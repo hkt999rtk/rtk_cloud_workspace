@@ -1556,8 +1556,26 @@ func TestShadowPolicyProbeCapturesVersionDuplicateAndAuthorizationEvidence(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if totals.VersionConflicts != 1 || totals.RejectedUpdates != 2 || totals.DuplicateSuppressions != 1 || totals.UnauthorizedRejections != 1 || totals.AuthViolations != 0 {
+	if totals.VersionConflicts != 1 || totals.RejectedUpdates != 2 || totals.DuplicateSuppressions != 1 || totals.UnauthorizedRejections != 1 || totals.AWSNamespaceRejections != 1 || totals.AuthViolations != 0 {
 		t.Fatalf("policy totals = %+v", totals)
+	}
+	broker.mu.Lock()
+	broker.AllowAWSNamespace = true
+	broker.mu.Unlock()
+	var unsafeTotals mqttIOTotals
+	err = runShadowPolicyProbe(sustainedDeviceSession{
+		Record: certRecord{
+			DeviceID: "policy-device", DeviceType: "light",
+			CertPEM: certPEM, KeyPEM: keyPEM,
+		},
+		MQTTTarget: mqttEndpointTarget{Host: host, Port: port},
+	}, "RTK", "policy-run-unsafe", api.URL, appConn, rejectedTopic, map[string]any{"power": true}, "command-2",
+		map[string]any{"version": float64(1)}, time.Now().Add(5*time.Second), time.Second, &unsafeTotals)
+	if err == nil || !strings.Contains(err.Error(), "forbidden AWS shadow namespace") {
+		t.Fatalf("AWS namespace acceptance error = %v", err)
+	}
+	if unsafeTotals.UnauthorizedRejections != 1 || unsafeTotals.AWSNamespaceRejections != 0 || unsafeTotals.AuthViolations != 1 {
+		t.Fatalf("unsafe policy totals = %+v", unsafeTotals)
 	}
 }
 
@@ -2465,6 +2483,7 @@ type fakeMQTTBroker struct {
 	shadowStates           map[string]map[string]any
 	RejectUsername         string
 	RejectForbiddenTopics  bool
+	AllowAWSNamespace      bool
 	SuppressShadowAccepted bool
 }
 
@@ -2723,7 +2742,10 @@ func (b *fakeMQTTBroker) handle(conn net.Conn) {
 			if !ok {
 				return
 			}
-			if b.RejectForbiddenTopics && strings.Contains(topic, "-forbidden/") {
+			b.mu.Lock()
+			rejectTopic := b.RejectForbiddenTopics && (strings.Contains(topic, "-forbidden/") || (strings.HasPrefix(topic, "$aws/") && !b.AllowAWSNamespace))
+			b.mu.Unlock()
+			if rejectTopic {
 				_ = mqttWritePacket(conn, 0x90, []byte{byte(packetID >> 8), byte(packetID), 0x80})
 				continue
 			}

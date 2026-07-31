@@ -241,6 +241,7 @@ type mqttIOTotals struct {
 	VersionConflicts           int64                       `json:"version_conflicts"`
 	RejectedUpdates            int64                       `json:"rejected_updates"`
 	UnauthorizedRejections     int64                       `json:"unauthorized_rejections"`
+	AWSNamespaceRejections     int64                       `json:"aws_namespace_rejections"`
 	DuplicateSuppressions      int64                       `json:"duplicate_suppressions"`
 	HTTPRequests               int64                       `json:"http_requests"`
 	HTTPSuccesses              int64                       `json:"http_successes"`
@@ -2919,13 +2920,22 @@ func runShadowPolicyProbe(session sustainedDeviceSession, brandname, runID, apiB
 	err = mqttSubscribe(probeConn, 1, "$vc/devices/"+forbiddenDeviceID+"/shadow/update/accepted")
 	if errors.Is(err, errMQTTSubscriptionRejected) {
 		totals.UnauthorizedRejections++
+	} else if err != nil {
+		return fmt.Errorf("authorization probe returned indeterminate subscription error: %w", err)
+	} else {
+		totals.AuthViolations++
+		return errors.New("device token subscribed to another device shadow topic")
+	}
+	err = mqttSubscribe(probeConn, 2, "$aws/things/"+session.Record.DeviceID+"/shadow/update/accepted")
+	if errors.Is(err, errMQTTSubscriptionRejected) {
+		totals.AWSNamespaceRejections++
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("authorization probe returned indeterminate subscription error: %w", err)
+		return fmt.Errorf("AWS namespace probe returned indeterminate subscription error: %w", err)
 	}
 	totals.AuthViolations++
-	return errors.New("device token subscribed to another device shadow topic")
+	return errors.New("device token subscribed to forbidden AWS shadow namespace")
 }
 
 func jsonInt64(value any) (int64, bool) {
@@ -3998,6 +4008,7 @@ func attachMQTTIOTotals(result map[string]any, totals mqttIOTotals) {
 	result["version_conflicts"] = totals.VersionConflicts
 	result["rejected_updates"] = totals.RejectedUpdates
 	result["unauthorized_rejections"] = totals.UnauthorizedRejections
+	result["aws_namespace_rejections"] = totals.AWSNamespaceRejections
 	result["duplicate_suppressions"] = totals.DuplicateSuppressions
 	result["http_requests"] = totals.HTTPRequests
 	result["http_successes"] = totals.HTTPSuccesses
@@ -4126,6 +4137,7 @@ func addMQTTIOTotals(a mqttIOTotals, b mqttIOTotals) mqttIOTotals {
 	a.VersionConflicts += b.VersionConflicts
 	a.RejectedUpdates += b.RejectedUpdates
 	a.UnauthorizedRejections += b.UnauthorizedRejections
+	a.AWSNamespaceRejections += b.AWSNamespaceRejections
 	a.DuplicateSuppressions += b.DuplicateSuppressions
 	a.HTTPRequests += b.HTTPRequests
 	a.HTTPSuccesses += b.HTTPSuccesses
@@ -4206,6 +4218,7 @@ func isZeroMQTTIOTotals(t mqttIOTotals) bool {
 		t.VersionConflicts == 0 &&
 		t.RejectedUpdates == 0 &&
 		t.UnauthorizedRejections == 0 &&
+		t.AWSNamespaceRejections == 0 &&
 		t.DuplicateSuppressions == 0 &&
 		t.HTTPRequests == 0 &&
 		t.HTTPSuccesses == 0 &&

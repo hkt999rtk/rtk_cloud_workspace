@@ -1496,6 +1496,7 @@ type rawLiveMQTTResult struct {
 	RejectedUpdates            int64                       `json:"rejected_updates"`
 	VersionConflicts           int64                       `json:"version_conflicts"`
 	UnauthorizedRejections     int64                       `json:"unauthorized_rejections"`
+	AWSNamespaceRejections     int64                       `json:"aws_namespace_rejections"`
 	DuplicateSuppressions      int64                       `json:"duplicate_suppressions"`
 	DeviceMQTTTotals           DeviceMQTTTotals            `json:"device_mqtt_totals"`
 	AppUserTotals              AppUserTotals               `json:"app_user_totals"`
@@ -1658,6 +1659,7 @@ func convertLiveMQTTStageResult(raw rawLiveMQTTResult, stage Stage, maxConnected
 		DeltaClearSuccessRatePercent:   percent(commandsPassed, commandsAttempted),
 		RejectedUpdateCount:            int(raw.RejectedUpdates),
 		UnauthorizedRejectionCount:     int(raw.UnauthorizedRejections),
+		AWSNamespaceRejectionCount:     int(raw.AWSNamespaceRejections),
 		DuplicateSuppressionCount:      int(raw.DuplicateSuppressions),
 		AuthorizationViolationCount:    int(raw.AuthViolations),
 		ClientTokenCorrelationCount:    int(httpSuccesses),

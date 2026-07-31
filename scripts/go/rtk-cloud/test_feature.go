@@ -241,7 +241,7 @@ func resolveFeatureSpecs(catalog testCatalog, feature, requestedProfile string) 
 		if tc.Status != "active" || tc.Feature != feature || tc.Runner != "test-feature" {
 			continue
 		}
-		if tc.Layer == "e2e" && tc.Profile == "canary" {
+		if (tc.Layer == "e2e" || tc.Layer == "live") && tc.Profile == "canary" {
 			canaryCases = append(canaryCases, tc)
 		}
 		if tc.Layer == "load" && tc.Profile == "qualification-1k" {
@@ -537,7 +537,7 @@ func evaluateFeatureCases(spec featureRunSpec, results map[string]any, stageDir 
 	latency := map[string]any{}
 	switch spec.Feature {
 	case "device-shadow":
-		operations = []string{"desired_write", "delta_receive", "reported_publish", "delta_clear", "offline_reconnect", "version_conflict", "unauthorized_update"}
+		operations = []string{"desired_write", "delta_receive", "reported_publish", "delta_clear", "offline_reconnect", "version_conflict", "unauthorized_update", "aws_namespace_rejection"}
 		latency["desired_reported_p95_ms"] = numberAt(results, "stage_results", 0, "desired_reported_p95_ms")
 		onlineOK := numberAt(results, "stage_results", 0, "device_mqtt_totals", "delta_received") > 0 &&
 			numberAt(results, "stage_results", 0, "device_mqtt_totals", "reported_publishes") > 0 &&
@@ -549,9 +549,12 @@ func evaluateFeatureCases(spec featureRunSpec, results map[string]any, stageDir 
 			numberAt(results, "stage_results", 0, "duplicate_suppression_count") > 0 &&
 			numberAt(results, "stage_results", 0, "duplicate_apply_count") == 0 &&
 			numberAt(results, "stage_results", 0, "authorization_violation_count") == 0
+		awsNamespaceOK := numberAt(results, "stage_results", 0, "aws_namespace_rejection_count") > 0 &&
+			numberAt(results, "stage_results", 0, "authorization_violation_count") == 0
 		assessments["E2E-HOME-SHADOW-001"] = passFail(onlineOK, "online desired/delta/reported convergence")
 		assessments["E2E-HOME-SHADOW-002"] = passFail(offlineOK, "offline desired convergence")
 		assessments["E2E-HOME-SHADOW-003"] = passFail(policyOK, "version conflict and unauthorized update enforcement")
+		assessments["LIVE-VC-SHADOWMQTT-001"] = passFail(awsNamespaceOK, "deployed broker rejects the AWS Shadow MQTT namespace")
 	case "video-webrtc":
 		operations = []string{}
 		target := float64(2)
