@@ -23,6 +23,9 @@ type authorizationQualificationSpec struct {
 	Targets    []authorizationQualificationTarget
 	Assertions map[string]map[string]string
 	Workflows  map[string]map[string]string
+	// EvidenceFiles are repository-relative files produced by command targets
+	// and copied into the immutable qualification bundle.
+	EvidenceFiles []string
 }
 
 type authorizationQualificationTarget struct {
@@ -876,6 +879,7 @@ func runAuthorizationQualificationWithSpecs(workspace, outputDir, runID string, 
 		caseByID[tc.ID] = tc
 	}
 	results := make([]authorizationQualificationResult, 0, len(specs))
+	var generatedEvidence []string
 	for _, spec := range specs {
 		tc, ok := caseByID[spec.TestID]
 		if !ok || tc.Status != "active" || tc.Layer != "integration" {
@@ -935,6 +939,21 @@ func runAuthorizationQualificationWithSpecs(workspace, outputDir, runID string, 
 			}
 		}
 		completed := time.Now().UTC()
+		for _, relativePath := range spec.EvidenceFiles {
+			source := filepath.Join(workspace, "repos", spec.Repository, filepath.FromSlash(relativePath))
+			raw, readErr := os.ReadFile(source)
+			if readErr != nil {
+				return fmt.Errorf("%s evidence %s: %w", spec.TestID, relativePath, readErr)
+			}
+			destination := filepath.Join(outputDir, "evidence", spec.TestID, filepath.Base(relativePath))
+			if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(destination, raw, 0o644); err != nil {
+				return err
+			}
+			generatedEvidence = append(generatedEvidence, destination)
+		}
 		results = append(results, authorizationQualificationResult{
 			TestID: spec.TestID, Selector: selector, Status: "PASS",
 			StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339),
@@ -954,7 +973,8 @@ func runAuthorizationQualificationWithSpecs(workspace, outputDir, runID string, 
 	if err := os.WriteFile(junitPath, []byte(renderAuthorizationQualificationJUnit(results)), 0o644); err != nil {
 		return err
 	}
-	refs, err := qualificationEvidenceRefs(outputDir, resultsPath, junitPath)
+	evidencePaths := append([]string{resultsPath, junitPath}, generatedEvidence...)
+	refs, err := qualificationEvidenceRefs(outputDir, evidencePaths...)
 	if err != nil {
 		return err
 	}
@@ -1129,8 +1149,12 @@ func qualificationEvidenceRefs(outputDir string, paths ...string) ([]featureCove
 			return nil, err
 		}
 		sum := sha256.Sum256(raw)
+		relativePath, err := filepath.Rel(outputDir, path)
+		if err != nil {
+			return nil, err
+		}
 		refs = append(refs, featureCoverageEvidenceFile{
-			Path: filepath.ToSlash(filepath.Base(path)), SHA256: hex.EncodeToString(sum[:]), Type: featureEvidenceType(path),
+			Path: filepath.ToSlash(relativePath), SHA256: hex.EncodeToString(sum[:]), Type: featureEvidenceType(path),
 		})
 	}
 	return refs, nil

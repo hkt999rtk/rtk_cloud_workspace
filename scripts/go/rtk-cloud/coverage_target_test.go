@@ -514,6 +514,8 @@ with open(os.path.join(root, "evidence-manifest.json"), "w") as handle:
         "generated_at": now,
         "cases": cases,
     }, handle)
+with open(os.path.join(root, "junit.xml"), "w") as handle:
+    handle.write('<testsuite name="ui" tests="%d" failures="0"></testsuite>\n' % len(cases))
 PY
 `)
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -536,6 +538,9 @@ PY
 	runDir := filepath.Join(workspace, ".artifacts", "test-runs", runID)
 	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
 	if _, err := os.Stat(filepath.Join(runDir, "ui", "desktop", "evidence-manifest.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, "ui", "desktop", "feature-evidence.json")); err != nil {
 		t.Fatal(err)
 	}
 }

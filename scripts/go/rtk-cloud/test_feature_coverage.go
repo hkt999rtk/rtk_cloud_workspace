@@ -297,6 +297,9 @@ func loadFeatureEvidence(workspace string, catalog testCatalog, rawPaths string)
 				return walkErr
 			}
 			if !entry.IsDir() && (entry.Name() == "feature-evidence.json" || entry.Name() == "evidence-manifest.json") {
+				if entry.Name() == "evidence-manifest.json" && exists(filepath.Join(filepath.Dir(candidate), "feature-evidence.json")) {
+					return nil
+				}
 				files = append(files, candidate)
 			}
 			return nil

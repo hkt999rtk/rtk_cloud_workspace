@@ -389,6 +389,65 @@ workflows:
 	}
 }
 
+func TestLogicalOperationSpecProvidesStableSDKWorkflowReferences(t *testing.T) {
+	source := specSourceRegistryItem{
+		ID: "SPEC-SDK-OPERATIONS", Path: "sdk-operations.yaml", Parser: "operations",
+		Authority: "service", Owner: "rtk_cloud_client",
+	}
+	raw := []byte(`schema_version: 1
+rtk_spec: { id: SPEC-SDK-OPERATIONS, status: normative, owner: rtk_cloud_client }
+operations:
+  - id: client_connect
+    feature_id: FEAT-SDK-TEST-001
+    requirement_ids: [REQ-SDK-TEST-001]
+`)
+	operations, findings, err := parseLogicalOperationSpec(source, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 || len(operations) != 1 {
+		t.Fatalf("valid logical operation parse: operations=%+v findings=%+v", operations, findings)
+	}
+	operation := operations[0]
+	if operation.DocumentID != source.ID || operation.OperationID != "client_connect" || operation.Revision == "" {
+		t.Fatalf("logical operation missing stable identity: %+v", operation)
+	}
+
+	invalid := strings.Replace(string(raw), "client_connect", "Client.Connect", 1)
+	_, findings, err = parseLogicalOperationSpec(source, []byte(invalid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasSpecFinding(findings, "INVALID_OPERATION_ID") {
+		t.Fatalf("invalid logical operation ID was accepted: %+v", findings)
+	}
+
+	if _, _, err := parseLogicalOperationSpec(source, []byte("operations: [")); err == nil {
+		t.Fatal("invalid logical operation YAML was accepted")
+	}
+	invalid = `schema_version: 2
+rtk_spec: { id: SPEC-WRONG, status: draft, owner: wrong-owner }
+operations:
+  - id: client_connect
+  - id: client_connect
+`
+	_, findings, err = parseLogicalOperationSpec(source, []byte(invalid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{
+		"INVALID_OPERATION_SCHEMA",
+		"DOCUMENT_METADATA_MISMATCH",
+		"DOCUMENT_STATUS_MISMATCH",
+		"DUPLICATE_OPERATION_REF",
+		"UNMAPPED_OPERATION",
+	} {
+		if !hasSpecFinding(findings, code) {
+			t.Fatalf("logical operation finding %s is missing: %+v", code, findings)
+		}
+	}
+}
+
 func TestSpecImpactIncludesWorkflowRevisionChanges(t *testing.T) {
 	workflow := specWorkflow{
 		ID: "WF-TEST-FLOW-001", FeatureID: "FEAT-TEST-FLOW-001",
