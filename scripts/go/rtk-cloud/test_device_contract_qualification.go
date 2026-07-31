@@ -2,6 +2,34 @@ package main
 
 var deviceContractQualificationSpecs = []authorizationQualificationSpec{
 	{
+		TestID: "INT-VC-FACTORY-SERVICE-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceRecordsFactoryEntitlementAfterCertificateIssue"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceUsesProductionJWTContextForIssuerSelection"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceRejectsProductionJWTSelectorMismatch"},
+			{Package: "./internal/factoryenroll", GoTest: "TestProductionJWTAuthenticatorExtractsProductionContext"},
+			{Package: "./internal/factoryenroll", GoTest: "TestProductionJWTAuthenticatorRejectsExpiredToken"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceRejectsConflictingServiceOptionsAliases"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceRejectsInvalidRequestsBeforeIssuerCall"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceHealthz"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceAuditSuccessEventsAreRedacted"},
+			{Package: "./internal/factoryenroll", GoTest: "TestServiceAuditWriteFailureStopsEnrollment"},
+			{Package: "./internal/factoryenrollapp", GoTest: "TestNewUsesProductionJWTAuthenticatorWhenConfigured"},
+			{Package: "./internal/factoryenrollapp", GoTest: "TestMetricsEndpoints"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-VC-FACTORY-BOUNDARY-001":    {"issuer_isolated_from_api": "PASS", "service_delegates_signing": "PASS"},
+			"REQ-VC-FACTORY-POLICY-001":      {"jwt_context_selects_profile": "PASS", "body_override_rejected": "PASS"},
+			"REQ-VC-FACTORY-KEY-CUSTODY-001": {"csr_proof_of_possession_required": "PASS", "private_key_never_accepted": "PASS"},
+			"REQ-VC-FACTORY-AUTH-001":        {"jwt_signature_audience_time_checked": "PASS", "auth_precedes_issuer_call": "PASS"},
+			"REQ-VC-FACTORY-REQUEST-001":     {"csr_identity_and_options_validated": "PASS", "conflicting_aliases_rejected": "PASS"},
+			"REQ-VC-FACTORY-PERSISTENCE-001": {"entitlement_recorded_after_issue": "PASS", "canonical_context_persisted": "PASS"},
+			"REQ-VC-FACTORY-READINESS-001":   {"health_checks_service": "PASS", "metrics_expose_outcomes": "PASS"},
+			"REQ-VC-FACTORY-AUDIT-001":       {"success_events_redacted": "PASS", "audit_failure_stops_enrollment": "PASS"},
+			"REQ-VC-FACTORY-CONFIG-001":      {"production_jwt_config_selected": "PASS", "invalid_runtime_config_rejected": "PASS"},
+		},
+	},
+	{
 		TestID: "INT-VC-SHADOW-CONTRACT-001", Repository: "rtk_video_cloud",
 		Targets: []authorizationQualificationTarget{
 			{Package: "./internal/deviceshadow", GoTest: "TestServiceUpdateMergesDesiredAndReportedAndComputesDelta"},
@@ -95,6 +123,87 @@ var deviceContractQualificationSpecs = []authorizationQualificationSpec{
 				"commit_first_mutation":                         "PASS",
 				"commit_second_mutation":                        "PASS",
 				"verify_committed_state_and_notification_order": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-SHADOW-SERVICE-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/deviceshadow", GoTest: "TestServiceUpdateMergesDesiredAndReportedAndComputesDelta"},
+			{Package: "./internal/deviceshadow", GoTest: "TestServiceUpdateDeletesNullFieldsAndTreatsArraysAsAtomic"},
+			{Package: "./internal/deviceshadow", GoTest: "TestServiceDeleteIncrementsVersionAndRecreateDoesNotReset"},
+			{Package: "./internal/deviceshadow", GoTest: "TestServiceListNamedShadowsExcludesUnnamedAndDeleted"},
+			{Package: "./internal/httpapi", GoTest: "TestDeviceShadowHTTPNamedListDeleteAndVersionConflict"},
+			{Package: "./internal/mqtt", GoTest: "TestAdapterReceiveShadowUpdatePublishesAcceptedDocumentsAndDelta"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowStoreUsesRedisForShadowRequestPath"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowStoreSaveUsesRedisOnlyWithoutTTLOrDirtySet"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowStoreOutboxSerializesAcrossWorkers"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowStoreOutboxRetriesCommittedMutation"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowDeleteCommitsOutboxAndLifecycleAuditTogether"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowMigrationIsDryRunnableAndIdempotent"},
+			{Package: "./internal/rediscache", GoTest: "TestDeviceShadowMigrationRepairsNamedIndexAndZeroTimestampTombstone"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-VC-SHADOW-BOUNDARY-001": {
+				"domain_service_transport_neutral": "PASS",
+				"public_identity_and_namespace":    "PASS",
+			},
+			"REQ-VC-SHADOW-IDENTITY-001": {
+				"device_and_name_key_stable": "PASS",
+				"unnamed_excluded_from_list": "PASS",
+			},
+			"REQ-VC-SHADOW-LIFECYCLE-001": {
+				"provision_does_not_create":      "PASS",
+				"delete_tombstones_all":          "PASS",
+				"recreate_version_rule_enforced": "PASS",
+			},
+			"REQ-VC-SHADOW-DURABILITY-001": {
+				"redis_only_request_path":    "PASS",
+				"mutation_outbox_atomic":     "PASS",
+				"redis_failure_fails_closed": "PASS",
+			},
+			"REQ-VC-SHADOW-MIGRATION-001": {
+				"dry_run_and_write_idempotent":        "PASS",
+				"legacy_index_and_tombstone_repaired": "PASS",
+			},
+			"REQ-VC-SHADOW-HTTP-001": {
+				"named_and_unnamed_routes":   "PASS",
+				"authorization_and_versions": "PASS",
+			},
+			"REQ-VC-SHADOW-DOCUMENT-001": {
+				"merge_delta_metadata_exact":  "PASS",
+				"null_array_and_limits_exact": "PASS",
+				"stale_version_rejected":      "PASS",
+			},
+			"REQ-VC-SHADOW-MQTT-RESPONSES-001": {
+				"accepted_rejected_exact":   "PASS",
+				"documents_and_delta_exact": "PASS",
+			},
+			"REQ-VC-SHADOW-NOTIFICATIONS-001": {
+				"previous_current_ordered": "PASS",
+				"delta_only_when_nonempty": "PASS",
+			},
+			"REQ-VC-SHADOW-STORAGE-001": {
+				"redis_fields_and_index_persist": "PASS",
+				"no_ttl_or_postgres_hydration":   "PASS",
+			},
+			"REQ-VC-SHADOW-ARCHITECTURE-001": {
+				"domain_exercised_without_transport": "PASS",
+				"persistence_and_publish_interfaces": "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-VC-SHADOW-LIFECYCLE-001": {
+				"create_shadow":             "PASS",
+				"tombstone_shadow":          "PASS",
+				"recreate_shadow":           "PASS",
+				"verify_version_continuity": "PASS",
+				"cleanup_shadow":            "PASS",
+			},
+			"WF-VC-SHADOW-NOTIFICATION-001": {
+				"commit_first_mutation":     "PASS",
+				"commit_second_mutation":    "PASS",
+				"verify_notification_order": "PASS",
 			},
 		},
 	},
@@ -259,6 +368,74 @@ var deviceContractQualificationSpecs = []authorizationQualificationSpec{
 		},
 	},
 	{
+		TestID: "INT-VC-CLIP-SERVICE-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/httpapi", GoTest: "TestDirectClipUploadAPI"},
+			{Package: "./internal/httpapi", GoTest: "TestRetiredMultipartClipIsNotBuffered"},
+			{Package: "./internal/clipcrypto", GoTest: "TestLegacyECDHAESCTRFixedVector"},
+			{Package: "./internal/clipupload", GoTest: "TestCreateCompleteVerifyAndExposeMetadata"},
+			{Package: "./internal/clipupload", GoTest: "TestCreateIsIdempotentAndRejectsDescriptorConflict"},
+			{Package: "./internal/clipupload", GoTest: "TestVerificationMismatchFailsAndDeletesObjects"},
+			{Package: "./internal/clipupload", GoTest: "TestCreateValidationAndOwnership"},
+			{Package: "./internal/clipupload", GoTest: "TestProcessorRetrySweepQueueAndVerificationFailures"},
+			{Package: "./internal/blob", GoTest: "TestS3DirectUploadPresignAndHead"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-VC-CLIP-ARCHITECTURE-001": {
+				"media_bypasses_api":       "PASS",
+				"postgres_lifecycle_owned": "PASS",
+			},
+			"REQ-VC-CLIP-DATAFLOW-001": {
+				"authorize_upload_complete_verify": "PASS",
+				"ready_before_read":                "PASS",
+			},
+			"REQ-VC-CLIP-CRYPTO-001": {
+				"fixed_cipher_vector_exact":  "PASS",
+				"stored_byte_checksum_exact": "PASS",
+			},
+			"REQ-VC-CLIP-AUTHZ-001": {
+				"device_identity_bound":           "PASS",
+				"activation_entitlement_required": "PASS",
+			},
+			"REQ-VC-CLIP-CREATE-001": {
+				"server_generated_keys":        "PASS",
+				"idempotent_retry_exact":       "PASS",
+				"descriptor_conflict_rejected": "PASS",
+			},
+			"REQ-VC-CLIP-COMPLETE-001": {
+				"atomic_transition":           "PASS",
+				"completion_replay_safe":      "PASS",
+				"duplicate_publish_prevented": "PASS",
+			},
+			"REQ-VC-CLIP-OBJECT-CONSTRAINTS-001": {
+				"presigned_key_and_headers_bound": "PASS",
+				"checksum_head_verified":          "PASS",
+			},
+			"REQ-VC-CLIP-STATE-001": {
+				"state_transitions_enforced": "PASS",
+				"ready_only_exposed":         "PASS",
+			},
+			"REQ-VC-CLIP-VERIFY-001": {
+				"verification_mismatch_terminal": "PASS",
+				"retry_sweep_and_cleanup":        "PASS",
+			},
+			"REQ-VC-CLIP-OBSERVABILITY-001": {
+				"outcomes_and_backlog_exposed": "PASS",
+				"secrets_not_logged":           "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-VC-CLIP-001": {
+				"create_upload":    "PASS",
+				"complete_upload":  "PASS",
+				"wait_until_ready": "PASS",
+				"enumerate_clip":   "PASS",
+				"download_clip":    "PASS",
+				"delete_clip":      "PASS",
+			},
+		},
+	},
+	{
 		TestID: "INT-SDK-MEDIA-CONTRACT-001", Repository: "rtk_cloud_client",
 		Targets: []authorizationQualificationTarget{
 			{
@@ -360,6 +537,59 @@ var deviceContractQualificationSpecs = []authorizationQualificationSpec{
 				"discover_active_node":      "PASS",
 				"deactivate_node":           "PASS",
 				"verify_node_is_not_active": "PASS",
+			},
+		},
+	},
+	{
+		TestID: "INT-VC-WEBRTC-SERVICE-001", Repository: "rtk_video_cloud",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/httpapi", GoTest: "TestRequestWebRTCRoundTrip"},
+			{Package: "./internal/httpapi", GoTest: "TestRequestWebRTCUsesAppTokenServiceOptionsClaim"},
+			{Package: "./internal/httpapi", GoTest: "TestRequestWebRTCDeviceNotOnlineLogsStructuredContext"},
+			{Package: "./internal/httpapi", GoTest: "TestRequestWebRTCCloseExpiredSessionReturnsGone"},
+			{Package: "./internal/httpapi", GoTest: "TestRequestWebRTCICEPreflightReturnsServersWithoutSession"},
+			{Package: "./internal/devicebus", GoTest: "TestTransportMuxSendsIdenticalOfferOnlyToCurrentOwnerWithoutFallback"},
+		},
+		Assertions: map[string]map[string]string{
+			"REQ-VC-WEBRTC-SURFACE-001": {
+				"only_non_trickle_routes": "PASS",
+				"server_not_media_peer":   "PASS",
+			},
+			"REQ-VC-WEBRTC-AUTHZ-001": {
+				"roles_scoped_per_route": "PASS",
+				"device_subject_matches": "PASS",
+			},
+			"REQ-VC-WEBRTC-ICE-001": {
+				"entitlement_checked":          "PASS",
+				"preflight_creates_no_session": "PASS",
+			},
+			"REQ-VC-WEBRTC-CREATE-001": {
+				"offer_stored_and_delivered": "PASS",
+				"response_omits_sdp":         "PASS",
+			},
+			"REQ-VC-WEBRTC-ANSWER-001": {
+				"answer_bound_to_session":     "PASS",
+				"bounded_wait_returns_answer": "PASS",
+			},
+			"REQ-VC-WEBRTC-DEVICE-ANSWER-001": {
+				"device_identity_matches": "PASS",
+				"open_session_required":   "PASS",
+			},
+			"REQ-VC-WEBRTC-CLOSE-001": {
+				"authorized_close_marks_state": "PASS",
+				"no_media_stats_fabricated":    "PASS",
+			},
+			"REQ-VC-WEBRTC-ERRORS-001": {
+				"offline_and_expired_stable": "PASS",
+				"auth_and_timeout_stable":    "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-VC-WEBRTC-001": {
+				"preflight_ice":   "PASS",
+				"request_stream":  "PASS",
+				"wait_for_answer": "PASS",
+				"close_stream":    "PASS",
 			},
 		},
 	},

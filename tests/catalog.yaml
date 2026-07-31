@@ -600,6 +600,18 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-AM-READINESS-PROJECTION-001, REQ-AM-READINESS-STATES-001]
     status: active
+  - id: INT-VC-FACTORY-SERVICE-001
+    title: Factory enrollment trust boundary validation persistence readiness and audit
+    layer: integration
+    owner: factory_enroll
+    source: repos/rtk_video_cloud/internal/factoryenroll/service_test.go
+    selector: "./internal/factoryenroll#TestServiceRecordsFactoryEntitlementAfterCertificateIssue,./internal/factoryenroll#TestServiceUsesProductionJWTContextForIssuerSelection,./internal/factoryenroll#TestServiceRejectsProductionJWTSelectorMismatch,./internal/factoryenroll#TestProductionJWTAuthenticatorExtractsProductionContext,./internal/factoryenroll#TestProductionJWTAuthenticatorRejectsExpiredToken,./internal/factoryenroll#TestServiceRejectsConflictingServiceOptionsAliases,./internal/factoryenroll#TestServiceRejectsInvalidRequestsBeforeIssuerCall,./internal/factoryenroll#TestServiceHealthz,./internal/factoryenroll#TestServiceAuditSuccessEventsAreRedacted,./internal/factoryenroll#TestServiceAuditWriteFailureStopsEnrollment,./internal/factoryenrollapp#TestNewUsesProductionJWTAuthenticatorWhenConfigured,./internal/factoryenrollapp#TestMetricsEndpoints"
+    method: Targeted service and composition tests enforce the signer boundary, production-policy context, device-held key custody, JWT and CSR validation, idempotent entitlement persistence, readiness, required configuration, and fail-closed redacted audit.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-BOUNDARY-001, REQ-VC-FACTORY-POLICY-001, REQ-VC-FACTORY-KEY-CUSTODY-001, REQ-VC-FACTORY-AUTH-001, REQ-VC-FACTORY-REQUEST-001, REQ-VC-FACTORY-PERSISTENCE-001, REQ-VC-FACTORY-READINESS-001, REQ-VC-FACTORY-AUDIT-001, REQ-VC-FACTORY-CONFIG-001]
+    status: active
   - id: INT-VC-SHADOW-CONTRACT-001
     title: Canonical Device Shadow HTTP MQTT mutation and durability contract
     layer: integration
@@ -611,6 +623,18 @@ cases:
     environments: [ci]
     evidence: [json, junit]
     verifies: [REQ-SHADOW-COMPATIBILITY-001, REQ-SHADOW-IDENTITY-001, REQ-SHADOW-HTTP-API-001, REQ-SHADOW-MQTT-API-001, REQ-SHADOW-MUTATION-001, REQ-SHADOW-RESPONSE-001, REQ-SHADOW-VALIDATION-001, REQ-SHADOW-DELETE-001, REQ-SHADOW-NOTIFICATION-001, REQ-SHADOW-CLIENT-001, REQ-SHADOW-CONFORMANCE-HTTP-001, REQ-SHADOW-CONFORMANCE-DURABILITY-001]
+    status: active
+  - id: INT-VC-SHADOW-SERVICE-001
+    title: Video Cloud Shadow service lifecycle persistence protocol and boundary contract
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/deviceshadow/service_test.go
+    selector: "./internal/deviceshadow#TestServiceUpdateMergesDesiredAndReportedAndComputesDelta,./internal/deviceshadow#TestServiceUpdateDeletesNullFieldsAndTreatsArraysAsAtomic,./internal/deviceshadow#TestServiceDeleteIncrementsVersionAndRecreateDoesNotReset,./internal/deviceshadow#TestServiceListNamedShadowsExcludesUnnamedAndDeleted,./internal/httpapi#TestDeviceShadowHTTPNamedListDeleteAndVersionConflict,./internal/mqtt#TestAdapterReceiveShadowUpdatePublishesAcceptedDocumentsAndDelta,./internal/rediscache#TestDeviceShadowStoreUsesRedisForShadowRequestPath,./internal/rediscache#TestDeviceShadowStoreSaveUsesRedisOnlyWithoutTTLOrDirtySet,./internal/rediscache#TestDeviceShadowStoreOutboxSerializesAcrossWorkers,./internal/rediscache#TestDeviceShadowStoreOutboxRetriesCommittedMutation,./internal/rediscache#TestDeviceShadowDeleteCommitsOutboxAndLifecycleAuditTogether,./internal/rediscache#TestDeviceShadowMigrationIsDryRunnableAndIdempotent,./internal/rediscache#TestDeviceShadowMigrationRepairsNamedIndexAndZeroTimestampTombstone"
+    method: Targeted domain, HTTP, MQTT, and Redis tests prove transport-neutral identity, lifecycle tombstones, fail-closed durability, migration, document semantics, ordered notifications, storage fields, and interface boundaries.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-SHADOW-BOUNDARY-001, REQ-VC-SHADOW-IDENTITY-001, REQ-VC-SHADOW-LIFECYCLE-001, REQ-VC-SHADOW-DURABILITY-001, REQ-VC-SHADOW-MIGRATION-001, REQ-VC-SHADOW-HTTP-001, REQ-VC-SHADOW-DOCUMENT-001, REQ-VC-SHADOW-MQTT-RESPONSES-001, REQ-VC-SHADOW-NOTIFICATIONS-001, REQ-VC-SHADOW-STORAGE-001, REQ-VC-SHADOW-ARCHITECTURE-001]
     status: active
   - id: INT-VC-TRANSPORT-CONTRACT-001
     title: Canonical device owner transport routing and capability contract
@@ -660,6 +684,18 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CONTRACT-MEDIA-ROUTES-001, REQ-CONTRACT-MEDIA-DIRECT-UPLOAD-001, REQ-CONTRACT-MEDIA-TOKEN-001, REQ-CONTRACT-MEDIA-DOWNLOAD-001]
     status: active
+  - id: INT-VC-CLIP-SERVICE-001
+    title: Video Cloud direct clip upload integrity state verification and observability
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/clipupload/clipupload_test.go
+    selector: "./internal/httpapi#TestDirectClipUploadAPI,./internal/httpapi#TestRetiredMultipartClipIsNotBuffered,./internal/clipcrypto#TestLegacyECDHAESCTRFixedVector,./internal/clipupload#TestCreateCompleteVerifyAndExposeMetadata,./internal/clipupload#TestCreateIsIdempotentAndRejectsDescriptorConflict,./internal/clipupload#TestVerificationMismatchFailsAndDeletesObjects,./internal/clipupload#TestCreateValidationAndOwnership,./internal/clipupload#TestProcessorRetrySweepQueueAndVerificationFailures,./internal/blob#TestS3DirectUploadPresignAndHead"
+    method: Targeted API, crypto, lifecycle, object-store, retry, and cleanup tests prove direct media bypass, fixed-vector encryption, bound PUT constraints, idempotency, state exposure, verifier behavior, and secret-free outcomes.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-CLIP-ARCHITECTURE-001, REQ-VC-CLIP-DATAFLOW-001, REQ-VC-CLIP-CRYPTO-001, REQ-VC-CLIP-AUTHZ-001, REQ-VC-CLIP-CREATE-001, REQ-VC-CLIP-COMPLETE-001, REQ-VC-CLIP-OBJECT-CONSTRAINTS-001, REQ-VC-CLIP-STATE-001, REQ-VC-CLIP-VERIFY-001, REQ-VC-CLIP-OBSERVABILITY-001]
+    status: active
   - id: INT-SDK-MEDIA-CONTRACT-001
     title: JavaScript SDK isolates snapshot and media helpers
     layer: integration
@@ -683,6 +719,18 @@ cases:
     environments: [ci]
     evidence: [json, junit]
     verifies: [REQ-CONTRACT-STREAMING-SURFACE-001, REQ-CONTRACT-STREAMING-AUTH-001, REQ-CONTRACT-STREAMING-ICE-001, REQ-CONTRACT-STREAMING-CREATE-001, REQ-CONTRACT-TURN-REGISTRY-001, REQ-CONTRACT-STREAMING-WAIT-001, REQ-CONTRACT-STREAMING-ANSWER-001, REQ-CONTRACT-STREAMING-CLOSE-001, REQ-CONTRACT-STREAMING-LIFECYCLE-001, REQ-CONTRACT-STREAMING-ERROR-001]
+    status: active
+  - id: INT-VC-WEBRTC-SERVICE-001
+    title: Video Cloud WebRTC signaling authorization SDP readiness and error contract
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/router_test.go
+    selector: "./internal/httpapi#TestRequestWebRTCRoundTrip,./internal/httpapi#TestRequestWebRTCUsesAppTokenServiceOptionsClaim,./internal/httpapi#TestRequestWebRTCDeviceNotOnlineLogsStructuredContext,./internal/httpapi#TestRequestWebRTCCloseExpiredSessionReturnsGone,./internal/httpapi#TestRequestWebRTCICEPreflightReturnsServersWithoutSession,./internal/devicebus#TestTransportMuxSendsIdenticalOfferOnlyToCurrentOwnerWithoutFallback"
+    method: Targeted signaling and transport tests prove the non-trickle surface, role and device binding, session-free ICE preflight, offer delivery without SDP echo, answer readiness, scoped close, and stable failures.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-WEBRTC-SURFACE-001, REQ-VC-WEBRTC-AUTHZ-001, REQ-VC-WEBRTC-ICE-001, REQ-VC-WEBRTC-CREATE-001, REQ-VC-WEBRTC-ANSWER-001, REQ-VC-WEBRTC-DEVICE-ANSWER-001, REQ-VC-WEBRTC-CLOSE-001, REQ-VC-WEBRTC-ERRORS-001]
     status: active
   - id: INT-SDK-STREAMING-CONTRACT-001
     title: JavaScript SDK preserves WebRTC session SDP and ICE payloads
@@ -708,7 +756,7 @@ cases:
     runner: test-feature
     environments: [staging]
     evidence: [json, junit, logs]
-    verifies: [REQ-SHADOW-CONFORMANCE-MQTT-001]
+    verifies: [REQ-SHADOW-CONFORMANCE-MQTT-001, REQ-VC-SHADOW-MQTT-001, REQ-VC-SHADOW-ACL-001]
     status: active
   - id: UNIT-VC-SHADOW-001
     title: Device shadow rejects stale versions
@@ -789,7 +837,7 @@ cases:
   - { <<: *sdk_e2e, id: E2E-AUTH-DEVRECOVERY-001, title: Device token reissue and certificate recovery completes, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-AUTH-DEVRECOVERY-001", verifies: [REQ-CONTRACT-AUTH-DEVICE-BOOTSTRAP-001, REQ-CONTRACT-AUTH-RECOVERY-001] }
   - { <<: *sdk_e2e, id: E2E-AUTH-DEVREVOCATION-001, title: Deactivated device certificate cannot bootstrap again, source: e2e_test/cloud_validation/scenarios/nightly-resilience.yaml, selector: "test_id: E2E-AUTH-DEVREVOCATION-001", verifies: [REQ-CONTRACT-AUTH-REVOCATION-001] }
 
-  - { id: E2E-FACTORY-ENROLL-001, title: Factory enrollment issues a usable device certificate, layer: e2e, owner: factory_enroll, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner enrolls a test device and validates the issued identity and certificate chain., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], verifies: [REQ-E2E-FACTORY-ENROLL-001], status: active }
+  - { id: E2E-FACTORY-ENROLL-001, title: Factory enrollment issues a usable device certificate, layer: e2e, owner: factory_enroll, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner enrolls a test device and validates the issued identity and certificate chain, service mTLS, opt-in deployment posture, and redacted smoke evidence., runner: test-e2e, environments: [local, staging], evidence: [json, markdown], verifies: [REQ-E2E-FACTORY-ENROLL-001, REQ-VC-FACTORY-ISSUER-MTLS-001, REQ-VC-FACTORY-DEPLOYMENT-001, REQ-VC-FACTORY-SMOKE-001], status: active }
   - { id: E2E-AUTH-FACTORY-BOOTSTRAP-001, title: Factory-issued certificate bootstraps runtime device authentication, layer: e2e, owner: rtk_video_cloud, source: e2e_test/README.md, selector: "factory_enroll/", method: Go E2E runner uses the factory-issued device identity to obtain and exercise a subject-bound runtime token., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-CONTRACT-AUTH-FACTORY-ENROLL-001], status: active }
   - { id: E2E-PROV-ACCOUNT-001, title: Account and Video Cloud provisioning smoke completes, layer: e2e, owner: provisioning, source: e2e_test/README.md, selector: "provisioning/account_video_smoke/", method: Go E2E runner resolves a possession claim, provisions isolated Account Manager and Video Cloud identities, waits for provisioning state, and proves device mTLS token issuance., runner: test-e2e, environments: [staging], evidence: [json, markdown], verifies: [REQ-CONTRACT-PROV-CLAIM-BOUNDARY-001, REQ-E2E-PROV-ACCOUNT-001], status: active }
   - { id: E2E-CA-SIGNUP-EMAIL-001, title: Cloud Send Mail and IMAP customer signup activation completes, layer: e2e, owner: cloud_platform, source: scripts/staging_email_signup_e2e.py, selector: "RUN_LIVE_EMAIL_E2E=1", method: Operator runner configures deployed staging HTTPS Send Mail delivery then verifies a plus-address signup email through local IMAP and browser activation/login., runner: test-live, environments: [staging], evidence: [json, logs], verifies: [REQ-E2E-CA-SIGNUP-EMAIL-001], status: active }
@@ -800,9 +848,9 @@ cases:
   - { id: E2E-HOME-SHADOW-001, title: Online desired delta and reported state converge, layer: e2e, feature: device-shadow, profile: canary, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-canary.description.env, selector: "test_id: E2E-HOME-SHADOW-001", method: Home load actors write desired state receive delta publish reported state and require delta clearance., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-HOME-SHADOW-001], status: active }
   - { id: E2E-HOME-SHADOW-002, title: Offline desired state converges after reconnect, layer: e2e, feature: device-shadow, profile: canary, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-canary.description.env, selector: "test_id: E2E-HOME-SHADOW-002", method: Offline actors queue desired state reconnect read shadow publish reported state and clear delta., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-HOME-SHADOW-002], status: active }
   - { id: E2E-HOME-SHADOW-003, title: Shadow versions duplicates and unauthorized updates are enforced, layer: e2e, feature: device-shadow, profile: canary, owner: home_cloud, source: loadtests/home-100k/scenarios/mqtt-canary.description.env, selector: "test_id: E2E-HOME-SHADOW-003", method: Shadow actors verify version conflicts duplicate suppression and rejection of unauthorized desired writes., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-HOME-SHADOW-003], status: active }
-  - { id: E2E-VC-WEBRTC-001, title: H264 WebRTC create first RTP and close succeed, layer: e2e, feature: video-webrtc, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/video-canary.description.env, selector: "test_id: E2E-VC-WEBRTC-001", method: Camera and viewer actors establish H264 media observe first RTP and close the session., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-VC-WEBRTC-001], status: active }
+  - { id: E2E-VC-WEBRTC-001, title: H264 WebRTC create first RTP and close succeed, layer: e2e, feature: video-webrtc, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/video-canary.description.env, selector: "test_id: E2E-VC-WEBRTC-001", method: Camera and viewer actors preflight ICE, establish H264 offer/answer media, observe first RTP, and close the session., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-VC-WEBRTC-001, REQ-VC-WEBRTC-FLOW-001], status: active }
   - { id: E2E-VC-TURN-001, title: Dynamic TURN registry supplies an active relay path, layer: e2e, feature: video-webrtc, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/video-canary.description.env, selector: "test_id: E2E-VC-TURN-001", method: Relay-only WebRTC actors require dynamic TURN resolution relay candidates and active TURN evidence., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-VC-TURN-001], status: active }
-  - { id: E2E-VC-CLIP-001, title: Clip upload readiness playback and delete lifecycle succeeds, layer: e2e, feature: clip-storage, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-canary.description.env, selector: "test_id: E2E-VC-CLIP-001", method: Camera and app actors upload reconcile list range-download verify and delete encrypted clips., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-VC-CLIP-001], status: active }
+  - { id: E2E-VC-CLIP-001, title: Clip upload readiness playback and delete lifecycle succeeds, layer: e2e, feature: clip-storage, profile: canary, owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-canary.description.env, selector: "test_id: E2E-VC-CLIP-001", method: Runtime preflight proves the deployed checksum-capable direct-upload path before camera and app actors upload, reconcile, list, range-download, verify, and delete encrypted clips., runner: test-feature, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-E2E-VC-CLIP-001, REQ-VC-CLIP-RUNTIME-001, REQ-VC-CLIP-CUTOVER-001], status: active }
 
   - { id: LIVE-STG-ONBOARD-001, title: Staging onboarding and service integration flow succeeds, layer: live, owner: cloud_platform, source: scripts/go/rtk-cloud/main.go, selector: "staging-e2e-test", method: Workspace orchestration runs the live staging E2E plan against dedicated test resources., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LIVE-STG-ONBOARD-001], status: active }
 
@@ -841,7 +889,7 @@ cases:
     status: active
   - { id: LOAD-HOME-TURN-001, title: Fifty-thousand-device TURN load meets thresholds, layer: load, feature: video-webrtc, profile: capacity, covers: [E2E-VC-WEBRTC-001, E2E-VC-TURN-001], owner: video_cloud, source: loadtests/home-100k/scenarios/video-50k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-50k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LOAD-HOME-TURN-001], status: active }
   - { id: LOAD-HOME-TURN-002, title: One-hundred-thousand-device TURN load meets thresholds, layer: load, feature: video-webrtc, profile: capacity, covers: [E2E-VC-WEBRTC-001, E2E-VC-TURN-001], owner: video_cloud, source: loadtests/home-100k/scenarios/video-100k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-100k-turn-v1", method: Distributed video clients exercise TURN-assisted sessions and aggregate capacity evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LOAD-HOME-TURN-002], status: active }
-  - { id: LOAD-VC-CLIP-001, title: Ten-thousand-device clip storage load meets thresholds, layer: load, feature: clip-storage, profile: capacity, covers: [E2E-VC-CLIP-001], owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-10k.description.env, selector: "HOME100K_SCENARIO_PROFILE=clip-storage-10k-v2", method: Clip clients upload and retrieve deterministic media fixtures while collecting latency error and storage evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LOAD-VC-CLIP-001], status: active }
+  - { id: LOAD-VC-CLIP-001, title: Ten-thousand-device clip storage load meets thresholds, layer: load, feature: clip-storage, profile: capacity, covers: [E2E-VC-CLIP-001], owner: video_cloud, source: loadtests/home-100k/scenarios/clip-storage-10k.description.env, selector: "HOME100K_SCENARIO_PROFILE=clip-storage-10k-v2", method: Clip clients upload and retrieve deterministic media fixtures while collecting latency, error, storage, and complete reconciliation evidence., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LOAD-VC-CLIP-001, REQ-VC-CLIP-RECONCILIATION-001], status: active }
   - id: LOAD-VC-CLIP-002
     title: One-thousand-device clip storage qualification meets thresholds
     layer: load
