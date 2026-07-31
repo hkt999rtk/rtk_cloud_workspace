@@ -421,6 +421,31 @@ operations:
 	if !hasSpecFinding(findings, "INVALID_OPERATION_ID") {
 		t.Fatalf("invalid logical operation ID was accepted: %+v", findings)
 	}
+
+	if _, _, err := parseLogicalOperationSpec(source, []byte("operations: [")); err == nil {
+		t.Fatal("invalid logical operation YAML was accepted")
+	}
+	invalid = `schema_version: 2
+rtk_spec: { id: SPEC-WRONG, status: draft, owner: wrong-owner }
+operations:
+  - id: client_connect
+  - id: client_connect
+`
+	_, findings, err = parseLogicalOperationSpec(source, []byte(invalid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, code := range []string{
+		"INVALID_OPERATION_SCHEMA",
+		"DOCUMENT_METADATA_MISMATCH",
+		"DOCUMENT_STATUS_MISMATCH",
+		"DUPLICATE_OPERATION_REF",
+		"UNMAPPED_OPERATION",
+	} {
+		if !hasSpecFinding(findings, code) {
+			t.Fatalf("logical operation finding %s is missing: %+v", code, findings)
+		}
+	}
 }
 
 func TestSpecImpactIncludesWorkflowRevisionChanges(t *testing.T) {

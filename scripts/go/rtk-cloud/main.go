@@ -1269,36 +1269,43 @@ func runTestServices(args []string) error {
 				return fmt.Errorf("--qualification-output-dir requires %s to be selected", requiredRepo)
 			}
 		}
-		qualificationSpecs := authorizationQualificationSpecs
-		if strings.TrimSpace(*qualificationCases) != "" {
-			requested := map[string]bool{}
-			for _, testID := range strings.Split(*qualificationCases, ",") {
-				testID = strings.TrimSpace(testID)
-				if testID != "" {
-					requested[testID] = true
-				}
-			}
-			qualificationSpecs = nil
-			for _, spec := range authorizationQualificationSpecs {
-				if requested[spec.TestID] {
-					qualificationSpecs = append(qualificationSpecs, spec)
-					delete(requested, spec.TestID)
-				}
-			}
-			if len(requested) > 0 {
-				unknown := make([]string, 0, len(requested))
-				for testID := range requested {
-					unknown = append(unknown, testID)
-				}
-				sort.Strings(unknown)
-				return fmt.Errorf("unknown qualification cases: %s", strings.Join(unknown, ", "))
-			}
+		qualificationSpecs, err := selectQualificationSpecs(*qualificationCases, authorizationQualificationSpecs)
+		if err != nil {
+			return err
 		}
 		if err := runAuthorizationQualificationWithSpecs(workspace, *qualificationOutputDir, *qualificationRunID, qualificationSpecs); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func selectQualificationSpecs(raw string, available []authorizationQualificationSpec) ([]authorizationQualificationSpec, error) {
+	if strings.TrimSpace(raw) == "" {
+		return available, nil
+	}
+	requested := map[string]bool{}
+	for _, testID := range strings.Split(raw, ",") {
+		if testID = strings.TrimSpace(testID); testID != "" {
+			requested[testID] = true
+		}
+	}
+	selected := make([]authorizationQualificationSpec, 0, len(requested))
+	for _, spec := range available {
+		if requested[spec.TestID] {
+			selected = append(selected, spec)
+			delete(requested, spec.TestID)
+		}
+	}
+	if len(requested) == 0 {
+		return selected, nil
+	}
+	unknown := make([]string, 0, len(requested))
+	for testID := range requested {
+		unknown = append(unknown, testID)
+	}
+	sort.Strings(unknown)
+	return nil, fmt.Errorf("unknown qualification cases: %s", strings.Join(unknown, ", "))
 }
 
 func selectChangedServiceRepos(changedFiles []string) []string {
