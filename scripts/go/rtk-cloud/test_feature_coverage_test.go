@@ -505,11 +505,13 @@ func TestWriteCaseFeatureEvidenceProducesCompleteLiveContract(t *testing.T) {
 			continue
 		}
 		steps := map[string]string{}
+		assertions := map[string]map[string]string{}
 		for _, step := range workflow.Steps {
 			steps[step.ID] = "PASS"
+			assertions[step.ID] = map[string]string{"observable_product_fact": "PASS"}
 		}
 		if err := writeJSON(filepath.Join(dir, "workflow-"+workflow.ID+".json"), map[string]any{
-			"workflow": map[string]any{"workflow_id": workflow.ID, "steps": steps},
+			"workflow": map[string]any{"workflow_id": workflow.ID, "steps": steps, "assertions": assertions},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -595,6 +597,25 @@ func TestWriteCaseFeatureEvidenceKeepsWorkflowGapIncompleteInObserveMode(t *test
 	_, _, _, err = qualifyLiveWorkflowEvidence(makeEvidenceDir(), tc, inventory, "required")
 	if err == nil || !strings.Contains(err.Error(), "requires step-level live workflow evidence") {
 		t.Fatalf("required mode accepted a workflow gap: %v", err)
+	}
+	statusOnlyDir := makeEvidenceDir()
+	for _, workflow := range inventory.Workflows {
+		if !catalogContainsString(workflow.RequirementIDs, "REQ-LIVE-STG-ONBOARD-001") {
+			continue
+		}
+		steps := map[string]string{}
+		for _, step := range workflow.Steps {
+			steps[step.ID] = "PASS"
+		}
+		if err := writeJSON(filepath.Join(statusOnlyDir, "workflow.json"), map[string]any{
+			"workflow": map[string]any{"workflow_id": workflow.ID, "steps": steps},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, _, err = qualifyLiveWorkflowEvidence(statusOnlyDir, tc, inventory, "required")
+	if err == nil || !strings.Contains(err.Error(), "requires explicit live assertions") {
+		t.Fatalf("required mode accepted status-only workflow evidence: %v", err)
 	}
 }
 

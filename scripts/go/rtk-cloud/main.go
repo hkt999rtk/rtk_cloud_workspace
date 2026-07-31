@@ -1894,8 +1894,12 @@ func runTestLive(args []string) error {
 	if !hasFlag(args, "--run") {
 		return nil
 	}
+	outDir := commandFlagValue(args, "--out-dir")
+	if err := writeLiveOnboardingWorkflowEvidence(outDir); err != nil {
+		return err
+	}
 	return writeCaseFeatureEvidence(
-		workspace, commandFlagValue(args, "--out-dir"), "LIVE-STG-ONBOARD-001", runID,
+		workspace, outDir, "LIVE-STG-ONBOARD-001", runID,
 		"staging", "", started, time.Now().UTC(),
 	)
 }
