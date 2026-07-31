@@ -1157,8 +1157,9 @@ func loadLiveWorkflowAssertions(outputDir string, tc testCatalogCase, inventory 
 		return nil, nil
 	}
 	type liveWorkflow struct {
-		WorkflowID string            `json:"workflow_id"`
-		Steps      map[string]string `json:"steps"`
+		WorkflowID string                       `json:"workflow_id"`
+		Steps      map[string]string            `json:"steps"`
+		Assertions map[string]map[string]string `json:"assertions,omitempty"`
 	}
 	var candidates []string
 	if err := filepath.WalkDir(outputDir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -1193,7 +1194,12 @@ func loadLiveWorkflowAssertions(outputDir string, tc testCatalogCase, inventory 
 			return nil, fmt.Errorf("%s requires step-level live workflow evidence for %s", tc.ID, workflowID)
 		}
 		statuses := actual.Steps
-		assertion, err := buildWorkflowAssertion(workflow, statuses)
+		for _, step := range workflow.Steps {
+			if len(actual.Assertions[step.ID]) == 0 {
+				return nil, fmt.Errorf("%s workflow %s step %s requires explicit live assertions", tc.ID, workflowID, step.ID)
+			}
+		}
+		assertion, err := buildWorkflowAssertionWithDetails(workflow, statuses, actual.Assertions)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", tc.ID, err)
 		}
@@ -1204,19 +1210,37 @@ func loadLiveWorkflowAssertions(outputDir string, tc testCatalogCase, inventory 
 }
 
 func buildWorkflowAssertion(workflow specWorkflow, statuses map[string]string) (featureWorkflowAssertion, error) {
+	return buildWorkflowAssertionWithDetails(workflow, statuses, nil)
+}
+
+func buildWorkflowAssertionWithDetails(workflow specWorkflow, statuses map[string]string, details map[string]map[string]string) (featureWorkflowAssertion, error) {
 	assertion := featureWorkflowAssertion{WorkflowID: workflow.ID, Revision: workflow.Revision, Status: "PASS"}
 	for _, step := range workflow.Steps {
 		status := strings.ToUpper(strings.TrimSpace(statuses[step.ID]))
 		if status != "PASS" {
 			return featureWorkflowAssertion{}, fmt.Errorf("workflow %s step %s did not provide PASS evidence", workflow.ID, step.ID)
 		}
+		stepAssertions := details[step.ID]
+		if len(stepAssertions) == 0 {
+			stepAssertions = map[string]string{"operation_and_transition": "PASS"}
+		}
+		for name, value := range stepAssertions {
+			if strings.TrimSpace(name) == "" || strings.ToUpper(strings.TrimSpace(value)) != "PASS" {
+				return featureWorkflowAssertion{}, fmt.Errorf("workflow %s step %s contains a non-PASS assertion", workflow.ID, step.ID)
+			}
+		}
 		assertion.Steps = append(assertion.Steps, featureWorkflowStepAssertion{
 			StepID: step.ID, OperationRef: step.OperationRef, Status: status,
-			Assertions: map[string]string{"operation_and_transition": "PASS"},
+			Assertions: stepAssertions,
 		})
 	}
 	if len(statuses) != len(workflow.Steps) {
 		return featureWorkflowAssertion{}, fmt.Errorf("workflow %s evidence contains missing or unknown steps", workflow.ID)
+	}
+	for stepID := range details {
+		if _, ok := statuses[stepID]; !ok {
+			return featureWorkflowAssertion{}, fmt.Errorf("workflow %s evidence contains assertions for unknown step %s", workflow.ID, stepID)
+		}
 	}
 	return assertion, nil
 }
