@@ -189,6 +189,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
 		t.Fatal("feature canaries require the shared HTTPS/MQTT tunnel")
 	}
+	if !strings.Contains(workflow, "FEATURE_QUALIFICATION_MODE: ${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}") {
+		t.Fatal("runtime runner must receive the repository feature qualification mode")
+	}
 	ui := workflow[uiStart:]
 	for _, expected := range []string{
 		"svc/account-manager 18081:80",

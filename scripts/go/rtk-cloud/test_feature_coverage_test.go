@@ -541,6 +541,63 @@ func TestWriteCaseFeatureEvidenceProducesCompleteLiveContract(t *testing.T) {
 	}
 }
 
+func TestWriteCaseFeatureEvidenceKeepsWorkflowGapIncompleteInObserveMode(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeEvidenceDir := func() string {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "logs"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "summary.json"), []byte(`{"overall":"pass"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("# PASS\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "logs", "run.log"), []byte("status=PASS\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	t.Setenv("FEATURE_QUALIFICATION_MODE", "observe")
+	observeDir := makeEvidenceDir()
+	if err := writeCaseFeatureEvidence(workspace, observeDir, "LIVE-STG-ONBOARD-001", "observe-workflow-gap", "staging", "", now, now); err != nil {
+		t.Fatalf("observe mode rejected a reportable workflow gap: %v", err)
+	}
+	var manifest featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(observeDir, "feature-evidence.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	item := manifest.Cases[0]
+	if item.Status != "INCOMPLETE" || item.Requirements[0].Status != "INCOMPLETE" || len(item.Workflows) != 0 {
+		t.Fatalf("observe workflow gap was not explicit INCOMPLETE evidence: %+v", item)
+	}
+	if item.Requirements[0].Assertions["workflow_contract"] != "INCOMPLETE" {
+		t.Fatalf("workflow gap assertion missing: %+v", item.Requirements[0].Assertions)
+	}
+
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, ok := catalogCaseByID(catalog.Cases, "LIVE-STG-ONBOARD-001")
+	if !ok {
+		t.Fatal("live onboarding catalog case missing")
+	}
+	_, _, _, err = qualifyLiveWorkflowEvidence(makeEvidenceDir(), tc, inventory, "required")
+	if err == nil || !strings.Contains(err.Error(), "requires step-level live workflow evidence") {
+		t.Fatalf("required mode accepted a workflow gap: %v", err)
+	}
+}
+
 func TestWriteCaseFeatureEvidenceRejectsMissingRequiredTypeAndSecrets(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
