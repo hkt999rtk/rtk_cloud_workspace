@@ -185,6 +185,47 @@ jobs:
         if: env.RUNTIME_COVERAGE_MODE == 'preflight'
         run: echo "Preflight completed without creating runtime resources."
 
+      - name: Run deterministic feature evidence
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_root=".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/deterministic"
+          go run ./scripts/go/rtk-cloud -- test-e2e \
+            --run-id "$RUNTIME_COVERAGE_RUN_ID" \
+            --output-dir "$evidence_root/e2e"
+          go run ./scripts/go/rtk-cloud -- test-ui \
+            --full --desktop --mobile --install \
+            --run-id "$RUNTIME_COVERAGE_RUN_ID" \
+            --output-dir "$evidence_root/ui"
+          qualification_postgres="runtime-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup_qualification_postgres() {
+            docker rm -f "$qualification_postgres" >/dev/null 2>&1 || true
+          }
+          trap cleanup_qualification_postgres EXIT
+          docker run --detach --name "$qualification_postgres" \
+            --env POSTGRES_PASSWORD=postgres \
+            --publish 127.0.0.1::5432 \
+            postgres:16-alpine >/dev/null
+          for attempt in {1..30}; do
+            if docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null
+          qualification_endpoint="$(docker port "$qualification_postgres" 5432/tcp)"
+          qualification_port="${qualification_endpoint##*:}"
+          [[ "$qualification_port" =~ ^[0-9]+$ ]]
+          export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${qualification_port}/postgres?sslmode=disable"
+          go run ./scripts/go/rtk-cloud -- test-services \
+            --repo rtk_account_manager,rtk_cloud_admin,rtk_video_cloud \
+            --qualification-only \
+            --qualification-run-id "$RUNTIME_COVERAGE_RUN_ID" \
+            --qualification-output-dir "$evidence_root/authorization"
+          cleanup_qualification_postgres
+          trap - EXIT
+
       - name: Log in to GHCR
         if: env.RUNTIME_COVERAGE_MODE == 'run'
         uses: docker/login-action@v3
