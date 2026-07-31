@@ -87,6 +87,22 @@ type specOpenAPIOperation struct {
 	Revision       string   `json:"revision"`
 }
 
+type specLogicalOperation struct {
+	ID             string   `yaml:"id"`
+	FeatureID      string   `yaml:"feature_id"`
+	RequirementIDs []string `yaml:"requirement_ids"`
+}
+
+type specLogicalOperationDocument struct {
+	SchemaVersion int `yaml:"schema_version"`
+	RTKSpec       struct {
+		ID     string `yaml:"id"`
+		Status string `yaml:"status"`
+		Owner  string `yaml:"owner"`
+	} `yaml:"rtk_spec"`
+	Operations []specLogicalOperation `yaml:"operations"`
+}
+
 type specWorkflowDependency struct {
 	Step string `yaml:"step" json:"step"`
 	Type string `yaml:"type" json:"type"`
@@ -256,7 +272,7 @@ func parseSpecSourceRegistry(raw []byte) (specSourceRegistry, error) {
 			return specSourceRegistry{}, fmt.Errorf("duplicate spec source id or path at sources[%d]", i)
 		}
 		seenID[source.ID], seenPath[source.Path] = true, true
-		if source.Parser != "markdown" && source.Parser != "openapi" && source.Parser != "workflow" {
+		if source.Parser != "markdown" && source.Parser != "openapi" && source.Parser != "operations" && source.Parser != "workflow" {
 			return specSourceRegistry{}, fmt.Errorf("spec source %s has unsupported parser %q", source.ID, source.Parser)
 		}
 		if !authorities[source.Authority] {
@@ -359,6 +375,15 @@ func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(stri
 				}
 				inventory.Features = append(inventory.Features, feature)
 			}
+			continue
+		}
+		if source.Parser == "operations" {
+			operations, findings, parseErr := parseLogicalOperationSpec(source, raw)
+			if parseErr != nil {
+				return specInventory{}, parseErr
+			}
+			inventory.Operations = append(inventory.Operations, operations...)
+			inventory.Findings = append(inventory.Findings, findings...)
 			continue
 		}
 		operations, findings, parseErr := parseOpenAPISpec(source, raw)
@@ -872,6 +897,65 @@ func parseOpenAPISpec(source specSourceRegistryItem, raw []byte) ([]specOpenAPIO
 		}
 		return operations[i].SourcePath < operations[j].SourcePath
 	})
+	return operations, findings, nil
+}
+
+func parseLogicalOperationSpec(source specSourceRegistryItem, raw []byte) ([]specOpenAPIOperation, []specInventoryFinding, error) {
+	var document specLogicalOperationDocument
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return nil, nil, fmt.Errorf("parse logical operation spec %s: %w", source.Path, err)
+	}
+	var findings []specInventoryFinding
+	if document.SchemaVersion != 1 {
+		findings = append(findings, specInventoryFinding{
+			Code: "INVALID_OPERATION_SCHEMA", Source: source.Path, Blocking: true,
+			Assessment: "logical operation spec requires schema_version 1",
+		})
+	}
+	if document.RTKSpec.ID != source.ID || (document.RTKSpec.Owner != "" && document.RTKSpec.Owner != source.Owner) {
+		findings = append(findings, specInventoryFinding{
+			Code: "DOCUMENT_METADATA_MISMATCH", Source: source.Path, Blocking: true,
+			Assessment: "rtk_spec id/owner does not match spec-sources.yaml",
+		})
+	}
+	if !specDocumentStatusMatchesAuthority(document.RTKSpec.Status, source.Authority) {
+		findings = append(findings, specInventoryFinding{
+			Code: "DOCUMENT_STATUS_MISMATCH", Source: source.Path, Blocking: true,
+			Assessment: fmt.Sprintf("operation status %q does not match registry authority %q", document.RTKSpec.Status, source.Authority),
+		})
+	}
+	idPattern := regexp.MustCompile(`^[a-z][a-z0-9_]{1,63}$`)
+	seen := map[string]bool{}
+	operations := make([]specOpenAPIOperation, 0, len(document.Operations))
+	for _, logical := range document.Operations {
+		if !idPattern.MatchString(logical.ID) {
+			findings = append(findings, specInventoryFinding{
+				Code: "INVALID_OPERATION_ID", Source: source.Path, Reference: logical.ID, Blocking: true,
+				Assessment: "logical operation IDs must be stable lower_snake_case identifiers",
+			})
+		}
+		if seen[logical.ID] {
+			findings = append(findings, specInventoryFinding{
+				Code: "DUPLICATE_OPERATION_REF", Source: source.Path, Reference: source.ID + "#" + logical.ID, Blocking: true,
+				Assessment: "logical operation ID is repeated",
+			})
+		}
+		seen[logical.ID] = true
+		if logical.FeatureID == "" || len(logical.RequirementIDs) == 0 {
+			findings = append(findings, specInventoryFinding{
+				Code: "UNMAPPED_OPERATION", Source: source.Path, Reference: logical.ID, Blocking: true,
+				Assessment: "public SDK operation lacks feature_id or requirement_ids",
+			})
+		}
+		revisionRaw, _ := json.Marshal(logical)
+		revisionSum := sha256.Sum256(revisionRaw)
+		operations = append(operations, specOpenAPIOperation{
+			DocumentID: source.ID, SourcePath: source.Path, OperationID: logical.ID,
+			FeatureID: logical.FeatureID, RequirementIDs: logical.RequirementIDs,
+			Revision: hex.EncodeToString(revisionSum[:]),
+		})
+	}
+	sort.Slice(operations, func(i, j int) bool { return operations[i].OperationID < operations[j].OperationID })
 	return operations, findings, nil
 }
 

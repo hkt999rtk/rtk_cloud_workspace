@@ -1167,6 +1167,7 @@ func runTestServices(args []string) error {
 	install := fs.Bool("install", false, "install npm dependencies before JavaScript service tests")
 	qualificationOutputDir := fs.String("qualification-output-dir", "", "write explicit integration requirement evidence to this directory")
 	qualificationRunID := fs.String("qualification-run-id", "", "stable run ID for integration requirement evidence")
+	qualificationCases := fs.String("qualification-cases", "", "comma-separated qualification Test IDs; default runs every qualification case")
 	qualificationOnly := fs.Bool("qualification-only", false, "run only targeted integration qualification cases")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1268,7 +1269,32 @@ func runTestServices(args []string) error {
 				return fmt.Errorf("--qualification-output-dir requires %s to be selected", requiredRepo)
 			}
 		}
-		if err := runAuthorizationQualification(workspace, *qualificationOutputDir, *qualificationRunID); err != nil {
+		qualificationSpecs := authorizationQualificationSpecs
+		if strings.TrimSpace(*qualificationCases) != "" {
+			requested := map[string]bool{}
+			for _, testID := range strings.Split(*qualificationCases, ",") {
+				testID = strings.TrimSpace(testID)
+				if testID != "" {
+					requested[testID] = true
+				}
+			}
+			qualificationSpecs = nil
+			for _, spec := range authorizationQualificationSpecs {
+				if requested[spec.TestID] {
+					qualificationSpecs = append(qualificationSpecs, spec)
+					delete(requested, spec.TestID)
+				}
+			}
+			if len(requested) > 0 {
+				unknown := make([]string, 0, len(requested))
+				for testID := range requested {
+					unknown = append(unknown, testID)
+				}
+				sort.Strings(unknown)
+				return fmt.Errorf("unknown qualification cases: %s", strings.Join(unknown, ", "))
+			}
+		}
+		if err := runAuthorizationQualificationWithSpecs(workspace, *qualificationOutputDir, *qualificationRunID, qualificationSpecs); err != nil {
 			return err
 		}
 	}
@@ -1703,14 +1729,137 @@ func writeNormalizedUIEvidence(workspace, runDir string) error {
 	if err != nil {
 		return err
 	}
-	manifests, _, err := loadFeatureEvidence(workspace, catalog, filepath.Join(runDir, "evidence-manifest.json"))
+	sourcePath := filepath.Join(runDir, "evidence-manifest.json")
+	raw, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return err
 	}
-	if len(manifests) != 1 {
-		return errors.New("UI evidence normalization requires exactly one source manifest")
+	manifest, err := adaptLegacyFeatureEvidence(workspace, raw, sourcePath, catalog)
+	if err != nil {
+		return err
 	}
-	return writeJSON(filepath.Join(runDir, "feature-evidence.json"), manifests[0])
+	var sourceManifest struct {
+		Cases []struct {
+			TestID           string `json:"test_id"`
+			ScreenshotPath   string `json:"screenshot_path"`
+			ScreenshotSHA256 string `json:"screenshot_sha256"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &sourceManifest); err != nil {
+		return fmt.Errorf("parse UI evidence paths: %w", err)
+	}
+	screenshots := map[string]featureCoverageEvidenceFile{}
+	for _, item := range sourceManifest.Cases {
+		if item.ScreenshotPath != "" && item.ScreenshotSHA256 != "" {
+			screenshots[item.TestID] = featureCoverageEvidenceFile{
+				Path: item.ScreenshotPath, SHA256: item.ScreenshotSHA256, Type: "screenshot",
+			}
+		}
+	}
+	inventory, err := loadAvailableSpecInventory(workspace)
+	if err != nil {
+		return err
+	}
+	requirements := catalogRequirementIndex(catalog)
+	featuresByRequirement := catalogFeatureByRequirement(catalog)
+	cases := map[string]testCatalogCase{}
+	for _, tc := range catalog.Cases {
+		cases[tc.ID] = tc
+	}
+	commonEvidence := make([]featureCoverageEvidenceFile, 0, 2)
+	for _, item := range []struct {
+		path, evidenceType string
+	}{
+		{"evidence-manifest.json", "json"},
+		{"junit.xml", "junit"},
+	} {
+		sha, hashErr := fileSHA256(filepath.Join(runDir, item.path))
+		if hashErr != nil {
+			return fmt.Errorf("hash UI %s evidence: %w", item.evidenceType, hashErr)
+		}
+		commonEvidence = append(commonEvidence, featureCoverageEvidenceFile{Path: item.path, SHA256: sha, Type: item.evidenceType})
+	}
+	for caseIndex := range manifest.Cases {
+		item := &manifest.Cases[caseIndex]
+		tc, ok := cases[item.TestID]
+		if !ok {
+			return fmt.Errorf("UI evidence contains unknown test case %s", item.TestID)
+		}
+		if item.Commits == nil {
+			item.Commits = map[string]string{}
+		}
+		// The normalized UI assertions are revision-bound to the canonical
+		// contracts checkout used to build this manifest.
+		item.Commits["contracts"] = manifest.SpecCommit
+		for _, requirementID := range tc.Verifies {
+			feature, exists := featuresByRequirement[requirementID]
+			if !exists {
+				return fmt.Errorf("UI case %s requirement %s has no feature", tc.ID, requirementID)
+			}
+			commits, commitErr := currentFeatureCommits(workspace, feature)
+			if commitErr != nil {
+				return commitErr
+			}
+			for anchor, commit := range commits {
+				item.Commits[anchor] = commit
+			}
+		}
+		refs := append([]featureCoverageEvidenceFile(nil), commonEvidence...)
+		if screenshot, exists := screenshots[item.TestID]; exists {
+			refs = append(refs, screenshot)
+		}
+		status := strings.ToUpper(item.Status)
+		item.Requirements = nil
+		for _, requirementID := range tc.Verifies {
+			requirement, exists := requirements[requirementID]
+			if !exists {
+				return fmt.Errorf("UI case %s verifies unknown requirement %s", tc.ID, requirementID)
+			}
+			item.Requirements = append(item.Requirements, featureRequirementAssertion{
+				RequirementID: requirementID,
+				Revision:      requirement.Revision,
+				SpecSource:    requirement.SpecSource,
+				Status:        status,
+				Assessment:    "Playwright observable behavior and evidence contract assessed for this requirement",
+				Assertions: map[string]string{
+					"observable_ui_behavior": status,
+					"evidence_contract":      status,
+				},
+				Evidence: refs,
+			})
+		}
+		item.Workflows = uiWorkflowAssertions(inventory, tc, status)
+	}
+	if err := validateFeatureEvidenceManifestV2(manifest, catalog, inventory); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(runDir, "feature-evidence.json"), manifest)
+}
+
+func uiWorkflowAssertions(inventory specInventory, tc testCatalogCase, status string) []featureWorkflowAssertion {
+	var assertions []featureWorkflowAssertion
+	for _, workflow := range inventory.Workflows {
+		bound := false
+		for _, requirementID := range workflow.RequirementIDs {
+			if catalogContainsString(tc.Verifies, requirementID) {
+				bound = true
+				break
+			}
+		}
+		if !bound {
+			continue
+		}
+		assertion := featureWorkflowAssertion{WorkflowID: workflow.ID, Revision: workflow.Revision, Status: status}
+		for _, step := range workflow.Steps {
+			assertion.Steps = append(assertion.Steps, featureWorkflowStepAssertion{
+				StepID: step.ID, OperationRef: step.OperationRef, Status: status,
+				Assertions: map[string]string{"observable_step_behavior": status},
+			})
+		}
+		assertions = append(assertions, assertion)
+	}
+	sort.Slice(assertions, func(i, j int) bool { return assertions[i].WorkflowID < assertions[j].WorkflowID })
+	return assertions
 }
 
 func runTestLive(args []string) error {
