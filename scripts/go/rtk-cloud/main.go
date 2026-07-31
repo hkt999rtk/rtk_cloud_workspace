@@ -1456,6 +1456,7 @@ func runTestUI(args []string) error {
 	desktop := fs.Bool("desktop", false, "run the desktop Chromium project")
 	mobile := fs.Bool("mobile", false, "run the mobile viewport project")
 	runID := fs.String("run-id", "", "stable test run ID; defaults to GitHub run identity or a UTC timestamp")
+	outputDir := fs.String("output-dir", "", "evidence output root below .artifacts/test-runs; defaults to the run ID UI directory")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1470,6 +1471,10 @@ func runTestUI(args []string) error {
 		return errors.New("--run-id must contain only letters, digits, dot, underscore, and hyphen")
 	}
 	workspace, err := workspaceRoot()
+	if err != nil {
+		return err
+	}
+	uiOutputRoot, err := resolveUIEvidenceOutputRoot(workspace, *runID, *outputDir)
 	if err != nil {
 		return err
 	}
@@ -1523,7 +1528,7 @@ func runTestUI(args []string) error {
 			if err != nil {
 				return err
 			}
-			env, err := uiEvidenceEnv(workspace, webRoot, *runID, target, "staging", expected)
+			env, err := uiEvidenceEnv(workspace, webRoot, uiOutputRoot, *runID, target, "staging", expected)
 			if err != nil {
 				return err
 			}
@@ -1581,7 +1586,7 @@ func runTestUI(args []string) error {
 		if err != nil {
 			return err
 		}
-		env, err := uiEvidenceEnv(workspace, webRoot, *runID, evidenceTarget, "local", expected)
+		env, err := uiEvidenceEnv(workspace, webRoot, uiOutputRoot, *runID, evidenceTarget, "local", expected)
 		if err != nil {
 			return err
 		}
@@ -1652,7 +1657,30 @@ func playwrightInstallArguments(goos string) []string {
 	return []string{"playwright", "install", "chromium"}
 }
 
-func uiEvidenceEnv(workspace, webRoot, runID, target, environment string, expected []string) (map[string]string, error) {
+func resolveUIEvidenceOutputRoot(workspace, runID, raw string) (string, error) {
+	artifactRoot := filepath.Join(workspace, ".artifacts", "test-runs")
+	outputRoot := strings.TrimSpace(raw)
+	if outputRoot == "" {
+		outputRoot = filepath.Join(artifactRoot, runID, "ui")
+	} else if !filepath.IsAbs(outputRoot) {
+		outputRoot = filepath.Join(workspace, outputRoot)
+	}
+	absArtifactRoot, err := filepath.Abs(artifactRoot)
+	if err != nil {
+		return "", err
+	}
+	absOutputRoot, err := filepath.Abs(outputRoot)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(absArtifactRoot, absOutputRoot)
+	if err != nil || relative == "." || relative == "" || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", errors.New("--output-dir must identify a child of the workspace .artifacts/test-runs directory")
+	}
+	return absOutputRoot, nil
+}
+
+func uiEvidenceEnv(workspace, webRoot, outputRoot, runID, target, environment string, expected []string) (map[string]string, error) {
 	workspaceCommit, err := gitOutput(workspace, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, err
@@ -1667,7 +1695,7 @@ func uiEvidenceEnv(workspace, webRoot, runID, target, environment string, expect
 		"E2E_TEST_RUN_ID":       runID,
 		"E2E_TEST_TARGET":       target,
 		"E2E_TEST_ENVIRONMENT":  environment,
-		"E2E_TEST_RUN_DIR":      filepath.Join(workspace, ".artifacts", "test-runs", runID, "ui", target),
+		"E2E_TEST_RUN_DIR":      filepath.Join(outputRoot, target),
 		"E2E_EXPECTED_TEST_IDS": strings.Join(expected, ","),
 		"E2E_WORKSPACE_COMMIT":  strings.TrimSpace(workspaceCommit),
 		"E2E_SUBMODULE_COMMIT":  strings.TrimSpace(submoduleCommit),

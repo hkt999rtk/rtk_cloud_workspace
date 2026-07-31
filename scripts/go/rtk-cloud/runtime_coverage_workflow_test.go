@@ -192,6 +192,29 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(workflow, "FEATURE_QUALIFICATION_MODE: ${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}") {
 		t.Fatal("runtime runner must receive the repository feature qualification mode")
 	}
+	deterministicStart := strings.Index(workflow, "- name: Run deterministic feature evidence")
+	loginStart := strings.Index(workflow, "- name: Log in to GHCR")
+	if deterministicStart < 0 || loginStart < 0 || deterministicStart > loginStart {
+		t.Fatal("runtime deterministic evidence must run after preflight and before deployment work")
+	}
+	deterministic := workflow[deterministicStart:loginStart]
+	for _, expected := range []string{
+		"test-e2e",
+		"test-ui",
+		"--full --desktop --mobile --install",
+		"--output-dir \"$evidence_root/ui\"",
+		"postgres:16-alpine",
+		"trap cleanup_qualification_postgres EXIT",
+		"--publish 127.0.0.1::5432",
+		"TEST_DATABASE_URL=\"postgres://postgres:postgres@127.0.0.1:${qualification_port}/postgres?sslmode=disable\"",
+		"--qualification-only",
+		"--qualification-output-dir \"$evidence_root/authorization\"",
+		"cleanup_qualification_postgres\n          trap - EXIT",
+	} {
+		if !strings.Contains(deterministic, expected) {
+			t.Fatalf("runtime deterministic evidence is missing %q", expected)
+		}
+	}
 	ui := workflow[uiStart:]
 	for _, expected := range []string{
 		"svc/account-manager 18081:80",
