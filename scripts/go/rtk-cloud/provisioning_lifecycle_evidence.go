@@ -23,7 +23,10 @@ const (
 	provisioningUnprovisionWorkflowID  = "WF-PROV-UNPROVISION-001"
 )
 
-var requestLifecycleAppToken = requestVideoRelayAppToken
+var (
+	requestLifecycleAppToken    = requestVideoRelayAppToken
+	requestLifecycleDeviceToken = requestVideoRelayDeviceToken
+)
 
 type canonicalVideoLifecycle struct {
 	Status      string         `json:"status"`
@@ -189,7 +192,7 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	if err != nil {
 		return err
 	}
-	deviceAccessToken, err := requestVideoRelayDeviceToken(videoTokenBaseURL, deviceCertificate)
+	deviceAccessToken, err := requestLifecycleDeviceToken(videoTokenBaseURL, deviceCertificate)
 	if err != nil {
 		return fmt.Errorf("reissue factory device token after unprovision: %w", err)
 	}

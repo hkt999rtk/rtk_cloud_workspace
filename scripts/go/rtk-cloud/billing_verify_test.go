@@ -28,6 +28,13 @@ func TestParseE2EStepsFullAndSelective(t *testing.T) {
 	if selected.Reset || selected.Provision || selected.Data || !selected.MQTT || selected.RuntimeLogs || !selected.BillingLog || selected.BillingDB || selected.Lifecycle {
 		t.Fatalf("selective selection = %+v", selected)
 	}
+	lifecycle, err := parseE2ESteps("provisioning-lifecycle", false, false)
+	if err != nil || !lifecycle.Lifecycle {
+		t.Fatalf("lifecycle selection = %+v err=%v", lifecycle, err)
+	}
+	if _, err := parseE2ESteps("reset,provision", true, true); err == nil || !strings.Contains(err.Error(), "at least one") {
+		t.Fatalf("empty selection unexpectedly accepted: %v", err)
+	}
 }
 
 func TestParseE2EStepsRejectsUnknownStep(t *testing.T) {

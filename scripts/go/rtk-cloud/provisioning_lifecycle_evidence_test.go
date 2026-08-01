@@ -10,9 +10,130 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *testing.T) {
+	envRoot := t.TempDir()
+	certPEM, keyPEM := testTLSCertificatePEM(t)
+	store, err := openTestDataStore(envRoot, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	users := []map[string]any{
+		{"email": "deactivate@example.test", "password": "pw-deactivate"},
+		{
+			"email": "unprovision@example.test", "password": "pw-unprovision",
+			"app_credentials": map[string]any{"private_key_pem": keyPEM, "csr_pem": "redacted-csr"},
+			"app_certificate": map[string]any{"certificate_chain_pem": certPEM},
+		},
+	}
+	if err := store.ReplaceUsers("RTK", "org-1", "rtk", "member", users); err != nil {
+		t.Fatal(err)
+	}
+	devices := []generatedDevice{
+		{DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+	}
+	credentials := map[string]testDataDeviceCredential{
+		"device-deactivate":  {DeviceID: "device-deactivate", CertPEM: certPEM, KeyPEM: keyPEM, ChainPEM: certPEM, FactoryEnrollResponseRedactedJSON: `{"status":"ok"}`},
+		"device-unprovision": {DeviceID: "device-unprovision", CertPEM: certPEM, KeyPEM: keyPEM, ChainPEM: certPEM, FactoryEnrollResponseRedactedJSON: `{"status":"ok"}`},
+	}
+	if err := store.ReplaceDevices("RTK", "run-1", devices, credentials); err != nil {
+		t.Fatal(err)
+	}
+	assignments := []bindAssignment{
+		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-deactivate", Status: "provision_requested"},
+		{AssignmentIndex: 1, AssignedEmail: "unprovision@example.test", DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-unprovision", Status: "provision_requested"},
+	}
+	if err := store.ReplaceBindings("RTK", "org-1", "rtk", "run-1", assignments); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	deactivated := false
+	unprovisioned := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		path := req.URL.Path
+		switch {
+		case path == "/v1/auth/login":
+			_, _ = io.WriteString(w, `{"tokens":{"access_token":"account-token"}}`)
+		case path == "/v1/orgs/org-1/devices/account-deactivate/deactivate":
+			deactivated = true
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"status":"accepted"}`)
+		case path == "/v1/orgs/org-1/devices/account-deactivate/provisioning":
+			_ = json.NewEncoder(w).Encode(map[string]any{"operation": map[string]any{"status": "succeeded"}, "readiness": map[string]any{"state": "ready", "product_state": "deactivated", "sources": map[string]any{"video_cloud_activation_status": "deactivated"}}})
+		case path == "/v1/orgs/org-1/devices/account-unprovision/unprovision" && !unprovisioned:
+			unprovisioned = true
+			_, _ = io.WriteString(w, `{"unprovision":{"device_id":"account-unprovision","organization_id":"org-1","video_cloud_devid":"device-unprovision","unprovisioned_at":"2026-08-01T00:00:00Z"}}`)
+		case path == "/v1/orgs/org-1/devices" && unprovisioned:
+			_, _ = io.WriteString(w, `{"devices":[]}`)
+		case strings.HasPrefix(path, "/v1/orgs/org-1/devices/account-unprovision") && unprovisioned:
+			http.NotFound(w, req)
+		case path == "/api/devices/device-deactivate/lifecycle":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "devid": "device-deactivate", "activated": !deactivated, "provisioned": true, "revoked": deactivated, "transport": map[string]any{}})
+		case path == "/api/devices/device-unprovision/lifecycle":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "devid": "device-unprovision", "activated": true, "provisioned": !unprovisioned, "revoked": false, "transport": map[string]any{}})
+		case path == "/api/devices/device-deactivate/info":
+			_, _ = io.WriteString(w, `{"status":"ok","devid":"device-deactivate"}`)
+		case path == "/api/devices/device-unprovision/info" && !unprovisioned:
+			_, _ = io.WriteString(w, `{"status":"ok","devid":"device-unprovision"}`)
+		case unprovisioned && (strings.HasPrefix(path, "/api/devices/device-unprovision/") || path == "/api/request_webrtc/ice"):
+			http.NotFound(w, req)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+
+	originalAppToken := requestLifecycleAppToken
+	originalDeviceToken := requestLifecycleDeviceToken
+	appTokenCalls := 0
+	requestLifecycleAppToken = func(string, tls.Certificate, string) (videoRelayTokenResponse, error) {
+		appTokenCalls++
+		if appTokenCalls == 1 {
+			return videoRelayTokenResponse{AccessToken: "former-owner-app-token"}, nil
+		}
+		return videoRelayTokenResponse{}, errors.New("owner binding absent")
+	}
+	requestLifecycleDeviceToken = func(string, tls.Certificate) (string, error) {
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"scope":"device","subject_id":"device-unprovision","service_options":["mqtt","video_streaming"]}`))
+		return "header." + payload + ".signature", nil
+	}
+	defer func() {
+		requestLifecycleAppToken = originalAppToken
+		requestLifecycleDeviceToken = originalDeviceToken
+	}()
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
+	t.Setenv("VIDEO_CLOUD_BASE_URL", server.URL)
+	t.Setenv("VIDEO_CLOUD_TOKEN_BASE_URL", server.URL)
+	t.Setenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN", "admin-token")
+	outDir := t.TempDir()
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runProvisioningLifecycleEvidence([]string{
+		"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--run-id", "run-1",
+		"--out-dir", outDir, "--timeout", "1s", "--poll", "1ms",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deactivated || !unprovisioned || appTokenCalls != 2 {
+		t.Fatalf("deactivated=%t unprovisioned=%t app_token_calls=%d", deactivated, unprovisioned, appTokenCalls)
+	}
+	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+}
 
 func TestCanonicalLifecycleAndDeviceInfoRequireMatchingIdentity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

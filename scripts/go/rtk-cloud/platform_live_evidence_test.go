@@ -110,3 +110,143 @@ func TestQualifyBFFProductionSourcesRejectsDemoAndFallback(t *testing.T) {
 		t.Fatal("demo_mode classification is incorrect")
 	}
 }
+
+func TestRunPlatformLiveEvidenceWritesBothCaseManifests(t *testing.T) {
+	targets := make([]map[string]any, 0, len(requiredPrometheusJobs))
+	for _, job := range requiredPrometheusJobs {
+		targets = append(targets, map[string]any{"labels": map[string]string{"job": job}, "health": "up"})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/api/v1/targets":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"activeTargets": targets}})
+		case "/api/v1/label/__name__/values":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": []string{"up"}})
+		default:
+			if strings.Contains(req.URL.Path, "qualification-missing-run-platform") {
+				http.NotFound(w, req)
+				return
+			}
+			_, _ = w.Write([]byte(`{"status":"ok","source":"live"}`))
+		}
+	}))
+	defer server.Close()
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	err = runPlatformLiveEvidence([]string{
+		"--workspace", workspace, "--run-id", "run-platform", "--out-dir", outDir,
+		"--prometheus-url", server.URL, "--bff-url", server.URL,
+		"--platform-session", "platform-session", "--customer-session", "customer-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"scrape", "bff-sources"} {
+		for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "feature-evidence.json"} {
+			if _, err := os.Stat(filepath.Join(outDir, dir, name)); err != nil {
+				t.Fatalf("missing %s/%s: %v", dir, name, err)
+			}
+		}
+	}
+}
+
+func TestPlatformLiveEvidenceFailsClosedOnInvalidUpstreams(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		run     func(string) error
+	}{
+		{
+			name:    "prometheus status",
+			handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"status":"error"}`)) },
+			run:     func(base string) error { return qualifyPrometheusInventory(base, t.TempDir(), "run-1") },
+		},
+		{
+			name: "prometheus missing up metric",
+			handler: func(w http.ResponseWriter, req *http.Request) {
+				if strings.Contains(req.URL.Path, "targets") {
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"activeTargets": []any{}}})
+					return
+				}
+				_, _ = w.Write([]byte(`{"status":"success","data":["go_info"]}`))
+			},
+			run: func(base string) error { return qualifyPrometheusInventory(base, t.TempDir(), "run-1") },
+		},
+		{
+			name: "prometheus metric inventory decode failure",
+			handler: func(w http.ResponseWriter, req *http.Request) {
+				if strings.Contains(req.URL.Path, "targets") {
+					targets := make([]map[string]any, 0, len(requiredPrometheusJobs))
+					for _, job := range requiredPrometheusJobs {
+						targets = append(targets, map[string]any{"labels": map[string]string{"job": job}, "health": "up"})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"activeTargets": targets}})
+					return
+				}
+				_, _ = w.Write([]byte(`not-json`))
+			},
+			run: func(base string) error { return qualifyPrometheusInventory(base, t.TempDir(), "run-1") },
+		},
+		{
+			name:    "bff non ok",
+			handler: func(w http.ResponseWriter, _ *http.Request) { http.Error(w, `{"error":"down"}`, http.StatusBadGateway) },
+			run: func(base string) error {
+				return qualifyBFFProductionSources(base, "platform", "customer", t.TempDir(), "run-1")
+			},
+		},
+		{
+			name:    "bff malformed json",
+			handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`not-json`)) },
+			run: func(base string) error {
+				return qualifyBFFProductionSources(base, "platform", "customer", t.TempDir(), "run-1")
+			},
+		},
+		{
+			name:    "bff successful missing fallback",
+			handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"status":"ok"}`)) },
+			run: func(base string) error {
+				return qualifyBFFProductionSources(base, "platform", "customer", t.TempDir(), "run-1")
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(tc.handler)
+			defer server.Close()
+			if err := tc.run(server.URL); err == nil {
+				t.Fatal("invalid upstream unexpectedly passed")
+			}
+		})
+	}
+	if !containsUnacceptableBFFEvidence([]any{"nested", map[string]any{"name": "sample tenant"}}) {
+		t.Fatal("nested sample evidence was not detected")
+	}
+	if err := runPlatformLiveEvidence(nil); err == nil {
+		t.Fatal("missing platform-live arguments unexpectedly passed")
+	}
+}
+
+func TestQualifyPrometheusInventoryRejectsUnwritableEvidencePath(t *testing.T) {
+	targets := make([]map[string]any, 0, len(requiredPrometheusJobs))
+	for _, job := range requiredPrometheusJobs {
+		targets = append(targets, map[string]any{"labels": map[string]string{"job": job}, "health": "up"})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.Contains(req.URL.Path, "targets") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"activeTargets": targets}})
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":["up"]}`))
+	}))
+	defer server.Close()
+	outFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(outFile, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := qualifyPrometheusInventory(server.URL, outFile, "run-1"); err == nil {
+		t.Fatal("file evidence path unexpectedly accepted as a directory")
+	}
+}

@@ -105,6 +105,22 @@ func TestBuildWorkflowAssertionRejectsNonPassDetailedAssertion(t *testing.T) {
 	}
 }
 
+func TestQualifyLiveRuntimeFactsRejectsIncompleteProductProof(t *testing.T) {
+	if _, _, err := qualifyLiveRuntimeFacts(liveOnboardingMQTTEvidence{}); err == nil || !strings.Contains(err.Error(), "not PASS") {
+		t.Fatalf("non-PASS runtime evidence accepted: %v", err)
+	}
+	statusOnly := liveOnboardingMQTTEvidence{Status: "PASS", Overall: "PASS", Devices: []liveOnboardingMQTTDevice{{
+		DeviceID: "device-1", MQTTStatus: "FAIL", CommandState: "PASS",
+	}}}
+	if _, _, err := qualifyLiveRuntimeFacts(statusOnly); err == nil || !strings.Contains(err.Error(), "complete app token") {
+		t.Fatalf("failed device runtime evidence accepted: %v", err)
+	}
+	statusOnly.Devices[0].MQTTStatus = "PASS"
+	if _, _, err := qualifyLiveRuntimeFacts(statusOnly); err == nil || !strings.Contains(err.Error(), "complete app token") {
+		t.Fatalf("status-only runtime evidence accepted: %v", err)
+	}
+}
+
 func TestLiveOnboardingWorkflowEvidenceRejectsMissingOrFailedInputs(t *testing.T) {
 	if err := writeLiveOnboardingWorkflowEvidence(""); err == nil || !strings.Contains(err.Error(), "requires --out-dir") {
 		t.Fatalf("empty output directory error = %v", err)

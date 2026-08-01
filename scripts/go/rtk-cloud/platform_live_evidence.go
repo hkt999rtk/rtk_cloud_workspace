@@ -60,7 +60,7 @@ func runPlatformLiveEvidence(args []string) error {
 	if err := qualifyPrometheusInventory(*prometheusURL, scrapeDir, *runID); err != nil {
 		return err
 	}
-	if err := writeCaseFeatureEvidence(workspace, scrapeDir, "LIVE-CA-SCRAPE-001", *runID, "staging", "prometheus", started, time.Now().UTC()); err != nil {
+	if err := writeCaseFeatureEvidence(workspace, scrapeDir, "LIVE-CA-SCRAPE-001", *runID, "staging", "", started, time.Now().UTC()); err != nil {
 		return err
 	}
 	bffStarted := time.Now().UTC()
@@ -68,7 +68,7 @@ func runPlatformLiveEvidence(args []string) error {
 	if err := qualifyBFFProductionSources(*bffURL, *platformSession, *customerSession, bffDir, *runID); err != nil {
 		return err
 	}
-	return writeCaseFeatureEvidence(workspace, bffDir, "LIVE-CA-BFF-SOURCES-001", *runID, "staging", "cloud-admin-bff", bffStarted, time.Now().UTC())
+	return writeCaseFeatureEvidence(workspace, bffDir, "LIVE-CA-BFF-SOURCES-001", *runID, "staging", "", bffStarted, time.Now().UTC())
 }
 
 func qualifyPrometheusInventory(baseURL, outDir, runID string) error {
