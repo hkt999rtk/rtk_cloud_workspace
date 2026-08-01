@@ -24,6 +24,7 @@ type e2eStepSelection struct {
 	RuntimeLogs bool
 	BillingLog  bool
 	BillingDB   bool
+	Lifecycle   bool
 }
 
 func parseE2ESteps(raw string, skipRemove, skipProvision bool) (e2eStepSelection, error) {
@@ -35,7 +36,7 @@ func parseE2ESteps(raw string, skipRemove, skipProvision bool) (e2eStepSelection
 	for _, item := range items {
 		switch strings.TrimSpace(item) {
 		case "all":
-			selection = e2eStepSelection{Reset: true, Provision: true, Data: true, MQTT: true, RuntimeLogs: true, BillingLog: true, BillingDB: true}
+			selection = e2eStepSelection{Reset: true, Provision: true, Data: true, MQTT: true, RuntimeLogs: true, BillingLog: true, BillingDB: true, Lifecycle: true}
 		case "reset":
 			selection.Reset = true
 		case "provision":
@@ -53,9 +54,11 @@ func parseE2ESteps(raw string, skipRemove, skipProvision bool) (e2eStepSelection
 			selection.BillingLog = true
 		case "billing-db", "ledger":
 			selection.BillingDB = true
+		case "lifecycle", "provisioning-lifecycle":
+			selection.Lifecycle = true
 		case "":
 		default:
-			return e2eStepSelection{}, fmt.Errorf("unsupported E2E step %q; use reset,provision,data,mqtt,runtime-logs,billing-log,billing-db", item)
+			return e2eStepSelection{}, fmt.Errorf("unsupported E2E step %q; use reset,provision,data,mqtt,runtime-logs,billing-log,billing-db,lifecycle", item)
 		}
 	}
 	if skipRemove {
@@ -64,7 +67,7 @@ func parseE2ESteps(raw string, skipRemove, skipProvision bool) (e2eStepSelection
 	if skipProvision {
 		selection.Provision = false
 	}
-	if !selection.Reset && !selection.Provision && !selection.Data && !selection.MQTT && !selection.RuntimeLogs && !selection.BillingLog && !selection.BillingDB {
+	if !selection.Reset && !selection.Provision && !selection.Data && !selection.MQTT && !selection.RuntimeLogs && !selection.BillingLog && !selection.BillingDB && !selection.Lifecycle {
 		return e2eStepSelection{}, errors.New("at least one E2E step is required")
 	}
 	return selection, nil

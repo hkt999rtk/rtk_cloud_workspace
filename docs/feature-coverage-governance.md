@@ -112,8 +112,13 @@ go run ./scripts/go/rtk-cloud -- test-feature-coverage record \
 ```
 
 - PR mode evaluates selected deterministic requirements.
-- Main and release modes evaluate all selected required requirements.
-- PR-only deferred live requirements remain visible and receive no PASS credit.
+- Main mode evaluates deterministic PR and main requirements.
+- Scheduled mode evaluates PR, main, and scheduled requirements, but defers
+  operator-held release evidence.
+- Release mode evaluates every selected required requirement, including
+  operator-held live evidence.
+- Requirements deferred by the active gate remain visible and receive no PASS
+  credit.
 - Scheduled critical evidence expires after 36 hours.
 - Operator-held live evidence expires after 7 days.
 

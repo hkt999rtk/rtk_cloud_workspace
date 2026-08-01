@@ -424,11 +424,12 @@ jobs:
           export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
           export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
           export CLOUD_STAGING_E2E_MQTT_PORT=18884
+          export HOME100K_REFRESH_APP_CERT=1
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
             --skip-remove --skip-provision \
-            --steps data,mqtt,runtime-logs,billing-log,billing-db \
+            --steps data,mqtt,runtime-logs,billing-log,billing-db,lifecycle \
             --user-count 2 --device-count 12 \
             --device-mix light=10,camera=2 \
             --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
@@ -464,13 +465,16 @@ jobs:
           kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
             port-forward svc/account-manager 18081:80 > "$RUNNER_TEMP/runtime-coverage-account-manager-port-forward.log" 2>&1 &
           account_manager_port_forward_pid=$!
+          kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-observability" \
+            port-forward svc/video-cloud-prometheus 18091:9090 > "$RUNNER_TEMP/runtime-coverage-prometheus-port-forward.log" 2>&1 &
+          prometheus_port_forward_pid=$!
           platform_payload="$RUNNER_TEMP/runtime-platform-login.json"
           customer_payload="$RUNNER_TEMP/runtime-customer-login.json"
           customer_register_payload="$RUNNER_TEMP/runtime-customer-register.json"
           customer_register_response="$RUNNER_TEMP/runtime-customer-register-response.json"
           platform_headers="$RUNNER_TEMP/runtime-platform-headers.txt"
           customer_headers="$RUNNER_TEMP/runtime-customer-headers.txt"
-          trap 'kill "$admin_port_forward_pid" "$account_manager_port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$customer_register_payload" "$customer_register_response" "$platform_headers" "$customer_headers"' EXIT
+          trap 'kill "$admin_port_forward_pid" "$account_manager_port_forward_pid" "$prometheus_port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$customer_register_payload" "$customer_register_response" "$platform_headers" "$customer_headers"' EXIT
           for attempt in {1..30}; do
             if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
               break
@@ -485,6 +489,13 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1:18081/v1/health >/dev/null
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:18091/-/ready >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18091/-/ready >/dev/null
           platform_email="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
             get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}' | openssl base64 -d -A)"
           platform_password="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
@@ -525,6 +536,13 @@ jobs:
             go run ./scripts/go/rtk-cloud -- test-ui \
               --staging --desktop --mobile --install \
               --run-id "$RUNTIME_COVERAGE_RUN_ID"
+          go run ./scripts/go/rtk-cloud -- test-platform-live \
+            --run-id "$RUNTIME_COVERAGE_RUN_ID" \
+            --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/platform-live" \
+            --prometheus-url http://127.0.0.1:18091 \
+            --bff-url http://127.0.0.1:18082 \
+            --platform-session "$E2E_PLATFORM_SESSION_ID" \
+            --customer-session "$E2E_CUSTOMER_SESSION_ID"
 
       - name: Aggregate runtime feature evidence
         if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
@@ -543,8 +561,12 @@ jobs:
           if [ "$qualification" = "required" ]; then
             action=check
           fi
+          coverage_mode=main
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            coverage_mode=scheduled
+          fi
           go run ./scripts/go/rtk-cloud -- test-feature-coverage "$action" \
-            --mode main \
+            --mode "$coverage_mode" \
             --evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID" \
             --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/feature-coverage"
 

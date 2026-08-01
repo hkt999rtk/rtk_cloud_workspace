@@ -183,7 +183,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		!strings.Contains(onboarding, "$VIDEO_CLOUD_BASE_URL/version") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
-		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") {
+		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") ||
+		!strings.Contains(onboarding, "HOME100K_REFRESH_APP_CERT=1") ||
+		!strings.Contains(onboarding, "billing-db,lifecycle") {
 		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
 	}
 	if !strings.Contains(workflow[canaryStart:uiStart], "tunnel-start") {
@@ -191,6 +193,12 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(workflow, "FEATURE_QUALIFICATION_MODE: ${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}") {
 		t.Fatal("runtime runner must receive the repository feature qualification mode")
+	}
+	if !strings.Contains(workflow, "coverage_mode=main") ||
+		!strings.Contains(workflow, `if [ "${{ github.event_name }}" = "schedule" ]`) ||
+		!strings.Contains(workflow, "coverage_mode=scheduled") ||
+		!strings.Contains(workflow, `--mode "$coverage_mode"`) {
+		t.Fatal("runtime feature aggregate must enforce scheduled requirements only for true schedule events")
 	}
 	if !strings.Contains(workflow, "go-version: \"1.26.3\"") {
 		t.Fatal("runtime runner must satisfy the Cloud Admin Go toolchain requirement")
@@ -226,6 +234,10 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"customer_register_payload",
 		"E2E_BRAND_CLOUD_ID",
 		"organization_name:\"Runtime Coverage Customer\"",
+		"svc/video-cloud-prometheus 18091:9090",
+		"test-platform-live",
+		"--platform-session \"$E2E_PLATFORM_SESSION_ID\"",
+		"--customer-session \"$E2E_CUSTOMER_SESSION_ID\"",
 	} {
 		if !strings.Contains(ui, expected) {
 			t.Fatalf("runtime UI smoke must provision its run-scoped customer identity: missing %q", expected)

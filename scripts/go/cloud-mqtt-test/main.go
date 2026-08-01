@@ -3461,12 +3461,19 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
 					continue
 				}
+				bootstrapObservedAt := time.Now().UTC()
 				appToken, err := requestAppToken(apiBaseURL, appCert, item.Assignment.DeviceID)
 				if err != nil {
 					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
 					continue
 				}
-				results <- runDeviceActorSeparatedEnvelope(item.Cert, itemBrand, runID, apiBaseURL, host, port, appToken.AccessToken)
+				if err := readDeviceInfoWithAppToken(apiBaseURL, item.Assignment.DeviceID, appToken.AccessToken); err != nil {
+					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
+					continue
+				}
+				result := runDeviceActorSeparatedEnvelope(item.Cert, itemBrand, runID, apiBaseURL, host, port, appToken.AccessToken)
+				result.TraceChain = prependRuntimeBootstrapTrace(result.TraceChain, bootstrapObservedAt)
+				results <- result
 			}
 		}()
 	}
@@ -3481,6 +3488,51 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 		out[row.DeviceID] = row
 	}
 	return out
+}
+
+func readDeviceInfoWithAppToken(apiBaseURL, deviceID, token string) error {
+	endpoint := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/api/devices/" + url.PathEscape(deviceID) + "/info"
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("read device info: %w", err)
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read device info response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("read device info returned HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		Status   string `json:"status"`
+		DeviceID string `json:"devid"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
+		return fmt.Errorf("decode device info response: %w", err)
+	}
+	if !strings.EqualFold(body.Status, "ok") || body.DeviceID != deviceID {
+		return errors.New("device info response did not match the app-token subject")
+	}
+	return nil
+}
+
+func prependRuntimeBootstrapTrace(existing []traceStep, observedAt time.Time) []traceStep {
+	steps := []traceStep{
+		{Timestamp: observedAt.Format(time.RFC3339), Phase: "app_token", Actor: "app_controller", Action: "request_token", Status: "PASS", Detail: "scope=app devid=matched"},
+		{Timestamp: observedAt.Format(time.RFC3339), Phase: "device_info", Actor: "app_controller", Action: "get_device_info", Status: "PASS", Detail: "app token subject matched device"},
+	}
+	steps = append(steps, existing...)
+	for index := range steps {
+		steps[index].Step = index + 1
+	}
+	return steps
 }
 
 func failedActorResult(deviceID, deviceType, reason string) deviceResult {

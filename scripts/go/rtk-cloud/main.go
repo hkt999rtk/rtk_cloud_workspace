@@ -75,6 +75,7 @@ var commands = map[string]commandSpec{
 	"mqtt-test":                        {run: runMQTTTest},
 	"mqtt-trace-report":                {run: runMQTTTraceReport},
 	"platform-admin-token":             {run: runPlatformAdminToken},
+	"provisioning-lifecycle-evidence":  {run: runProvisioningLifecycleEvidence},
 	"video-cloud-admin-token":          {run: runVideoCloudAdminToken},
 	"cloud-logger-token":               {run: runCloudLoggerToken},
 	"provision":                        {run: runProvision},
@@ -103,6 +104,7 @@ var commands = map[string]commandSpec{
 	"test-feature-coverage":            {run: runTestFeatureCoverage},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
+	"test-platform-live":               {run: runPlatformLiveEvidence},
 	"test-services":                    {run: runTestServices},
 	"test-catalog":                     {run: runTestCatalog},
 	"test-coverage":                    {run: runTestCoverage},
@@ -4347,7 +4349,7 @@ func runEnvironmentAcceptance(args []string) error {
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
-	steps := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db (or all)")
+	steps := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db,lifecycle (or all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -4401,7 +4403,7 @@ func runStagingE2ETest(args []string) error {
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate data setup artifacts")
 	skipProvision := fs.Bool("skip-provision", false, "skip K8s provision and run only acceptance checks")
-	selectedStepsFlag := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db (or all)")
+	selectedStepsFlag := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db,lifecycle (or all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -4469,12 +4471,13 @@ func runStagingE2ETest(args []string) error {
 	useLKEProvision := provider == "lke" && os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT") == "" && lkeProvisionScript == ""
 	useLegacyLKEProvision := provider == "lke" && lkeProvisionScript != ""
 	scripts := map[string]string{
-		"remove-k8s":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s")),
-		"provision-k8s":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s")),
-		"setup-data":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), selfCommandPath("environment-e2e-data-setup")),
-		"mqtt-test":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
-		"mqtt-log-verify": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("environment-e2e-mqtt-log-verify")),
-		"billing-verify":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT"), selfCommandPath("environment-e2e-billing-verify")),
+		"remove-k8s":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT"), selfCommandPath("remove-k8s")),
+		"provision-k8s":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT"), selfCommandPath("provision-k8s")),
+		"setup-data":       firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DATA_SETUP_SCRIPT"), selfCommandPath("environment-e2e-data-setup")),
+		"mqtt-test":        firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT"), selfCommandPath("mqtt-test")),
+		"mqtt-log-verify":  firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT"), selfCommandPath("environment-e2e-mqtt-log-verify")),
+		"billing-verify":   firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BILLING_VERIFY_SCRIPT"), selfCommandPath("environment-e2e-billing-verify")),
+		"lifecycle-verify": selfCommandPath("provisioning-lifecycle-evidence"),
 	}
 	if provider == "lke" {
 		if lkeRemoveScript != "" {
@@ -4609,6 +4612,20 @@ func runStagingE2ETest(args []string) error {
 			return billingErr
 		}
 	}
+	if selection.Lifecycle {
+		lifecycleArgs := []string{
+			"--workspace", workspace,
+			"--env-root", envRoot,
+			"--brandname", *brandname,
+			"--run-id", firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), filepath.Base(*outDir)),
+			"--out-dir", filepath.Join(*outDir, "provisioning-lifecycle"),
+		}
+		step, lifecycleErr := runE2EStepWithOptions("verify_provisioning_lifecycle", filepath.Join(logsDir, "verify_provisioning_lifecycle.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["lifecycle-verify"], lifecycleArgs...)...)
+		steps = append(steps, step)
+		if lifecycleErr != nil {
+			return lifecycleErr
+		}
+	}
 	overall := "pass"
 	for _, step := range steps {
 		if step.Status != "PASS" {
@@ -4624,7 +4641,7 @@ func runStagingE2ETest(args []string) error {
 		"stack":        stackName,
 		"target":       "k8s",
 		"brandname":    *brandname,
-		"artifacts":    map[string]any{"test_data_db": testDataDB, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "mqtt_log_verify_summary_file": mqttLogVerifySummaryFile, "billing_verify_summary_file": filepath.Join(*outDir, "billing-verify", "summary.json"), "report_file": reportFile},
+		"artifacts":    map[string]any{"test_data_db": testDataDB, "bind_validation_dir": bindValidationDir, "data_setup_summary_file": dataSetupSummaryFile, "mqtt_log_verify_summary_file": mqttLogVerifySummaryFile, "billing_verify_summary_file": filepath.Join(*outDir, "billing-verify", "summary.json"), "provisioning_lifecycle_results_file": filepath.Join(*outDir, "provisioning-lifecycle", "results.json"), "report_file": reportFile},
 		"steps":        steps,
 	}
 	if err := writeJSON(summaryFile, summary); err != nil {
@@ -4668,7 +4685,7 @@ func runStagingE2E(args []string) error {
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")
 	noResume := fs.Bool("no-resume", false, "recreate users/devices/bind artifacts")
-	steps := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db (or all)")
+	steps := fs.String("steps", "all", "comma-separated steps: reset,provision,data,mqtt,runtime-logs,billing-log,billing-db,lifecycle (or all)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
