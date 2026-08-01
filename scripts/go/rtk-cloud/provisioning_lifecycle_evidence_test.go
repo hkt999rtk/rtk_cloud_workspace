@@ -23,7 +23,11 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		t.Fatal(err)
 	}
 	users := []map[string]any{
-		{"email": "deactivate@example.test", "password": "pw-deactivate", "tokens": map[string]any{"access_token": "cached-deactivate-token"}},
+		{
+			"email": "deactivate@example.test", "password": "pw-deactivate", "tokens": map[string]any{"access_token": "cached-deactivate-token"},
+			"app_credentials": map[string]any{"private_key_pem": keyPEM, "csr_pem": "redacted-csr"},
+			"app_certificate": map[string]any{"certificate_chain_pem": certPEM},
+		},
 		{
 			"email": "unprovision@example.test", "password": "pw-unprovision",
 			"tokens":          map[string]any{"access_token": "cached-unprovision-token"},
@@ -181,6 +185,53 @@ func TestLifecycleUserTokenFallsBackToTenantScopedLogin(t *testing.T) {
 	}
 	if token != "tenant-access-token" {
 		t.Fatalf("token = %q", token)
+	}
+}
+
+func TestSelectReadyLifecycleAssignmentsSkipsUnprovisionedDevices(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		deviceID := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/api/devices/"), "/lifecycle")
+		state := map[string]any{"status": "ok", "devid": deviceID, "activated": true, "provisioned": true, "revoked": false, "transport": map[string]any{}}
+		if deviceID == "camera-not-connected" {
+			state["provisioned"] = false
+		}
+		_ = json.NewEncoder(w).Encode(state)
+	}))
+	defer server.Close()
+
+	assignments := []bindAssignment{
+		{DeviceID: "camera-not-connected", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{DeviceID: "light-connected", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "camera-connected", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+	}
+	deactivation, unprovision, deactivationState, unprovisionState, err := selectReadyLifecycleAssignments(server.URL, "admin-token", assignments, time.Second, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deactivation.DeviceID != "light-connected" || unprovision.DeviceID != "camera-connected" {
+		t.Fatalf("selected deactivation=%s unprovision=%s", deactivation.DeviceID, unprovision.DeviceID)
+	}
+	if !deactivationState.Provisioned || !unprovisionState.Provisioned {
+		t.Fatalf("selected states = %+v / %+v", deactivationState, unprovisionState)
+	}
+}
+
+func TestSelectReadyLifecycleAssignmentsReportsReadinessFailures(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.Contains(req.URL.Path, "unavailable") {
+			http.Error(w, `{"error":"unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"status":"ok","devid":"camera-not-ready","activated":true,"provisioned":false,"revoked":false,"transport":{}}`)
+	}))
+	defer server.Close()
+
+	_, _, _, _, err := selectReadyLifecycleAssignments(server.URL, "admin-token", []bindAssignment{
+		{DeviceID: "camera-not-ready", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{DeviceID: "unavailable", ServiceOptions: []string{"mqtt"}},
+	}, time.Nanosecond, time.Nanosecond)
+	if err == nil || !strings.Contains(err.Error(), "camera-not-ready=activated:true,provisioned:false,revoked:false") || !strings.Contains(err.Error(), "unavailable=error(") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
