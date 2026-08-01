@@ -145,7 +145,7 @@ jobs:
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -274,7 +274,7 @@ jobs:
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - name: Run iOS validation
         run: |
           chmod +x e2e_test/cloud_validation/scripts/*.sh e2e_test/cloud_validation/providers/*.sh repos/rtk_cloud_client/tools/*.sh
@@ -377,7 +377,7 @@ jobs:
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -470,7 +470,7 @@ jobs:
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.24.x"
+          go-version: "1.25.x"
       - name: Run shared Shadow feature qualification
         run: |
           go run ./scripts/go/rtk-cloud -- test-feature \
