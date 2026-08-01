@@ -582,8 +582,8 @@ func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testin
 			"app_certificate": map[string]string{
 				"status":                "issued",
 				"subject":               "app-user:user-1",
-				"certificate_pem":       "issued",
-				"certificate_chain_pem": "issued",
+				"certificate_pem":       certPEM,
+				"certificate_chain_pem": certPEM,
 			},
 		})
 	}))
@@ -653,18 +653,26 @@ func TestSustainedCommandRuntimeLogStreamsAreUniquePerCommand(t *testing.T) {
 }
 
 func TestPrepareAppCertificateBootstrapForAssignmentsUsesAccountLoginToken(t *testing.T) {
+	t.Setenv("HOME100K_REFRESH_APP_CERT", "1")
 	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
 	loginCalls := 0
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		loginCalls++
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if csr, _ := request["app_csr_pem"].(string); strings.TrimSpace(csr) != "" {
+			t.Fatal("issued certificate login unexpectedly sent a replacement CSR")
+		}
 		writeJSON(t, w, map[string]any{
 			"user":   map[string]string{"id": "user-1"},
 			"tokens": map[string]string{"access_token": "account-access", "refresh_token": "account-refresh"},
 			"app_certificate": map[string]string{
 				"status":                "issued",
 				"subject":               "app-user:user-1",
-				"certificate_pem":       "issued",
-				"certificate_chain_pem": "issued",
+				"certificate_pem":       certPEM,
+				"certificate_chain_pem": certPEM,
 			},
 		})
 	}))
@@ -700,6 +708,16 @@ func TestPrepareAppCertificateBootstrapForAssignmentsUsesAccountLoginToken(t *te
 	}
 	if material.ManagersByEmail[user.Email] == nil {
 		t.Fatal("manager missing for assigned user")
+	}
+	issuedUser, ok := material.UsersByEmail[user.Email]
+	if !ok {
+		t.Fatal("issued user material missing")
+	}
+	if strings.TrimSpace(issuedUser.AppCredentials.PrivateKeyPEM) == "" || strings.TrimSpace(issuedUser.AppCertificate.CertificatePEM) == "" {
+		t.Fatalf("issued user key pair is incomplete: key=%t cert=%t", strings.TrimSpace(issuedUser.AppCredentials.PrivateKeyPEM) != "", strings.TrimSpace(issuedUser.AppCertificate.CertificatePEM) != "")
+	}
+	if _, err := loadAppX509KeyPairForUser(issuedUser); err != nil {
+		t.Fatalf("issued app certificate no longer matches its persisted private key: %v", err)
 	}
 }
 
