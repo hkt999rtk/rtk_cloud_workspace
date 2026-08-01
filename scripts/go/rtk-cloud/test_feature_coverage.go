@@ -1100,48 +1100,91 @@ func writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, 
 			assertions[i].Assertions["workflow_contract"] = evidenceStatus
 		}
 	}
+	item := featureCaseEvidenceV2{
+		TestID:          testID,
+		Status:          evidenceStatus,
+		Assessment:      evidenceAssessment,
+		Environment:     environment,
+		Target:          target,
+		StartedAt:       started.UTC().Format(time.RFC3339),
+		CompletedAt:     completed.UTC().Format(time.RFC3339),
+		WorkspaceCommit: commits["workspace"],
+		Commits:         commits,
+		Requirements:    assertions,
+		Workflows:       workflowAssertions,
+	}
 	manifest := featureEvidenceManifestV2{
 		SchemaVersion: featureEvidenceSchemaV3,
 		RunID:         runID,
 		GeneratedAt:   completed.UTC().Format(time.RFC3339),
 		SpecCommit:    specCommit,
-		Cases: []featureCaseEvidenceV2{{
-			TestID:          testID,
-			Status:          evidenceStatus,
-			Assessment:      evidenceAssessment,
-			Environment:     environment,
-			Target:          target,
-			StartedAt:       started.UTC().Format(time.RFC3339),
-			CompletedAt:     completed.UTC().Format(time.RFC3339),
-			WorkspaceCommit: commits["workspace"],
-			Commits:         commits,
-			Requirements:    assertions,
-			Workflows:       workflowAssertions,
-		}},
+		Cases:         []featureCaseEvidenceV2{item},
 	}
+	existingPath := filepath.Join(outputDir, "feature-evidence.json")
+	if exists(existingPath) {
+		var existing featureEvidenceManifestV2
+		if err := readJSONFile(existingPath, &existing); err != nil {
+			return fmt.Errorf("read existing feature evidence: %w", err)
+		}
+		if existing.SchemaVersion != featureEvidenceSchemaV3 || existing.RunID != runID || existing.SpecCommit != specCommit {
+			return errors.New("existing feature evidence belongs to a different run or spec revision")
+		}
+		for _, recorded := range existing.Cases {
+			if recorded.TestID == testID {
+				return fmt.Errorf("feature evidence already contains Test ID %s", testID)
+			}
+		}
+		existing.GeneratedAt = manifest.GeneratedAt
+		existing.Cases = append(existing.Cases, item)
+		manifest = existing
+	}
+	sort.Slice(manifest.Cases, func(i, j int) bool { return manifest.Cases[i].TestID < manifest.Cases[j].TestID })
 	if err := validateFeatureEvidenceManifestV2(manifest, catalog, inventory); err != nil {
 		return err
 	}
 	if err := writeJSON(filepath.Join(outputDir, "feature-evidence.json"), manifest); err != nil {
 		return err
 	}
+	return writeLiveFeatureSummaryArtifacts(outputDir, manifest)
+}
+
+func writeLiveFeatureSummaryArtifacts(outputDir string, manifest featureEvidenceManifestV2) error {
+	status := "PASS"
+	var resultCases []map[string]any
+	var junitCases, reportRows strings.Builder
+	var totalDuration float64
+	skipped := 0
+	for _, item := range manifest.Cases {
+		started, startErr := time.Parse(time.RFC3339, item.StartedAt)
+		completed, completeErr := time.Parse(time.RFC3339, item.CompletedAt)
+		duration := 0.0
+		if startErr == nil && completeErr == nil && !completed.Before(started) {
+			duration = completed.Sub(started).Seconds()
+		}
+		totalDuration += duration
+		resultCases = append(resultCases, map[string]any{
+			"test_id": item.TestID, "status": item.Status, "assessment": item.Assessment,
+			"started_at": item.StartedAt, "completed_at": item.CompletedAt,
+		})
+		if item.Status == "INCOMPLETE" {
+			status = "INCOMPLETE"
+			skipped++
+			fmt.Fprintf(&junitCases, `<testcase classname="feature-live" name="%s" time="%.3f"><skipped message="canonical workflow evidence incomplete"/></testcase>`, item.TestID, duration)
+		} else {
+			fmt.Fprintf(&junitCases, `<testcase classname="feature-live" name="%s" time="%.3f"/>`, item.TestID, duration)
+		}
+		fmt.Fprintf(&reportRows, "| `%s` | **%s** | %s |\n", item.TestID, item.Status, item.Assessment)
+	}
 	if err := writeJSON(filepath.Join(outputDir, "feature-results.json"), map[string]any{
-		"schema_version": featureEvidenceSchemaV3,
-		"run_id":         runID, "test_id": testID, "status": evidenceStatus, "assessment": evidenceAssessment,
-		"started_at": started.UTC().Format(time.RFC3339), "completed_at": completed.UTC().Format(time.RFC3339),
+		"schema_version": featureEvidenceSchemaV3, "run_id": manifest.RunID, "status": status, "cases": resultCases,
 	}); err != nil {
 		return err
 	}
-	duration := completed.Sub(started).Seconds()
-	junitCase := fmt.Sprintf(`<testcase classname="feature-live" name="%s" time="%.3f"/>`, testID, duration)
-	if evidenceStatus == "INCOMPLETE" {
-		junitCase = fmt.Sprintf(`<testcase classname="feature-live" name="%s" time="%.3f"><skipped message="canonical workflow evidence incomplete"/></testcase>`, testID, duration)
-	}
-	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="feature-live" tests="1" failures="0" skipped="%d" time="%.3f">%s</testsuite>`+"\n", map[bool]int{true: 1}[evidenceStatus == "INCOMPLETE"], duration, junitCase)
+	junit := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="feature-live" tests="%d" failures="0" skipped="%d" time="%.3f">%s</testsuite>`+"\n", len(manifest.Cases), skipped, totalDuration, junitCases.String())
 	if err := os.WriteFile(filepath.Join(outputDir, "feature-junit.xml"), []byte(junit), 0o644); err != nil {
 		return err
 	}
-	report := fmt.Sprintf("# Live Feature Evidence\n\n- Test ID: `%s`\n- Run ID: `%s`\n- Status: **%s**\n- Assessment: %s\n- Requirements: `%s`\n- Workspace commit: `%s`\n", testID, runID, evidenceStatus, evidenceAssessment, strings.Join(tc.Verifies, "`, `"), commits["workspace"])
+	report := fmt.Sprintf("# Live Feature Evidence\n\n- Run ID: `%s`\n- Status: **%s**\n\n| Test ID | Status | Assessment |\n|---|---|---|\n%s", manifest.RunID, status, reportRows.String())
 	return os.WriteFile(filepath.Join(outputDir, "FEATURE_REPORT.md"), []byte(report), 0o644)
 }
 
