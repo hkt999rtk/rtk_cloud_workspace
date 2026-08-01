@@ -98,8 +98,12 @@ func runProvisioningLifecycleEvidence(args []string) error {
 		return err
 	}
 
-	deactivation := artifact.Assignments[0]
-	unprovision := artifact.Assignments[1]
+	deactivation, unprovision, deactivationBefore, _, err := selectReadyLifecycleAssignments(
+		videoBaseURL, videoAdminToken, artifact.Assignments, *timeout, *poll,
+	)
+	if err != nil {
+		return err
+	}
 	deactivationToken, err := lifecycleUserToken(ctx, artifact.TenantSlug, users, deactivation)
 	if err != nil {
 		return err
@@ -107,17 +111,6 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	unprovisionToken, err := lifecycleUserToken(ctx, artifact.TenantSlug, users, unprovision)
 	if err != nil {
 		return err
-	}
-	deactivationBefore, err := readCanonicalVideoLifecycle(videoBaseURL, videoAdminToken, deactivation.DeviceID)
-	if err != nil {
-		return err
-	}
-	unprovisionBefore, err := readCanonicalVideoLifecycle(videoBaseURL, videoAdminToken, unprovision.DeviceID)
-	if err != nil {
-		return err
-	}
-	if !deactivationBefore.Activated || !unprovisionBefore.Activated || !unprovisionBefore.Provisioned || unprovisionBefore.Revoked {
-		return errors.New("selected lifecycle devices are not independently active and provisioned")
 	}
 	if err := readCanonicalDeviceInfo(videoBaseURL, videoAdminToken, deactivation.DeviceID); err != nil {
 		return err
@@ -355,6 +348,52 @@ func lifecycleUserToken(ctx accountManagerContext, tenantSlug string, users map[
 		Session:  user.Tokens,
 	}
 	return brandCloudUserAccessToken(ctx, tenantSlug, session, func(string, ...any) {})
+}
+
+func selectReadyLifecycleAssignments(baseURL, bearer string, assignments []bindAssignment, timeout, poll time.Duration) (bindAssignment, bindAssignment, canonicalVideoLifecycle, canonicalVideoLifecycle, error) {
+	deadline := time.Now().Add(timeout)
+	last := map[string]canonicalVideoLifecycle{}
+	lastErrors := map[string]string{}
+	for {
+		ready := make([]bindAssignment, 0, len(assignments))
+		for _, assignment := range assignments {
+			state, err := readCanonicalVideoLifecycle(baseURL, bearer, assignment.DeviceID)
+			if err != nil {
+				lastErrors[assignment.DeviceID] = err.Error()
+				continue
+			}
+			last[assignment.DeviceID] = state
+			delete(lastErrors, assignment.DeviceID)
+			if state.Activated && state.Provisioned && !state.Revoked {
+				ready = append(ready, assignment)
+			}
+		}
+		for i := len(ready) - 1; i >= 0; i-- {
+			unprovision := ready[i]
+			if !contains(unprovision.ServiceOptions, "video_streaming") && !contains(unprovision.ServiceOptions, "video_storage") {
+				continue
+			}
+			for _, deactivation := range ready {
+				if deactivation.DeviceID == unprovision.DeviceID {
+					continue
+				}
+				return deactivation, unprovision, last[deactivation.DeviceID], last[unprovision.DeviceID], nil
+			}
+		}
+		if !time.Now().Before(deadline) {
+			states := make([]string, 0, len(assignments))
+			for _, assignment := range assignments {
+				if detail := lastErrors[assignment.DeviceID]; detail != "" {
+					states = append(states, fmt.Sprintf("%s=error(%s)", assignment.DeviceID, detail))
+					continue
+				}
+				state := last[assignment.DeviceID]
+				states = append(states, fmt.Sprintf("%s=activated:%t,provisioned:%t,revoked:%t", assignment.DeviceID, state.Activated, state.Provisioned, state.Revoked))
+			}
+			return bindAssignment{}, bindAssignment{}, canonicalVideoLifecycle{}, canonicalVideoLifecycle{}, fmt.Errorf("lifecycle qualification requires two ready devices including one video-capable device: %s", strings.Join(states, "; "))
+		}
+		time.Sleep(poll)
+	}
 }
 
 func requestAccountDeactivation(ctx accountManagerContext, brandCloudID string, assignment bindAssignment, bearer, runID string) error {
