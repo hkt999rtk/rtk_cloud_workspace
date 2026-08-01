@@ -201,11 +201,15 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") ||
+		!strings.Contains(onboarding, "staging-e2e-test") ||
 		!strings.Contains(onboarding, "--steps data,mqtt,runtime-logs,billing-log,billing-db ") {
 		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
 	}
 	if strings.Contains(onboarding, "--steps lifecycle") || strings.Contains(onboarding, "billing-db,lifecycle") {
 		t.Fatal("onboarding must not mutate device eligibility before feature canaries")
+	}
+	if strings.Contains(onboarding, "-- test-live") {
+		t.Fatal("partial onboarding must not publish the complete live case before lifecycle evidence exists")
 	}
 	lifecycle := workflow[lifecycleStart:aggregateStart]
 	for _, expected := range []string{
@@ -215,7 +219,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"CLOUD_STAGING_E2E_MQTT_PORT=18884",
 		"--skip-remove --skip-provision",
 		"--steps lifecycle",
-		`--out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/lifecycle-live"`,
+		`mv "$live_dir/summary.json" "$live_dir/onboarding-summary.json"`,
+		`mv "$live_dir/TEST_REPORT.md" "$live_dir/ONBOARDING_TEST_REPORT.md"`,
+		`--out-dir "$live_dir"`,
 	} {
 		if !strings.Contains(lifecycle, expected) {
 			t.Fatalf("terminal lifecycle qualification missing %q", expected)

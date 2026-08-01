@@ -424,7 +424,7 @@ jobs:
           export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
           export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
           export CLOUD_STAGING_E2E_MQTT_PORT=18884
-          go run ./scripts/go/rtk-cloud -- test-live \
+          go run ./scripts/go/rtk-cloud -- staging-e2e-test \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
             --skip-remove --skip-provision \
@@ -553,6 +553,11 @@ jobs:
           export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
           export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
           export CLOUD_STAGING_E2E_MQTT_PORT=18884
+          live_dir=".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
+          test -s "$live_dir/summary.json"
+          test -s "$live_dir/TEST_REPORT.md"
+          mv "$live_dir/summary.json" "$live_dir/onboarding-summary.json"
+          mv "$live_dir/TEST_REPORT.md" "$live_dir/ONBOARDING_TEST_REPORT.md"
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
@@ -560,7 +565,7 @@ jobs:
             --steps lifecycle \
             --user-count 2 --device-count 12 \
             --device-mix light=10,camera=2 \
-            --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/lifecycle-live"
+            --out-dir "$live_dir"
 
       - name: Aggregate runtime feature evidence
         if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
