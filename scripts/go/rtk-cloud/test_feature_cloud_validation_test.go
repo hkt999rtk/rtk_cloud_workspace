@@ -162,7 +162,7 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"secrets.LINODE_TOKEN", "secrets.CI_RUNNER_GITHUB_WORK_KEY",
 		"Initialize private submodules", "git submodule update --init --recursive --depth=1",
 		"permitted_classes: [], permitted_symbols: [], aliases: true",
-		"Select Swift 6 toolchain", "/Applications/Xcode_16.2.app/Contents/Developer", "Swift version 6",
+		"runs-on: macos-15", "Select Swift 6 toolchain", "/Applications/Xcode_16.4.app/Contents/Developer", "Swift version 6",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("SDK cloud workflow is missing %q", required)
