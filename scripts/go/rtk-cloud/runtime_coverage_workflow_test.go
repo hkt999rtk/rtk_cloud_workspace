@@ -164,6 +164,18 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 			t.Fatalf("%s does not inject the atomic runtime coverage flush helper", dockerfile)
 		}
 	}
+	accountDockerfile, err := os.ReadFile(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.account-manager"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker",
+		"COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker",
+	} {
+		if !strings.Contains(string(accountDockerfile), want) {
+			t.Fatalf("runtime Account Manager image missing %q", want)
+		}
+	}
 	videoDockerfile, err := os.ReadFile(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.video-cloud"))
 	if err != nil {
 		t.Fatal(err)
