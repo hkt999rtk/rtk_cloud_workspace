@@ -37,6 +37,76 @@ func TestImportCloudValidationFeatureEvidence(t *testing.T) {
 	}
 }
 
+func TestImportCloudValidationFeatureEvidenceThroughCLI(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+	if err := runTestFeatureCoverage([]string{"import-cloud-validation", "--input", filepath.Join(dir, "results.json")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "feature-evidence.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTestFeatureCoverage([]string{"import-cloud-validation"}); err == nil {
+		t.Fatal("import-cloud-validation without --input was accepted")
+	}
+}
+
+func TestImportCloudValidationRejectsWrongOutputAndCommit(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+	if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), t.TempDir()); err == nil {
+		t.Fatal("cloud-validation evidence was accepted outside its native result directory")
+	}
+	var report map[string]any
+	if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+		t.Fatal(err)
+	}
+	report["sdk_commit"] = "0000000000000000000000000000000000000000"
+	writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+	if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+		t.Fatal("cloud-validation evidence from a different SDK commit was accepted")
+	}
+}
+
+func TestImportCloudValidationRejectsInvalidRunIdentity(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"run failed":        func(report map[string]any) { report["status"] = "FAIL" },
+		"wrong environment": func(report map[string]any) { report["environment"] = "production" },
+		"bad start time":    func(report map[string]any) { report["started_at"] = "not-a-time" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+			var report map[string]any
+			if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+				t.Fatal(err)
+			}
+			mutate(report)
+			writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+			if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+				t.Fatal("invalid cloud-validation run identity was accepted")
+			}
+		})
+	}
+}
+
 func TestImportCloudValidationRejectsMissingCloudEvent(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
