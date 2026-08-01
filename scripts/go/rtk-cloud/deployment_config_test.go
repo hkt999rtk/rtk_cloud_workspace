@@ -10,6 +10,40 @@ import (
 	"testing"
 )
 
+func TestDeploymentRuntimeEndpointsPreferExplicitServiceDomains(t *testing.T) {
+	endpoints := deploymentRuntimeEndpoints(map[string]string{
+		"CLOUD_STACK_NAME":          "coverage-123-1",
+		"CLOUD_DNS_ROOT_DOMAIN":     "coverage-123-1.invalid",
+		"ACCOUNT_MANAGER_DOMAIN":    "account.coverage-123-1.invalid",
+		"VIDEO_CLOUD_DOMAIN":        "video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_DEVICE_DOMAIN": "device.video.coverage-123-1.invalid",
+	})
+	want := map[string]string{
+		"ACCOUNT_MANAGER_BASE_URL":    "https://account.coverage-123-1.invalid",
+		"VIDEO_CLOUD_BASE_URL":        "https://video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_PUBLIC_BASE_URL": "https://video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_MTLS_BASE_URL":   "https://device.video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_TOKEN_BASE_URL":  "https://device.video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_MQTT_ADDR":       "video.coverage-123-1.invalid:8883",
+	}
+	if !reflect.DeepEqual(endpoints, want) {
+		t.Fatalf("endpoints = %#v, want %#v", endpoints, want)
+	}
+}
+
+func TestDeploymentRuntimeEndpointsDeriveLegacyDomains(t *testing.T) {
+	endpoints := deploymentRuntimeEndpoints(map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
+	})
+	if got := endpoints["VIDEO_CLOUD_MTLS_BASE_URL"]; got != "https://device.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("VIDEO_CLOUD_MTLS_BASE_URL = %q", got)
+	}
+	if got := endpoints["ACCOUNT_MANAGER_BASE_URL"]; got != "https://account-manager.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("ACCOUNT_MANAGER_BASE_URL = %q", got)
+	}
+}
+
 func TestDeploymentTestUsesIdenticalLifecycleForEveryEnvironment(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
