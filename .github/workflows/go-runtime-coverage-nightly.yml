@@ -221,6 +221,7 @@ jobs:
           go run ./scripts/go/rtk-cloud -- test-services \
             --repo rtk_account_manager,rtk_cloud_admin,rtk_video_cloud \
             --qualification-only \
+            --install \
             --qualification-run-id "$RUNTIME_COVERAGE_RUN_ID" \
             --qualification-output-dir "$evidence_root/authorization"
           cleanup_qualification_postgres
