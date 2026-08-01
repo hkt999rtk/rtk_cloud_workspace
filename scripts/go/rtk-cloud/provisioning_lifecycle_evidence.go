@@ -100,11 +100,11 @@ func runProvisioningLifecycleEvidence(args []string) error {
 
 	deactivation := artifact.Assignments[0]
 	unprovision := artifact.Assignments[1]
-	deactivationToken, err := lifecycleUserToken(ctx, users, deactivation)
+	deactivationToken, err := lifecycleUserToken(ctx, artifact.TenantSlug, users, deactivation)
 	if err != nil {
 		return err
 	}
-	unprovisionToken, err := lifecycleUserToken(ctx, users, unprovision)
+	unprovisionToken, err := lifecycleUserToken(ctx, artifact.TenantSlug, users, unprovision)
 	if err != nil {
 		return err
 	}
@@ -344,12 +344,17 @@ func verifyFormerOwnerAccessRevoked(ctx accountManagerContext, videoBaseURL, vid
 	return nil
 }
 
-func lifecycleUserToken(ctx accountManagerContext, users map[string]userCredential, assignment bindAssignment) (string, error) {
+func lifecycleUserToken(ctx accountManagerContext, tenantSlug string, users map[string]userCredential, assignment bindAssignment) (string, error) {
 	user, ok := users[assignment.AssignedEmail]
-	if !ok || strings.TrimSpace(user.Password) == "" {
+	if !ok {
 		return "", fmt.Errorf("missing lifecycle user credential for %s", assignment.AssignedEmail)
 	}
-	return loginAccountUser(ctx, assignment.AssignedEmail, user.Password)
+	session := &brandCloudUserSession{
+		Email:    user.Email,
+		Password: user.Password,
+		Session:  user.Tokens,
+	}
+	return brandCloudUserAccessToken(ctx, tenantSlug, session, func(string, ...any) {})
 }
 
 func requestAccountDeactivation(ctx accountManagerContext, brandCloudID string, assignment bindAssignment, bearer, runID string) error {
