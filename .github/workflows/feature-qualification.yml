@@ -23,12 +23,22 @@ on:
         description: "Comma-separated feature override: device-shadow,video-webrtc,clip-storage"
         required: false
         type: string
+      run_live:
+        description: "Execute selected live qualifications while qualification mode is observe"
+        required: false
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       features:
         description: "Comma-separated feature override"
         required: false
         type: string
+      run_live:
+        description: "Execute selected live qualifications while qualification mode is observe"
+        required: false
+        type: boolean
+        default: false
     secrets:
       CI_RUNNER_GITHUB_WORK_KEY:
         required: true
@@ -53,6 +63,7 @@ jobs:
       required: ${{ steps.selection.outputs.required }}
       features: ${{ steps.selection.outputs.features }}
       mode: ${{ steps.selection.outputs.mode }}
+      execute: ${{ steps.selection.outputs.execute }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -85,6 +96,7 @@ jobs:
         shell: bash
         env:
           INPUT_FEATURES: ${{ inputs.features }}
+          INPUT_RUN_LIVE: ${{ inputs.run_live }}
         run: |
           set -euo pipefail
           base_ref="${{ github.event.pull_request.base.sha }}"
@@ -112,6 +124,14 @@ jobs:
             echo "FEATURE_QUALIFICATION_MODE must be observe or required, got: $mode" >&2
             exit 1
           fi
+          execute=false
+          if [ "${INPUT_RUN_LIVE:-false}" = "true" ]; then
+            if [ "${{ github.event_name }}" != "workflow_dispatch" ] && [ "${{ github.event_name }}" != "workflow_call" ]; then
+              echo "run_live is only accepted from workflow_dispatch or workflow_call" >&2
+              exit 1
+            fi
+            execute=true
+          fi
           go run ./scripts/go/rtk-cloud -- test-spec-inventory check \
             --mode "$mode" \
             --output-dir .artifacts/spec-inventory
@@ -122,12 +142,14 @@ jobs:
           echo "required=$required" >> "$GITHUB_OUTPUT"
           echo "features=$features" >> "$GITHUB_OUTPUT"
           echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "execute=$execute" >> "$GITHUB_OUTPUT"
           {
             echo "## Feature qualification selection"
             echo
             echo "- Mode: \`$mode\`"
             echo "- Required: \`$required\`"
             echo "- Features: \`$features\`"
+            echo "- Execute live qualification: \`$execute\`"
             echo
             echo '```json'
             cat .artifacts/feature-selection.json
@@ -148,7 +170,9 @@ jobs:
   qualify:
     name: Shared staging feature qualification
     needs: select
-    if: needs.select.outputs.required == 'true' && needs.select.outputs.mode == 'required'
+    if: >-
+      ${{ needs.select.outputs.required == 'true' &&
+          (needs.select.outputs.mode == 'required' || needs.select.outputs.execute == 'true') }}
     concurrency:
       group: staging-mutating-tests
       cancel-in-progress: false
@@ -326,7 +350,7 @@ jobs:
             echo "PASS: no load-sensitive feature changed."
             exit 0
           fi
-          if [ "${{ needs.select.outputs.mode }}" = "observe" ]; then
+          if [ "${{ needs.select.outputs.mode }}" = "observe" ] && [ "${{ needs.select.outputs.execute }}" != "true" ]; then
             echo "PASS: observation mode selected ${{ needs.select.outputs.features }}; live qualification is not enforced."
             exit 0
           fi

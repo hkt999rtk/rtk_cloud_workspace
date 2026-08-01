@@ -95,6 +95,27 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 	}
 }
 
+func TestFeatureQualificationCanRunLiveBeforeRequiredMode(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "feature-qualification.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(raw)
+	for _, required := range []string{
+		"run_live:", "execute: ${{ steps.selection.outputs.execute }}", `echo "execute=$execute"`,
+		"needs.select.outputs.mode == 'required' || needs.select.outputs.execute == 'true'",
+		`[ "${{ needs.select.outputs.execute }}" != "true" ]`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("feature qualification observe-live wiring is missing %q", required)
+		}
+	}
+}
+
 func writeCloudValidationImportFixture(t *testing.T, workspace string, eventTypes []string) string {
 	t.Helper()
 	dir := t.TempDir()
