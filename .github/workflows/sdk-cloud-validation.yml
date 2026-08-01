@@ -143,6 +143,10 @@ jobs:
           git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
           git submodule update --init --recursive --depth=1
+      - name: Select Swift 6 toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_16.2.app/Contents/Developer
+          swift --version | grep -q 'Swift version 6'
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
