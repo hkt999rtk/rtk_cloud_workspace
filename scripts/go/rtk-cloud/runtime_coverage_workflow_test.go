@@ -183,11 +183,16 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(string(videoDockerfile), "turnregistrar") {
 		t.Fatal("runtime Video Cloud image must include the run-scoped TURN registrar")
 	}
-	onboardingStart := strings.Index(workflow, "- name: Run onboarding and cross-service lifecycle checks")
+	onboardingStart := strings.Index(workflow, "- name: Run onboarding and runtime log checks")
 	canaryStart := strings.Index(workflow, "- name: Run all feature canaries")
 	uiStart := strings.Index(workflow, "- name: Run desktop and mobile deployed UI smoke")
-	if onboardingStart < 0 || canaryStart < 0 || uiStart < 0 {
+	lifecycleStart := strings.Index(workflow, "- name: Run cross-service lifecycle checks")
+	aggregateStart := strings.Index(workflow, "- name: Aggregate runtime feature evidence")
+	if onboardingStart < 0 || canaryStart < 0 || uiStart < 0 || lifecycleStart < 0 || aggregateStart < 0 {
 		t.Fatal("runtime workflow lifecycle steps are missing")
+	}
+	if !(onboardingStart < canaryStart && canaryStart < uiStart && uiStart < lifecycleStart && lifecycleStart < aggregateStart) {
+		t.Fatal("destructive lifecycle qualification must run after feature canaries and deployed UI smoke")
 	}
 	onboarding := workflow[onboardingStart:canaryStart]
 	if !strings.Contains(onboarding, "tunnel-start") ||
@@ -196,8 +201,25 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") ||
-		!strings.Contains(onboarding, "billing-db,lifecycle") {
+		!strings.Contains(onboarding, "--steps data,mqtt,runtime-logs,billing-log,billing-db ") {
 		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
+	}
+	if strings.Contains(onboarding, "--steps lifecycle") || strings.Contains(onboarding, "billing-db,lifecycle") {
+		t.Fatal("onboarding must not mutate device eligibility before feature canaries")
+	}
+	lifecycle := workflow[lifecycleStart:aggregateStart]
+	for _, expected := range []string{
+		"tunnel-start",
+		"CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE",
+		"CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444",
+		"CLOUD_STAGING_E2E_MQTT_PORT=18884",
+		"--skip-remove --skip-provision",
+		"--steps lifecycle",
+		`--out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/lifecycle-live"`,
+	} {
+		if !strings.Contains(lifecycle, expected) {
+			t.Fatalf("terminal lifecycle qualification missing %q", expected)
+		}
 	}
 	if strings.Contains(onboarding, "HOME100K_REFRESH_APP_CERT") {
 		t.Fatal("onboarding must reuse the matching app key and certificate created by data setup")
