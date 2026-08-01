@@ -3331,6 +3331,11 @@ func TestWriteSDKDeviceReadyFileIsDeterministic(t *testing.T) {
 }
 
 func TestReadDeviceInfoWithAppTokenRequiresMatchingSubject(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path != "/api/devices/device-1/info" {
 			t.Fatalf("path = %q", req.URL.Path)
@@ -3342,19 +3347,48 @@ func TestReadDeviceInfoWithAppTokenRequiresMatchingSubject(t *testing.T) {
 	}))
 	defer server.Close()
 
-	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token"); err != nil {
+	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token", cert); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestReadDeviceInfoWithAppTokenRejectsMismatch(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_, _ = io.WriteString(w, `{"status":"ok","devid":"other-device"}`)
 	}))
 	defer server.Close()
 
-	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token"); err == nil {
+	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token", cert); err == nil {
 		t.Fatal("mismatched device info unexpectedly passed")
+	}
+}
+
+func TestReadDeviceInfoWithAppTokenPresentsAppClientCertificate(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.TLS == nil || len(req.TLS.PeerCertificates) != 1 {
+			t.Fatal("missing app client certificate")
+		}
+		if got := req.TLS.PeerCertificates[0].Subject.CommonName; got != "app-user:user-1" {
+			t.Fatalf("client certificate subject = %q", got)
+		}
+		_, _ = io.WriteString(w, `{"status":"ok","devid":"device-1"}`)
+	}))
+	server.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	server.StartTLS()
+	defer server.Close()
+
+	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token", cert); err != nil {
+		t.Fatal(err)
 	}
 }
 

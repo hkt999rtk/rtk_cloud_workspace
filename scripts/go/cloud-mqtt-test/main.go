@@ -3467,7 +3467,7 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
 					continue
 				}
-				if err := readDeviceInfoWithAppToken(apiBaseURL, item.Assignment.DeviceID, appToken.AccessToken); err != nil {
+				if err := readDeviceInfoWithAppToken(apiBaseURL, item.Assignment.DeviceID, appToken.AccessToken, appCert); err != nil {
 					results <- failedActorResult(item.Assignment.DeviceID, item.Assignment.DeviceType, redactedError(err))
 					continue
 				}
@@ -3490,14 +3490,19 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 	return out
 }
 
-func readDeviceInfoWithAppToken(apiBaseURL, deviceID, token string) error {
+func readDeviceInfoWithAppToken(apiBaseURL, deviceID, token string, cert tls.Certificate) error {
 	endpoint := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/api/devices/" + url.PathEscape(deviceID) + "/info"
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, InsecureSkipVerify: true},
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("read device info: %w", err)
