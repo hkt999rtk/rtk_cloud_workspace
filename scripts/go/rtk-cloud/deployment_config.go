@@ -789,13 +789,15 @@ func deploymentRuntimeEndpoints(v map[string]string) map[string]string {
 	if stack == "" || rootDomain == "" {
 		return map[string]string{}
 	}
-	publicHost := stack + "." + rootDomain
+	publicHost := firstNonEmpty(strings.TrimSpace(v["VIDEO_CLOUD_DOMAIN"]), stack+"."+rootDomain)
+	accountHost := firstNonEmpty(strings.TrimSpace(v["ACCOUNT_MANAGER_DOMAIN"]), "account-manager."+stack+"."+rootDomain)
+	deviceHost := firstNonEmpty(strings.TrimSpace(v["VIDEO_CLOUD_DEVICE_DOMAIN"]), "device."+publicHost)
 	return map[string]string{
-		"ACCOUNT_MANAGER_BASE_URL":    "https://account-manager." + publicHost,
+		"ACCOUNT_MANAGER_BASE_URL":    "https://" + accountHost,
 		"VIDEO_CLOUD_BASE_URL":        "https://" + publicHost,
 		"VIDEO_CLOUD_PUBLIC_BASE_URL": "https://" + publicHost,
-		"VIDEO_CLOUD_MTLS_BASE_URL":   "https://device." + publicHost,
-		"VIDEO_CLOUD_TOKEN_BASE_URL":  "https://device." + publicHost,
+		"VIDEO_CLOUD_MTLS_BASE_URL":   "https://" + deviceHost,
+		"VIDEO_CLOUD_TOKEN_BASE_URL":  "https://" + deviceHost,
 		"VIDEO_CLOUD_MQTT_ADDR":       publicHost + ":8883",
 	}
 }
