@@ -169,6 +169,9 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 	if strings.Contains(workflow, "submodules: recursive") || strings.Count(workflow, "Initialize private submodules") != 4 {
 		t.Fatal("every SDK workflow job must bootstrap private submodules with the deploy key")
 	}
+	if strings.Count(workflow, `go-version: "1.25.x"`) != 4 || strings.Contains(workflow, `go-version: "1.24.x"`) {
+		t.Fatal("every SDK workflow job must use the scripts/go Go 1.25 toolchain")
+	}
 	scriptRaw, err := os.ReadFile(filepath.Join(workspace, "e2e_test", "cloud_validation", "scripts", "run-cloud-validation.sh"))
 	if err != nil {
 		t.Fatal(err)
