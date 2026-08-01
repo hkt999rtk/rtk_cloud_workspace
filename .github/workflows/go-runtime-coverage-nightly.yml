@@ -207,13 +207,19 @@ jobs:
             --env POSTGRES_PASSWORD=postgres \
             --publish 127.0.0.1::5432 \
             postgres:16-alpine >/dev/null
+          qualification_postgres_ready=false
           for attempt in {1..30}; do
             if docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null 2>&1; then
+              qualification_postgres_ready=true
               break
             fi
             sleep 1
           done
-          docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null
+          if [[ "$qualification_postgres_ready" != true ]]; then
+            docker inspect --format 'qualification postgres status={{.State.Status}} exit={{.State.ExitCode}}' "$qualification_postgres" >&2 || true
+            docker logs "$qualification_postgres" >&2 || true
+            exit 1
+          fi
           qualification_endpoint="$(docker port "$qualification_postgres" 5432/tcp)"
           qualification_port="${qualification_endpoint##*:}"
           [[ "$qualification_port" =~ ^[0-9]+$ ]]
