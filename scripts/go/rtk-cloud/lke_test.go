@@ -3776,8 +3776,15 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	if !strings.Contains(log, "name: video-cloud-api") {
 		t.Fatalf("expected video-cloud deployment manifest, got:\n%s", log)
 	}
-	if strings.Contains(log, "name: account-manager") || strings.Contains(log, "name: cloud-admin") {
-		t.Fatalf("video-only deploy should not apply account-manager/admin manifests:\n%s", log)
+	for _, unwanted := range []string{
+		"kind: Deployment\nmetadata:\n  name: account-manager",
+		"kind: Deployment\nmetadata:\n  name: cloud-admin",
+		"rollout status deployment/account-manager",
+		"rollout status deployment/cloud-admin",
+	} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("video-only deploy unexpectedly applied non-video workload %q", unwanted)
+		}
 	}
 }
 
