@@ -111,12 +111,12 @@ func runTestFeatureCoverage(args []string) error {
 		action, args = args[0], args[1:]
 	}
 	if action != "audit" && action != "check" && action != "select" && action != "record" && action != "import-cloud-validation" {
-		return errors.New("usage: test-feature-coverage [audit|select|check|record|import-cloud-validation] [--evidence PATHS] [--mode pr|main|release] [--output-dir PATH]")
+		return errors.New("usage: test-feature-coverage [audit|select|check|record|import-cloud-validation] [--evidence PATHS] [--mode pr|main|scheduled|release] [--output-dir PATH]")
 	}
 	fs := flag.NewFlagSet("test-feature-coverage "+action, flag.ContinueOnError)
 	var evidence, mode, outputDir, base, head, testID, runID, environment, target, startedAt, completedAt, input string
 	fs.StringVar(&evidence, "evidence", "", "comma-separated evidence files or directories")
-	fs.StringVar(&mode, "mode", "pr", "qualification mode: pr, main, or release")
+	fs.StringVar(&mode, "mode", "pr", "qualification mode: pr, main, scheduled, or release")
 	fs.StringVar(&outputDir, "output-dir", "", "report directory")
 	fs.StringVar(&base, "base", "", "selection base commit")
 	fs.StringVar(&head, "head", "HEAD", "selection head commit")
@@ -130,7 +130,7 @@ func runTestFeatureCoverage(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if mode != "pr" && mode != "main" && mode != "release" {
+	if mode != "pr" && mode != "main" && mode != "scheduled" && mode != "release" {
 		return fmt.Errorf("unsupported mode %q", mode)
 	}
 	if action != "record" && action != "import-cloud-validation" && outputDir == "" {
@@ -735,6 +735,8 @@ func requirementEvaluatedInMode(requirement testCatalogRequirement, mode string)
 		return requirement.Gate == "pr"
 	case "main":
 		return requirement.Gate == "pr" || requirement.Gate == "main"
+	case "scheduled":
+		return requirement.Gate == "pr" || requirement.Gate == "main" || requirement.Gate == "scheduled"
 	case "release":
 		return true
 	default:

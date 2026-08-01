@@ -77,7 +77,49 @@ func writeLiveOnboardingWorkflowEvidence(outDir string) error {
 			"assertions":  assertions,
 		},
 	}
-	return writeJSON(filepath.Join(outDir, "live-onboarding-workflow.json"), payload)
+	if err := writeJSON(filepath.Join(outDir, "live-onboarding-workflow.json"), payload); err != nil {
+		return err
+	}
+	runtimeSteps, runtimeAssertions, err := qualifyLiveRuntimeFacts(mqtt)
+	if err != nil {
+		return err
+	}
+	runtimePayload := map[string]any{
+		"schema_version": "rtk-live-workflow-evidence/v1",
+		"workflow": map[string]any{
+			"workflow_id": provisioningRuntimeWorkflowID,
+			"steps":       runtimeSteps,
+			"assertions":  runtimeAssertions,
+		},
+	}
+	return writeJSON(filepath.Join(outDir, "provisioning-runtime-workflow.json"), runtimePayload)
+}
+
+func qualifyLiveRuntimeFacts(mqtt liveOnboardingMQTTEvidence) (map[string]string, map[string]map[string]string, error) {
+	if !strings.EqualFold(mqtt.Status, "pass") || !strings.EqualFold(mqtt.Overall, "pass") {
+		return nil, nil, errors.New("live runtime MQTT evidence is not PASS")
+	}
+	for _, device := range mqtt.Devices {
+		if !strings.EqualFold(device.MQTTStatus, "pass") || !strings.EqualFold(device.CommandState, "pass") {
+			continue
+		}
+		if !hasLiveTrace(device.Trace, "app_token", "app_controller", "request_token", "", "scope=app") ||
+			!hasLiveTrace(device.Trace, "device_info", "app_controller", "get_device_info", "", "subject matched device") ||
+			!hasLiveTrace(device.Trace, "shadow_desired", "app_controller", "publish", "", "") ||
+			!hasLiveTrace(device.Trace, "shadow_delta", "device_client", "receive", "", "") {
+			continue
+		}
+		return map[string]string{
+				"issue_app_runtime_token": "PASS",
+				"read_device_info":        "PASS",
+				"deliver_owner_command":   "PASS",
+			}, map[string]map[string]string{
+				"issue_app_runtime_token": {"app_certificate_request_token": "PASS", "app_scope": "PASS", "device_subject_bound": "PASS"},
+				"read_device_info":        {"app_token_authorized": "PASS", "response_device_identity_matched": "PASS"},
+				"deliver_owner_command":   {"owner_publish_succeeded": "PASS", "device_receive_succeeded": "PASS"},
+			}, nil
+	}
+	return nil, nil, errors.New("no run-scoped device has complete app token, device info, and owner command evidence")
 }
 
 func qualifyLiveOnboardingFacts(bind liveOnboardingBindEvidence, mqtt liveOnboardingMQTTEvidence) (map[string]string, map[string]map[string]string, error) {

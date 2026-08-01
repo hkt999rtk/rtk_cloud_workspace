@@ -18,14 +18,14 @@ func TestParseE2EStepsFullAndSelective(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !full.Reset || !full.Provision || !full.Data || !full.MQTT || !full.RuntimeLogs || !full.BillingLog || !full.BillingDB {
+	if !full.Reset || !full.Provision || !full.Data || !full.MQTT || !full.RuntimeLogs || !full.BillingLog || !full.BillingDB || !full.Lifecycle {
 		t.Fatalf("full selection = %+v", full)
 	}
 	selected, err := parseE2ESteps("mqtt,billing-log", true, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.Reset || selected.Provision || selected.Data || !selected.MQTT || selected.RuntimeLogs || !selected.BillingLog || selected.BillingDB {
+	if selected.Reset || selected.Provision || selected.Data || !selected.MQTT || selected.RuntimeLogs || !selected.BillingLog || selected.BillingDB || selected.Lifecycle {
 		t.Fatalf("selective selection = %+v", selected)
 	}
 }

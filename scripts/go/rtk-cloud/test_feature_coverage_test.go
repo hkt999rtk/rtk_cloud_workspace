@@ -151,25 +151,37 @@ func TestFeatureCoverageGateModesDeferLiveEvidenceUntilRelease(t *testing.T) {
 	requirement := &catalog.Features[0].Requirements[0]
 
 	requirement.Gate = "pr"
-	for _, mode := range []string{"pr", "main", "release"} {
+	for _, mode := range []string{"pr", "main", "scheduled", "release"} {
 		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
 		if report.Required != 1 || report.Pass != 1 || report.DeferredLive != 0 {
 			t.Fatalf("%s must qualify deterministic PR evidence: %+v", mode, report)
 		}
 	}
 
-	for _, gate := range []string{"scheduled", "operator-release"} {
-		requirement.Gate = gate
-		for _, mode := range []string{"pr", "main"} {
-			report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
-			if report.Required != 0 || report.Pass != 0 || report.DeferredLive != 1 || report.Requirements[0].Status != "DEFERRED_LIVE" {
-				t.Fatalf("%s gate %s must defer live evidence: %+v", mode, gate, report)
-			}
+	requirement.Gate = "scheduled"
+	for _, mode := range []string{"pr", "main"} {
+		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
+		if report.Required != 0 || report.Pass != 0 || report.DeferredLive != 1 || report.Requirements[0].Status != "DEFERRED_LIVE" {
+			t.Fatalf("%s gate scheduled must defer live evidence: %+v", mode, report)
 		}
-		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "release", now)
+	}
+	for _, mode := range []string{"scheduled", "release"} {
+		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
 		if report.Required != 1 || report.Pass != 1 || report.DeferredLive != 0 {
-			t.Fatalf("release gate %s must require live evidence: %+v", gate, report)
+			t.Fatalf("%s must require scheduled evidence: %+v", mode, report)
 		}
+	}
+
+	requirement.Gate = "operator-release"
+	for _, mode := range []string{"pr", "main", "scheduled"} {
+		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
+		if report.Required != 0 || report.Pass != 0 || report.DeferredLive != 1 || report.Requirements[0].Status != "DEFERRED_LIVE" {
+			t.Fatalf("%s gate operator-release must defer live evidence: %+v", mode, report)
+		}
+	}
+	report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "release", now)
+	if report.Required != 1 || report.Pass != 1 || report.DeferredLive != 0 {
+		t.Fatalf("release must require operator evidence: %+v", report)
 	}
 }
 
@@ -520,6 +532,9 @@ func TestWriteCaseFeatureEvidenceProducesCompleteLiveContract(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("# PASS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "junit.xml"), []byte(`<?xml version="1.0"?><testsuite tests="1" failures="0"><testcase name="live"/></testsuite>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "logs", "run.log"), []byte("status=PASS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -586,6 +601,9 @@ func TestWriteCaseFeatureEvidenceKeepsWorkflowGapIncompleteInObserveMode(t *test
 		if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("# PASS\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(dir, "junit.xml"), []byte(`<?xml version="1.0"?><testsuite tests="1" failures="0"><testcase name="live"/></testsuite>`), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(dir, "logs", "run.log"), []byte("status=PASS\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -627,14 +645,21 @@ func TestWriteCaseFeatureEvidenceKeepsWorkflowGapIncompleteInObserveMode(t *test
 	}
 	statusOnlyDir := makeEvidenceDir()
 	for _, workflow := range inventory.Workflows {
-		if !catalogContainsString(workflow.RequirementIDs, "REQ-LIVE-STG-ONBOARD-001") {
+		matchesCase := false
+		for _, requirementID := range tc.Verifies {
+			if catalogContainsString(workflow.RequirementIDs, requirementID) {
+				matchesCase = true
+				break
+			}
+		}
+		if !matchesCase {
 			continue
 		}
 		steps := map[string]string{}
 		for _, step := range workflow.Steps {
 			steps[step.ID] = "PASS"
 		}
-		if err := writeJSON(filepath.Join(statusOnlyDir, "workflow.json"), map[string]any{
+		if err := writeJSON(filepath.Join(statusOnlyDir, "workflow-"+workflow.ID+".json"), map[string]any{
 			"workflow": map[string]any{"workflow_id": workflow.ID, "steps": steps},
 		}); err != nil {
 			t.Fatal(err)

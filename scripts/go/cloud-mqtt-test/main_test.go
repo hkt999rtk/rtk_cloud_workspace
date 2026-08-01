@@ -3311,3 +3311,44 @@ func TestWriteSDKDeviceReadyFileIsDeterministic(t *testing.T) {
 		t.Fatalf("ready evidence = %#v", ready.Evidence)
 	}
 }
+
+func TestReadDeviceInfoWithAppTokenRequiresMatchingSubject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/api/devices/device-1/info" {
+			t.Fatalf("path = %q", req.URL.Path)
+		}
+		if req.Header.Get("Authorization") != "Bearer app-token" {
+			t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+		}
+		_, _ = io.WriteString(w, `{"status":"ok","devid":"device-1","info":{"model":"C1"}}`)
+	}))
+	defer server.Close()
+
+	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadDeviceInfoWithAppTokenRejectsMismatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = io.WriteString(w, `{"status":"ok","devid":"other-device"}`)
+	}))
+	defer server.Close()
+
+	if err := readDeviceInfoWithAppToken(server.URL, "device-1", "app-token"); err == nil {
+		t.Fatal("mismatched device info unexpectedly passed")
+	}
+}
+
+func TestPrependRuntimeBootstrapTraceRenumbersEvidence(t *testing.T) {
+	observed := time.Date(2026, 8, 1, 7, 0, 0, 0, time.UTC)
+	steps := prependRuntimeBootstrapTrace([]traceStep{{Step: 1, Phase: "mqtt_connect", Status: "PASS"}}, observed)
+	if len(steps) != 3 || steps[0].Phase != "app_token" || steps[1].Phase != "device_info" || steps[2].Phase != "mqtt_connect" {
+		t.Fatalf("steps = %#v", steps)
+	}
+	for index, step := range steps {
+		if step.Step != index+1 {
+			t.Fatalf("step[%d].Step = %d", index, step.Step)
+		}
+	}
+}

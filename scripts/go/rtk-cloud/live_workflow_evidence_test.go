@@ -20,6 +20,8 @@ func TestQualifyLiveOnboardingFactsRequiresOneCompleteDeviceChain(t *testing.T) 
 	mqtt := liveOnboardingMQTTEvidence{Status: "PASS", Overall: "pass", Devices: []liveOnboardingMQTTDevice{{
 		DeviceID: "device-1", MQTTStatus: "PASS", TelemetryState: "PASS", CommandState: "PASS",
 		Trace: []liveOnboardingMQTTTraceStep{
+			{Phase: "app_token", Actor: "app_controller", Action: "request_token", Status: "PASS", Detail: "scope=app devid=matched"},
+			{Phase: "device_info", Actor: "app_controller", Action: "get_device_info", Status: "PASS", Detail: "app token subject matched device"},
 			{Phase: "device_token", Actor: "device_client", Action: "request_token", Status: "PASS", Detail: "scope=device"},
 			{Phase: "mqtt_connect", Actor: "device_client", Action: "mqtt_connect", Status: "PASS"},
 			{Phase: "mqtt_connect", Actor: "app_observer", Action: "mqtt_connect", Status: "PASS"},
@@ -71,6 +73,13 @@ func TestQualifyLiveOnboardingFactsRequiresOneCompleteDeviceChain(t *testing.T) 
 	if generated.Workflow.WorkflowID != liveOnboardingWorkflowID ||
 		generated.Workflow.Assertions["observe_online_readiness"]["owner_online_receive"] != "PASS" {
 		t.Fatalf("unexpected generated workflow: %+v", generated.Workflow)
+	}
+	if err := readJSONFile(filepath.Join(outDir, "provisioning-runtime-workflow.json"), &generated); err != nil {
+		t.Fatal(err)
+	}
+	if generated.Workflow.WorkflowID != provisioningRuntimeWorkflowID ||
+		generated.Workflow.Assertions["read_device_info"]["response_device_identity_matched"] != "PASS" {
+		t.Fatalf("unexpected runtime workflow: %+v", generated.Workflow)
 	}
 
 	mqtt.Devices[0].Trace[len(mqtt.Devices[0].Trace)-1].Status = "FAIL"
