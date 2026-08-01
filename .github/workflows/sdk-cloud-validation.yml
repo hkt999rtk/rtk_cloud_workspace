@@ -249,6 +249,20 @@ jobs:
             --environment "${{ inputs.environment }}" --platform ios --mode "${{ inputs.mode }}" \
             --profile "${{ inputs.profile }}" \
             --run-id "sdk-cloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-ios"
+      - name: Normalize iOS requirement evidence
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result=""
+          while IFS= read -r candidate; do
+            if jq -e '.platform_result != null and .platform == "ios"' "$candidate" >/dev/null; then
+              result="$candidate"
+              break
+            fi
+          done < <(find .artifacts/e2e_test/cloud_validation -name results.json -type f -print)
+          test -n "$result"
+          go run ./scripts/go/rtk-cloud -- test-feature-coverage import-cloud-validation --input "$result"
       - name: Reject and remove secret-bearing iOS text artifacts
         if: always()
         run: e2e_test/cloud_validation/scripts/sanitize-upload-artifacts.sh .artifacts/e2e_test/cloud_validation
@@ -276,6 +290,7 @@ jobs:
             .artifacts/e2e_test/cloud_validation/**/virtual-device/TEST_REPORT.md
             .artifacts/e2e_test/cloud_validation/**/platform_test.log
             .artifacts/e2e_test/cloud_validation/**/redaction-failures.txt
+            .artifacts/e2e_test/cloud_validation/**/feature-evidence.json
           if-no-files-found: error
           include-hidden-files: true
 
@@ -329,6 +344,20 @@ jobs:
             --environment "${{ inputs.environment }}" --platform android --mode "${{ inputs.mode }}" \
             --profile "${{ inputs.profile }}" \
             --run-id "sdk-cloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-android"
+      - name: Normalize Android requirement evidence
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          result=""
+          while IFS= read -r candidate; do
+            if jq -e '.platform_result != null and .platform == "android"' "$candidate" >/dev/null; then
+              result="$candidate"
+              break
+            fi
+          done < <(find .artifacts/e2e_test/cloud_validation -name results.json -type f -print)
+          test -n "$result"
+          go run ./scripts/go/rtk-cloud -- test-feature-coverage import-cloud-validation --input "$result"
       - name: Reject and remove secret-bearing Android artifacts
         if: always()
         run: e2e_test/cloud_validation/scripts/sanitize-upload-artifacts.sh .artifacts/e2e_test/cloud_validation
@@ -352,6 +381,7 @@ jobs:
             .artifacts/e2e_test/cloud_validation/**/virtual-device/TEST_REPORT.md
             .artifacts/e2e_test/cloud_validation/**/platform_test.log
             .artifacts/e2e_test/cloud_validation/**/redaction-failures.txt
+            .artifacts/e2e_test/cloud_validation/**/feature-evidence.json
           if-no-files-found: error
           include-hidden-files: true
 
