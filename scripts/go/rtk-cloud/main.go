@@ -1273,7 +1273,62 @@ func runTestServices(args []string) error {
 		if err != nil {
 			return err
 		}
+		if *install {
+			if err := installQualificationNPMDependencies(workspace, qualificationSpecs); err != nil {
+				return err
+			}
+		}
 		if err := runAuthorizationQualificationWithSpecs(workspace, *qualificationOutputDir, *qualificationRunID, qualificationSpecs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func qualificationNPMInstallDirs(specs []authorizationQualificationSpec) ([]string, error) {
+	dirs := map[string]bool{}
+	for _, spec := range specs {
+		targets, err := authorizationQualificationTargets(spec)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", spec.TestID, err)
+		}
+		for _, target := range targets {
+			requiresNPM := len(target.Command) > 0 && target.Command[0] == "npm"
+			for _, setup := range target.SetupCommands {
+				if len(setup) > 0 && setup[0] == "npm" {
+					requiresNPM = true
+				}
+			}
+			if requiresNPM {
+				dirs[filepath.Join("repos", spec.Repository, target.WorkingDir)] = true
+			}
+		}
+	}
+	result := make([]string, 0, len(dirs))
+	for dir := range dirs {
+		result = append(result, dir)
+	}
+	slices.Sort(result)
+	return result, nil
+}
+
+var qualificationNPMCI = runCmdWithEnv
+
+func installQualificationNPMDependencies(workspace string, specs []authorizationQualificationSpec) error {
+	dirs, err := qualificationNPMInstallDirs(specs)
+	if err != nil {
+		return err
+	}
+	if len(dirs) == 0 {
+		return nil
+	}
+	npmCache := filepath.Join(workspace, ".artifacts", "npm-cache")
+	if err := os.MkdirAll(npmCache, 0o755); err != nil {
+		return fmt.Errorf("create isolated npm cache: %w", err)
+	}
+	for _, relativeDir := range dirs {
+		fmt.Fprintf(os.Stdout, "== install qualification dependencies: %s ==\n", relativeDir)
+		if err := qualificationNPMCI(filepath.Join(workspace, relativeDir), map[string]string{"NPM_CONFIG_CACHE": npmCache}, "npm", "ci"); err != nil {
 			return err
 		}
 	}

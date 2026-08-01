@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -572,9 +573,9 @@ func TestVideoLoadtestTokenMintWaitsForBatchBeforeReportingFailures(t *testing.T
 		{DeviceID: "cam-ok", AssignedEmail: user.Email, CertPEM: certPEM, KeyPEM: keyPEM, User: user},
 		{DeviceID: "cam-fail", AssignedEmail: user.Email, CertPEM: certPEM, KeyPEM: keyPEM, User: user},
 	}
-	requests := 0
+	var requests atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
+		requests.Add(1)
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
@@ -605,8 +606,8 @@ func TestVideoLoadtestTokenMintWaitsForBatchBeforeReportingFailures(t *testing.T
 			t.Fatalf("error %q missing %q", text, want)
 		}
 	}
-	if requests != 7 {
-		t.Fatalf("requests = %d, want 7: ok device+app, failing device+4 app retries", requests)
+	if requests.Load() != 7 {
+		t.Fatalf("requests = %d, want 7: ok device+app, failing device+4 app retries", requests.Load())
 	}
 }
 

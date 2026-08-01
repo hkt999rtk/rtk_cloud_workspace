@@ -211,6 +211,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"--publish 127.0.0.1::5432",
 		"TEST_DATABASE_URL=\"postgres://postgres:postgres@127.0.0.1:${qualification_port}/postgres?sslmode=disable\"",
 		"--qualification-only",
+		"--qualification-only \\\n            --install \\",
 		"--qualification-output-dir \"$evidence_root/authorization\"",
 		"cleanup_qualification_postgres\n          trap - EXIT",
 	} {
