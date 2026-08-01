@@ -75,6 +75,8 @@ var commands = map[string]commandSpec{
 	"mqtt-test":                        {run: runMQTTTest},
 	"mqtt-trace-report":                {run: runMQTTTraceReport},
 	"platform-admin-token":             {run: runPlatformAdminToken},
+	"video-cloud-admin-token":          {run: runVideoCloudAdminToken},
+	"cloud-logger-token":               {run: runCloudLoggerToken},
 	"provision":                        {run: runProvision},
 	"provision-k8s":                    {run: runProvisionK8s},
 	"refresh-user-tokens":              {run: runRefreshUserTokens},
@@ -181,7 +183,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "test-feature-coverage" {
 		return args, nil
 	}
 	var environment, workspace string
@@ -3758,6 +3760,11 @@ func ensureK8SKubeconfig(workspace, envRoot, stack string) (string, error) {
 	if info, err := os.Stat(out); err == nil && !info.IsDir() {
 		return out, nil
 	}
+	return downloadK8SKubeconfig(workspace, stack)
+}
+
+func downloadK8SKubeconfig(workspace, stack string) (string, error) {
+	out := filepath.Join(workspace, ".artifacts", "kube", stack+"-lke.kubeconfig")
 	token := strings.TrimSpace(os.Getenv("LINODE_TOKEN"))
 	if token == "" {
 		return "", errors.New("LINODE_TOKEN, KUBECONFIG, or CLOUD_STAGING_K8S_KUBECONFIG is required for K8s staging")
@@ -4052,7 +4059,10 @@ func shouldLogK8SPortForwardLine(line string) bool {
 
 func readK8SSecretEnv(kubeconfig, namespace, secret string, keys ...string) ([]string, error) {
 	cmd := exec.Command(lkeKubectl(), "-n", namespace, "get", "secret", secret, "-o", "json")
-	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	cmd.Env = os.Environ()
+	if strings.TrimSpace(kubeconfig) != "" {
+		cmd.Env = append(cmd.Env, "KUBECONFIG="+kubeconfig)
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -6814,6 +6824,8 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	if baseURL == "" {
 		baseURL = "https://" + domain
 	}
+	explicitAdminEmail := strings.TrimSpace(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"))
+	explicitAdminPassword := strings.TrimSpace(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"))
 	ctx := accountManagerContext{
 		EnvRoot:          envRoot,
 		BaseURL:          baseURL,
@@ -6821,22 +6833,25 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		AdminPassword:    firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD")),
 		PlatformAdminEnv: platformEnv,
 	}
-	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" && os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) == "lke" {
 		stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
-		forwardURL, cleanup, err := lkeAccountManagerPortForward(envRoot, map[string]string{
-			"CLOUD_STACK_NAME": stack,
-		})
-		if err != nil {
-			return accountManagerContext{}, err
+		refreshRuntimeCredentials := os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" || lkeAccountManagerURLMatchesDomain(ctx.BaseURL, domain)
+		if os.Getenv("ACCOUNT_MANAGER_BASE_URL") == "" {
+			forwardURL, cleanup, err := lkeAccountManagerPortForward(envRoot, map[string]string{
+				"CLOUD_STACK_NAME": stack,
+			})
+			if err != nil {
+				return accountManagerContext{}, err
+			}
+			ctx.BaseURL = forwardURL
+			ctx.cleanup = cleanup
 		}
-		ctx.BaseURL = forwardURL
-		ctx.cleanup = cleanup
-		if ctx.AdminEmail == "" || ctx.AdminPassword == "" {
-			kubeconfig := firstNonEmpty(
-				os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"),
-				os.Getenv("LKE_KUBECONFIG"),
-				filepath.Join(envRoot, "state", "kubeconfig.yaml"),
-			)
+		if refreshRuntimeCredentials && (explicitAdminEmail == "" || explicitAdminPassword == "") {
+			kubeconfig, err := lkeRuntimeKubeconfig(workspace, envRoot, stack)
+			if err != nil {
+				ctx.Close()
+				return accountManagerContext{}, err
+			}
 			secretEnv, err := readK8SSecretEnv(
 				kubeconfig,
 				stack+"-account-manager",
@@ -6855,11 +6870,11 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 				}
 				switch key {
 				case "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":
-					if ctx.AdminEmail == "" {
+					if explicitAdminEmail == "" {
 						ctx.AdminEmail = value
 					}
 				case "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":
-					if ctx.AdminPassword == "" {
+					if explicitAdminPassword == "" {
 						ctx.AdminPassword = value
 					}
 				}
@@ -6867,6 +6882,124 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 		}
 	}
 	return ctx, nil
+}
+
+func lkeAccountManagerURLMatchesDomain(baseURL, domain string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Hostname(), strings.TrimSpace(domain))
+}
+
+func lkeRuntimeSecretValueFromFlags(workspaceFlag, envRootFlag, namespaceSuffix, secretName, key string) (string, error) {
+	workspace := workspaceFlag
+	var err error
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return "", err
+		}
+	}
+	envRoot, err := resolveEnvRoot(workspace, envRootFlag)
+	if err != nil {
+		return "", err
+	}
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) != "lke" {
+		return "", errors.New("LKE runtime credentials require CLOUD_PROVIDER=lke")
+	}
+	stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
+	kubeconfig, err := lkeRuntimeKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return "", err
+	}
+	items, err := readK8SSecretEnv(kubeconfig, stack+namespaceSuffix, secretName, key)
+	if err != nil {
+		return "", err
+	}
+	_, value, ok := strings.Cut(items[0], "=")
+	if !ok || strings.TrimSpace(value) == "" {
+		return "", fmt.Errorf("k8s secret %s/%s missing %s", stack+namespaceSuffix, secretName, key)
+	}
+	return value, nil
+}
+
+func lkeRuntimeKubeconfig(workspace, envRoot, stack string) (string, error) {
+	candidates := []string{
+		firstNonEmpty(os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"), os.Getenv("LKE_KUBECONFIG"), os.Getenv("KUBECONFIG")),
+		filepath.Join(envRoot, "state", "kubeconfig.yaml"),
+		filepath.Join(workspace, ".artifacts", "kube", stack+"-lke.kubeconfig"),
+	}
+	for _, path := range candidates {
+		if strings.TrimSpace(path) != "" && k8sKubeconfigReady(path) {
+			return path, nil
+		}
+	}
+	if strings.TrimSpace(os.Getenv("LINODE_TOKEN")) != "" {
+		return downloadK8SKubeconfig(workspace, stack)
+	}
+	cmd := exec.Command(lkeKubectl(), "--request-timeout=5s", "get", "--raw=/readyz")
+	if cmd.Run() == nil {
+		return "", nil
+	}
+	return "", errors.New("current LKE kubeconfig is unavailable or expired; LINODE_TOKEN is required to refresh it")
+}
+
+func k8sKubeconfigReady(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	cmd := exec.Command(lkeKubectl(), "--kubeconfig", path, "--request-timeout=5s", "get", "--raw=/readyz")
+	return cmd.Run() == nil
+}
+
+func runVideoCloudAdminToken(args []string) error {
+	fs := flag.NewFlagSet("video-cloud-admin-token", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	ttl := fs.Duration("ttl", 30*time.Minute, "short-lived token TTL")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *ttl <= 0 || *ttl > time.Hour {
+		return errors.New("--ttl must be greater than zero and no more than 1h")
+	}
+	secret, err := lkeRuntimeSecretValueFromFlags(*workspaceFlag, *envRootFlag, "-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_AUTH_SECRET")
+	if err != nil {
+		return err
+	}
+	workspace := *workspaceFlag
+	if workspace == "" {
+		workspace, err = workspaceRoot()
+		if err != nil {
+			return err
+		}
+	}
+	cmd := exec.Command("go", "run", "./cmd/admin-token", "--ttl", ttl.String())
+	cmd.Dir = filepath.Join(workspace, "repos", "rtk_video_cloud")
+	cmd.Env = append(os.Environ(), "GOWORK=off", "VIDEO_CLOUD_AUTH_SECRET="+secret)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func runCloudLoggerToken(args []string) error {
+	fs := flag.NewFlagSet("cloud-logger-token", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	workspaceFlag := fs.String("workspace", "", "workspace")
+	envRootFlag := fs.String("env-root", "", "environment root")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	value, err := lkeRuntimeSecretValueFromFlags(*workspaceFlag, *envRootFlag, "-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_LOGGER_TOKEN")
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, value)
+	return nil
 }
 
 func runPlatformAdminToken(args []string) error {

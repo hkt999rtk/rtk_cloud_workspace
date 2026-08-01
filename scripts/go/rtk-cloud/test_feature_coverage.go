@@ -733,8 +733,12 @@ func requirementEvaluatedInMode(requirement testCatalogRequirement, mode string)
 	switch mode {
 	case "pr":
 		return requirement.Gate == "pr"
-	default:
+	case "main":
+		return requirement.Gate == "pr" || requirement.Gate == "main"
+	case "release":
 		return true
+	default:
+		return false
 	}
 }
 

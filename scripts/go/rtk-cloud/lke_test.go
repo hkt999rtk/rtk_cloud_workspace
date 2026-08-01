@@ -3831,6 +3831,126 @@ func TestAccountManagerContextForLKELoadsMissingPlatformAdminFromRuntimeSecret(t
 	ctx.Close()
 }
 
+func TestAccountManagerContextForLKERefreshesCachedPlatformAdminFromRuntimeSecret(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
+	writeTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=stale@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=stale-password\n")
+
+	ctx, err := accountManagerContextFromFlags(workspace, envRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+	if ctx.AdminEmail != "admin@example.test" || ctx.AdminPassword != "password123" {
+		t.Fatalf("expected current LKE runtime credentials, got email=%q password-current=%t", ctx.AdminEmail, ctx.AdminPassword == "password123")
+	}
+}
+
+func TestLKESDKRuntimeCredentialHelpersReadCurrentClusterSecret(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	writeTestFile(t, kubeconfig, "test-kubeconfig\n")
+	t.Setenv("KUBECONFIG", kubeconfig)
+
+	loggerToken, err := lkeRuntimeSecretValueFromFlags(workspace, envRoot, "-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_LOGGER_TOKEN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loggerToken != "test-logger-token" {
+		t.Fatal("logger token was not loaded from the current LKE runtime secret")
+	}
+	videoSecret, err := lkeRuntimeSecretValueFromFlags(workspace, envRoot, "-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_AUTH_SECRET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if videoSecret != "test-video-auth" {
+		t.Fatal("video auth secret was not loaded from the current LKE runtime secret")
+	}
+}
+
+func TestVideoCloudAdminTokenRejectsLongLivedToken(t *testing.T) {
+	if err := runVideoCloudAdminToken([]string{"--ttl", "2h"}); err == nil || !strings.Contains(err.Error(), "no more than 1h") {
+		t.Fatalf("expected long-lived token rejection, got %v", err)
+	}
+}
+
+func TestSDKLiveTokenCommandsUseCurrentLKESecret(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	if err := os.MkdirAll(filepath.Join(workspace, "repos", "rtk_video_cloud"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig")
+	writeTestFile(t, kubeconfig, "test-kubeconfig\n")
+	t.Setenv("KUBECONFIG", kubeconfig)
+	binDir := t.TempDir()
+	writeTestFile(t, filepath.Join(binDir, "go"), `#!/usr/bin/env bash
+set -euo pipefail
+[[ "${VIDEO_CLOUD_AUTH_SECRET:-}" == "test-video-auth" ]]
+[[ "$*" == "run ./cmd/admin-token --ttl 5m0s" ]]
+printf 'header.payload.signature\n'
+`)
+	if err := os.Chmod(filepath.Join(binDir, "go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	videoOutput := captureStdout(t, func() {
+		if err := runVideoCloudAdminToken([]string{"--workspace", workspace, "--env-root", envRoot, "--ttl", "5m"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(videoOutput) != "header.payload.signature" {
+		t.Fatal("video admin command did not return the short-lived child token")
+	}
+	loggerOutput := captureStdout(t, func() {
+		if err := runCloudLoggerToken([]string{"--workspace", workspace, "--env-root", envRoot}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.TrimSpace(loggerOutput) != "test-logger-token" {
+		t.Fatal("logger command did not return the current LKE token")
+	}
+}
+
+func TestSDKLiveTokenCommandsRejectInvalidFlags(t *testing.T) {
+	if err := runVideoCloudAdminToken([]string{"--unknown"}); err == nil {
+		t.Fatal("video token command accepted an unknown flag")
+	}
+	if err := runCloudLoggerToken([]string{"--unknown"}); err == nil {
+		t.Fatal("logger token command accepted an unknown flag")
+	}
+}
+
+func TestEnsureK8SKubeconfigRequiresAccessWhenNoConfigExists(t *testing.T) {
+	t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", "")
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("LINODE_TOKEN", "")
+	if _, err := ensureK8SKubeconfig(t.TempDir(), t.TempDir(), "video-cloud-staging"); err == nil || !strings.Contains(err.Error(), "LINODE_TOKEN") {
+		t.Fatalf("expected missing K8s access rejection, got %v", err)
+	}
+}
+
+func TestLKEAccountManagerCredentialRefreshRequiresDeploymentDomain(t *testing.T) {
+	domain := "account-manager.video-cloud-staging.realtekconnect.com"
+	for _, tc := range []struct {
+		url  string
+		want bool
+	}{
+		{"https://account-manager.video-cloud-staging.realtekconnect.com", true},
+		{"https://account-manager.video-cloud-staging.realtekconnect.com/v1", true},
+		{"http://127.0.0.1:18081", false},
+		{"https://account-manager.example.invalid", false},
+		{"not a url", false},
+	} {
+		if got := lkeAccountManagerURLMatchesDomain(tc.url, domain); got != tc.want {
+			t.Fatalf("lkeAccountManagerURLMatchesDomain(%q)=%t, want %t", tc.url, got, tc.want)
+		}
+	}
+}
+
 func TestLKEFactoryEnrollPortForward(t *testing.T) {
 	_, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectl(t)
@@ -4797,6 +4917,10 @@ if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRE
 fi
 if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
   printf '{"data":{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM="}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
+  printf '{"data":{"VIDEO_CLOUD_AUTH_SECRET":"dGVzdC12aWRlby1hdXRo","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4="}}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then

@@ -385,6 +385,22 @@ func TestNormalizeEnvironmentArgsAllowsExplicitFeatureEnvironmentRoot(t *testing
 	}
 }
 
+func TestNormalizeEnvironmentArgsPreservesFeatureEvidenceEnvironment(t *testing.T) {
+	input := []string{
+		"test-feature-coverage", "record",
+		"--test-id", "E2E-CA-SIGNUP-EMAIL-001",
+		"--environment", "staging",
+		"--output-dir", "/tmp/evidence",
+	}
+	args, err := normalizeEnvironmentArgs(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(args, input) {
+		t.Fatalf("normalizeEnvironmentArgs() = %#v, want %#v", args, input)
+	}
+}
+
 func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 	t.Helper()
 	root := t.TempDir()
