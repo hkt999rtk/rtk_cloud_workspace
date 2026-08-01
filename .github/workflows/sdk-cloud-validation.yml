@@ -93,6 +93,8 @@ on:
         type: boolean
         default: false
     secrets:
+      CI_RUNNER_GITHUB_WORK_KEY:
+        required: true
       fixture_provider_command:
         required: false
       fixture_cleanup_command:
@@ -125,7 +127,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: false
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
@@ -239,7 +256,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: false
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
@@ -327,7 +359,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: false
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
@@ -405,7 +452,22 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
+          submodules: false
+      - name: Initialize private submodules
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CI_RUNNER_GITHUB_WORK_KEY"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git submodule sync --recursive
+          git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
           go-version: "1.24.x"
