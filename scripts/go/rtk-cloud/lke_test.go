@@ -1813,6 +1813,15 @@ func TestLKENetworkPoliciesAllowVideoCloudAPIInternalRouting(t *testing.T) {
 
 	policy := lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)
 	for _, want := range []string{
+		"kubernetes.io/metadata.name: video-cloud-staging-account-manager",
+		"app.kubernetes.io/name: account-manager-outbox-worker",
+		"port: 8080",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("video API internal policy missing %q:\n%s", want, policy)
+		}
+	}
+	for _, want := range []string{
 		"name: allow-video-cloud-api-internal",
 		"namespace: video-cloud-staging-video-cloud",
 		"podSelector:\n    matchLabels:\n      app.kubernetes.io/name: video-cloud-api",
@@ -3611,11 +3620,13 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 		"go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache",
 		"go build -trimpath -o /out/rtk-account-manager-email-worker ./cmd/email-worker",
 		"go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin",
+		"go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker",
 		"apt-get install -y --no-install-recommends ca-certificates",
 		"COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate",
 		"COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache",
 		"COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manager-email-worker",
 		"COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin",
+		"COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker",
 		"COPY --from=builder /src/migrations /app/migrations",
 	} {
 		if !strings.Contains(body, want) {
@@ -3704,6 +3715,47 @@ func TestAccountManagerEmailWorkerManifestUsesSendMailHTTPSecret(t *testing.T) {
 	changedTimeout["SENDMAIL_HTTP_TIMEOUT"] = "30s"
 	if lkeAccountManagerEmailWorkerManifest(changedTimeout) == manifest {
 		t.Fatal("Send Mail timeout change must update the worker runtime checksum")
+	}
+}
+
+func TestAccountManagerOutboxWorkerUsesDirectLifecycleAPI(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	env := map[string]string{"CLOUD_STACK_NAME": "coverage-stack"}
+	secret := lkeAccountManagerSecretManifest(env)
+	for _, want := range []string{
+		`CROSS_SERVICE_BROKER: "direct_http"`,
+		`VIDEO_CLOUD_LIFECYCLE_BASE_URL: "http://video-cloud-api.coverage-stack-video-cloud.svc.cluster.local:80"`,
+		`VIDEO_CLOUD_LIFECYCLE_TOKEN: "`,
+		`VIDEO_CLOUD_LIFECYCLE_TIMEOUT: "10s"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret missing %q:\n%s", want, secret)
+		}
+	}
+	manifest := lkeAccountManagerOutboxWorkerManifest(env)
+	for _, want := range []string{
+		"name: account-manager-outbox-worker",
+		`command: ["/app/rtk-account-manager-outbox-worker"]`,
+		"name: account-manager-runtime",
+		"registry.example.test/account-manager:test",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("outbox manifest missing %q:\n%s", want, manifest)
+		}
+	}
+	changed := maps.Clone(env)
+	changed["VIDEO_CLOUD_LIFECYCLE_TIMEOUT"] = "30s"
+	if lkeAccountManagerOutboxWorkerManifest(changed) == manifest {
+		t.Fatal("lifecycle timeout change must update the worker runtime checksum")
+	}
+	t.Setenv("LKE_NAMESPACE_VIDEO_CLOUD", "different-video-namespace")
+	if lkeAccountManagerOutboxWorkerManifest(env) == manifest {
+		t.Fatal("lifecycle base URL change must update the worker runtime checksum")
+	}
+	t.Setenv("LKE_NAMESPACE_VIDEO_CLOUD", "")
+	t.Setenv("LKE_INTERNAL_AUTH", "different-internal-token")
+	if lkeAccountManagerOutboxWorkerManifest(env) == manifest {
+		t.Fatal("lifecycle token change must update the worker runtime checksum")
 	}
 }
 

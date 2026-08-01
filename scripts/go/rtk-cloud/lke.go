@@ -1537,10 +1537,16 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: mqtt
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: account-manager-outbox-worker
       ports:
         - protocol: TCP
           port: 8080
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"))
 }
 
 func lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env map[string]string) string {
@@ -1903,6 +1909,9 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "account-manager") {
+		if err := kubectlApply(lkeAccountManagerOutboxWorkerManifest(env)); err != nil {
+			return err
+		}
 		if lkeEmailDeliveryEnabled(env) {
 			if err := kubectlApply(lkeAccountManagerEmailWorkerManifest(env)); err != nil {
 				return err
@@ -1916,6 +1925,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	}
 	if lkeWorkloadSelected(env, opts, "account-manager") && lkeEmailDeliveryEnabled(env) {
 		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-email-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "account-manager") {
+		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-outbox-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return err
 		}
 	}
@@ -2172,6 +2186,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-worker ./cmd/email-worker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker
 
 FROM debian:bookworm-slim
 WORKDIR /app
@@ -2185,6 +2200,7 @@ COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-mi
 COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache
 COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manager-email-worker
 COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin
+COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker
 COPY --from=builder /src/migrations /app/migrations
 USER app
 EXPOSE 8080
@@ -2501,6 +2517,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		return err
 	}
 	if err := kubectlApply(lkeAccountManagerSecretManifest(env)); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
 		return err
 	}
 	_ = runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "job", "account-manager-migrate", "--ignore-not-found")
@@ -6311,12 +6330,19 @@ stringData:
   EMAIL_OUTBOX_MAX_ATTEMPTS: %q
   EMAIL_OUTBOX_RETRY_BASE: %q
   EMAIL_OUTBOX_RETRY_MAX: %q
-  CROSS_SERVICE_BROKER: "log"
+  CROSS_SERVICE_BROKER: "direct_http"
+  VIDEO_CLOUD_LIFECYCLE_BASE_URL: %q
+  VIDEO_CLOUD_LIFECYCLE_TOKEN: %q
+  VIDEO_CLOUD_LIFECYCLE_TIMEOUT: %q
   APP_CERT_ISSUER_BASE_URL: %q
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
+}
+
+func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
+	return "http://video-cloud-api." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:80"
 }
 
 func lkeEmailOutboxEncryptionKey(env map[string]string) string {
@@ -6397,6 +6423,67 @@ spec:
           image: %s
           imagePullPolicy: IfNotPresent
           command: ["/app/rtk-account-manager-email-worker"]
+          envFrom:
+            - secretRef:
+                name: account-manager-runtime
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], checksum, lkeImagePullSecretName(env), image)
+}
+
+func lkeAccountManagerOutboxWorkerManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(
+		lkeAccountManagerDatabaseURL(env),
+		lkeVideoCloudLifecycleInternalURL(env),
+		lkeInternalAuthToken(),
+		firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"),
+	)
+	image := ""
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			image = workload.Image
+			break
+		}
+	}
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-manager-outbox-worker
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-outbox-worker
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: account-manager-outbox-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: account-manager-outbox-worker
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: worker
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-outbox-worker"]
           envFrom:
             - secretRef:
                 name: account-manager-runtime
