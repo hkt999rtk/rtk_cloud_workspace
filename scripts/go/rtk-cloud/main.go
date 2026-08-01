@@ -1293,14 +1293,23 @@ func qualificationNPMInstallDirs(specs []authorizationQualificationSpec) ([]stri
 			return nil, fmt.Errorf("%s: %w", spec.TestID, err)
 		}
 		for _, target := range targets {
-			requiresNPM := len(target.Command) > 0 && target.Command[0] == "npm"
-			for _, setup := range target.SetupCommands {
-				if len(setup) > 0 && setup[0] == "npm" {
-					requiresNPM = true
+			commands := append(slices.Clone(target.SetupCommands), target.Command)
+			for _, command := range commands {
+				if len(command) == 0 || command[0] != "npm" {
+					continue
 				}
-			}
-			if requiresNPM {
-				dirs[filepath.Join("repos", spec.Repository, target.WorkingDir)] = true
+				dir := filepath.Join("repos", spec.Repository, target.WorkingDir)
+				for index := 1; index < len(command); index++ {
+					if command[index] == "--prefix" && index+1 < len(command) {
+						dir = filepath.Join(dir, command[index+1])
+						break
+					}
+					if prefix, ok := strings.CutPrefix(command[index], "--prefix="); ok {
+						dir = filepath.Join(dir, prefix)
+						break
+					}
+				}
+				dirs[dir] = true
 			}
 		}
 	}

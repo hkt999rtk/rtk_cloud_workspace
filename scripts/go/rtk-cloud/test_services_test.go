@@ -73,6 +73,20 @@ func TestQualificationNPMInstallDirsFollowSelectedTargets(t *testing.T) {
 				{WorkingDir: "packages/javascript", Command: []string{"npm", "test"}, Label: "javascript duplicate"},
 			},
 		},
+		{
+			TestID: "INT-JS-PREFIX", Repository: "rtk_cloud_client",
+			Targets: []authorizationQualificationTarget{{
+				SetupCommands: [][]string{{"npm", "--prefix", "packages/javascript", "run", "build"}},
+				Command:       []string{"ctest", "--test-dir", ".artifacts/build"}, Label: "cross-language",
+			}},
+		},
+		{
+			TestID: "INT-JS-PREFIX-EQUALS", Repository: "rtk_cloud_client",
+			Targets: []authorizationQualificationTarget{{
+				SetupCommands: [][]string{{"npm", "--prefix=packages/javascript", "run", "build"}},
+				Command:       []string{"ctest", "--test-dir", ".artifacts/build"}, Label: "cross-language equals",
+			}},
+		},
 		{TestID: "INT-GO", Repository: "rtk_video_cloud", Package: "./internal/apiapp", GoTest: "TestSomething"},
 	}
 
@@ -93,6 +107,17 @@ func TestQualificationNPMInstallDirsRejectInvalidTarget(t *testing.T) {
 	}})
 	if err == nil || !strings.Contains(err.Error(), "INT-INVALID: qualification target requires") {
 		t.Fatalf("invalid qualification target error = %v", err)
+	}
+}
+
+func TestAuthorizationQualificationNPMInstallDirsUsePackageLockRoot(t *testing.T) {
+	got, err := qualificationNPMInstallDirs(authorizationQualificationSpecs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"repos/rtk_cloud_client/packages/javascript"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("authorization npm install dirs = %v, want %v", got, want)
 	}
 }
 
