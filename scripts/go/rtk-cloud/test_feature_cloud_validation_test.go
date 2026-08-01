@@ -161,6 +161,7 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"vars.SDK_E2E_IOS_CLOUD_SLUG", "vars.SDK_E2E_ANDROID_CLOUD_SLUG",
 		"secrets.LINODE_TOKEN", "secrets.CI_RUNNER_GITHUB_WORK_KEY",
 		"Initialize private submodules", "git submodule update --init --recursive --depth=1",
+		"permitted_classes: [], permitted_symbols: [], aliases: true",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("SDK cloud workflow is missing %q", required)
