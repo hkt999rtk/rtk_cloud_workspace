@@ -131,6 +131,7 @@ jobs:
           go run ./rtk-cloud -- test-services \
             --repo rtk_account_manager,rtk_cloud_admin,rtk_video_cloud \
             --qualification-only \
+            --install \
             --qualification-run-id "$FEATURE_EVIDENCE_RUN_ID" \
             --qualification-output-dir "../../.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID/authorization"
 
