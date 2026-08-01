@@ -424,7 +424,6 @@ jobs:
           export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
           export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
           export CLOUD_STAGING_E2E_MQTT_PORT=18884
-          export HOME100K_REFRESH_APP_CERT=1
           go run ./scripts/go/rtk-cloud -- test-live \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \

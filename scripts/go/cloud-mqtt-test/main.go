@@ -5252,7 +5252,11 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	status.CertificateStatus = first.AppCertificate.Status
 	login := first
 	issuedUser := user
-	requestCSR := first.AppCertificate.Status == "csr_required" || (first.AppCertificate.Status == "issued" && refreshAppCertificateRequested())
+	// Account Manager deliberately reuses a valid issued certificate even when
+	// another CSR is supplied. Generate a new private key only when the server
+	// explicitly requires a CSR, otherwise the existing cert would be paired
+	// with an unrelated key and the TLS material would be unusable.
+	requestCSR := first.AppCertificate.Status == "csr_required"
 	if requestCSR {
 		csrPEM, keyPEM, err := generateAppCSR("app-user:" + first.User.ID)
 		if err != nil {
@@ -5293,6 +5297,9 @@ func prepareAppCertificateBootstrap(accountBaseURL, videoBaseURL, tenantSlug str
 	return material
 }
 
+// refreshAppCertificateRequested retains the legacy cache-bypass behavior for
+// callers that need a fresh account login token. It must not cause a new key or
+// CSR while Account Manager reports that the existing certificate is valid.
 func refreshAppCertificateRequested() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("HOME100K_REFRESH_APP_CERT")))
 	return value == "1" || value == "true" || value == "yes" || value == "on"
