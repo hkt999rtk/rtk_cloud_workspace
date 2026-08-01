@@ -2,6 +2,7 @@
 
 import importlib.util
 import pathlib
+import tempfile
 import unittest
 from unittest import mock
 
@@ -90,6 +91,54 @@ class StagingEmailSignupE2ETest(unittest.TestCase):
         self.assertIn('"LKE_CLOUD_ADMIN_IMAGE": (', source)
         self.assertIn('"ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin"', source)
         self.assertNotIn('"provision", "--env-root", str(runtime_root), "--deploy"', source)
+
+    def test_normalizes_signup_and_account_auth_workflows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            evidence_dir = pathlib.Path(temp)
+            (evidence_dir / "evidence.json").write_text(
+                '{"schema":"rtk.email-signup-e2e.evidence.v1",'
+                '"run_id":"email-run-1","status":"PASS","workflow":{'
+                '"workflow_id":"WF-AM-SIGNUP-001","steps":{'
+                '"submit_signup":"PASS","verify_email":"PASS",'
+                '"read_authenticated_user":"PASS","password_login":"PASS",'
+                '"reject_token_replay":"PASS"}}}',
+                encoding="utf-8",
+            )
+            runner.normalize_signup_workflow_evidence(evidence_dir, "email-run-1")
+            signup = runner.json.loads(
+                (evidence_dir / "evidence.json").read_text(encoding="utf-8")
+            )
+            account = runner.json.loads(
+                (evidence_dir / "account-auth-workflow.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                signup["workflow"]["assertions"]["reject_token_replay"]
+                ["token_replay_rejected_without_token_leak"],
+                "PASS",
+            )
+            self.assertEqual(
+                account["workflow"]["workflow_id"],
+                "WF-CONTRACT-AUTH-ACCOUNT-001",
+            )
+            self.assertEqual(
+                account["workflow"]["steps"]["login_verified_account"],
+                "PASS",
+            )
+
+    def test_rejects_mismatched_browser_workflow_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            evidence_dir = pathlib.Path(temp)
+            (evidence_dir / "evidence.json").write_text(
+                '{"schema":"rtk.email-signup-e2e.evidence.v1",'
+                '"run_id":"another-run","status":"PASS","workflow":{}}',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(runner.E2EError, "workflow"):
+                runner.normalize_signup_workflow_evidence(
+                    evidence_dir, "email-run-1"
+                )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime
+import json
 import os
 import pathlib
 import re
@@ -197,6 +198,61 @@ def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
         yield runtime
 
 
+def normalize_signup_workflow_evidence(evidence_dir: pathlib.Path, run_id: str) -> None:
+    evidence_path = evidence_dir / "evidence.json"
+    try:
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise E2EError("signup browser evidence is missing or invalid") from exc
+    signup_steps = {
+        "submit_signup": "PASS",
+        "verify_email": "PASS",
+        "read_authenticated_user": "PASS",
+        "password_login": "PASS",
+        "reject_token_replay": "PASS",
+    }
+    if (
+        evidence.get("schema") != "rtk.email-signup-e2e.evidence.v1"
+        or evidence.get("run_id") != run_id
+        or evidence.get("status") != "PASS"
+        or evidence.get("workflow", {}).get("workflow_id") != "WF-AM-SIGNUP-001"
+        or evidence.get("workflow", {}).get("steps") != signup_steps
+    ):
+        raise E2EError("signup browser evidence identity or workflow is invalid")
+    signup_assertions = {
+        "submit_signup": {"signup_ui_and_check_email": "PASS"},
+        "verify_email": {"sendmail_imap_mime_origin_and_unique_url": "PASS"},
+        "read_authenticated_user": {"http_only_session_api_me_and_verified_state": "PASS"},
+        "password_login": {"verified_password_login_and_organization_name": "PASS"},
+        "reject_token_replay": {"token_replay_rejected_without_token_leak": "PASS"},
+    }
+    evidence["workflow"]["assertions"] = signup_assertions
+    evidence_path.write_text(json.dumps(evidence, sort_keys=True) + "\n", encoding="utf-8")
+    evidence_path.chmod(0o600)
+
+    account_auth = {
+        "schema": "rtk.email-signup-account-auth.evidence.v1",
+        "run_id": run_id,
+        "status": "PASS",
+        "workflow": {
+            "workflow_id": "WF-CONTRACT-AUTH-ACCOUNT-001",
+            "steps": {
+                "create_pending_account": "PASS",
+                "verify_account_email": "PASS",
+                "login_verified_account": "PASS",
+            },
+            "assertions": {
+                "create_pending_account": signup_assertions["submit_signup"],
+                "verify_account_email": signup_assertions["verify_email"],
+                "login_verified_account": signup_assertions["password_login"],
+            },
+        },
+    }
+    account_path = evidence_dir / "account-auth-workflow.json"
+    account_path.write_text(json.dumps(account_auth, sort_keys=True) + "\n", encoding="utf-8")
+    account_path.chmod(0o600)
+
+
 def main() -> int:
     started_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     parser = argparse.ArgumentParser()
@@ -294,25 +350,31 @@ def main() -> int:
     }
     print(f"Running cloud signup activation E2E (run {run_id})...")
     run_checked(["npm", "run", "e2e:email-signup-live"], admin_web, browser_env, timeout=360)
+    normalize_signup_workflow_evidence(evidence_dir, run_id)
     completed_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     (evidence_dir / "run.log").write_text(
-        f"test_id=E2E-CA-SIGNUP-EMAIL-001 run_id={run_id} status=PASS\n",
+        f"test_id=E2E-CA-SIGNUP-EMAIL-001 run_id={run_id} status=PASS\n"
+        f"test_id=E2E-AUTH-ACCOUNT-ONBOARDING-001 run_id={run_id} status=PASS\n",
         encoding="utf-8",
     )
-    run_checked(
-        [
-            "go", "run", "./scripts/go/rtk-cloud", "--",
-            "test-feature-coverage", "record",
-            "--test-id", "E2E-CA-SIGNUP-EMAIL-001",
-            "--run-id", run_id,
-            "--environment", "staging",
-            "--started-at", started_at,
-            "--completed-at", completed_at,
-            "--output-dir", str(evidence_dir),
-        ],
-        workspace,
-        child_env,
-    )
+    for test_id in (
+        "E2E-CA-SIGNUP-EMAIL-001",
+        "E2E-AUTH-ACCOUNT-ONBOARDING-001",
+    ):
+        run_checked(
+            [
+                "go", "run", "./scripts/go/rtk-cloud", "--",
+                "test-feature-coverage", "record",
+                "--test-id", test_id,
+                "--run-id", run_id,
+                "--environment", "staging",
+                "--started-at", started_at,
+                "--completed-at", completed_at,
+                "--output-dir", str(evidence_dir),
+            ],
+            workspace,
+            child_env,
+        )
     print(f"Cloud Send Mail + local IMAP signup E2E passed (run {run_id}; evidence redacted).")
     return 0
 

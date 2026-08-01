@@ -619,6 +619,72 @@ func TestWriteCaseFeatureEvidenceKeepsWorkflowGapIncompleteInObserveMode(t *test
 	}
 }
 
+func TestWriteCaseFeatureEvidenceAppendsMultipleCasesFromOneLiveRun(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, workflowID := range []string{"WF-AM-SIGNUP-001", "WF-CONTRACT-AUTH-ACCOUNT-001"} {
+		for _, workflow := range inventory.Workflows {
+			if workflow.ID != workflowID {
+				continue
+			}
+			steps := map[string]string{}
+			assertions := map[string]map[string]string{}
+			for _, step := range workflow.Steps {
+				steps[step.ID] = "PASS"
+				assertions[step.ID] = map[string]string{"observable_live_behavior": "PASS"}
+			}
+			if err := writeJSON(filepath.Join(dir, workflowID+".json"), map[string]any{
+				"workflow": map[string]any{"workflow_id": workflowID, "steps": steps, "assertions": assertions},
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "run.log"), []byte("status=PASS\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, testID := range []string{"E2E-CA-SIGNUP-EMAIL-001", "E2E-AUTH-ACCOUNT-ONBOARDING-001"} {
+		if err := writeCaseFeatureEvidence(workspace, dir, testID, "shared-email-run", "staging", "", now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var manifest featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(dir, "feature-evidence.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Cases) != 2 || manifest.Cases[0].Status != "PASS" || manifest.Cases[1].Status != "PASS" {
+		t.Fatalf("multi-case live manifest = %#v", manifest.Cases)
+	}
+	var results struct {
+		Status string `json:"status"`
+		Cases  []any  `json:"cases"`
+	}
+	if err := readJSONFile(filepath.Join(dir, "feature-results.json"), &results); err != nil {
+		t.Fatal(err)
+	}
+	if results.Status != "PASS" || len(results.Cases) != 2 {
+		t.Fatalf("multi-case live results = %#v", results)
+	}
+	junit, err := os.ReadFile(filepath.Join(dir, "feature-junit.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(junit), `tests="2"`) {
+		t.Fatalf("multi-case JUnit does not contain both cases: %s", junit)
+	}
+	if err := writeCaseFeatureEvidence(workspace, dir, "E2E-CA-SIGNUP-EMAIL-001", "shared-email-run", "staging", "", now, now); err == nil {
+		t.Fatal("duplicate Test ID was appended to live evidence")
+	}
+}
+
 func TestWriteCaseFeatureEvidenceRejectsMissingRequiredTypeAndSecrets(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
