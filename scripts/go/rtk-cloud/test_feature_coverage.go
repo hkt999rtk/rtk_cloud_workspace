@@ -110,11 +110,11 @@ func runTestFeatureCoverage(args []string) error {
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		action, args = args[0], args[1:]
 	}
-	if action != "audit" && action != "check" && action != "select" && action != "record" {
-		return errors.New("usage: test-feature-coverage [audit|select|check|record] [--evidence PATHS] [--mode pr|main|release] [--output-dir PATH]")
+	if action != "audit" && action != "check" && action != "select" && action != "record" && action != "import-cloud-validation" {
+		return errors.New("usage: test-feature-coverage [audit|select|check|record|import-cloud-validation] [--evidence PATHS] [--mode pr|main|release] [--output-dir PATH]")
 	}
 	fs := flag.NewFlagSet("test-feature-coverage "+action, flag.ContinueOnError)
-	var evidence, mode, outputDir, base, head, testID, runID, environment, target, startedAt, completedAt string
+	var evidence, mode, outputDir, base, head, testID, runID, environment, target, startedAt, completedAt, input string
 	fs.StringVar(&evidence, "evidence", "", "comma-separated evidence files or directories")
 	fs.StringVar(&mode, "mode", "pr", "qualification mode: pr, main, or release")
 	fs.StringVar(&outputDir, "output-dir", "", "report directory")
@@ -126,13 +126,14 @@ func runTestFeatureCoverage(args []string) error {
 	fs.StringVar(&target, "target", "", "record: optional catalog target")
 	fs.StringVar(&startedAt, "started-at", "", "record: RFC3339 start")
 	fs.StringVar(&completedAt, "completed-at", "", "record: RFC3339 completion")
+	fs.StringVar(&input, "input", "", "import-cloud-validation: native SDK cloud-validation results.json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if mode != "pr" && mode != "main" && mode != "release" {
 		return fmt.Errorf("unsupported mode %q", mode)
 	}
-	if action != "record" && outputDir == "" {
+	if action != "record" && action != "import-cloud-validation" && outputDir == "" {
 		outputDir = ".artifacts/feature-coverage"
 	}
 	workspace, err := workspaceRoot()
@@ -153,6 +154,15 @@ func runTestFeatureCoverage(args []string) error {
 			return errors.New("record start/completion timestamps are invalid")
 		}
 		return writeCaseFeatureEvidence(workspace, outputDir, testID, runID, environment, target, started, completed)
+	}
+	if action == "import-cloud-validation" {
+		if input == "" {
+			return errors.New("import-cloud-validation requires --input")
+		}
+		if outputDir == "" {
+			outputDir = filepath.Dir(input)
+		}
+		return importCloudValidationFeatureEvidence(workspace, catalog, input, outputDir)
 	}
 	inventory, err := loadSpecInventory(workspace)
 	if err != nil {
@@ -979,6 +989,9 @@ func verifyFeatureEvidenceFiles(files []featureCoverageEvidenceFile) error {
 }
 
 func featureEvidenceType(path string) string {
+	if strings.EqualFold(filepath.Base(path), "cloud-evidence.json") {
+		return "cloud-evidence"
+	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".json":
 		return "json"
