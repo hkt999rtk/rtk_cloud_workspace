@@ -23,9 +23,10 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		t.Fatal(err)
 	}
 	users := []map[string]any{
-		{"email": "deactivate@example.test", "password": "pw-deactivate"},
+		{"email": "deactivate@example.test", "password": "pw-deactivate", "tokens": map[string]any{"access_token": "cached-deactivate-token"}},
 		{
 			"email": "unprovision@example.test", "password": "pw-unprovision",
+			"tokens":          map[string]any{"access_token": "cached-unprovision-token"},
 			"app_credentials": map[string]any{"private_key_pem": keyPEM, "csr_pem": "redacted-csr"},
 			"app_certificate": map[string]any{"certificate_chain_pem": certPEM},
 		},
@@ -60,8 +61,6 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := req.URL.Path
 		switch {
-		case path == "/v1/auth/login":
-			_, _ = io.WriteString(w, `{"tokens":{"access_token":"account-token"}}`)
 		case path == "/v1/orgs/org-1/devices/account-deactivate/deactivate":
 			deactivated = true
 			w.WriteHeader(http.StatusCreated)
@@ -132,6 +131,56 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
+	}
+}
+
+func TestLifecycleUserTokenUsesRunScopedSessionBeforePasswordLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		t.Fatalf("cached lifecycle session unexpectedly called %s", req.URL.Path)
+	}))
+	defer server.Close()
+
+	token, err := lifecycleUserToken(
+		accountManagerContext{BaseURL: server.URL},
+		"rtk-test",
+		map[string]userCredential{
+			"member@example.test": {
+				Email:  "member@example.test",
+				Tokens: accountPlatformSession{AccessToken: "run-scoped-access-token"},
+			},
+		},
+		bindAssignment{AssignedEmail: "member@example.test"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "run-scoped-access-token" {
+		t.Fatalf("token = %q", token)
+	}
+}
+
+func TestLifecycleUserTokenFallsBackToTenantScopedLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+			t.Fatalf("login path = %q", req.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"tokens":{"access_token":"tenant-access-token","refresh_token":"tenant-refresh-token"}}`)
+	}))
+	defer server.Close()
+
+	token, err := lifecycleUserToken(
+		accountManagerContext{BaseURL: server.URL},
+		"rtk-test",
+		map[string]userCredential{
+			"member@example.test": {Email: "member@example.test", Password: "password"},
+		},
+		bindAssignment{AssignedEmail: "member@example.test"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "tenant-access-token" {
+		t.Fatalf("token = %q", token)
 	}
 }
 
