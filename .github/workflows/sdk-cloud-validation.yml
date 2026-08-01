@@ -225,14 +225,15 @@ jobs:
       CLOUD_VALIDATION_CA_BUNDLE: ${{ vars.SDK_E2E_CA_BUNDLE }}
       CLOUD_VALIDATION_ENV_ROOT: ${{ vars.SDK_E2E_ENV_ROOT }}
       CLOUD_VALIDATION_CLOUD_LOGGER_URL: ${{ vars.SDK_E2E_CLOUD_LOGGER_URL }}
-      CLOUD_VALIDATION_IOS_CLOUD_SLUG: sdk-e2e-ios
-      CLOUD_VALIDATION_ANDROID_CLOUD_SLUG: sdk-e2e-android
+      CLOUD_VALIDATION_IOS_CLOUD_SLUG: ${{ vars.SDK_E2E_IOS_CLOUD_SLUG || 'sdk-e2e-ios' }}
+      CLOUD_VALIDATION_ANDROID_CLOUD_SLUG: ${{ vars.SDK_E2E_ANDROID_CLOUD_SLUG || 'sdk-e2e-android' }}
       CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN: ${{ secrets.platform_admin_token }}
       CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
       CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN: ${{ secrets.cloud_logger_token }}
       CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND: ${{ secrets.fixture_provider_command || secrets.SDK_E2E_FIXTURE_PROVIDER_COMMAND }}
       CLOUD_VALIDATION_FIXTURE_CLEANUP_COMMAND: ${{ secrets.fixture_cleanup_command || secrets.SDK_E2E_FIXTURE_CLEANUP_COMMAND }}
       CLOUD_VALIDATION_EVIDENCE_PROVIDER_COMMAND: ${{ secrets.evidence_provider_command || secrets.SDK_E2E_EVIDENCE_PROVIDER_COMMAND }}
+      LINODE_TOKEN: ${{ secrets.LINODE_TOKEN || secrets.linode_token }}
       CLOUD_VALIDATION_ARTIFACT: ${{ inputs.ios_artifact_path || inputs.artifact_path }}
       CLOUD_VALIDATION_ARTIFACT_SHA256: ${{ inputs.ios_artifact_sha256 || inputs.artifact_sha256 }}
     steps:
@@ -311,14 +312,15 @@ jobs:
       CLOUD_VALIDATION_CA_BUNDLE: ${{ vars.SDK_E2E_CA_BUNDLE }}
       CLOUD_VALIDATION_ENV_ROOT: ${{ vars.SDK_E2E_ENV_ROOT }}
       CLOUD_VALIDATION_CLOUD_LOGGER_URL: ${{ vars.SDK_E2E_CLOUD_LOGGER_URL }}
-      CLOUD_VALIDATION_ANDROID_CLOUD_SLUG: sdk-e2e-android
-      CLOUD_VALIDATION_IOS_CLOUD_SLUG: sdk-e2e-ios
+      CLOUD_VALIDATION_ANDROID_CLOUD_SLUG: ${{ vars.SDK_E2E_ANDROID_CLOUD_SLUG || 'sdk-e2e-android' }}
+      CLOUD_VALIDATION_IOS_CLOUD_SLUG: ${{ vars.SDK_E2E_IOS_CLOUD_SLUG || 'sdk-e2e-ios' }}
       CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN: ${{ secrets.platform_admin_token }}
       CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
       CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN: ${{ secrets.cloud_logger_token }}
       CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND: ${{ secrets.fixture_provider_command || secrets.SDK_E2E_FIXTURE_PROVIDER_COMMAND }}
       CLOUD_VALIDATION_FIXTURE_CLEANUP_COMMAND: ${{ secrets.fixture_cleanup_command || secrets.SDK_E2E_FIXTURE_CLEANUP_COMMAND }}
       CLOUD_VALIDATION_EVIDENCE_PROVIDER_COMMAND: ${{ secrets.evidence_provider_command || secrets.SDK_E2E_EVIDENCE_PROVIDER_COMMAND }}
+      LINODE_TOKEN: ${{ secrets.LINODE_TOKEN || secrets.linode_token }}
       CLOUD_VALIDATION_INSTALL_ANDROID_SYSTEM_IMAGE: "1"
       CLOUD_VALIDATION_ARTIFACT: ${{ inputs.android_artifact_path || inputs.artifact_path }}
       CLOUD_VALIDATION_ARTIFACT_SHA256: ${{ inputs.android_artifact_sha256 || inputs.artifact_sha256 }}

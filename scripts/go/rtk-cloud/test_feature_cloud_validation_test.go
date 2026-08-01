@@ -158,9 +158,20 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"Normalize iOS requirement evidence", "Normalize Android requirement evidence",
 		"test-feature-coverage import-cloud-validation", "feature-evidence.json",
 		`.platform == "ios"`, `.platform == "android"`,
+		"vars.SDK_E2E_IOS_CLOUD_SLUG", "vars.SDK_E2E_ANDROID_CLOUD_SLUG",
+		"secrets.LINODE_TOKEN",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("SDK cloud workflow is missing %q", required)
+		}
+	}
+	scriptRaw, err := os.ReadFile(filepath.Join(workspace, "e2e_test", "cloud_validation", "scripts", "run-cloud-validation.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"video-cloud-admin-token", "cloud-logger-token", `provider" == "lke"`, `ACCOUNT_MANAGER_BASE_URL="${CLOUD_VALIDATION_ACCOUNT_MANAGER_URL:-}"`} {
+		if !strings.Contains(string(scriptRaw), required) {
+			t.Fatalf("SDK cloud credential discovery is missing %q", required)
 		}
 	}
 }

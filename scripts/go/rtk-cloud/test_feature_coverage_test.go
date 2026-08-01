@@ -140,9 +140,36 @@ func TestFeatureCoverageRejectsTamperedAndStaleEvidence(t *testing.T) {
 	catalog.Features[0].Requirements[0].FreshnessHours = 36
 	item.Requirements[0].Evidence[0].SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(`{"assertion":"passed"}`)))
 	item.CompletedAt = now.Add(-37 * time.Hour).Format(time.RFC3339)
-	report = assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "main", now)
+	report = assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "release", now)
 	if report.Requirements[0].Status != "STALE" {
 		t.Fatalf("stale scheduled evidence = %+v", report)
+	}
+}
+
+func TestFeatureCoverageGateModesDeferLiveEvidenceUntilRelease(t *testing.T) {
+	workspace, catalog, item, now := featureCoverageFixture(t)
+	requirement := &catalog.Features[0].Requirements[0]
+
+	requirement.Gate = "pr"
+	for _, mode := range []string{"pr", "main", "release"} {
+		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
+		if report.Required != 1 || report.Pass != 1 || report.DeferredLive != 0 {
+			t.Fatalf("%s must qualify deterministic PR evidence: %+v", mode, report)
+		}
+	}
+
+	for _, gate := range []string{"scheduled", "operator-release"} {
+		requirement.Gate = gate
+		for _, mode := range []string{"pr", "main"} {
+			report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, mode, now)
+			if report.Required != 0 || report.Pass != 0 || report.DeferredLive != 1 || report.Requirements[0].Status != "DEFERRED_LIVE" {
+				t.Fatalf("%s gate %s must defer live evidence: %+v", mode, gate, report)
+			}
+		}
+		report := assessFeatureCoverage(workspace, catalog, []featureEvidenceManifestV2{{Cases: []featureCaseEvidenceV2{item}}}, []string{"FEAT-TEST-FLOW-001"}, "release", now)
+		if report.Required != 1 || report.Pass != 1 || report.DeferredLive != 0 {
+			t.Fatalf("release gate %s must require live evidence: %+v", gate, report)
+		}
 	}
 }
 

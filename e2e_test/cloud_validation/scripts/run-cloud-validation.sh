@@ -77,16 +77,28 @@ load_local_deployment_credentials() {
   fi
   env_root="$(cd "$env_root" && pwd -P)"
 
+  local provider=""
+  if [[ -f "$env_root/env/stack.env" ]]; then
+    provider="$(awk -F= '$1 == "CLOUD_PROVIDER" {print $2; exit}' "$env_root/env/stack.env")"
+  fi
+
   if [[ -z "${CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN:-}" ]]; then
     CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN="$({
       cd "$workspace_root/scripts/go"
-      GOWORK=off go run ./rtk-cloud -- platform-admin-token --workspace "$workspace_root" --env-root "$env_root"
+      ACCOUNT_MANAGER_BASE_URL="${CLOUD_VALIDATION_ACCOUNT_MANAGER_URL:-}" \
+        GOWORK=off go run ./rtk-cloud -- platform-admin-token --workspace "$workspace_root" --env-root "$env_root"
     })"
     export CLOUD_VALIDATION_PLATFORM_ADMIN_TOKEN
   fi
 
   video_auth_file="$env_root/state/secrets/video-auth"
-  if [[ -z "${CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN:-}" && -s "$video_auth_file" ]]; then
+  if [[ -z "${CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN:-}" && "$provider" == "lke" ]]; then
+    CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN="$({
+      cd "$workspace_root/scripts/go"
+      GOWORK=off go run ./rtk-cloud -- video-cloud-admin-token --workspace "$workspace_root" --env-root "$env_root" --ttl 30m
+    })"
+    export CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN
+  elif [[ -z "${CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN:-}" && -s "$video_auth_file" ]]; then
     video_secret="$(<"$video_auth_file")"
     CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN="$({
       cd "$workspace_root/repos/rtk_video_cloud"
@@ -97,7 +109,13 @@ load_local_deployment_credentials() {
   fi
 
   logger_token_file="$env_root/state/secrets/cloud-logger-ingest-token"
-  if [[ -z "${CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN:-}" && -s "$logger_token_file" ]]; then
+  if [[ -z "${CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN:-}" && "$provider" == "lke" ]]; then
+    CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN="$({
+      cd "$workspace_root/scripts/go"
+      GOWORK=off go run ./rtk-cloud -- cloud-logger-token --workspace "$workspace_root" --env-root "$env_root"
+    })"
+    export CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN
+  elif [[ -z "${CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN:-}" && -s "$logger_token_file" ]]; then
     CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN="$(<"$logger_token_file")"
     export CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN
   fi
