@@ -163,7 +163,7 @@ jobs:
           (cd scripts/go/cloud-mqtt-test && GOWORK=off go test ./...)
           e2e_test/cloud_validation/scripts/test-staging-providers.sh
           e2e_test/cloud_validation/scripts/test-android-emulator-state.sh
-          ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load(File.read(path), [], [], true); puts "parsed #{path}" }' \
+          ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load(File.read(path), permitted_classes: [], permitted_symbols: [], aliases: true); puts "parsed #{path}" }' \
             repos/rtk_cloud_contracts_doc/openapi.yaml \
             repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc/openapi.yaml
           git diff --check
