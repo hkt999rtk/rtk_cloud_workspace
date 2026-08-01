@@ -3392,6 +3392,47 @@ func TestReadDeviceInfoWithAppTokenPresentsAppClientCertificate(t *testing.T) {
 	}
 }
 
+func TestRunSelectedDeviceProbesStopsWhenDeviceInfoFails(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/request_token":
+			writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+		case "/api/devices/device-1/info":
+			http.Error(w, "unavailable", http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected path %q", req.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	results := runSelectedDeviceProbes(
+		[]assignment{{AssignedEmail: "user@example.test", DeviceID: "device-1", DeviceType: "camera"}},
+		nil,
+		"RTK",
+		"run-1",
+		server.URL,
+		"",
+		0,
+		map[string]userCredential{
+			"user@example.test": {
+				Email: "user@example.test",
+				AppCredentials: appCertificateKeys{
+					PrivateKeyPEM: keyPEM,
+				},
+				AppCertificate: appCertificateSummary{
+					CertificatePEM: certPEM,
+				},
+			},
+		},
+		1,
+	)
+	result := results["device-1"]
+	if result.MQTTStatus != "FAIL" || result.Error != "read device info returned HTTP 500" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestPrependRuntimeBootstrapTraceRenumbersEvidence(t *testing.T) {
 	observed := time.Date(2026, 8, 1, 7, 0, 0, 0, time.UTC)
 	steps := prependRuntimeBootstrapTrace([]traceStep{{Step: 1, Phase: "mqtt_connect", Status: "PASS"}}, observed)

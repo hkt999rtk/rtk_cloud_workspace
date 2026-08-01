@@ -267,6 +267,7 @@ func TestWorkspaceBaselineRunsAndCanEnforceDeterministicFeatureEvidence(t *testi
 		"test-spec-impact",
 		"Qualify canonical authorization requirements",
 		"--qualification-only",
+		"--qualification-only \\\n            --install \\",
 		"--qualification-output-dir",
 		"TEST_DATABASE_URL:",
 		`export FEATURE_QUALIFICATION_MODE="$qualification"`,
