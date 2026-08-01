@@ -192,6 +192,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(workflow, "FEATURE_QUALIFICATION_MODE: ${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}") {
 		t.Fatal("runtime runner must receive the repository feature qualification mode")
 	}
+	if !strings.Contains(workflow, "go-version: \"1.26.3\"") {
+		t.Fatal("runtime runner must satisfy the Cloud Admin Go toolchain requirement")
+	}
 	deterministicStart := strings.Index(workflow, "- name: Run deterministic feature evidence")
 	loginStart := strings.Index(workflow, "- name: Log in to GHCR")
 	if deterministicStart < 0 || loginStart < 0 || deterministicStart > loginStart {
