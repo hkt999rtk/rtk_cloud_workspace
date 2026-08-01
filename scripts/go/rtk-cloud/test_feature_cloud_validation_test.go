@@ -159,11 +159,15 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"test-feature-coverage import-cloud-validation", "feature-evidence.json",
 		`.platform == "ios"`, `.platform == "android"`,
 		"vars.SDK_E2E_IOS_CLOUD_SLUG", "vars.SDK_E2E_ANDROID_CLOUD_SLUG",
-		"secrets.LINODE_TOKEN",
+		"secrets.LINODE_TOKEN", "secrets.CI_RUNNER_GITHUB_WORK_KEY",
+		"Initialize private submodules", "git submodule update --init --recursive --depth=1",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("SDK cloud workflow is missing %q", required)
 		}
+	}
+	if strings.Contains(workflow, "submodules: recursive") || strings.Count(workflow, "Initialize private submodules") != 4 {
+		t.Fatal("every SDK workflow job must bootstrap private submodules with the deploy key")
 	}
 	scriptRaw, err := os.ReadFile(filepath.Join(workspace, "e2e_test", "cloud_validation", "scripts", "run-cloud-validation.sh"))
 	if err != nil {
