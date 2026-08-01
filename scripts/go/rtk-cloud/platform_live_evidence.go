@@ -57,7 +57,7 @@ func runPlatformLiveEvidence(args []string) error {
 	}
 	started := time.Now().UTC()
 	scrapeDir := filepath.Join(*outDir, "scrape")
-	if err := qualifyPrometheusInventory(*prometheusURL, scrapeDir, *runID); err != nil {
+	if err := waitForPrometheusInventory(*prometheusURL, scrapeDir, *runID, time.Minute, 5*time.Second); err != nil {
 		return err
 	}
 	if err := writeCaseFeatureEvidence(workspace, scrapeDir, "LIVE-CA-SCRAPE-001", *runID, "staging", "", started, time.Now().UTC()); err != nil {
@@ -69,6 +69,29 @@ func runPlatformLiveEvidence(args []string) error {
 		return err
 	}
 	return writeCaseFeatureEvidence(workspace, bffDir, "LIVE-CA-BFF-SOURCES-001", *runID, "staging", "", bffStarted, time.Now().UTC())
+}
+
+func waitForPrometheusInventory(baseURL, outDir, runID string, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
+		if err := qualifyPrometheusInventory(baseURL, outDir, runID); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if timeout <= 0 || !time.Now().Before(deadline) {
+			return lastErr
+		}
+		wait := interval
+		if wait <= 0 {
+			wait = time.Millisecond
+		}
+		if remaining := time.Until(deadline); wait > remaining {
+			wait = remaining
+		}
+		time.Sleep(wait)
+	}
 }
 
 func qualifyPrometheusInventory(baseURL, outDir, runID string) error {
