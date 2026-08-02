@@ -86,7 +86,7 @@ func runTestFactoryLive(args []string) error {
 		if *confirm != stack {
 			return fmt.Errorf("--configure-runtime requires --confirm %s", stack)
 		}
-		if err := configureFactoryProductionJWTRuntime(kubeconfig, stack); err != nil {
+		if err := configureFactoryProductionJWTRuntime(kubeconfig, envRoot, stack); err != nil {
 			return err
 		}
 	}
@@ -137,7 +137,10 @@ func runTestFactoryLive(args []string) error {
 	return importFactoryQualificationFeatureEvidence(workspace, outDir, result)
 }
 
-func configureFactoryProductionJWTRuntime(kubeconfig, stack string) error {
+func configureFactoryProductionJWTRuntime(kubeconfig, envRoot, stack string) error {
+	if err := configureFactoryOpenBAORole(kubeconfig, envRoot, stack); err != nil {
+		return err
+	}
 	var secretBytes [32]byte
 	if _, err := rand.Read(secretBytes[:]); err != nil {
 		return fmt.Errorf("generate factory production JWT secret: %w", err)
@@ -180,6 +183,25 @@ func configureFactoryProductionJWTRuntime(kubeconfig, stack string) error {
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("wait for %s rollout: %w", target.deployment, err)
 		}
+	}
+	return nil
+}
+
+func configureFactoryOpenBAORole(kubeconfig, envRoot, stack string) error {
+	token, err := readSensitiveFile(filepath.Join(envRoot, "state", "openbao", "root-token"), "OpenBao root token")
+	if err != nil {
+		return err
+	}
+	script := `IFS= read -r BAO_TOKEN
+export BAO_TOKEN
+export BAO_CACERT=/openbao/tls/ca.crt
+bao write pki/device/roles/factory-device allow_any_name=true enforce_hostnames=false cn_validations=[] server_flag=false client_flag=true key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth ttl=8760h max_ttl=26280h >/dev/null`
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", stack+"-secrets", "exec", "-i", "openbao-0", "--", "sh", "-ceu", script)
+	cmd.Stdin = strings.NewReader(strings.TrimSpace(token) + "\n")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("configure OpenBao factory-device role: %w", err)
 	}
 	return nil
 }

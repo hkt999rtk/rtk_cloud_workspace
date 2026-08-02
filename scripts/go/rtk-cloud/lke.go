@@ -4035,7 +4035,7 @@ if ! has_ca pki/app; then
   bao write pki/app/intermediate/set-signed certificate=@/tmp/openbao-app.crt >/dev/null
 fi
 	bao write pki/device/roles/factory-device \
-	  allow_any_name=true enforce_hostnames=false server_flag=false client_flag=true \
+	  allow_any_name=true enforce_hostnames=false cn_validations=[] server_flag=false client_flag=true \
 	  key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth \
 	  ttl=8760h max_ttl=26280h >/dev/null
 	bao write pki/device/roles/gateway-server \
