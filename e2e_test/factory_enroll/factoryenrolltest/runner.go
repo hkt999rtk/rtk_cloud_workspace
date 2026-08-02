@@ -204,7 +204,9 @@ func (r *Runner) enrollOne(parent context.Context, cfg Config, index int) Device
 		return failed(index, deviceID, resp.StatusCode, started, "certificate_chain", err)
 	}
 	if cfg.WriteKeyFiles && cfg.ArtifactDir != "" {
-		_ = writeDeviceMaterial(cfg.ArtifactDir, index, keyPEM, csrPEM, []byte(out.CertificatePEM), []byte(out.CertificateChainPEM))
+		if err := writeDeviceMaterial(cfg.ArtifactDir, index, keyPEM, csrPEM, []byte(out.CertificatePEM), []byte(out.CertificateChainPEM)); err != nil {
+			return failed(index, deviceID, resp.StatusCode, started, "device_material", err)
+		}
 	}
 	certFields.Index = index
 	certFields.RequestID = requestID
@@ -242,7 +244,7 @@ func writeDeviceMaterial(root string, index int, key, csr, cert, chain []byte) e
 		"device.csr":        {csr, 0o644},
 		"device.crt":        {cert, 0o644},
 		"device-chain.crt":  {chain, 0o644},
-		"device-bundle.crt": {append(append([]byte{}, cert...), chain...), 0o644},
+		"device-bundle.crt": {joinPEM(cert, chain), 0o644},
 	}
 	for name, file := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), file.content, file.mode); err != nil {
@@ -250,6 +252,22 @@ func writeDeviceMaterial(root string, index int, key, csr, cert, chain []byte) e
 		}
 	}
 	return nil
+}
+
+func joinPEM(parts ...[]byte) []byte {
+	var joined bytes.Buffer
+	for _, part := range parts {
+		trimmed := bytes.TrimSpace(part)
+		if len(trimmed) == 0 {
+			continue
+		}
+		if joined.Len() > 0 {
+			joined.WriteByte('\n')
+		}
+		joined.Write(trimmed)
+		joined.WriteByte('\n')
+	}
+	return joined.Bytes()
 }
 
 func summarize(result *Result) {

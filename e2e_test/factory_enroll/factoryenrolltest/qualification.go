@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -315,7 +316,10 @@ func (r *QualificationRunner) postJSON(ctx context.Context, endpoint, bearer str
 func ProbeDeviceToken(ctx context.Context, baseURL, certFile, keyFile, caFile string, timeout time.Duration) (int, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return 0, fmt.Errorf("load device mTLS identity: %w", err)
+		certTypes, keyType := deviceIdentityMaterialTypes(certFile, keyFile)
+		leafTypes, _ := deviceIdentityMaterialTypes(filepath.Join(filepath.Dir(certFile), "device.crt"), keyFile)
+		chainTypes, _ := deviceIdentityMaterialTypes(filepath.Join(filepath.Dir(certFile), "device-chain.crt"), keyFile)
+		return 0, fmt.Errorf("load device mTLS identity (bundle public keys %s, leaf public keys %s, chain public keys %s, private key PEM %s): %w", certTypes, leafTypes, chainTypes, keyType, err)
 	}
 	roots, err := x509.SystemCertPool()
 	if err != nil || roots == nil {
@@ -355,6 +359,34 @@ func ProbeDeviceToken(ctx context.Context, baseURL, certFile, keyFile, caFile st
 		return resp.StatusCode, errors.New("device mTLS token response missing access token")
 	}
 	return resp.StatusCode, nil
+}
+
+func deviceIdentityMaterialTypes(certFile, keyFile string) (string, string) {
+	certType, keyType := "unavailable", "unavailable"
+	if raw, err := os.ReadFile(certFile); err == nil {
+		var types []string
+		for len(raw) > 0 {
+			block, rest := pem.Decode(raw)
+			if block == nil {
+				break
+			}
+			raw = rest
+			if block.Type == "CERTIFICATE" {
+				if cert, err := x509.ParseCertificate(block.Bytes); err == nil {
+					types = append(types, fmt.Sprintf("%T", cert.PublicKey))
+				}
+			}
+		}
+		if len(types) > 0 {
+			certType = strings.Join(types, ",")
+		}
+	}
+	if raw, err := os.ReadFile(keyFile); err == nil {
+		if block, _ := pem.Decode(raw); block != nil {
+			keyType = block.Type
+		}
+	}
+	return certType, keyType
 }
 
 func writeQualificationJSON(path string, result *QualificationResult) error {

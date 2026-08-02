@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -196,7 +197,7 @@ func TestQualificationRunsCanonicalProductionWorkflowAndRedactsSecrets(t *testin
 			}
 			_ = json.NewEncoder(w).Encode(EnrollResponse{
 				RequestID: in.RequestID, IssuerRequestID: "issuer-001", DeviceID: in.DeviceID, SerialNumber: in.SerialNumber,
-				CertificatePEM: string(signer.signCSR(t, in.DeviceID, in.CSRPem)), CertificateChainPEM: string(signer.caPEM),
+				CertificatePEM: strings.TrimSpace(string(signer.signCSR(t, in.DeviceID, in.CSRPem))), CertificateChainPEM: strings.TrimSpace(string(signer.caPEM)),
 			})
 		default:
 			http.NotFound(w, r)
@@ -214,6 +215,9 @@ func TestQualificationRunsCanonicalProductionWorkflowAndRedactsSecrets(t *testin
 			if _, err := os.Stat(path); err != nil {
 				t.Fatalf("mTLS material %s: %v", path, err)
 			}
+		}
+		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+			t.Fatalf("load generated device TLS identity: %v", err)
 		}
 		return http.StatusOK, nil
 	}).Run(context.Background(), QualificationConfig{
