@@ -273,6 +273,173 @@ func TestQualificationAllowsOnlyExplicitAccountAndFactoryLoopbackTunnels(t *test
 	}
 }
 
+func TestQualificationConfigRejectsIncompleteOrInvalidInputs(t *testing.T) {
+	valid := QualificationConfig{
+		AccountManagerURL: "https://account.example.test", FactoryURL: "https://factory.example.test",
+		DeviceBaseURL: "https://device.example.test", AdminEmail: "admin@example.test", AdminPassword: "password",
+		RunID: "run", ArtifactDir: t.TempDir(), Timeout: -time.Second,
+	}
+	tests := []struct {
+		name string
+		edit func(*QualificationConfig)
+		want string
+	}{
+		{name: "invalid URL", edit: func(c *QualificationConfig) { c.FactoryURL = "://bad" }, want: "valid URL"},
+		{name: "missing admin email", edit: func(c *QualificationConfig) { c.AdminEmail = "" }, want: "email and password"},
+		{name: "missing admin password", edit: func(c *QualificationConfig) { c.AdminPassword = "" }, want: "email and password"},
+		{name: "missing run ID", edit: func(c *QualificationConfig) { c.RunID = "" }, want: "run ID"},
+		{name: "missing artifact directory", edit: func(c *QualificationConfig) { c.ArtifactDir = "" }, want: "artifact directory"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.edit(&cfg)
+			if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Normalize() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := valid.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if valid.Timeout != 30*time.Second {
+		t.Fatalf("default timeout = %s", valid.Timeout)
+	}
+}
+
+func TestQualificationAPIStepsRejectIncompleteResponses(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		status  int
+		body    string
+		invoke  func(*QualificationRunner, QualificationConfig) error
+		wantErr string
+	}{
+		{name: "login HTTP failure", path: "/v1/auth/login", status: http.StatusUnauthorized, body: `{"error":"denied"}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.login(context.Background(), c)
+			return err
+		}, wantErr: "platform admin login"},
+		{name: "login missing token", path: "/v1/auth/login", status: http.StatusOK, body: `{"tokens":{}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.login(context.Background(), c)
+			return err
+		}, wantErr: "no access token"},
+		{name: "brand missing ID", path: "/v1/admin/brand-clouds", status: http.StatusCreated, body: `{"brand_cloud":{}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.createBrandCloud(context.Background(), c, "token")
+			return err
+		}, wantErr: "no ID"},
+		{name: "profile missing ID", path: "/v1/admin/brand-clouds/brand/device-item-profiles", status: http.StatusCreated, body: `{"device_item_profile":{}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.createProfile(context.Background(), c, "token", "brand")
+			return err
+		}, wantErr: "no ID"},
+		{name: "production missing JWT", path: "/v1/admin/brand-clouds/brand/device-item-profiles/profile/production-runs", status: http.StatusCreated, body: `{"production_run":{"id":"run"}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, _, err := r.createProductionRun(context.Background(), c, "token", "brand", "profile")
+			return err
+		}, wantErr: "incomplete production JWT"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path != tc.path {
+					t.Fatalf("path = %q, want %q", req.URL.Path, tc.path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			cfg := QualificationConfig{AccountManagerURL: server.URL, RunID: "run", AdminEmail: "admin", AdminPassword: "password"}
+			err := tc.invoke(NewQualificationRunner(server.Client(), func(context.Context, string, string, string, string, time.Duration) (int, error) { return 0, nil }), cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestProbeDeviceTokenResponsesAndMaterialGuardrails(t *testing.T) {
+	clientCert, clientKey := deviceTokenTestIdentity(t)
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantStatus int
+		wantErr    string
+	}{
+		{name: "success", status: http.StatusOK, body: `{"access_token":"redacted"}`, wantStatus: http.StatusOK},
+		{name: "HTTP failure", status: http.StatusNotFound, body: `{"reason":"projection missing"}`, wantStatus: http.StatusNotFound, wantErr: "HTTP 404"},
+		{name: "invalid JSON", status: http.StatusOK, body: `{`, wantStatus: http.StatusOK, wantErr: "not JSON"},
+		{name: "missing access token", status: http.StatusOK, body: `{}`, wantStatus: http.StatusOK, wantErr: "missing access token"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path != "/request_token" || req.Method != http.MethodPost {
+					t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.RequireAnyClientCert}
+			server.StartTLS()
+			defer server.Close()
+			caFile := filepath.Join(t.TempDir(), "server-ca.pem")
+			if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			status, err := ProbeDeviceToken(context.Background(), server.URL, clientCert, clientKey, caFile, time.Second)
+			if status != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", status, tc.wantStatus)
+			}
+			if tc.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	t.Run("malformed identity diagnostics", func(t *testing.T) {
+		dir := t.TempDir()
+		certFile := filepath.Join(dir, "device-bundle.crt")
+		keyFile := filepath.Join(dir, "device.key")
+		_ = os.WriteFile(certFile, []byte("not a certificate"), 0o600)
+		_ = os.WriteFile(keyFile, []byte("not a key"), 0o600)
+		_, err := ProbeDeviceToken(context.Background(), "https://device.example.test", certFile, keyFile, "", time.Second)
+		if err == nil || !strings.Contains(err.Error(), "bundle public keys unavailable") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("invalid CA", func(t *testing.T) {
+		caFile := filepath.Join(t.TempDir(), "invalid-ca.pem")
+		_ = os.WriteFile(caFile, []byte("invalid"), 0o600)
+		_, err := ProbeDeviceToken(context.Background(), "https://device.example.test", clientCert, clientKey, caFile, time.Second)
+		if err == nil || !strings.Contains(err.Error(), "contains no certificates") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func deviceTokenTestIdentity(t *testing.T) (string, string) {
+	t.Helper()
+	_, deviceID, csrPEM, keyPEM, err := GenerateDeviceIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := newTestSigner(t)
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "device-bundle.crt")
+	keyFile := filepath.Join(dir, "device.key")
+	if err := os.WriteFile(certFile, joinPEM(signer.signCSR(t, deviceID, string(csrPEM)), signer.caPEM), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return certFile, keyFile
+}
+
 func TestReportRoundTripRendersStableEvidenceAndSortedErrors(t *testing.T) {
 	started := time.Date(2026, 7, 24, 1, 2, 3, 0, time.UTC)
 	result := &Result{
