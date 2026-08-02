@@ -237,7 +237,7 @@ func k8sPrometheusTargets(env map[string]string, opts provisionOptions) []k8sPro
 			Namespace: observabilityNS,
 			Service:   "video-cloud-grafana",
 			Port:      3000,
-			Path:      "/metrics",
+			Path:      "/api/admin/grafana/metrics",
 		},
 	)
 	return targets

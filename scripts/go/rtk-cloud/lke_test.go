@@ -3175,6 +3175,7 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"job_name: video-cloud-prometheus",
 		"targets: [\"video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090\"]",
 		"job_name: video-cloud-grafana",
+		"metrics_path: /api/admin/grafana/metrics",
 		"targets: [\"video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"]",
 		"metrics_path: /metrics",
 	} {
@@ -3185,8 +3186,11 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 10; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
-	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 13; got != want {
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 12; got != want {
 		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
+	}
+	if got, want := strings.Count(manifest, "metrics_path:"), 13; got != want {
+		t.Fatalf("metrics target count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }
 
