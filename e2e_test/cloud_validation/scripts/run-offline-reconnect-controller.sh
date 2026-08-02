@@ -21,6 +21,10 @@ headers="$secret_root/offline-shadow-headers.txt"
 test -f "$header_file"
 mkdir -p "$(dirname "$signal_file")"
 offline_timeout_seconds="${CLOUD_VALIDATION_OFFLINE_TIMEOUT_SECONDS:-120}"
+# Android can finish the online round-trip and begin the offline scenario in
+# less than one second. Poll frequently enough to observe that convergence
+# window before asking the virtual device to disconnect.
+poll_interval_seconds="${CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1}"
 deadline=$((SECONDS + offline_timeout_seconds))
 queued_at=""
 
@@ -47,7 +51,7 @@ while (( SECONDS < deadline )); do
     chmod 600 "$disconnect_request"
     break
   fi
-  sleep 1
+  sleep "$poll_interval_seconds"
 done
 
 if [[ ! -f "$disconnect_request" ]]; then
@@ -61,7 +65,7 @@ while (( SECONDS < deadline )); do
   ' "$offline_ready" >/dev/null; then
     break
   fi
-  sleep 1
+  sleep "$poll_interval_seconds"
 done
 
 if [[ ! -f "$offline_ready" ]]; then
@@ -79,7 +83,7 @@ while (( SECONDS < deadline )); do
     chmod 600 "$signal_file"
     break
   fi
-  sleep 1
+  sleep "$poll_interval_seconds"
 done
 
 if [[ -z "$queued_at" ]]; then
@@ -113,7 +117,7 @@ while (( SECONDS < deadline )); do
     chmod 600 "$evidence_file"
     exit 0
   fi
-  sleep 1
+  sleep "$poll_interval_seconds"
 done
 
 echo "offline controller did not observe post-reconnect convergence" >&2
