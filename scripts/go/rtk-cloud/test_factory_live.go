@@ -267,7 +267,14 @@ func writeFactoryRuntimeVerification(workspace, kubeconfig, stack string, result
 	if err := validateFactoryDeployment(factoryDeployment); err != nil {
 		return err
 	}
-	if err := validateFactoryDeployedSourceImages(workspace, accountDeployment, factoryDeployment); err != nil {
+	certIssuerDeployment, err := kubectlJSON(kubeconfig, videoNS, "deployment", "certissuer")
+	if err != nil {
+		return err
+	}
+	if err := validateDeploymentReady(certIssuerDeployment, "certissuer"); err != nil {
+		return err
+	}
+	if err := validateFactoryDeployedSourceImages(workspace, accountDeployment, factoryDeployment, certIssuerDeployment); err != nil {
 		return err
 	}
 	for _, item := range []struct {
@@ -289,7 +296,7 @@ func writeFactoryRuntimeVerification(workspace, kubeconfig, stack string, result
 	}
 	lines := []string{
 		"schema=rtk-factory-runtime-verification/v1", "stack=" + stack,
-		"account_manager_ready=PASS", "factoryenroll_ready=PASS", "shared_production_jwt_keys_present=PASS",
+		"account_manager_ready=PASS", "factoryenroll_ready=PASS", "certissuer_ready=PASS", "shared_production_jwt_keys_present=PASS",
 		"source_commit_images_matched=PASS",
 		"production_jwt_auth_configured=PASS", "certissuer_url_https=PASS", "certissuer_client_mtls_mount=PASS",
 		"issuer_request_id_present=PASS", "device_certificate_chain_verified=PASS", "device_mtls_token_http_200=PASS",
@@ -298,7 +305,7 @@ func writeFactoryRuntimeVerification(workspace, kubeconfig, stack string, result
 	return os.WriteFile(filepath.Join(outDir, "factory-runtime-verification.log"), []byte(strings.Join(lines, "\n")+"\n"), 0o600)
 }
 
-func validateFactoryDeployedSourceImages(workspace string, accountDeployment, factoryDeployment map[string]any) error {
+func validateFactoryDeployedSourceImages(workspace string, accountDeployment, factoryDeployment, certIssuerDeployment map[string]any) error {
 	for _, item := range []struct {
 		repo       string
 		deployment map[string]any
@@ -306,6 +313,7 @@ func validateFactoryDeployedSourceImages(workspace string, accountDeployment, fa
 	}{
 		{"rtk_account_manager", accountDeployment, "account-manager"},
 		{"rtk_video_cloud", factoryDeployment, "factoryenroll"},
+		{"rtk_video_cloud", certIssuerDeployment, "certissuer"},
 	} {
 		commit, err := gitOutput(filepath.Join(workspace, "repos", item.repo), "rev-parse", "HEAD")
 		if err != nil {
