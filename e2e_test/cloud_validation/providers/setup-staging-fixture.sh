@@ -217,6 +217,8 @@ for required_slug in "$cloud_slug" "$foreign_cloud_slug"; do
 done
 cloud_name="$(jq -er --arg slug "$cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .name' "$cloud_list")"
 foreign_cloud_name="$(jq -er --arg slug "$foreign_cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .name' "$cloud_list")"
+cloud_id="$(jq -er --arg slug "$cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .id' "$cloud_list")"
+foreign_cloud_id="$(jq -er --arg slug "$foreign_cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .id' "$cloud_list")"
 # The shared data setup keys its SQLite filename from the Brand Cloud display
 # name, while rows inside the DB retain the tenant slug. These values can differ
 # because Account Manager adds a uniqueness suffix to tenant slugs.
@@ -224,8 +226,74 @@ db="$isolated_env/artifacts/test-data/$(brand_slug "$cloud_name")-test-data.sqli
 foreign_db="$isolated_env/artifacts/test-data/$(brand_slug "$foreign_cloud_name")-test-data.sqlite"
 write_recovery_bundle "clouds_validated" 1
 
+future_rfc3339() {
+  if date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+    date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ'
+  else
+    date -u -d '+1 hour' '+%Y-%m-%dT%H:%M:%SZ'
+  fi
+}
+
+issue_factory_production_jwt() {
+  local brand_cloud_id="$1" role="$2"
+  local profile_key="sdk-cloud-validation-v1"
+  local profiles_response="$secret_root/${role}-device-item-profiles.json"
+  local profile_request="$secret_root/${role}-device-item-profile-request.json"
+  local profile_response="$secret_root/${role}-device-item-profile-response.json"
+  local production_request="$secret_root/${role}-production-run-request.json"
+  local production_response="$secret_root/${role}-production-run-response.json"
+  local profile_id factory_jwt
+
+  curl --fail --silent --show-error --max-time 15 \
+    --header "@$account_headers" \
+    "${account_url%/}/v1/admin/brand-clouds/${brand_cloud_id}/device-item-profiles?status=active&limit=100&offset=0" > "$profiles_response"
+  chmod 600 "$profiles_response"
+  profile_id="$(jq -er --arg key "$profile_key" 'first((.device_item_profiles // .items // [])[] | select(.profile_key == $key and .status == "active")) | .id' "$profiles_response" 2>/dev/null || true)"
+  if [[ -z "$profile_id" ]]; then
+    jq -n --arg key "$profile_key" '{
+      profile_key:$key,
+      display_name:"SDK Cloud Validation",
+      category:"ip_camera",
+      ca_profile:"factory-device",
+      issuer_profile:"sdk-cloud-validation",
+      service_options:["mqtt","video_streaming","video_storage"]
+    }' > "$profile_request"
+    chmod 600 "$profile_request"
+    curl --fail --silent --show-error --max-time 15 \
+      --request POST \
+      --header "@$account_headers" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$profile_request" \
+      "${account_url%/}/v1/admin/brand-clouds/${brand_cloud_id}/device-item-profiles" > "$profile_response"
+    chmod 600 "$profile_response"
+    profile_id="$(jq -er '.device_item_profile.id' "$profile_response")"
+  fi
+
+  jq -n \
+    --arg batch_id "sdk-${safe_run}-${role}" \
+    --arg valid_from "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg valid_until "$(future_rfc3339)" '{
+      factory_id:"sdk-cloud-validation",
+      batch_id:$batch_id,
+      allowed_quantity:1,
+      valid_from:$valid_from,
+      valid_until:$valid_until
+    }' > "$production_request"
+  chmod 600 "$production_request"
+  curl --fail --silent --show-error --max-time 15 \
+    --request POST \
+    --header "@$account_headers" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$production_request" \
+    "${account_url%/}/v1/admin/brand-clouds/${brand_cloud_id}/device-item-profiles/${profile_id}/production-runs" > "$production_response"
+  chmod 600 "$production_response"
+  factory_jwt="$(jq -er 'select((.production_run.id | length) > 0 and (.factory_jwt | length) > 0) | .factory_jwt' "$production_response")"
+  rm -f -- "$profiles_response" "$profile_request" "$profile_response" "$production_request" "$production_response"
+  printf '%s' "$factory_jwt"
+}
+
 run_setup() {
-  local name="$1" role="$2" output="$3"
+  local name="$1" role="$2" output="$3" production_jwt="$4"
   local device_prefix_base="sdk-${platform}-${role}-"
   # OpenBao validates the common name as one IDNA label (63-byte maximum).
   # Reserve five characters for the generated -0001 suffix.
@@ -239,6 +307,11 @@ run_setup() {
   device_run_fragment="$(bounded_run_fragment "$run_fragment_length")"
   local device_prefix="${device_prefix_base}${device_run_fragment}"
   ACCOUNT_MANAGER_BASE_URL="$account_url" \
+    FACTORY_ENROLL_PRODUCTION_JWT="$production_jwt" \
+    FACTORY_ENROLL_AUTH_KEY= \
+    FACTORY_ENROLL_FACTORY_ID=sdk-cloud-validation \
+    FACTORY_ENROLL_BATCH_ID="sdk-${safe_run}-${role}" \
+    FACTORY_ENROLL_RUN_ID="$run_id" \
     RTK_CLOUD_APP_CERT_KEY_ALGORITHM=p256 \
     CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRIES="${CLOUD_VALIDATION_FACTORY_ENROLL_RETRIES:-3}" \
     CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRY_DELAY="${CLOUD_VALIDATION_FACTORY_ENROLL_RETRY_DELAY:-1s}" \
@@ -259,16 +332,20 @@ run_setup() {
     --no-resume
 }
 
+primary_production_jwt="$(issue_factory_production_jwt "$cloud_id" primary)"
+foreign_production_jwt="$(issue_factory_production_jwt "$foreign_cloud_id" foreign)"
 set +e
-run_setup "$cloud_name" primary "$setup_out"
+run_setup "$cloud_name" primary "$setup_out" "$primary_production_jwt"
 setup_rc=$?
 if (( setup_rc == 0 )); then
   # Persist the primary resources before starting the foreign fixture. A
   # failure in the second setup must not orphan the first user or device.
   write_recovery_bundle "primary_fixture_created" 1
-  run_setup "$foreign_cloud_name" foreign "$foreign_setup_out"
+  run_setup "$foreign_cloud_name" foreign "$foreign_setup_out" "$foreign_production_jwt"
   setup_rc=$?
 fi
+primary_production_jwt=""
+foreign_production_jwt=""
 set -e
 
 if (( setup_rc != 0 )); then

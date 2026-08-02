@@ -2092,6 +2092,7 @@ func runGenerateLoadDevices(args []string) error {
 	envRootFlag := fs.String("env-root", "", "environment root")
 	factoryURL := fs.String("factory-url", os.Getenv("FACTORY_ENROLL_URL"), "factory enroll URL")
 	factoryAuthKey := fs.String("factory-auth-key", os.Getenv("FACTORY_ENROLL_AUTH_KEY"), "factory enroll auth key")
+	factoryProductionJWT := strings.TrimSpace(os.Getenv("FACTORY_ENROLL_PRODUCTION_JWT"))
 	factoryID := fs.String("factory-id", firstNonEmpty(os.Getenv("FACTORY_ENROLL_FACTORY_ID"), "staging-loadtest"), "factory id")
 	lineID := fs.String("line-id", firstNonEmpty(os.Getenv("FACTORY_ENROLL_LINE_ID"), "loadtest-line"), "line id")
 	stationID := fs.String("station-id", firstNonEmpty(os.Getenv("FACTORY_ENROLL_STATION_ID"), "loadtest-station"), "station id")
@@ -2154,14 +2155,14 @@ func runGenerateLoadDevices(args []string) error {
 		if *factoryURL == "" {
 			*factoryURL = envFileValue(videoEnv, "FACTORY_ENROLL_URL")
 		}
-		if *factoryAuthKey == "" {
+		if factoryProductionJWT == "" && *factoryAuthKey == "" {
 			*factoryAuthKey = envFileValue(videoEnv, "FACTORY_ENROLL_AUTH_KEY")
 		}
 		if *factoryURL == "" {
 			return errors.New("factory enrollment URL missing; set FACTORY_ENROLL_URL in video-cloud env or pass --factory-url")
 		}
-		if *factoryAuthKey == "" {
-			return errors.New("factory enrollment auth key missing; set FACTORY_ENROLL_AUTH_KEY in video-cloud env or pass --factory-auth-key")
+		if factoryProductionJWT == "" && *factoryAuthKey == "" {
+			return errors.New("factory enrollment credential missing; set ephemeral FACTORY_ENROLL_PRODUCTION_JWT or FACTORY_ENROLL_AUTH_KEY")
 		}
 		*factoryURL = normalizeFactoryEnrollURLs(*factoryURL)
 	}
@@ -2244,6 +2245,7 @@ func runGenerateLoadDevices(args []string) error {
 				DeviceDays:     *deviceValidDays,
 				FactoryURL:     *factoryURL,
 				FactoryAuthKey: *factoryAuthKey,
+				ProductionJWT:  factoryProductionJWT,
 				FactoryID:      *factoryID,
 				LineID:         *lineID,
 				StationID:      *stationID,
@@ -7504,6 +7506,7 @@ type loadDeviceInput struct {
 	DeviceDays     int
 	FactoryURL     string
 	FactoryAuthKey string
+	ProductionJWT  string
 	FactoryID      string
 	LineID         string
 	StationID      string
@@ -7882,8 +7885,6 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 	if err := os.WriteFile(requestPath, bodyBytes, 0o644); err != nil {
 		return factoryEnrollOutcome{}, err
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	signature := signFactoryRequest(in.FactoryAuthKey, "POST", "/v1/factory/enroll", timestamp, requestID, bodyBytes)
 	client := &http.Client{Timeout: in.Timeout}
 	req, err := http.NewRequest(http.MethodPost, factoryURL+"/v1/factory/enroll", bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -7891,8 +7892,14 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Video-Cloud-Request-ID", requestID)
-	req.Header.Set("X-Video-Cloud-Timestamp", timestamp)
-	req.Header.Set("X-Video-Cloud-Signature", signature)
+	if strings.TrimSpace(in.ProductionJWT) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(in.ProductionJWT))
+	} else {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		signature := signFactoryRequest(in.FactoryAuthKey, "POST", "/v1/factory/enroll", timestamp, requestID, bodyBytes)
+		req.Header.Set("X-Video-Cloud-Timestamp", timestamp)
+		req.Header.Set("X-Video-Cloud-Signature", signature)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return factoryEnrollOutcome{Retryable: true, HTTPStatus: "000", ErrorText: err.Error(), Serial: serial, RequestID: requestID}, nil

@@ -86,6 +86,51 @@ func TestFactoryEnrollDeviceUsesDistinctP256FallbackRequestID(t *testing.T) {
 	}
 }
 
+func TestFactoryEnrollDeviceUsesEphemeralProductionJWTWithoutLegacyHMAC(t *testing.T) {
+	dir := t.TempDir()
+	csrPath := filepath.Join(dir, "device.csr.pem")
+	if _, err := writeDeviceKeyAndCSR(filepath.Join(dir, "device.key.pem"), csrPath, "load-device-0001", "camera", "ed25519"); err != nil {
+		t.Fatal(err)
+	}
+
+	const productionJWT = "header.payload.signature"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+productionJWT {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("X-Video-Cloud-Signature"); got != "" {
+			t.Errorf("legacy signature must be absent, got %q", got)
+		}
+		if got := r.Header.Get("X-Video-Cloud-Timestamp"); got != "" {
+			t.Errorf("legacy timestamp must be absent, got %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"certificate_pem":       "test-cert",
+			"certificate_chain_pem": "test-chain",
+			"serial_number":         "test-serial",
+		})
+	}))
+	defer server.Close()
+
+	outcome, err := factoryEnrollDevice(loadDeviceInput{
+		Index: 1, FactoryURL: server.URL, FactoryAuthKey: "must-not-be-used", ProductionJWT: productionJWT,
+		RunID: "run-1", SerialPrefix: "LOAD", Timeout: time.Second,
+	}, "load-device-0001", "Load Device 0001", csrPath, filepath.Join(dir, "device.cert.pem"), filepath.Join(dir, "device.chain.pem"), "ed25519")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.OK {
+		t.Fatalf("outcome = %+v", outcome)
+	}
+	requestBody, err := os.ReadFile(filepath.Join(dir, "factory-enroll-request.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(requestBody), productionJWT) {
+		t.Fatal("production JWT leaked into factory enrollment request artifact")
+	}
+}
+
 func TestFactoryEnrollURLForDeviceDistributesAcrossURLs(t *testing.T) {
 	raw := " http://127.0.0.1:18443/ ,http://127.0.0.1:18444,http://127.0.0.1:18445/ "
 	want := map[int]string{

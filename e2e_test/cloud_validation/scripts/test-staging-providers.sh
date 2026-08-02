@@ -23,6 +23,8 @@ cat > "$tmp/workspace/scripts/setup-staging-e2e-data.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "${SETUP_ARGS_LOG:?SETUP_ARGS_LOG is required}"
+test "${FACTORY_ENROLL_PRODUCTION_JWT:-}" = "test-production-jwt"
+test -z "${FACTORY_ENROLL_AUTH_KEY:-}"
 env_root=""
 brandname=""
 while [[ $# -gt 0 ]]; do
@@ -108,6 +110,10 @@ elif [[ "$joined" == *"--write-out"* && "$joined" == *"direct-invalid-probe-head
   printf '401'
 elif [[ "$joined" == *"--write-out"* ]]; then
   printf '204'
+elif [[ "$joined" == *"/device-item-profiles/fixture-profile/production-runs"* ]]; then
+  printf '%s\n' '{"production_run":{"id":"fixture-production-run"},"factory_jwt":"test-production-jwt"}'
+elif [[ "$joined" == *"/device-item-profiles?status=active"* ]]; then
+  printf '%s\n' '{"device_item_profiles":[{"id":"fixture-profile","profile_key":"sdk-cloud-validation-v1","status":"active"}]}'
 elif [[ "$joined" == *"/v1/admin/brand-clouds"* ]]; then
   printf '%s\n' '{"brand_clouds":[{"id":"cloud-sdk-e2e-ios","name":"SDK E2E iOS","tenant_slug":"sdk-e2e-ios-a579a0e7","status":"active"},{"id":"cloud-sdk-e2e-android","name":"SDK E2E Android","tenant_slug":"sdk-e2e-android-0d152276","status":"active"}]}'
 elif [[ "$joined" == *"/request_token"* ]]; then
