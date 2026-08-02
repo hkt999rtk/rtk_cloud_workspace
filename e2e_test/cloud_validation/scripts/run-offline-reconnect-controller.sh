@@ -41,16 +41,24 @@ read_shadow() {
 }
 
 while (( SECONDS < deadline )); do
-  if read_shadow && jq -e --arg run_id "$run_id" '
-    .state.desired.cloud_validation_run == $run_id and
-    .state.reported.cloud_validation_run == $run_id and
-    .state.desired.enabled == true and
-    .state.reported.enabled == true and
-    ((.state.delta == null) or (.state.delta == {}))
-  ' "$response" >/dev/null; then
-    : > "$disconnect_request"
-    chmod 600 "$disconnect_request"
-    break
+  if read_shadow; then
+    if jq -e --arg run_id "$run_id" '
+      .state.desired.cloud_validation_run == $run_id and
+      .state.reported.cloud_validation_run == $run_id and
+      .state.desired.enabled == true and
+      .state.reported.enabled == true and
+      ((.state.delta == null) or (.state.delta == {}))
+    ' "$response" >/dev/null || jq -e --arg run_id "$run_id" '
+      .state.desired.cloud_validation_run == $run_id and
+      .state.desired.cloud_validation_scenario == "shadow_offline_reconnect" and
+      .state.delta.cloud_validation_run == $run_id and
+      .state.delta.cloud_validation_scenario == "shadow_offline_reconnect" and
+      (.state.reported.cloud_validation_scenario // "") != "shadow_offline_reconnect"
+    ' "$response" >/dev/null; then
+      : > "$disconnect_request"
+      chmod 600 "$disconnect_request"
+      break
+    fi
   fi
   sleep "$poll_interval_seconds"
 done
@@ -79,7 +87,9 @@ deadline=$((SECONDS + offline_timeout_seconds))
 while (( SECONDS < deadline )); do
   if read_shadow && jq -e --arg run_id "$run_id" '
     .state.desired.cloud_validation_run == $run_id and
-    .state.desired.cloud_validation_scenario == "shadow_offline_reconnect"
+    .state.desired.cloud_validation_scenario == "shadow_offline_reconnect" and
+    .state.delta.cloud_validation_run == $run_id and
+    .state.delta.cloud_validation_scenario == "shadow_offline_reconnect"
   ' "$response" >/dev/null; then
     queued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     : > "$signal_file"

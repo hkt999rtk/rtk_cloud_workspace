@@ -125,7 +125,11 @@ elif [[ "$joined" == *"/request_token"* ]]; then
 elif [[ "$joined" == *"/auth/login"* ]]; then
   printf '%s\n' '{"tokens":{"access_token":"rotated-access","refresh_token":"rotated-refresh"},"app_certificate":{"status":"issued","certificate_pem":"-----BEGIN CERTIFICATE-----\nrotated\n-----END CERTIFICATE-----"}}'
 elif [[ "$joined" == *"/things/device-sdk-e2e-ios/shadow"* ]]; then
-  printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"delta":{}},"version":3}'
+  if [[ ! -e "${CLOUD_VALIDATION_OUT_DIR:?CLOUD_VALIDATION_OUT_DIR is required}/virtual-device/offline-reconnect.signal" ]]; then
+    printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","enabled":true},"delta":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true}},"version":2}'
+  else
+    printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"delta":{}},"version":3}'
+  fi
 elif [[ "$joined" == *"/v1/logs"* ]]; then
   printf '%s\n' '{"events":[
     {"event_id":"evt-token","ts":"2026-07-18T10:00:01Z","msg":"mTLS request_token issued success 200","device_id":"device-sdk-e2e-ios"},
