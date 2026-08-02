@@ -30,7 +30,7 @@ read_shadow() {
   fi
   curl "${curl_mtls[@]}" \
     --header "@$header_file" --dump-header "$headers" \
-    "${base_url%/}/api/devices/$device_id/shadow" > "$response"
+    "${base_url%/}/things/$device_id/shadow" > "$response"
 }
 
 while (( SECONDS < deadline )); do

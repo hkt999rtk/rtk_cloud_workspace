@@ -99,7 +99,7 @@ if status="$(curl "${curl_mtls[@]}" --output "$invalid_token_response" --write-o
 fi
 shadow_status="000"
 if status="$(curl "${curl_mtls[@]}" --output "$shadow_response" --write-out '%{http_code}' \
-  --header "@$probe_headers" "${base_url%/}/api/devices/${device_id}/shadow")"; then
+  --header "@$probe_headers" "${base_url%/}/things/${device_id}/shadow")"; then
   shadow_status="$status"
 fi
 for response_file in "$token_response" "$info_response" "$foreign_info_response" "$invalid_token_response" "$shadow_response"; do

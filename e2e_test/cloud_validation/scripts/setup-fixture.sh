@@ -75,5 +75,7 @@ jq -e --arg run_id "$run_id" --arg platform "$platform" '
   (.app.private_key_path | type == "string" and length > 0) and
   (.app.pkcs12_path | type == "string" and length > 0) and
   (.app.pkcs12_password | type == "string" and length > 0) and
+  (.app.revoked_pkcs12_path | type == "string" and length > 0) and
+  (.app.revoked_pkcs12_password | type == "string" and length > 0) and
   (.test_data_db | type == "string" and length > 0)
 ' "$bundle" >/dev/null

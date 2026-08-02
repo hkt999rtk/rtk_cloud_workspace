@@ -249,7 +249,7 @@ run before SDK release acceptance.
 | --- | --- |
 | PR | SDK unit tests, sample builds, local mock integration; no live secret requirement. |
 | Deploy | Android/iOS platform smoke, one virtual device, Cloud evidence, cleanup. |
-| Nightly | Deterministic offline/reconnect, token expiry/reissue, cross-cloud denial, restart, and repeated lifecycle are required. App-certificate rotation remains an explicit `SKIP(capability_not_implemented)` until the sample SDK profile owns CSR rotation. |
+| Nightly | Deterministic offline/reconnect, token expiry/reissue, cross-cloud denial, app-certificate rotation, restart, and repeated lifecycle are required. |
 | Release | Package-mode validation of the exact distributable artifact. |
 | Device lab | Secure Enclave/hardware Keystore, real background limits, Wi-Fi/cellular, BLE/SoftAP, camera/media. |
 

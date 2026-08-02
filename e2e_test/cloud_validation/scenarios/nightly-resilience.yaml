@@ -23,7 +23,7 @@ scenarios:
     required_capabilities: [app_mtls_certificate_rotation]
     device_profile: online
     app_action: reject_old_certificate_and_load_rotated_certificate
-    expected_sdk_result: capability_not_implemented
+    expected_sdk_result: success
     expected_cloud_evidence: []
     timeout: 90s
     cleanup: revoke_rotated_certificate

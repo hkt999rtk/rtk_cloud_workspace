@@ -289,7 +289,7 @@ fi
 chmod 600 "$db" "$foreign_db"
 write_recovery_bundle "post_setup_validation" 1
 
-user_json="$($sqlite -json "$db" "select email, brand_cloud_id, tenant_slug, app_credentials_json, app_certificate_json, body_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
+user_json="$($sqlite -json "$db" "select email, password, brand_cloud_id, tenant_slug, app_credentials_json, app_certificate_json, body_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
 binding_json="$($sqlite -json "$db" "select device_id, account_device_id, assigned_email from device_bindings where tenant_slug = '$cloud_slug' order by assignment_index limit 1")"
 foreign_user_json="$($sqlite -json "$foreign_db" "select email, brand_cloud_id, tenant_slug, body_json from users where tenant_slug = '$foreign_cloud_slug' order by email limit 1")"
 foreign_binding_json="$($sqlite -json "$foreign_db" "select device_id, account_device_id, assigned_email from device_bindings where tenant_slug = '$foreign_cloud_slug' order by assignment_index limit 1")"
@@ -300,6 +300,7 @@ if ! jq -e 'length == 1' <<<"$user_json" >/dev/null || ! jq -e 'length == 1' <<<
 fi
 
 email="$(jq -er '.[0].email' <<<"$user_json")"
+password="$(jq -er '.[0].password' <<<"$user_json")"
 brand_cloud_id="$(jq -er '.[0].brand_cloud_id' <<<"$user_json")"
 tenant_slug="$(jq -er '.[0].tenant_slug' <<<"$user_json")"
 brand_cloud_user_id="$(jq -er '.[0].body_json | fromjson | .brand_cloud_user_id' <<<"$user_json")"
@@ -320,24 +321,62 @@ if ! jq -e --arg id "$brand_cloud_id" --arg slug "$tenant_slug" --arg foreign_id
   exit 1
 fi
 
+revoked_app_key="$secret_root/revoked-app-private-key.pem"
+revoked_app_cert="$secret_root/revoked-app-certificate-chain.pem"
+revoked_app_cert_raw="$secret_root/revoked-app-certificate-chain.raw.pem"
+revoked_app_identity="$secret_root/revoked-app-identity.p12"
+revoked_app_identity_password_file="$secret_root/revoked-app-identity-password.txt"
+jq -er '.[0].app_credentials_json | fromjson | .private_key_pem' <<<"$user_json" > "$revoked_app_key"
+jq -er '.[0].app_certificate_json | fromjson |
+  if ((.certificate_chain_pem // "") | length) > 0 then .certificate_chain_pem else .certificate_pem end' \
+  <<<"$user_json" > "$revoked_app_cert_raw"
+sed 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\
+-----BEGIN CERTIFICATE-----/g' "$revoked_app_cert_raw" > "$revoked_app_cert"
+rm -f -- "$revoked_app_cert_raw"
+revoked_app_identity_password="$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+printf '%s' "$revoked_app_identity_password" > "$revoked_app_identity_password_file"
+chmod 600 "$revoked_app_identity_password_file"
+openssl pkcs12 -export -out "$revoked_app_identity" -inkey "$revoked_app_key" -in "$revoked_app_cert" -passout "file:$revoked_app_identity_password_file"
+rm -f -- "$revoked_app_identity_password_file"
+
+# Rotate the fixture identity before platform execution. The mobile scenario
+# must prove that this preserved old identity is rejected while the newly
+# issued identity can obtain a token and perform an authorized device read.
+curl --fail --silent --show-error --max-time 15 --request POST \
+  --header "@$account_headers" --header 'Content-Type: application/json' --data '{}' \
+  "${account_url%/}/v1/admin/brand-clouds/$brand_cloud_id/users/$brand_cloud_user_id/app-certificate/revoke" >/dev/null
+
 app_key="$secret_root/app-private-key.pem"
+app_csr="$secret_root/app-certificate.csr.pem"
+app_login_request="$secret_root/app-certificate-login-request.json"
+app_login_response="$secret_root/app-certificate-login-response.json"
 app_cert="$secret_root/app-certificate-chain.pem"
 app_cert_raw="$secret_root/app-certificate-chain.raw.pem"
 app_identity="$secret_root/app-identity.p12"
 app_identity_password_file="$secret_root/app-identity-password.txt"
-jq -er '.[0].app_credentials_json | fromjson | .private_key_pem' <<<"$user_json" > "$app_key"
-jq -er '.[0].app_certificate_json | fromjson |
+openssl ecparam -name prime256v1 -genkey -noout -out "$app_key"
+openssl req -new -key "$app_key" -subj "/CN=app-brand-cloud-user:$brand_cloud_user_id" -out "$app_csr"
+jq -n --arg email "$email" --arg password "$password" --rawfile csr "$app_csr" \
+  '{email:$email,password:$password,app_csr_pem:$csr}' > "$app_login_request"
+curl --fail --silent --show-error --max-time 15 \
+  --header 'Content-Type: application/json' --data-binary "@$app_login_request" \
+  "${account_url%/}/v1/brand-clouds/$tenant_slug/auth/login" > "$app_login_response"
+jq -e '.app_certificate.status == "issued" and
+  (((.app_certificate.certificate_chain_pem // .app_certificate.certificate_pem // "") | length) > 0)' \
+  "$app_login_response" >/dev/null
+jq -r '.app_certificate |
   if ((.certificate_chain_pem // "") | length) > 0 then .certificate_chain_pem else .certificate_pem end' \
-  <<<"$user_json" > "$app_cert_raw"
+  "$app_login_response" > "$app_cert_raw"
 sed 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\
 -----BEGIN CERTIFICATE-----/g' "$app_cert_raw" > "$app_cert"
-rm -f -- "$app_cert_raw"
+rm -f -- "$app_cert_raw" "$app_login_request" "$app_login_response" "$app_csr"
 app_identity_password="$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 printf '%s' "$app_identity_password" > "$app_identity_password_file"
 chmod 600 "$app_identity_password_file"
 openssl pkcs12 -export -out "$app_identity" -inkey "$app_key" -in "$app_cert" -passout "file:$app_identity_password_file"
 rm -f -- "$app_identity_password_file"
-chmod 600 "$app_key" "$app_cert" "$app_identity" "$cloud_list"
+chmod 600 "$revoked_app_key" "$revoked_app_cert" "$revoked_app_identity" \
+  "$app_key" "$app_cert" "$app_identity" "$cloud_list"
 
 # The SDK WebSocket session is a device-transport API and must use a
 # device-scoped token. Issue it from the run-scoped virtual-device certificate;
@@ -420,6 +459,8 @@ jq -n \
   --arg key_path "$app_key" \
   --arg pkcs12_path "$app_identity" \
   --arg pkcs12_password "$app_identity_password" \
+  --arg revoked_pkcs12_path "$revoked_app_identity" \
+  --arg revoked_pkcs12_password "$revoked_app_identity_password" \
   --arg user_id "$brand_cloud_user_id" \
   --arg email "$email" \
   --arg cloud_id "$brand_cloud_id" \
@@ -459,7 +500,9 @@ jq -n \
       certificate_path: $cert_path,
       private_key_path: $key_path,
       pkcs12_path: $pkcs12_path,
-      pkcs12_password: $pkcs12_password
+      pkcs12_password: $pkcs12_password,
+      revoked_pkcs12_path: $revoked_pkcs12_path,
+      revoked_pkcs12_password: $revoked_pkcs12_password
     },
     local_temporary_files: [$token_file, $token_request_file, $cloud_file],
     resources: [

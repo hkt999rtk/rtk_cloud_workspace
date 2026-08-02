@@ -39,6 +39,7 @@ create table users (brandname text, email text, brand_cloud_id text, tenant_slug
 create table device_bindings (brandname text, tenant_slug text, device_id text, account_device_id text, assigned_email text, assignment_index integer);
 create table device_credentials (brandname text, device_id text, cert_pem text, key_pem text, chain_pem text);
 insert into users values ('$brandname','run-user@users.local','$cloud_id','$tenant_slug','{"private_key_pem":"-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
+alter table users add column password text default 'fixture-password';
 insert into device_bindings values ('$brandname','$tenant_slug','$device_id','$account_device_id','run-user@users.local',1);
 insert into device_credentials values ('$brandname','$device_id','-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----','-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----','-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----');
 SQL
@@ -74,7 +75,9 @@ elif [[ "$joined" == *"/v1/admin/brand-clouds"* ]]; then
   printf '%s\n' '{"brand_clouds":[{"id":"cloud-sdk-e2e-ios","name":"SDK E2E iOS","tenant_slug":"sdk-e2e-ios-a579a0e7","status":"active"},{"id":"cloud-sdk-e2e-android","name":"SDK E2E Android","tenant_slug":"sdk-e2e-android-0d152276","status":"active"}]}'
 elif [[ "$joined" == *"/request_token"* ]]; then
   printf '%s\n' '{"access_token":"live-access","refresh_token":"live-refresh"}'
-elif [[ "$joined" == *"/api/devices/device-sdk-e2e-ios/shadow"* ]]; then
+elif [[ "$joined" == *"/auth/login"* ]]; then
+  printf '%s\n' '{"tokens":{"access_token":"rotated-access","refresh_token":"rotated-refresh"},"app_certificate":{"status":"issued","certificate_pem":"-----BEGIN CERTIFICATE-----\nrotated\n-----END CERTIFICATE-----"}}'
+elif [[ "$joined" == *"/things/device-sdk-e2e-ios/shadow"* ]]; then
   printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"delta":{}},"version":3}'
 elif [[ "$joined" == *"/v1/logs"* ]]; then
   printf '%s\n' '{"events":[
@@ -159,7 +162,7 @@ done < <(sed -nE 's/.*--device-prefix ([^ ]+).*/\1/p' "$SETUP_ARGS_LOG")
 export CLOUD_VALIDATION_ENV_ROOT="$tmp/source-env"
 export CLOUD_VALIDATION_CA_BUNDLE="$tmp/ca.pem"
 test "$(stat -f '%Lp' "$CLOUD_VALIDATION_RUNTIME_BUNDLE")" = "600"
-jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
+jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.app.revoked_pkcs12_path | length > 0) and (.app.revoked_pkcs12_password | length > 0) and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
 
 export CLOUD_VALIDATION_READY_FILE="$tmp/out/virtual-device-ready.json"
 export CLOUD_VALIDATION_ACCOUNT_MANAGER_URL="https://account.test"
@@ -194,6 +197,7 @@ jq -e '.events[0].type == "command_dispatched" and .events[0].evidence.http_stat
 export CURL_LOG="$tmp/offline-controller-curl.log"
 "$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -q -- '--cert .* --key ' "$CURL_LOG"
+grep -q -- '/things/device-sdk-e2e-ios/shadow' "$CURL_LOG"
 unset CURL_LOG
 test -f "$tmp/out/virtual-device/offline-reconnect.signal"
 jq -e '[.events[].type] | contains(["desired_queued","device_reconnected","reported_written","delta_cleared"])' "$tmp/out/offline-reconnect-evidence.json" >/dev/null
