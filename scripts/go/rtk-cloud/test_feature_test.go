@@ -285,6 +285,80 @@ func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	}
 }
 
+func TestFeatureQualificationUsesResolvedFormalOwnerBrandPlan(t *testing.T) {
+	t.Setenv("HOME100K_BRAND_PLAN", "")
+	loadRoot := t.TempDir()
+	t.Setenv("HOME100K_ENV_ROOT", loadRoot)
+	want := filepath.Join(loadRoot, "artifacts", "load-owner", "resolved-brand-plan.json")
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := featureQualificationBrandPlanPath(filepath.Join(t.TempDir(), "lke"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("qualification brand plan = %q, want %q", got, want)
+	}
+}
+
+func TestFeatureQualificationRejectsMissingFormalOwnerBrandPlan(t *testing.T) {
+	t.Setenv("HOME100K_BRAND_PLAN", "")
+	loadRoot := t.TempDir()
+	t.Setenv("HOME100K_ENV_ROOT", loadRoot)
+	_, err := featureQualificationBrandPlanPath(filepath.Join(t.TempDir(), "lke"))
+	if err == nil || !strings.Contains(err.Error(), "requires the run-scoped formal-owner brand plan") {
+		t.Fatalf("featureQualificationBrandPlanPath() error = %v, want missing formal-owner plan", err)
+	}
+}
+
+func TestFeatureCanaryUsesFirstRunScopedFormalOwnerBrand(t *testing.T) {
+	t.Setenv("HOME100K_BRAND_PLAN", "")
+	loadRoot := t.TempDir()
+	t.Setenv("HOME100K_ENV_ROOT", loadRoot)
+	path := filepath.Join(loadRoot, "artifacts", "load-owner", "resolved-brand-plan.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{"total_devices":10,"devices_per_user":5,"brands":[{"brandname":"RTK-LOAD-1K-run-B01","devices":10,"normal_users":2,"developer_users":{"owner":1},"device_mix":{"light":10}}]}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := featureRunScopedBrandName(filepath.Join(t.TempDir(), "lke"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "RTK-LOAD-1K-run-B01" {
+		t.Fatalf("canary brand = %q, want run-scoped formal owner brand", got)
+	}
+}
+
+func TestFeatureExternalEndpointEnvUsesRunEnvironmentDomains(t *testing.T) {
+	envRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stack := "VIDEO_CLOUD_DOMAIN=video.example.test\nACCOUNT_MANAGER_DOMAIN=account.example.test\n"
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte(stack), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := featureExternalEndpointEnv(envRoot)
+	want := map[string]string{
+		"HOME100K_ACCOUNT_MANAGER_BASE_URL":    "https://account.example.test",
+		"HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL": "https://video.example.test",
+		"HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL":  "https://device.video.example.test",
+		"HOME100K_MQTT_ADDR":                   "video.example.test:8883",
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Fatalf("%s = %q, want %q", key, got[key], value)
+		}
+	}
+}
+
 func TestExecuteFeatureSpecRequiresDeploymentRegion(t *testing.T) {
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")

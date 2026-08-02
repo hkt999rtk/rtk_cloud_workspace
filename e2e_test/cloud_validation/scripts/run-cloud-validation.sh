@@ -49,7 +49,7 @@ if [[ "$profile" == "release" && "$mode" != "package" ]]; then
   exit 2
 fi
 if [[ -z "$scenario_files" && "$profile" == "nightly" ]]; then
-  scenario_files="$workspace_root/e2e_test/cloud_validation/scenarios/core-smoke.yaml,$workspace_root/e2e_test/cloud_validation/scenarios/nightly-resilience.yaml,$workspace_root/e2e_test/cloud_validation/scenarios/shadow-offline-nightly.yaml"
+  scenario_files="$workspace_root/e2e_test/cloud_validation/scenarios/core-smoke.yaml,$workspace_root/e2e_test/cloud_validation/scenarios/nightly-resilience.yaml,$workspace_root/e2e_test/cloud_validation/scenarios/shadow-roundtrip.yaml,$workspace_root/e2e_test/cloud_validation/scenarios/shadow-offline-nightly.yaml"
 fi
 
 runner_bin="${CLOUD_VALIDATION_RUNNER_BIN:-}"

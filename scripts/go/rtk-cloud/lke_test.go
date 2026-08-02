@@ -893,6 +893,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"ARGS -n video-cloud-staging-secrets get pod/openbao-0 -o jsonpath={.status.phase}",
 		"kind: Secret\nmetadata:\n  name: account-manager-runtime",
 		"kind: Job\nmetadata:\n  name: account-manager-migrate",
+		"imagePullSecrets:\n        - name: ghcr-pull",
 		"envFrom:\n            - secretRef:\n                name: account-manager-runtime",
 		"postgres://postgres:test-seed-postgres@postgresql.video-cloud-staging-platform.svc.cluster.local:5432/rtk_account_manager?sslmode=disable",
 		"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL: \"platform-admin@video-cloud-staging.local\"",
