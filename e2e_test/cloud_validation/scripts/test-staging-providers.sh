@@ -16,6 +16,11 @@ fi
 offline_controller="$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -Fq 'CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600' "$offline_controller"
 grep -Fq 'CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1' "$offline_controller"
+grep -Fq 'cloud-validation-offline-ready' "$offline_controller"
+grep -Fq 'offline ready handshake path is required for nightly validation' \
+  "$root/repos/rtk_cloud_client/samples/android/app/src/main/kotlin/com/rtk/cloud/sample/CloudValidation.kt"
+grep -Fq '.offline_ready_path = $offline_ready_path' \
+  "$root/repos/rtk_cloud_client/tools/run_android_sample_cloud_validation.sh"
 test "$(grep -Fc 'deadline=$((SECONDS + offline_timeout_seconds))' "$offline_controller")" -eq 3
 
 mkdir -p "$tmp/bin" "$tmp/workspace/scripts" "$tmp/source-env/state" "$tmp/out" "$tmp/secrets"
@@ -286,7 +291,8 @@ cat > "$tmp/out/virtual-device/offline-ready" <<'JSON'
 JSON
 chmod 600 "$tmp/out/virtual-device/offline-ready"
 export CURL_LOG="$tmp/offline-controller-curl.log"
-"$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
+CLOUD_VALIDATION_OFFLINE_READY_BRIDGE_COMMAND=true \
+  "$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -q -- '--cert .* --key ' "$CURL_LOG"
 grep -q -- '/things/device-sdk-e2e-ios/shadow' "$CURL_LOG"
 unset CURL_LOG

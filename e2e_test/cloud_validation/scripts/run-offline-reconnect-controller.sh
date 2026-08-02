@@ -40,6 +40,35 @@ read_shadow() {
     "${base_url%/}/things/$device_id/shadow" > "$response"
 }
 
+signal_platform_offline_ready() {
+  if [[ -n "${CLOUD_VALIDATION_OFFLINE_READY_BRIDGE_COMMAND:-}" ]]; then
+    bash -lc "$CLOUD_VALIDATION_OFFLINE_READY_BRIDGE_COMMAND"
+    return
+  fi
+  case "$platform" in
+    android)
+      local state_file="${CLOUD_VALIDATION_ANDROID_EMULATOR_STATE:?CLOUD_VALIDATION_ANDROID_EMULATOR_STATE is required}"
+      local serial
+      serial="$(jq -er '.serial' "$state_file")"
+      adb -s "$serial" shell run-as com.rtk.cloud.sample sh -c \
+        'umask 077; : > files/cloud-validation-offline-ready'
+      ;;
+    ios)
+      local device data_container marker
+      device="$(xcrun simctl list devices booted | awk -F '[()]' '/Booted/ { print $2; exit }')"
+      test -n "$device"
+      data_container="$(xcrun simctl get_app_container "$device" com.rtk.cloud.sample.ios data)"
+      marker="$data_container/Documents/cloud-validation-offline-ready"
+      : > "$marker"
+      chmod 600 "$marker"
+      ;;
+    *)
+      echo "unsupported platform for offline-ready bridge: $platform" >&2
+      return 1
+      ;;
+  esac
+}
+
 while (( SECONDS < deadline )); do
   if read_shadow; then
     if jq -e --arg run_id "$run_id" '
@@ -80,6 +109,15 @@ done
 
 if [[ ! -f "$offline_ready" ]]; then
   echo "virtual device did not confirm the offline phase" >&2
+  exit 1
+fi
+
+# Release the platform's desired-state write only after the virtual device has
+# closed MQTT and produced the run-scoped OFFLINE artifact. This removes the
+# race where the app could write the "offline" desired state while the device
+# was still connected and able to consume it.
+if ! signal_platform_offline_ready; then
+  echo "offline controller could not signal platform offline readiness" >&2
   exit 1
 fi
 
