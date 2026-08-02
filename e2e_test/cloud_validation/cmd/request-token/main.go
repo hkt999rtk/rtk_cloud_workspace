@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -14,31 +15,42 @@ import (
 )
 
 func main() {
+	os.Exit(run(os.Args[1:], os.Stderr))
+}
+
+var requestToken = mtlsclient.Request
+
+func run(args []string, stderr io.Writer) int {
 	var url, cert, key, ca, request, output, expectedHTTPStatuses string
 	var timeout time.Duration
-	flag.StringVar(&url, "url", "", "HTTPS token endpoint")
-	flag.StringVar(&cert, "cert", "", "PEM client certificate chain")
-	flag.StringVar(&key, "key", "", "PEM client private key")
-	flag.StringVar(&ca, "ca", "", "optional PEM server CA")
-	flag.StringVar(&request, "request", "", "JSON request file")
-	flag.StringVar(&output, "output", "", "mode-0600 response file")
-	flag.StringVar(&expectedHTTPStatuses, "expect-http-status", "", "comma-separated non-success HTTP statuses accepted without writing a response")
-	flag.DurationVar(&timeout, "timeout", 15*time.Second, "request timeout")
-	flag.Parse()
+	fs := flag.NewFlagSet("request-token", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&url, "url", "", "HTTPS token endpoint")
+	fs.StringVar(&cert, "cert", "", "PEM client certificate chain")
+	fs.StringVar(&key, "key", "", "PEM client private key")
+	fs.StringVar(&ca, "ca", "", "optional PEM server CA")
+	fs.StringVar(&request, "request", "", "JSON request file")
+	fs.StringVar(&output, "output", "", "mode-0600 response file")
+	fs.StringVar(&expectedHTTPStatuses, "expect-http-status", "", "comma-separated non-success HTTP statuses accepted without writing a response")
+	fs.DurationVar(&timeout, "timeout", 15*time.Second, "request timeout")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	if url == "" || cert == "" || key == "" || request == "" || output == "" {
-		fmt.Fprintln(os.Stderr, "url, cert, key, request, and output are required")
-		os.Exit(2)
+		fmt.Fprintln(stderr, "url, cert, key, request, and output are required")
+		return 2
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	if err := mtlsclient.Request(ctx, url, cert, key, ca, request, output, timeout); err != nil {
+	if err := requestToken(ctx, url, cert, key, ca, request, output, timeout); err != nil {
 		var statusErr *mtlsclient.HTTPStatusError
 		if errors.As(err, &statusErr) && expectedStatus(expectedHTTPStatuses, statusErr.StatusCode) {
-			return
+			return 0
 		}
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, err)
+		return 1
 	}
+	return 0
 }
 
 func expectedStatus(raw string, actual int) bool {

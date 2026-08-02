@@ -3305,6 +3305,35 @@ func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
 	}
 }
 
+func TestSDKDeviceSimulatorFailsWithoutDisconnectRequest(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "device-missing-disconnect")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	result := runSDKDeviceSimulator(
+		[]assignment{{DeviceID: "device-missing-disconnect", DeviceType: "light"}},
+		[]certRecord{{DeviceID: "device-missing-disconnect", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+		"RTK", "run-sdk-missing-disconnect", tokenServer.URL,
+		[]mqttEndpointTarget{{Host: host, Port: port}}, 1,
+		loadOptions{Concurrency: 1, ReadyFile: filepath.Join(tmp, "ready.json"), SDKReconnectSignalFile: filepath.Join(tmp, "reconnect.signal")},
+	)
+	if result.Status != "FAIL" || len(result.Notes) == 0 || !strings.Contains(result.Notes[len(result.Notes)-1], "disconnect request") {
+		t.Fatalf("sdk simulator result = %+v, want missing disconnect request failure", result)
+	}
+}
+
 func TestWriteSDKDeviceReadyFileIsDeterministic(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "virtual-device", "ready.json")
 	sessions := []sustainedDeviceSession{
