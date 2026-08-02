@@ -81,6 +81,18 @@ func TestQualifyLiveOnboardingFactsRequiresOneCompleteDeviceChain(t *testing.T) 
 		generated.Workflow.Assertions["read_device_info"]["response_device_identity_matched"] != "PASS" {
 		t.Fatalf("unexpected runtime workflow: %+v", generated.Workflow)
 	}
+	if err := readJSONFile(filepath.Join(outDir, "bulk-provisioning-workflow.json"), &generated); err != nil {
+		t.Fatal(err)
+	}
+	if generated.Workflow.WorkflowID != "WF-PROV-BULK-001" ||
+		generated.Workflow.Assertions["wait_for_provisioning"]["zero_pending_or_failed"] != "PASS" {
+		t.Fatalf("unexpected bulk workflow: %+v", generated.Workflow)
+	}
+	brokenBulk := bind
+	brokenBulk.Provisioning.LastStates = map[string]liveOnboardingProvisionState{}
+	if _, _, err := qualifyBulkProvisioningFacts(brokenBulk); err == nil || !strings.Contains(err.Error(), "not complete") {
+		t.Fatalf("bulk evidence without per-device state passed: %v", err)
+	}
 
 	mqtt.Devices[0].Trace[len(mqtt.Devices[0].Trace)-1].Status = "FAIL"
 	if _, _, err := qualifyLiveOnboardingFacts(bind, mqtt); err == nil || !strings.Contains(err.Error(), "no single") {

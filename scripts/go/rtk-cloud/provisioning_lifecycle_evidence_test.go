@@ -50,8 +50,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		t.Fatal(err)
 	}
 	assignments := []bindAssignment{
-		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-deactivate", Status: "provision_requested"},
-		{AssignmentIndex: 1, AssignedEmail: "unprovision@example.test", DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-unprovision", Status: "provision_requested"},
+		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ClaimID: "claim-deactivate", AccountDeviceID: "account-deactivate", OperationID: "operation-deactivate", Status: "provision_requested"},
+		{AssignmentIndex: 1, AssignedEmail: "unprovision@example.test", DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ClaimID: "claim-unprovision", AccountDeviceID: "account-unprovision", OperationID: "operation-unprovision", Status: "provision_requested"},
 	}
 	if err := store.ReplaceBindings("RTK", "org-1", "rtk", "run-1", assignments); err != nil {
 		t.Fatal(err)
@@ -62,6 +62,7 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 
 	deactivated := false
 	unprovisioned := false
+	registryDisabled := false
 	transportReady := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := req.URL.Path
@@ -70,6 +71,11 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 			deactivated = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(w, `{"status":"accepted"}`)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodDelete:
+			registryDisabled = true
+			w.WriteHeader(http.StatusNoContent)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && registryDisabled:
+			http.NotFound(w, req)
 		case path == "/v1/orgs/org-1/devices/account-deactivate/provisioning":
 			_ = json.NewEncoder(w).Encode(map[string]any{"operation": map[string]any{"status": "succeeded"}, "readiness": map[string]any{"state": "ready", "product_state": "deactivated", "sources": map[string]any{"video_cloud_activation_status": "deactivated"}}})
 		case path == "/v1/orgs/org-1/devices/account-unprovision/unprovision" && !unprovisioned:
@@ -99,8 +105,11 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	originalDeviceToken := requestLifecycleDeviceToken
 	originalRelayTest := executeLifecycleVideoRelayTest
 	appTokenCalls := 0
-	requestLifecycleAppToken = func(string, tls.Certificate, string) (videoRelayTokenResponse, error) {
+	requestLifecycleAppToken = func(_ string, _ tls.Certificate, deviceID string) (videoRelayTokenResponse, error) {
 		appTokenCalls++
+		if deviceID == "device-deactivate" {
+			return videoRelayTokenResponse{AccessToken: "deactivation-owner-app-token"}, nil
+		}
 		if appTokenCalls == 1 {
 			return videoRelayTokenResponse{AccessToken: "former-owner-app-token"}, nil
 		}
@@ -135,8 +144,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !deactivated || !unprovisioned || appTokenCalls != 2 {
-		t.Fatalf("deactivated=%t unprovisioned=%t app_token_calls=%d", deactivated, unprovisioned, appTokenCalls)
+	if !deactivated || !registryDisabled || !unprovisioned || appTokenCalls != 3 {
+		t.Fatalf("deactivated=%t registry_disabled=%t unprovisioned=%t app_token_calls=%d", deactivated, registryDisabled, unprovisioned, appTokenCalls)
 	}
 	var result map[string]any
 	resultBytes, err := os.ReadFile(filepath.Join(outDir, "results.json"))
@@ -150,7 +159,7 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if readiness["prepared_by_lifecycle"] != true || readiness["status"] != "PASS" {
 		t.Fatalf("transport readiness evidence = %#v", readiness)
 	}
-	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
+	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-account-workflow.json", "provisioning-claim-workflow.json", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
@@ -407,7 +416,7 @@ func TestWriteProvisioningWorkflowEvidenceProducesAllCanonicalWorkflows(t *testi
 	}
 	wantSteps := map[string]map[string]bool{}
 	for _, workflow := range inventory.Workflows {
-		if workflow.ID != provisioningDeactivationWorkflowID && workflow.ID != provisioningUnprovisionWorkflowID && workflow.ID != provisioningSignoffWorkflowID {
+		if workflow.ID != "WF-PROV-ACCOUNT-001" && workflow.ID != "WF-PROV-CLAIM-001" && workflow.ID != provisioningDeactivationWorkflowID && workflow.ID != provisioningUnprovisionWorkflowID && workflow.ID != provisioningSignoffWorkflowID {
 			continue
 		}
 		wantSteps[workflow.ID] = map[string]bool{}
@@ -420,6 +429,8 @@ func TestWriteProvisioningWorkflowEvidenceProducesAllCanonicalWorkflows(t *testi
 		t.Fatal(err)
 	}
 	for file, workflowID := range map[string]string{
+		"provisioning-account-workflow.json":      "WF-PROV-ACCOUNT-001",
+		"provisioning-claim-workflow.json":        "WF-PROV-CLAIM-001",
 		"provisioning-deactivation-workflow.json": provisioningDeactivationWorkflowID,
 		"provisioning-unprovision-workflow.json":  provisioningUnprovisionWorkflowID,
 		"provisioning-signoff-workflow.json":      provisioningSignoffWorkflowID,
@@ -444,6 +455,57 @@ func TestWriteProvisioningWorkflowEvidenceProducesAllCanonicalWorkflows(t *testi
 			if !wantSteps[workflowID][stepID] {
 				t.Fatalf("%s emitted unknown step %s", workflowID, stepID)
 			}
+		}
+	}
+}
+
+func TestProvisioningLiveCasesProduceRequirementAndWorkflowEvidence(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	if err := writeProvisioningWorkflowEvidence(outDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(outDir, "bulk-provisioning-workflow.json"), map[string]any{
+		"schema_version": "rtk-live-workflow-evidence/v1",
+		"workflow": map[string]any{
+			"workflow_id": "WF-PROV-BULK-001",
+			"steps":       map[string]string{"provision_registry_device": "PASS", "wait_for_provisioning": "PASS"},
+			"assertions": map[string]map[string]string{
+				"provision_registry_device": {"operation_created": "PASS"},
+				"wait_for_provisioning":     {"all_devices_ready": "PASS"},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(outDir, "results.json"), map[string]any{"status": "PASS"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), []byte("# Provisioning PASS\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "junit.xml"), []byte(`<testsuite tests="1"><testcase name="provisioning"/></testsuite>`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, testID := range []string{"E2E-PROV-ACCOUNT-001", "E2E-PROV-BULK-001"} {
+		if err := writeCaseFeatureEvidence(workspace, outDir, testID, "provision-live-evidence", "staging", "", now, now.Add(time.Second)); err != nil {
+			t.Fatalf("write %s evidence: %v", testID, err)
+		}
+	}
+	var manifest featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(outDir, "feature-evidence.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Cases) != 2 {
+		t.Fatalf("cases = %d, want 2", len(manifest.Cases))
+	}
+	for _, item := range manifest.Cases {
+		if item.Status != "PASS" || len(item.Requirements) == 0 || len(item.Workflows) == 0 {
+			t.Fatalf("incomplete provisioning evidence: %+v", item)
 		}
 	}
 }

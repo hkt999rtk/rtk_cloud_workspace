@@ -1995,10 +1995,15 @@ func runTestLive(args []string) error {
 	if err := writeLiveOnboardingWorkflowEvidence(outDir); err != nil {
 		return err
 	}
-	return writeCaseFeatureEvidence(
-		workspace, outDir, "LIVE-STG-ONBOARD-001", runID,
-		"staging", "", started, time.Now().UTC(),
-	)
+	for _, testID := range []string{"LIVE-STG-ONBOARD-001", "E2E-PROV-ACCOUNT-001", "E2E-PROV-BULK-001"} {
+		if err := writeCaseFeatureEvidence(
+			workspace, outDir, testID, runID,
+			"staging", "", started, time.Now().UTC(),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func commandFlagValue(args []string, name string) string {

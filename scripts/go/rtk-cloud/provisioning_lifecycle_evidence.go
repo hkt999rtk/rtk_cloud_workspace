@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -137,9 +139,16 @@ func runProvisioningLifecycleEvidence(args []string) error {
 		return err
 	}
 	formerOwnerAppCertificate, err := readLifecycleAppCertificate(store, *brandname, unprovision.AssignedEmail)
+	deactivationOwnerAppCertificate, deactivationCertificateErr := readLifecycleAppCertificate(store, *brandname, deactivation.AssignedEmail)
 	_ = store.Close()
 	if err != nil {
 		return err
+	}
+	if deactivationCertificateErr != nil {
+		return deactivationCertificateErr
+	}
+	if strings.TrimSpace(deactivation.ClaimID) == "" || strings.TrimSpace(deactivation.OperationID) == "" || strings.TrimSpace(deactivation.AccountDeviceID) == "" {
+		return errors.New("account provisioning qualification is missing claim, operation, or registry-device correlation")
 	}
 	certificateDigest := sha256.Sum256([]byte(credentialBefore.CertPEM))
 	if strings.TrimSpace(credentialBefore.CertPEM) == "" || strings.TrimSpace(credentialBefore.FactoryEnrollResponseRedactedJSON) == "" {
@@ -152,12 +161,22 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	if err := readCanonicalDeviceInfo(videoBaseURL, formerOwnerAppToken.AccessToken, unprovision.DeviceID); err != nil {
 		return fmt.Errorf("verify former-owner pre-unprovision access: %w", err)
 	}
+	deactivationOwnerAppToken, err := requestLifecycleAppToken(videoTokenBaseURL, deactivationOwnerAppCertificate, deactivation.DeviceID)
+	if err != nil {
+		return fmt.Errorf("mint owner app token for account provisioning qualification: %w", err)
+	}
+	if err := readCanonicalDeviceInfo(videoBaseURL, deactivationOwnerAppToken.AccessToken, deactivation.DeviceID); err != nil {
+		return fmt.Errorf("verify owner app readiness for account provisioning qualification: %w", err)
+	}
 
 	if err := requestAccountDeactivation(ctx, artifact.BrandCloudID, deactivation, deactivationToken, *runID); err != nil {
 		return err
 	}
 	deactivationSnapshot, deactivationAfter, err := waitForDeactivation(ctx, videoBaseURL, videoAdminToken, artifact.BrandCloudID, deactivation, deactivationToken, *timeout, *poll)
 	if err != nil {
+		return err
+	}
+	if err := disableAccountRegistryDevice(ctx, artifact.BrandCloudID, deactivation.AccountDeviceID, deactivationToken); err != nil {
 		return err
 	}
 
@@ -223,7 +242,9 @@ func runProvisioningLifecycleEvidence(args []string) error {
 			"device_id": deactivation.DeviceID, "account_device_id": deactivation.AccountDeviceID,
 			"operation_status": deactivationSnapshot.OperationStatus, "activation_status": deactivationSnapshot.ActivationStatus,
 			"video_activated_before": deactivationBefore.Activated, "video_activated_after": deactivationAfter.Activated,
-			"video_revoked_after": deactivationAfter.Revoked,
+			"video_revoked_after": deactivationAfter.Revoked, "registry_device_disabled": true,
+			"claim_id_present": true, "provision_operation_id_present": true,
+			"owner_app_certificate_present": true, "owner_app_token_issued": true, "owner_device_info_read": true,
 		},
 		"unprovision": map[string]any{
 			"device_id": unprovision.DeviceID, "account_device_id": unprovision.AccountDeviceID,
@@ -244,11 +265,45 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	if err := writeProvisioningWorkflowEvidence(*outDir); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(*outDir, "junit.xml"), []byte(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="provisioning-lifecycle" tests="2" failures="0"><testcase classname="provisioning" name="deactivation"/><testcase classname="provisioning" name="unprovision"/></testsuite>`+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(*outDir, "junit.xml"), []byte(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="provisioning-lifecycle" tests="3" failures="0"><testcase classname="provisioning" name="account-provisioning"/><testcase classname="provisioning" name="deactivation"/><testcase classname="provisioning" name="unprovision"/></testsuite>`+"\n"), 0o644); err != nil {
 		return err
 	}
-	report := fmt.Sprintf("# Provisioning Lifecycle Qualification\n\n- Run ID: `%s`\n- Status: **PASS**\n- Deactivation device: `%s`\n- Unprovision device: `%s`\n- Previous owner binding released: **PASS**\n- Factory identity preserved: **PASS**\n", *runID, deactivation.DeviceID, unprovision.DeviceID)
+	report := fmt.Sprintf("# Provisioning Lifecycle Qualification\n\n- Run ID: `%s`\n- Status: **PASS**\n- Account provisioning device: `%s`\n- Owner app certificate/token readiness: **PASS**\n- Registry device disabled after deactivation: **PASS**\n- Unprovision device: `%s`\n- Previous owner binding released: **PASS**\n- Factory identity preserved: **PASS**\n", *runID, deactivation.DeviceID, unprovision.DeviceID)
 	return os.WriteFile(filepath.Join(*outDir, "TEST_REPORT.md"), []byte(report), 0o644)
+}
+
+func disableAccountRegistryDevice(ctx accountManagerContext, brandCloudID, accountDeviceID, bearer string) error {
+	endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices/%s", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(accountDeviceID))
+	reqCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("authorization", "Bearer "+bearer)
+	resp, err := rtkJSONHTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("disable account registry device: %w", err)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		return readErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("disable account registry device returned HTTP %d%s", resp.StatusCode, errorBodySuffix(body))
+	}
+	body, status, err := curlJSONStatus(endpoint, bearer, nil)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusNotFound {
+		return fmt.Errorf("disabled account registry device remains readable: HTTP %d%s", status, errorBodySuffix(body))
+	}
+	return nil
 }
 
 func prepareLifecycleTransportReadiness(workspace, envRoot, brandname, outDir string) error {
@@ -543,6 +598,33 @@ func writeProvisioningWorkflowEvidence(outDir string) error {
 		steps      map[string]string
 		assertions map[string]map[string]string
 	}{
+		{
+			file: "provisioning-account-workflow.json", workflowID: "WF-PROV-ACCOUNT-001",
+			steps: map[string]string{
+				"issue_app_certificate": "PASS", "resolve_device_claim": "PASS", "provision_registry_device": "PASS",
+				"wait_for_provisioning": "PASS", "issue_app_runtime_token": "PASS", "verify_device_readiness": "PASS",
+				"deactivate_video_device": "PASS", "delete_registry_device": "PASS",
+			},
+			assertions: map[string]map[string]string{
+				"issue_app_certificate":     {"run_scoped_app_private_key_present": "PASS", "issued_certificate_loaded": "PASS"},
+				"resolve_device_claim":      {"claim_id_present": "PASS", "account_video_identity_correlated": "PASS"},
+				"provision_registry_device": {"provision_operation_id_present": "PASS", "same_registry_device_used": "PASS"},
+				"wait_for_provisioning":     {"operation_succeeded": "PASS", "video_activation_projected": "PASS"},
+				"issue_app_runtime_token":   {"app_certificate_mtls": "PASS", "app_scope_token_issued": "PASS"},
+				"verify_device_readiness":   {"owner_token_authorized": "PASS", "device_identity_matched": "PASS"},
+				"deactivate_video_device":   {"same_device_deactivated": "PASS", "video_revocation_converged": "PASS"},
+				"delete_registry_device":    {"same_registry_device_disabled": "PASS", "disabled_device_not_readable": "PASS"},
+			},
+		},
+		{
+			file: "provisioning-claim-workflow.json", workflowID: "WF-PROV-CLAIM-001",
+			steps: map[string]string{"resolve_device_claim": "PASS", "activate_claimed_device": "PASS", "verify_claimed_device_lifecycle": "PASS"},
+			assertions: map[string]map[string]string{
+				"resolve_device_claim":            {"claim_id_present": "PASS", "registry_and_video_identity_correlated": "PASS"},
+				"activate_claimed_device":         {"normalized_activation_input_used": "PASS", "provision_operation_succeeded": "PASS"},
+				"verify_claimed_device_lifecycle": {"activated_projection_observed": "PASS", "same_video_device_verified": "PASS"},
+			},
+		},
 		{
 			file: "provisioning-deactivation-workflow.json", workflowID: provisioningDeactivationWorkflowID,
 			steps: map[string]string{"request_account_deactivation": "PASS", "deactivate_video_device": "PASS", "verify_deactivated_lifecycle": "PASS"},
