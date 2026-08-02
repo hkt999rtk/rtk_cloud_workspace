@@ -51,7 +51,7 @@ signal_platform_offline_ready() {
       local serial
       serial="$(jq -er '.serial' "$state_file")"
       adb -s "$serial" shell run-as com.rtk.cloud.sample sh -c \
-        'umask 077; : > files/cloud-validation-offline-ready'
+        'umask 077; : > /data/user/0/com.rtk.cloud.sample/files/cloud-validation-offline-ready'
       ;;
     ios)
       local device data_container marker

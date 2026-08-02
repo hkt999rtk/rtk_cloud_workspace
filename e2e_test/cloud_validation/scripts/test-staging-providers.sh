@@ -16,7 +16,7 @@ fi
 offline_controller="$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -Fq 'CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600' "$offline_controller"
 grep -Fq 'CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1' "$offline_controller"
-grep -Fq 'cloud-validation-offline-ready' "$offline_controller"
+grep -Fq '/data/user/0/com.rtk.cloud.sample/files/cloud-validation-offline-ready' "$offline_controller"
 grep -Fq 'offline ready handshake path is required for nightly validation' \
   "$root/repos/rtk_cloud_client/samples/android/app/src/main/kotlin/com/rtk/cloud/sample/CloudValidation.kt"
 grep -Fq '.offline_ready_path = $offline_ready_path' \
