@@ -12,6 +12,8 @@ app_key="$(jq -er '.app.private_key_path' "$bundle")"
 secret_root="$(jq -er 'first(.resources[] | select(.kind == "local_fixture_root") | .path)' "$bundle")"
 header_file="$secret_root/app-headers.txt"
 signal_file="$out_dir/virtual-device/offline-reconnect.signal"
+disconnect_request="$out_dir/virtual-device/offline-disconnect.request"
+offline_ready="$out_dir/virtual-device/offline-ready"
 evidence_file="$out_dir/offline-reconnect-evidence.json"
 response="$secret_root/offline-shadow-response.json"
 headers="$secret_root/offline-shadow-headers.txt"
@@ -32,6 +34,40 @@ read_shadow() {
     --header "@$header_file" --dump-header "$headers" \
     "${base_url%/}/things/$device_id/shadow" > "$response"
 }
+
+while (( SECONDS < deadline )); do
+  if read_shadow && jq -e --arg run_id "$run_id" '
+    .state.desired.cloud_validation_run == $run_id and
+    .state.reported.cloud_validation_run == $run_id and
+    .state.desired.enabled == true and
+    .state.reported.enabled == true and
+    ((.state.delta == null) or (.state.delta == {}))
+  ' "$response" >/dev/null; then
+    : > "$disconnect_request"
+    chmod 600 "$disconnect_request"
+    break
+  fi
+  sleep 1
+done
+
+if [[ ! -f "$disconnect_request" ]]; then
+  echo "offline controller did not observe online shadow convergence" >&2
+  exit 1
+fi
+
+while (( SECONDS < deadline )); do
+  if [[ -f "$offline_ready" ]] && jq -e --arg run_id "$run_id" '
+    .schema_version == 1 and .run_id == $run_id and .status == "OFFLINE"
+  ' "$offline_ready" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ ! -f "$offline_ready" ]]; then
+  echo "virtual device did not confirm the offline phase" >&2
+  exit 1
+fi
 
 while (( SECONDS < deadline )); do
   if read_shadow && jq -e --arg run_id "$run_id" '

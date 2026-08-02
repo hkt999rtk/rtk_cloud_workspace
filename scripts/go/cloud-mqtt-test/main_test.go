@@ -3260,7 +3260,21 @@ func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond)
+	disconnectRequest := filepath.Join(tmp, "offline-disconnect.request")
+	if err := os.WriteFile(disconnectRequest, []byte("disconnect\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	offlineReady := filepath.Join(tmp, "offline-ready")
+	deadline = time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(offlineReady); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sdk reconnect simulator did not confirm offline state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	appConn, err := connectMQTTActor(mqttActorProbe{
 		DeviceID: "device-reconnect", Brandname: "RTK", RunID: "run-sdk-reconnect",
 		AppToken: testMQTTToken("app"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,

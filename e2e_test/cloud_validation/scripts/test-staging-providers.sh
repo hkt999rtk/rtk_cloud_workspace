@@ -217,6 +217,10 @@ JSON
 export CLOUD_VALIDATION_COMMAND_TRIGGER_TIMEOUT_SECONDS=2
 "$root/e2e_test/cloud_validation/scripts/run-cloud-command-trigger.sh"
 jq -e '.events[0].type == "command_dispatched" and .events[0].evidence.http_status == 200' "$tmp/out/cloud-command-trigger-evidence.json" >/dev/null
+cat > "$tmp/out/virtual-device/offline-ready" <<'JSON'
+{"schema_version":1,"run_id":"run-ios","status":"OFFLINE"}
+JSON
+chmod 600 "$tmp/out/virtual-device/offline-ready"
 export CURL_LOG="$tmp/offline-controller-curl.log"
 "$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -q -- '--cert .* --key ' "$CURL_LOG"

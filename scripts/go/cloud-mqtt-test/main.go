@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
@@ -1542,11 +1543,34 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		return result
 	}
 	if strings.TrimSpace(opts.SDKReconnectSignalFile) != "" {
+		disconnectRequestFile := filepath.Join(filepath.Dir(opts.SDKReconnectSignalFile), "offline-disconnect.request")
+		offlineReadyFile := filepath.Join(filepath.Dir(opts.SDKReconnectSignalFile), "offline-ready")
+		onlineContext, stopOnline := context.WithCancel(context.Background())
+		onlineDone := make(chan struct{})
+		go func() {
+			respondSDKDeviceShadowDeltas(onlineContext, sessions, deadline, &result)
+			close(onlineDone)
+		}()
+		if err := waitForSDKSignal(disconnectRequestFile, deadline, "offline disconnect request"); err != nil {
+			stopOnline()
+			closeSustainedSessions(sessions)
+			<-onlineDone
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sdk device disconnect request: "+redactedError(err))
+			return result
+		}
+		stopOnline()
 		closeSustainedSessions(sessions)
+		<-onlineDone
 		sessions = nil
 		result.Totals.ActiveConnections = 0
 		result.Totals.ActiveSubscriptions = 0
-		if err := waitForSDKReconnectSignal(opts.SDKReconnectSignalFile, deadline); err != nil {
+		if err := writeSDKOfflineReadyFile(offlineReadyFile, runID); err != nil {
+			result.Status = "FAIL"
+			result.Notes = append(result.Notes, "sdk device offline ready artifact: "+redactedError(err))
+			return result
+		}
+		if err := waitForSDKSignal(opts.SDKReconnectSignalFile, deadline, "reconnect signal"); err != nil {
 			result.Status = "FAIL"
 			result.Notes = append(result.Notes, "sdk device reconnect signal: "+redactedError(err))
 			return result
@@ -1572,7 +1596,11 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		}
 		result.Notes = append(result.Notes, "sdk device deterministic offline/reconnect handshake completed")
 	}
+	respondSDKDeviceShadowDeltas(context.Background(), sessions, deadline, &result)
+	return result
+}
 
+func respondSDKDeviceShadowDeltas(ctx context.Context, sessions []sustainedDeviceSession, deadline time.Time, result *sustainedLoadResult) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, session := range sessions {
@@ -1583,12 +1611,20 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 			topic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update/delta"
 			updateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
 			for time.Now().Before(deadline) {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 				wait := time.Until(deadline)
 				if wait > time.Second {
 					wait = time.Second
 				}
 				doc, err := session.Reader.WaitForPublish(topic, wait, nil)
 				if err != nil {
+					if ctx.Err() != nil {
+						return
+					}
 					if readerErr := session.Reader.LastError(); readerErr != nil {
 						mu.Lock()
 						result.Status = "FAIL"
@@ -1629,7 +1665,6 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		}()
 	}
 	wg.Wait()
-	return result
 }
 
 func resyncSDKDeviceShadows(sessions []sustainedDeviceSession, runID string, result *sustainedLoadResult) error {
@@ -1710,7 +1745,7 @@ func probeInvalidDeviceCredential(assignments []assignment, certByID map[string]
 	return nil
 }
 
-func waitForSDKReconnectSignal(path string, deadline time.Time) error {
+func waitForSDKSignal(path string, deadline time.Time, description string) error {
 	for time.Now().Before(deadline) {
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
 			return nil
@@ -1719,7 +1754,27 @@ func waitForSDKReconnectSignal(path string, deadline time.Time) error {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return errors.New("timed out waiting for reconnect signal")
+	return fmt.Errorf("timed out waiting for %s", description)
+}
+
+func waitForSDKReconnectSignal(path string, deadline time.Time) error {
+	return waitForSDKSignal(path, deadline, "reconnect signal")
+}
+
+func writeSDKOfflineReadyFile(path, runID string) error {
+	payload, err := json.MarshalIndent(map[string]any{
+		"schema_version": 1,
+		"run_id":         runID,
+		"status":         "OFFLINE",
+		"observed_at":    time.Now().UTC().Format(time.RFC3339Nano),
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(payload, '\n'), 0o600)
 }
 
 func sdkSimulatorDelta(doc map[string]any) map[string]any {
