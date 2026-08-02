@@ -709,6 +709,14 @@ func TestVideoRelayTokenBaseURLPrefersExplicitValue(t *testing.T) {
 	}
 }
 
+func TestVideoRelayTokenBaseURLOverridePrefersRuntimeURL(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_TOKEN_BASE_URL", "https://device.video.coverage-run.invalid:18443")
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "https://device.video.staging.example.test")
+	if got := videoRelayTokenBaseURLOverride(); got != "https://device.video.coverage-run.invalid:18443" {
+		t.Fatalf("token base URL override = %q", got)
+	}
+}
+
 func deviceIDs(devices []videoRelaySelectedDevice) []string {
 	out := make([]string, 0, len(devices))
 	for _, device := range devices {

@@ -569,7 +569,7 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
 	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
-	mtlsURL := videoCloudMTLSBaseURLForRelay(envRoot, stackEnv, apiURL)
+	mtlsURL := videoCloudTokenBaseURLForRelay(envRoot, stackEnv, apiURL, videoRelayTokenBaseURLOverride())
 	deviceTokens := map[string]string{}
 	appTokens := map[string]string{}
 	for _, device := range selected {
@@ -1673,6 +1673,13 @@ func videoCloudTokenBaseURLForRelay(envRoot string, stackValues map[string]strin
 		return explicit
 	}
 	return strings.TrimRight(strings.TrimSpace(videoCloudMTLSBaseURLForRelay(envRoot, stackValues, fallback)), "/")
+}
+
+func videoRelayTokenBaseURLOverride() string {
+	return firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_TOKEN_BASE_URL"),
+		os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE"),
+	)
 }
 
 func videoRelayTopologyDeployValue(path, key string) string {
