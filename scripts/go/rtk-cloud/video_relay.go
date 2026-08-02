@@ -286,7 +286,7 @@ func runVideoLoadtestTokens(args []string) error {
 		return fmt.Errorf("--concurrency must be positive")
 	}
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
-	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
+	apiURL := videoRelayAPIBaseURL(stackEnv)
 	mtlsURL := videoCloudTokenBaseURLForRelay(envRoot, stackEnv, apiURL, *baseURL)
 	deviceTokens, appTokens, err := mintVideoLoadtestTokens(mtlsURL, selected, *expirySeconds, *concurrency, *requestTimeout)
 	if err != nil {
@@ -568,7 +568,7 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 	}
 
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
-	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
+	apiURL := videoRelayAPIBaseURL(stackEnv)
 	mtlsURL := videoCloudTokenBaseURLForRelay(envRoot, stackEnv, apiURL, videoRelayTokenBaseURLOverride())
 	deviceTokens := map[string]string{}
 	appTokens := map[string]string{}
@@ -1680,6 +1680,17 @@ func videoRelayTokenBaseURLOverride() string {
 		os.Getenv("VIDEO_CLOUD_TOKEN_BASE_URL"),
 		os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE"),
 	)
+}
+
+func videoRelayAPIBaseURL(stackValues map[string]string) string {
+	if explicit := firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_BASE_URL"),
+		os.Getenv("VIDEO_CLOUD_PUBLIC_BASE_URL"),
+		os.Getenv("HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL"),
+	); explicit != "" {
+		return strings.TrimRight(explicit, "/")
+	}
+	return "https://" + firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
 }
 
 func videoRelayTopologyDeployValue(path, key string) string {

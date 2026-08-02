@@ -717,6 +717,23 @@ func TestVideoRelayTokenBaseURLOverridePrefersRuntimeURL(t *testing.T) {
 	}
 }
 
+func TestVideoRelayAPIBaseURLPrefersRuntimeURL(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_BASE_URL", "https://video.coverage-run.invalid:18443/")
+	t.Setenv("VIDEO_CLOUD_PUBLIC_BASE_URL", "https://video.staging.example.test")
+	t.Setenv("HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL", "https://video.load.example.test")
+	got := videoRelayAPIBaseURL(map[string]string{"VIDEO_CLOUD_DOMAIN": "coverage-run.coverage-run.invalid"})
+	if got != "https://video.coverage-run.invalid:18443" {
+		t.Fatalf("API base URL = %q, want run-scoped tunnel URL", got)
+	}
+}
+
+func TestVideoRelayAPIBaseURLFallsBackToStackDomain(t *testing.T) {
+	got := videoRelayAPIBaseURL(map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"})
+	if got != "https://video.example.test" {
+		t.Fatalf("API base URL = %q, want stack domain fallback", got)
+	}
+}
+
 func deviceIDs(devices []videoRelaySelectedDevice) []string {
 	out := make([]string, 0, len(devices))
 	for _, device := range devices {
