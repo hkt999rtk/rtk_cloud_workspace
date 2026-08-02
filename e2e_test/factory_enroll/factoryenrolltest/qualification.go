@@ -159,9 +159,6 @@ func (r *QualificationRunner) Run(ctx context.Context, cfg QualificationConfig) 
 	if err != nil {
 		return nil, err
 	}
-	if factoryResult.Summary.Successes != 1 || len(factoryResult.Devices) != 1 || !factoryResult.Devices[0].Success {
-		return nil, errors.New("factory enrollment did not produce one successful device")
-	}
 	if err := os.MkdirAll(factoryArtifactDir, 0o700); err != nil {
 		return nil, err
 	}
@@ -170,6 +167,9 @@ func (r *QualificationRunner) Run(ctx context.Context, cfg QualificationConfig) 
 	}
 	if err := WriteMarkdown(filepath.Join(factoryArtifactDir, "factory-enroll-report.md"), factoryResult); err != nil {
 		return nil, err
+	}
+	if factoryResult.Summary.Successes != 1 || len(factoryResult.Devices) != 1 || !factoryResult.Devices[0].Success {
+		return nil, errors.New("factory enrollment did not produce one successful device; inspect redacted factory-runner evidence")
 	}
 	device := factoryResult.Devices[0]
 	result.DeviceID = device.DeviceID
