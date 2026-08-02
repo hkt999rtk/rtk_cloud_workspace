@@ -297,3 +297,150 @@ func TestFactoryQualificationSmallHelpersAndFailureBranches(t *testing.T) {
 		t.Fatal("missing factory evidence files were accepted")
 	}
 }
+
+func TestRunTestFactoryLiveRejectsUnsafeRuntimeBeforeStartingTunnels(t *testing.T) {
+	writeStack := func(t *testing.T, body string) string {
+		t.Helper()
+		envRoot := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return envRoot
+	}
+
+	t.Run("wrong stack", func(t *testing.T) {
+		envRoot := writeStack(t, "CLOUD_STACK_NAME=shared-production\n")
+		err := runTestFactoryLive([]string{"--workspace", t.TempDir(), "--env-root", envRoot})
+		if err == nil || !strings.Contains(err.Error(), "restricted to video-cloud-staging") {
+			t.Fatalf("wrong-stack error = %v", err)
+		}
+	})
+
+	t.Run("configure confirmation", func(t *testing.T) {
+		envRoot := writeStack(t, "CLOUD_STACK_NAME=video-cloud-staging\nVIDEO_CLOUD_DOMAIN=video-cloud-staging.realtekconnect.com\n")
+		t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", filepath.Join(t.TempDir(), "kubeconfig"))
+		err := runTestFactoryLive([]string{"--workspace", t.TempDir(), "--env-root", envRoot, "--configure-runtime", "--confirm", "wrong"})
+		if err == nil || !strings.Contains(err.Error(), "requires --confirm video-cloud-staging") {
+			t.Fatalf("confirmation error = %v", err)
+		}
+	})
+
+	t.Run("missing device domain", func(t *testing.T) {
+		envRoot := writeStack(t, "CLOUD_STACK_NAME=video-cloud-staging\n")
+		t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", filepath.Join(t.TempDir(), "kubeconfig"))
+		err := runTestFactoryLive([]string{"--workspace", t.TempDir(), "--env-root", envRoot})
+		if err == nil || !strings.Contains(err.Error(), "--device-url is required") {
+			t.Fatalf("missing-domain error = %v", err)
+		}
+	})
+
+	t.Run("non HTTPS device URL", func(t *testing.T) {
+		envRoot := writeStack(t, "CLOUD_STACK_NAME=video-cloud-staging\n")
+		t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", filepath.Join(t.TempDir(), "kubeconfig"))
+		err := runTestFactoryLive([]string{"--workspace", t.TempDir(), "--env-root", envRoot, "--device-url", "http://device.example.invalid"})
+		if err == nil || !strings.Contains(err.Error(), "device URL must be HTTPS") {
+			t.Fatalf("device-URL error = %v", err)
+		}
+	})
+}
+
+func TestFactoryKubectlHelpersCoverSuccessAndFailures(t *testing.T) {
+	t.Run("JSON and secret keys", func(t *testing.T) {
+		installFactoryTestCommand(t, "kubectl", `printf '%s\n' '{"data":{"FIRST":"eA==","SECOND":"eQ=="}}'`)
+		object, err := kubectlJSON("kubeconfig", "namespace", "secret", "runtime")
+		if err != nil || object["data"] == nil {
+			t.Fatalf("kubectlJSON object=%v error=%v", object, err)
+		}
+		keys, err := kubectlSecretKeyNames("kubeconfig", "namespace", "runtime")
+		if err != nil || !keys["FIRST"] || !keys["SECOND"] {
+			t.Fatalf("secret keys=%v error=%v", keys, err)
+		}
+	})
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		installFactoryTestCommand(t, "kubectl", `printf '%s\n' 'not-json'`)
+		if _, err := kubectlJSON("kubeconfig", "namespace", "deployment", "service"); err == nil {
+			t.Fatal("invalid kubectl JSON was accepted")
+		}
+	})
+
+	t.Run("command failure", func(t *testing.T) {
+		installFactoryTestCommand(t, "kubectl", `exit 9`)
+		if _, err := kubectlJSON("kubeconfig", "namespace", "deployment", "service"); err == nil || !strings.Contains(err.Error(), "kubectl get deployment/service") {
+			t.Fatalf("kubectl failure error = %v", err)
+		}
+		if err := kubectlPatchJSON("kubeconfig", "namespace", "secret", "runtime", map[string]any{"data": map[string]string{"key": "value"}}); err == nil || !strings.Contains(err.Error(), "patch secret/runtime") {
+			t.Fatalf("kubectl patch failure error = %v", err)
+		}
+	})
+
+	t.Run("patch success and marshal failure", func(t *testing.T) {
+		installFactoryTestCommand(t, "kubectl", `cat >/dev/null`)
+		if err := kubectlPatchJSON("kubeconfig", "namespace", "secret", "runtime", map[string]any{"data": map[string]string{"key": "value"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := kubectlPatchJSON("kubeconfig", "namespace", "secret", "runtime", map[string]any{"invalid": make(chan int)}); err == nil {
+			t.Fatal("non-JSON patch payload was accepted")
+		}
+	})
+}
+
+func TestFactoryRuntimeValidationFailureBranches(t *testing.T) {
+	ready := map[string]any{
+		"metadata": map[string]any{"name": "service"},
+		"spec":     map[string]any{"replicas": float64(1)},
+		"status":   map[string]any{"readyReplicas": float64(1)},
+	}
+	if err := validateDeploymentReady(ready, "service"); err != nil {
+		t.Fatal(err)
+	}
+	ready["spec"].(map[string]any)["replicas"] = float64(0)
+	if err := validateDeploymentReady(ready, "service"); err == nil {
+		t.Fatal("zero-replica deployment was accepted")
+	}
+
+	workspace := t.TempDir()
+	accountCommit := initFactoryTestRepo(t, filepath.Join(workspace, "repos", "rtk_account_manager"))
+	_ = initFactoryTestRepo(t, filepath.Join(workspace, "repos", "rtk_video_cloud"))
+	account := map[string]any{"image": "ghcr.io/test/account-manager:sha-wrong"}
+	video := map[string]any{"image": "ghcr.io/test/video:sha-unused"}
+	if err := validateFactoryDeployedSourceImages(workspace, account, video, video); err == nil || !strings.Contains(err.Error(), accountCommit[:12]) {
+		t.Fatalf("source-image mismatch error = %v", err)
+	}
+
+	missingRepoWorkspace := t.TempDir()
+	if err := validateFactoryDeployedSourceImages(missingRepoWorkspace, account, video, video); err == nil {
+		t.Fatal("missing source repository was accepted")
+	}
+}
+
+func TestConfigureFactoryRuntimeReportsCredentialAndRolloutFailures(t *testing.T) {
+	if err := configureFactoryOpenBAORole("kubeconfig", t.TempDir(), "video-cloud-staging"); err == nil {
+		t.Fatal("missing OpenBao token was accepted")
+	}
+
+	envRoot := t.TempDir()
+	tokenPath := filepath.Join(envRoot, "state", "openbao", "root-token")
+	if err := os.MkdirAll(filepath.Dir(tokenPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tokenPath, []byte("test-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("OpenBao command", func(t *testing.T) {
+		installFactoryTestCommand(t, "kubectl", `exit 8`)
+		if err := configureFactoryOpenBAORole("kubeconfig", envRoot, "video-cloud-staging"); err == nil || !strings.Contains(err.Error(), "configure OpenBao") {
+			t.Fatalf("OpenBao command error = %v", err)
+		}
+	})
+	t.Run("rollout", func(t *testing.T) {
+		installFactoryTestCommand(t, "kubectl", `cat >/dev/null || true
+case "$*" in *"rollout status"*) exit 7 ;; esac`)
+		if err := configureFactoryProductionJWTRuntime("kubeconfig", envRoot, "video-cloud-staging"); err == nil || !strings.Contains(err.Error(), "wait for account-manager rollout") {
+			t.Fatalf("rollout error = %v", err)
+		}
+	})
+}
