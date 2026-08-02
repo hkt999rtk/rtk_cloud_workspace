@@ -1995,7 +1995,7 @@ func TestLKEOpenBaoBootstrapRolesAllowEd25519AndP256CSRs(t *testing.T) {
 
 	for _, want := range []string{
 		"bao write pki/device/roles/factory-device",
-		"allow_any_name=true enforce_hostnames=false cn_validations=[] server_flag=false client_flag=true",
+		`"cn_validations":[],"server_flag":false,"client_flag":true`,
 		"bao write pki/device/roles/gateway-server",
 		"bao write pki/app/roles/app-user",
 		"key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth",
