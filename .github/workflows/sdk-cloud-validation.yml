@@ -333,8 +333,11 @@ jobs:
 
   android-live:
     name: Android Emulator deployed-cloud validation
-    needs: contract-and-source
-    if: ${{ inputs.run_live && (inputs.platform == 'all' || inputs.platform == 'android') }}
+    needs: [contract-and-source, ios-live]
+    if: >-
+      ${{ always() && needs.contract-and-source.result == 'success' &&
+          (needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped') &&
+          inputs.run_live && (inputs.platform == 'all' || inputs.platform == 'android') }}
     runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
     timeout-minutes: 35
     concurrency:

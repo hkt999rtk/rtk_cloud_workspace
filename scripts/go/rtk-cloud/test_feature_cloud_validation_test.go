@@ -235,6 +235,8 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"Initialize private submodules", "git submodule update --init --recursive --depth=1",
 		"permitted_classes: [], permitted_symbols: [], aliases: true",
 		"runs-on: macos-15", "Select Swift 6 toolchain", "/Applications/Xcode_16.4.app/Contents/Developer", "Swift version 6",
+		"needs: [contract-and-source, ios-live]",
+		"(needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped')",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("SDK cloud workflow is missing %q", required)
@@ -242,6 +244,9 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 	}
 	if strings.Contains(workflow, "submodules: recursive") || strings.Count(workflow, "Initialize private submodules") != 4 {
 		t.Fatal("every SDK workflow job must bootstrap private submodules with the deploy key")
+	}
+	if strings.Count(workflow, "group: sdk-cloud-validation-mobile-host") != 2 {
+		t.Fatal("iOS and Android live jobs must share the mobile-host concurrency guard")
 	}
 	if strings.Count(workflow, `go-version: "1.25.x"`) != 4 || strings.Contains(workflow, `go-version: "1.24.x"`) {
 		t.Fatal("every SDK workflow job must use the scripts/go Go 1.25 toolchain")
