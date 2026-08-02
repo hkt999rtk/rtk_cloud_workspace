@@ -498,6 +498,8 @@ jq -n \
   --arg pkcs12_password "$app_identity_password" \
   --arg revoked_pkcs12_path "$revoked_app_identity" \
   --arg revoked_pkcs12_password "$revoked_app_identity_password" \
+  --arg device_certificate_path "$device_cert" \
+  --arg device_private_key_path "$device_key" \
   --arg user_id "$brand_cloud_user_id" \
   --arg email "$email" \
   --arg cloud_id "$brand_cloud_id" \
@@ -539,7 +541,9 @@ jq -n \
       pkcs12_path: $pkcs12_path,
       pkcs12_password: $pkcs12_password,
       revoked_pkcs12_path: $revoked_pkcs12_path,
-      revoked_pkcs12_password: $revoked_pkcs12_password
+      revoked_pkcs12_password: $revoked_pkcs12_password,
+      device_certificate_path: $device_certificate_path,
+      device_private_key_path: $device_private_key_path
     },
     local_temporary_files: [$token_file, $token_request_file, $cloud_file],
     resources: [

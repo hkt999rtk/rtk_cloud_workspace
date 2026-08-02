@@ -70,7 +70,10 @@ if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
     esac
   done
   test -n "$output"
-  if [[ -n "${ROTATION_TOKEN_STATE:-}" && ! -e "$ROTATION_TOKEN_STATE" ]]; then
+  if [[ -n "${AUTH_DEACTIVATED_STATE:-}" && -e "$AUTH_DEACTIVATED_STATE" && "$joined" == *"auth-resilience-foreign-cert.pem"* ]]; then
+    printf '%s\n' '{"error":"certificate_rejected"}' > "$output"
+    printf '403'
+  elif [[ -n "${ROTATION_TOKEN_STATE:-}" && ! -e "$ROTATION_TOKEN_STATE" ]]; then
     : > "$ROTATION_TOKEN_STATE"
     printf '%s\n' '{"error":"authorization_pending"}' > "$output"
     printf '401'
@@ -81,6 +84,13 @@ if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"entitlement/revoke"* && "${FAIL_ENTITLEMENT_REVOKE:-0}" == "1" ]]; then
   printf '500'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/commands"* ]]; then
+  printf '200'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"auth-resilience-expired-headers.txt"* ]]; then
+  printf '401'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"/api/devices/"* && "$joined" == *"/deactivate"* ]]; then
+  : > "${AUTH_DEACTIVATED_STATE:?AUTH_DEACTIVATED_STATE is required}"
+  printf '204'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"auth-resilience-"* && "$joined" == *"/info"* ]]; then
   printf '200'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"device-sdk-e2e-android/info"* ]]; then
   printf '403'
@@ -136,13 +146,20 @@ cat > "$tmp/bin/request-device-token" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 output=""
+cert=""
+expect_status=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) output="$2"; shift 2 ;;
+    --cert) cert="$2"; shift 2 ;;
+    --expect-http-status) expect_status="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 test -n "$output"
+if [[ -n "$expect_status" && "$cert" == *"auth-resilience-foreign-cert.pem" && -e "${AUTH_DEACTIVATED_STATE:?AUTH_DEACTIVATED_STATE is required}" ]]; then
+  exit 0
+fi
 if [[ -n "${DEVICE_TOKEN_STATE:-}" && ! -e "$DEVICE_TOKEN_STATE" ]]; then
   : > "$DEVICE_TOKEN_STATE"
   exit 1
@@ -150,7 +167,22 @@ fi
 printf '%s\n' '{"access_token":"device-transport-token"}' > "$output"
 chmod 600 "$output"
 SCRIPT
-chmod +x "$tmp/bin/curl" "$tmp/bin/go" "$tmp/bin/openssl" "$tmp/bin/request-device-token"
+cat > "$tmp/bin/mtls-probe" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+expected=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --expect-http-status) expected="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$expected" in
+  200|401,403) exit 0 ;;
+  *) exit 1 ;;
+esac
+SCRIPT
+chmod +x "$tmp/bin/curl" "$tmp/bin/go" "$tmp/bin/openssl" "$tmp/bin/request-device-token" "$tmp/bin/mtls-probe"
 
 export PATH="$tmp/bin:$PATH"
 export SQLITE_BIN="$sqlite_bin"
@@ -171,8 +203,10 @@ export CLOUD_VALIDATION_SECRET_ROOT="$tmp/secrets"
 export CLOUD_VALIDATION_IOS_CLOUD_SLUG="sdk-e2e-ios-a579a0e7"
 export CLOUD_VALIDATION_ANDROID_CLOUD_SLUG="sdk-e2e-android-0d152276"
 export CLOUD_VALIDATION_DEVICE_TOKEN_HELPER="$tmp/bin/request-device-token"
+export CLOUD_VALIDATION_MTLS_PROBE_HELPER="$tmp/bin/mtls-probe"
 export ROTATION_TOKEN_STATE="$tmp/rotation-token-ready"
 export DEVICE_TOKEN_STATE="$tmp/device-token-ready"
+export AUTH_DEACTIVATED_STATE="$tmp/auth-device-deactivated"
 
 (cd "$tmp" && "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh")
 test -e "$tmp/secrets/run-ios/environment/state"
@@ -214,6 +248,12 @@ cat > "$tmp/out/platform-result.json" <<'JSON'
   {"scenario_id":"shadow_online_roundtrip","status":"PASS","duration_ms":1,"correlation_id":"run-ios-shadow"}
 ]}
 JSON
+mkdir -p "$tmp/out/ios"
+cp "$tmp/out/platform-result.json" "$tmp/out/ios/platform-result.json"
+touch "$ROTATION_TOKEN_STATE"
+"$root/e2e_test/cloud_validation/scripts/run-auth-resilience-scenarios.sh"
+jq -e '[.results[].scenario_id] | contains(["app_certificate_token_bootstrap","device_token_certificate_recovery","deactivated_certificate_rejected"])' "$tmp/out/ios/platform-result.json" >/dev/null
+jq -e '[.events[].type] | contains(["account_session_issued","app_certificate_issued","token_reissued","device_deactivated","certificate_rejected"])' "$tmp/out/auth-resilience-evidence.json" >/dev/null
 export CLOUD_VALIDATION_COMMAND_TRIGGER_TIMEOUT_SECONDS=2
 "$root/e2e_test/cloud_validation/scripts/run-cloud-command-trigger.sh"
 jq -e '.events[0].type == "command_dispatched" and .events[0].evidence.http_status == 200' "$tmp/out/cloud-command-trigger-evidence.json" >/dev/null
