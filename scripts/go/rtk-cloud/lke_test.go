@@ -1175,6 +1175,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"",
 		"proxy_set_header X-Client-Verify $ssl_client_verify;",
 		"proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;",
+		"proxy_set_header X-Client-Cert $ssl_client_escaped_cert;",
 		"ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
 		"nginx.ingress.kubernetes.io/backend-protocol: \"HTTPS\"",
 		"ingressClassName: nginx",

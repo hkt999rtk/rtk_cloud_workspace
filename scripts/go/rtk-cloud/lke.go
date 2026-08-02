@@ -1224,6 +1224,7 @@ func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
     nginx.ingress.kubernetes.io/configuration-snippet: |
       proxy_set_header X-Client-Verify $ssl_client_verify;
       proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;
+      proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
 `, lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env))
 }
 
