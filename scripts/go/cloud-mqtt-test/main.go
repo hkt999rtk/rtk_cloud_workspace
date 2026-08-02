@@ -1528,7 +1528,13 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 	if deadline.Before(connectDeadline) {
 		connectDeadline = deadline
 	}
-	sessions := connectSustainedDevicesPacedUntilWithOptions(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, 0, opts.deviceTokenOptions(), &result.Totals)
+	initialTokenOpts := opts.deviceTokenOptions()
+	if strings.TrimSpace(opts.SDKReconnectSignalFile) != "" {
+		// A shadow delta is an edge-triggered notification, so a production SDK
+		// client must also reconcile the durable shadow document after connect.
+		initialTokenOpts.SubscribeShadowGet = true
+	}
+	sessions := connectSustainedDevicesPacedUntilWithOptions(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, 0, initialTokenOpts, &result.Totals)
 	defer func() { closeSustainedSessions(sessions) }()
 	if len(sessions) != len(assignments) || len(sessions) == 0 {
 		result.Status = "FAIL"
@@ -1548,7 +1554,7 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		onlineContext, stopOnline := context.WithCancel(context.Background())
 		onlineDone := make(chan struct{})
 		go func() {
-			respondSDKDeviceShadowDeltas(onlineContext, sessions, deadline, &result)
+			respondSDKDeviceShadowDeltas(onlineContext, sessions, runID, deadline, true, &result)
 			close(onlineDone)
 		}()
 		if err := waitForSDKSignal(disconnectRequestFile, deadline, "offline disconnect request"); err != nil {
@@ -1596,20 +1602,22 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		}
 		result.Notes = append(result.Notes, "sdk device deterministic offline/reconnect handshake completed")
 	}
-	respondSDKDeviceShadowDeltas(context.Background(), sessions, deadline, &result)
+	respondSDKDeviceShadowDeltas(context.Background(), sessions, runID, deadline, false, &result)
 	return result
 }
 
-func respondSDKDeviceShadowDeltas(ctx context.Context, sessions []sustainedDeviceSession, deadline time.Time, result *sustainedLoadResult) {
+func respondSDKDeviceShadowDeltas(ctx context.Context, sessions []sustainedDeviceSession, runID string, deadline time.Time, reconcileOnTimeout bool, result *sustainedLoadResult) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	for _, session := range sessions {
+	for sessionIndex, session := range sessions {
+		sessionIndex := sessionIndex
 		session := session
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			topic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update/delta"
 			updateTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow/update"
+			reconcileAttempt := 0
 			for time.Now().Before(deadline) {
 				select {
 				case <-ctx.Done():
@@ -1631,6 +1639,32 @@ func respondSDKDeviceShadowDeltas(ctx context.Context, sessions []sustainedDevic
 						recordFailure(&result.Totals, "sdk_device_reader_failed", readerErr)
 						mu.Unlock()
 						return
+					}
+					if reconcileOnTimeout {
+						reconcileAttempt++
+						clientToken := fmt.Sprintf("%s-device-online-sync-%d-%d", runID, sessionIndex+1, reconcileAttempt)
+						reportedBytes, found, syncErr := syncSDKDeviceShadow(session, clientToken, wait)
+						if syncErr != nil {
+							if ctx.Err() != nil {
+								return
+							}
+							if readerErr := session.Reader.LastError(); readerErr != nil {
+								mu.Lock()
+								result.Status = "FAIL"
+								recordFailure(&result.Totals, "sdk_device_shadow_sync_failed", readerErr)
+								mu.Unlock()
+								return
+							}
+							continue
+						}
+						if found {
+							mu.Lock()
+							result.CommandsAttempted++
+							result.Totals.MessagesReceived++
+							result.Totals.DeltaReceived++
+							recordSDKDeviceReported(result, reportedBytes)
+							mu.Unlock()
+						}
 					}
 					continue
 				}
@@ -1656,10 +1690,7 @@ func respondSDKDeviceShadowDeltas(ctx context.Context, sessions []sustainedDevic
 					continue
 				}
 				mu.Lock()
-				result.CommandsPassed++
-				result.Totals.PublishSuccesses++
-				result.Totals.ReportedEvents++
-				result.Totals.TotalBytesSent += int64(len(updateTopic) + len(payload))
+				recordSDKDeviceReported(result, len(updateTopic)+len(payload))
 				mu.Unlock()
 			}
 		}()
@@ -1667,46 +1698,61 @@ func respondSDKDeviceShadowDeltas(ctx context.Context, sessions []sustainedDevic
 	wg.Wait()
 }
 
+func recordSDKDeviceReported(result *sustainedLoadResult, reportedBytes int) {
+	result.CommandsPassed++
+	result.Totals.PublishSuccesses++
+	result.Totals.ReportedEvents++
+	result.Totals.TotalBytesSent += int64(reportedBytes)
+}
+
+func syncSDKDeviceShadow(session sustainedDeviceSession, clientToken string, timeout time.Duration) (int, bool, error) {
+	baseTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow"
+	request, err := json.Marshal(map[string]any{"clientToken": clientToken})
+	if err != nil {
+		return 0, false, err
+	}
+	if err := mqttPublish(session.Conn, baseTopic+"/get", request); err != nil {
+		return 0, false, fmt.Errorf("publish shadow get for %s: %w", session.Record.DeviceID, err)
+	}
+	document, err := session.Reader.WaitForPublish(baseTopic+"/get/accepted", timeout, func(doc map[string]any) bool {
+		got, _ := doc["clientToken"].(string)
+		return got == "" || got == clientToken
+	})
+	if err != nil {
+		return 0, false, fmt.Errorf("wait shadow get for %s: %w", session.Record.DeviceID, err)
+	}
+	delta := sdkSimulatorDelta(document)
+	if len(delta) == 0 {
+		return 0, false, nil
+	}
+	payload, err := json.Marshal(map[string]any{
+		"state":       map[string]any{"reported": delta},
+		"clientToken": "reported-" + clientToken,
+	})
+	if err != nil {
+		return 0, false, err
+	}
+	updateTopic := baseTopic + "/update"
+	if err := mqttPublish(session.Conn, updateTopic, payload); err != nil {
+		return 0, false, fmt.Errorf("publish synced reported state for %s: %w", session.Record.DeviceID, err)
+	}
+	return len(updateTopic) + len(payload), true, nil
+}
+
 func resyncSDKDeviceShadows(sessions []sustainedDeviceSession, runID string, result *sustainedLoadResult) error {
 	for idx, session := range sessions {
-		baseTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow"
 		clientToken := fmt.Sprintf("%s-device-reconnect-%d", runID, idx+1)
-		request, err := json.Marshal(map[string]any{"clientToken": clientToken})
+		reportedBytes, found, err := syncSDKDeviceShadow(session, clientToken, 10*time.Second)
 		if err != nil {
 			return err
 		}
-		if err := mqttPublish(session.Conn, baseTopic+"/get", request); err != nil {
-			return fmt.Errorf("publish shadow get for %s: %w", session.Record.DeviceID, err)
-		}
-		document, err := session.Reader.WaitForPublish(baseTopic+"/get/accepted", 10*time.Second, func(doc map[string]any) bool {
-			got, _ := doc["clientToken"].(string)
-			return got == "" || got == clientToken
-		})
-		if err != nil {
-			return fmt.Errorf("wait shadow get for %s: %w", session.Record.DeviceID, err)
-		}
-		delta := sdkSimulatorDelta(document)
-		if len(delta) == 0 {
+		if !found {
 			continue
-		}
-		payload, err := json.Marshal(map[string]any{
-			"state":       map[string]any{"reported": delta},
-			"clientToken": "reported-" + clientToken,
-		})
-		if err != nil {
-			return err
 		}
 		result.CommandsAttempted++
 		result.Totals.MessagesReceived++
 		result.Totals.DeltaReceived++
-		if err := mqttPublish(session.Conn, baseTopic+"/update", payload); err != nil {
-			result.Totals.PublishFailures++
-			return fmt.Errorf("publish reconnect reported state for %s: %w", session.Record.DeviceID, err)
-		}
-		result.CommandsPassed++
-		result.Totals.PublishSuccesses++
-		result.Totals.ReportedEvents++
-		result.Totals.TotalBytesSent += int64(len(baseTopic+"/update") + len(payload))
+		recordSDKDeviceReported(result, reportedBytes)
 	}
 	return nil
 }

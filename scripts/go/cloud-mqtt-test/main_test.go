@@ -2503,6 +2503,7 @@ type fakeMQTTBroker struct {
 	RejectForbiddenTopics  bool
 	AllowAWSNamespace      bool
 	SuppressShadowAccepted bool
+	SuppressShadowDelta    bool
 }
 
 func newFakeMQTTBroker(t *testing.T) *fakeMQTTBroker {
@@ -2867,7 +2868,9 @@ func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
 		state["desired"] = desired
 		state["delta"] = desired
 		b.mu.Unlock()
-		b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": map[string]any{"delta": desired}})
+		if !b.SuppressShadowDelta {
+			b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": map[string]any{"delta": desired}})
+		}
 		b.publishToSubscribers(documentsTopic, map[string]any{
 			"clientToken": req.Token,
 			"version":     1,
@@ -3302,6 +3305,95 @@ func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("sdk reconnect simulator did not finish")
+	}
+}
+
+func TestSDKDeviceSimulatorResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	broker.SuppressShadowDelta = true
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "device-initial-sync")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	readyFile := filepath.Join(tmp, "ready.json")
+	reconnectSignal := filepath.Join(tmp, "reconnect.signal")
+	resultCh := make(chan sustainedLoadResult, 1)
+	go func() {
+		resultCh <- runSDKDeviceSimulator(
+			[]assignment{{DeviceID: "device-initial-sync", DeviceType: "light"}},
+			[]certRecord{{DeviceID: "device-initial-sync", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+			"RTK", "run-sdk-initial-sync", tokenServer.URL,
+			[]mqttEndpointTarget{{Host: host, Port: port}}, 5,
+			loadOptions{Concurrency: 1, ReadyFile: readyFile, SDKReconnectSignalFile: reconnectSignal},
+		)
+	}()
+	waitForFile := func(path, description string) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			if _, err := os.Stat(path); err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", description)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitForFile(readyFile, "sdk initial-sync simulator readiness")
+	appConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "device-initial-sync", Brandname: "RTK", RunID: "run-sdk-initial-sync",
+		AppToken: testMQTTToken("app"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
+	}, "app-controller", testMQTTToken("app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredPayload, err := json.Marshal(map[string]any{
+		"state": map[string]any{"desired": map[string]any{"power": true}}, "clientToken": "initial-desired",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowUpdateTopic := "$vc/devices/device-initial-sync/shadow/update"
+	if err := mqttPublish(appConn, shadowUpdateTopic, desiredPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = appConn.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for broker.PublishCount("device", shadowUpdateTopic) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("sdk simulator did not reconcile the pending initial shadow document")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "offline-disconnect.request"), []byte("disconnect\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitForFile(filepath.Join(tmp, "offline-ready"), "sdk offline state")
+	if err := os.WriteFile(reconnectSignal, []byte("reconnect\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-resultCh:
+		if result.Status != "PASS" || result.CommandsPassed != 1 || result.Totals.DeltaReceived != 1 || result.Totals.ReportedEvents != 1 {
+			t.Fatalf("sdk initial-sync result = %+v", result)
+		}
+		if broker.PublishCount("device", "$vc/devices/device-initial-sync/shadow/get") == 0 {
+			t.Fatal("sdk simulator did not issue a shadow GET after the delta push was suppressed")
+		}
+	case <-time.After(7 * time.Second):
+		t.Fatal("sdk initial-sync simulator did not finish")
 	}
 }
 
