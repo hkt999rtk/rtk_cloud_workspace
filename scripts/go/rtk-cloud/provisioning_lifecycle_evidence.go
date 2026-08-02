@@ -24,8 +24,9 @@ const (
 )
 
 var (
-	requestLifecycleAppToken    = requestVideoRelayAppToken
-	requestLifecycleDeviceToken = requestVideoRelayDeviceToken
+	requestLifecycleAppToken       = requestVideoRelayAppToken
+	requestLifecycleDeviceToken    = requestVideoRelayDeviceToken
+	executeLifecycleVideoRelayTest = executeVideoRelayTest
 )
 
 type canonicalVideoLifecycle struct {
@@ -103,15 +104,8 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	)
 	transportReadinessPrepared := false
 	if err != nil {
-		readinessDir := filepath.Join(*outDir, "transport-readiness")
-		readiness, readinessErr := executeVideoRelayTest(
-			workspace, envRoot, *brandname, readinessDir, "smoke", "device-only", "all", 5, 2, "none",
-		)
-		if readinessErr != nil {
-			return fmt.Errorf("prepare lifecycle video transport readiness: %w", readinessErr)
-		}
-		if readiness.Status != "PASS" {
-			return fmt.Errorf("prepare lifecycle video transport readiness: status=%s", readiness.Status)
+		if err := prepareLifecycleTransportReadiness(workspace, envRoot, *brandname, *outDir); err != nil {
+			return err
 		}
 		transportReadinessPrepared = true
 		deactivation, unprovision, deactivationBefore, _, err = selectReadyLifecycleAssignments(
@@ -255,6 +249,19 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	}
 	report := fmt.Sprintf("# Provisioning Lifecycle Qualification\n\n- Run ID: `%s`\n- Status: **PASS**\n- Deactivation device: `%s`\n- Unprovision device: `%s`\n- Previous owner binding released: **PASS**\n- Factory identity preserved: **PASS**\n", *runID, deactivation.DeviceID, unprovision.DeviceID)
 	return os.WriteFile(filepath.Join(*outDir, "TEST_REPORT.md"), []byte(report), 0o644)
+}
+
+func prepareLifecycleTransportReadiness(workspace, envRoot, brandname, outDir string) error {
+	readiness, err := executeLifecycleVideoRelayTest(
+		workspace, envRoot, brandname, filepath.Join(outDir, "transport-readiness"), "smoke", "device-only", "all", 5, 2, "none",
+	)
+	if err != nil {
+		return fmt.Errorf("prepare lifecycle video transport readiness: %w", err)
+	}
+	if readiness.Status != "PASS" {
+		return fmt.Errorf("prepare lifecycle video transport readiness: status=%s", readiness.Status)
+	}
+	return nil
 }
 
 func loadLifecycleDeviceCertificate(credential testDataDeviceCredential) (tls.Certificate, error) {

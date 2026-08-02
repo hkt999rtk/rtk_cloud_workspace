@@ -15,6 +15,11 @@ import (
 	"time"
 )
 
+var (
+	platformPrometheusWaitTimeout  = time.Minute
+	platformPrometheusWaitInterval = 5 * time.Second
+)
+
 var requiredPrometheusJobs = []string{
 	"account-manager",
 	"cloud-admin",
@@ -57,7 +62,7 @@ func runPlatformLiveEvidence(args []string) error {
 	}
 	started := time.Now().UTC()
 	scrapeDir := filepath.Join(*outDir, "scrape")
-	if err := waitForPrometheusInventory(*prometheusURL, scrapeDir, *runID, time.Minute, 5*time.Second); err != nil {
+	if err := waitForPrometheusInventory(*prometheusURL, scrapeDir, *runID, platformPrometheusWaitTimeout, platformPrometheusWaitInterval); err != nil {
 		return err
 	}
 	if err := writeCaseFeatureEvidence(workspace, scrapeDir, "LIVE-CA-SCRAPE-001", *runID, "staging", "", started, time.Now().UTC()); err != nil {

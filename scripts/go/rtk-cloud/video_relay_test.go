@@ -327,6 +327,42 @@ func TestVideoRelayDeviceOnlyEvidenceRequiresWebSocketOwner(t *testing.T) {
 	}
 }
 
+func TestApplyVideoRelayEvidenceAssessmentDeviceOnly(t *testing.T) {
+	result := videoRelayResult{
+		Status:          "PASS",
+		Overall:         "pass",
+		WebRTCRelayRole: "device-only",
+		WebRTC: videoRelayWebRTCResult{
+			SignalingTraceStatus:  "FAIL",
+			RelayEvidenceRequired: true,
+			RelayEvidenceStatus:   "FAIL",
+		},
+		Devices: []videoRelayDeviceResult{{WebSocketOwnerStatus: "PASS"}},
+	}
+	applyVideoRelayEvidenceAssessment(&result)
+	if result.Status != "PASS" || result.WebRTC.SignalingTraceStatus != "not_required" || result.WebRTC.RelayEvidenceRequired || result.WebRTC.RelayEvidenceStatus != "not_required" {
+		t.Fatalf("device-only assessment = %+v", result)
+	}
+}
+
+func TestApplyVideoRelayEvidenceAssessmentRequiresFullEvidence(t *testing.T) {
+	result := videoRelayResult{
+		Status:          "PASS",
+		Overall:         "pass",
+		WebRTCRelayRole: "both",
+		WebRTC: videoRelayWebRTCResult{
+			SignalingTraceStatus:  "FAIL",
+			RelayEvidenceRequired: true,
+			RelayEvidenceStatus:   "FAIL",
+		},
+		Devices: []videoRelayDeviceResult{{WebSocketOwnerStatus: "FAIL"}},
+	}
+	applyVideoRelayEvidenceAssessment(&result)
+	if result.Status != "FAIL" || result.Overall != "fail" {
+		t.Fatalf("full assessment = %+v", result)
+	}
+}
+
 func TestVideoRelayWritesTokenMapFilesWithoutEmbeddingSecretsInArgs(t *testing.T) {
 	dir := t.TempDir()
 	files, cleanup, err := writeVideoRelayTokenMapFiles(map[string]string{"cam-1": "device-secret-token"}, map[string]string{"cam-1": "app-secret-token"})
@@ -706,6 +742,15 @@ func TestVideoRelayTokenBaseURLPrefersExplicitValue(t *testing.T) {
 	}, "https://video.example.test", "https://device.override.example.test/")
 	if got != "https://device.override.example.test" {
 		t.Fatalf("token base URL = %q, want explicit device token URL", got)
+	}
+}
+
+func TestVideoRelayTokenBaseURLFallsBackToResolvedDeviceURL(t *testing.T) {
+	got := videoCloudTokenBaseURLForRelay(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video.example.test",
+	}, "https://video.example.test", "")
+	if got != "https://device.video.example.test" {
+		t.Fatalf("token base URL = %q, want resolved device URL", got)
 	}
 }
 

@@ -62,6 +62,7 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 
 	deactivated := false
 	unprovisioned := false
+	transportReady := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := req.URL.Path
 		switch {
@@ -79,9 +80,9 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		case strings.HasPrefix(path, "/v1/orgs/org-1/devices/account-unprovision") && unprovisioned:
 			http.NotFound(w, req)
 		case path == "/api/devices/device-deactivate/lifecycle":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "devid": "device-deactivate", "activated": !deactivated, "provisioned": true, "revoked": deactivated, "transport": map[string]any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "devid": "device-deactivate", "activated": !deactivated, "provisioned": transportReady, "revoked": deactivated, "transport": map[string]any{}})
 		case path == "/api/devices/device-unprovision/lifecycle":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "devid": "device-unprovision", "activated": true, "provisioned": !unprovisioned, "revoked": false, "transport": map[string]any{}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "devid": "device-unprovision", "activated": true, "provisioned": transportReady && !unprovisioned, "revoked": false, "transport": map[string]any{}})
 		case path == "/api/devices/device-deactivate/info":
 			_, _ = io.WriteString(w, `{"status":"ok","devid":"device-deactivate"}`)
 		case path == "/api/devices/device-unprovision/info" && !unprovisioned:
@@ -96,6 +97,7 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 
 	originalAppToken := requestLifecycleAppToken
 	originalDeviceToken := requestLifecycleDeviceToken
+	originalRelayTest := executeLifecycleVideoRelayTest
 	appTokenCalls := 0
 	requestLifecycleAppToken = func(string, tls.Certificate, string) (videoRelayTokenResponse, error) {
 		appTokenCalls++
@@ -108,9 +110,14 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"scope":"device","subject_id":"device-unprovision","service_options":["mqtt","video_streaming"]}`))
 		return "header." + payload + ".signature", nil
 	}
+	executeLifecycleVideoRelayTest = func(string, string, string, string, string, string, string, int, int, string) (videoRelayResult, error) {
+		transportReady = true
+		return videoRelayResult{Status: "PASS", Overall: "pass"}, nil
+	}
 	defer func() {
 		requestLifecycleAppToken = originalAppToken
 		requestLifecycleDeviceToken = originalDeviceToken
+		executeLifecycleVideoRelayTest = originalRelayTest
 	}()
 	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
 	t.Setenv("VIDEO_CLOUD_BASE_URL", server.URL)
@@ -131,10 +138,41 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if !deactivated || !unprovisioned || appTokenCalls != 2 {
 		t.Fatalf("deactivated=%t unprovisioned=%t app_token_calls=%d", deactivated, unprovisioned, appTokenCalls)
 	}
+	var result map[string]any
+	resultBytes, err := os.ReadFile(filepath.Join(outDir, "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(resultBytes, &result); err != nil {
+		t.Fatal(err)
+	}
+	readiness, _ := result["transport_readiness"].(map[string]any)
+	if readiness["prepared_by_lifecycle"] != true || readiness["status"] != "PASS" {
+		t.Fatalf("transport readiness evidence = %#v", readiness)
+	}
 	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
+	}
+}
+
+func TestPrepareLifecycleTransportReadinessReportsRunnerFailures(t *testing.T) {
+	original := executeLifecycleVideoRelayTest
+	defer func() { executeLifecycleVideoRelayTest = original }()
+
+	executeLifecycleVideoRelayTest = func(string, string, string, string, string, string, string, int, int, string) (videoRelayResult, error) {
+		return videoRelayResult{}, errors.New("runner unavailable")
+	}
+	if err := prepareLifecycleTransportReadiness("workspace", "env", "RTK", t.TempDir()); err == nil || !strings.Contains(err.Error(), "runner unavailable") {
+		t.Fatalf("runner error = %v", err)
+	}
+
+	executeLifecycleVideoRelayTest = func(string, string, string, string, string, string, string, int, int, string) (videoRelayResult, error) {
+		return videoRelayResult{Status: "FAIL"}, nil
+	}
+	if err := prepareLifecycleTransportReadiness("workspace", "env", "RTK", t.TempDir()); err == nil || !strings.Contains(err.Error(), "status=FAIL") {
+		t.Fatalf("status error = %v", err)
 	}
 }
 

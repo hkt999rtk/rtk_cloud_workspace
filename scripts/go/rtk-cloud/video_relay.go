@@ -658,6 +658,11 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		result.Artifacts["coturn_relay_journal"] = filepath.Join(outDir, "coturn-relay-journal.log")
 	}
 	result.Devices = summarizeVideoRelayLoadResults(loadResultsPath, selected)
+	applyVideoRelayEvidenceAssessment(&result)
+	return writeVideoRelayFinal(outDir, result)
+}
+
+func applyVideoRelayEvidenceAssessment(result *videoRelayResult) {
 	for _, device := range result.Devices {
 		if !videoRelayDeviceEvidencePass(result.WebRTCRelayRole, device) {
 			result.Status = "FAIL"
@@ -677,7 +682,6 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		result.Status = "FAIL"
 		result.Overall = "fail"
 	}
-	return writeVideoRelayFinal(outDir, result)
 }
 
 func videoRelayDeviceEvidencePass(role string, device videoRelayDeviceResult) bool {

@@ -114,6 +114,33 @@ func TestWaitForPrometheusInventoryFailsClosedAfterTimeout(t *testing.T) {
 	}
 }
 
+func TestWaitForPrometheusInventoryUsesMinimumRetryInterval(t *testing.T) {
+	targetCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if strings.Contains(req.URL.Path, "targets") {
+			targetCalls++
+			targets := make([]map[string]any, 0, len(requiredPrometheusJobs))
+			for _, job := range requiredPrometheusJobs {
+				health := "up"
+				if targetCalls == 1 {
+					health = "down"
+				}
+				targets = append(targets, map[string]any{"labels": map[string]string{"job": job}, "health": health})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "success", "data": map[string]any{"activeTargets": targets}})
+			return
+		}
+		_, _ = w.Write([]byte(`{"status":"success","data":["up"]}`))
+	}))
+	defer server.Close()
+	if err := waitForPrometheusInventory(server.URL, t.TempDir(), "run-1", time.Second, 0); err != nil {
+		t.Fatal(err)
+	}
+	if targetCalls != 2 {
+		t.Fatalf("target API calls = %d, want 2", targetCalls)
+	}
+}
+
 func TestQualifyBFFProductionSourcesRequiresAuthenticatedUpstreams(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		cookie, err := req.Cookie("rtk_admin_session")
@@ -192,6 +219,33 @@ func TestRunPlatformLiveEvidenceWritesBothCaseManifests(t *testing.T) {
 				t.Fatalf("missing %s/%s: %v", dir, name, err)
 			}
 		}
+	}
+}
+
+func TestRunPlatformLiveEvidenceReturnsPrometheusReadinessFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"success","data":{"activeTargets":[]}}`))
+	}))
+	defer server.Close()
+	originalTimeout := platformPrometheusWaitTimeout
+	originalInterval := platformPrometheusWaitInterval
+	platformPrometheusWaitTimeout = 0
+	platformPrometheusWaitInterval = 0
+	defer func() {
+		platformPrometheusWaitTimeout = originalTimeout
+		platformPrometheusWaitInterval = originalInterval
+	}()
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runPlatformLiveEvidence([]string{
+		"--workspace", workspace, "--run-id", "run-platform-fail", "--out-dir", t.TempDir(),
+		"--prometheus-url", server.URL, "--bff-url", server.URL,
+		"--platform-session", "platform-session", "--customer-session", "customer-session",
+	})
+	if err == nil {
+		t.Fatalf("readiness error = %v", err)
 	}
 }
 
