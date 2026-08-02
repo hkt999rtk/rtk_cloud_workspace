@@ -198,8 +198,9 @@ export BAO_TOKEN
 export BAO_CACERT=/openbao/tls/ca.crt
 export BAO_ADDR=%s
 bao write pki/device/roles/factory-device - >/dev/null <<'JSON'
-{"allow_any_name":true,"enforce_hostnames":false,"cn_validations":[],"server_flag":false,"client_flag":true,"key_type":"any","key_usage":["DigitalSignature"],"ext_key_usage":["ClientAuth"],"ttl":"8760h","max_ttl":"26280h"}
-JSON`, openBaoAddress)
+{"allow_any_name":true,"enforce_hostnames":false,"cn_validations":["disabled"],"server_flag":false,"client_flag":true,"key_type":"any","key_usage":["DigitalSignature"],"ext_key_usage":["ClientAuth"],"ttl":"8760h","max_ttl":"26280h"}
+JSON
+test "$(bao read -field=cn_validations pki/device/roles/factory-device)" = "[disabled]"`, openBaoAddress)
 	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", stack+"-secrets", "exec", "-i", "openbao-0", "--", "sh", "-ceu", script)
 	cmd.Stdin = strings.NewReader(strings.TrimSpace(token) + "\n")
 	cmd.Stdout = os.Stdout
