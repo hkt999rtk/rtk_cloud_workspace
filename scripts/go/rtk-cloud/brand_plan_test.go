@@ -307,6 +307,58 @@ func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 	}
 }
 
+func TestWriteBulkProvisioningWorkflowEvidenceRequiresEveryDeviceReady(t *testing.T) {
+	plan := loadTestBrandPlan{
+		TotalDevices: 3,
+		Brands: []loadTestBrandConfig{
+			{Brandname: "RTK-LOAD-1K-run-B01", Devices: 2},
+			{Brandname: "RTK-LOAD-1K-run-B02", Devices: 1},
+		},
+	}
+	dir := t.TempDir()
+	for _, brand := range plan.Brands {
+		bindDir := filepath.Join(dir, brandSlug(brand.Brandname), "bind-validation")
+		if err := os.MkdirAll(bindDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSON(filepath.Join(bindDir, "bulk-device-bind-validation-results.json"), map[string]any{
+			"overall": "pass",
+			"provisioning": map[string]any{
+				"checked": brand.Devices, "ready": brand.Devices, "pending": 0, "failed": 0,
+			},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writeBulkProvisioningWorkflowEvidence(dir, plan); err != nil {
+		t.Fatal(err)
+	}
+	var evidence struct {
+		Workflow struct {
+			WorkflowID string                       `json:"workflow_id"`
+			Steps      map[string]string            `json:"steps"`
+			Assertions map[string]map[string]string `json:"assertions"`
+		} `json:"workflow"`
+	}
+	if err := readJSONFile(filepath.Join(dir, "bulk-provisioning-workflow.json"), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Workflow.WorkflowID != "WF-PROV-BULK-001" || len(evidence.Workflow.Steps) != 2 ||
+		len(evidence.Workflow.Assertions["wait_for_provisioning"]) == 0 {
+		t.Fatalf("unexpected bulk workflow evidence: %+v", evidence.Workflow)
+	}
+
+	failedPath := filepath.Join(dir, brandSlug(plan.Brands[1].Brandname), "bind-validation", "bulk-device-bind-validation-results.json")
+	if err := writeJSON(failedPath, map[string]any{
+		"overall": "fail", "provisioning": map[string]any{"checked": 1, "ready": 0, "pending": 0, "failed": 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBulkProvisioningWorkflowEvidence(dir, plan); err == nil {
+		t.Fatal("incomplete bulk provisioning evidence was accepted")
+	}
+}
+
 func TestLoadEmailDevicePrefixIsRunScopedAndOpenBaoSafe(t *testing.T) {
 	prefix, err := loadEmailDevicePrefix("run-20260726", "B01")
 	if err != nil {

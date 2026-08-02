@@ -6526,6 +6526,8 @@ spec:
         rtk.realtek.com/stack: %s
     spec:
       restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: %s
       containers:
         - name: migrate
           image: %s
@@ -6534,7 +6536,7 @@ spec:
           envFrom:
             - secretRef:
                 name: account-manager-runtime
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], image)
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), image)
 }
 
 func lkeAccountManagerDatabaseURL(env map[string]string) string {

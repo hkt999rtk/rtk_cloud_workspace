@@ -183,6 +183,16 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 			t.Fatalf("SDK cloud credential discovery is missing %q", required)
 		}
 	}
+	for _, scenario := range []string{
+		"core-smoke.yaml",
+		"nightly-resilience.yaml",
+		"shadow-roundtrip.yaml",
+		"shadow-offline-nightly.yaml",
+	} {
+		if !strings.Contains(string(scriptRaw), scenario) {
+			t.Fatalf("SDK cloud nightly profile omits required scenario %q", scenario)
+		}
+	}
 }
 
 func TestFeatureQualificationCanRunLiveBeforeRequiredMode(t *testing.T) {

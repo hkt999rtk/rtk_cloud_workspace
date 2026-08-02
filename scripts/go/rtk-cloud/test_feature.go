@@ -355,6 +355,31 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 		"HOME100K_PRESERVE_VMS":            "0",
 		"HOME100K_AUTO_DESTROY_ON_EXIT":    "1",
 	}
+	if spec.Profile == "qualification-1k" {
+		brandPlan, planErr := featureQualificationBrandPlanPath(envRoot)
+		if planErr != nil {
+			return blockedFeatureManifest(
+				runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec},
+				planErr.Error(),
+			), planErr
+		}
+		env["HOME100K_BRAND_PLAN"] = brandPlan
+	}
+	if strings.TrimSpace(os.Getenv("HOME100K_BRANDNAME")) == "" {
+		brandName, brandErr := featureRunScopedBrandName(envRoot)
+		if brandErr != nil {
+			return blockedFeatureManifest(
+				runID, spec.Feature, spec.Profile, environment, commits, []featureRunSpec{spec},
+				brandErr.Error(),
+			), brandErr
+		}
+		if brandName != "" {
+			env["HOME100K_BRANDNAME"] = brandName
+		}
+	}
+	for key, value := range featureExternalEndpointEnv(envRoot) {
+		env[key] = value
+	}
 	workflowCommand, workflowErr := featureWorkflowCommand()
 	if workflowErr != nil {
 		return blockedFeatureManifest(
@@ -375,6 +400,42 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 	return manifest, runErr
 }
 
+func featureExternalEndpointEnv(envRoot string) map[string]string {
+	stackFile := filepath.Join(filepath.Clean(envRoot), "env", "stack.env")
+	videoDomain := strings.TrimSpace(envFileValue(stackFile, "VIDEO_CLOUD_DOMAIN"))
+	accountDomain := strings.TrimSpace(envFileValue(stackFile, "ACCOUNT_MANAGER_DOMAIN"))
+	values := map[string]string{}
+	if value := firstNonEmpty(os.Getenv("HOME100K_ACCOUNT_MANAGER_BASE_URL"), prefixedHTTPSOrigin(accountDomain)); value != "" {
+		values["HOME100K_ACCOUNT_MANAGER_BASE_URL"] = value
+	}
+	if value := firstNonEmpty(os.Getenv("HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL"), prefixedHTTPSOrigin(videoDomain)); value != "" {
+		values["HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL"] = value
+	}
+	if value := firstNonEmpty(os.Getenv("HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL"), prefixedHTTPSOrigin("device."+videoDomain)); value != "" && videoDomain != "" {
+		values["HOME100K_VIDEO_CLOUD_TOKEN_BASE_URL"] = value
+	}
+	if value := firstNonEmpty(os.Getenv("HOME100K_MQTT_ADDR"), mqttEndpoint(videoDomain)); value != "" {
+		values["HOME100K_MQTT_ADDR"] = value
+	}
+	return values
+}
+
+func prefixedHTTPSOrigin(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	return "https://" + host
+}
+
+func mqttEndpoint(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	return host + ":8883"
+}
+
 func featureWorkflowCommand() (string, error) {
 	command := firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_FEATURE_WORKFLOW"), "workflow-live")
 	if command != "workflow-live" && command != "workflow-local-live" {
@@ -392,6 +453,44 @@ func featureLoadEnvRoot(deploymentEnvRoot string) string {
 
 func featureExecutionLoadEnvRoot(deploymentEnvRoot string) string {
 	return firstNonEmpty(os.Getenv("HOME100K_ENV_ROOT"), featureLoadEnvRoot(deploymentEnvRoot))
+}
+
+func featureQualificationBrandPlanPath(deploymentEnvRoot string) (string, error) {
+	return featureResolvedBrandPlanPath(deploymentEnvRoot, true)
+}
+
+func featureResolvedBrandPlanPath(deploymentEnvRoot string, required bool) (string, error) {
+	explicit := strings.TrimSpace(os.Getenv("HOME100K_BRAND_PLAN"))
+	path := explicit
+	if path == "" {
+		path = filepath.Join(featureExecutionLoadEnvRoot(deploymentEnvRoot), "artifacts", "load-owner", "resolved-brand-plan.json")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) && !required && explicit == "" {
+			return "", nil
+		}
+		if os.IsNotExist(err) && required {
+			return "", fmt.Errorf("qualification-1k requires the run-scoped formal-owner brand plan: %s", path)
+		}
+		return "", fmt.Errorf("inspect run-scoped formal-owner brand plan %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("run-scoped formal-owner brand plan is not a regular file: %s", path)
+	}
+	return path, nil
+}
+
+func featureRunScopedBrandName(deploymentEnvRoot string) (string, error) {
+	path, err := featureResolvedBrandPlanPath(deploymentEnvRoot, false)
+	if err != nil || path == "" {
+		return "", err
+	}
+	plan, err := loadLoadTestBrandPlan(path)
+	if err != nil {
+		return "", fmt.Errorf("load run-scoped formal-owner brand plan: %w", err)
+	}
+	return strings.TrimSpace(plan.Brands[0].Brandname), nil
 }
 
 func featureKubeconfigPath(deploymentEnvRoot string) string {
