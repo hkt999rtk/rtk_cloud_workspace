@@ -4,6 +4,16 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/sdk-cloud-provider-test.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
+
+# Live evidence is qualified against the workspace canonical contracts source.
+# The SDK's nested pinned copy is implementation input, not the spec inventory
+# ground truth consumed by the feature-evidence importer.
+grep -Fq '"$workspace_root/repos/rtk_cloud_contracts_doc"' "$root/e2e_test/cloud_validation/scripts/run-cloud-validation.sh"
+if grep -Fq '"$workspace_root/repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc"' "$root/e2e_test/cloud_validation/scripts/run-cloud-validation.sh"; then
+  echo "cloud validation must not anchor evidence to the SDK nested contracts copy" >&2
+  exit 1
+fi
+
 mkdir -p "$tmp/bin" "$tmp/workspace/scripts" "$tmp/source-env/state" "$tmp/out" "$tmp/secrets"
 printf 'state' > "$tmp/source-env/state/marker"
 printf 'test ca' > "$tmp/ca.pem"

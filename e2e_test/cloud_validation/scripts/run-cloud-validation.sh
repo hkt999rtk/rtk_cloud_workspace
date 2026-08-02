@@ -168,8 +168,8 @@ run_platform() {
     return 2
   fi
   export CLOUD_VALIDATION_SDK_COMMIT="${CLOUD_VALIDATION_SDK_COMMIT:-$(git -C "$workspace_root/repos/rtk_cloud_client" rev-parse HEAD)}"
-  if [[ -z "${CLOUD_VALIDATION_CONTRACTS_COMMIT:-}" && -d "$workspace_root/repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc" ]]; then
-    export CLOUD_VALIDATION_CONTRACTS_COMMIT="$(git -C "$workspace_root/repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z "${CLOUD_VALIDATION_CONTRACTS_COMMIT:-}" && -d "$workspace_root/repos/rtk_cloud_contracts_doc" ]]; then
+    export CLOUD_VALIDATION_CONTRACTS_COMMIT="$(git -C "$workspace_root/repos/rtk_cloud_contracts_doc" rev-parse HEAD 2>/dev/null || true)"
   fi
   export CLOUD_VALIDATION_READINESS_COMMAND="${CLOUD_VALIDATION_READINESS_COMMAND:-$script_dir/check-cloud-readiness.sh}"
   export CLOUD_VALIDATION_SETUP_COMMAND="${CLOUD_VALIDATION_SETUP_COMMAND:-$script_dir/setup-fixture.sh}"
