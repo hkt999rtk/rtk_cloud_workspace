@@ -37,6 +37,78 @@ func TestImportCloudValidationFeatureEvidence(t *testing.T) {
 	}
 }
 
+func TestImportCloudValidationWebSocketWorkflowEvidence(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := []string{
+		"Cloud command received through SDK transport callback",
+		"message matched run correlation",
+		"WebSocket session disconnected after receive",
+	}
+	dir := writeCloudValidationWebSocketImportFixture(t, workspace, native, 200)
+	if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err != nil {
+		t.Fatal(err)
+	}
+	var manifest featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(dir, "feature-evidence.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Cases) != 1 || len(manifest.Cases[0].Workflows) != 1 {
+		t.Fatalf("unexpected websocket workflow evidence: %#v", manifest.Cases)
+	}
+	workflow := manifest.Cases[0].Workflows[0]
+	if workflow.WorkflowID != "WF-SDK-WS-001" || workflow.Status != "PASS" || len(workflow.Steps) != 4 {
+		t.Fatalf("websocket workflow was not qualified step by step: %#v", workflow)
+	}
+	for _, stepID := range []string{"dispatch_cloud_command", "receive_websocket_message", "verify_message_correlation", "close_websocket_session"} {
+		found := false
+		for _, step := range workflow.Steps {
+			found = found || step.StepID == stepID
+		}
+		if !found {
+			t.Fatalf("websocket workflow omitted %s: %#v", stepID, workflow.Steps)
+		}
+	}
+}
+
+func TestImportCloudValidationRejectsIncompleteWebSocketWorkflow(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := []string{
+		"Cloud command received through SDK transport callback",
+		"message matched run correlation",
+		"WebSocket session disconnected after receive",
+	}
+	for name, fixture := range map[string]struct {
+		evidence []string
+		status   int
+	}{
+		"dispatch not accepted": {evidence: complete, status: 500},
+		"receive missing":       {evidence: complete[1:], status: 200},
+		"correlation missing":   {evidence: []string{complete[0], complete[2]}, status: 200},
+		"cleanup missing":       {evidence: complete[:2], status: 200},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeCloudValidationWebSocketImportFixture(t, workspace, fixture.evidence, fixture.status)
+			if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+				t.Fatal("incomplete websocket workflow evidence was accepted")
+			}
+		})
+	}
+}
+
 func TestImportCloudValidationFeatureEvidenceThroughCLI(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -250,6 +322,31 @@ func writeCloudValidationImportFixture(t *testing.T, workspace string, eventType
 	if err := os.WriteFile(filepath.Join(dir, "junit.xml"), []byte("<testsuite tests=\"1\" failures=\"0\"/>\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return dir
+}
+
+func writeCloudValidationWebSocketImportFixture(t *testing.T, workspace string, nativeEvidence []string, httpStatus int) string {
+	t.Helper()
+	dir := writeCloudValidationImportFixture(t, workspace, nil)
+	var report map[string]any
+	if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+		t.Fatal(err)
+	}
+	correlationID := "sdk-import-test-ios-websocket_receive_roundtrip"
+	report["platform_result"] = map[string]any{"status": "PASS", "results": []any{map[string]any{
+		"test_id": "E2E-SDK-WS-002", "scenario_id": "websocket_receive_roundtrip", "status": "PASS",
+		"correlation_id": correlationID, "evidence": nativeEvidence,
+	}}}
+	report["scenarios"] = []any{map[string]any{
+		"id": "websocket_receive_roundtrip", "test_id": "E2E-SDK-WS-002", "expected_cloud_evidence": []string{"command_dispatched"},
+	}}
+	writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+	writeTestJSON(t, filepath.Join(dir, "cloud-evidence.json"), map[string]any{
+		"schema_version": 1, "run_id": "sdk-import-test", "platform": "ios", "events": []any{map[string]any{
+			"scenario_id": "websocket_receive_roundtrip", "correlation_id": correlationID, "type": "command_dispatched",
+			"observed_at": time.Now().UTC().Truncate(time.Second).Format(time.RFC3339), "evidence": map[string]any{"http_status": httpStatus},
+		}},
+	})
 	return dir
 }
 

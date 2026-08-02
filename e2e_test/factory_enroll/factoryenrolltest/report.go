@@ -43,6 +43,7 @@ func RenderMarkdown(result *Result) string {
 	fmt.Fprintf(&b, "- Count: `%d`\n", result.Config.Count)
 	fmt.Fprintf(&b, "- Concurrency: `%d`\n", result.Config.Concurrency)
 	fmt.Fprintf(&b, "- Batch ID: `%s`\n", result.Config.BatchID)
+	fmt.Fprintf(&b, "- Authentication: `%s`\n", result.Config.AuthMode)
 	fmt.Fprintf(&b, "\n## Summary\n\n")
 	status := "PASS"
 	if result.Summary.Failures > 0 {
@@ -74,7 +75,7 @@ func RenderMarkdown(result *Result) string {
 	fmt.Fprintf(&b, "| ---: | --- | --- | ---: | ---: | --- |\n")
 	for _, device := range result.Devices {
 		outcome := "PASS"
-		evidence := "certificate CN/public key/clientAuth validated"
+		evidence := "issuer request recorded; certificate CN/public key/clientAuth/chain validated"
 		if !device.Success {
 			outcome = "FAIL"
 			evidence = safeCell(device.ErrorClass + ": " + device.Error)

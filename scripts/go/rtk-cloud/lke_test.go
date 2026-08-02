@@ -892,6 +892,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"ca.crt:",
 		"ARGS -n video-cloud-staging-secrets get pod/openbao-0 -o jsonpath={.status.phase}",
 		"kind: Secret\nmetadata:\n  name: account-manager-runtime",
+		"FACTORY_PRODUCTION_JWT_SECRET: \"test-seed-factory-production-jwt\"",
+		"FACTORY_PRODUCTION_JWT_AUDIENCE: \"factory-enroll\"",
 		"kind: Job\nmetadata:\n  name: account-manager-migrate",
 		"imagePullSecrets:\n        - name: ghcr-pull",
 		"envFrom:\n            - secretRef:\n                name: account-manager-runtime",
@@ -926,6 +928,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"APP_CERT_ISSUER_CLIENT_CERT: \"/etc/rtk-account-manager/certissuer/client.crt\"",
 		"name: account-manager-certissuer-client",
 		"kind: Secret\nmetadata:\n  name: factoryenroll-runtime",
+		"FACTORY_ENROLL_PRODUCTION_JWT_SECRET: \"test-seed-factory-production-jwt\"",
+		"FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE: \"factory-enroll\"",
 		"kind: Secret\nmetadata:\n  name: factoryenroll-certissuer-client",
 		"kind: Deployment\nmetadata:\n  name: factoryenroll",
 		"rtk.realtek.com/runtime-checksum",
@@ -3509,6 +3513,8 @@ func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"))
 	if !strings.Contains(body, "FACTORY_ENROLL_AUTH_KEY=test-seed-factory-enroll-auth") ||
+		!strings.Contains(body, "FACTORY_ENROLL_PRODUCTION_JWT_SECRET=test-seed-factory-production-jwt") ||
+		!strings.Contains(body, "FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE=factory-enroll") ||
 		!strings.Contains(body, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=test-seed-internal-auth") {
 		t.Fatalf("unexpected video cloud runtime env:\n%s", body)
 	}
@@ -3536,7 +3542,9 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	}
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager.env"))
-	if !strings.Contains(body, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-seed-internal-auth") {
+	if !strings.Contains(body, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-seed-internal-auth") ||
+		!strings.Contains(body, "FACTORY_PRODUCTION_JWT_SECRET=test-seed-factory-production-jwt") ||
+		!strings.Contains(body, "FACTORY_PRODUCTION_JWT_AUDIENCE=factory-enroll") {
 		t.Fatalf("unexpected account-manager runtime env:\n%s", body)
 	}
 	info, err := os.Stat(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"))
@@ -3545,6 +3553,55 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("account-manager runtime env permissions got %o want 600", info.Mode().Perm())
+	}
+}
+
+func TestFactoryProductionJWTSharedAcrossLKEWorkloadsAndChecksums(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
+	t.Setenv("FACTORY_PRODUCTION_JWT_SECRET", "factory-production-secret-one")
+	t.Setenv("FACTORY_PRODUCTION_JWT_AUDIENCE", "factory-enroll")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	accountSecret := lkeAccountManagerSecretManifest(env)
+	factorySecret := lkeFactoryEnrollRuntimeSecretManifest(env)
+	for name, manifest := range map[string]string{
+		"account manager": accountSecret,
+		"factory enroll":  factorySecret,
+	} {
+		if !strings.Contains(manifest, `"factory-production-secret-one"`) ||
+			!strings.Contains(manifest, `"factory-enroll"`) {
+			t.Fatalf("%s secret does not contain the shared production JWT configuration:\n%s", name, manifest)
+		}
+	}
+
+	var accountWorkload lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			accountWorkload = workload
+			break
+		}
+	}
+	if accountWorkload.Key == "" {
+		t.Fatal("account-manager workload not found")
+	}
+	material := lkeCertIssuerMaterial{
+		FactoryCert: "factory-cert",
+		FactoryKey:  "factory-key",
+		ClientCert:  "client-cert",
+		ClientKey:   "client-key",
+		ServiceCA:   "service-ca",
+	}
+	accountDeployment := lkeDeploymentManifest(env, accountWorkload, &material)
+	factoryDeployment := lkeFactoryEnrollDeploymentManifest(env, material)
+
+	t.Setenv("FACTORY_PRODUCTION_JWT_SECRET", "factory-production-secret-two")
+	if changed := lkeDeploymentManifest(env, accountWorkload, &material); changed == accountDeployment {
+		t.Fatal("production JWT secret change must update the account-manager pod template checksum")
+	}
+	if changed := lkeFactoryEnrollDeploymentManifest(env, material); changed == factoryDeployment {
+		t.Fatal("production JWT secret change must update the factory-enroll pod template checksum")
 	}
 }
 

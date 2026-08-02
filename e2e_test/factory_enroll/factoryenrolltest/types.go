@@ -9,6 +9,7 @@ const enrollPath = "/v1/factory/enroll"
 type Config struct {
 	FactoryURL    string        `json:"factory_url"`
 	AuthKey       string        `json:"-"`
+	ProductionJWT string        `json:"-"`
 	Count         int           `json:"count"`
 	RunID         string        `json:"run_id"`
 	FactoryID     string        `json:"factory_id"`
@@ -72,6 +73,7 @@ type ResultConfig struct {
 	StationID   string `json:"station_id,omitempty"`
 	FixtureID   string `json:"fixture_id,omitempty"`
 	BatchID     string `json:"batch_id,omitempty"`
+	AuthMode    string `json:"auth_mode"`
 }
 
 type Summary struct {
@@ -87,6 +89,7 @@ type Summary struct {
 type DeviceResult struct {
 	Index            int       `json:"index"`
 	RequestID        string    `json:"request_id"`
+	IssuerRequestID  string    `json:"issuer_request_id,omitempty"`
 	DeviceID         string    `json:"devid"`
 	SerialNumber     string    `json:"serial_number,omitempty"`
 	Success          bool      `json:"success"`
@@ -98,5 +101,6 @@ type DeviceResult struct {
 	CertNotBefore    time.Time `json:"cert_not_before,omitempty"`
 	CertNotAfter     time.Time `json:"cert_not_after,omitempty"`
 	ClientAuthUsable bool      `json:"client_auth_usable,omitempty"`
+	ChainVerified    bool      `json:"chain_verified,omitempty"`
 	CA               bool      `json:"ca,omitempty"`
 }

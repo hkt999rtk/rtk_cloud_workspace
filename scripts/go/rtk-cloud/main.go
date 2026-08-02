@@ -102,6 +102,7 @@ var commands = map[string]commandSpec{
 	"test-e2e":                         {run: runTestE2E},
 	"test-feature":                     {run: runTestFeature},
 	"test-feature-coverage":            {run: runTestFeatureCoverage},
+	"test-factory-live":                {run: runTestFactoryLive},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
 	"test-platform-live":               {run: runPlatformLiveEvidence},

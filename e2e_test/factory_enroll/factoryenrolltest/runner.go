@@ -29,20 +29,21 @@ func NewRunner(client *http.Client) *Runner {
 
 func DefaultConfigFromEnv() Config {
 	return Config{
-		FactoryURL:   envDefault("FACTORY_ENROLL_TEST_URL", "http://127.0.0.1:18443"),
-		AuthKey:      os.Getenv("FACTORY_ENROLL_TEST_AUTH_KEY"),
-		Count:        envInt("FACTORY_ENROLL_TEST_COUNT", 100),
-		RunID:        envDefault("FACTORY_ENROLL_TEST_RUN_ID", time.Now().UTC().Format("20060102T150405Z")),
-		FactoryID:    envDefault("FACTORY_ENROLL_TEST_FACTORY_ID", "factory-local"),
-		LineID:       envDefault("FACTORY_ENROLL_TEST_LINE_ID", "line-local"),
-		StationID:    envDefault("FACTORY_ENROLL_TEST_STATION_ID", "station-local"),
-		FixtureID:    envDefault("FACTORY_ENROLL_TEST_FIXTURE_ID", "fixture-local"),
-		OperatorID:   envDefault("FACTORY_ENROLL_TEST_OPERATOR_ID", "operator-local"),
-		BatchID:      os.Getenv("FACTORY_ENROLL_TEST_BATCH_ID"),
-		Timeout:      envDuration("FACTORY_ENROLL_TEST_TIMEOUT", 30*time.Second),
-		Concurrency:  envInt("FACTORY_ENROLL_TEST_CONCURRENCY", 8),
-		ArtifactDir:  os.Getenv("FACTORY_ENROLL_TEST_ARTIFACT_DIR"),
-		SerialPrefix: envDefault("FACTORY_ENROLL_TEST_SERIAL_PREFIX", "FTEST"),
+		FactoryURL:    envDefault("FACTORY_ENROLL_TEST_URL", "http://127.0.0.1:18443"),
+		AuthKey:       os.Getenv("FACTORY_ENROLL_TEST_AUTH_KEY"),
+		ProductionJWT: os.Getenv("FACTORY_ENROLL_TEST_PRODUCTION_JWT"),
+		Count:         envInt("FACTORY_ENROLL_TEST_COUNT", 100),
+		RunID:         envDefault("FACTORY_ENROLL_TEST_RUN_ID", time.Now().UTC().Format("20060102T150405Z")),
+		FactoryID:     envDefault("FACTORY_ENROLL_TEST_FACTORY_ID", "factory-local"),
+		LineID:        envDefault("FACTORY_ENROLL_TEST_LINE_ID", "line-local"),
+		StationID:     envDefault("FACTORY_ENROLL_TEST_STATION_ID", "station-local"),
+		FixtureID:     envDefault("FACTORY_ENROLL_TEST_FIXTURE_ID", "fixture-local"),
+		OperatorID:    envDefault("FACTORY_ENROLL_TEST_OPERATOR_ID", "operator-local"),
+		BatchID:       os.Getenv("FACTORY_ENROLL_TEST_BATCH_ID"),
+		Timeout:       envDuration("FACTORY_ENROLL_TEST_TIMEOUT", 30*time.Second),
+		Concurrency:   envInt("FACTORY_ENROLL_TEST_CONCURRENCY", 8),
+		ArtifactDir:   os.Getenv("FACTORY_ENROLL_TEST_ARTIFACT_DIR"),
+		SerialPrefix:  envDefault("FACTORY_ENROLL_TEST_SERIAL_PREFIX", "FTEST"),
 	}
 }
 
@@ -54,8 +55,8 @@ func (c *Config) Normalize() error {
 	if _, err := url.ParseRequestURI(c.FactoryURL); err != nil {
 		return fmt.Errorf("factory URL is invalid: %w", err)
 	}
-	if strings.TrimSpace(c.AuthKey) == "" {
-		return fmt.Errorf("auth key is required")
+	if strings.TrimSpace(c.ProductionJWT) == "" && strings.TrimSpace(c.AuthKey) == "" {
+		return fmt.Errorf("production JWT or auth key is required")
 	}
 	if c.Count <= 0 {
 		return fmt.Errorf("count must be > 0")
@@ -96,6 +97,7 @@ func (r *Runner) Run(ctx context.Context, cfg Config) (*Result, error) {
 			StationID:   cfg.StationID,
 			FixtureID:   cfg.FixtureID,
 			BatchID:     cfg.BatchID,
+			AuthMode:    factoryAuthMode(cfg),
 		},
 		Devices:  make([]DeviceResult, cfg.Count),
 		Errors:   map[string]int{},
@@ -168,11 +170,15 @@ func (r *Runner) enrollOne(parent context.Context, cfg Config, index int) Device
 	if err != nil {
 		return failed(index, deviceID, 0, started, "request", err)
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Video-Cloud-Request-ID", requestID)
-	req.Header.Set("X-Video-Cloud-Timestamp", timestamp)
-	req.Header.Set("X-Video-Cloud-Signature", SignHMAC([]byte(cfg.AuthKey), req.Method, enrollPath, timestamp, requestID, raw))
+	if strings.TrimSpace(cfg.ProductionJWT) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(cfg.ProductionJWT))
+	} else {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		req.Header.Set("X-Video-Cloud-Timestamp", timestamp)
+		req.Header.Set("X-Video-Cloud-Signature", SignHMAC([]byte(cfg.AuthKey), req.Method, enrollPath, timestamp, requestID, raw))
+	}
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return failed(index, deviceID, 0, started, classifyError(0, err), err)
@@ -194,17 +200,29 @@ func (r *Runner) enrollOne(parent context.Context, cfg Config, index int) Device
 	if err != nil {
 		return failed(index, deviceID, resp.StatusCode, started, "certificate", err)
 	}
+	if err := ValidateCertificateChain(out.CertificatePEM, out.CertificateChainPEM); err != nil {
+		return failed(index, deviceID, resp.StatusCode, started, "certificate_chain", err)
+	}
 	if cfg.WriteKeyFiles && cfg.ArtifactDir != "" {
 		_ = writeDeviceMaterial(cfg.ArtifactDir, index, keyPEM, csrPEM, []byte(out.CertificatePEM), []byte(out.CertificateChainPEM))
 	}
 	certFields.Index = index
 	certFields.RequestID = requestID
+	certFields.IssuerRequestID = out.IssuerRequestID
 	certFields.DeviceID = deviceID
 	certFields.SerialNumber = out.SerialNumber
 	certFields.Success = true
+	certFields.ChainVerified = true
 	certFields.StatusCode = resp.StatusCode
 	certFields.LatencyMillis = time.Since(started).Milliseconds()
 	return certFields
+}
+
+func factoryAuthMode(cfg Config) string {
+	if strings.TrimSpace(cfg.ProductionJWT) != "" {
+		return "production_jwt"
+	}
+	return "hmac_compatibility"
 }
 
 func failed(index int, deviceID string, status int, started time.Time, class string, err error) DeviceResult {
@@ -220,10 +238,11 @@ func writeDeviceMaterial(root string, index int, key, csr, cert, chain []byte) e
 		content []byte
 		mode    os.FileMode
 	}{
-		"device.key":       {key, 0o600},
-		"device.csr":       {csr, 0o644},
-		"device.crt":       {cert, 0o644},
-		"device-chain.crt": {chain, 0o644},
+		"device.key":        {key, 0o600},
+		"device.csr":        {csr, 0o644},
+		"device.crt":        {cert, 0o644},
+		"device-chain.crt":  {chain, 0o644},
+		"device-bundle.crt": {append(append([]byte{}, cert...), chain...), 0o644},
 	}
 	for name, file := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), file.content, file.mode); err != nil {

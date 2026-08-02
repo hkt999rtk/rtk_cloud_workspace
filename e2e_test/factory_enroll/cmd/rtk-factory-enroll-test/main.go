@@ -25,6 +25,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "run":
 		return runEnroll(args[1:])
+	case "qualify-staging":
+		return runQualification(args[1:])
 	case "report":
 		return runReport(args[1:])
 	default:
@@ -33,7 +35,29 @@ func run(args []string) error {
 }
 
 func usage() error {
-	return fmt.Errorf("usage: rtk-factory-enroll-test <run|report> [flags]")
+	return fmt.Errorf("usage: rtk-factory-enroll-test <run|qualify-staging|report> [flags]")
+}
+
+func runQualification(args []string) error {
+	cfg := factoryenrolltest.DefaultQualificationConfigFromEnv()
+	fs := flag.NewFlagSet("qualify-staging", flag.ContinueOnError)
+	fs.StringVar(&cfg.AccountManagerURL, "account-manager-url", cfg.AccountManagerURL, "Account Manager HTTPS base URL")
+	fs.StringVar(&cfg.FactoryURL, "factory-url", cfg.FactoryURL, "factory enrollment HTTPS base URL")
+	fs.StringVar(&cfg.DeviceBaseURL, "device-url", cfg.DeviceBaseURL, "device-facing mTLS HTTPS base URL")
+	fs.StringVar(&cfg.DeviceCAFile, "device-ca", cfg.DeviceCAFile, "optional device endpoint CA file")
+	fs.StringVar(&cfg.RunID, "run-id", cfg.RunID, "test run id")
+	fs.StringVar(&cfg.ArtifactDir, "artifact-dir", cfg.ArtifactDir, "private artifact directory")
+	fs.DurationVar(&cfg.Timeout, "timeout", cfg.Timeout, "per-request timeout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	result, err := factoryenrolltest.NewQualificationRunner(nil, nil).Run(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("factory production qualification complete: run=%s brand=%s profile=%s production_run=%s device=%s issuer_request=%s token_http=%d\n",
+		result.RunID, result.BrandCloudID, result.DeviceItemProfileID, result.ProductionRunID, result.DeviceID, result.IssuerRequestID, result.TokenHTTPStatus)
+	return nil
 }
 
 func runEnroll(args []string) error {

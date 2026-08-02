@@ -96,9 +96,176 @@ func TestRunnerEnrollsMultipleDevicesAndValidatesCertificates(t *testing.T) {
 		t.Fatalf("summary = %+v", result.Summary)
 	}
 	for _, device := range result.Devices {
-		if !device.Success || !device.ClientAuthUsable || device.CA {
+		if !device.Success || !device.ClientAuthUsable || !device.ChainVerified || device.CA || device.IssuerRequestID == "" {
 			t.Fatalf("device result = %+v", device)
 		}
+	}
+}
+
+func TestRunnerPrefersProductionJWTAndRedactsItFromEvidence(t *testing.T) {
+	const productionJWT = "header.payload.signature-secret-marker"
+	signer := newTestSigner(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+productionJWT {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("X-Video-Cloud-Signature"); got != "" {
+			t.Fatalf("production JWT request must not send legacy HMAC signature, got %q", got)
+		}
+		if got := r.Header.Get("X-Video-Cloud-Timestamp"); got != "" {
+			t.Fatalf("production JWT request must not send legacy timestamp, got %q", got)
+		}
+		var in EnrollRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(EnrollResponse{
+			RequestID:           in.RequestID,
+			IssuerRequestID:     "issuer-production-001",
+			DeviceID:            in.DeviceID,
+			SerialNumber:        in.SerialNumber,
+			CertificatePEM:      string(signer.signCSR(t, in.DeviceID, in.CSRPem)),
+			CertificateChainPEM: string(signer.caPEM),
+		})
+	}))
+	defer server.Close()
+
+	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
+		FactoryURL:    server.URL,
+		AuthKey:       "legacy-key-must-not-be-used",
+		ProductionJWT: productionJWT,
+		Count:         1,
+		RunID:         "production-jwt-run",
+		Concurrency:   1,
+		Timeout:       time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.AuthMode != "production_jwt" || result.Summary.Successes != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), productionJWT) || strings.Contains(RenderMarkdown(result), productionJWT) {
+		t.Fatal("production JWT leaked into redacted evidence")
+	}
+}
+
+func TestConfigRequiresFactoryAuthentication(t *testing.T) {
+	cfg := Config{FactoryURL: "https://factory.example.test", Count: 1, Concurrency: 1}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "production JWT or auth key") {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+}
+
+func TestQualificationRunsCanonicalProductionWorkflowAndRedactsSecrets(t *testing.T) {
+	const (
+		adminPassword = "admin-password-secret-marker"
+		accessToken   = "admin-access-token-secret-marker"
+		productionJWT = "production-jwt-secret-marker"
+	)
+	signer := newTestSigner(t)
+	var paths []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": accessToken}})
+		case "/v1/admin/brand-clouds":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_cloud": map[string]string{"id": "brand-001"}})
+		case "/v1/admin/brand-clouds/brand-001/device-item-profiles":
+			if r.Header.Get("Authorization") != "Bearer "+accessToken {
+				t.Fatalf("profile request authorization = %q", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profile": map[string]string{"id": "profile-001"}})
+		case "/v1/admin/brand-clouds/brand-001/device-item-profiles/profile-001/production-runs":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"production_run": map[string]string{"id": "run-001"}, "factory_jwt": productionJWT})
+		case enrollPath:
+			if r.Header.Get("Authorization") != "Bearer "+productionJWT {
+				t.Fatalf("factory authorization = %q", r.Header.Get("Authorization"))
+			}
+			var in EnrollRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(EnrollResponse{
+				RequestID: in.RequestID, IssuerRequestID: "issuer-001", DeviceID: in.DeviceID, SerialNumber: in.SerialNumber,
+				CertificatePEM: string(signer.signCSR(t, in.DeviceID, in.CSRPem)), CertificateChainPEM: string(signer.caPEM),
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	artifactDir := t.TempDir()
+	tokenProbeCalled := false
+	result, err := NewQualificationRunner(server.Client(), func(_ context.Context, baseURL, certFile, keyFile, _ string, _ time.Duration) (int, error) {
+		tokenProbeCalled = true
+		if baseURL != server.URL {
+			t.Fatalf("device base URL = %q", baseURL)
+		}
+		for _, path := range []string{certFile, keyFile} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("mTLS material %s: %v", path, err)
+			}
+		}
+		return http.StatusOK, nil
+	}).Run(context.Background(), QualificationConfig{
+		AccountManagerURL: server.URL, AdminEmail: "admin@example.test", AdminPassword: adminPassword,
+		FactoryURL: server.URL, DeviceBaseURL: server.URL, RunID: "qualification-001", ArtifactDir: artifactDir, Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tokenProbeCalled || result.TokenHTTPStatus != http.StatusOK || result.Steps["bootstrap_device_token"] != "PASS" {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, "factory-runner", "device-material")); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral device private material was not removed: %v", err)
+	}
+	if len(paths) != 5 {
+		t.Fatalf("paths = %v", paths)
+	}
+	raw, err := os.ReadFile(filepath.Join(artifactDir, "factory-qualification-results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{adminPassword, accessToken, productionJWT} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("qualification evidence leaked secret marker %q", secret)
+		}
+	}
+}
+
+func TestQualificationRejectsNonHTTPSEndpoints(t *testing.T) {
+	cfg := QualificationConfig{
+		AccountManagerURL: "http://account.example.test", FactoryURL: "https://factory.example.test",
+		DeviceBaseURL: "https://device.example.test", AdminEmail: "admin@example.test", AdminPassword: "password",
+		RunID: "run", ArtifactDir: t.TempDir(),
+	}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "must be HTTPS") {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+}
+
+func TestQualificationAllowsOnlyExplicitAccountAndFactoryLoopbackTunnels(t *testing.T) {
+	cfg := QualificationConfig{
+		AccountManagerURL: "http://127.0.0.1:18081", FactoryURL: "http://127.0.0.1:18443",
+		DeviceBaseURL: "https://device.example.test", AdminEmail: "admin@example.test", AdminPassword: "password",
+		RunID: "run", ArtifactDir: t.TempDir(), AllowLoopbackTunnel: true,
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	cfg.DeviceBaseURL = "http://127.0.0.1:18080"
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "device base URL must be HTTPS") {
+		t.Fatalf("Normalize() device tunnel error = %v", err)
 	}
 }
 
@@ -143,7 +310,7 @@ func TestReportRoundTripRendersStableEvidenceAndSortedErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(report)
-	for _, want := range []string{"Overall result: `FAIL`", "certificate CN/public key/clientAuth validated", "invalid \\| certificate rejected", "`a_certificate`", "`z_transport`"} {
+	for _, want := range []string{"Overall result: `FAIL`", "issuer request recorded; certificate CN/public key/clientAuth/chain validated", "invalid \\| certificate rejected", "`a_certificate`", "`z_transport`"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("report missing %q:\n%s", want, text)
 		}
