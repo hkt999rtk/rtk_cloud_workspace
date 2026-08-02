@@ -408,13 +408,31 @@ token_helper_args=(
 if [[ -n "${CLOUD_VALIDATION_SERVER_CA_BUNDLE:-}" ]]; then
   token_helper_args+=(--ca "$CLOUD_VALIDATION_SERVER_CA_BUNDLE")
 fi
-if [[ -n "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER:-}" ]]; then
-  "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER}" "${token_helper_args[@]}"
-else
-  (cd "$workspace/e2e_test" && GOWORK=off go run ./cloud_validation/cmd/request-token "${token_helper_args[@]}")
+device_token_ready=0
+device_token_attempts="${CLOUD_VALIDATION_DEVICE_CERT_READY_ATTEMPTS:-30}"
+for ((attempt = 1; attempt <= device_token_attempts; attempt++)); do
+  set +e
+  if [[ -n "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER:-}" ]]; then
+    "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER}" "${token_helper_args[@]}"
+    device_token_rc=$?
+  else
+    (cd "$workspace/e2e_test" && GOWORK=off go run ./cloud_validation/cmd/request-token "${token_helper_args[@]}")
+    device_token_rc=$?
+  fi
+  set -e
+  if (( device_token_rc == 0 )) && jq -e '.access_token | type == "string" and length > 0' "$device_token_response" >/dev/null 2>&1; then
+    device_token_ready=1
+    break
+  fi
+  if (( attempt < device_token_attempts )); then
+    sleep "${CLOUD_VALIDATION_DEVICE_CERT_READY_DELAY_SECONDS:-1}"
+  fi
+done
+if [[ "$device_token_ready" != "1" ]]; then
+  echo "device certificate did not become ready after $device_token_attempts attempts" >&2
+  exit 1
 fi
 chmod 600 "$device_token_request" "$device_token_response"
-jq -e '.access_token | type == "string" and length > 0' "$device_token_response" >/dev/null
 
 token_response="$secret_root/app-token-response.json"
 token_request="$secret_root/app-token-request.json"

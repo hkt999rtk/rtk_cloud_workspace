@@ -143,6 +143,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 test -n "$output"
+if [[ -n "${DEVICE_TOKEN_STATE:-}" && ! -e "$DEVICE_TOKEN_STATE" ]]; then
+  : > "$DEVICE_TOKEN_STATE"
+  exit 1
+fi
 printf '%s\n' '{"access_token":"device-transport-token"}' > "$output"
 chmod 600 "$output"
 SCRIPT
@@ -168,6 +172,7 @@ export CLOUD_VALIDATION_IOS_CLOUD_SLUG="sdk-e2e-ios-a579a0e7"
 export CLOUD_VALIDATION_ANDROID_CLOUD_SLUG="sdk-e2e-android-0d152276"
 export CLOUD_VALIDATION_DEVICE_TOKEN_HELPER="$tmp/bin/request-device-token"
 export ROTATION_TOKEN_STATE="$tmp/rotation-token-ready"
+export DEVICE_TOKEN_STATE="$tmp/device-token-ready"
 
 (cd "$tmp" && "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh")
 test -e "$tmp/secrets/run-ios/environment/state"
