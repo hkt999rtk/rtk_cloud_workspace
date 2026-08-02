@@ -1705,6 +1705,8 @@ func recordSDKDeviceReported(result *sustainedLoadResult, reportedBytes int) {
 	result.Totals.TotalBytesSent += int64(reportedBytes)
 }
 
+var errSDKShadowSyncTimeout = errors.New("timed out waiting for SDK shadow sync")
+
 func syncSDKDeviceShadow(session sustainedDeviceSession, clientToken string, timeout time.Duration) (int, bool, error) {
 	baseTopic := "$vc/devices/" + session.Record.DeviceID + "/shadow"
 	request, err := json.Marshal(map[string]any{"clientToken": clientToken})
@@ -1719,6 +1721,9 @@ func syncSDKDeviceShadow(session sustainedDeviceSession, clientToken string, tim
 		return got == "" || got == clientToken
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "timed out waiting for MQTT publish") {
+			return 0, false, fmt.Errorf("%w for %s", errSDKShadowSyncTimeout, session.Record.DeviceID)
+		}
 		return 0, false, fmt.Errorf("wait shadow get for %s: %w", session.Record.DeviceID, err)
 	}
 	delta := sdkSimulatorDelta(document)
@@ -1741,10 +1746,12 @@ func syncSDKDeviceShadow(session sustainedDeviceSession, clientToken string, tim
 
 func resyncSDKDeviceShadows(sessions []sustainedDeviceSession, runID string, result *sustainedLoadResult) error {
 	for idx, session := range sessions {
-		clientToken := fmt.Sprintf("%s-device-reconnect-%d", runID, idx+1)
-		reportedBytes, found, err := syncSDKDeviceShadow(session, clientToken, 10*time.Second)
+		reportedBytes, found, err := retrySDKShadowSync(3, func(attempt int) (int, bool, error) {
+			clientToken := fmt.Sprintf("%s-device-reconnect-%d-%d", runID, idx+1, attempt)
+			return syncSDKDeviceShadow(session, clientToken, 10*time.Second)
+		})
 		if err != nil {
-			return err
+			return fmt.Errorf("shadow sync retry exhausted for %s: %w", session.Record.DeviceID, err)
 		}
 		if !found {
 			continue
@@ -1755,6 +1762,24 @@ func resyncSDKDeviceShadows(sessions []sustainedDeviceSession, runID string, res
 		recordSDKDeviceReported(result, reportedBytes)
 	}
 	return nil
+}
+
+func retrySDKShadowSync(attempts int, syncAttempt func(int) (int, bool, error)) (int, bool, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		reportedBytes, found, err := syncAttempt(attempt)
+		if err == nil {
+			return reportedBytes, found, nil
+		}
+		lastErr = err
+		if !errors.Is(err, errSDKShadowSyncTimeout) {
+			return 0, false, err
+		}
+	}
+	return 0, false, lastErr
 }
 
 func probeInvalidDeviceCredential(assignments []assignment, certByID map[string]certRecord, apiBaseURL string, tokenOpts tokenRequestOptions) error {

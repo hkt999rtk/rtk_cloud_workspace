@@ -3397,6 +3397,30 @@ func TestSDKDeviceSimulatorResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *t
 	}
 }
 
+func TestRetrySDKShadowSyncRetriesOnlyTransientResponseTimeout(t *testing.T) {
+	attempts := 0
+	reportedBytes, found, err := retrySDKShadowSync(3, func(attempt int) (int, bool, error) {
+		attempts++
+		if attempt == 1 {
+			return 0, false, fmt.Errorf("first response lost: %w", errSDKShadowSyncTimeout)
+		}
+		return 42, true, nil
+	})
+	if err != nil || attempts != 2 || reportedBytes != 42 || !found {
+		t.Fatalf("retry result bytes=%d found=%t attempts=%d err=%v", reportedBytes, found, attempts, err)
+	}
+
+	permanent := errors.New("publish failed")
+	attempts = 0
+	_, _, err = retrySDKShadowSync(3, func(int) (int, bool, error) {
+		attempts++
+		return 0, false, permanent
+	})
+	if !errors.Is(err, permanent) || attempts != 1 {
+		t.Fatalf("permanent retry attempts=%d err=%v, want one attempt and permanent error", attempts, err)
+	}
+}
+
 func TestSDKDeviceSimulatorFailsWithoutDisconnectRequest(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
