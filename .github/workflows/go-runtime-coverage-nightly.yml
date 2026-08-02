@@ -207,13 +207,19 @@ jobs:
             --env POSTGRES_PASSWORD=postgres \
             --publish 127.0.0.1::5432 \
             postgres:16-alpine >/dev/null
+          qualification_postgres_ready=false
           for attempt in {1..30}; do
             if docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null 2>&1; then
+              qualification_postgres_ready=true
               break
             fi
             sleep 1
           done
-          docker exec "$qualification_postgres" pg_isready -U postgres >/dev/null
+          if [[ "$qualification_postgres_ready" != true ]]; then
+            docker inspect --format 'qualification postgres status={{.State.Status}} exit={{.State.ExitCode}}' "$qualification_postgres" >&2 || true
+            docker logs "$qualification_postgres" >&2 || true
+            exit 1
+          fi
           qualification_endpoint="$(docker port "$qualification_postgres" 5432/tcp)"
           qualification_port="${qualification_endpoint##*:}"
           [[ "$qualification_port" =~ ^[0-9]+$ ]]
@@ -412,7 +418,7 @@ jobs:
             echo "VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY=$server_public"
           } >> "$GITHUB_ENV"
 
-      - name: Run onboarding and cross-service lifecycle checks
+      - name: Run onboarding and runtime log checks
         if: env.RUNTIME_COVERAGE_MODE == 'run'
         shell: bash
         run: |
@@ -424,11 +430,11 @@ jobs:
           export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
           export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
           export CLOUD_STAGING_E2E_MQTT_PORT=18884
-          go run ./scripts/go/rtk-cloud -- test-live \
+          go run ./scripts/go/rtk-cloud -- staging-e2e-test \
             --env-root "$RUNTIME_ENV_ROOT" \
             --run --confirm "$RUNTIME_COVERAGE_STACK" \
             --skip-remove --skip-provision \
-            --steps data,mqtt,runtime-logs,billing-log,billing-db,lifecycle \
+            --steps data,mqtt,runtime-logs,billing-log,billing-db \
             --user-count 2 --device-count 12 \
             --device-mix light=10,camera=2 \
             --out-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
@@ -542,6 +548,30 @@ jobs:
             --bff-url http://127.0.0.1:18082 \
             --platform-session "$E2E_PLATFORM_SESSION_ID" \
             --customer-session "$E2E_CUSTOMER_SESSION_ID"
+
+      - name: Run cross-service lifecycle checks
+        if: env.RUNTIME_COVERAGE_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUNTIME_COVERAGE_LOGGER_TUNNEL=false scripts/ci/runtime-coverage-k8s.sh tunnel-start
+          trap 'scripts/ci/runtime-coverage-k8s.sh tunnel-stop' EXIT
+          export CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="$VIDEO_CLOUD_TOKEN_BASE_URL"
+          export CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444
+          export CLOUD_STAGING_E2E_MQTT_PORT=18884
+          live_dir=".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/live"
+          test -s "$live_dir/summary.json"
+          test -s "$live_dir/TEST_REPORT.md"
+          mv "$live_dir/summary.json" "$live_dir/onboarding-summary.json"
+          mv "$live_dir/TEST_REPORT.md" "$live_dir/ONBOARDING_TEST_REPORT.md"
+          go run ./scripts/go/rtk-cloud -- test-live \
+            --env-root "$RUNTIME_ENV_ROOT" \
+            --run --confirm "$RUNTIME_COVERAGE_STACK" \
+            --skip-remove --skip-provision \
+            --steps lifecycle \
+            --user-count 2 --device-count 12 \
+            --device-mix light=10,camera=2 \
+            --out-dir "$live_dir"
 
       - name: Aggregate runtime feature evidence
         if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'

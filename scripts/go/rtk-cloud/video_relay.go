@@ -286,7 +286,7 @@ func runVideoLoadtestTokens(args []string) error {
 		return fmt.Errorf("--concurrency must be positive")
 	}
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
-	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
+	apiURL := videoRelayAPIBaseURL(stackEnv)
 	mtlsURL := videoCloudTokenBaseURLForRelay(envRoot, stackEnv, apiURL, *baseURL)
 	deviceTokens, appTokens, err := mintVideoLoadtestTokens(mtlsURL, selected, *expirySeconds, *concurrency, *requestTimeout)
 	if err != nil {
@@ -568,8 +568,8 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 	}
 
 	stackEnv := videoRelayEnvValues(filepath.Join(envRoot, "env", "stack.env"))
-	apiURL := "https://" + firstNonEmpty(stackEnv["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
-	mtlsURL := videoCloudMTLSBaseURLForRelay(envRoot, stackEnv, apiURL)
+	apiURL := videoRelayAPIBaseURL(stackEnv)
+	mtlsURL := videoCloudTokenBaseURLForRelay(envRoot, stackEnv, apiURL, videoRelayTokenBaseURLOverride())
 	deviceTokens := map[string]string{}
 	appTokens := map[string]string{}
 	for _, device := range selected {
@@ -658,16 +658,23 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		result.Artifacts["coturn_relay_journal"] = filepath.Join(outDir, "coturn-relay-journal.log")
 	}
 	result.Devices = summarizeVideoRelayLoadResults(loadResultsPath, selected)
+	applyVideoRelayEvidenceAssessment(&result)
+	return writeVideoRelayFinal(outDir, result)
+}
+
+func applyVideoRelayEvidenceAssessment(result *videoRelayResult) {
 	for _, device := range result.Devices {
-		if device.WebSocketOwnerStatus != "PASS" || device.WebRTCCreateStatus != "PASS" || device.WebRTCAnswerStatus != "PASS" ||
-			device.ICEConnectedStatus != "PASS" || device.RTPReceiveStatus != "PASS" || device.CloseStatus != "PASS" ||
-			device.RTPPacketsReceived <= 0 || device.RTPBytesReceived <= 0 {
+		if !videoRelayDeviceEvidencePass(result.WebRTCRelayRole, device) {
 			result.Status = "FAIL"
 			result.Overall = "fail"
 			break
 		}
 	}
-	if result.WebRTC.SignalingTraceStatus != "PASS" {
+	if result.WebRTCRelayRole == "device-only" {
+		result.WebRTC.SignalingTraceStatus = "not_required"
+		result.WebRTC.RelayEvidenceRequired = false
+		result.WebRTC.RelayEvidenceStatus = "not_required"
+	} else if result.WebRTC.SignalingTraceStatus != "PASS" {
 		result.Status = "FAIL"
 		result.Overall = "fail"
 	}
@@ -675,7 +682,15 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		result.Status = "FAIL"
 		result.Overall = "fail"
 	}
-	return writeVideoRelayFinal(outDir, result)
+}
+
+func videoRelayDeviceEvidencePass(role string, device videoRelayDeviceResult) bool {
+	if role == "device-only" {
+		return device.WebSocketOwnerStatus == "PASS"
+	}
+	return device.WebSocketOwnerStatus == "PASS" && device.WebRTCCreateStatus == "PASS" && device.WebRTCAnswerStatus == "PASS" &&
+		device.ICEConnectedStatus == "PASS" && device.RTPReceiveStatus == "PASS" && device.CloseStatus == "PASS" &&
+		device.RTPPacketsReceived > 0 && device.RTPBytesReceived > 0
 }
 
 func selectVideoRelayDevicesFromTestData(envRoot, brandname string, maxDevices int) ([]videoRelaySelectedDevice, []string, error) {
@@ -1662,6 +1677,24 @@ func videoCloudTokenBaseURLForRelay(envRoot string, stackValues map[string]strin
 		return explicit
 	}
 	return strings.TrimRight(strings.TrimSpace(videoCloudMTLSBaseURLForRelay(envRoot, stackValues, fallback)), "/")
+}
+
+func videoRelayTokenBaseURLOverride() string {
+	return firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_TOKEN_BASE_URL"),
+		os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE"),
+	)
+}
+
+func videoRelayAPIBaseURL(stackValues map[string]string) string {
+	if explicit := firstNonEmpty(
+		os.Getenv("VIDEO_CLOUD_BASE_URL"),
+		os.Getenv("VIDEO_CLOUD_PUBLIC_BASE_URL"),
+		os.Getenv("HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL"),
+	); explicit != "" {
+		return strings.TrimRight(explicit, "/")
+	}
+	return "https://" + firstNonEmpty(stackValues["VIDEO_CLOUD_DOMAIN"], "video-cloud-staging.realtekconnect.com")
 }
 
 func videoRelayTopologyDeployValue(path, key string) string {

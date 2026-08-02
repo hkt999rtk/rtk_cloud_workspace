@@ -304,6 +304,65 @@ func TestVideoRelayBuildsRunnerArgsForSplitRelayRoles(t *testing.T) {
 	}
 }
 
+func TestVideoRelayDeviceOnlyEvidenceRequiresWebSocketOwner(t *testing.T) {
+	device := videoRelayDeviceResult{WebSocketOwnerStatus: "PASS"}
+	if !videoRelayDeviceEvidencePass("device-only", device) {
+		t.Fatal("device-only evidence unexpectedly required viewer or RTP assertions")
+	}
+	device.WebSocketOwnerStatus = "FAIL"
+	if videoRelayDeviceEvidencePass("device-only", device) {
+		t.Fatal("device-only evidence passed without a websocket owner")
+	}
+	device = videoRelayDeviceResult{
+		WebSocketOwnerStatus: "PASS", WebRTCCreateStatus: "PASS", WebRTCAnswerStatus: "PASS",
+		ICEConnectedStatus: "PASS", RTPReceiveStatus: "PASS", CloseStatus: "PASS",
+		RTPPacketsReceived: 1, RTPBytesReceived: 1,
+	}
+	if !videoRelayDeviceEvidencePass("both", device) {
+		t.Fatal("complete relay evidence unexpectedly failed")
+	}
+	device.RTPBytesReceived = 0
+	if videoRelayDeviceEvidencePass("both", device) {
+		t.Fatal("full relay evidence passed without RTP bytes")
+	}
+}
+
+func TestApplyVideoRelayEvidenceAssessmentDeviceOnly(t *testing.T) {
+	result := videoRelayResult{
+		Status:          "PASS",
+		Overall:         "pass",
+		WebRTCRelayRole: "device-only",
+		WebRTC: videoRelayWebRTCResult{
+			SignalingTraceStatus:  "FAIL",
+			RelayEvidenceRequired: true,
+			RelayEvidenceStatus:   "FAIL",
+		},
+		Devices: []videoRelayDeviceResult{{WebSocketOwnerStatus: "PASS"}},
+	}
+	applyVideoRelayEvidenceAssessment(&result)
+	if result.Status != "PASS" || result.WebRTC.SignalingTraceStatus != "not_required" || result.WebRTC.RelayEvidenceRequired || result.WebRTC.RelayEvidenceStatus != "not_required" {
+		t.Fatalf("device-only assessment = %+v", result)
+	}
+}
+
+func TestApplyVideoRelayEvidenceAssessmentRequiresFullEvidence(t *testing.T) {
+	result := videoRelayResult{
+		Status:          "PASS",
+		Overall:         "pass",
+		WebRTCRelayRole: "both",
+		WebRTC: videoRelayWebRTCResult{
+			SignalingTraceStatus:  "FAIL",
+			RelayEvidenceRequired: true,
+			RelayEvidenceStatus:   "FAIL",
+		},
+		Devices: []videoRelayDeviceResult{{WebSocketOwnerStatus: "FAIL"}},
+	}
+	applyVideoRelayEvidenceAssessment(&result)
+	if result.Status != "FAIL" || result.Overall != "fail" {
+		t.Fatalf("full assessment = %+v", result)
+	}
+}
+
 func TestVideoRelayWritesTokenMapFilesWithoutEmbeddingSecretsInArgs(t *testing.T) {
 	dir := t.TempDir()
 	files, cleanup, err := writeVideoRelayTokenMapFiles(map[string]string{"cam-1": "device-secret-token"}, map[string]string{"cam-1": "app-secret-token"})
@@ -683,6 +742,40 @@ func TestVideoRelayTokenBaseURLPrefersExplicitValue(t *testing.T) {
 	}, "https://video.example.test", "https://device.override.example.test/")
 	if got != "https://device.override.example.test" {
 		t.Fatalf("token base URL = %q, want explicit device token URL", got)
+	}
+}
+
+func TestVideoRelayTokenBaseURLFallsBackToResolvedDeviceURL(t *testing.T) {
+	got := videoCloudTokenBaseURLForRelay(t.TempDir(), map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video.example.test",
+	}, "https://video.example.test", "")
+	if got != "https://device.video.example.test" {
+		t.Fatalf("token base URL = %q, want resolved device URL", got)
+	}
+}
+
+func TestVideoRelayTokenBaseURLOverridePrefersRuntimeURL(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_TOKEN_BASE_URL", "https://device.video.coverage-run.invalid:18443")
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "https://device.video.staging.example.test")
+	if got := videoRelayTokenBaseURLOverride(); got != "https://device.video.coverage-run.invalid:18443" {
+		t.Fatalf("token base URL override = %q", got)
+	}
+}
+
+func TestVideoRelayAPIBaseURLPrefersRuntimeURL(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_BASE_URL", "https://video.coverage-run.invalid:18443/")
+	t.Setenv("VIDEO_CLOUD_PUBLIC_BASE_URL", "https://video.staging.example.test")
+	t.Setenv("HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL", "https://video.load.example.test")
+	got := videoRelayAPIBaseURL(map[string]string{"VIDEO_CLOUD_DOMAIN": "coverage-run.coverage-run.invalid"})
+	if got != "https://video.coverage-run.invalid:18443" {
+		t.Fatalf("API base URL = %q, want run-scoped tunnel URL", got)
+	}
+}
+
+func TestVideoRelayAPIBaseURLFallsBackToStackDomain(t *testing.T) {
+	got := videoRelayAPIBaseURL(map[string]string{"VIDEO_CLOUD_DOMAIN": "video.example.test"})
+	if got != "https://video.example.test" {
+		t.Fatalf("API base URL = %q, want stack domain fallback", got)
 	}
 }
 

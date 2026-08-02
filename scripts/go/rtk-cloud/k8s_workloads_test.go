@@ -79,9 +79,9 @@ func TestK8SPrometheusTargetsAreDerivedFromWorkloadRegistry(t *testing.T) {
 	env := k8sWorkloadTestEnv()
 	targets := k8sPrometheusTargets(env, provisionOptions{videoOnly: true})
 
-	got := map[string]string{}
+	got := map[string]k8sPrometheusTarget{}
 	for _, target := range targets {
-		got[target.Job] = target.Service
+		got[target.Job] = target
 	}
 	checks := map[string]string{
 		"video-cloud-api":              "video-cloud-api",
@@ -95,12 +95,15 @@ func TestK8SPrometheusTargetsAreDerivedFromWorkloadRegistry(t *testing.T) {
 		"video-cloud-grafana":          "video-cloud-grafana",
 	}
 	for job, service := range checks {
-		if got[job] != service {
-			t.Fatalf("target %s service got %q want %q; all targets %#v", job, got[job], service, got)
+		if got[job].Service != service {
+			t.Fatalf("target %s service got %q want %q; all targets %#v", job, got[job].Service, service, got)
 		}
 	}
 	if _, ok := got["account-manager"]; ok {
 		t.Fatalf("video-only prometheus targets should not include account-manager: %#v", got)
+	}
+	if got["video-cloud-grafana"].Path != "/api/admin/grafana/metrics" {
+		t.Fatalf("Grafana metrics path = %q", got["video-cloud-grafana"].Path)
 	}
 }
 
@@ -114,6 +117,7 @@ func TestK8SPrometheusConfigKeepsExistingTargets(t *testing.T) {
 		"job_name: video-cloud-metrics-exporter",
 		"job_name: video-cloud-prometheus",
 		"job_name: video-cloud-grafana",
+		"metrics_path: /api/admin/grafana/metrics",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("prometheus config missing %q:\n%s", want, manifest)

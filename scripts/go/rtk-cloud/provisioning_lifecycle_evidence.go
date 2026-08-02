@@ -24,8 +24,9 @@ const (
 )
 
 var (
-	requestLifecycleAppToken    = requestVideoRelayAppToken
-	requestLifecycleDeviceToken = requestVideoRelayDeviceToken
+	requestLifecycleAppToken       = requestVideoRelayAppToken
+	requestLifecycleDeviceToken    = requestVideoRelayDeviceToken
+	executeLifecycleVideoRelayTest = executeVideoRelayTest
 )
 
 type canonicalVideoLifecycle struct {
@@ -99,8 +100,18 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	}
 
 	deactivation, unprovision, deactivationBefore, _, err := selectReadyLifecycleAssignments(
-		videoBaseURL, videoAdminToken, artifact.Assignments, *timeout, *poll,
+		videoBaseURL, videoAdminToken, artifact.Assignments, 0, *poll,
 	)
+	transportReadinessPrepared := false
+	if err != nil {
+		if err := prepareLifecycleTransportReadiness(workspace, envRoot, *brandname, *outDir); err != nil {
+			return err
+		}
+		transportReadinessPrepared = true
+		deactivation, unprovision, deactivationBefore, _, err = selectReadyLifecycleAssignments(
+			videoBaseURL, videoAdminToken, artifact.Assignments, *timeout, *poll,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -203,6 +214,11 @@ func runProvisioningLifecycleEvidence(args []string) error {
 		"run_id":         *runID,
 		"status":         "PASS",
 		"completed_at":   completed.Format(time.RFC3339),
+		"transport_readiness": map[string]any{
+			"prepared_by_lifecycle":  transportReadinessPrepared,
+			"required_video_devices": 2,
+			"status":                 "PASS",
+		},
 		"deactivation": map[string]any{
 			"device_id": deactivation.DeviceID, "account_device_id": deactivation.AccountDeviceID,
 			"operation_status": deactivationSnapshot.OperationStatus, "activation_status": deactivationSnapshot.ActivationStatus,
@@ -233,6 +249,19 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	}
 	report := fmt.Sprintf("# Provisioning Lifecycle Qualification\n\n- Run ID: `%s`\n- Status: **PASS**\n- Deactivation device: `%s`\n- Unprovision device: `%s`\n- Previous owner binding released: **PASS**\n- Factory identity preserved: **PASS**\n", *runID, deactivation.DeviceID, unprovision.DeviceID)
 	return os.WriteFile(filepath.Join(*outDir, "TEST_REPORT.md"), []byte(report), 0o644)
+}
+
+func prepareLifecycleTransportReadiness(workspace, envRoot, brandname, outDir string) error {
+	readiness, err := executeLifecycleVideoRelayTest(
+		workspace, envRoot, brandname, filepath.Join(outDir, "transport-readiness"), "smoke", "device-only", "all", 5, 2, "none",
+	)
+	if err != nil {
+		return fmt.Errorf("prepare lifecycle video transport readiness: %w", err)
+	}
+	if readiness.Status != "PASS" {
+		return fmt.Errorf("prepare lifecycle video transport readiness: status=%s", readiness.Status)
+	}
+	return nil
 }
 
 func loadLifecycleDeviceCertificate(credential testDataDeviceCredential) (tls.Certificate, error) {

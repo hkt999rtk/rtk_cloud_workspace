@@ -1813,6 +1813,15 @@ func TestLKENetworkPoliciesAllowVideoCloudAPIInternalRouting(t *testing.T) {
 
 	policy := lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)
 	for _, want := range []string{
+		"kubernetes.io/metadata.name: video-cloud-staging-account-manager",
+		"app.kubernetes.io/name: account-manager-outbox-worker",
+		"port: 8080",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("video API internal policy missing %q:\n%s", want, policy)
+		}
+	}
+	for _, want := range []string{
 		"name: allow-video-cloud-api-internal",
 		"namespace: video-cloud-staging-video-cloud",
 		"podSelector:\n    matchLabels:\n      app.kubernetes.io/name: video-cloud-api",
@@ -3166,6 +3175,7 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"job_name: video-cloud-prometheus",
 		"targets: [\"video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090\"]",
 		"job_name: video-cloud-grafana",
+		"metrics_path: /api/admin/grafana/metrics",
 		"targets: [\"video-cloud-grafana.video-cloud-staging-observability.svc.cluster.local:3000\"]",
 		"metrics_path: /metrics",
 	} {
@@ -3176,8 +3186,11 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 10; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
-	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 13; got != want {
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 12; got != want {
 		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
+	}
+	if got, want := strings.Count(manifest, "metrics_path:"), 13; got != want {
+		t.Fatalf("metrics target count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }
 
@@ -3611,11 +3624,13 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 		"go build -trimpath -o /out/rtk-account-manager-user-cache ./cmd/user-cache",
 		"go build -trimpath -o /out/rtk-account-manager-email-worker ./cmd/email-worker",
 		"go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin",
+		"go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker",
 		"apt-get install -y --no-install-recommends ca-certificates",
 		"COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate",
 		"COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache",
 		"COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manager-email-worker",
 		"COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin",
+		"COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker",
 		"COPY --from=builder /src/migrations /app/migrations",
 	} {
 		if !strings.Contains(body, want) {
@@ -3707,6 +3722,47 @@ func TestAccountManagerEmailWorkerManifestUsesSendMailHTTPSecret(t *testing.T) {
 	}
 }
 
+func TestAccountManagerOutboxWorkerUsesDirectLifecycleAPI(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	env := map[string]string{"CLOUD_STACK_NAME": "coverage-stack"}
+	secret := lkeAccountManagerSecretManifest(env)
+	for _, want := range []string{
+		`CROSS_SERVICE_BROKER: "direct_http"`,
+		`VIDEO_CLOUD_LIFECYCLE_BASE_URL: "http://video-cloud-api.coverage-stack-video-cloud.svc.cluster.local:80"`,
+		`VIDEO_CLOUD_LIFECYCLE_TOKEN: "`,
+		`VIDEO_CLOUD_LIFECYCLE_TIMEOUT: "10s"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret missing %q:\n%s", want, secret)
+		}
+	}
+	manifest := lkeAccountManagerOutboxWorkerManifest(env)
+	for _, want := range []string{
+		"name: account-manager-outbox-worker",
+		`command: ["/app/rtk-account-manager-outbox-worker"]`,
+		"name: account-manager-runtime",
+		"registry.example.test/account-manager:test",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("outbox manifest missing %q:\n%s", want, manifest)
+		}
+	}
+	changed := maps.Clone(env)
+	changed["VIDEO_CLOUD_LIFECYCLE_TIMEOUT"] = "30s"
+	if lkeAccountManagerOutboxWorkerManifest(changed) == manifest {
+		t.Fatal("lifecycle timeout change must update the worker runtime checksum")
+	}
+	t.Setenv("LKE_NAMESPACE_VIDEO_CLOUD", "different-video-namespace")
+	if lkeAccountManagerOutboxWorkerManifest(env) == manifest {
+		t.Fatal("lifecycle base URL change must update the worker runtime checksum")
+	}
+	t.Setenv("LKE_NAMESPACE_VIDEO_CLOUD", "")
+	t.Setenv("LKE_INTERNAL_AUTH", "different-internal-token")
+	if lkeAccountManagerOutboxWorkerManifest(env) == manifest {
+		t.Fatal("lifecycle token change must update the worker runtime checksum")
+	}
+}
+
 func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -3724,8 +3780,15 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	if !strings.Contains(log, "name: video-cloud-api") {
 		t.Fatalf("expected video-cloud deployment manifest, got:\n%s", log)
 	}
-	if strings.Contains(log, "name: account-manager") || strings.Contains(log, "name: cloud-admin") {
-		t.Fatalf("video-only deploy should not apply account-manager/admin manifests:\n%s", log)
+	for _, unwanted := range []string{
+		"kind: Deployment\nmetadata:\n  name: account-manager",
+		"kind: Deployment\nmetadata:\n  name: cloud-admin",
+		"rollout status deployment/account-manager",
+		"rollout status deployment/cloud-admin",
+	} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("video-only deploy unexpectedly applied non-video workload %q", unwanted)
+		}
 	}
 }
 
