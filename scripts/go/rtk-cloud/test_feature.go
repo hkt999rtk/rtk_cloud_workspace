@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -804,13 +805,53 @@ func writeFeatureStageReports(dir string, spec featureRunSpec, manifest featureE
 	}); err != nil {
 		return err
 	}
+	report := renderFeatureReport(manifest)
+	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), report, 0o644); err != nil {
+		return err
+	}
+	junit := renderFeatureStageJUnit(manifest)
+	if err := os.WriteFile(filepath.Join(dir, "junit.xml"), junit, 0o644); err != nil {
+		return err
+	}
+	stableReports := []struct {
+		path string
+		raw  []byte
+	}{
+		{path: "TEST_REPORT.md", raw: report},
+		{path: "junit.xml", raw: junit},
+	}
+	for caseIndex := range manifest.Cases {
+		for _, item := range stableReports {
+			sum := sha256.Sum256(item.raw)
+			manifest.Cases[caseIndex].Evidence = append(manifest.Cases[caseIndex].Evidence, featureEvidenceFile{
+				Path: item.path, SHA256: hex.EncodeToString(sum[:]),
+			})
+		}
+	}
 	if err := writeJSONFile(filepath.Join(dir, "evidence-manifest.json"), manifest); err != nil {
 		return err
 	}
 	if err := writeNormalizedFeatureEvidence(dir, manifest); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), renderFeatureReport(manifest), 0o644)
+	return nil
+}
+
+func renderFeatureStageJUnit(manifest featureEvidenceManifest) []byte {
+	failures := 0
+	var cases strings.Builder
+	for _, item := range manifest.Cases {
+		status := strings.ToUpper(strings.TrimSpace(item.Status))
+		fmt.Fprintf(&cases, `<testcase classname="feature-%s" name="%s" time="%.3f">`,
+			html.EscapeString(manifest.Feature), html.EscapeString(item.TestID), float64(item.DurationMS)/1000)
+		if status != "PASS" {
+			failures++
+			fmt.Fprintf(&cases, `<failure message="%s"/>`, html.EscapeString(item.Assessment))
+		}
+		fmt.Fprint(&cases, `</testcase>`)
+	}
+	return []byte(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?><testsuite name="feature-%s" tests="%d" failures="%d" time="%.3f">%s</testsuite>`+"\n",
+		html.EscapeString(manifest.Feature), len(manifest.Cases), failures, float64(manifest.DurationMS)/1000, cases.String()))
 }
 
 func writeNormalizedFeatureEvidence(dir string, manifest featureEvidenceManifest) error {

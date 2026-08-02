@@ -210,7 +210,7 @@ func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingRe
 	if err := writeFeatureStageReports(stageDir, spec, manifest); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"plan.json", "results.json", "evidence-manifest.json", "TEST_REPORT.md"} {
+	for _, name := range []string{"plan.json", "results.json", "evidence-manifest.json", "feature-evidence.json", "TEST_REPORT.md", "junit.xml"} {
 		if stat, err := os.Stat(filepath.Join(stageDir, name)); err != nil || stat.Size() == 0 {
 			t.Fatalf("%s was not materialized: stat=%v err=%v", name, stat, err)
 		}
@@ -221,6 +221,25 @@ func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingRe
 	}
 	if results["status"] != "NOT_RUN" {
 		t.Fatalf("fallback results status = %v, want NOT_RUN", results["status"])
+	}
+	var normalized featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(stageDir, "feature-evidence.json"), &normalized); err != nil {
+		t.Fatal(err)
+	}
+	if len(normalized.Cases) != 2 {
+		t.Fatalf("normalized cases = %d, want 2", len(normalized.Cases))
+	}
+	for _, item := range normalized.Cases {
+		if len(item.Requirements) == 0 {
+			t.Fatalf("normalized case lacks requirements: %+v", item)
+		}
+		types := map[string]bool{}
+		for _, evidence := range item.Requirements[0].Evidence {
+			types[evidence.Type] = true
+		}
+		if !types["markdown"] || !types["junit"] {
+			t.Fatalf("normalized evidence types = %v, want markdown and junit", types)
+		}
 	}
 
 	original := []byte("{\"runner_result\":true}\n")
