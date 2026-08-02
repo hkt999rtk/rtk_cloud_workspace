@@ -304,6 +304,29 @@ func TestVideoRelayBuildsRunnerArgsForSplitRelayRoles(t *testing.T) {
 	}
 }
 
+func TestVideoRelayDeviceOnlyEvidenceRequiresWebSocketOwner(t *testing.T) {
+	device := videoRelayDeviceResult{WebSocketOwnerStatus: "PASS"}
+	if !videoRelayDeviceEvidencePass("device-only", device) {
+		t.Fatal("device-only evidence unexpectedly required viewer or RTP assertions")
+	}
+	device.WebSocketOwnerStatus = "FAIL"
+	if videoRelayDeviceEvidencePass("device-only", device) {
+		t.Fatal("device-only evidence passed without a websocket owner")
+	}
+	device = videoRelayDeviceResult{
+		WebSocketOwnerStatus: "PASS", WebRTCCreateStatus: "PASS", WebRTCAnswerStatus: "PASS",
+		ICEConnectedStatus: "PASS", RTPReceiveStatus: "PASS", CloseStatus: "PASS",
+		RTPPacketsReceived: 1, RTPBytesReceived: 1,
+	}
+	if !videoRelayDeviceEvidencePass("both", device) {
+		t.Fatal("complete relay evidence unexpectedly failed")
+	}
+	device.RTPBytesReceived = 0
+	if videoRelayDeviceEvidencePass("both", device) {
+		t.Fatal("full relay evidence passed without RTP bytes")
+	}
+}
+
 func TestVideoRelayWritesTokenMapFilesWithoutEmbeddingSecretsInArgs(t *testing.T) {
 	dir := t.TempDir()
 	files, cleanup, err := writeVideoRelayTokenMapFiles(map[string]string{"cam-1": "device-secret-token"}, map[string]string{"cam-1": "app-secret-token"})

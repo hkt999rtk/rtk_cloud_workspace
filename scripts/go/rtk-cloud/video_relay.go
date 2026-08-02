@@ -659,15 +659,17 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 	}
 	result.Devices = summarizeVideoRelayLoadResults(loadResultsPath, selected)
 	for _, device := range result.Devices {
-		if device.WebSocketOwnerStatus != "PASS" || device.WebRTCCreateStatus != "PASS" || device.WebRTCAnswerStatus != "PASS" ||
-			device.ICEConnectedStatus != "PASS" || device.RTPReceiveStatus != "PASS" || device.CloseStatus != "PASS" ||
-			device.RTPPacketsReceived <= 0 || device.RTPBytesReceived <= 0 {
+		if !videoRelayDeviceEvidencePass(result.WebRTCRelayRole, device) {
 			result.Status = "FAIL"
 			result.Overall = "fail"
 			break
 		}
 	}
-	if result.WebRTC.SignalingTraceStatus != "PASS" {
+	if result.WebRTCRelayRole == "device-only" {
+		result.WebRTC.SignalingTraceStatus = "not_required"
+		result.WebRTC.RelayEvidenceRequired = false
+		result.WebRTC.RelayEvidenceStatus = "not_required"
+	} else if result.WebRTC.SignalingTraceStatus != "PASS" {
 		result.Status = "FAIL"
 		result.Overall = "fail"
 	}
@@ -676,6 +678,15 @@ func executeVideoRelayTest(workspace, envRoot, brandname, outDir, profile, webrt
 		result.Overall = "fail"
 	}
 	return writeVideoRelayFinal(outDir, result)
+}
+
+func videoRelayDeviceEvidencePass(role string, device videoRelayDeviceResult) bool {
+	if role == "device-only" {
+		return device.WebSocketOwnerStatus == "PASS"
+	}
+	return device.WebSocketOwnerStatus == "PASS" && device.WebRTCCreateStatus == "PASS" && device.WebRTCAnswerStatus == "PASS" &&
+		device.ICEConnectedStatus == "PASS" && device.RTPReceiveStatus == "PASS" && device.CloseStatus == "PASS" &&
+		device.RTPPacketsReceived > 0 && device.RTPBytesReceived > 0
 }
 
 func selectVideoRelayDevicesFromTestData(envRoot, brandname string, maxDevices int) ([]videoRelaySelectedDevice, []string, error) {

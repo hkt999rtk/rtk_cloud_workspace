@@ -99,8 +99,25 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	}
 
 	deactivation, unprovision, deactivationBefore, _, err := selectReadyLifecycleAssignments(
-		videoBaseURL, videoAdminToken, artifact.Assignments, *timeout, *poll,
+		videoBaseURL, videoAdminToken, artifact.Assignments, 0, *poll,
 	)
+	transportReadinessPrepared := false
+	if err != nil {
+		readinessDir := filepath.Join(*outDir, "transport-readiness")
+		readiness, readinessErr := executeVideoRelayTest(
+			workspace, envRoot, *brandname, readinessDir, "smoke", "device-only", "all", 5, 2, "none",
+		)
+		if readinessErr != nil {
+			return fmt.Errorf("prepare lifecycle video transport readiness: %w", readinessErr)
+		}
+		if readiness.Status != "PASS" {
+			return fmt.Errorf("prepare lifecycle video transport readiness: status=%s", readiness.Status)
+		}
+		transportReadinessPrepared = true
+		deactivation, unprovision, deactivationBefore, _, err = selectReadyLifecycleAssignments(
+			videoBaseURL, videoAdminToken, artifact.Assignments, *timeout, *poll,
+		)
+	}
 	if err != nil {
 		return err
 	}
@@ -203,6 +220,11 @@ func runProvisioningLifecycleEvidence(args []string) error {
 		"run_id":         *runID,
 		"status":         "PASS",
 		"completed_at":   completed.Format(time.RFC3339),
+		"transport_readiness": map[string]any{
+			"prepared_by_lifecycle":  transportReadinessPrepared,
+			"required_video_devices": 2,
+			"status":                 "PASS",
+		},
 		"deactivation": map[string]any{
 			"device_id": deactivation.DeviceID, "account_device_id": deactivation.AccountDeviceID,
 			"operation_status": deactivationSnapshot.OperationStatus, "activation_status": deactivationSnapshot.ActivationStatus,
