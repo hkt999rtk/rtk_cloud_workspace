@@ -61,7 +61,24 @@ joined="$*"
 if [[ -n "${CURL_LOG:-}" ]]; then
   printf '%s\n' "$joined" >> "$CURL_LOG"
 fi
-if [[ "$joined" == *"--write-out"* && "$joined" == *"entitlement/revoke"* && "${FAIL_ENTITLEMENT_REVOKE:-0}" == "1" ]]; then
+if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
+  output=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output) output="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  test -n "$output"
+  if [[ -n "${ROTATION_TOKEN_STATE:-}" && ! -e "$ROTATION_TOKEN_STATE" ]]; then
+    : > "$ROTATION_TOKEN_STATE"
+    printf '%s\n' '{"error":"authorization_pending"}' > "$output"
+    printf '401'
+  else
+    printf '%s\n' '{"access_token":"live-access","refresh_token":"live-refresh"}' > "$output"
+    printf '200'
+  fi
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"entitlement/revoke"* && "${FAIL_ENTITLEMENT_REVOKE:-0}" == "1" ]]; then
   printf '500'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/commands"* ]]; then
   printf '200'
@@ -150,6 +167,7 @@ export CLOUD_VALIDATION_SECRET_ROOT="$tmp/secrets"
 export CLOUD_VALIDATION_IOS_CLOUD_SLUG="sdk-e2e-ios-a579a0e7"
 export CLOUD_VALIDATION_ANDROID_CLOUD_SLUG="sdk-e2e-android-0d152276"
 export CLOUD_VALIDATION_DEVICE_TOKEN_HELPER="$tmp/bin/request-device-token"
+export ROTATION_TOKEN_STATE="$tmp/rotation-token-ready"
 
 (cd "$tmp" && "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh")
 test -e "$tmp/secrets/run-ios/environment/state"

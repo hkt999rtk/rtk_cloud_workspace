@@ -419,19 +419,38 @@ jq -e '.access_token | type == "string" and length > 0' "$device_token_response"
 token_response="$secret_root/app-token-response.json"
 token_request="$secret_root/app-token-request.json"
 jq -n --arg devid "$device_id" '{scope:"app", service:"mqtt", devid:$devid}' > "$token_request"
+app_token_curl=(curl --silent --show-error --max-time 15 --cert "$app_cert" --key "$app_key")
 if [[ -n "${CLOUD_VALIDATION_SERVER_CA_BUNDLE:-}" ]]; then
-  curl --fail --silent --show-error --max-time 15 \
-    --cacert "$CLOUD_VALIDATION_SERVER_CA_BUNDLE" --cert "$app_cert" --key "$app_key" \
+  app_token_curl+=(--cacert "$CLOUD_VALIDATION_SERVER_CA_BUNDLE")
+fi
+app_token_ready=0
+app_token_status="000"
+app_token_attempts="${CLOUD_VALIDATION_APP_CERT_READY_ATTEMPTS:-30}"
+for ((attempt = 1; attempt <= app_token_attempts; attempt++)); do
+  set +e
+  app_token_status="$("${app_token_curl[@]}" --output "$token_response" --write-out '%{http_code}' \
     -H 'Content-Type: application/json' --data-binary "@$token_request" \
-    "${device_url%/}/request_token" > "$token_response"
-else
-  curl --fail --silent --show-error --max-time 15 \
-    --cert "$app_cert" --key "$app_key" \
-    -H 'Content-Type: application/json' --data-binary "@$token_request" \
-    "${device_url%/}/request_token" > "$token_response"
+    "${device_url%/}/request_token")"
+  app_token_rc=$?
+  set -e
+  if (( app_token_rc == 0 )) && [[ "$app_token_status" == "200" ]] && \
+    jq -e '.access_token | type == "string" and length > 0' "$token_response" >/dev/null 2>&1; then
+    app_token_ready=1
+    break
+  fi
+  case "$app_token_status" in
+    000|401|403|404|409|425|429|5??) ;;
+    *) echo "rotated app certificate readiness failed with HTTP $app_token_status" >&2; exit 1 ;;
+  esac
+  if (( attempt < app_token_attempts )); then
+    sleep "${CLOUD_VALIDATION_APP_CERT_READY_DELAY_SECONDS:-1}"
+  fi
+done
+if [[ "$app_token_ready" != "1" ]]; then
+  echo "rotated app certificate did not become ready after $app_token_attempts attempts (last HTTP $app_token_status)" >&2
+  exit 1
 fi
 chmod 600 "$token_response"
-jq -e '.access_token | type == "string" and length > 0' "$token_response" >/dev/null
 app_headers="$secret_root/app-headers.txt"
 printf 'Authorization: Bearer %s\n' "$(jq -er '.access_token' "$token_response")" > "$app_headers"
 chmod 600 "$app_headers"
