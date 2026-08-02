@@ -315,6 +315,27 @@ func TestFeatureQualificationRejectsMissingFormalOwnerBrandPlan(t *testing.T) {
 	}
 }
 
+func TestFeatureResolvedBrandPlanOptionalMissingIsEmpty(t *testing.T) {
+	t.Setenv("HOME100K_BRAND_PLAN", "")
+	t.Setenv("HOME100K_ENV_ROOT", t.TempDir())
+	got, err := featureResolvedBrandPlanPath(filepath.Join(t.TempDir(), "lke"), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("optional resolved brand plan = %q, want empty", got)
+	}
+}
+
+func TestFeatureResolvedBrandPlanRejectsDirectory(t *testing.T) {
+	path := t.TempDir()
+	t.Setenv("HOME100K_BRAND_PLAN", path)
+	_, err := featureResolvedBrandPlanPath(filepath.Join(t.TempDir(), "lke"), true)
+	if err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Fatalf("featureResolvedBrandPlanPath() error = %v, want non-regular-file rejection", err)
+	}
+}
+
 func TestFeatureCanaryUsesFirstRunScopedFormalOwnerBrand(t *testing.T) {
 	t.Setenv("HOME100K_BRAND_PLAN", "")
 	loadRoot := t.TempDir()
