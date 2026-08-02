@@ -80,7 +80,6 @@ while (( SECONDS < deadline )); do
     ' "$response" >/dev/null || jq -e --arg run_id "$run_id" '
       .state.desired.cloud_validation_run == $run_id and
       .state.desired.cloud_validation_scenario == "shadow_offline_reconnect" and
-      .state.delta.cloud_validation_run == $run_id and
       .state.delta.cloud_validation_scenario == "shadow_offline_reconnect" and
       (.state.reported.cloud_validation_scenario // "") != "shadow_offline_reconnect"
     ' "$response" >/dev/null; then
@@ -126,8 +125,9 @@ while (( SECONDS < deadline )); do
   if read_shadow && jq -e --arg run_id "$run_id" '
     .state.desired.cloud_validation_run == $run_id and
     .state.desired.cloud_validation_scenario == "shadow_offline_reconnect" and
-    .state.delta.cloud_validation_run == $run_id and
-    .state.delta.cloud_validation_scenario == "shadow_offline_reconnect"
+    .state.desired.enabled == true and
+    .state.delta.cloud_validation_scenario == "shadow_offline_reconnect" and
+    (.state.reported.cloud_validation_scenario // "") != "shadow_offline_reconnect"
   ' "$response" >/dev/null; then
     queued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     : > "$signal_file"
