@@ -13,6 +13,10 @@ if grep -Fq '"$workspace_root/repos/rtk_cloud_client/docs/rtk_cloud_contracts_do
   echo "cloud validation must not anchor evidence to the SDK nested contracts copy" >&2
   exit 1
 fi
+offline_controller="$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
+grep -Fq 'CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600' "$offline_controller"
+grep -Fq 'CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1' "$offline_controller"
+test "$(grep -Fc 'deadline=$((SECONDS + offline_timeout_seconds))' "$offline_controller")" -eq 3
 
 mkdir -p "$tmp/bin" "$tmp/workspace/scripts" "$tmp/source-env/state" "$tmp/out" "$tmp/secrets"
 printf 'state' > "$tmp/source-env/state/marker"

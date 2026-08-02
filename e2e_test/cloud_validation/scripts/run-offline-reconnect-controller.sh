@@ -21,11 +21,12 @@ headers="$secret_root/offline-shadow-headers.txt"
 test -f "$header_file"
 mkdir -p "$(dirname "$signal_file")"
 offline_timeout_seconds="${CLOUD_VALIDATION_OFFLINE_TIMEOUT_SECONDS:-120}"
+start_timeout_seconds="${CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600}"
 # Android can finish the online round-trip and begin the offline scenario in
 # less than one second. Poll frequently enough to observe that convergence
 # window before asking the virtual device to disconnect.
 poll_interval_seconds="${CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1}"
-deadline=$((SECONDS + offline_timeout_seconds))
+deadline=$((SECONDS + start_timeout_seconds))
 queued_at=""
 
 read_shadow() {
@@ -59,6 +60,7 @@ if [[ ! -f "$disconnect_request" ]]; then
   exit 1
 fi
 
+deadline=$((SECONDS + offline_timeout_seconds))
 while (( SECONDS < deadline )); do
   if [[ -f "$offline_ready" ]] && jq -e --arg run_id "$run_id" '
     .schema_version == 1 and .run_id == $run_id and .status == "OFFLINE"
@@ -73,6 +75,7 @@ if [[ ! -f "$offline_ready" ]]; then
   exit 1
 fi
 
+deadline=$((SECONDS + offline_timeout_seconds))
 while (( SECONDS < deadline )); do
   if read_shadow && jq -e --arg run_id "$run_id" '
     .state.desired.cloud_validation_run == $run_id and
