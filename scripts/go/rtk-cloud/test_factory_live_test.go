@@ -63,6 +63,26 @@ func TestValidateFactoryDeploymentRequiresProductionJWTAndMTLSPosture(t *testing
 	}
 }
 
+func TestDeploymentChecksumPatchCarriesOnlyDigestAndFactoryEnvRefs(t *testing.T) {
+	patch := deploymentChecksumPatch("digest-value", []map[string]any{{
+		"name":      "FACTORY_ENROLL_PRODUCTION_JWT_SECRET",
+		"valueFrom": map[string]any{"secretKeyRef": map[string]string{"name": "factoryenroll-runtime", "key": "FACTORY_ENROLL_PRODUCTION_JWT_SECRET"}},
+	}})
+	raw, err := json.Marshal(patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, marker := range []string{"digest-value", "factoryenroll-runtime", "FACTORY_ENROLL_PRODUCTION_JWT_SECRET"} {
+		if !strings.Contains(text, marker) {
+			t.Fatalf("patch missing %q: %s", marker, text)
+		}
+	}
+	if strings.Contains(text, "production-jwt-secret-marker") {
+		t.Fatal("deployment patch must not carry the signing secret")
+	}
+}
+
 func TestImportFactoryQualificationWritesCrossFeatureEvidence(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

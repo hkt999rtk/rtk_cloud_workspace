@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -43,6 +45,8 @@ func runTestFactoryLive(args []string) error {
 	outDirFlag := fs.String("out-dir", "", "private evidence output directory")
 	runIDFlag := fs.String("run-id", "", "run ID")
 	deviceURLFlag := fs.String("device-url", "", "device-facing mTLS HTTPS base URL")
+	configureRuntime := fs.Bool("configure-runtime", false, "configure the shared production JWT secret and roll out Account Manager/factoryenroll")
+	confirm := fs.String("confirm", "", "exact stack confirmation required with --configure-runtime")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -73,6 +77,18 @@ func runTestFactoryLive(args []string) error {
 	stack := firstNonEmpty(stackValues["CLOUD_STACK_NAME"], "video-cloud-staging")
 	if stack != "video-cloud-staging" {
 		return fmt.Errorf("factory live qualification is restricted to video-cloud-staging, got %s", stack)
+	}
+	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return err
+	}
+	if *configureRuntime {
+		if *confirm != stack {
+			return fmt.Errorf("--configure-runtime requires --confirm %s", stack)
+		}
+		if err := configureFactoryProductionJWTRuntime(kubeconfig, stack); err != nil {
+			return err
+		}
 	}
 	deviceURL := firstNonEmpty(*deviceURLFlag, os.Getenv("VIDEO_CLOUD_DEVICE_BASE_URL"))
 	if deviceURL == "" {
@@ -115,14 +131,82 @@ func runTestFactoryLive(args []string) error {
 	if err := validateFactoryQualificationResult(result, runID); err != nil {
 		return err
 	}
-	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
-	if err != nil {
-		return err
-	}
-	if err := writeFactoryRuntimeVerification(kubeconfig, stack, result, outDir); err != nil {
+	if err := writeFactoryRuntimeVerification(workspace, kubeconfig, stack, result, outDir); err != nil {
 		return err
 	}
 	return importFactoryQualificationFeatureEvidence(workspace, outDir, result)
+}
+
+func configureFactoryProductionJWTRuntime(kubeconfig, stack string) error {
+	var secretBytes [32]byte
+	if _, err := rand.Read(secretBytes[:]); err != nil {
+		return fmt.Errorf("generate factory production JWT secret: %w", err)
+	}
+	secret := base64.RawURLEncoding.EncodeToString(secretBytes[:])
+	digest := sha256.Sum256([]byte(secret))
+	checksum := hex.EncodeToString(digest[:])
+	audience := "factory-enroll"
+	patches := []struct {
+		namespace string
+		kind      string
+		name      string
+		payload   map[string]any
+	}{
+		{stack + "-account-manager", "secret", "account-manager-runtime", map[string]any{"stringData": map[string]string{
+			"FACTORY_PRODUCTION_JWT_SECRET": secret, "FACTORY_PRODUCTION_JWT_AUDIENCE": audience,
+		}}},
+		{stack + "-video-cloud", "secret", "factoryenroll-runtime", map[string]any{"stringData": map[string]string{
+			"FACTORY_ENROLL_PRODUCTION_JWT_SECRET": secret, "FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE": audience,
+		}}},
+		{stack + "-account-manager", "deployment", "account-manager", deploymentChecksumPatch(checksum, nil)},
+		{stack + "-video-cloud", "deployment", "factoryenroll", deploymentChecksumPatch(checksum, []map[string]any{
+			{"name": "FACTORY_ENROLL_PRODUCTION_JWT_SECRET", "valueFrom": map[string]any{"secretKeyRef": map[string]string{"name": "factoryenroll-runtime", "key": "FACTORY_ENROLL_PRODUCTION_JWT_SECRET"}}},
+			{"name": "FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE", "valueFrom": map[string]any{"secretKeyRef": map[string]string{"name": "factoryenroll-runtime", "key": "FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE"}}},
+		})},
+	}
+	for _, patch := range patches {
+		if err := kubectlPatchJSON(kubeconfig, patch.namespace, patch.kind, patch.name, patch.payload); err != nil {
+			return err
+		}
+	}
+	secret = ""
+	for _, target := range []struct{ namespace, deployment string }{
+		{stack + "-account-manager", "account-manager"},
+		{stack + "-video-cloud", "factoryenroll"},
+	} {
+		cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", target.namespace, "rollout", "status", "deployment/"+target.deployment, "--timeout=5m")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("wait for %s rollout: %w", target.deployment, err)
+		}
+	}
+	return nil
+}
+
+func deploymentChecksumPatch(checksum string, env []map[string]any) map[string]any {
+	template := map[string]any{"metadata": map[string]any{"annotations": map[string]string{
+		"rtk.realtek.com/factory-production-jwt-checksum": checksum,
+	}}}
+	if len(env) > 0 {
+		template["spec"] = map[string]any{"containers": []map[string]any{{"name": "factoryenroll", "env": env}}}
+	}
+	return map[string]any{"spec": map[string]any{"template": template}}
+}
+
+func kubectlPatchJSON(kubeconfig, namespace, kind, name string, payload map[string]any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", namespace, "patch", kind, name, "--type=strategic", "--patch-file=/dev/stdin")
+	cmd.Stdin = strings.NewReader(string(raw))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("patch %s/%s in %s: %w", kind, name, namespace, err)
+	}
+	return nil
 }
 
 func envListValue(values []string, key string) string {
@@ -166,7 +250,7 @@ func factoryProductionWorkflowSteps() []string {
 	return []string{"create_device_item_profile", "issue_production_jwt", "generate_device_csr", "enroll_factory_identity", "verify_certissuer_mtls", "validate_device_certificate", "bootstrap_device_token"}
 }
 
-func writeFactoryRuntimeVerification(kubeconfig, stack string, result factoryQualificationResult, outDir string) error {
+func writeFactoryRuntimeVerification(workspace, kubeconfig, stack string, result factoryQualificationResult, outDir string) error {
 	accountNS := stack + "-account-manager"
 	videoNS := stack + "-video-cloud"
 	accountDeployment, err := kubectlJSON(kubeconfig, accountNS, "deployment", "account-manager")
@@ -181,6 +265,9 @@ func writeFactoryRuntimeVerification(kubeconfig, stack string, result factoryQua
 		return err
 	}
 	if err := validateFactoryDeployment(factoryDeployment); err != nil {
+		return err
+	}
+	if err := validateFactoryDeployedSourceImages(workspace, accountDeployment, factoryDeployment); err != nil {
 		return err
 	}
 	for _, item := range []struct {
@@ -203,11 +290,37 @@ func writeFactoryRuntimeVerification(kubeconfig, stack string, result factoryQua
 	lines := []string{
 		"schema=rtk-factory-runtime-verification/v1", "stack=" + stack,
 		"account_manager_ready=PASS", "factoryenroll_ready=PASS", "shared_production_jwt_keys_present=PASS",
+		"source_commit_images_matched=PASS",
 		"production_jwt_auth_configured=PASS", "certissuer_url_https=PASS", "certissuer_client_mtls_mount=PASS",
 		"issuer_request_id_present=PASS", "device_certificate_chain_verified=PASS", "device_mtls_token_http_200=PASS",
 		"issuer_request_id=" + result.IssuerRequestID,
 	}
 	return os.WriteFile(filepath.Join(outDir, "factory-runtime-verification.log"), []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+}
+
+func validateFactoryDeployedSourceImages(workspace string, accountDeployment, factoryDeployment map[string]any) error {
+	for _, item := range []struct {
+		repo       string
+		deployment map[string]any
+		name       string
+	}{
+		{"rtk_account_manager", accountDeployment, "account-manager"},
+		{"rtk_video_cloud", factoryDeployment, "factoryenroll"},
+	} {
+		commit, err := gitOutput(filepath.Join(workspace, "repos", item.repo), "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(item.deployment)
+		short := strings.TrimSpace(commit)
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		if !strings.Contains(string(raw), "sha-"+short) {
+			return fmt.Errorf("%s deployment image does not match %s commit %s", item.name, item.repo, short)
+		}
+	}
+	return nil
 }
 
 func kubectlJSON(kubeconfig, namespace, kind, name string) (map[string]any, error) {
