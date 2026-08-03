@@ -277,17 +277,23 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	ui := workflow[uiStart:]
 	for _, expected := range []string{
 		"svc/account-manager 18081:80",
-		"http://127.0.0.1:18081/v1/auth/register",
-		"customer_register_payload",
+		"select email, password, brand_cloud_id",
+		"role in ('member', 'owner', 'admin')",
+		"case when role = 'member'",
+		"customer_fixture",
 		"E2E_BRAND_CLOUD_ID",
-		"organization_name:\"Runtime Coverage Customer\"",
 		"svc/video-cloud-prometheus 18091:9090",
 		"test-platform-live",
 		"--platform-session \"$E2E_PLATFORM_SESSION_ID\"",
 		"--customer-session \"$E2E_CUSTOMER_SESSION_ID\"",
 	} {
 		if !strings.Contains(ui, expected) {
-			t.Fatalf("runtime UI smoke must provision its run-scoped customer identity: missing %q", expected)
+			t.Fatalf("runtime UI smoke must reuse its run-scoped customer identity: missing %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"/v1/auth/register", "customer_register_payload", "customer_register_response"} {
+		if strings.Contains(ui, forbidden) {
+			t.Fatalf("runtime UI smoke must not re-register its existing run-scoped customer: found %q", forbidden)
 		}
 	}
 }
