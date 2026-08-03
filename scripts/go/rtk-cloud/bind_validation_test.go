@@ -237,6 +237,53 @@ func TestAccountBulkBindDevicesUsesAdminEndpointAndDoesNotListDevices(t *testing
 	}
 }
 
+func TestAccountRegisterDevicesDirectUsesCanonicalOrganizationRoute(t *testing.T) {
+	created := map[string]map[string]any{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/orgs/brand-1/devices" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("authorization") != "Bearer member-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		metadata, _ := req["metadata"].(map[string]any)
+		deviceID, _ := metadata["video_cloud_devid"].(string)
+		if deviceID == "" || req["name"] != deviceID || metadata["device_type"] != "camera" {
+			t.Fatalf("unexpected create payload: %+v", req)
+		}
+		created[deviceID] = req
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"device": map[string]any{"id": "account-" + deviceID, "metadata": metadata}})
+	}))
+	defer server.Close()
+
+	assignments := []bindAssignment{
+		{AssignedEmail: "member@example.test", DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{AssignedEmail: "member@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_storage"}},
+	}
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1", assignments,
+		map[string]*brandCloudUserSession{"member@example.test": {Email: "member@example.test", Session: accountPlatformSession{AccessToken: "member-token"}}},
+		func(string, ...any) {}, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 2 || len(results) != 2 || summary.Requested != 2 || summary.Created != 2 || summary.Existing != 0 || summary.Failed != 0 {
+		t.Fatalf("created=%d results=%+v summary=%+v", len(created), results, summary)
+	}
+	for _, assignment := range assignments {
+		result := results[assignment.DeviceID]
+		if result.Status != "created" || result.AccountDeviceID != "account-"+assignment.DeviceID || result.ClaimID != "" {
+			t.Fatalf("result[%s] = %+v", assignment.DeviceID, result)
+		}
+	}
+}
+
 func TestAccountClaimResolveAlreadyClaimed(t *testing.T) {
 	if !accountClaimResolveAlreadyClaimed([]byte(`{"code":"already_claimed","message":"Claim token has already been claimed"}`)) {
 		t.Fatal("already_claimed response was not recognized")

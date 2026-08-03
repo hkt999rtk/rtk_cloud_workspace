@@ -9417,15 +9417,7 @@ func runBindDevices(args []string) error {
 		return accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, items, userSessions, runID, *concurrency)
 	}
 	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
-		bulkAssignments := items
-		results, summary, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, bulkAssignments, bindDevicesBulkChunkSize())
-		if err != nil {
-			if claimEvidenceCount == 0 && strings.Contains(err.Error(), "HTTP 404") {
-				safeLog("bulk bind endpoint unavailable; falling back to claim-token resolve flow")
-				results, summary, err = claimBind(bulkAssignments)
-			}
-		}
-		return results, summary, err
+		return accountRegisterDevicesDirect(ctx, brandCloudID, tenantSlug, items, userSessions, safeLog, *concurrency)
 	}
 	bulkResults, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, claimEvidenceCount, claimBind, bulkBind)
 	if err != nil {
@@ -9483,7 +9475,7 @@ func runBindDevices(args []string) error {
 		return assignment, nil
 	}
 	recreateAfterUnprovision := func(assignment bindAssignment, userSession *brandCloudUserSession) (bindAssignment, error) {
-		results, _, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, []bindAssignment{assignment}, 1)
+		results, _, err := accountRegisterDevicesDirect(ctx, brandCloudID, tenantSlug, []bindAssignment{assignment}, map[string]*brandCloudUserSession{assignment.AssignedEmail: userSession}, safeLog, 1)
 		if err != nil {
 			return bindAssignment{}, err
 		}
@@ -9836,6 +9828,92 @@ func bindDevicesBulkChunkSize() int {
 		return 5000
 	}
 	return size
+}
+
+func accountRegisterDevicesDirect(ctx accountManagerContext, brandCloudID, tenantSlug string, assignments []bindAssignment, userSessions map[string]*brandCloudUserSession, logf func(string, ...any), concurrency int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 16 {
+		concurrency = 16
+	}
+	results := map[string]accountBulkBindDeviceResult{}
+	var resultsMu sync.Mutex
+	created := 0
+	existing := 0
+	failed := 0
+	_, err := boundedParallelMap(len(assignments), concurrency, func(i int) (struct{}, error) {
+		assignment := assignments[i]
+		userSession := userSessions[assignment.AssignedEmail]
+		if userSession == nil {
+			return struct{}{}, fmt.Errorf("missing assigned user session: email=%s device=%s", assignment.AssignedEmail, assignment.DeviceID)
+		}
+		metadata := map[string]any{
+			"video_cloud_devid":           assignment.DeviceID,
+			"video_cloud_activity_id":     "bulk-bind-" + assignment.DeviceID,
+			"video_cloud_clip_public_key": "bulk-bind-placeholder-public-key",
+			"device_type":                 assignment.DeviceType,
+			"service_options":             assignment.ServiceOptions,
+		}
+		payload, err := json.Marshal(map[string]any{
+			"name": assignment.DeviceID, "category": assignment.Category,
+			"serial_number": assignment.DeviceID, "metadata": metadata,
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices", ctx.BaseURL, url.PathEscape(brandCloudID))
+		body, status, err := curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, userSession, logf, "create registry device", func(userToken string) ([]byte, int, error) {
+			return curlJSONStatus(endpoint, userToken, payload)
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		var result accountBulkBindDeviceResult
+		switch status {
+		case http.StatusCreated:
+			var parsed struct {
+				Device map[string]any `json:"device"`
+			}
+			if err := json.Unmarshal(body, &parsed); err != nil {
+				return struct{}{}, err
+			}
+			result = accountBulkBindDeviceResult{
+				VideoCloudDevid: assignment.DeviceID, Status: "created",
+				AccountDeviceID: stringValue(parsed.Device["id"]), Device: parsed.Device,
+				ProvisionInput: provisionInputForAssignment(assignment),
+			}
+			if result.AccountDeviceID == "" {
+				return struct{}{}, fmt.Errorf("create device response missing device.id: device=%s", assignment.DeviceID)
+			}
+		case http.StatusConflict:
+			userToken, tokenErr := brandCloudUserAccessToken(ctx, tenantSlug, userSession, logf)
+			if tokenErr != nil {
+				return struct{}{}, tokenErr
+			}
+			result, err = accountFindExistingClaimedDevice(ctx, brandCloudID, userToken, assignment)
+			if err != nil {
+				return struct{}{}, err
+			}
+		default:
+			return struct{}{}, fmt.Errorf("create registry device failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
+		}
+		resultsMu.Lock()
+		results[assignment.DeviceID] = result
+		if result.Status == "created" {
+			created++
+		} else {
+			existing++
+		}
+		resultsMu.Unlock()
+		return struct{}{}, nil
+	})
+	if err != nil {
+		failed = len(assignments) - len(results)
+	}
+	summary := accountBulkBindSummary{Requested: len(assignments), Created: created, Existing: existing, Failed: failed, Chunks: 1}
+	logf("bulk registry bind summary: requested=%d created=%d existing=%d failed=%d", summary.Requested, summary.Created, summary.Existing, summary.Failed)
+	return results, summary, err
 }
 
 func accountBulkBindDevicesInChunks(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID string, assignments []bindAssignment, chunkSize int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {

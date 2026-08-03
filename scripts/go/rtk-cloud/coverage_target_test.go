@@ -439,7 +439,7 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 		{"device_id":"device-bulk","device_type":"camera","service_options":["mqtt","video_streaming"]}
 	]`)
 
-	var claimCreates, claimResolves, bulkBinds, provisions int
+	var claimCreates, claimResolves, registryCreates, provisions int
 	var requestsMu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -464,14 +464,12 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 				"claim_id": "claim-001", "device": map[string]string{"id": "account-claim"},
 				"provision_input": map[string]any{"video_cloud_devid": "device-claim", "service_options": []string{"mqtt", "video_streaming"}},
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-001/device-bind-jobs":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices":
 			requestsMu.Lock()
-			bulkBinds++
+			registryCreates++
 			requestsMu.Unlock()
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"job":     map[string]any{"requested": 1, "created": 1, "existing": 0, "failed": 0, "status": "succeeded"},
-				"results": []map[string]any{{"video_cloud_devid": "device-bulk", "status": "created", "account_device_id": "account-bulk", "provision_input": map[string]any{"video_cloud_devid": "device-bulk", "service_options": []string{"mqtt", "video_streaming"}}}},
-			})
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"device": map[string]any{"id": "account-bulk", "metadata": map[string]any{"video_cloud_devid": "device-bulk"}}})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/provision"):
 			requestsMu.Lock()
 			provisions++
@@ -495,10 +493,10 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestsMu.Lock()
-	counts := []int{claimCreates, claimResolves, bulkBinds, provisions}
+	counts := []int{claimCreates, claimResolves, registryCreates, provisions}
 	requestsMu.Unlock()
 	if counts[0] != 1 || counts[1] != 1 || counts[2] != 1 || counts[3] != 2 {
-		t.Fatalf("claim-create/resolve bulk provision counts=%v", counts)
+		t.Fatalf("claim-create/resolve registry-create provision counts=%v", counts)
 	}
 	artifact, err := readBindArtifactFromTestData(filepath.Join(envRoot, "lke"), "RTK")
 	if err != nil {

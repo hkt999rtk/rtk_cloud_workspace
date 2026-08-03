@@ -147,7 +147,7 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	if deactivationCertificateErr != nil {
 		return deactivationCertificateErr
 	}
-	if strings.TrimSpace(deactivation.ClaimID) == "" || strings.TrimSpace(deactivation.OperationID) == "" || strings.TrimSpace(deactivation.AccountDeviceID) == "" {
+	if strings.TrimSpace(unprovision.ClaimID) == "" || strings.TrimSpace(unprovision.OperationID) == "" || strings.TrimSpace(unprovision.AccountDeviceID) == "" {
 		return errors.New("account provisioning qualification is missing claim, operation, or registry-device correlation")
 	}
 	certificateDigest := sha256.Sum256([]byte(credentialBefore.CertPEM))
@@ -243,12 +243,13 @@ func runProvisioningLifecycleEvidence(args []string) error {
 			"operation_status": deactivationSnapshot.OperationStatus, "activation_status": deactivationSnapshot.ActivationStatus,
 			"video_activated_before": deactivationBefore.Activated, "video_activated_after": deactivationAfter.Activated,
 			"video_revoked_after": deactivationAfter.Revoked, "registry_device_disabled": true,
-			"claim_id_present": true, "provision_operation_id_present": true,
-			"owner_app_certificate_present": true, "owner_app_token_issued": true, "owner_device_info_read": true,
+			"provision_operation_id_present": true,
+			"owner_app_certificate_present":  true, "owner_app_token_issued": true, "owner_device_info_read": true,
 		},
 		"unprovision": map[string]any{
 			"device_id": unprovision.DeviceID, "account_device_id": unprovision.AccountDeviceID,
 			"status": stringValue(unprovisionResult["status"]), "previous_owner_binding_absent": true,
+			"claim_id_present": true, "provision_operation_id_present": true,
 			"video_activated_after": unprovisionAfter.Activated, "video_provisioned_after": unprovisionAfter.Provisioned,
 			"video_revoked_after": unprovisionAfter.Revoked, "factory_certificate_sha256": fmt.Sprintf("%x", certificateDigest),
 			"factory_identity_preserved": true, "service_options": unprovision.ServiceOptions,
@@ -452,16 +453,19 @@ func selectReadyLifecycleAssignments(baseURL, bearer string, assignments []bindA
 				ready = append(ready, assignment)
 			}
 		}
-		for _, deactivation := range ready {
-			if strings.TrimSpace(deactivation.ClaimID) == "" || strings.TrimSpace(deactivation.OperationID) == "" || strings.TrimSpace(deactivation.AccountDeviceID) == "" {
+		for _, unprovision := range ready {
+			if strings.TrimSpace(unprovision.ClaimID) == "" || strings.TrimSpace(unprovision.OperationID) == "" || strings.TrimSpace(unprovision.AccountDeviceID) == "" {
+				continue
+			}
+			if !contains(unprovision.ServiceOptions, "video_streaming") && !contains(unprovision.ServiceOptions, "video_storage") {
 				continue
 			}
 			for i := len(ready) - 1; i >= 0; i-- {
-				unprovision := ready[i]
+				deactivation := ready[i]
 				if deactivation.DeviceID == unprovision.DeviceID {
 					continue
 				}
-				if !contains(unprovision.ServiceOptions, "video_streaming") && !contains(unprovision.ServiceOptions, "video_storage") {
+				if strings.TrimSpace(deactivation.OperationID) == "" || strings.TrimSpace(deactivation.AccountDeviceID) == "" {
 					continue
 				}
 				return deactivation, unprovision, last[deactivation.DeviceID], last[unprovision.DeviceID], nil
@@ -477,7 +481,7 @@ func selectReadyLifecycleAssignments(baseURL, bearer string, assignments []bindA
 				state := last[assignment.DeviceID]
 				states = append(states, fmt.Sprintf("%s=activated:%t,provisioned:%t,revoked:%t", assignment.DeviceID, state.Activated, state.Provisioned, state.Revoked))
 			}
-			return bindAssignment{}, bindAssignment{}, canonicalVideoLifecycle{}, canonicalVideoLifecycle{}, fmt.Errorf("lifecycle qualification requires a claim-correlated ready device and a distinct ready video-capable device: %s", strings.Join(states, "; "))
+			return bindAssignment{}, bindAssignment{}, canonicalVideoLifecycle{}, canonicalVideoLifecycle{}, fmt.Errorf("lifecycle qualification requires a claim-correlated ready video device for unprovision and a distinct ready registry device for deactivation: %s", strings.Join(states, "; "))
 		}
 		time.Sleep(poll)
 	}

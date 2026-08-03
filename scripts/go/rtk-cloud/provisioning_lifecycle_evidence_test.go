@@ -50,7 +50,7 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		t.Fatal(err)
 	}
 	assignments := []bindAssignment{
-		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ClaimID: "claim-deactivate", AccountDeviceID: "account-deactivate", OperationID: "operation-deactivate", Status: "provision_requested"},
+		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-deactivate", OperationID: "operation-deactivate", Status: "provision_requested"},
 		{AssignmentIndex: 1, AssignedEmail: "unprovision@example.test", DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ClaimID: "claim-unprovision", AccountDeviceID: "account-unprovision", OperationID: "operation-unprovision", Status: "provision_requested"},
 	}
 	if err := store.ReplaceBindings("RTK", "org-1", "rtk", "run-1", assignments); err != nil {
@@ -185,7 +185,7 @@ func TestPrepareLifecycleTransportReadinessReportsRunnerFailures(t *testing.T) {
 	}
 }
 
-func TestSelectReadyLifecycleAssignmentsRequiresClaimCorrelatedDeactivation(t *testing.T) {
+func TestSelectReadyLifecycleAssignmentsRequiresClaimCorrelatedVideoUnprovision(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		deviceID := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/api/devices/"), "/lifecycle")
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -196,14 +196,13 @@ func TestSelectReadyLifecycleAssignmentsRequiresClaimCorrelatedDeactivation(t *t
 	defer server.Close()
 	assignments := []bindAssignment{
 		{DeviceID: "bulk-light", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
-		{DeviceID: "claimed-light", ClaimID: "claim-1", AccountDeviceID: "account-claim", OperationID: "op-claim", ServiceOptions: []string{"mqtt"}},
-		{DeviceID: "bulk-camera", AccountDeviceID: "account-camera", OperationID: "op-camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{DeviceID: "claimed-camera", ClaimID: "claim-1", AccountDeviceID: "account-claim", OperationID: "op-claim", ServiceOptions: []string{"mqtt", "video_streaming"}},
 	}
 	deactivation, unprovision, _, _, err := selectReadyLifecycleAssignments(server.URL, "token", assignments, 0, time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deactivation.DeviceID != "claimed-light" || unprovision.DeviceID != "bulk-camera" {
+	if deactivation.DeviceID != "bulk-light" || unprovision.DeviceID != "claimed-camera" {
 		t.Fatalf("deactivation=%+v unprovision=%+v", deactivation, unprovision)
 	}
 }
@@ -271,8 +270,8 @@ func TestSelectReadyLifecycleAssignmentsSkipsUnprovisionedDevices(t *testing.T) 
 
 	assignments := []bindAssignment{
 		{DeviceID: "camera-not-connected", ServiceOptions: []string{"mqtt", "video_streaming"}},
-		{DeviceID: "light-connected", ClaimID: "claim-light", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
-		{DeviceID: "camera-connected", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+		{DeviceID: "light-connected", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "camera-connected", ClaimID: "claim-camera", AccountDeviceID: "account-camera", OperationID: "op-camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
 	}
 	deactivation, unprovision, deactivationState, unprovisionState, err := selectReadyLifecycleAssignments(server.URL, "admin-token", assignments, time.Second, time.Millisecond)
 	if err != nil {
