@@ -427,7 +427,7 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	}
 }
 
-func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
+func TestRunBindDevicesQualifiesEveryAssignmentThroughClaimResolve(t *testing.T) {
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging")
 	usersPath := filepath.Join(workspace, "users.json")
@@ -459,31 +459,22 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 			requestsMu.Lock()
 			claimResolves++
 			requestsMu.Unlock()
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"claim_id": "claim-001", "device": map[string]string{"id": "account-claim"},
-				"provision_input": map[string]any{"video_cloud_devid": "device-claim", "service_options": []string{"mqtt", "video_streaming"}},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-001/device-bind-jobs":
-			if r.Header.Get("authorization") != "Bearer platform-token" {
-				t.Fatalf("bulk registry authorization = %q", r.Header.Get("authorization"))
-			}
-			var request struct {
-				Items []map[string]any `json:"items"`
-			}
+			var request map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			requestsMu.Lock()
-			registryCreates += len(request.Items)
-			requestsMu.Unlock()
+			deviceID := "device-claim"
+			if strings.HasSuffix(request["claim_token"], "device-bulk") {
+				deviceID = "device-bulk"
+			}
+			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"job": map[string]any{"status": "completed", "requested": 1, "created": 1, "existing": 0, "failed": 0},
-				"results": []map[string]any{{
-					"video_cloud_devid": "device-bulk", "status": "created", "account_device_id": "account-bulk",
-					"provision_input": map[string]any{"video_cloud_devid": "device-bulk", "service_options": []string{"mqtt", "video_streaming"}},
-				}},
+				"claim_id": "claim-" + deviceID, "device": map[string]string{"id": "account-" + deviceID},
+				"provision_input": map[string]any{"video_cloud_devid": deviceID, "service_options": []string{"mqtt", "video_streaming"}},
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-001/device-bind-jobs":
+			registryCreates++
+			t.Fatal("nonexistent admin bulk registry route was called")
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices":
 			t.Fatal("synthetic member was used for registry creation")
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/provision"):
@@ -499,7 +490,7 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
 	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
 	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
-	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "1")
+	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "2")
 
 	if err := runBindDevices([]string{
 		"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK",
@@ -511,14 +502,14 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 	requestsMu.Lock()
 	counts := []int{claimCreates, claimResolves, registryCreates, provisions}
 	requestsMu.Unlock()
-	if counts[0] != 1 || counts[1] != 1 || counts[2] != 1 || counts[3] != 2 {
+	if counts[0] != 2 || counts[1] != 2 || counts[2] != 0 || counts[3] != 2 {
 		t.Fatalf("claim-create/resolve registry-create provision counts=%v", counts)
 	}
 	artifact, err := readBindArtifactFromTestData(filepath.Join(envRoot, "lke"), "RTK")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifact.Assignments) != 2 || artifact.Assignments[0].ClaimID != "claim-001" || artifact.Assignments[1].ClaimID != "" {
+	if len(artifact.Assignments) != 2 || artifact.Assignments[0].ClaimID == "" || artifact.Assignments[1].ClaimID == "" {
 		t.Fatalf("assignments=%+v", artifact.Assignments)
 	}
 }

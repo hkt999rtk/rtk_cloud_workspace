@@ -9797,16 +9797,19 @@ type accountBulkBindDeviceResult struct {
 }
 
 func bindClaimEvidenceCount(total int) (int, error) {
+	if total <= 0 {
+		return 0, errors.New("claim qualification requires at least one device")
+	}
 	raw := strings.TrimSpace(os.Getenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT"))
 	if raw == "" || raw == "0" {
-		return 0, nil
+		return total, nil
 	}
 	count, err := strconv.Atoi(raw)
 	if err != nil || count < 0 {
 		return 0, fmt.Errorf("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT must be a non-negative integer")
 	}
-	if total < 2 || count >= total {
-		return 0, fmt.Errorf("claim evidence count %d must leave at least one of %d devices for bulk-bind qualification", count, total)
+	if count != total {
+		return 0, fmt.Errorf("claim evidence count %d must cover all %d devices; Account Manager has no admin bulk registry route", count, total)
 	}
 	return count, nil
 }

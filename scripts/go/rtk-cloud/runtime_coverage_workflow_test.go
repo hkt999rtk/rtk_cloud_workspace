@@ -207,10 +207,12 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT=18444") ||
 		!strings.Contains(onboarding, "CLOUD_STAGING_E2E_MQTT_PORT=18884") ||
-		!strings.Contains(onboarding, "CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT=1") ||
 		!strings.Contains(onboarding, "staging-e2e-test") ||
 		!strings.Contains(onboarding, "--steps data,mqtt,runtime-logs,billing-log,billing-db ") {
 		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
+	}
+	if strings.Contains(onboarding, "CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT") {
+		t.Fatal("onboarding must not split devices onto a nonexistent admin bulk registry route")
 	}
 	if strings.Contains(onboarding, "--steps lifecycle") || strings.Contains(onboarding, "billing-db,lifecycle") {
 		t.Fatal("onboarding must not mutate device eligibility before feature canaries")

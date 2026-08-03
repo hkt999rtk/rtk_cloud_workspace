@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -60,10 +59,13 @@ func TestValidateDeviceBindAllowsMissingClaimIDWhenProvisionIdentifiersExist(t *
 	}
 }
 
-func TestBindClaimEvidenceCountLeavesBulkQualificationDevices(t *testing.T) {
-	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "1")
-	if got, err := bindClaimEvidenceCount(12); err != nil || got != 1 {
+func TestBindClaimEvidenceCountRequiresCanonicalClaimForEveryDevice(t *testing.T) {
+	if got, err := bindClaimEvidenceCount(12); err != nil || got != 12 {
 		t.Fatalf("count=%d err=%v", got, err)
+	}
+	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "12")
+	if got, err := bindClaimEvidenceCount(12); err != nil || got != 12 {
+		t.Fatalf("explicit count=%d err=%v", got, err)
 	}
 	for _, tc := range []struct {
 		value string
@@ -71,8 +73,8 @@ func TestBindClaimEvidenceCountLeavesBulkQualificationDevices(t *testing.T) {
 	}{
 		{value: "invalid", total: 12},
 		{value: "-1", total: 12},
-		{value: "1", total: 1},
-		{value: "12", total: 12},
+		{value: "1", total: 12},
+		{value: "12", total: 0},
 	} {
 		t.Run(tc.value, func(t *testing.T) {
 			t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", tc.value)
@@ -101,28 +103,27 @@ func TestParseAccountClaimResolveBindResultPreservesClaimCorrelation(t *testing.
 	}
 }
 
-func TestBindAssignmentsForQualificationKeepsClaimAndBulkEvidenceSeparate(t *testing.T) {
-	assignments := []bindAssignment{{DeviceID: "claimed"}, {DeviceID: "bulk-1"}, {DeviceID: "bulk-2"}}
+func TestBindAssignmentsForQualificationUsesCanonicalClaimForEveryDevice(t *testing.T) {
+	assignments := []bindAssignment{{DeviceID: "claimed-1"}, {DeviceID: "claimed-2"}, {DeviceID: "claimed-3"}}
 	claimBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
-		if len(items) != 1 || items[0].DeviceID != "claimed" {
+		if len(items) != 3 {
 			t.Fatalf("claim items=%+v", items)
 		}
-		return map[string]accountBulkBindDeviceResult{"claimed": {ClaimID: "claim-1", AccountDeviceID: "account-claim"}}, accountBulkBindSummary{Requested: 1, Created: 1}, nil
+		return map[string]accountBulkBindDeviceResult{
+			"claimed-1": {ClaimID: "claim-1", AccountDeviceID: "account-1"},
+			"claimed-2": {ClaimID: "claim-2", AccountDeviceID: "account-2"},
+			"claimed-3": {ClaimID: "claim-3", AccountDeviceID: "account-3"},
+		}, accountBulkBindSummary{Requested: 3, Created: 3}, nil
 	}
 	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
-		if len(items) != 2 || items[0].DeviceID != "bulk-1" || items[1].DeviceID != "bulk-2" {
-			t.Fatalf("bulk items=%+v", items)
-		}
-		return map[string]accountBulkBindDeviceResult{
-			"bulk-1": {AccountDeviceID: "account-bulk-1"},
-			"bulk-2": {AccountDeviceID: "account-bulk-2"},
-		}, accountBulkBindSummary{Requested: 2, Created: 2, Chunks: 1}, nil
+		t.Fatalf("unsupported admin bulk registry path called with %+v", items)
+		return nil, accountBulkBindSummary{}, nil
 	}
-	results, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, 1, claimBind, bulkBind)
+	results, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, len(assignments), claimBind, bulkBind)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) != 3 || results["claimed"].ClaimID != "claim-1" || claimSummary == nil || claimSummary.Requested != 1 || bulkSummary == nil || bulkSummary.Requested != 2 {
+	if len(results) != 3 || results["claimed-1"].ClaimID != "claim-1" || claimSummary == nil || claimSummary.Requested != 3 || bulkSummary != nil {
 		t.Fatalf("results=%+v claim=%+v bulk=%+v", results, claimSummary, bulkSummary)
 	}
 }
@@ -235,29 +236,6 @@ func TestAccountBulkBindDevicesUsesAdminEndpointAndDoesNotListDevices(t *testing
 	}
 	if results["load-device-0001"].Status != "existing" || results["load-device-0002"].AccountDeviceID != "account-device-2" {
 		t.Fatalf("unexpected results: %+v", results)
-	}
-}
-
-func TestLoadBinderUsesPlatformAdminForBulkRegistryCreation(t *testing.T) {
-	source, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(source)
-	start := strings.Index(text, "bulkBind := func(items []bindAssignment)")
-	if start < 0 {
-		t.Fatal("could not locate load bulk-bind orchestration")
-	}
-	end := strings.Index(text[start:], "bulkResults, claimSummary")
-	if end < 0 {
-		t.Fatal("could not locate the end of load bulk-bind orchestration")
-	}
-	block := text[start : start+end]
-	if !strings.Contains(block, "accountBulkBindDevicesInChunks") {
-		t.Fatalf("load bulk bind must use the platform-admin endpoint:\n%s", block)
-	}
-	if strings.Contains(block, "accountRegisterDevicesDirect") {
-		t.Fatalf("load bulk bind must not require synthetic members to manage the registry:\n%s", block)
 	}
 }
 
