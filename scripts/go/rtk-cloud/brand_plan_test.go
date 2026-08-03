@@ -84,6 +84,15 @@ func TestLoadTestBrandPlan1KScenarioUsesOneFormalOwner(t *testing.T) {
 	if rawMix == "" {
 		t.Fatalf("%s does not define HOME100K_DEVICE_MIX", descriptionPath)
 	}
+	for _, required := range []string{
+		"HOME100K_MQTT_ADDR=auto-public-mqtt",
+		"HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://video-cloud-staging.realtekconnect.com",
+		"HOME100K_ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-staging.realtekconnect.com",
+	} {
+		if !strings.Contains(string(description), required+"\n") {
+			t.Fatalf("%s does not define required remote live endpoint %q", descriptionPath, required)
+		}
+	}
 	wantMix, err := allocateDeviceMix(100, rawMix)
 	if err != nil {
 		t.Fatal(err)
