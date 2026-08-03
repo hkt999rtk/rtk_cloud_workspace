@@ -909,7 +909,7 @@ scripts/setup-staging-e2e-data.sh \
 - `--device-mix MIX` / `--device-prefix PREFIX`：轉傳給 `generate-load-devices`。
 - `--out-dir PATH`：輸出 `summary.json`、`logs/*.log` 與 `bind-validation/` 的位置；未指定時使用 `<env-root>/artifacts/staging-e2e-data/<timestamp>/`。
 
-內建 device generator 在建立 device 前，會以 platform admin 呼叫 Account Manager：先為本次 Brand Cloud 建立或重用 run-scoped device item profile，再建立 production run 並取得短效 production JWT。JWT 只傳入 device generator 子程序，不寫入 log、summary 或 evidence；`factory-production.json` 只保留 Brand、profile、production-run ID 與已簽發狀態。production run 建立失敗時會在任何 device enrollment／bind 前停止，不回退到 legacy HMAC。
+內建 device generator 在建立 device 前，會以 platform admin 呼叫 Account Manager：先為本次 Brand Cloud 建立或重用 run-scoped device item profile，再建立 production run 並取得短效 production JWT。若上游 fixture provider 已透過同一正式 API 簽發並傳入 `FACTORY_ENROLL_PRODUCTION_JWT`，共用 setup 只傳遞該 token，不重複建立 production run。JWT 只傳入 device generator 子程序，不寫入 log、summary 或 evidence；由共用 setup 簽發時，`factory-production.json` 只保留 Brand、profile、production-run ID 與已簽發狀態。production run 建立失敗時會在任何 device enrollment／bind 前停止，不回退到 legacy HMAC。
 
 輸出 `summary.json` 會包含 `test_data_db`、`bind_validation_dir`，以及 create brand、create users、prepare factory production、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本只支援 Kubernetes provider；`CLOUD_PROVIDER=linode` 會在任何 mutation 前 fail fast。
 

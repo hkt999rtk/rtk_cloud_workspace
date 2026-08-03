@@ -22,6 +22,23 @@ type factoryProductionCredential struct {
 
 type factoryProductionPreparer func(string, string, string, string, int, time.Time) (factoryProductionCredential, error)
 
+func useProvidedFactoryProductionCredential(logsDir, runID, productionJWT string) ([]string, e2eStep, error) {
+	step := e2eStep{Name: "prepare_factory_production", Status: "PASS", ExitCode: 0, LogFile: filepath.Join(logsDir, "prepare_factory_production.log")}
+	if strings.TrimSpace(runID) == "" || strings.TrimSpace(productionJWT) == "" {
+		step.Status = "FAIL"
+		step.ExitCode = 1
+		return nil, step, errors.New("caller-provided factory production credential requires a run ID and non-empty JWT")
+	}
+	if err := os.WriteFile(step.LogFile, []byte("factory_production_run=PASS\nproduction_jwt_source=caller_issued\n"), 0o600); err != nil {
+		return nil, step, err
+	}
+	return []string{
+		"FACTORY_ENROLL_PRODUCTION_JWT=" + strings.TrimSpace(productionJWT),
+		"FACTORY_ENROLL_RUN_ID=" + runID,
+		"FACTORY_ENROLL_BATCH_ID=" + firstNonEmpty(os.Getenv("FACTORY_ENROLL_BATCH_ID"), runID),
+	}, step, nil
+}
+
 func prepareFactoryProductionStep(workspace, envRoot, outDir, logsDir, brandname, runID string, quantity int, started time.Time, prepare factoryProductionPreparer) ([]string, e2eStep, error) {
 	step := e2eStep{Name: "prepare_factory_production", Status: "PASS", ExitCode: 0, LogFile: filepath.Join(logsDir, "prepare_factory_production.log")}
 	credential, err := prepare(workspace, envRoot, brandname, runID, quantity, started)

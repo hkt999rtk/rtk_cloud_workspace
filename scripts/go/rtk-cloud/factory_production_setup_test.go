@@ -124,6 +124,29 @@ func TestPrepareFactoryProductionStepStopsOnIssuanceFailure(t *testing.T) {
 	}
 }
 
+func TestUseProvidedFactoryProductionCredentialDoesNotReissueOrLeak(t *testing.T) {
+	logsDir := t.TempDir()
+	const jwt = "caller-issued-secret-jwt"
+	t.Setenv("FACTORY_ENROLL_BATCH_ID", "caller-batch")
+	env, step, err := useProvidedFactoryProductionCredential(logsDir, "runtime-1", jwt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if step.Status != "PASS" || envListValue(env, "FACTORY_ENROLL_PRODUCTION_JWT") != jwt || envListValue(env, "FACTORY_ENROLL_BATCH_ID") != "caller-batch" {
+		t.Fatalf("env=%v step=%+v", env, step)
+	}
+	raw, err := os.ReadFile(step.LogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), jwt) || !strings.Contains(string(raw), "production_jwt_source=caller_issued") {
+		t.Fatalf("caller-issued credential log is unsafe or incomplete: %s", raw)
+	}
+	if env, step, err := useProvidedFactoryProductionCredential(logsDir, "", jwt); err == nil || len(env) != 0 || step.Status != "FAIL" {
+		t.Fatalf("invalid credential env=%v step=%+v err=%v", env, step, err)
+	}
+}
+
 func TestEnsureFactoryProductionProfileReusesActiveRunProfile(t *testing.T) {
 	var methods []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

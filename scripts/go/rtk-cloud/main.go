@@ -3250,10 +3250,18 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	deviceSetupRequired := shouldRunStep("create_devices") && !(*resume && testDataDeviceMatchesSetup(envRoot, *brandname, *deviceCount, *deviceMix))
 	managedFactoryGenerator := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT")) == ""
+	providedProductionJWT := strings.TrimSpace(os.Getenv("FACTORY_ENROLL_PRODUCTION_JWT"))
 	factoryEnv := append([]string(nil), childEnv...)
 	if deviceSetupRequired && managedFactoryGenerator {
 		factoryRunID := firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), *loadRunID, time.Now().UTC().Format("20060102T150405Z")+"-factory")
-		credentialEnv, step, err := prepareFactoryProductionStep(workspace, envRoot, *outDir, logsDir, *brandname, factoryRunID, *deviceCount, time.Now().UTC(), prepareFactoryProductionCredential)
+		var credentialEnv []string
+		var step e2eStep
+		var err error
+		if providedProductionJWT != "" {
+			credentialEnv, step, err = useProvidedFactoryProductionCredential(logsDir, factoryRunID, providedProductionJWT)
+		} else {
+			credentialEnv, step, err = prepareFactoryProductionStep(workspace, envRoot, *outDir, logsDir, *brandname, factoryRunID, *deviceCount, time.Now().UTC(), prepareFactoryProductionCredential)
+		}
 		steps = append(steps, step)
 		if err != nil {
 			return err
