@@ -284,6 +284,48 @@ func TestAccountRegisterDevicesDirectUsesCanonicalOrganizationRoute(t *testing.T
 	}
 }
 
+func TestAccountRegisterDevicesDirectRejectsMissingAssignedUserSession(t *testing.T) {
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: "http://unused.invalid"}, "brand-1", "tenant-1",
+		[]bindAssignment{{AssignedEmail: "missing@example.test", DeviceID: "device-1"}}, nil,
+		func(string, ...any) {}, 0,
+	)
+	if err == nil || len(results) != 0 || summary.Requested != 1 || summary.Failed != 1 {
+		t.Fatalf("results=%+v summary=%+v err=%v", results, summary, err)
+	}
+}
+
+func TestAccountRegisterDevicesDirectReusesMatchingConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-1/devices":
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"already_exists"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/orgs/brand-1/devices":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"devices":    []map[string]any{{"id": "account-device-1", "metadata": map[string]any{"video_cloud_devid": "device-1"}}},
+				"pagination": map[string]any{"total": 1},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1",
+		[]bindAssignment{{AssignedEmail: "member@example.test", DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}}},
+		map[string]*brandCloudUserSession{"member@example.test": {Email: "member@example.test", Session: accountPlatformSession{AccessToken: "member-token"}}},
+		func(string, ...any) {}, 17,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results["device-1"].Status != "existing" || results["device-1"].AccountDeviceID != "account-device-1" || summary.Existing != 1 || summary.Created != 0 || summary.Failed != 0 {
+		t.Fatalf("results=%+v summary=%+v", results, summary)
+	}
+}
+
 func TestAccountClaimResolveAlreadyClaimed(t *testing.T) {
 	if !accountClaimResolveAlreadyClaimed([]byte(`{"code":"already_claimed","message":"Claim token has already been claimed"}`)) {
 		t.Fatal("already_claimed response was not recognized")
