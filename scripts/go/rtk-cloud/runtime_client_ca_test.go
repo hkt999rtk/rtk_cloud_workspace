@@ -52,6 +52,34 @@ func TestRefreshRuntimeDeviceClientCABundleUsesLiveCertIssuerSecret(t *testing.T
 	}
 }
 
+func TestRunRefreshRuntimeClientCAWritesLiveBundle(t *testing.T) {
+	root, rootCert, rootKey := testSigningCA(t, "video-cloud-staging-root-ca", nil, nil, 11)
+	device, _, _ := testSigningCA(t, "video-cloud-staging-device-ca", rootCert, rootKey, 12)
+	app, _, _ := testSigningCA(t, "video-cloud-staging-app-ca", rootCert, rootKey, 13)
+	workspace, envRoot := testRuntimeCAWorkspace(t)
+	installRuntimeCAKubectlStub(t, map[string]string{
+		"root-ca.crt":   base64.StdEncoding.EncodeToString([]byte(root)),
+		"device-ca.crt": base64.StdEncoding.EncodeToString([]byte(device)),
+		"app-ca.crt":    base64.StdEncoding.EncodeToString([]byte(app)),
+	})
+
+	if err := runRefreshRuntimeClientCA([]string{"--workspace", workspace, "--env-root", envRoot}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunRefreshRuntimeClientCARejectsInvalidArguments(t *testing.T) {
+	if err := runRefreshRuntimeClientCA([]string{"--unknown"}); err == nil {
+		t.Fatal("unknown flag was accepted")
+	}
+	if err := runRefreshRuntimeClientCA([]string{"--workspace", t.TempDir()}); err == nil || !strings.Contains(err.Error(), "--env-root is required") {
+		t.Fatalf("missing env-root error = %v", err)
+	}
+}
+
 func TestRefreshRuntimeDeviceClientCABundleRejectsMismatchedChainWithoutOverwrite(t *testing.T) {
 	root, rootCert, rootKey := testSigningCA(t, "video-cloud-staging-root-ca", nil, nil, 1)
 	device, _, _ := testSigningCA(t, "video-cloud-staging-device-ca", rootCert, rootKey, 2)

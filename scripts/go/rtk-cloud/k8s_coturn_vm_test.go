@@ -69,6 +69,67 @@ func TestLKECurrentCoturnRuntimeSecretsRejectMissingLiveValueWithoutStaleFallbac
 	}
 }
 
+func TestLKECurrentCoturnRuntimeSecretsUseExplicitOperatorOverrides(t *testing.T) {
+	t.Setenv("LKE_TURN_SHARED", "operator-turn")
+	t.Setenv("LKE_TURN_REGISTRY_NODE_AUTH", "operator-registry")
+
+	turn, registry, err := lkeCurrentCoturnRuntimeSecrets(
+		provisionPaths{},
+		map[string]string{"CLOUD_STACK_NAME": "not-staging"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turn != "operator-turn" || registry != "operator-registry" {
+		t.Fatalf("explicit coturn secrets = %q/%q", turn, registry)
+	}
+}
+
+func TestLKECurrentCoturnRuntimeSecretsRejectNonStagingLiveSync(t *testing.T) {
+	_, _, err := lkeCurrentCoturnRuntimeSecrets(
+		provisionPaths{},
+		map[string]string{"CLOUD_STACK_NAME": "coverage-run"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "requires the staging stack") {
+		t.Fatalf("non-staging live sync error = %v", err)
+	}
+}
+
+func TestLKECurrentK8SSecretValueValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		output  string
+		fail    bool
+		want    string
+		wantErr string
+	}{
+		{name: "valid", output: `{"data":{"SECRET_KEY":"dmFsdWU="}}`, want: "value"},
+		{name: "kubectl failure", output: "unavailable", fail: true, wantErr: "read live K8s secret"},
+		{name: "invalid json", output: `{`, wantErr: "decode live K8s secret"},
+		{name: "missing key", output: `{"data":{}}`, wantErr: "missing SECRET_KEY"},
+		{name: "invalid base64", output: `{"data":{"SECRET_KEY":"%%%"}}`, wantErr: "key SECRET_KEY"},
+		{name: "empty decoded value", output: `{"data":{"SECRET_KEY":"ICA="}}`, wantErr: "key SECRET_KEY is empty"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			installCoturnRawKubectlStub(t, tt.output, tt.fail)
+			got, err := lkeCurrentK8SSecretValue("test-namespace", "test-secret", "SECRET_KEY")
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error = %v, want substring %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("secret value = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func withCoturnSecretState(t *testing.T, stateDir string) {
 	t.Helper()
 	oldDir := lkeRuntimeSecretStateDir
@@ -123,5 +184,25 @@ esac
 		t.Setenv("RTK_TEST_FAIL_WORKER_SECRET", "1")
 	} else {
 		t.Setenv("RTK_TEST_FAIL_WORKER_SECRET", "0")
+	}
+}
+
+func installCoturnRawKubectlStub(t *testing.T, output string, fail bool) {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "kubectl")
+	writeTestFile(t, stub, `#!/bin/sh
+printf '%s' "$RTK_TEST_KUBECTL_OUTPUT"
+if [ "$RTK_TEST_KUBECTL_FAIL" = 1 ]; then exit 1; fi
+`)
+	if err := os.Chmod(stub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", stub)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("RTK_TEST_KUBECTL_OUTPUT", output)
+	if fail {
+		t.Setenv("RTK_TEST_KUBECTL_FAIL", "1")
+	} else {
+		t.Setenv("RTK_TEST_KUBECTL_FAIL", "0")
 	}
 }
