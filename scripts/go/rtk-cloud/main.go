@@ -9413,38 +9413,33 @@ func runBindDevices(args []string) error {
 		return err
 	}
 	bulkResults := map[string]accountBulkBindDeviceResult{}
-	bulkAssignments := assignments
-	if claimEvidenceCount > 0 {
-		claimAssignments := assignments[:claimEvidenceCount]
-		results, summary, err := accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, claimAssignments, userSessions, runID, *concurrency)
-		if err != nil {
-			return fmt.Errorf("run-scoped claim evidence bind failed: %w", err)
-		}
-		for deviceID, result := range results {
-			bulkResults[deviceID] = result
-		}
-		bulkAssignments = assignments[claimEvidenceCount:]
-		safeLog("claim evidence bind complete: requested=%d created=%d failed=%d", summary.Requested, summary.Created, summary.Failed)
+	claimBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		return accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, items, userSessions, runID, *concurrency)
 	}
-	if len(bulkAssignments) > 0 {
+	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		bulkAssignments := items
 		results, summary, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, bulkAssignments, bindDevicesBulkChunkSize())
 		if err != nil {
 			if claimEvidenceCount == 0 && strings.Contains(err.Error(), "HTTP 404") {
 				safeLog("bulk bind endpoint unavailable; falling back to claim-token resolve flow")
-				results, summary, err = accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, bulkAssignments, userSessions, runID, *concurrency)
-			}
-			if err != nil {
-				artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
-				_ = os.MkdirAll(artifactDir, 0o755)
-				failedPath := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-failed-%s.json", slug, runID))
-				_ = writeJSON(failedPath, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind-failed/v1", "brandname": *brandname, "brand_cloud_id": brandCloudID, "run_id": runID, "error": err.Error(), "results": results})
-				return fmt.Errorf("admin bulk bind failed: %w", err)
+				results, summary, err = claimBind(bulkAssignments)
 			}
 		}
-		for deviceID, result := range results {
-			bulkResults[deviceID] = result
-		}
-		safeLog("bulk bind complete: requested=%d created=%d existing=%d failed=%d chunks=%d", summary.Requested, summary.Created, summary.Existing, summary.Failed, summary.Chunks)
+		return results, summary, err
+	}
+	bulkResults, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, claimEvidenceCount, claimBind, bulkBind)
+	if err != nil {
+		artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
+		_ = os.MkdirAll(artifactDir, 0o755)
+		failedPath := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-failed-%s.json", slug, runID))
+		_ = writeJSON(failedPath, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind-failed/v1", "brandname": *brandname, "brand_cloud_id": brandCloudID, "run_id": runID, "error": err.Error(), "results": bulkResults})
+		return err
+	}
+	if claimSummary != nil {
+		safeLog("claim evidence bind complete: requested=%d created=%d failed=%d", claimSummary.Requested, claimSummary.Created, claimSummary.Failed)
+	}
+	if bulkSummary != nil {
+		safeLog("bulk bind complete: requested=%d created=%d existing=%d failed=%d chunks=%d", bulkSummary.Requested, bulkSummary.Created, bulkSummary.Existing, bulkSummary.Failed, bulkSummary.Chunks)
 	}
 	var progressMu sync.Mutex
 	done := 0
@@ -9799,6 +9794,37 @@ func bindClaimEvidenceCount(total int) (int, error) {
 		return 0, fmt.Errorf("claim evidence count %d must leave at least one of %d devices for bulk-bind qualification", count, total)
 	}
 	return count, nil
+}
+
+type accountAssignmentBinder func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error)
+
+func bindAssignmentsForQualification(assignments []bindAssignment, claimCount int, claimBind, bulkBind accountAssignmentBinder) (map[string]accountBulkBindDeviceResult, *accountBulkBindSummary, *accountBulkBindSummary, error) {
+	results := map[string]accountBulkBindDeviceResult{}
+	merge := func(items map[string]accountBulkBindDeviceResult) {
+		for deviceID, result := range items {
+			results[deviceID] = result
+		}
+	}
+	var claimSummary, bulkSummary *accountBulkBindSummary
+	bulkAssignments := assignments
+	if claimCount > 0 {
+		claimResults, summary, err := claimBind(assignments[:claimCount])
+		merge(claimResults)
+		if err != nil {
+			return results, nil, nil, fmt.Errorf("run-scoped claim evidence bind failed: %w", err)
+		}
+		claimSummary = &summary
+		bulkAssignments = assignments[claimCount:]
+	}
+	if len(bulkAssignments) > 0 {
+		bulkResults, summary, err := bulkBind(bulkAssignments)
+		merge(bulkResults)
+		if err != nil {
+			return results, claimSummary, nil, fmt.Errorf("admin bulk bind failed: %w", err)
+		}
+		bulkSummary = &summary
+	}
+	return results, claimSummary, bulkSummary, nil
 }
 
 func bindDevicesBulkChunkSize() int {

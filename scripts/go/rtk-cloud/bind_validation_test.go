@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -96,6 +97,53 @@ func TestParseAccountClaimResolveBindResultPreservesClaimCorrelation(t *testing.
 	}
 	if _, err := parseAccountClaimResolveBindResult([]byte(`{"device":{"id":"account-device-1"}}`), assignment); err == nil {
 		t.Fatal("claim resolve response without claim_id was accepted")
+	}
+}
+
+func TestBindAssignmentsForQualificationKeepsClaimAndBulkEvidenceSeparate(t *testing.T) {
+	assignments := []bindAssignment{{DeviceID: "claimed"}, {DeviceID: "bulk-1"}, {DeviceID: "bulk-2"}}
+	claimBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		if len(items) != 1 || items[0].DeviceID != "claimed" {
+			t.Fatalf("claim items=%+v", items)
+		}
+		return map[string]accountBulkBindDeviceResult{"claimed": {ClaimID: "claim-1", AccountDeviceID: "account-claim"}}, accountBulkBindSummary{Requested: 1, Created: 1}, nil
+	}
+	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		if len(items) != 2 || items[0].DeviceID != "bulk-1" || items[1].DeviceID != "bulk-2" {
+			t.Fatalf("bulk items=%+v", items)
+		}
+		return map[string]accountBulkBindDeviceResult{
+			"bulk-1": {AccountDeviceID: "account-bulk-1"},
+			"bulk-2": {AccountDeviceID: "account-bulk-2"},
+		}, accountBulkBindSummary{Requested: 2, Created: 2, Chunks: 1}, nil
+	}
+	results, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, 1, claimBind, bulkBind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results["claimed"].ClaimID != "claim-1" || claimSummary == nil || claimSummary.Requested != 1 || bulkSummary == nil || bulkSummary.Requested != 2 {
+		t.Fatalf("results=%+v claim=%+v bulk=%+v", results, claimSummary, bulkSummary)
+	}
+}
+
+func TestBindAssignmentsForQualificationReportsPhaseFailures(t *testing.T) {
+	assignments := []bindAssignment{{DeviceID: "claimed"}, {DeviceID: "bulk"}}
+	failed := errors.New("failed")
+	if results, _, _, err := bindAssignmentsForQualification(assignments, 1,
+		func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+			return map[string]accountBulkBindDeviceResult{"claimed": {ClaimID: "partial"}}, accountBulkBindSummary{}, failed
+		}, nil,
+	); err == nil || len(results) != 1 {
+		t.Fatalf("claim failure results=%+v err=%v", results, err)
+	}
+	if results, claimSummary, _, err := bindAssignmentsForQualification(assignments, 1,
+		func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+			return map[string]accountBulkBindDeviceResult{"claimed": {ClaimID: "claim-1"}}, accountBulkBindSummary{Created: 1}, nil
+		}, func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+			return map[string]accountBulkBindDeviceResult{"bulk": {AccountDeviceID: "partial"}}, accountBulkBindSummary{}, failed
+		},
+	); err == nil || len(results) != 2 || claimSummary == nil {
+		t.Fatalf("bulk failure results=%+v claim=%+v err=%v", results, claimSummary, err)
 	}
 }
 
