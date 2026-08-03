@@ -427,6 +427,88 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	}
 }
 
+func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging")
+	usersPath := filepath.Join(workspace, "users.json")
+	devicesDir := filepath.Join(envRoot, "devices", "test_device")
+	writeCoverageFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=local\n")
+	writeCoverageFile(t, usersPath, `{"brandname":"RTK","users":[{"email":"one@example.test","password":"pw-one"},{"email":"two@example.test","password":"pw-two"}]}`)
+	writeCoverageFile(t, filepath.Join(devicesDir, "manifests", "devices.json"), `[
+		{"device_id":"device-claim","device_type":"camera","service_options":["mqtt","video_streaming"]},
+		{"device_id":"device-bulk","device_type":"camera","service_options":["mqtt","video_streaming"]}
+	]`)
+
+	var claimCreates, claimResolves, bulkBinds, provisions int
+	var requestsMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "platform-token", "refresh_token": "platform-refresh"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{"id": "brand-001", "name": "RTK", "tenant_slug": "rtk"}}})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/brand-clouds/rtk/auth/login"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token", "refresh_token": "user-refresh"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
+			requestsMu.Lock()
+			claimCreates++
+			requestsMu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{"claim_token": "created"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices/claim/resolve":
+			requestsMu.Lock()
+			claimResolves++
+			requestsMu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"claim_id": "claim-001", "device": map[string]string{"id": "account-claim"},
+				"provision_input": map[string]any{"video_cloud_devid": "device-claim", "service_options": []string{"mqtt", "video_streaming"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-001/device-bind-jobs":
+			requestsMu.Lock()
+			bulkBinds++
+			requestsMu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"job":     map[string]any{"requested": 1, "created": 1, "existing": 0, "failed": 0, "status": "succeeded"},
+				"results": []map[string]any{{"video_cloud_devid": "device-bulk", "status": "created", "account_device_id": "account-bulk", "provision_input": map[string]any{"video_cloud_devid": "device-bulk", "service_options": []string{"mqtt", "video_streaming"}}}},
+			})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/provision"):
+			requestsMu.Lock()
+			provisions++
+			requestsMu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
+	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "1")
+
+	if err := runBindDevices([]string{
+		"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK",
+		"--users-file", usersPath, "--devices-dir", devicesDir, "--count", "2", "--concurrency", "2",
+		"--skip-bootstrap", "--skip-direct-provision-bridge",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requestsMu.Lock()
+	counts := []int{claimCreates, claimResolves, bulkBinds, provisions}
+	requestsMu.Unlock()
+	if counts[0] != 1 || counts[1] != 1 || counts[2] != 1 || counts[3] != 2 {
+		t.Fatalf("claim-create/resolve bulk provision counts=%v", counts)
+	}
+	artifact, err := readBindArtifactFromTestData(filepath.Join(envRoot, "lke"), "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Assignments) != 2 || artifact.Assignments[0].ClaimID != "claim-001" || artifact.Assignments[1].ClaimID != "" {
+		t.Fatalf("assignments=%+v", artifact.Assignments)
+	}
+}
+
 func TestStagingMQTTLogVerifyCorrelatesPersistedRuntimeEvidence(t *testing.T) {
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging")
