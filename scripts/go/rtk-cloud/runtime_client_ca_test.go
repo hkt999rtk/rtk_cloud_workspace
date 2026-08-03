@@ -80,6 +80,79 @@ func TestRunRefreshRuntimeClientCARejectsInvalidArguments(t *testing.T) {
 	}
 }
 
+func TestValidateRuntimeClientCAStack(t *testing.T) {
+	tests := []struct {
+		name     string
+		stack    string
+		stackEnv map[string]string
+		wantErr  bool
+	}{
+		{name: "shared staging", stack: "video-cloud-staging", stackEnv: map[string]string{}},
+		{
+			name:  "exact run scoped coverage stack",
+			stack: "coverage-123-1",
+			stackEnv: map[string]string{
+				"CLOUD_ENV_NAME":               "runtime-coverage",
+				"CLOUD_RUNTIME_COVERAGE_STACK": "coverage-123-1",
+			},
+		},
+		{
+			name:  "coverage metadata mismatch",
+			stack: "coverage-123-1",
+			stackEnv: map[string]string{
+				"CLOUD_ENV_NAME":               "runtime-coverage",
+				"CLOUD_RUNTIME_COVERAGE_STACK": "coverage-456-1",
+			},
+			wantErr: true,
+		},
+		{
+			name:  "coverage name outside runtime coverage environment",
+			stack: "coverage-123-1",
+			stackEnv: map[string]string{
+				"CLOUD_ENV_NAME":               "staging",
+				"CLOUD_RUNTIME_COVERAGE_STACK": "coverage-123-1",
+			},
+			wantErr: true,
+		},
+		{name: "production", stack: "video-cloud-production", stackEnv: map[string]string{}, wantErr: true},
+		{name: "arbitrary stack", stack: "developer-stack", stackEnv: map[string]string{}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateRuntimeClientCAStack(test.stack, test.stackEnv)
+			if test.wantErr && err == nil {
+				t.Fatal("stack was accepted, want rejection")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("stack was rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestRefreshRuntimeDeviceClientCABundleUsesRunScopedCoverageSecret(t *testing.T) {
+	root, rootCert, rootKey := testSigningCA(t, "coverage-root-ca", nil, nil, 21)
+	device, _, _ := testSigningCA(t, "coverage-device-ca", rootCert, rootKey, 22)
+	app, _, _ := testSigningCA(t, "coverage-app-ca", rootCert, rootKey, 23)
+	workspace, envRoot := testRuntimeCAWorkspace(t)
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), strings.Join([]string{
+		"CLOUD_PROVIDER=lke",
+		"CLOUD_ENV_NAME=runtime-coverage",
+		"CLOUD_STACK_NAME=coverage-123-1",
+		"CLOUD_RUNTIME_COVERAGE_STACK=coverage-123-1",
+		"",
+	}, "\n"))
+	installRuntimeCAKubectlStub(t, map[string]string{
+		"root-ca.crt":   base64.StdEncoding.EncodeToString([]byte(root)),
+		"device-ca.crt": base64.StdEncoding.EncodeToString([]byte(device)),
+		"app-ca.crt":    base64.StdEncoding.EncodeToString([]byte(app)),
+	})
+
+	if _, err := refreshRuntimeDeviceClientCABundle(workspace, envRoot); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRefreshRuntimeDeviceClientCABundleRejectsMismatchedChainWithoutOverwrite(t *testing.T) {
 	root, rootCert, rootKey := testSigningCA(t, "video-cloud-staging-root-ca", nil, nil, 1)
 	device, _, _ := testSigningCA(t, "video-cloud-staging-device-ca", rootCert, rootKey, 2)

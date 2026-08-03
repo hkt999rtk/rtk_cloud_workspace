@@ -51,8 +51,8 @@ func refreshRuntimeDeviceClientCABundle(workspace, envRoot string) (string, erro
 		return "", errors.New("runtime client CA refresh requires CLOUD_PROVIDER=lke")
 	}
 	stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
-	if stack != "video-cloud-staging" {
-		return "", fmt.Errorf("runtime client CA refresh requires the staging stack, got %s", stack)
+	if err := validateRuntimeClientCAStack(stack, stackEnv); err != nil {
+		return "", err
 	}
 	kubeconfig, err := lkeRuntimeKubeconfig(workspace, envRoot, stack)
 	if err != nil {
@@ -91,6 +91,19 @@ func refreshRuntimeDeviceClientCABundle(workspace, envRoot string) (string, erro
 		return "", err
 	}
 	return filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem"), nil
+}
+
+func validateRuntimeClientCAStack(stack string, stackEnv map[string]string) error {
+	if stack == "video-cloud-staging" {
+		return nil
+	}
+	runtimeStack := strings.TrimSpace(stackEnv["CLOUD_RUNTIME_COVERAGE_STACK"])
+	if strings.TrimSpace(stackEnv["CLOUD_ENV_NAME"]) == "runtime-coverage" &&
+		strings.HasPrefix(stack, "coverage-") &&
+		runtimeStack == stack {
+		return nil
+	}
+	return fmt.Errorf("runtime client CA refresh requires staging or the exact run-scoped coverage stack, got %s", stack)
 }
 
 func validateRuntimeClientCAChain(rootPEM, devicePEM, appPEM string) error {
