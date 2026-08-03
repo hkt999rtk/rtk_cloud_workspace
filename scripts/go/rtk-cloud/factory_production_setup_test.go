@@ -145,6 +145,23 @@ func TestUseProvidedFactoryProductionCredentialDoesNotReissueOrLeak(t *testing.T
 	if env, step, err := useProvidedFactoryProductionCredential(logsDir, "", jwt); err == nil || len(env) != 0 || step.Status != "FAIL" {
 		t.Fatalf("invalid credential env=%v step=%+v err=%v", env, step, err)
 	}
+	if env, _, err := useProvidedFactoryProductionCredential(filepath.Join(t.TempDir(), "missing", "logs"), "runtime-1", jwt); err == nil || len(env) != 0 {
+		t.Fatalf("unwritable log path env=%v err=%v", env, err)
+	}
+}
+
+func TestPrepareFactoryProductionStepRejectsUnwritableLogPath(t *testing.T) {
+	root := t.TempDir()
+	logsPath := filepath.Join(root, "not-a-directory")
+	if err := os.WriteFile(logsPath, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env, _, err := prepareFactoryProductionStep("workspace", "env", root, logsPath, "RTK", "runtime-1", 1, time.Now().UTC(), func(string, string, string, string, int, time.Time) (factoryProductionCredential, error) {
+		return factoryProductionCredential{JWT: "secret", BrandCloudID: "brand", DeviceItemProfileID: "profile", ProductionRunID: "production"}, nil
+	})
+	if err == nil || len(env) != 0 {
+		t.Fatalf("unwritable log path env=%v err=%v", env, err)
+	}
 }
 
 func TestEnsureFactoryProductionProfileReusesActiveRunProfile(t *testing.T) {
