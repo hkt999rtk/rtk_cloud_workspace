@@ -355,6 +355,10 @@ jobs:
             --env-root "$RUNTIME_ENV_ROOT" \
             --preflight --plan --apply --deploy --artifacts \
             --confirm "$RUNTIME_COVERAGE_STACK"
+          grep -qx "CLOUD_ENV_NAME=runtime-coverage" "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -qx "CLOUD_RUNTIME_COVERAGE_STACK=$RUNTIME_COVERAGE_STACK" "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -Fxq "VIDEO_CLOUD_API_BASE_URL=https://video.$RUNTIME_COVERAGE_STACK.invalid:18443" \
+            "$RUNTIME_ENV_ROOT/env/stack.env"
           echo "RUNTIME_COVERAGE_DEPLOYED=1" >> "$GITHUB_ENV"
 
       - name: Verify isolated deployment image digests and commits

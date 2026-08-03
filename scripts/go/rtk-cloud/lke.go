@@ -2888,6 +2888,27 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 }
 
 func isSafeLKEOperatorStackOverride(key string) bool {
+	safeRuntimeKeys := map[string]bool{
+		"CLOUD_RUNTIME_COVERAGE_STACK":           true,
+		"VIDEO_CLOUD_API_BASE_URL":               true,
+		"VIDEO_CLOUD_BLOB_ENDPOINT":              true,
+		"VIDEO_CLOUD_BLOB_REGION":                true,
+		"VIDEO_CLOUD_BLOB_BUCKET":                true,
+		"VIDEO_CLOUD_BLOB_PREFIX":                true,
+		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":      true,
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": true,
+		"VIDEO_CLOUD_CLIP_VERIFIER_ADDR":         true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL":        true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL":    true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES":      true,
+		"VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES":   true,
+		"VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL":  true,
+		"VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL": true,
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS":           true,
+	}
+	if safeRuntimeKeys[key] {
+		return true
+	}
 	if !strings.HasPrefix(key, "LKE_") {
 		return false
 	}
