@@ -3193,6 +3193,11 @@ func runStagingE2EDataSetup(args []string) error {
 		steps = append(steps, step)
 		return err
 	}
+	runStepWithEnv := func(name string, env []string, argv ...string) error {
+		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet, Env: env}, argv...)
+		steps = append(steps, step)
+		return err
+	}
 	skipStep := func(name, reason string) {
 		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] skip: %s reason=%q\n", name, reason)
 		steps = append(steps, e2eStep{Name: name, Status: "SKIP", ExitCode: 0, DurationSeconds: 0, LogFile: ""})
@@ -3243,8 +3248,26 @@ func runStagingE2EDataSetup(args []string) error {
 		}
 		skipStep("create_users", reason)
 	}
-	if shouldRunStep("create_devices") && !(*resume && testDataDeviceMatchesSetup(envRoot, *brandname, *deviceCount, *deviceMix)) {
-		if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force", "--concurrency", strconv.Itoa(*deviceConcurrency))...); err != nil {
+	deviceSetupRequired := shouldRunStep("create_devices") && !(*resume && testDataDeviceMatchesSetup(envRoot, *brandname, *deviceCount, *deviceMix))
+	managedFactoryGenerator := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT")) == ""
+	factoryEnv := append([]string(nil), childEnv...)
+	if deviceSetupRequired && managedFactoryGenerator {
+		factoryRunID := firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), *loadRunID, time.Now().UTC().Format("20060102T150405Z")+"-factory")
+		credentialEnv, step, err := prepareFactoryProductionStep(workspace, envRoot, *outDir, logsDir, *brandname, factoryRunID, *deviceCount, time.Now().UTC(), prepareFactoryProductionCredential)
+		steps = append(steps, step)
+		if err != nil {
+			return err
+		}
+		factoryEnv = append(factoryEnv, credentialEnv...)
+	} else {
+		reason := "device generation not selected or resumed"
+		if deviceSetupRequired && !managedFactoryGenerator {
+			reason = "external device generator owns its factory credential contract"
+		}
+		skipStep("prepare_factory_production", reason)
+	}
+	if deviceSetupRequired {
+		if err := runStepWithEnv("create_devices", factoryEnv, commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force", "--concurrency", strconv.Itoa(*deviceConcurrency))...); err != nil {
 			return err
 		}
 		coverage = testDataCoverageFor(envRoot, *brandname)
@@ -3390,7 +3413,7 @@ func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, devi
 }
 
 func e2eStepOrder() []string {
-	return []string{"create_brand", "create_users", "create_devices", "bind_devices", "validate_bind"}
+	return []string{"create_brand", "create_users", "prepare_factory_production", "create_devices", "bind_devices", "validate_bind"}
 }
 
 func e2eStepIndex(name string) int {

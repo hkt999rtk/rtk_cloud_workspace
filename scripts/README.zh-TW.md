@@ -356,12 +356,13 @@ go run ./scripts/go/rtk-cloud -- generate-load-devices \
 - `--env-root PATH`：指定 environment directory；必填。可傳 `cloud_env/staging`，script 會自動使用其下的 Kubernetes provider 子目錄，預設 `lke/`。
 - `--out-dir PATH`：輸出目錄，預設 `cloud_env/staging/runtime/devices/test_device`。
 - `--factory-url URL` / `FACTORY_ENROLL_URL`：覆寫 factory enrollment API base URL；預設從 env-root 的 `FACTORY_ENROLL_URL` 讀取，沒有時用 `VIDEO_CLOUD_DOMAIN` 推導 `https://<domain>`。
-- `--factory-auth-key KEY` / `FACTORY_ENROLL_AUTH_KEY`：覆寫 factory enrollment HMAC key；預設從 env-root 的 video-cloud service env 讀取。
+- `FACTORY_ENROLL_PRODUCTION_JWT`：正式 staging data setup 由 Account Manager production-run API 短暫注入；不得寫入 env-root、artifact 或 log。直接單獨執行此低階指令時，可由 operator 提供既有的短效 token。
+- `--factory-auth-key KEY` / `FACTORY_ENROLL_AUTH_KEY`：只保留給尚未啟用 production JWT 的相容環境；production JWT 存在時不會使用 HMAC。
 - `--factory-id`、`--line-id`、`--station-id`、`--fixture-id`、`--operator-id`、`--batch-id`：送到 factory enroll request 的量產欄位。
 - `--generate-only`：只用本地 simulation CA 簽發憑證，不寫入 cloud database。
 - `--force`：移除既有輸出目錄後重建。
 
-K8s staging 的 factory enrollment 設定由 K8s runtime secret/config 提供。E2E 會透過 K8s service query/port-forward 取得 `FACTORY_ENROLL_URL` 與 `FACTORY_ENROLL_AUTH_KEY`，不再透過 VM provision/deploy 修改 service env。
+K8s staging 的 factory enrollment verifier 設定由 K8s runtime secret/config 提供。E2E 會透過 K8s service query/port-forward 取得 `FACTORY_ENROLL_URL`，再由 Account Manager production-run API 簽發綁定 Brand Cloud、device item profile、quantity 與有效期的 JWT；測試 harness 不直接讀 signing secret 或自行簽 token。
 
 重要輸出：
 
@@ -908,7 +909,9 @@ scripts/setup-staging-e2e-data.sh \
 - `--device-mix MIX` / `--device-prefix PREFIX`：轉傳給 `generate-load-devices`。
 - `--out-dir PATH`：輸出 `summary.json`、`logs/*.log` 與 `bind-validation/` 的位置；未指定時使用 `<env-root>/artifacts/staging-e2e-data/<timestamp>/`。
 
-輸出 `summary.json` 會包含 `test_data_db`、`bind_validation_dir`，以及 create brand、create users、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本只支援 Kubernetes provider；`CLOUD_PROVIDER=linode` 會在任何 mutation 前 fail fast。
+內建 device generator 在建立 device 前，會以 platform admin 呼叫 Account Manager：先為本次 Brand Cloud 建立或重用 run-scoped device item profile，再建立 production run 並取得短效 production JWT。JWT 只傳入 device generator 子程序，不寫入 log、summary 或 evidence；`factory-production.json` 只保留 Brand、profile、production-run ID 與已簽發狀態。production run 建立失敗時會在任何 device enrollment／bind 前停止，不回退到 legacy HMAC。
+
+輸出 `summary.json` 會包含 `test_data_db`、`bind_validation_dir`，以及 create brand、create users、prepare factory production、create devices、bind devices、validate bind 每段的 status、exit code、duration seconds 和 log path。這個腳本只支援 Kubernetes provider；`CLOUD_PROVIDER=linode` 會在任何 mutation 前 fail fast。
 
 ### Home loading test
 

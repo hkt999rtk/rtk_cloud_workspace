@@ -274,7 +274,7 @@ func TestStagingMultiBrandPlanAndArtifactResumeHelpers(t *testing.T) {
 	if got := deviceMixString(map[string]int{"smart_meter": 1, "light": 2}); got != "light=2,smart_meter=1" {
 		t.Fatalf("deviceMixString() = %q", got)
 	}
-	if e2eStepIndex("bind_devices") != 3 || e2eStepIndex("missing") != -1 || shouldRunE2EStep("create_users", "bind_devices") {
+	if e2eStepIndex("bind_devices") != 4 || e2eStepIndex("prepare_factory_production") != 2 || e2eStepIndex("missing") != -1 || shouldRunE2EStep("create_users", "bind_devices") {
 		t.Fatal("unexpected E2E step ordering")
 	}
 
