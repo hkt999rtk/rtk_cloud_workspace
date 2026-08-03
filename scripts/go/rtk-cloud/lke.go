@@ -7268,23 +7268,33 @@ spec:
 }
 
 func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreate bool) error {
+	expiredKubeconfig := false
 	if kubeconfig := firstNonEmpty(os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"), os.Getenv("LKE_KUBECONFIG")); kubeconfig != "" {
 		if _, statErr := os.Stat(kubeconfig); statErr != nil {
 			return statErr
 		}
-		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
-		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", kubeconfig)
-		return nil
+		if k8sKubeconfigReady(kubeconfig) {
+			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
+			fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", kubeconfig)
+			return nil
+		}
+		expiredKubeconfig = true
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig is unavailable or expired, refreshing: %s\n", kubeconfig)
 	}
 	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "kubeconfig.yaml")
 	if _, statErr := os.Stat(stateKubeconfig); statErr == nil {
-		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
-		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", stateKubeconfig)
-		return nil
+		if k8sKubeconfigReady(stateKubeconfig) {
+			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
+			fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", stateKubeconfig)
+			return nil
+		}
+		expiredKubeconfig = true
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig is unavailable or expired, refreshing: %s\n", stateKubeconfig)
 	}
 	out, err := exec.Command(lkeKubectl(), "config", "current-context").CombinedOutput()
 	context := strings.TrimSpace(string(out))
-	if err == nil && context != "" {
+	ready := exec.Command(lkeKubectl(), "--request-timeout=5s", "get", "--raw=/readyz").Run() == nil
+	if !expiredKubeconfig && err == nil && context != "" && ready {
 		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
 		return nil
 	}

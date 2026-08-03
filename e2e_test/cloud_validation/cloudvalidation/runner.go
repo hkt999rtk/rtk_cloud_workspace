@@ -344,6 +344,11 @@ func preflight(cfg Config) []StepResult {
 				steps = append(steps, blockedStep("preflight_runtime_bundle", "not_configured", "runtime credential bundle is missing and no fixture setup command is configured"))
 			}
 		}
+		if cfg.Platform == "ios" && runtime.GOOS == "darwin" {
+			if err := validateIOSSimulatorToolchain(); err != nil {
+				steps = append(steps, blockedStep("preflight_ios_simulator", "environment_unavailable", err.Error()))
+			}
+		}
 		if filepath.Base(cfg.SetupCommand) == "setup-fixture.sh" && !fileExists(cfg.RuntimeBundle) && strings.TrimSpace(os.Getenv("CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND")) == "" {
 			for name, value := range map[string]string{
 				"env_root":                os.Getenv("CLOUD_VALIDATION_ENV_ROOT"),
@@ -374,6 +379,24 @@ func preflight(cfg Config) []StepResult {
 		steps = append(steps, passedStep("preflight", "configuration and local prerequisites passed"))
 	}
 	return steps
+}
+
+func validateIOSSimulatorToolchain() error {
+	if output, err := exec.Command("xcodebuild", "-checkFirstLaunchStatus").CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("Xcode first-launch components are not ready: %s", detail)
+	}
+	output, err := exec.Command("xcrun", "simctl", "list", "devices", "available").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("CoreSimulator device discovery failed: %s", strings.TrimSpace(string(output)))
+	}
+	if !strings.Contains(string(output), "iPhone") {
+		return errors.New("CoreSimulator has no available iPhone device")
+	}
+	return nil
 }
 
 type managedCommand struct {

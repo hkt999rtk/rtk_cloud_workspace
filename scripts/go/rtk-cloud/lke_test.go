@@ -169,6 +169,34 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	}
 }
 
+func TestEnsureLKEKubeAccessRefreshesExpiredStateKubeconfig(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
+	stateKubeconfig := filepath.Join(envRoot, "state", "kubeconfig.yaml")
+	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\n")
+	writeTestFile(t, stateKubeconfig, "expired kubeconfig\n")
+	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/kubeconfig": `{"kubeconfig":"` + encodedKubeconfig + `"}`,
+	})
+	fakeKubectlWithoutCurrentContext(t)
+	t.Setenv("FAKE_KUBECTL_REJECT_KUBECONFIG_CONTAINING", "expired kubeconfig")
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	if err := ensureLKEKubeAccess(provisionPaths{EnvRoot: envRoot}, map[string]string{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readTestFile(t, stateKubeconfig); strings.Contains(got, "expired kubeconfig") {
+		t.Fatalf("expired kubeconfig was not refreshed: %s", got)
+	}
+	if calls := readTestFile(t, curlLog); !strings.Contains(calls, "GET /lke/clusters/12345/kubeconfig") {
+		t.Fatalf("expected kubeconfig refresh, got:\n%s", calls)
+	}
+	if got := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"); got != stateKubeconfig {
+		t.Fatalf("active kubeconfig = %q, want %q", got, stateKubeconfig)
+	}
+}
+
 func TestEnsureK8SKubeconfigPrefersEnvRootState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", "")
@@ -5139,6 +5167,16 @@ if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   exit 1
 fi
 if [[ "$*" == *"get --raw=/readyz"* ]]; then
+	if [[ -n "${FAKE_KUBECTL_REJECT_KUBECONFIG_CONTAINING:-}" ]]; then
+		for ((i=1; i<=$#; i++)); do
+			if [[ "${!i}" == "--kubeconfig" ]]; then
+				j=$((i + 1))
+				if grep -qF "$FAKE_KUBECTL_REJECT_KUBECONFIG_CONTAINING" "${!j}"; then
+					exit 1
+				fi
+			fi
+		done
+	fi
   printf 'ok\n'
   exit 0
 fi
