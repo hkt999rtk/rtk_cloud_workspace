@@ -1287,6 +1287,7 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -1369,6 +1370,7 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -1425,6 +1427,7 @@ func TestSustainedShadowCommandRequestsAppMQTTTokenWithAppCertificate(t *testing
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -1503,6 +1506,7 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -3192,6 +3196,7 @@ func TestSDKDeviceSimulatorMatchesHome100KShadowDeviceContract(t *testing.T) {
 	if err := mqttSubscribe(homeDeviceConn, 10, topic+"/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(homeDeviceConn)
 	reader := startSustainedDeviceReader(homeDeviceConn)
 	defer reader.Close()
 	var homeTotals mqttIOTotals
