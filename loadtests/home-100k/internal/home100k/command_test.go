@@ -1982,6 +1982,27 @@ func TestHome100KSingleDeviceSmokeUsesResolvedBrandPlan(t *testing.T) {
 	}
 }
 
+func TestHome100KLiveEntrypointsRefreshCurrentClientCA(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if count := strings.Count(body, "refresh_device_ca_bundle"); count < 6 {
+		t.Fatalf("home-100k.sh refreshes the live client CA only %d times, want function plus all live/preflight entrypoints", count)
+	}
+	for _, marker := range []string{
+		"refresh-runtime-client-ca",
+		"preflight)\n    refresh_device_ca_bundle",
+		"workflow-resume-live)\n",
+		"refresh_device_ca_bundle\n    export HOME100K_DEVICE_CLIENT_CA_BUNDLE",
+	} {
+		if !strings.Contains(body, marker) {
+			t.Fatalf("home-100k.sh missing live CA refresh marker %q", marker)
+		}
+	}
+}
+
 func TestHome100KScriptIncludesK8SRuntimeHealthProbe(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {
