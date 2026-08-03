@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -275,36 +276,97 @@ func runProvisioningLifecycleEvidence(args []string) error {
 
 func disableAccountRegistryDevice(ctx accountManagerContext, brandCloudID, accountDeviceID, bearer string) error {
 	endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices/%s", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(accountDeviceID))
-	reqCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodDelete, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("authorization", "Bearer "+bearer)
-	resp, err := rtkJSONHTTPClient.Do(req)
+	body, status, err := lifecycleRegistryRequest(http.MethodDelete, endpoint, bearer, nil)
 	if err != nil {
 		return fmt.Errorf("disable account registry device: %w", err)
+	}
+	if status != http.StatusNoContent {
+		return fmt.Errorf("disable account registry device returned HTTP %d%s", status, errorBodySuffix(body))
+	}
+	body, status, err = lifecycleRegistryRequest(http.MethodGet, endpoint, bearer, nil)
+	if err != nil {
+		return fmt.Errorf("read disabled account registry device: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("disabled account registry device is not readable: HTTP %d%s", status, errorBodySuffix(body))
+	}
+	var readback struct {
+		Device struct {
+			ID         string  `json:"id"`
+			Name       string  `json:"name"`
+			Category   string  `json:"category"`
+			Status     string  `json:"status"`
+			DisabledAt *string `json:"disabled_at"`
+		} `json:"device"`
+	}
+	if err := json.Unmarshal(body, &readback); err != nil {
+		return fmt.Errorf("decode disabled account registry device: %w", err)
+	}
+	if readback.Device.ID != accountDeviceID {
+		return fmt.Errorf("disabled account registry device identity mismatch: got %q want %q", readback.Device.ID, accountDeviceID)
+	}
+	disabledAtPresent := readback.Device.DisabledAt != nil && strings.TrimSpace(*readback.Device.DisabledAt) != ""
+	if readback.Device.Status != "disabled" || !disabledAtPresent {
+		return fmt.Errorf("account registry device did not persist soft-disabled state: status=%q disabled_at_present=%t", readback.Device.Status, disabledAtPresent)
+	}
+	body, status, err = lifecycleRegistryRequest(http.MethodPatch, endpoint, bearer, map[string]string{
+		"name": readback.Device.Name, "category": readback.Device.Category,
+	})
+	if err != nil {
+		return fmt.Errorf("verify disabled account registry device update rejection: %w", err)
+	}
+	if status != http.StatusConflict {
+		return fmt.Errorf("disabled account registry device update was not rejected: HTTP %d%s", status, errorBodySuffix(body))
+	}
+	body, status, err = lifecycleRegistryRequest(http.MethodPatch, endpoint+"/status", bearer, map[string]string{"status": "online"})
+	if err != nil {
+		return fmt.Errorf("verify disabled account registry device status rejection: %w", err)
+	}
+	if status != http.StatusConflict {
+		return fmt.Errorf("disabled account registry device status update was not rejected: HTTP %d%s", status, errorBodySuffix(body))
+	}
+	body, status, err = lifecycleRegistryRequest(http.MethodDelete, endpoint, bearer, nil)
+	if err != nil {
+		return fmt.Errorf("repeat account registry device disable: %w", err)
+	}
+	if status != http.StatusNoContent {
+		return fmt.Errorf("repeated account registry device disable was not idempotent: HTTP %d%s", status, errorBodySuffix(body))
+	}
+	return nil
+}
+
+func lifecycleRegistryRequest(method, endpoint, bearer string, payload any) ([]byte, int, error) {
+	var requestBody io.Reader
+	if payload != nil {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return nil, 0, err
+		}
+		requestBody = bytes.NewReader(raw)
+	}
+	reqCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, method, endpoint, requestBody)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("authorization", "Bearer "+bearer)
+	if payload != nil {
+		req.Header.Set("content-type", "application/json")
+	}
+	resp, err := rtkJSONHTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, err
 	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
 	closeErr := resp.Body.Close()
 	if readErr != nil {
-		return readErr
+		return nil, resp.StatusCode, readErr
 	}
 	if closeErr != nil {
-		return closeErr
+		return nil, resp.StatusCode, closeErr
 	}
-	if resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("disable account registry device returned HTTP %d%s", resp.StatusCode, errorBodySuffix(body))
-	}
-	body, status, err := curlJSONStatus(endpoint, bearer, nil)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusNotFound {
-		return fmt.Errorf("disabled account registry device remains readable: HTTP %d%s", status, errorBodySuffix(body))
-	}
-	return nil
+	return body, resp.StatusCode, nil
 }
 
 func prepareLifecycleTransportReadiness(workspace, envRoot, brandname, outDir string) error {
@@ -620,7 +682,15 @@ func writeProvisioningWorkflowEvidence(outDir string) error {
 				"issue_app_runtime_token":   {"app_certificate_mtls": "PASS", "app_scope_token_issued": "PASS"},
 				"verify_device_readiness":   {"owner_token_authorized": "PASS", "device_identity_matched": "PASS"},
 				"deactivate_video_device":   {"same_device_deactivated": "PASS", "video_revocation_converged": "PASS"},
-				"delete_registry_device":    {"same_registry_device_disabled": "PASS", "disabled_device_not_readable": "PASS"},
+				"delete_registry_device": {
+					"same_registry_device_disabled":          "PASS",
+					"disabled_device_readable":               "PASS",
+					"disabled_status_confirmed":              "PASS",
+					"disabled_at_present":                    "PASS",
+					"disabled_device_update_rejected":        "PASS",
+					"disabled_device_status_update_rejected": "PASS",
+					"repeated_delete_idempotent":             "PASS",
+				},
 			},
 		},
 		{

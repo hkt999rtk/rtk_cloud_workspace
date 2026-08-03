@@ -63,6 +63,9 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	deactivated := false
 	unprovisioned := false
 	registryDisabled := false
+	registryDeleteCalls := 0
+	registryUpdateRejected := false
+	registryStatusUpdateRejected := false
 	transportReady := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := req.URL.Path
@@ -73,9 +76,16 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 			_, _ = io.WriteString(w, `{"status":"accepted"}`)
 		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodDelete:
 			registryDisabled = true
+			registryDeleteCalls++
 			w.WriteHeader(http.StatusNoContent)
-		case path == "/v1/orgs/org-1/devices/account-deactivate" && registryDisabled:
-			http.NotFound(w, req)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodGet && registryDisabled:
+			_, _ = io.WriteString(w, `{"device":{"id":"account-deactivate","name":"device-deactivate","category":"ip_camera","status":"disabled","disabled_at":"2026-08-03T10:39:49Z"}}`)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodPatch && registryDisabled:
+			registryUpdateRejected = true
+			http.Error(w, `{"code":"conflict"}`, http.StatusConflict)
+		case path == "/v1/orgs/org-1/devices/account-deactivate/status" && req.Method == http.MethodPatch && registryDisabled:
+			registryStatusUpdateRejected = true
+			http.Error(w, `{"code":"conflict"}`, http.StatusConflict)
 		case path == "/v1/orgs/org-1/devices/account-deactivate/provisioning":
 			_ = json.NewEncoder(w).Encode(map[string]any{"operation": map[string]any{"status": "succeeded"}, "readiness": map[string]any{"state": "ready", "product_state": "deactivated", "sources": map[string]any{"video_cloud_activation_status": "deactivated"}}})
 		case path == "/v1/orgs/org-1/devices/account-unprovision/unprovision" && !unprovisioned:
@@ -144,8 +154,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !deactivated || !registryDisabled || !unprovisioned || appTokenCalls != 3 {
-		t.Fatalf("deactivated=%t registry_disabled=%t unprovisioned=%t app_token_calls=%d", deactivated, registryDisabled, unprovisioned, appTokenCalls)
+	if !deactivated || !registryDisabled || registryDeleteCalls != 2 || !registryUpdateRejected || !registryStatusUpdateRejected || !unprovisioned || appTokenCalls != 3 {
+		t.Fatalf("deactivated=%t registry_disabled=%t delete_calls=%d update_rejected=%t status_update_rejected=%t unprovisioned=%t app_token_calls=%d", deactivated, registryDisabled, registryDeleteCalls, registryUpdateRejected, registryStatusUpdateRejected, unprovisioned, appTokenCalls)
 	}
 	var result map[string]any
 	resultBytes, err := os.ReadFile(filepath.Join(outDir, "results.json"))
@@ -163,6 +173,82 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
+	}
+	workflowBytes, err := os.ReadFile(filepath.Join(outDir, "provisioning-account-workflow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, assertion := range []string{
+		"disabled_device_readable", "disabled_status_confirmed", "disabled_at_present",
+		"disabled_device_update_rejected", "disabled_device_status_update_rejected", "repeated_delete_idempotent",
+	} {
+		if !strings.Contains(string(workflowBytes), `"`+assertion+`": "PASS"`) {
+			t.Fatalf("provisioning workflow evidence missing %s: %s", assertion, workflowBytes)
+		}
+	}
+}
+
+func TestDisableAccountRegistryDeviceEnforcesSoftDisableContract(t *testing.T) {
+	validBody := `{"device":{"id":"device-1","name":"Device 1","category":"mqtt_device","status":"disabled","disabled_at":"2026-08-03T10:39:49Z"}}`
+	tests := []struct {
+		name               string
+		getStatus          int
+		getBody            string
+		updateStatus       int
+		statusUpdateStatus int
+		repeatDeleteStatus int
+		wantError          string
+	}{
+		{name: "soft disabled contract", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent},
+		{name: "device must remain readable", getStatus: http.StatusNotFound, getBody: `{"code":"not_found"}`, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "is not readable"},
+		{name: "disabled status required", getStatus: http.StatusOK, getBody: `{"device":{"id":"device-1","name":"Device 1","category":"mqtt_device","status":"online","disabled_at":"2026-08-03T10:39:49Z"}}`, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "did not persist soft-disabled state"},
+		{name: "disabled timestamp required", getStatus: http.StatusOK, getBody: `{"device":{"id":"device-1","name":"Device 1","category":"mqtt_device","status":"disabled"}}`, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "disabled_at_present=false"},
+		{name: "device update rejected", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusOK, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "update was not rejected"},
+		{name: "status update rejected", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusOK, repeatDeleteStatus: http.StatusNoContent, wantError: "status update was not rejected"},
+		{name: "repeated delete idempotent", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNotFound, wantError: "was not idempotent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleteCalls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Header.Get("Authorization") != "Bearer user-token" {
+					t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+				}
+				switch {
+				case req.Method == http.MethodDelete && req.URL.Path == "/v1/orgs/org-1/devices/device-1":
+					deleteCalls++
+					if deleteCalls == 1 {
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
+					w.WriteHeader(tt.repeatDeleteStatus)
+				case req.Method == http.MethodGet && req.URL.Path == "/v1/orgs/org-1/devices/device-1":
+					w.WriteHeader(tt.getStatus)
+					_, _ = io.WriteString(w, tt.getBody)
+				case req.Method == http.MethodPatch && req.URL.Path == "/v1/orgs/org-1/devices/device-1":
+					w.WriteHeader(tt.updateStatus)
+				case req.Method == http.MethodPatch && req.URL.Path == "/v1/orgs/org-1/devices/device-1/status":
+					w.WriteHeader(tt.statusUpdateStatus)
+				default:
+					http.NotFound(w, req)
+				}
+			}))
+			defer server.Close()
+
+			err := disableAccountRegistryDevice(accountManagerContext{BaseURL: server.URL}, "org-1", "device-1", "user-token")
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if deleteCalls != 2 {
+					t.Fatalf("delete calls = %d, want 2", deleteCalls)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
