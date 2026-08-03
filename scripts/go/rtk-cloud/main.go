@@ -9440,7 +9440,7 @@ func runBindDevices(args []string) error {
 		return accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, items, userSessions, runID, *concurrency)
 	}
 	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
-		return accountRegisterDevicesDirect(ctx, brandCloudID, tenantSlug, items, userSessions, safeLog, *concurrency)
+		return accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, items, bindDevicesBulkChunkSize())
 	}
 	bulkResults, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, claimEvidenceCount, claimBind, bulkBind)
 	if err != nil {

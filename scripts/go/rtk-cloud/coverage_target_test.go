@@ -464,12 +464,28 @@ func TestRunBindDevicesQualifiesClaimAndBulkPathsTogether(t *testing.T) {
 				"claim_id": "claim-001", "device": map[string]string{"id": "account-claim"},
 				"provision_input": map[string]any{"video_cloud_devid": "device-claim", "service_options": []string{"mqtt", "video_streaming"}},
 			})
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-001/device-bind-jobs":
+			if r.Header.Get("authorization") != "Bearer platform-token" {
+				t.Fatalf("bulk registry authorization = %q", r.Header.Get("authorization"))
+			}
+			var request struct {
+				Items []map[string]any `json:"items"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
 			requestsMu.Lock()
-			registryCreates++
+			registryCreates += len(request.Items)
 			requestsMu.Unlock()
-			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"device": map[string]any{"id": "account-bulk", "metadata": map[string]any{"video_cloud_devid": "device-bulk"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"job": map[string]any{"status": "completed", "requested": 1, "created": 1, "existing": 0, "failed": 0},
+				"results": []map[string]any{{
+					"video_cloud_devid": "device-bulk", "status": "created", "account_device_id": "account-bulk",
+					"provision_input": map[string]any{"video_cloud_devid": "device-bulk", "service_options": []string{"mqtt", "video_streaming"}},
+				}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices":
+			t.Fatal("synthetic member was used for registry creation")
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/provision"):
 			requestsMu.Lock()
 			provisions++

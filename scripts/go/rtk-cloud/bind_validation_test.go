@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -234,6 +235,29 @@ func TestAccountBulkBindDevicesUsesAdminEndpointAndDoesNotListDevices(t *testing
 	}
 	if results["load-device-0001"].Status != "existing" || results["load-device-0002"].AccountDeviceID != "account-device-2" {
 		t.Fatalf("unexpected results: %+v", results)
+	}
+}
+
+func TestLoadBinderUsesPlatformAdminForBulkRegistryCreation(t *testing.T) {
+	source, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "bulkBind := func(items []bindAssignment)")
+	if start < 0 {
+		t.Fatal("could not locate load bulk-bind orchestration")
+	}
+	end := strings.Index(text[start:], "bulkResults, claimSummary")
+	if end < 0 {
+		t.Fatal("could not locate the end of load bulk-bind orchestration")
+	}
+	block := text[start : start+end]
+	if !strings.Contains(block, "accountBulkBindDevicesInChunks") {
+		t.Fatalf("load bulk bind must use the platform-admin endpoint:\n%s", block)
+	}
+	if strings.Contains(block, "accountRegisterDevicesDirect") {
+		t.Fatalf("load bulk bind must not require synthetic members to manage the registry:\n%s", block)
 	}
 }
 
