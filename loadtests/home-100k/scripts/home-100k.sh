@@ -2228,7 +2228,7 @@ run_video_live_workflow() {
     echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
   fi
   cleanup_rc=0
-  if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]; then
+  if should_shutdown_after_workflow; then
     set_phase "shutdown-vms"
     cleanup_live_vms || cleanup_rc=$?
   else
@@ -2538,7 +2538,7 @@ case "$command" in
       echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
     fi
     cleanup_rc=0
-    if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]; then
+    if should_shutdown_after_workflow; then
       set_phase "shutdown-vms"
       cleanup_live_vms || cleanup_rc=$?
     else

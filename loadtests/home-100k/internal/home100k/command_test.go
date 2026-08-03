@@ -1961,6 +1961,12 @@ func TestHome100KScriptKeepsVMsForFailedOrIncompleteRunsByDefault(t *testing.T) 
 			t.Fatalf("home-100k.sh missing shutdown gate marker %q:\n%s", want, body)
 		}
 	}
+	if strings.Contains(body, `if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]`) {
+		t.Fatalf("home-100k.sh destroys failed live-run VMs despite the preserve-by-default contract")
+	}
+	if got := strings.Count(body, `if should_shutdown_after_workflow; then`); got < 3 {
+		t.Fatalf("home-100k.sh has %d preserve-aware workflow cleanup gates, want at least 3", got)
+	}
 }
 
 func TestHome100KSingleDeviceSmokeUsesResolvedBrandPlan(t *testing.T) {
