@@ -3308,7 +3308,7 @@ func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
 	}
 }
 
-func TestSDKDeviceSimulatorResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *testing.T) {
+func TestSDKDeviceSimulatorDeployProfileResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	broker.SuppressShadowDelta = true
 	defer broker.Close()
@@ -3327,15 +3327,14 @@ func TestSDKDeviceSimulatorResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *t
 	}
 	tmp := t.TempDir()
 	readyFile := filepath.Join(tmp, "ready.json")
-	reconnectSignal := filepath.Join(tmp, "reconnect.signal")
 	resultCh := make(chan sustainedLoadResult, 1)
 	go func() {
 		resultCh <- runSDKDeviceSimulator(
 			[]assignment{{DeviceID: "device-initial-sync", DeviceType: "light"}},
 			[]certRecord{{DeviceID: "device-initial-sync", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
 			"RTK", "run-sdk-initial-sync", tokenServer.URL,
-			[]mqttEndpointTarget{{Host: host, Port: port}}, 5,
-			loadOptions{Concurrency: 1, ReadyFile: readyFile, SDKReconnectSignalFile: reconnectSignal},
+			[]mqttEndpointTarget{{Host: host, Port: port}}, 2,
+			loadOptions{Concurrency: 1, ReadyFile: readyFile},
 		)
 	}()
 	waitForFile := func(path, description string) {
@@ -3376,13 +3375,6 @@ func TestSDKDeviceSimulatorResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *t
 			t.Fatal("sdk simulator did not reconcile the pending initial shadow document")
 		}
 		time.Sleep(10 * time.Millisecond)
-	}
-	if err := os.WriteFile(filepath.Join(tmp, "offline-disconnect.request"), []byte("disconnect\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	waitForFile(filepath.Join(tmp, "offline-ready"), "sdk offline state")
-	if err := os.WriteFile(reconnectSignal, []byte("reconnect\n"), 0o600); err != nil {
-		t.Fatal(err)
 	}
 	select {
 	case result := <-resultCh:

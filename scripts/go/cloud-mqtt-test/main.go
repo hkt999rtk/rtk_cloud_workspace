@@ -1529,11 +1529,11 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		connectDeadline = deadline
 	}
 	initialTokenOpts := opts.deviceTokenOptions()
-	if strings.TrimSpace(opts.SDKReconnectSignalFile) != "" {
-		// A shadow delta is an edge-triggered notification, so a production SDK
-		// client must also reconcile the durable shadow document after connect.
-		initialTokenOpts.SubscribeShadowGet = true
-	}
+	// A shadow delta is an edge-triggered notification, so every production SDK
+	// validation profile must also reconcile the durable shadow document after
+	// connect. This closes the READY-to-desired race even when offline reconnect
+	// is not part of the selected profile.
+	initialTokenOpts.SubscribeShadowGet = true
 	sessions := connectSustainedDevicesPacedUntilWithOptions(assignments, certByID, brandname, runID, apiBaseURL, mqttTargets, opts.Concurrency, connectDeadline, 0, initialTokenOpts, &result.Totals)
 	defer func() { closeSustainedSessions(sessions) }()
 	if len(sessions) != len(assignments) || len(sessions) == 0 {
@@ -1602,7 +1602,7 @@ func runSDKDeviceSimulator(assignments []assignment, certs []certRecord, brandna
 		}
 		result.Notes = append(result.Notes, "sdk device deterministic offline/reconnect handshake completed")
 	}
-	respondSDKDeviceShadowDeltas(context.Background(), sessions, runID, deadline, false, &result)
+	respondSDKDeviceShadowDeltas(context.Background(), sessions, runID, deadline, true, &result)
 	return result
 }
 
