@@ -284,6 +284,7 @@ func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 		t.Fatalf("formal activation was not sequenced before synthetic setup:\n%s", log)
 	}
 	if !strings.Contains(log, "--user-email-domain users.invalid") ||
+		!strings.Contains(log, "--user-role member") ||
 		!strings.Contains(log, "--user-email-prefix load-run-20260726-b01") ||
 		!strings.Contains(log, "--device-prefix load-run-20260726-b01") ||
 		!strings.Contains(log, "--no-resume") {

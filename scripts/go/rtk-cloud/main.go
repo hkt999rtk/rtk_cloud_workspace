@@ -2928,7 +2928,7 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		}
 		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", devicePrefix, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
 		if cfg.EmailOwners {
-			args = append(args, "--user-email-prefix", brand.MemberPrefix, "--user-email-domain", "users.invalid")
+			args = append(args, "--user-role", "member", "--user-email-prefix", brand.MemberPrefix, "--user-email-domain", "users.invalid")
 		}
 		if cfg.Resume {
 			args = append(args, "--resume")
@@ -6606,6 +6606,25 @@ func plannedUsersWithPrefixAndDomain(brandname, slug, role string, count int, em
 	return users
 }
 
+func loadOwnerAdminBaseURL(stackEnv map[string]string) (string, error) {
+	environment := strings.ToLower(strings.TrimSpace(stackEnv["CLOUD_ENV_NAME"]))
+	stack := strings.ToLower(strings.TrimSpace(stackEnv["CLOUD_STACK_NAME"]))
+	dnsRoot := strings.ToLower(strings.Trim(strings.TrimSpace(stackEnv["CLOUD_DNS_ROOT_DOMAIN"]), "."))
+	if environment != "staging" || !strings.Contains(stack, "staging") || stack == "" || dnsRoot == "" {
+		return "", errors.New("load-owner activation requires a staging stack and DNS root")
+	}
+	expectedDomain := "admin." + stack + "." + dnsRoot
+	domain := strings.ToLower(strings.TrimSpace(firstNonEmpty(stackEnv["CLOUD_ADMIN_DOMAIN"], expectedDomain)))
+	adminBaseURL := "https://" + domain
+	parsed, err := url.Parse(adminBaseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		!strings.EqualFold(parsed.Hostname(), expectedDomain) {
+		return "", errors.New("staging Cloud Admin HTTPS origin is unavailable or does not match the runtime stack")
+	}
+	return adminBaseURL, nil
+}
+
 func runActivateLoadOwner(args []string) error {
 	fs := flag.NewFlagSet("activate-load-owner", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -6685,9 +6704,9 @@ func runActivateLoadOwner(args []string) error {
 		childEnv = append(childEnv, "IMAP_CONNECT_HOST="+connectHost)
 	}
 	stackEnv, _ := readEnvFile(filepath.Join(ctx.EnvRoot, "env", "stack.env"))
-	adminBaseURL := "https://" + strings.TrimSpace(stackEnv["CLOUD_ADMIN_DOMAIN"])
-	if parsed, parseErr := url.Parse(adminBaseURL); parseErr != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-		return errors.New("staging Cloud Admin HTTPS origin is unavailable")
+	adminBaseURL, err := loadOwnerAdminBaseURL(stackEnv)
+	if err != nil {
+		return err
 	}
 	helper := filepath.Join(workspace, "repos", "rtk_account_manager", "scripts", "email_signup_imap.py")
 	imapEnv := append(childEnv,
