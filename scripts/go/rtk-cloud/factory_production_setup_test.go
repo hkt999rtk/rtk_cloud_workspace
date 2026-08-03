@@ -66,6 +66,36 @@ func TestPrepareFactoryProductionCredentialUsesAccountManagerIssuance(t *testing
 	}
 }
 
+func TestFactoryProductionAccountContextFallsBackToOperatorEnvironment(t *testing.T) {
+	root := t.TempDir()
+	platformDir := filepath.Join(root, "services", "account-manager")
+	if err := os.MkdirAll(filepath.Join(root, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(platformDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "env", "stack.env"), []byte("CLOUD_PROVIDER=local\nACCOUNT_MANAGER_DOMAIN=accounts.example.test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(platformDir, "account-manager-platform-admin.env"), []byte("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=admin@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=test-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", "")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "")
+	t.Setenv("CLOUD_PROVIDER", "")
+
+	ctx, err := factoryProductionAccountContext(root, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ctx.Close()
+	if ctx.BaseURL != "https://accounts.example.test" || ctx.AdminEmail != "admin@example.test" || ctx.AdminPassword != "test-password" {
+		t.Fatalf("fallback context = %+v", ctx)
+	}
+}
+
 func TestFactoryProductionEvidenceRedactsJWT(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "factory-production.json")
 	credential := factoryProductionCredential{JWT: "must-never-be-written", BrandCloudID: "brand", DeviceItemProfileID: "profile", ProductionRunID: "run"}
