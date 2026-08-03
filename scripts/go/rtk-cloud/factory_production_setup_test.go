@@ -32,7 +32,7 @@ func TestPrepareFactoryProductionCredentialUsesAccountManagerIssuance(t *testing
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload["allowed_quantity"] != float64(12) || payload["batch_id"] != "runtime-123-1" {
+			if payload["allowed_quantity"] != float64(12) || payload["batch_id"] != "runtime-123-1" || payload["factory_id"] != runtimeFactoryProductionID {
 				t.Fatalf("production payload = %#v", payload)
 			}
 			w.WriteHeader(http.StatusCreated)
@@ -131,7 +131,7 @@ func TestPrepareFactoryProductionStepPassesCredentialOnlyToChildEnv(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if step.Status != "PASS" || step.ExitCode != 0 || envListValue(env, "FACTORY_ENROLL_PRODUCTION_JWT") != secretJWT || envListValue(env, "FACTORY_ENROLL_RUN_ID") != "runtime-1" {
+	if step.Status != "PASS" || step.ExitCode != 0 || envListValue(env, "FACTORY_ENROLL_PRODUCTION_JWT") != secretJWT || envListValue(env, "FACTORY_ENROLL_RUN_ID") != "runtime-1" || envListValue(env, "FACTORY_ENROLL_FACTORY_ID") != runtimeFactoryProductionID {
 		t.Fatalf("env=%v step=%+v", env, step)
 	}
 	for _, path := range []string{step.LogFile, filepath.Join(root, "factory-production.json")} {

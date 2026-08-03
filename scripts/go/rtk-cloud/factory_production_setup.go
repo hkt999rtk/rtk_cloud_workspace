@@ -20,6 +20,8 @@ type factoryProductionCredential struct {
 	ProductionRunID     string
 }
 
+const runtimeFactoryProductionID = "runtime-e2e"
+
 type factoryProductionPreparer func(string, string, string, string, int, time.Time) (factoryProductionCredential, error)
 
 func useProvidedFactoryProductionCredential(logsDir, runID, productionJWT string) ([]string, e2eStep, error) {
@@ -59,6 +61,7 @@ func prepareFactoryProductionStep(workspace, envRoot, outDir, logsDir, brandname
 		"FACTORY_ENROLL_PRODUCTION_JWT=" + credential.JWT,
 		"FACTORY_ENROLL_RUN_ID=" + runID,
 		"FACTORY_ENROLL_BATCH_ID=" + runID,
+		"FACTORY_ENROLL_FACTORY_ID=" + runtimeFactoryProductionID,
 	}, step, nil
 }
 
@@ -166,7 +169,7 @@ func ensureFactoryProductionProfile(ctx accountManagerContext, token, brandID, p
 
 func createFactoryProductionRun(ctx accountManagerContext, token, brandID, profileID, runID string, quantity int, now time.Time) (string, string, error) {
 	payload, err := json.Marshal(map[string]any{
-		"factory_id": "runtime-e2e", "batch_id": runID, "allowed_quantity": quantity,
+		"factory_id": runtimeFactoryProductionID, "batch_id": runID, "allowed_quantity": quantity,
 		"valid_from":  now.UTC().Add(-time.Minute).Format(time.RFC3339),
 		"valid_until": now.UTC().Add(2 * time.Hour).Format(time.RFC3339),
 	})
