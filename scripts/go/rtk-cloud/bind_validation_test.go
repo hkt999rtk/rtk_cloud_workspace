@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 )
 
@@ -244,7 +243,7 @@ func TestAccountRegisterDevicesDirectUsesCanonicalOrganizationRoute(t *testing.T
 		if r.URL.Path != "/v1/orgs/brand-1/devices" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
-		if r.Header.Get("authorization") != "Bearer platform-token" {
+		if r.Header.Get("authorization") != "Bearer admin-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
 		}
 		var req map[string]any
@@ -266,9 +265,11 @@ func TestAccountRegisterDevicesDirectUsesCanonicalOrganizationRoute(t *testing.T
 		{AssignedEmail: "member@example.test", DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
 		{AssignedEmail: "member@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_storage"}},
 	}
-	session := accountPlatformSession{AccessToken: "platform-token"}
-	var sessionMu sync.Mutex
-	results, summary, err := accountRegisterDevicesDirect(accountManagerContext{BaseURL: server.URL}, &session, &sessionMu, "brand-1", assignments, func(string, ...any) {}, 1)
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1", assignments,
+		map[string]*brandCloudUserSession{"member@example.test": {Email: "member@example.test", Session: accountPlatformSession{AccessToken: "admin-token"}}},
+		func(string, ...any) {}, 1,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,9 +289,12 @@ func TestAccountRegisterDevicesDirectReportsCreateFailure(t *testing.T) {
 		http.Error(w, `{"error":{"code":"forbidden"}}`, http.StatusForbidden)
 	}))
 	defer server.Close()
-	session := accountPlatformSession{AccessToken: "platform-token"}
-	var sessionMu sync.Mutex
-	results, summary, err := accountRegisterDevicesDirect(accountManagerContext{BaseURL: server.URL}, &session, &sessionMu, "brand-1", []bindAssignment{{DeviceID: "device-1"}}, func(string, ...any) {}, 0)
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1",
+		[]bindAssignment{{AssignedEmail: "admin@example.test", DeviceID: "device-1"}},
+		map[string]*brandCloudUserSession{"admin@example.test": {Email: "admin@example.test", Session: accountPlatformSession{AccessToken: "admin-token"}}},
+		func(string, ...any) {}, 0,
+	)
 	if err == nil || len(results) != 0 || summary.Requested != 1 || summary.Failed != 1 {
 		t.Fatalf("results=%+v summary=%+v err=%v", results, summary, err)
 	}
@@ -313,9 +317,12 @@ func TestAccountRegisterDevicesDirectReusesMatchingConflict(t *testing.T) {
 	}))
 	defer server.Close()
 
-	session := accountPlatformSession{AccessToken: "platform-token"}
-	var sessionMu sync.Mutex
-	results, summary, err := accountRegisterDevicesDirect(accountManagerContext{BaseURL: server.URL}, &session, &sessionMu, "brand-1", []bindAssignment{{DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}}}, func(string, ...any) {}, 17)
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1",
+		[]bindAssignment{{AssignedEmail: "admin@example.test", DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}}},
+		map[string]*brandCloudUserSession{"admin@example.test": {Email: "admin@example.test", Session: accountPlatformSession{AccessToken: "admin-token"}}},
+		func(string, ...any) {}, 17,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

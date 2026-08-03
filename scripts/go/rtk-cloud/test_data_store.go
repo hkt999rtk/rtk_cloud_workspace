@@ -314,7 +314,18 @@ func (s *testDataStore) ReplaceUsers(brandname, brandCloudID, tenantSlug, role s
 }
 
 func (s *testDataStore) ReadUsersList(brandname string) (map[string]userCredential, []userCredential, error) {
-	rows, err := s.DB.Query(`select email, password, tokens_json from users where brandname = ? and (role = 'member' or coalesce(role, '') = '') order by email`, brandname)
+	rows, err := s.DB.Query(`
+		select email, password, tokens_json
+		from users
+		where brandname = ? and (
+			role = 'member' or coalesce(role, '') = '' or (
+				role in ('owner', 'admin') and not exists (
+					select 1 from users as members
+					where members.brandname = users.brandname and (members.role = 'member' or coalesce(members.role, '') = '')
+				)
+			)
+		)
+		order by email`, brandname)
 	if err != nil {
 		return nil, nil, err
 	}

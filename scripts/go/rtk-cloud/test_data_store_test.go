@@ -105,6 +105,34 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 	}
 }
 
+func TestReadUsersListFallsBackToPrivilegedStagingUsersWithoutMembers(t *testing.T) {
+	store, err := openTestDataStore(t.TempDir(), "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.ReplaceUsers("RTK", "org-rtk", "rtk", "admin", []map[string]any{{"email": "admin@example.test", "password": "pw"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, users, err := store.ReadUsersList("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].Email != "admin@example.test" {
+		t.Fatalf("privileged fallback users = %+v", users)
+	}
+	if err := store.ReplaceUsers("RTK", "org-rtk", "rtk", "member", []map[string]any{{"email": "member@example.test", "password": "pw"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, users, err = store.ReadUsersList("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 1 || users[0].Email != "member@example.test" {
+		t.Fatalf("member-preferred users = %+v", users)
+	}
+}
+
 func TestTestDataStoreUpsertsBindingCheckpoint(t *testing.T) {
 	envRoot := t.TempDir()
 	store, err := openTestDataStore(envRoot, "RTK")
