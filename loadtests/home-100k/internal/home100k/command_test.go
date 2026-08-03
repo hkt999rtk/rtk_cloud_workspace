@@ -1707,6 +1707,96 @@ func TestValidatePlanDataCoverageAcceptsMatchingUsersAndBoundDevices(t *testing.
 	}
 }
 
+func TestValidatePlanDataCoverageUsesPrivilegedUsersOnlyWithoutMembers(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	writeHomeSQLiteTestData(t, envRoot,
+		[]string{"admin-00@example.test", "admin-01@example.test"},
+		[]map[string]any{
+			{"assigned_email": "admin-00@example.test", "device_id": "load-device-0001", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "admin-01@example.test", "device_id": "load-device-0002", "device_type": "light", "service_options": []string{"mqtt"}},
+		})
+	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, "RTK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`alter table users add column role text not null default 'admin'`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Conditions.Users = 2
+	plan.Conditions.Devices = 2
+	plan.DeviceMix = map[string]int{"light": 2}
+
+	coverage, err := inspectPlanDataCoverage(envRoot, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.UsersAvailable != 2 || coverage.EligibleUsers != 2 || coverage.DevicesAvailable != 2 {
+		t.Fatalf("privileged fallback coverage = %+v", coverage)
+	}
+	if err := validatePlanDataCoverage(envRoot, plan); err != nil {
+		t.Fatalf("validatePlanDataCoverage() error = %v", err)
+	}
+	rows, err := loadEligibleBrandRows(envRoot, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("privileged fallback bundle rows = %+v", rows)
+	}
+}
+
+func TestInspectPlanDataCoveragePrefersMembersOverPrivilegedUsers(t *testing.T) {
+	envRoot := writeTinyEnvRoot(t)
+	writeHomeSQLiteTestData(t, envRoot,
+		[]string{"admin@example.test", "member@example.test"},
+		[]map[string]any{
+			{"assigned_email": "admin@example.test", "device_id": "admin-device", "device_type": "light", "service_options": []string{"mqtt"}},
+			{"assigned_email": "member@example.test", "device_id": "member-device", "device_type": "smart_meter", "service_options": []string{"mqtt"}},
+		})
+	db, err := sql.Open("sqlite", homeTestDataDBPath(envRoot, "RTK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`alter table users add column role text not null default 'member'`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`update users set role = 'admin' where email = 'admin@example.test'`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	plan, err := NewPlan(PlanOptions{EnvRoot: envRoot, Brandname: "RTK", Region: "us-sea"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coverage, err := inspectPlanDataCoverage(envRoot, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.UsersAvailable != 1 || coverage.EligibleUsers != 1 || coverage.DevicesAvailable != 1 {
+		t.Fatalf("member-preferred coverage = %+v", coverage)
+	}
+	if coverage.DeviceMix["smart_meter"] != 1 || coverage.DeviceMix["light"] != 0 {
+		t.Fatalf("member-preferred device mix = %+v", coverage.DeviceMix)
+	}
+	rows, err := loadEligibleBrandRows(envRoot, "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].AssignedEmail != "member@example.test" {
+		t.Fatalf("member-preferred bundle rows = %+v", rows)
+	}
+}
+
 func TestEnvArchiveExcludesLegacyUsersAndDeviceBindArtifacts(t *testing.T) {
 	envRoot := writeTinyEnvRoot(t)
 	oldUsers := filepath.Join(envRoot, "artifacts", "users", "rtk-users-20260614T010000Z.json")

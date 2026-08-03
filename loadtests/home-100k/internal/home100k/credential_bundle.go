@@ -257,7 +257,11 @@ func loadEligibleBrandRows(envRoot string, brandname string) ([]shardBindAssignm
 		return nil, err
 	}
 	defer db.Close()
-	rows, err := db.Query(`select brandname, coalesce(brand_cloud_id, ''), coalesce(tenant_slug, ''), assignment_index, assigned_email, device_id, device_type, service_options_json from device_bindings where brandname = ? order by assignment_index, device_id`, brandname)
+	query := `select b.brandname, coalesce(b.brand_cloud_id, ''), coalesce(b.tenant_slug, ''), b.assignment_index, b.assigned_email, b.device_id, b.device_type, b.service_options_json from device_bindings b where b.brandname = ? order by b.assignment_index, b.device_id`
+	if homeSQLiteColumnExists(db, "users", "role") {
+		query = `select b.brandname, coalesce(b.brand_cloud_id, ''), coalesce(b.tenant_slug, ''), b.assignment_index, b.assigned_email, b.device_id, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? and (` + homeRuntimeUserRolePredicate("u") + `) order by b.assignment_index, b.device_id`
+	}
+	rows, err := db.Query(query, brandname)
 	if err != nil {
 		return nil, err
 	}
