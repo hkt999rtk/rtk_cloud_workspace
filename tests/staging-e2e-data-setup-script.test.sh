@@ -27,15 +27,16 @@ printf '%s\\t%s\\n' "$name" "\$*" >> "$COMMAND_LOG"
 case "$name" in
 create-users)
 	mkdir -p "$ENV_ROOT/artifacts/users"
-	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
+	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"},{"email":"rtk+002@users.local"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
 	;;
 generate-devices)
 	mkdir -p "$ENV_ROOT/devices/test_device/manifests"
-	printf '[]\\n' > "$ENV_ROOT/devices/test_device/manifests/devices.json"
+	printf '[{"device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},{"device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},{"device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},{"device_id":"load-device-0004","device_type":"light","service_options":["mqtt"]}]\\n' > "$ENV_ROOT/devices/test_device/manifests/devices.json"
 	;;
 bind-devices)
 	mkdir -p "$ENV_ROOT/artifacts/device-bind"
-	printf '{"brandname":"RTK","count":4,"assignments":[{"device_id":"dev-1"}]}\\n' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	printf '{"brandname":"RTK","count":4,"assignments":[{"assigned_email":"rtk+001@users.local","device_id":"load-device-0001","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},{"assigned_email":"rtk+002@users.local","device_id":"load-device-0002","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]},{"assigned_email":"rtk+001@users.local","device_id":"load-device-0003","device_type":"light","service_options":["mqtt"]},{"assigned_email":"rtk+002@users.local","device_id":"load-device-0004","device_type":"light","service_options":["mqtt"]}]}\\n' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data import-legacy --env-root "$ENV_ROOT" --brandname RTK --latest-only >/dev/null
 	;;
 validate-bind)
 	printf '{"overall":"pass","report_file":"validate-report.md"}\\n'
@@ -65,7 +66,10 @@ CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT="$TMP/validate-bind.sh" \
 	--device-count 4 \
 	--device-mix camera=2,light=2 \
 	--out-dir "$OUT_DIR" \
-	--quiet > "$TMP/run.out" 2> "$TMP/run.err"
+	--quiet > "$TMP/run.out" 2> "$TMP/run.err" || {
+	cat "$TMP/run.err" >&2
+	exit 1
+}
 
 expected=$'create-brand\ncreate-users\ngenerate-devices\nbind-devices\nvalidate-bind'
 actual="$(cut -f1 "$COMMAND_LOG")"
@@ -80,7 +84,10 @@ grep -F $'bind-devices\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/clou
 SUMMARY="$(jq -r '.summary_file' "$TMP/run.out")"
 test "$SUMMARY" = "$OUT_DIR/summary.json"
 test -f "$SUMMARY"
-jq -e '.overall == "pass" and .test_data_db != "" and (.steps | length == 5)' "$SUMMARY" >/dev/null
+jq -e '.overall == "pass" and .test_data_db != "" and (.steps | length == 6) and ([.steps[] | select(.name == "prepare_factory_production" and .status == "SKIP")] | length == 1)' "$SUMMARY" >/dev/null || {
+	jq '{overall, test_data_db, steps}' "$SUMMARY" >&2
+	exit 1
+}
 grep -E '\[cloud-staging-e2e\] start: create_brand log=.*/logs/create_brand.log' "$TMP/run.err" >/dev/null
 if grep -F '[cloud-staging-e2e] progress:' "$TMP/run.err" >/dev/null; then
 	echo "quiet data setup should not print progress lines" >&2

@@ -452,13 +452,16 @@ func selectReadyLifecycleAssignments(baseURL, bearer string, assignments []bindA
 				ready = append(ready, assignment)
 			}
 		}
-		for i := len(ready) - 1; i >= 0; i-- {
-			unprovision := ready[i]
-			if !contains(unprovision.ServiceOptions, "video_streaming") && !contains(unprovision.ServiceOptions, "video_storage") {
+		for _, deactivation := range ready {
+			if strings.TrimSpace(deactivation.ClaimID) == "" || strings.TrimSpace(deactivation.OperationID) == "" || strings.TrimSpace(deactivation.AccountDeviceID) == "" {
 				continue
 			}
-			for _, deactivation := range ready {
+			for i := len(ready) - 1; i >= 0; i-- {
+				unprovision := ready[i]
 				if deactivation.DeviceID == unprovision.DeviceID {
+					continue
+				}
+				if !contains(unprovision.ServiceOptions, "video_streaming") && !contains(unprovision.ServiceOptions, "video_storage") {
 					continue
 				}
 				return deactivation, unprovision, last[deactivation.DeviceID], last[unprovision.DeviceID], nil
@@ -474,7 +477,7 @@ func selectReadyLifecycleAssignments(baseURL, bearer string, assignments []bindA
 				state := last[assignment.DeviceID]
 				states = append(states, fmt.Sprintf("%s=activated:%t,provisioned:%t,revoked:%t", assignment.DeviceID, state.Activated, state.Provisioned, state.Revoked))
 			}
-			return bindAssignment{}, bindAssignment{}, canonicalVideoLifecycle{}, canonicalVideoLifecycle{}, fmt.Errorf("lifecycle qualification requires two ready devices including one video-capable device: %s", strings.Join(states, "; "))
+			return bindAssignment{}, bindAssignment{}, canonicalVideoLifecycle{}, canonicalVideoLifecycle{}, fmt.Errorf("lifecycle qualification requires a claim-correlated ready device and a distinct ready video-capable device: %s", strings.Join(states, "; "))
 		}
 		time.Sleep(poll)
 	}

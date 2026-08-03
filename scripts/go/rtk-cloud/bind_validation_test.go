@@ -58,6 +58,47 @@ func TestValidateDeviceBindAllowsMissingClaimIDWhenProvisionIdentifiersExist(t *
 	}
 }
 
+func TestBindClaimEvidenceCountLeavesBulkQualificationDevices(t *testing.T) {
+	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "1")
+	if got, err := bindClaimEvidenceCount(12); err != nil || got != 1 {
+		t.Fatalf("count=%d err=%v", got, err)
+	}
+	for _, tc := range []struct {
+		value string
+		total int
+	}{
+		{value: "invalid", total: 12},
+		{value: "-1", total: 12},
+		{value: "1", total: 1},
+		{value: "12", total: 12},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", tc.value)
+			if _, err := bindClaimEvidenceCount(tc.total); err == nil {
+				t.Fatalf("value=%q total=%d was accepted", tc.value, tc.total)
+			}
+		})
+	}
+}
+
+func TestParseAccountClaimResolveBindResultPreservesClaimCorrelation(t *testing.T) {
+	assignment := bindAssignment{DeviceID: "load-device-0001"}
+	result, err := parseAccountClaimResolveBindResult([]byte(`{
+  "claim_id":"claim-1",
+  "device":{"id":"account-device-1"},
+  "provision_input":{"video_cloud_devid":"load-device-0001"}
+}`), assignment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ClaimID != "claim-1" || result.AccountDeviceID != "account-device-1" || result.VideoCloudDevid != assignment.DeviceID {
+		t.Fatalf("result=%+v", result)
+	}
+	if _, err := parseAccountClaimResolveBindResult([]byte(`{"device":{"id":"account-device-1"}}`), assignment); err == nil {
+		t.Fatal("claim resolve response without claim_id was accepted")
+	}
+}
+
 func TestValidateDeviceBindAllowsAlreadyBoundDevicesWithoutOperationID(t *testing.T) {
 	root := t.TempDir()
 	bindPath := filepath.Join(root, "bind.json")

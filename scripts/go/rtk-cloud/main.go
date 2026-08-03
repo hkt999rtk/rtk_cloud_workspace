@@ -9408,13 +9408,30 @@ func runBindDevices(args []string) error {
 		defer checkpointMu.Unlock()
 		return store.UpsertBinding(*brandname, brandCloudID, tenantSlug, runID, assignment)
 	}
+	claimEvidenceCount, err := bindClaimEvidenceCount(len(assignments))
+	if err != nil {
+		return err
+	}
 	bulkResults := map[string]accountBulkBindDeviceResult{}
-	if len(assignments) > 0 {
-		results, summary, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, assignments, bindDevicesBulkChunkSize())
+	bulkAssignments := assignments
+	if claimEvidenceCount > 0 {
+		claimAssignments := assignments[:claimEvidenceCount]
+		results, summary, err := accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, claimAssignments, userSessions, runID, *concurrency)
 		if err != nil {
-			if strings.Contains(err.Error(), "HTTP 404") {
+			return fmt.Errorf("run-scoped claim evidence bind failed: %w", err)
+		}
+		for deviceID, result := range results {
+			bulkResults[deviceID] = result
+		}
+		bulkAssignments = assignments[claimEvidenceCount:]
+		safeLog("claim evidence bind complete: requested=%d created=%d failed=%d", summary.Requested, summary.Created, summary.Failed)
+	}
+	if len(bulkAssignments) > 0 {
+		results, summary, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, bulkAssignments, bindDevicesBulkChunkSize())
+		if err != nil {
+			if claimEvidenceCount == 0 && strings.Contains(err.Error(), "HTTP 404") {
 				safeLog("bulk bind endpoint unavailable; falling back to claim-token resolve flow")
-				results, summary, err = accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, assignments, userSessions, runID, *concurrency)
+				results, summary, err = accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, bulkAssignments, userSessions, runID, *concurrency)
 			}
 			if err != nil {
 				artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
@@ -9424,7 +9441,9 @@ func runBindDevices(args []string) error {
 				return fmt.Errorf("admin bulk bind failed: %w", err)
 			}
 		}
-		bulkResults = results
+		for deviceID, result := range results {
+			bulkResults[deviceID] = result
+		}
 		safeLog("bulk bind complete: requested=%d created=%d existing=%d failed=%d chunks=%d", summary.Requested, summary.Created, summary.Existing, summary.Failed, summary.Chunks)
 	}
 	var progressMu sync.Mutex
@@ -9446,6 +9465,7 @@ func runBindDevices(args []string) error {
 		if bulkResult.AccountDeviceID == "" {
 			return bindAssignment{}, fmt.Errorf("bulk bind result missing account_device_id: device=%s", assignment.DeviceID)
 		}
+		assignment.ClaimID = bulkResult.ClaimID
 		assignment.AccountDeviceID = bulkResult.AccountDeviceID
 		prov := bulkResult.ProvisionInput
 		if len(prov) == 0 {
@@ -9758,11 +9778,27 @@ type accountBulkBindSummary struct {
 type accountBulkBindDeviceResult struct {
 	VideoCloudDevid string
 	Status          string
+	ClaimID         string
 	AccountDeviceID string
 	Device          map[string]any
 	ProvisionInput  map[string]any
 	ErrorCode       string
 	ErrorMessage    string
+}
+
+func bindClaimEvidenceCount(total int) (int, error) {
+	raw := strings.TrimSpace(os.Getenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT"))
+	if raw == "" || raw == "0" {
+		return 0, nil
+	}
+	count, err := strconv.Atoi(raw)
+	if err != nil || count < 0 {
+		return 0, fmt.Errorf("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT must be a non-negative integer")
+	}
+	if total < 2 || count >= total {
+		return 0, fmt.Errorf("claim evidence count %d must leave at least one of %d devices for bulk-bind qualification", count, total)
+	}
+	return count, nil
 }
 
 func bindDevicesBulkChunkSize() int {
@@ -10052,12 +10088,16 @@ func parseAccountClaimResolveBindResult(body []byte, assignment bindAssignment) 
 	if accountDeviceID == "" {
 		return accountBulkBindDeviceResult{}, fmt.Errorf("claim resolve response missing device.id: device=%s", assignment.DeviceID)
 	}
+	if strings.TrimSpace(parsed.ClaimID) == "" {
+		return accountBulkBindDeviceResult{}, fmt.Errorf("claim resolve response missing claim_id: device=%s", assignment.DeviceID)
+	}
 	if parsed.ProvisionInput == nil {
 		parsed.ProvisionInput = provisionInputForAssignment(assignment)
 	}
 	return accountBulkBindDeviceResult{
 		VideoCloudDevid: assignment.DeviceID,
 		Status:          "created",
+		ClaimID:         parsed.ClaimID,
 		AccountDeviceID: accountDeviceID,
 		Device:          parsed.Device,
 		ProvisionInput:  parsed.ProvisionInput,

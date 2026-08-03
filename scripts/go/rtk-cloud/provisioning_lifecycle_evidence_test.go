@@ -185,6 +185,29 @@ func TestPrepareLifecycleTransportReadinessReportsRunnerFailures(t *testing.T) {
 	}
 }
 
+func TestSelectReadyLifecycleAssignmentsRequiresClaimCorrelatedDeactivation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		deviceID := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/api/devices/"), "/lifecycle")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "devid": deviceID, "activated": true, "provisioned": true, "revoked": false,
+			"transport": map[string]any{},
+		})
+	}))
+	defer server.Close()
+	assignments := []bindAssignment{
+		{DeviceID: "bulk-light", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "claimed-light", ClaimID: "claim-1", AccountDeviceID: "account-claim", OperationID: "op-claim", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "bulk-camera", AccountDeviceID: "account-camera", OperationID: "op-camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+	}
+	deactivation, unprovision, _, _, err := selectReadyLifecycleAssignments(server.URL, "token", assignments, 0, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deactivation.DeviceID != "claimed-light" || unprovision.DeviceID != "bulk-camera" {
+		t.Fatalf("deactivation=%+v unprovision=%+v", deactivation, unprovision)
+	}
+}
+
 func TestLifecycleUserTokenUsesRunScopedSessionBeforePasswordLogin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		t.Fatalf("cached lifecycle session unexpectedly called %s", req.URL.Path)
@@ -248,7 +271,7 @@ func TestSelectReadyLifecycleAssignmentsSkipsUnprovisionedDevices(t *testing.T) 
 
 	assignments := []bindAssignment{
 		{DeviceID: "camera-not-connected", ServiceOptions: []string{"mqtt", "video_streaming"}},
-		{DeviceID: "light-connected", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "light-connected", ClaimID: "claim-light", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "camera-connected", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
 	}
 	deactivation, unprovision, deactivationState, unprovisionState, err := selectReadyLifecycleAssignments(server.URL, "admin-token", assignments, time.Second, time.Millisecond)
