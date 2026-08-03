@@ -237,6 +237,23 @@ func TestCommandEvidenceAndFileBoundaries(t *testing.T) {
 	}
 }
 
+func TestCloudValidationCommandPreservesSelectedToolchainPath(t *testing.T) {
+	binDir := t.TempDir()
+	marker := filepath.Join(binDir, "selected-go")
+	if err := os.WriteFile(marker, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	cfg := Config{OutDir: t.TempDir()}
+	cmd := cloudValidationCommand(context.Background(), cfg, "command -v selected-go")
+	if strings.Contains(strings.Join(cmd.Args, " "), " -l") {
+		t.Fatalf("cloud validation command unexpectedly uses a login shell: %v", cmd.Args)
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("selected toolchain PATH was not preserved: %v: %s", err, output)
+	}
+}
+
 func TestReportPersistenceAndErrorBoundaries(t *testing.T) {
 	started := time.Now().Add(-time.Second)
 	report := RunReport{

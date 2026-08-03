@@ -389,9 +389,8 @@ func startManagedCommand(ctx context.Context, cfg Config, name, command string) 
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-lc", command)
+	cmd := cloudValidationCommand(ctx, cfg, command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = commandEnv(cfg)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
@@ -459,9 +458,8 @@ func runCommandStep(ctx context.Context, cfg Config, name, command, reasonCode s
 		return failedStep(name, reasonCode, err.Error())
 	}
 	defer logFile.Close()
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-lc", command)
+	cmd := cloudValidationCommand(ctx, cfg, command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = commandEnv(cfg)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil && cmd.Process != nil {
@@ -478,6 +476,15 @@ func runCommandStep(ctx context.Context, cfg Config, name, command, reasonCode s
 		return failedStep(name, reasonCode, fmt.Sprintf("%s failed: %v; see %s", name, err, logPath))
 	}
 	return passedStep(name, logPath)
+}
+
+func cloudValidationCommand(ctx context.Context, cfg Config, command string) *exec.Cmd {
+	// A login shell reloads the host profile and can replace the toolchain PATH
+	// injected by Actions setup steps. Preserve the runner's explicit environment
+	// so live validation executes the selected Go and platform toolchains.
+	cmd := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc", "-c", command)
+	cmd.Env = commandEnv(cfg)
+	return cmd
 }
 
 func commandEnv(cfg Config) []string {
