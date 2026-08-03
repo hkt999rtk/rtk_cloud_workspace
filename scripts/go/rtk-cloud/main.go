@@ -9417,7 +9417,7 @@ func runBindDevices(args []string) error {
 		return accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, items, userSessions, runID, *concurrency)
 	}
 	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
-		return accountRegisterDevicesDirect(ctx, brandCloudID, tenantSlug, items, userSessions, safeLog, *concurrency)
+		return accountRegisterDevicesDirect(ctx, &session, &sessionMu, brandCloudID, items, safeLog, *concurrency)
 	}
 	bulkResults, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, claimEvidenceCount, claimBind, bulkBind)
 	if err != nil {
@@ -9475,7 +9475,7 @@ func runBindDevices(args []string) error {
 		return assignment, nil
 	}
 	recreateAfterUnprovision := func(assignment bindAssignment, userSession *brandCloudUserSession) (bindAssignment, error) {
-		results, _, err := accountRegisterDevicesDirect(ctx, brandCloudID, tenantSlug, []bindAssignment{assignment}, map[string]*brandCloudUserSession{assignment.AssignedEmail: userSession}, safeLog, 1)
+		results, _, err := accountRegisterDevicesDirect(ctx, &session, &sessionMu, brandCloudID, []bindAssignment{assignment}, safeLog, 1)
 		if err != nil {
 			return bindAssignment{}, err
 		}
@@ -9830,7 +9830,7 @@ func bindDevicesBulkChunkSize() int {
 	return size
 }
 
-func accountRegisterDevicesDirect(ctx accountManagerContext, brandCloudID, tenantSlug string, assignments []bindAssignment, userSessions map[string]*brandCloudUserSession, logf func(string, ...any), concurrency int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+func accountRegisterDevicesDirect(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, brandCloudID string, assignments []bindAssignment, logf func(string, ...any), concurrency int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
 	if concurrency <= 0 {
 		concurrency = 1
 	}
@@ -9844,10 +9844,6 @@ func accountRegisterDevicesDirect(ctx accountManagerContext, brandCloudID, tenan
 	failed := 0
 	_, err := boundedParallelMap(len(assignments), concurrency, func(i int) (struct{}, error) {
 		assignment := assignments[i]
-		userSession := userSessions[assignment.AssignedEmail]
-		if userSession == nil {
-			return struct{}{}, fmt.Errorf("missing assigned user session: email=%s device=%s", assignment.AssignedEmail, assignment.DeviceID)
-		}
 		metadata := map[string]any{
 			"video_cloud_devid":           assignment.DeviceID,
 			"video_cloud_activity_id":     "bulk-bind-" + assignment.DeviceID,
@@ -9863,8 +9859,8 @@ func accountRegisterDevicesDirect(ctx accountManagerContext, brandCloudID, tenan
 			return struct{}{}, err
 		}
 		endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices", ctx.BaseURL, url.PathEscape(brandCloudID))
-		body, status, err := curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, userSession, logf, "create registry device", func(userToken string) ([]byte, int, error) {
-			return curlJSONStatus(endpoint, userToken, payload)
+		body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "create registry device", func(platformToken string) ([]byte, int, error) {
+			return curlJSONStatus(endpoint, platformToken, payload)
 		})
 		if err != nil {
 			return struct{}{}, err
@@ -9887,11 +9883,10 @@ func accountRegisterDevicesDirect(ctx accountManagerContext, brandCloudID, tenan
 				return struct{}{}, fmt.Errorf("create device response missing device.id: device=%s", assignment.DeviceID)
 			}
 		case http.StatusConflict:
-			userToken, tokenErr := brandCloudUserAccessToken(ctx, tenantSlug, userSession, logf)
-			if tokenErr != nil {
-				return struct{}{}, tokenErr
-			}
-			result, err = accountFindExistingClaimedDevice(ctx, brandCloudID, userToken, assignment)
+			sessionMu.Lock()
+			platformToken := session.AccessToken
+			sessionMu.Unlock()
+			result, err = accountFindExistingClaimedDevice(ctx, brandCloudID, platformToken, assignment)
 			if err != nil {
 				return struct{}{}, err
 			}
