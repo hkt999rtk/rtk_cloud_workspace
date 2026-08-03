@@ -570,13 +570,20 @@ func TestNativeAndOperatorLiveRequirementsUseExecutableGates(t *testing.T) {
 		}
 	}
 
-	for _, requirementID := range []string{"REQ-E2E-FACTORY-ENROLL-001", "REQ-CONTRACT-AUTH-FACTORY-ENROLL-001"} {
+	operatorRequirements := []string{
+		"REQ-E2E-FACTORY-ENROLL-001", "REQ-CONTRACT-AUTH-FACTORY-ENROLL-001",
+		"REQ-VC-FACTORY-DEPLOYMENT-001", "REQ-VC-FACTORY-ISSUER-MTLS-001", "REQ-VC-FACTORY-SMOKE-001",
+		"REQ-LOAD-HOME-SHADOW-001", "REQ-LOAD-HOME-SHADOW-002",
+		"REQ-LOAD-HOME-VIDEO-001", "REQ-LOAD-HOME-TURN-001", "REQ-LOAD-HOME-TURN-002",
+		"REQ-LOAD-VC-CLIP-001", "REQ-LOAD-VC-CLIP-002",
+	}
+	for _, requirementID := range operatorRequirements {
 		requirement, ok := requirements[requirementID]
 		if !ok {
-			t.Fatalf("factory operator requirement %s is missing from the spec inventory", requirementID)
+			t.Fatalf("operator requirement %s is missing from the spec inventory", requirementID)
 		}
 		if requirement.AcceptanceLayer != "live" || requirement.Gate != "operator-release" || requirement.FreshnessHours != 168 {
-			t.Fatalf("factory operator requirement %s layer=%q gate=%q freshness=%d, want live/operator-release/168", requirementID, requirement.AcceptanceLayer, requirement.Gate, requirement.FreshnessHours)
+			t.Fatalf("operator requirement %s layer=%q gate=%q freshness=%d, want live/operator-release/168", requirementID, requirement.AcceptanceLayer, requirement.Gate, requirement.FreshnessHours)
 		}
 	}
 }

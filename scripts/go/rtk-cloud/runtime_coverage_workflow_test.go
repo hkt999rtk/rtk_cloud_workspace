@@ -99,9 +99,15 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"--device-mix light=10,camera=2",
 		`export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"`,
 		"Aggregate runtime feature evidence",
+		"Download same-commit scheduled SDK evidence",
+		"actions: read",
+		"sdk-cloud-validation-nightly.yml",
+		"--event schedule",
+		"scheduled SDK evidence provenance mismatch",
+		"SCHEDULED_FEATURE_EVIDENCE_ROOT",
 		`test-feature-coverage "$action"`,
 		"test-spec-inventory check",
-		`--evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID"`,
+		`--evidence "$evidence_paths"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
@@ -245,6 +251,13 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(workflow, "go-version: \"1.26.3\"") {
 		t.Fatal("runtime runner must satisfy the Cloud Admin Go toolchain requirement")
+	}
+	sdkNightlyRaw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "sdk-cloud-validation-nightly.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sdkNightlyRaw), `cron: "30 15 * * *"`) {
+		t.Fatal("SDK scheduled validation must finish before the 17:30 UTC runtime aggregate")
 	}
 	deterministicStart := strings.Index(workflow, "- name: Run deterministic feature evidence")
 	loginStart := strings.Index(workflow, "- name: Log in to GHCR")

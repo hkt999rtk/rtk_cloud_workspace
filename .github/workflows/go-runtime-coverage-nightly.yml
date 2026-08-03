@@ -17,6 +17,7 @@ on:
         required: false
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
@@ -578,6 +579,43 @@ jobs:
             --device-mix light=10,camera=2 \
             --out-dir "$live_dir"
 
+      - name: Download same-commit scheduled SDK evidence
+        if: github.event_name == 'schedule' && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/scheduled-feature-evidence"
+          mkdir -p "$evidence_root"
+          sdk_runs="$RUNNER_TEMP/scheduled-sdk-runs.json"
+          gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow sdk-cloud-validation-nightly.yml \
+            --event schedule \
+            --branch "$GITHUB_REF_NAME" \
+            --status success \
+            --limit 30 \
+            --json databaseId,headSha > "$sdk_runs"
+          sdk_run_id="$(jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.headSha == $sha) | .databaseId][0] // empty' "$sdk_runs")"
+          if [[ -z "$sdk_run_id" ]]; then
+            echo "no successful scheduled SDK validation run matches commit $GITHUB_SHA" >&2
+            exit 1
+          fi
+          event="$(gh run view "$sdk_run_id" --repo "$GITHUB_REPOSITORY" --json event,conclusion,headSha --jq '[.event,.conclusion,.headSha] | @tsv')"
+          IFS=$'\t' read -r sdk_event sdk_conclusion sdk_head_sha <<<"$event"
+          if [[ "$sdk_event" != schedule || "$sdk_conclusion" != success || "$sdk_head_sha" != "$GITHUB_SHA" ]]; then
+            echo "scheduled SDK evidence provenance mismatch" >&2
+            exit 1
+          fi
+          gh run download "$sdk_run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'sdk-cloud-validation-*-ios' \
+            --pattern 'sdk-cloud-validation-*-android' \
+            --dir "$evidence_root"
+          test "$(find "$evidence_root" -name feature-evidence.json -type f | wc -l | tr -d ' ')" -ge 2
+          echo "SCHEDULED_FEATURE_EVIDENCE_ROOT=$evidence_root" >> "$GITHUB_ENV"
+
       - name: Aggregate runtime feature evidence
         if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
         shell: bash
@@ -599,9 +637,14 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             coverage_mode=scheduled
           fi
+          evidence_paths=".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID"
+          if [ "$coverage_mode" = "scheduled" ]; then
+            test -n "${SCHEDULED_FEATURE_EVIDENCE_ROOT:-}"
+            evidence_paths="$evidence_paths,$SCHEDULED_FEATURE_EVIDENCE_ROOT"
+          fi
           go run ./scripts/go/rtk-cloud -- test-feature-coverage "$action" \
             --mode "$coverage_mode" \
-            --evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID" \
+            --evidence "$evidence_paths" \
             --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/feature-coverage"
 
       - name: Gracefully stop services and collect runtime counters
