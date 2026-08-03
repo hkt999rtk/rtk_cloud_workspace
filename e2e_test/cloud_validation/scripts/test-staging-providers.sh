@@ -102,7 +102,7 @@ if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
     printf '%s\n' '{"access_token":"live-access","refresh_token":"live-refresh"}' > "$output"
     printf '200'
   fi
-elif [[ "$joined" == *"--write-out"* && "$joined" == *"entitlement/revoke"* && "${FAIL_ENTITLEMENT_REVOKE:-0}" == "1" ]]; then
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"/unprovision"* && "${FAIL_UNPROVISION:-0}" == "1" ]]; then
   printf '500'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/commands"* ]]; then
   printf '200'
@@ -308,7 +308,7 @@ export CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN="secret-logger"
 jq -e '[.events[].type] | contains(["token_issued","device_mtls_authenticated","authorized_device_read","transport_connected","transport_disconnected","command_dispatched","authorization_denied","desired_written","delta_delivered","desired_queued","device_reconnected","reported_written","delta_cleared"])' "$tmp/out/cloud-evidence.json" >/dev/null
 
 export CURL_LOG="$tmp/cleanup-curl.log"
-export FAIL_ENTITLEMENT_REVOKE=1
+export FAIL_UNPROVISION=1
 set +e
 "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"
 cleanup_rc=$?
@@ -319,7 +319,11 @@ grep -q '/v1/admin/devices/account-device-sdk-e2e-ios/unprovision' "$CURL_LOG"
 grep -q '/v1/admin/devices/account-device-sdk-e2e-android/unprovision' "$CURL_LOG"
 grep -q '/v1/admin/brand-clouds/cloud-sdk-e2e-ios/users/user-sdk-e2e-ios' "$CURL_LOG"
 grep -q '/v1/admin/brand-clouds/cloud-sdk-e2e-android/users/user-sdk-e2e-android' "$CURL_LOG"
-unset FAIL_ENTITLEMENT_REVOKE
+if grep -q 'entitlement/revoke' "$CURL_LOG"; then
+  echo "cleanup bypassed canonical Account Manager unprovision workflow" >&2
+  exit 1
+fi
+unset FAIL_UNPROVISION
 "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"
 test ! -e "$tmp/secrets/run-ios"
 
