@@ -277,23 +277,23 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	ui := workflow[uiStart:]
 	for _, expected := range []string{
 		"svc/account-manager 18081:80",
-		"select email, password, brand_cloud_id",
-		"role in ('member', 'owner', 'admin')",
-		"case when role = 'member'",
-		"customer_fixture",
-		"E2E_BRAND_CLOUD_ID",
+		"customer_email=\"runtime-ui+${RUNTIME_COVERAGE_RUN_ID}@users.local\"",
+		"customer_password=\"$(openssl rand -base64 24)\"",
+		"--arg organization_name \"Runtime Coverage UI ${RUNTIME_COVERAGE_RUN_ID}\"",
+		"http://127.0.0.1:18081/v1/auth/register",
+		"E2E_BRAND_CLOUD_ID=\"$(jq -er '.organization.id // empty'",
 		"svc/video-cloud-prometheus 18091:9090",
 		"test-platform-live",
 		"--platform-session \"$E2E_PLATFORM_SESSION_ID\"",
 		"--customer-session \"$E2E_CUSTOMER_SESSION_ID\"",
 	} {
 		if !strings.Contains(ui, expected) {
-			t.Fatalf("runtime UI smoke must reuse its run-scoped customer identity: missing %q", expected)
+			t.Fatalf("runtime UI smoke must create a run-scoped product customer identity: missing %q", expected)
 		}
 	}
-	for _, forbidden := range []string{"/v1/auth/register", "customer_register_payload", "customer_register_response"} {
+	for _, forbidden := range []string{"select email from users", "select password from users", "select email, password, brand_cloud_id", "customer_fixture"} {
 		if strings.Contains(ui, forbidden) {
-			t.Fatalf("runtime UI smoke must not re-register its existing run-scoped customer: found %q", forbidden)
+			t.Fatalf("runtime UI smoke must not use tenant-scoped load credentials for product customer login: found %q", forbidden)
 		}
 	}
 }

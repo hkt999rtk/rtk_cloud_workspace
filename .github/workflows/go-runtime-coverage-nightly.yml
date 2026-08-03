@@ -465,6 +465,7 @@ jobs:
           E2E_EVIDENCE_SAFE: "1"
         run: |
           set -euo pipefail
+          umask 077
           kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-admin" \
             port-forward svc/cloud-admin 18082:80 > "$RUNNER_TEMP/runtime-coverage-admin-port-forward.log" 2>&1 &
           admin_port_forward_pid=$!
@@ -476,9 +477,11 @@ jobs:
           prometheus_port_forward_pid=$!
           platform_payload="$RUNNER_TEMP/runtime-platform-login.json"
           customer_payload="$RUNNER_TEMP/runtime-customer-login.json"
+          customer_register_payload="$RUNNER_TEMP/runtime-customer-register.json"
+          customer_register_response="$RUNNER_TEMP/runtime-customer-register-response.json"
           platform_headers="$RUNNER_TEMP/runtime-platform-headers.txt"
           customer_headers="$RUNNER_TEMP/runtime-customer-headers.txt"
-          trap 'kill "$admin_port_forward_pid" "$account_manager_port_forward_pid" "$prometheus_port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$platform_headers" "$customer_headers"' EXIT
+          trap 'kill "$admin_port_forward_pid" "$account_manager_port_forward_pid" "$prometheus_port_forward_pid" 2>/dev/null || true; rm -f "$platform_payload" "$customer_payload" "$customer_register_payload" "$customer_register_response" "$platform_headers" "$customer_headers"' EXIT
           for attempt in {1..30}; do
             if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
               break
@@ -504,26 +507,26 @@ jobs:
             get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}' | openssl base64 -d -A)"
           platform_password="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
             get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD}' | openssl base64 -d -A)"
-          test_data_db="$RUNTIME_ENV_ROOT/artifacts/test-data/rtk-test-data.sqlite"
-          test -s "$test_data_db"
-          customer_fixture="$(sqlite3 -json "$test_data_db" "
-            select email, password, brand_cloud_id
-            from users
-            where role in ('member', 'owner', 'admin') or coalesce(role, '') = ''
-            order by case when role = 'member' or coalesce(role, '') = '' then 0 else 1 end, email
-            limit 1;
-          ")"
-          customer_email="$(jq -er '.[0].email // empty' <<<"$customer_fixture")"
-          customer_password="$(jq -er '.[0].password // empty' <<<"$customer_fixture")"
-          E2E_BRAND_CLOUD_ID="$(jq -er '.[0].brand_cloud_id // empty' <<<"$customer_fixture")"
+          customer_email="runtime-ui+${RUNTIME_COVERAGE_RUN_ID}@users.local"
+          customer_password="$(openssl rand -base64 24)"
           test -n "$customer_email"
           test -n "$customer_password"
-          test -n "$E2E_BRAND_CLOUD_ID"
           jq -n --arg email "$platform_email" --arg password "$platform_password" \
             '{email:$email,password:$password}' > "$platform_payload"
           jq -n --arg email "$customer_email" --arg password "$customer_password" \
             '{email:$email,password:$password}' > "$customer_payload"
-          chmod 0600 "$platform_payload" "$customer_payload"
+          jq -n \
+            --arg email "$customer_email" \
+            --arg password "$customer_password" \
+            --arg organization_name "Runtime Coverage UI ${RUNTIME_COVERAGE_RUN_ID}" \
+            '{email:$email,password:$password,organization_name:$organization_name}' > "$customer_register_payload"
+          chmod 0600 "$platform_payload" "$customer_payload" "$customer_register_payload"
+          curl -fsS -o "$customer_register_response" \
+            -H 'content-type: application/json' \
+            --data-binary "@$customer_register_payload" \
+            http://127.0.0.1:18081/v1/auth/register
+          E2E_BRAND_CLOUD_ID="$(jq -er '.organization.id // empty' "$customer_register_response")"
+          test -n "$E2E_BRAND_CLOUD_ID"
           curl -fsS -D "$platform_headers" -o /dev/null \
             -H 'content-type: application/json' \
             --data-binary "@$platform_payload" \
