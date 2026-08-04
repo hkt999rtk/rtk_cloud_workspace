@@ -137,7 +137,9 @@ go run ./scripts/go/rtk-cloud -- lke-resolve-images \
 且缺少任一 `LKE_*_IMAGE` 時會自動執行 image resolve，寫入
 `<env-root>/artifacts/lke-images/<timestamp>/`，並同步 latest manifest 到
 `<env-root>/artifacts/lke-images/lke-image-manifest.json`。手動 export
-`LKE_*_IMAGE` 只作為 override。
+`LKE_*_IMAGE` 只作為 override。若 override 指向官方 GHCR 的 `sha-*` tag，
+tag 必須精確對應目前 pinned submodule commit，且 resolver 仍會確認 image
+存在；自訂開發 registry image 維持既有 override 相容性。
 
 ### `go run ./scripts/go/rtk-cloud -- lke-build-images`
 

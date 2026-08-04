@@ -230,6 +230,58 @@ func TestCatalogObserveReportsProofGapsWithoutBlockingMigration(t *testing.T) {
 	}
 }
 
+func TestCatalogRejectsScheduledRequirementMappedOnlyToOperatorLoad(t *testing.T) {
+	catalog := testCatalog{
+		Features: []testCatalogFeature{{
+			ID: "FEAT-TEST-FLOW-001", Status: "active",
+			Requirements: []testCatalogRequirement{{
+				ID: "REQ-LOAD-TEST-FLOW-001", Status: "active", Gate: "scheduled",
+				AcceptanceLayer: "live", Environments: []string{"staging"},
+			}},
+		}},
+		Cases: []testCatalogCase{{
+			ID: "LOAD-TEST-FLOW-001", Status: "active", Layer: "load", Runner: "test-live",
+			Profile: "capacity", Environments: []string{"staging"}, Verifies: []string{"REQ-LOAD-TEST-FLOW-001"},
+		}},
+	}
+	if err := validateRequirementProofMappings(catalog); err == nil || !strings.Contains(err.Error(), "no scheduled-executable proof case") {
+		t.Fatalf("scheduled gate accepted an operator-only capacity proof: %v", err)
+	}
+	catalog.Cases[0] = testCatalogCase{
+		ID: "E2E-TEST-FLOW-001", Status: "active", Layer: "e2e", Runner: "test-feature",
+		Profile: "canary", Environments: []string{"staging"}, Verifies: []string{"REQ-LOAD-TEST-FLOW-001"},
+	}
+	if err := validateRequirementProofMappings(catalog); err != nil {
+		t.Fatalf("scheduled canary proof should be reachable: %v", err)
+	}
+}
+
+func TestScheduledGateProofCaseMatchesNightlyExecutionRoutes(t *testing.T) {
+	tests := []struct {
+		name  string
+		case_ testCatalogCase
+		want  bool
+	}{
+		{name: "feature canary", case_: testCatalogCase{Runner: "test-feature", Profile: "canary", Environments: []string{"staging"}}, want: true},
+		{name: "feature qualification", case_: testCatalogCase{Runner: "test-feature", Profile: "qualification-1k", Environments: []string{"staging"}}},
+		{name: "capacity", case_: testCatalogCase{Runner: "test-live", Profile: "capacity", Environments: []string{"staging"}}},
+		{name: "staging UI", case_: testCatalogCase{Runner: "test-ui", Layer: "ui", Environments: []string{"staging"}}, want: true},
+		{name: "local UI", case_: testCatalogCase{Runner: "test-ui", Layer: "ui", Environments: []string{"local"}}},
+		{name: "scheduled SDK", case_: testCatalogCase{Runner: "test-e2e", Owner: "rtk_cloud_client", Environments: []string{"staging"}}, want: true},
+		{name: "operator E2E", case_: testCatalogCase{Runner: "test-e2e", Owner: "factory_enroll", Environments: []string{"staging"}}},
+		{name: "runtime onboarding", case_: testCatalogCase{ID: "LIVE-STG-ONBOARD-001", Runner: "test-live", Environments: []string{"staging"}}, want: true},
+		{name: "runtime scrape", case_: testCatalogCase{ID: "LIVE-CA-SCRAPE-001", Runner: "test-live", Environments: []string{"staging"}}, want: true},
+		{name: "operator live", case_: testCatalogCase{ID: "E2E-CA-SIGNUP-EMAIL-001", Runner: "test-live", Environments: []string{"staging"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := scheduledGateProofCase(tc.case_); got != tc.want {
+				t.Fatalf("scheduledGateProofCase() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCatalogRejectsUnknownFeatureQualificationMode(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

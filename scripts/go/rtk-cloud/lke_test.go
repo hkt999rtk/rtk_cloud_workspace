@@ -855,6 +855,47 @@ func TestRunLKEResolveImagesUsesProvidedServiceImageWithoutInspect(t *testing.T)
 	}
 }
 
+func TestRunLKEResolveImagesRejectsStaleOfficialPinnedServiceImage(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	commits := makeLKEServiceRepos(t, workspace)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-000000000000")
+
+	err := runLKEResolveImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--owner", "hkt999rtk",
+		"--skip-verify",
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match source commit") || !strings.Contains(err.Error(), commits["rtk_video_cloud"]) {
+		t.Fatalf("stale official image override accepted: %v", err)
+	}
+}
+
+func TestRunLKEResolveImagesVerifiesCurrentOfficialPinnedServiceImage(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	commits := makeLKEServiceRepos(t, workspace)
+	image := "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-" + commits["rtk_video_cloud"]
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", image)
+	inspected := []string{}
+	oldInspect := inspectLKEImage
+	inspectLKEImage = func(candidate string) error {
+		inspected = append(inspected, candidate)
+		return nil
+	}
+	t.Cleanup(func() { inspectLKEImage = oldInspect })
+
+	if err := runLKEResolveImages([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--owner", "hkt999rtk",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(inspected) != 5 || inspected[0] != image {
+		t.Fatalf("official pinned image was not verified exactly once: %v", inspected)
+	}
+}
+
 func TestRunLKEResolveImagesFailsWhenServiceImageIsMissing(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	commits := makeLKEServiceRepos(t, workspace)
