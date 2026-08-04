@@ -992,7 +992,7 @@ cases:
     evidence: [json, markdown, logs]
     verifies: [REQ-LOAD-HOME-SHADOW-001]
     status: active
-  - { id: LOAD-HOME-SHADOW-002, title: Home one-hundred-thousand-device load meets thresholds, layer: load, feature: device-shadow, profile: capacity, covers: [E2E-HOME-SHADOW-001, E2E-HOME-SHADOW-002, E2E-HOME-SHADOW-003], owner: home_cloud, source: loadtests/home-100k/scenarios/default.description.env, selector: "HOME100K_ENVIRONMENT=staging", method: Distributed load generators exercise the full Home Cloud mix and aggregate latency error and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LOAD-HOME-SHADOW-002], status: active }
+  - { id: LOAD-HOME-SHADOW-002, title: Home one-hundred-thousand-device load meets thresholds, layer: load, feature: device-shadow, profile: capacity, covers: [E2E-HOME-SHADOW-001, E2E-HOME-SHADOW-002, E2E-HOME-SHADOW-003], owner: home_cloud, source: loadtests/home-100k/scenarios/video-100k-turn.description.env, selector: "HOME100K_SCENARIO_PROFILE=video-100k-turn-v1", method: The combined 100K Home and TURN capacity profile exercises the full MQTT shadow mix and aggregates latency error correlation and capacity thresholds., runner: test-live, environments: [staging], evidence: [json, markdown, logs], verifies: [REQ-LOAD-HOME-SHADOW-002], status: active }
   - id: LOAD-HOME-VIDEO-001
     title: One-thousand-device video qualification meets thresholds
     layer: load
