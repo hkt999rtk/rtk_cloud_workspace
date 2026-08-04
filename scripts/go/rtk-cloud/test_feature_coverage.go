@@ -168,7 +168,7 @@ func runTestFeatureCoverage(args []string) error {
 	if err != nil {
 		return err
 	}
-	selected, err := selectCatalogFeatures(workspace, catalog, base, head)
+	selected, err := selectFeatureCoverageScope(workspace, catalog, base, head, mode)
 	if err != nil {
 		return err
 	}
@@ -191,7 +191,7 @@ func runTestFeatureCoverage(args []string) error {
 	return nil
 }
 
-func selectCatalogFeatures(workspace string, catalog testCatalog, base, head string) ([]string, error) {
+func activeCatalogFeatureIDs(catalog testCatalog) []string {
 	all := make([]string, 0, len(catalog.Features))
 	for _, feature := range catalog.Features {
 		if feature.Status == "active" {
@@ -199,6 +199,21 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 		}
 	}
 	sort.Strings(all)
+	return all
+}
+
+func selectFeatureCoverageScope(workspace string, catalog testCatalog, base, head, mode string) ([]string, error) {
+	// PRs qualify only impacted features. Main, scheduled, and release gates are
+	// repository qualification boundaries and must never turn an empty or narrow
+	// diff into a misleading 0/0 PASS.
+	if mode != "pr" {
+		return activeCatalogFeatureIDs(catalog), nil
+	}
+	return selectCatalogFeatures(workspace, catalog, base, head)
+}
+
+func selectCatalogFeatures(workspace string, catalog testCatalog, base, head string) ([]string, error) {
+	all := activeCatalogFeatureIDs(catalog)
 	if strings.TrimSpace(base) == "" {
 		return all, nil
 	}
@@ -208,10 +223,7 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 	}
 	paths := strings.Fields(raw)
 	for _, path := range paths {
-		if path == "tests/catalog.yaml" || path == "tests/spec-sources.yaml" ||
-			strings.HasPrefix(path, "scripts/go/rtk-cloud/test_feature_coverage") ||
-			strings.HasPrefix(path, "scripts/go/rtk-cloud/test_spec_") ||
-			strings.HasPrefix(path, ".github/workflows/") || strings.HasPrefix(path, "scripts/test_") {
+		if conservativeFeatureSelectionPath(path) {
 			return all, nil
 		}
 	}
@@ -265,6 +277,25 @@ func selectCatalogFeatures(workspace string, catalog testCatalog, base, head str
 	}
 	sort.Strings(selected)
 	return selected, nil
+}
+
+func conservativeFeatureSelectionPath(path string) bool {
+	path = filepath.ToSlash(path)
+	if strings.HasPrefix(path, "tests/") ||
+		strings.HasPrefix(path, ".github/workflows/") ||
+		strings.HasPrefix(path, "scripts/test_") ||
+		strings.HasPrefix(path, "scripts/go/rtk-cloud/") ||
+		strings.HasPrefix(path, "e2e_test/") ||
+		strings.HasPrefix(path, "loadtests/") {
+		return true
+	}
+	// A superproject diff exposes a submodule update as only its gitlink path,
+	// not the changed files inside that repository. Without trustworthy inner
+	// paths the safe scope is every active feature.
+	if strings.HasPrefix(path, "repos/") && !strings.Contains(strings.TrimPrefix(path, "repos/"), "/") {
+		return true
+	}
+	return false
 }
 
 func governedProductSurfacePath(path string) bool {

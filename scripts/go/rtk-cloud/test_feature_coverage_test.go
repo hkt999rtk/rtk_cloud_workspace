@@ -430,6 +430,30 @@ func TestFeatureSelectionUsesChangePathsAndRejectsUnmappedSurface(t *testing.T) 
 	if _, err := selectCatalogFeatures(repository, catalog, strings.TrimSpace(base), "HEAD"); err == nil {
 		t.Fatal("unmapped product surface accepted")
 	}
+
+	harnessBase, _ := gitOutput(repository, "rev-parse", "HEAD")
+	harness := filepath.Join(repository, "loadtests", "home-100k", "scripts", "runner.sh")
+	if err := os.MkdirAll(filepath.Dir(harness), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(harness, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", ".")
+	runGit("commit", "-q", "-m", "shared harness change")
+	catalog.Features = []testCatalogFeature{
+		{ID: "FEAT-CA-TEST-001", Status: "active", ChangePaths: []string{"repos/rtk_cloud_admin/**"}},
+		{ID: "FEAT-VC-TEST-001", Status: "active", ChangePaths: []string{"repos/rtk_video_cloud/**"}},
+	}
+	selected, err = selectCatalogFeatures(repository, catalog, strings.TrimSpace(harnessBase), "HEAD")
+	if err != nil || strings.Join(selected, ",") != "FEAT-CA-TEST-001,FEAT-VC-TEST-001" {
+		t.Fatalf("shared harness selection = %v, %v", selected, err)
+	}
+
+	selected, err = selectFeatureCoverageScope(repository, catalog, "invalid-base-is-not-read", "HEAD", "main")
+	if err != nil || strings.Join(selected, ",") != "FEAT-CA-TEST-001,FEAT-VC-TEST-001" {
+		t.Fatalf("main qualification selection = %v, %v", selected, err)
+	}
 }
 
 func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
