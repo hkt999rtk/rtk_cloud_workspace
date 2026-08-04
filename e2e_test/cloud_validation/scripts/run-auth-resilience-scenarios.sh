@@ -105,6 +105,10 @@ if ! request_device_token "$device_cert" "$device_key" "$device_id" "$device_ini
   exit 1
 fi
 require_access_token "$device_initial" "initial device certificate token request"
+if ! expect_device_token_rejection "$device_cert" "$device_key" "$foreign_device_id"; then
+  echo "device certificate was accepted for a conflicting device identity" >&2
+  exit 1
+fi
 expired_headers="$secret_root/auth-resilience-expired-headers.txt"
 printf '%s\n' '{"access_token":"expired-cloud-validation-token"}' > "$expired_headers"
 chmod 600 "$expired_headers"
@@ -166,6 +170,7 @@ jq -n --arg run_id "$run_id" --arg platform "$platform" --arg observed_at "$obse
     {scenario_id:"app_certificate_token_bootstrap",correlation_id:($run_id+"-"+$platform+"-app_certificate_token_bootstrap"),type:"authorized_device_read",observed_at:$observed_at,evidence:{source_event_ids:["app-device-read-http-200"]}},
     {scenario_id:"device_token_certificate_recovery",correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),type:"device_mtls_authenticated",observed_at:$observed_at,evidence:{source_event_ids:["device-mtls-token-initial"]}},
     {scenario_id:"device_token_certificate_recovery",correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),type:"token_issued",observed_at:$observed_at,evidence:{source_event_ids:["device-token-initial"]}},
+    {scenario_id:"device_token_certificate_recovery",correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),type:"conflicting_device_identity_rejected",observed_at:$observed_at,evidence:{source_event_ids:["device-certificate-conflicting-identity-denied"]}},
     {scenario_id:"device_token_certificate_recovery",correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),type:"token_reissued",observed_at:$observed_at,evidence:{source_event_ids:["device-token-reissued"]}},
     {scenario_id:"device_token_certificate_recovery",correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),type:"certificate_recovery_succeeded",observed_at:$observed_at,evidence:{source_event_ids:["reissued-token-device-read-http-200"]}},
     {scenario_id:"deactivated_certificate_rejected",correlation_id:($run_id+"-"+$platform+"-deactivated_certificate_rejected"),type:"token_issued",observed_at:$observed_at,evidence:{source_event_ids:["pre-deactivation-token"]}},
@@ -179,7 +184,7 @@ merged="$platform_result.tmp"
 jq --arg run_id "$run_id" --arg platform "$platform" '
   .results += [
     {scenario_id:"app_certificate_token_bootstrap",status:"PASS",duration_ms:0,correlation_id:($run_id+"-"+$platform+"-app_certificate_token_bootstrap"),evidence:["account login CSR issued an app certificate","app mTLS token authorized the run-owned device"]},
-    {scenario_id:"device_token_certificate_recovery",status:"PASS",duration_ms:0,correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),evidence:["expired token rejected","device certificate reissued a usable token"]},
+    {scenario_id:"device_token_certificate_recovery",status:"PASS",duration_ms:0,correlation_id:($run_id+"-"+$platform+"-device_token_certificate_recovery"),evidence:["conflicting device identity rejected","expired token rejected","device certificate reissued a usable token"]},
     {scenario_id:"deactivated_certificate_rejected",status:"PASS",duration_ms:0,correlation_id:($run_id+"-"+$platform+"-deactivated_certificate_rejected"),evidence:["pre-deactivation token issued","deactivated certificate rebootstrap rejected"]}
   ] |
   .results |= unique_by(.scenario_id) |

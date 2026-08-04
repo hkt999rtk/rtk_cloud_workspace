@@ -186,6 +186,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 test -n "$output"
+if [[ -n "$expect_status" && "$cert" != *"auth-resilience-foreign-cert.pem" ]]; then
+  exit 0
+fi
 if [[ -n "$expect_status" && "$cert" == *"auth-resilience-foreign-cert.pem" && -e "${AUTH_DEACTIVATED_STATE:?AUTH_DEACTIVATED_STATE is required}" ]]; then
   exit 0
 fi
@@ -282,7 +285,7 @@ cp "$tmp/out/platform-result.json" "$tmp/out/ios/platform-result.json"
 touch "$ROTATION_TOKEN_STATE"
 "$root/e2e_test/cloud_validation/scripts/run-auth-resilience-scenarios.sh"
 jq -e '[.results[].scenario_id] | contains(["app_certificate_token_bootstrap","device_token_certificate_recovery","deactivated_certificate_rejected"])' "$tmp/out/ios/platform-result.json" >/dev/null
-jq -e '[.events[].type] | contains(["account_session_issued","app_certificate_issued","token_reissued","device_deactivated","certificate_rejected"])' "$tmp/out/auth-resilience-evidence.json" >/dev/null
+jq -e '[.events[].type] | contains(["account_session_issued","app_certificate_issued","conflicting_device_identity_rejected","token_reissued","device_deactivated","certificate_rejected"])' "$tmp/out/auth-resilience-evidence.json" >/dev/null
 export CLOUD_VALIDATION_COMMAND_TRIGGER_TIMEOUT_SECONDS=2
 "$root/e2e_test/cloud_validation/scripts/run-cloud-command-trigger.sh"
 jq -e '.events[0].type == "command_dispatched" and .events[0].evidence.http_status == 200' "$tmp/out/cloud-command-trigger-evidence.json" >/dev/null

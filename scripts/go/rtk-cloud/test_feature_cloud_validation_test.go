@@ -77,6 +77,49 @@ func TestImportCloudValidationWebSocketWorkflowEvidence(t *testing.T) {
 	}
 }
 
+func TestCloudValidationDeviceRecoveryQualifiesBootstrapAndRecoveryWorkflows(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventory, err := loadSpecInventory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, ok := catalogCaseByID(catalog.Cases, "E2E-AUTH-DEVRECOVERY-001")
+	if !ok {
+		t.Fatal("missing E2E-AUTH-DEVRECOVERY-001 catalog case")
+	}
+	const scenarioID = "device_token_certificate_recovery"
+	const correlationID = "sdk-import-test-ios-device_token_certificate_recovery"
+	eventTypes := []string{"token_issued", "conflicting_device_identity_rejected", "token_reissued", "certificate_recovery_succeeded"}
+	item := cloudValidationEventKey{CorrelationID: correlationID, Types: map[string]bool{}, Evidence: map[string]map[string]any{}}
+	for _, eventType := range eventTypes {
+		item.Types[eventType] = true
+	}
+	events := map[string]cloudValidationEventKey{scenarioID: item}
+	assertions, err := cloudValidationWorkflowAssertions(tc, inventory, scenarioID, correlationID, nil, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, assertion := range assertions {
+		got[assertion.WorkflowID] = len(assertion.Steps)
+	}
+	if got["WF-CONTRACT-AUTH-DEVICE-001"] != 2 || got["WF-CONTRACT-AUTH-RECOVERY-001"] != 3 {
+		t.Fatalf("unexpected device workflow assertions: %#v", assertions)
+	}
+	delete(item.Types, "conflicting_device_identity_rejected")
+	events[scenarioID] = item
+	if _, err := cloudValidationWorkflowAssertions(tc, inventory, scenarioID, correlationID, nil, events); err == nil {
+		t.Fatal("device bootstrap workflow accepted missing conflicting-identity rejection")
+	}
+}
+
 func TestImportCloudValidationRejectsIncompleteWebSocketWorkflow(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
