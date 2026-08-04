@@ -121,6 +121,11 @@ For the `video-1k-v1` profile, `aggregate` reads
 `video_evidence`. This reuses the workspace-owned video runner instead of
 adding WebRTC media logic to the home MQTT/shadow runner.
 
+The governed 1K profile executes the workspace-owned runner as one global
+remote shard on the live `us-sea` generator. Aggregate therefore also accepts
+`<out-dir>/video/shard-01/load-results.json`; a local operator-workstation run
+is not qualifying evidence for `video-1k-v1`.
+
 For the `video-50k-turn-v1` and `video-100k-turn-v1` profiles, `aggregate`
 reads every `<out-dir>/video/step-*` directory, preserves a
 `video_evidence.steps` entry per viewer step, and also emits aggregate
