@@ -241,6 +241,44 @@ func TestCatalogRejectsUnknownFeatureQualificationMode(t *testing.T) {
 	}
 }
 
+func TestLoadCasesUseScenarioProfilesAtTheirDeclaredScale(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]struct {
+		devices string
+		profile string
+	}{
+		"LOAD-HOME-SHADOW-001": {devices: "1000"},
+		"LOAD-HOME-SHADOW-002": {devices: "100000", profile: "video-100k-turn-v1"},
+		"LOAD-HOME-VIDEO-001":  {devices: "1000", profile: "video-1k-v1"},
+		"LOAD-HOME-TURN-001":   {devices: "50000", profile: "video-50k-turn-v1"},
+		"LOAD-HOME-TURN-002":   {devices: "100000", profile: "video-100k-turn-v1"},
+		"LOAD-VC-CLIP-001":     {devices: "10000", profile: "clip-storage-10k-v2"},
+		"LOAD-VC-CLIP-002":     {devices: "1000", profile: "clip-storage-1k-v1"},
+	}
+	for testID, want := range expected {
+		t.Run(testID, func(t *testing.T) {
+			tc, ok := catalogCaseByID(catalog.Cases, testID)
+			if !ok {
+				t.Fatalf("catalog case %s is missing", testID)
+			}
+			scenario := filepath.Join(workspace, filepath.FromSlash(tc.Source))
+			if got := envFileValue(scenario, "HOME100K_DEVICES"); got != want.devices {
+				t.Fatalf("%s HOME100K_DEVICES = %q, want %q", tc.Source, got, want.devices)
+			}
+			if got := envFileValue(scenario, "HOME100K_SCENARIO_PROFILE"); got != want.profile {
+				t.Fatalf("%s HOME100K_SCENARIO_PROFILE = %q, want %q", tc.Source, got, want.profile)
+			}
+		})
+	}
+}
+
 func TestCatalogSurfaceExclusionRequiresOwnedUnexpiredReason(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
