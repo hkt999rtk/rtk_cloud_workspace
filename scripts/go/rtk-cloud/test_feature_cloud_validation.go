@@ -28,6 +28,7 @@ type cloudValidationImportReport struct {
 			TestID        string   `json:"test_id"`
 			ScenarioID    string   `json:"scenario_id"`
 			Status        string   `json:"status"`
+			ReasonCode    string   `json:"reason_code"`
 			CorrelationID string   `json:"correlation_id"`
 			Evidence      []string `json:"evidence"`
 		} `json:"results"`
@@ -105,6 +106,12 @@ func importCloudValidationFeatureEvidence(workspace string, catalog testCatalog,
 
 	scenarioContract := map[string]cloudValidationImportScenario{}
 	for _, scenario := range report.Scenarios {
+		if scenario.ID == "" || scenario.TestID == "" {
+			return errors.New("cloud-validation scenario contract requires scenario and Test IDs")
+		}
+		if _, exists := scenarioContract[scenario.ID]; exists {
+			return fmt.Errorf("duplicate cloud-validation scenario contract %s", scenario.ID)
+		}
 		scenarioContract[scenario.ID] = cloudValidationImportScenario{TestID: scenario.TestID, ExpectedEvents: scenario.ExpectedCloudEvidence}
 	}
 	events := cloudValidationEventsByScenario(evidence)
@@ -120,11 +127,22 @@ func importCloudValidationFeatureEvidence(workspace string, catalog testCatalog,
 	featureByRequirement := catalogFeatureByRequirement(catalog)
 	var cases []featureCaseEvidenceV2
 	seen := map[string]bool{}
+	seenScenarios := map[string]bool{}
 	for _, result := range report.PlatformResult.Results {
 		contract, exists := scenarioContract[result.ScenarioID]
-		if !exists || contract.TestID == "" || contract.TestID != result.TestID {
+		if !exists {
+			if result.TestID == "" && strings.EqualFold(result.Status, "SKIP") && result.ReasonCode == "profile_excluded" {
+				continue
+			}
+			return fmt.Errorf("scenario %s is not part of the selected native scenario contract", result.ScenarioID)
+		}
+		if contract.TestID != result.TestID {
 			return fmt.Errorf("scenario %s Test ID does not match the native scenario contract", result.ScenarioID)
 		}
+		if seenScenarios[result.ScenarioID] {
+			return fmt.Errorf("duplicate cloud-validation scenario result %s", result.ScenarioID)
+		}
+		seenScenarios[result.ScenarioID] = true
 		if seen[result.TestID] {
 			return fmt.Errorf("duplicate cloud-validation Test ID %s", result.TestID)
 		}
@@ -173,6 +191,11 @@ func importCloudValidationFeatureEvidence(workspace string, catalog testCatalog,
 			CompletedAt: completed.UTC().Format(time.RFC3339), WorkspaceCommit: commits["workspace"], Commits: commits,
 			Requirements: assertions, Workflows: workflowAssertions,
 		})
+	}
+	for scenarioID := range scenarioContract {
+		if !seenScenarios[scenarioID] {
+			return fmt.Errorf("selected cloud-validation scenario %s is missing a native result", scenarioID)
+		}
 	}
 	if len(cases) == 0 {
 		return errors.New("cloud-validation result contains no feature Test IDs")
