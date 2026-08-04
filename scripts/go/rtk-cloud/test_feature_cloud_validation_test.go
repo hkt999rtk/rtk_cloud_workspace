@@ -274,6 +274,8 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"test-feature-coverage import-cloud-validation", "feature-evidence.json",
 		`.platform == "ios"`, `.platform == "android"`,
 		"vars.SDK_E2E_IOS_CLOUD_SLUG", "vars.SDK_E2E_ANDROID_CLOUD_SLUG",
+		"CLOUD_VALIDATION_IOS_ARTIFACT:", "CLOUD_VALIDATION_IOS_ARTIFACT_SHA256:",
+		"CLOUD_VALIDATION_ANDROID_ARTIFACT:", "CLOUD_VALIDATION_ANDROID_ARTIFACT_SHA256:",
 		"secrets.LINODE_TOKEN", "secrets.CI_RUNNER_GITHUB_WORK_KEY",
 		"Initialize private submodules", "git submodule update --init --recursive --depth=1",
 		"permitted_classes: [], permitted_symbols: [], aliases: true",
@@ -290,6 +292,12 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 	}
 	if strings.Count(workflow, "group: sdk-cloud-validation-mobile-host") != 2 {
 		t.Fatal("iOS and Android live jobs must share the mobile-host concurrency guard")
+	}
+	if strings.Count(workflow, "CLOUD_VALIDATION_IOS_ARTIFACT:") != 1 || strings.Count(workflow, "CLOUD_VALIDATION_IOS_ARTIFACT_SHA256:") != 1 {
+		t.Fatal("iOS live job must explicitly override any host-level platform artifact path and checksum")
+	}
+	if strings.Count(workflow, "CLOUD_VALIDATION_ANDROID_ARTIFACT:") != 1 || strings.Count(workflow, "CLOUD_VALIDATION_ANDROID_ARTIFACT_SHA256:") != 1 {
+		t.Fatal("Android live job must explicitly override any host-level platform artifact path and checksum")
 	}
 	if strings.Count(workflow, `go-version: "1.25.x"`) != 4 || strings.Contains(workflow, `go-version: "1.24.x"`) {
 		t.Fatal("every SDK workflow job must use the scripts/go Go 1.25 toolchain")

@@ -5045,6 +5045,39 @@ func runTestCommand(t *testing.T, dir, name string, args ...string) string {
 	return string(out)
 }
 
+func TestRolloutK8SKindVerifiesOnDeleteStatefulSetReadiness(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "`+logPath+`"
+case "$*" in
+  *"get statefulset -o name"*) printf 'statefulset/openbao\n' ;;
+  *"get statefulset/openbao -o jsonpath="*) printf 'OnDelete' ;;
+  *"get statefulset/openbao -o json"*) printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":1},"status":{"observedGeneration":4,"readyReplicas":1,"currentReplicas":1,"currentRevision":"openbao-abc","updateRevision":"openbao-abc"}}' ;;
+  *"rollout status"*) exit 91 ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
+	if err := rolloutK8SKind("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset", "--timeout=1s"); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{"get statefulset -o name", "get statefulset/openbao -o jsonpath={.spec.updateStrategy.type}", "get statefulset/openbao -o json"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("missing OnDelete readiness check %q in:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "rollout status") {
+		t.Fatalf("OnDelete StatefulSet must not use kubectl rollout status:\n%s", log)
+	}
+}
+
 func fakeKubectl(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

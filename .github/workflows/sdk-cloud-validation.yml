@@ -257,6 +257,8 @@ jobs:
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN || secrets.linode_token }}
       CLOUD_VALIDATION_ARTIFACT: ${{ inputs.ios_artifact_path || inputs.artifact_path }}
       CLOUD_VALIDATION_ARTIFACT_SHA256: ${{ inputs.ios_artifact_sha256 || inputs.artifact_sha256 }}
+      CLOUD_VALIDATION_IOS_ARTIFACT: ${{ inputs.ios_artifact_path || inputs.artifact_path }}
+      CLOUD_VALIDATION_IOS_ARTIFACT_SHA256: ${{ inputs.ios_artifact_sha256 || inputs.artifact_sha256 }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -363,6 +365,8 @@ jobs:
       CLOUD_VALIDATION_INSTALL_ANDROID_SYSTEM_IMAGE: "1"
       CLOUD_VALIDATION_ARTIFACT: ${{ inputs.android_artifact_path || inputs.artifact_path }}
       CLOUD_VALIDATION_ARTIFACT_SHA256: ${{ inputs.android_artifact_sha256 || inputs.artifact_sha256 }}
+      CLOUD_VALIDATION_ANDROID_ARTIFACT: ${{ inputs.android_artifact_path || inputs.artifact_path }}
+      CLOUD_VALIDATION_ANDROID_ARTIFACT_SHA256: ${{ inputs.android_artifact_sha256 || inputs.artifact_sha256 }}
     steps:
       - uses: actions/checkout@v6
         with:

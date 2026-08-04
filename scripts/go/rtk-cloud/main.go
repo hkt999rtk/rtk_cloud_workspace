@@ -3967,11 +3967,86 @@ func rolloutK8SKind(kubeconfig, namespace, kind, timeoutArg string) error {
 		return err
 	}
 	for _, name := range strings.Fields(string(out)) {
+		if kind == "statefulset" {
+			strategy, err := k8sStatefulSetUpdateStrategy(kubeconfig, namespace, name)
+			if err != nil {
+				return err
+			}
+			if strategy == "OnDelete" {
+				if err := waitK8SOnDeleteStatefulSetReady(kubeconfig, namespace, name, timeoutArg); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		if err := runK8SKubectl(kubeconfig, "-n", namespace, "rollout", "status", name, timeoutArg); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func k8sStatefulSetUpdateStrategy(kubeconfig, namespace, name string) (string, error) {
+	cmd := exec.Command("kubectl", "-n", namespace, "get", name, "-o", "jsonpath={.spec.updateStrategy.type}")
+	cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("kubectl get %s/%s update strategy: %s", namespace, name, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func waitK8SOnDeleteStatefulSetReady(kubeconfig, namespace, name, timeoutArg string) error {
+	timeoutText := strings.TrimPrefix(timeoutArg, "--timeout=")
+	timeout, err := time.ParseDuration(timeoutText)
+	if err != nil || timeout <= 0 {
+		return fmt.Errorf("invalid rollout timeout %q", timeoutArg)
+	}
+	poll := envDurationDefault("RTK_CLOUD_K8S_ROLLOUT_POLL", 2*time.Second)
+	deadline := time.Now().Add(timeout)
+	var last string
+	for {
+		cmd := exec.Command("kubectl", "-n", namespace, "get", name, "-o", "json")
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+		out, commandErr := cmd.CombinedOutput()
+		if commandErr != nil {
+			last = strings.TrimSpace(string(out))
+		} else {
+			var state struct {
+				Metadata struct {
+					Generation int64 `json:"generation"`
+				} `json:"metadata"`
+				Spec struct {
+					Replicas *int32 `json:"replicas"`
+				} `json:"spec"`
+				Status struct {
+					ObservedGeneration int64  `json:"observedGeneration"`
+					ReadyReplicas      int32  `json:"readyReplicas"`
+					CurrentReplicas    int32  `json:"currentReplicas"`
+					CurrentRevision    string `json:"currentRevision"`
+					UpdateRevision     string `json:"updateRevision"`
+				} `json:"status"`
+			}
+			if unmarshalErr := json.Unmarshal(out, &state); unmarshalErr != nil {
+				last = unmarshalErr.Error()
+			} else {
+				desired := int32(1)
+				if state.Spec.Replicas != nil {
+					desired = *state.Spec.Replicas
+				}
+				revisionReady := state.Status.UpdateRevision == "" || state.Status.CurrentRevision == state.Status.UpdateRevision
+				if state.Status.ObservedGeneration >= state.Metadata.Generation && state.Status.ReadyReplicas == desired && state.Status.CurrentReplicas == desired && revisionReady {
+					fmt.Fprintf(os.Stderr, "statefulset %q OnDelete readiness verified\n", strings.TrimPrefix(name, "statefulset/"))
+					return nil
+				}
+				last = fmt.Sprintf("generation=%d/%d ready=%d current=%d desired=%d revision=%s/%s", state.Status.ObservedGeneration, state.Metadata.Generation, state.Status.ReadyReplicas, state.Status.CurrentReplicas, desired, state.Status.CurrentRevision, state.Status.UpdateRevision)
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("statefulset %s/%s OnDelete readiness timed out after %s: %s", namespace, name, timeout, last)
+		}
+		time.Sleep(poll)
+	}
 }
 
 func k8sServicePort(kubeconfig, namespace, service, portName string) (int, error) {
