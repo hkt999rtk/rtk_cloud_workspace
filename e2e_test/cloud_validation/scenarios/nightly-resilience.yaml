@@ -42,7 +42,7 @@ scenarios:
     device_profile: online
     app_action: reissue_then_expire_and_recover_with_device_certificate
     expected_sdk_result: success
-    expected_cloud_evidence: [device_mtls_authenticated, token_issued, token_reissued, certificate_recovery_succeeded]
+    expected_cloud_evidence: [device_mtls_authenticated, token_issued, conflicting_device_identity_rejected, token_reissued, certificate_recovery_succeeded]
     timeout: 120s
     cleanup: run_owned_resources
   - id: deactivated_certificate_rejected

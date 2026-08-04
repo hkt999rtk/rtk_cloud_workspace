@@ -271,6 +271,7 @@ func cloudValidationWorkflowAssertions(tc testCatalogCase, inventory specInvento
 	eventSteps := map[string]map[string]string{
 		"WF-SDK-AUTH-001":                 {"request_sdk_token": "token_issued", "read_authorized_device": "authorized_device_read"},
 		"WF-CONTRACT-AUTH-APP-001":        {"discover_csr_requirement": "account_session_issued", "issue_app_certificate": "app_certificate_issued", "issue_app_runtime_token": "token_issued"},
+		"WF-CONTRACT-AUTH-DEVICE-001":     {"issue_device_runtime_token": "token_issued", "reject_conflicting_device_identity": "conflicting_device_identity_rejected"},
 		"WF-CONTRACT-AUTH-RECOVERY-001":   {"issue_device_access_token": "token_issued", "reissue_valid_access_token": "token_reissued", "recover_with_device_certificate": "certificate_recovery_succeeded"},
 		"WF-CONTRACT-AUTH-REVOCATION-001": {"issue_pre_deactivation_token": "token_issued", "deactivate_device_identity": "device_deactivated", "reject_revoked_certificate": "certificate_rejected"},
 	}
