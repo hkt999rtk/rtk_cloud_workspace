@@ -183,6 +183,32 @@ func TestCatalogRequiredRequirementRejectsSupportingOnlyProof(t *testing.T) {
 	}
 }
 
+func TestCatalogUIRequirementAcceptsBrowserIntegrationWithScreenshotProof(t *testing.T) {
+	requirement := testCatalogRequirement{
+		ID: "REQ-UI-TEST-FLOW-001", Status: "active",
+		AcceptanceLayer: "ui", Environments: []string{"ci"},
+	}
+	catalog := testCatalog{
+		SchemaVersion: 4,
+		Features: []testCatalogFeature{{
+			ID: "FEAT-TEST-FLOW-001", Status: "active",
+			Requirements: []testCatalogRequirement{requirement},
+		}},
+		Cases: []testCatalogCase{{
+			ID: "INT-TEST-FLOW-001", Layer: "integration", Status: "active",
+			Verifies: []string{requirement.ID}, Environments: []string{"ci"},
+			Evidence: []string{"json", "screenshot"},
+		}},
+	}
+	if err := validateRequirementProofMappings(catalog); err != nil {
+		t.Fatalf("browser integration with screenshot should qualify as UI proof: %v", err)
+	}
+	catalog.Cases[0].Evidence = []string{"json"}
+	if err := validateRequirementProofMappings(catalog); err == nil || !strings.Contains(err.Error(), "no qualifying") {
+		t.Fatalf("integration without screenshot must not qualify as UI proof, got %v", err)
+	}
+}
+
 func TestCatalogObserveReportsProofGapsWithoutBlockingMigration(t *testing.T) {
 	catalog := testCatalog{
 		SchemaVersion: 4,
