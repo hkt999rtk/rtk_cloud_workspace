@@ -5078,6 +5078,108 @@ esac
 	}
 }
 
+func TestRolloutK8SKindReportsOnDeleteFailures(t *testing.T) {
+	t.Run("strategy lookup", func(t *testing.T) {
+		dir := t.TempDir()
+		kubectl := filepath.Join(dir, "kubectl")
+		writeTestFile(t, kubectl, `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"get statefulset -o name"*) printf 'statefulset/openbao\n' ;;
+  *"get statefulset/openbao -o jsonpath="*) printf 'strategy unavailable\n'; exit 17 ;;
+esac
+`)
+		if err := os.Chmod(kubectl, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		err := rolloutK8SKind("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset", "--timeout=1s")
+		if err == nil || !strings.Contains(err.Error(), "strategy unavailable") {
+			t.Fatalf("error = %v, want strategy lookup failure", err)
+		}
+	})
+
+	t.Run("invalid readiness timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		kubectl := filepath.Join(dir, "kubectl")
+		writeTestFile(t, kubectl, `#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  *"get statefulset -o name"*) printf 'statefulset/openbao\n' ;;
+  *"get statefulset/openbao -o jsonpath="*) printf 'OnDelete' ;;
+esac
+`)
+		if err := os.Chmod(kubectl, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		err := rolloutK8SKind("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset", "--timeout=invalid")
+		if err == nil || !strings.Contains(err.Error(), `invalid rollout timeout "--timeout=invalid"`) {
+			t.Fatalf("error = %v, want invalid timeout failure", err)
+		}
+	})
+}
+
+func TestWaitK8SOnDeleteStatefulSetReadyPollsUntilReady(t *testing.T) {
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+if [[ -f "`+countPath+`" ]]; then count="$(cat "`+countPath+`")"; fi
+count=$((count + 1))
+printf '%s' "$count" > "`+countPath+`"
+if [[ "$count" == "1" ]]; then
+  printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":3,"readyReplicas":1,"currentReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}'
+else
+  printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"currentReplicas":2,"currentRevision":"openbao-new","updateRevision":"openbao-new"}}'
+fi
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
+	if err := waitK8SOnDeleteStatefulSetReady("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(readTestFile(t, countPath)); got != "2" {
+		t.Fatalf("kubectl poll count = %s, want 2", got)
+	}
+}
+
+func TestWaitK8SOnDeleteStatefulSetReadyReportsPollFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		response   string
+		exitStatus int
+		want       string
+	}{
+		{name: "kubectl error", response: "cluster unavailable", exitStatus: 19, want: "cluster unavailable"},
+		{name: "malformed JSON", response: "not-json", want: "invalid character"},
+		{name: "not ready", response: `{"metadata":{"generation":2},"status":{"observedGeneration":1,"currentRevision":"old","updateRevision":"new"}}`, want: "generation=1/2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			kubectl := filepath.Join(dir, "kubectl")
+			script := "#!/usr/bin/env bash\nprintf '%s\\n' " + strconv.Quote(tc.response) + "\n"
+			if tc.exitStatus != 0 {
+				script += fmt.Sprintf("exit %d\n", tc.exitStatus)
+			}
+			writeTestFile(t, kubectl, script)
+			if err := os.Chmod(kubectl, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			err := waitK8SOnDeleteStatefulSetReady("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1ns")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want timeout detail %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func fakeKubectl(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
