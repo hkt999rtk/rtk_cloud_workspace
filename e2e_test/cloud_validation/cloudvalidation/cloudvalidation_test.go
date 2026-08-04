@@ -11,9 +11,33 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type readinessEvidence struct {
+	Status string `json:"status"`
+	Probes []struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Assessment string `json:"assessment"`
+		Attempts   int    `json:"attempts"`
+	} `json:"probes"`
+}
+
+func readReadinessEvidence(t *testing.T, path string) readinessEvidence {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence readinessEvidence
+	if err := json.Unmarshal(raw, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	return evidence
+}
 
 func TestLoadScenarios(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "scenario.yaml")
@@ -358,6 +382,119 @@ func TestCloudReadinessScript(t *testing.T) {
 	}
 	if got := readServerVersion(filepath.Join(outDir, "server-version.json")); got != "account-manager=server-123;video-cloud=0.28.2/test-build" {
 		t.Fatalf("version=%q, want combined deployed service versions", got)
+	}
+	evidence := readReadinessEvidence(t, filepath.Join(outDir, "readiness-results.json"))
+	if evidence.Status != "PASS" || len(evidence.Probes) != 6 {
+		t.Fatalf("readiness evidence = %#v, want six passing probes", evidence)
+	}
+	for _, probe := range evidence.Probes {
+		if probe.Status != "PASS" || probe.Attempts != 1 {
+			t.Fatalf("readiness probe = %#v, want first-attempt PASS", probe)
+		}
+	}
+}
+
+func TestCloudReadinessRetriesTransportTimeoutAndRecordsAttempts(t *testing.T) {
+	var accountRequests atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/health":
+			if accountRequests.Add(1) == 1 {
+				time.Sleep(1200 * time.Millisecond)
+			}
+			_, _ = w.Write([]byte(`{"service":"account-manager"}`))
+		case "/healthz":
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		case "/version":
+			_, _ = w.Write([]byte(`{"ApiVersion":"test","AppVersion":"test"}`))
+		case "/api/devices/00000000-0000-4000-8000-000000000001/entitlement/revoke":
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			_ = conn.Close()
+		}
+	}()
+	outDir := t.TempDir()
+	script := filepath.Join("..", "scripts", "check-cloud-readiness.sh")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = append(os.Environ(),
+		"CLOUD_VALIDATION_OUT_DIR="+outDir,
+		"CLOUD_VALIDATION_ACCOUNT_MANAGER_URL="+server.URL,
+		"CLOUD_VALIDATION_VIDEO_CLOUD_URL="+server.URL,
+		"CLOUD_VALIDATION_DEVICE_URL="+server.URL,
+		"CLOUD_VALIDATION_MQTT_ADDR="+listener.Addr().String(),
+		"CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN=video-admin-test",
+		"CLOUD_VALIDATION_PROBE_TIMEOUT_SECONDS=1",
+		"CLOUD_VALIDATION_PROBE_ATTEMPTS=2",
+		"CLOUD_VALIDATION_PROBE_RETRY_DELAY_SECONDS=0",
+	)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("readiness script failed after transient timeout: %v\n%s", err, output)
+	}
+	evidence := readReadinessEvidence(t, filepath.Join(outDir, "readiness-results.json"))
+	if evidence.Status != "PASS" || len(evidence.Probes) == 0 {
+		t.Fatalf("readiness evidence = %#v", evidence)
+	}
+	account := evidence.Probes[0]
+	if account.Name != "account" || account.Status != "PASS" || account.Attempts != 2 {
+		t.Fatalf("account readiness = %#v, want second-attempt PASS", account)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, "readiness-results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), server.URL) || strings.Contains(string(raw), "video-admin-test") {
+		t.Fatalf("readiness evidence contains URL or token: %s", raw)
+	}
+}
+
+func TestCloudReadinessDoesNotRetryHTTPFailure(t *testing.T) {
+	var accountRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accountRequests.Add(1)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	outDir := t.TempDir()
+	script := filepath.Join("..", "scripts", "check-cloud-readiness.sh")
+	cmd := exec.Command("/bin/bash", script)
+	cmd.Env = append(os.Environ(),
+		"CLOUD_VALIDATION_OUT_DIR="+outDir,
+		"CLOUD_VALIDATION_ACCOUNT_MANAGER_URL="+server.URL,
+		"CLOUD_VALIDATION_VIDEO_CLOUD_URL="+server.URL,
+		"CLOUD_VALIDATION_DEVICE_URL="+server.URL,
+		"CLOUD_VALIDATION_MQTT_ADDR="+listener.Addr().String(),
+		"CLOUD_VALIDATION_VIDEO_CLOUD_ADMIN_TOKEN=video-admin-test",
+		"CLOUD_VALIDATION_PROBE_TIMEOUT_SECONDS=1",
+		"CLOUD_VALIDATION_PROBE_ATTEMPTS=3",
+		"CLOUD_VALIDATION_PROBE_RETRY_DELAY_SECONDS=0",
+	)
+	if output, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("readiness unexpectedly passed HTTP 503: %s", output)
+	}
+	if got := accountRequests.Load(); got != 1 {
+		t.Fatalf("HTTP failure requests = %d, want no retry", got)
+	}
+	evidence := readReadinessEvidence(t, filepath.Join(outDir, "readiness-results.json"))
+	if evidence.Status != "FAIL" || len(evidence.Probes) != 1 || evidence.Probes[0].Assessment != "unexpected_http_status" || evidence.Probes[0].Attempts != 1 {
+		t.Fatalf("HTTP failure evidence = %#v", evidence)
 	}
 }
 
