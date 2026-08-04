@@ -10,14 +10,14 @@
         "owner": 1
       },
       "device_mix": {
-        "light": 18,
+        "light": 15,
         "switch": 7,
         "smart_plug": 12,
         "air_conditioner": 10,
         "environment_sensor": 12,
         "security_sensor": 10,
         "smart_meter": 8,
-        "camera_status": 7,
+        "camera": 10,
         "door_lock": 4,
         "appliance": 7,
         "gateway": 5

@@ -110,6 +110,27 @@ func TestLoadTestBrandPlan1KScenarioUsesOneFormalOwner(t *testing.T) {
 			t.Fatalf("1K brand mix %s=%d, scenario wants %d", deviceType, got, want)
 		}
 	}
+	if got := brand.DeviceMix["camera"]; got != 10 {
+		t.Fatalf("1K formal-owner fixture camera weight = %d, want 10 for 100 Video/Clip devices", got)
+	}
+	if got := brand.DeviceMix["camera_status"]; got != 0 {
+		t.Fatalf("1K formal-owner fixture must use video-capable camera devices, got camera_status weight %d", got)
+	}
+	var cameraProfile loadDeviceType
+	for _, profile := range loadDeviceTypes {
+		if profile.Name == "camera" {
+			cameraProfile = profile
+			break
+		}
+	}
+	if cameraProfile.Name == "" {
+		t.Fatal("camera load-device profile is missing")
+	}
+	for _, service := range []string{"mqtt", "video_streaming", "video_storage"} {
+		if !contains(cameraProfile.ServiceOptions, service) {
+			t.Fatalf("1K camera profile is missing required service option %q: %+v", service, cameraProfile)
+		}
+	}
 }
 
 func TestPlannedUsersKeepsMemberEmailAndSeparatesDeveloperRoles(t *testing.T) {
