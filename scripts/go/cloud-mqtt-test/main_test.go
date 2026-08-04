@@ -1287,6 +1287,7 @@ func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testi
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -1369,6 +1370,7 @@ func TestSustainedShadowCommandCanDisableRuntimeLogs(t *testing.T) {
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -1425,6 +1427,7 @@ func TestSustainedShadowCommandRequestsAppMQTTTokenWithAppCertificate(t *testing
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -1503,6 +1506,7 @@ func TestSustainedShadowCommandFailsBeforeDeltaWhenAcceptedIsMissing(t *testing.
 	if err := mqttSubscribe(deviceConn, 1, "$vc/devices/rtk-0041/shadow/update/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(deviceConn)
 	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -2503,6 +2507,7 @@ type fakeMQTTBroker struct {
 	RejectForbiddenTopics  bool
 	AllowAWSNamespace      bool
 	SuppressShadowAccepted bool
+	SuppressShadowDelta    bool
 }
 
 func newFakeMQTTBroker(t *testing.T) *fakeMQTTBroker {
@@ -2867,7 +2872,9 @@ func (b *fakeMQTTBroker) publishShadowResponses(topic string, payload []byte) {
 		state["desired"] = desired
 		state["delta"] = desired
 		b.mu.Unlock()
-		b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": map[string]any{"delta": desired}})
+		if !b.SuppressShadowDelta {
+			b.publishToSubscribers(deltaTopic, map[string]any{"clientToken": req.Token, "version": 1, "state": map[string]any{"delta": desired}})
+		}
 		b.publishToSubscribers(documentsTopic, map[string]any{
 			"clientToken": req.Token,
 			"version":     1,
@@ -3189,6 +3196,7 @@ func TestSDKDeviceSimulatorMatchesHome100KShadowDeviceContract(t *testing.T) {
 	if err := mqttSubscribe(homeDeviceConn, 10, topic+"/delta"); err != nil {
 		t.Fatal(err)
 	}
+	clearConnDeadline(homeDeviceConn)
 	reader := startSustainedDeviceReader(homeDeviceConn)
 	defer reader.Close()
 	var homeTotals mqttIOTotals
@@ -3260,7 +3268,21 @@ func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	time.Sleep(50 * time.Millisecond)
+	disconnectRequest := filepath.Join(tmp, "offline-disconnect.request")
+	if err := os.WriteFile(disconnectRequest, []byte("disconnect\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	offlineReady := filepath.Join(tmp, "offline-ready")
+	deadline = time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(offlineReady); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sdk reconnect simulator did not confirm offline state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	appConn, err := connectMQTTActor(mqttActorProbe{
 		DeviceID: "device-reconnect", Brandname: "RTK", RunID: "run-sdk-reconnect",
 		AppToken: testMQTTToken("app"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
@@ -3288,6 +3310,140 @@ func TestSDKDeviceSimulatorResyncsShadowAfterOfflineReconnect(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("sdk reconnect simulator did not finish")
+	}
+}
+
+func TestSDKDeviceSimulatorDeployProfileResyncsPendingShadowWhenInitialDeltaPushIsMissed(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	broker.SuppressShadowDelta = true
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "device-initial-sync")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	readyFile := filepath.Join(tmp, "ready.json")
+	resultCh := make(chan sustainedLoadResult, 1)
+	go func() {
+		resultCh <- runSDKDeviceSimulator(
+			[]assignment{{DeviceID: "device-initial-sync", DeviceType: "light"}},
+			[]certRecord{{DeviceID: "device-initial-sync", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+			"RTK", "run-sdk-initial-sync", tokenServer.URL,
+			[]mqttEndpointTarget{{Host: host, Port: port}}, 2,
+			loadOptions{Concurrency: 1, ReadyFile: readyFile},
+		)
+	}()
+	waitForFile := func(path, description string) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			if _, err := os.Stat(path); err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s", description)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	waitForFile(readyFile, "sdk initial-sync simulator readiness")
+	appConn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "device-initial-sync", Brandname: "RTK", RunID: "run-sdk-initial-sync",
+		AppToken: testMQTTToken("app"), Dial: broker.TLSDial, Timeout: time.Second, Now: fixedProbeTime,
+	}, "app-controller", testMQTTToken("app"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	desiredPayload, err := json.Marshal(map[string]any{
+		"state": map[string]any{"desired": map[string]any{"power": true}}, "clientToken": "initial-desired",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shadowUpdateTopic := "$vc/devices/device-initial-sync/shadow/update"
+	if err := mqttPublish(appConn, shadowUpdateTopic, desiredPayload); err != nil {
+		t.Fatal(err)
+	}
+	_ = appConn.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for broker.PublishCount("device", shadowUpdateTopic) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("sdk simulator did not reconcile the pending initial shadow document")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case result := <-resultCh:
+		if result.Status != "PASS" || result.CommandsPassed != 1 || result.Totals.DeltaReceived != 1 || result.Totals.ReportedEvents != 1 {
+			t.Fatalf("sdk initial-sync result = %+v", result)
+		}
+		if broker.PublishCount("device", "$vc/devices/device-initial-sync/shadow/get") == 0 {
+			t.Fatal("sdk simulator did not issue a shadow GET after the delta push was suppressed")
+		}
+	case <-time.After(7 * time.Second):
+		t.Fatal("sdk initial-sync simulator did not finish")
+	}
+}
+
+func TestRetrySDKShadowSyncRetriesOnlyTransientResponseTimeout(t *testing.T) {
+	attempts := 0
+	reportedBytes, found, err := retrySDKShadowSync(3, func(attempt int) (int, bool, error) {
+		attempts++
+		if attempt == 1 {
+			return 0, false, fmt.Errorf("first response lost: %w", errSDKShadowSyncTimeout)
+		}
+		return 42, true, nil
+	})
+	if err != nil || attempts != 2 || reportedBytes != 42 || !found {
+		t.Fatalf("retry result bytes=%d found=%t attempts=%d err=%v", reportedBytes, found, attempts, err)
+	}
+
+	permanent := errors.New("publish failed")
+	attempts = 0
+	_, _, err = retrySDKShadowSync(3, func(int) (int, bool, error) {
+		attempts++
+		return 0, false, permanent
+	})
+	if !errors.Is(err, permanent) || attempts != 1 {
+		t.Fatalf("permanent retry attempts=%d err=%v, want one attempt and permanent error", attempts, err)
+	}
+}
+
+func TestSDKDeviceSimulatorFailsWithoutDisconnectRequest(t *testing.T) {
+	broker := newFakeTLSMQTTBroker(t)
+	defer broker.Close()
+	deviceCertPEM, deviceKeyPEM, _ := testAppMaterial(t, "device-missing-disconnect")
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, map[string]string{"access_token": testMQTTToken("device")})
+	}))
+	defer tokenServer.Close()
+	host, rawPort, err := net.SplitHostPort(broker.listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	result := runSDKDeviceSimulator(
+		[]assignment{{DeviceID: "device-missing-disconnect", DeviceType: "light"}},
+		[]certRecord{{DeviceID: "device-missing-disconnect", DeviceType: "light", CertPEM: deviceCertPEM, KeyPEM: deviceKeyPEM}},
+		"RTK", "run-sdk-missing-disconnect", tokenServer.URL,
+		[]mqttEndpointTarget{{Host: host, Port: port}}, 1,
+		loadOptions{Concurrency: 1, ReadyFile: filepath.Join(tmp, "ready.json"), SDKReconnectSignalFile: filepath.Join(tmp, "reconnect.signal")},
+	)
+	if result.Status != "FAIL" || len(result.Notes) == 0 || !strings.Contains(result.Notes[len(result.Notes)-1], "disconnect request") {
+		t.Fatalf("sdk simulator result = %+v, want missing disconnect request failure", result)
 	}
 }
 

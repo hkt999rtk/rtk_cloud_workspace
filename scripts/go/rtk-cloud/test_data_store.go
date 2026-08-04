@@ -314,7 +314,18 @@ func (s *testDataStore) ReplaceUsers(brandname, brandCloudID, tenantSlug, role s
 }
 
 func (s *testDataStore) ReadUsersList(brandname string) (map[string]userCredential, []userCredential, error) {
-	rows, err := s.DB.Query(`select email, password, tokens_json from users where brandname = ? and (role = 'member' or coalesce(role, '') = '') order by email`, brandname)
+	rows, err := s.DB.Query(`
+		select email, password, tokens_json
+		from users
+		where brandname = ? and (
+			role = 'member' or coalesce(role, '') = '' or (
+				role in ('owner', 'admin') and not exists (
+					select 1 from users as members
+					where members.brandname = users.brandname and (members.role = 'member' or coalesce(members.role, '') = '')
+				)
+			)
+		)
+		order by email`, brandname)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -475,7 +486,7 @@ on conflict(brandname, device_id) do update set
 }
 
 func (s *testDataStore) ReadBindAssignments(brandname string) ([]bindAssignment, error) {
-	rows, err := s.DB.Query(`select assignment_index, assigned_email, device_id, device_type, category, service_options_json, account_device_id, operation_id, status from device_bindings where brandname = ? order by assignment_index, device_id`, brandname)
+	rows, err := s.DB.Query(`select assignment_index, assigned_email, device_id, device_type, category, service_options_json, account_device_id, operation_id, status, body_json from device_bindings where brandname = ? order by assignment_index, device_id`, brandname)
 	if err != nil {
 		return nil, err
 	}
@@ -483,11 +494,16 @@ func (s *testDataStore) ReadBindAssignments(brandname string) ([]bindAssignment,
 	out := []bindAssignment{}
 	for rows.Next() {
 		var item bindAssignment
-		var serviceOptionsJSON string
-		if err := rows.Scan(&item.AssignmentIndex, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &item.Category, &serviceOptionsJSON, &item.AccountDeviceID, &item.OperationID, &item.Status); err != nil {
+		var serviceOptionsJSON, bodyJSON string
+		if err := rows.Scan(&item.AssignmentIndex, &item.AssignedEmail, &item.DeviceID, &item.DeviceType, &item.Category, &serviceOptionsJSON, &item.AccountDeviceID, &item.OperationID, &item.Status, &bodyJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
+		var stored bindAssignment
+		if err := json.Unmarshal([]byte(bodyJSON), &stored); err != nil {
+			return nil, err
+		}
+		item.ClaimID = stored.ClaimID
 		out = append(out, item)
 	}
 	return out, rows.Err()

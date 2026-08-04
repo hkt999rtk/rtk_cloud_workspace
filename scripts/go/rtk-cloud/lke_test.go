@@ -169,6 +169,34 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	}
 }
 
+func TestEnsureLKEKubeAccessRefreshesExpiredStateKubeconfig(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
+	stateKubeconfig := filepath.Join(envRoot, "state", "kubeconfig.yaml")
+	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\n")
+	writeTestFile(t, stateKubeconfig, "expired kubeconfig\n")
+	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/kubeconfig": `{"kubeconfig":"` + encodedKubeconfig + `"}`,
+	})
+	fakeKubectlWithoutCurrentContext(t)
+	t.Setenv("FAKE_KUBECTL_REJECT_KUBECONFIG_CONTAINING", "expired kubeconfig")
+	t.Setenv("LINODE_TOKEN", "test-token")
+
+	if err := ensureLKEKubeAccess(provisionPaths{EnvRoot: envRoot}, map[string]string{}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readTestFile(t, stateKubeconfig); strings.Contains(got, "expired kubeconfig") {
+		t.Fatalf("expired kubeconfig was not refreshed: %s", got)
+	}
+	if calls := readTestFile(t, curlLog); !strings.Contains(calls, "GET /lke/clusters/12345/kubeconfig") {
+		t.Fatalf("expected kubeconfig refresh, got:\n%s", calls)
+	}
+	if got := os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"); got != stateKubeconfig {
+		t.Fatalf("active kubeconfig = %q, want %q", got, stateKubeconfig)
+	}
+}
+
 func TestEnsureK8SKubeconfigPrefersEnvRootState(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", "")
@@ -892,6 +920,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"ca.crt:",
 		"ARGS -n video-cloud-staging-secrets get pod/openbao-0 -o jsonpath={.status.phase}",
 		"kind: Secret\nmetadata:\n  name: account-manager-runtime",
+		"FACTORY_PRODUCTION_JWT_SECRET: \"test-seed-factory-production-jwt\"",
+		"FACTORY_PRODUCTION_JWT_AUDIENCE: \"factory-enroll\"",
 		"kind: Job\nmetadata:\n  name: account-manager-migrate",
 		"imagePullSecrets:\n        - name: ghcr-pull",
 		"envFrom:\n            - secretRef:\n                name: account-manager-runtime",
@@ -926,6 +956,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"APP_CERT_ISSUER_CLIENT_CERT: \"/etc/rtk-account-manager/certissuer/client.crt\"",
 		"name: account-manager-certissuer-client",
 		"kind: Secret\nmetadata:\n  name: factoryenroll-runtime",
+		"FACTORY_ENROLL_PRODUCTION_JWT_SECRET: \"test-seed-factory-production-jwt\"",
+		"FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE: \"factory-enroll\"",
 		"kind: Secret\nmetadata:\n  name: factoryenroll-certissuer-client",
 		"kind: Deployment\nmetadata:\n  name: factoryenroll",
 		"rtk.realtek.com/runtime-checksum",
@@ -1175,6 +1207,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"",
 		"proxy_set_header X-Client-Verify $ssl_client_verify;",
 		"proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;",
+		"proxy_set_header X-Client-Cert $ssl_client_escaped_cert;",
 		"ca.crt: \"-----BEGIN CERTIFICATE-----\\ntest-root-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-device-ca\\n-----END CERTIFICATE-----\\n-----BEGIN CERTIFICATE-----\\ntest-app-ca\\n-----END CERTIFICATE-----\\n\"",
 		"nginx.ingress.kubernetes.io/backend-protocol: \"HTTPS\"",
 		"ingressClassName: nginx",
@@ -1990,6 +2023,7 @@ func TestLKEOpenBaoBootstrapRolesAllowEd25519AndP256CSRs(t *testing.T) {
 
 	for _, want := range []string{
 		"bao write pki/device/roles/factory-device",
+		`"cn_validations":["disabled"],"server_flag":false,"client_flag":true`,
 		"bao write pki/device/roles/gateway-server",
 		"bao write pki/app/roles/app-user",
 		"key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth",
@@ -3406,6 +3440,52 @@ func TestWriteLKECompatibilityArtifactsForKubernetesArchitecture(t *testing.T) {
 	}
 }
 
+func TestWriteLKECompatibilityArtifactsPreservesRuntimeCoverageConfig(t *testing.T) {
+	envRoot := t.TempDir()
+	env := map[string]string{
+		"CLOUD_ENV_NAME":                         "runtime-coverage",
+		"CLOUD_STACK_NAME":                       "coverage-123-1",
+		"CLOUD_RUNTIME_COVERAGE_STACK":           "coverage-123-1",
+		"CLOUD_REGION":                           "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN":                  "coverage-123-1.invalid",
+		"VIDEO_CLOUD_DOMAIN":                     "video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_API_BASE_URL":               "https://video.coverage-123-1.invalid:18443",
+		"VIDEO_CLOUD_BLOB_ENDPOINT":              "https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_REGION":                "us-sea",
+		"VIDEO_CLOUD_BLOB_BUCKET":                "clip-test",
+		"VIDEO_CLOUD_BLOB_PREFIX":                "runtime-coverage/runtime-123-1",
+		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":      "false",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "true",
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS":           "turn:turn.example.test:3478?transport=udp",
+		"VIDEO_CLOUD_LOAD_ADMIN_TOKEN":           "must-not-be-written",
+		"LINODE_OBJ_SECRET_ACCESS_KEY":           "must-not-be-written",
+	}
+	if err := writeLKECompatibilityArtifacts(provisionPaths{EnvRoot: envRoot}, env); err != nil {
+		t.Fatal(err)
+	}
+
+	stack := readTestFile(t, filepath.Join(envRoot, "env", "stack.env"))
+	for _, want := range []string{
+		"CLOUD_ENV_NAME=runtime-coverage",
+		"CLOUD_STACK_NAME=coverage-123-1",
+		"CLOUD_RUNTIME_COVERAGE_STACK=coverage-123-1",
+		"VIDEO_CLOUD_API_BASE_URL=https://video.coverage-123-1.invalid:18443",
+		"VIDEO_CLOUD_BLOB_ENDPOINT=https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/runtime-123-1",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true",
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS=turn:turn.example.test:3478?transport=udp",
+	} {
+		if !strings.Contains(stack, want) {
+			t.Fatalf("expected %q in stack.env, got:\n%s", want, stack)
+		}
+	}
+	if strings.Contains(stack, "must-not-be-written") ||
+		strings.Contains(stack, "VIDEO_CLOUD_LOAD_ADMIN_TOKEN") ||
+		strings.Contains(stack, "LINODE_OBJ_SECRET_ACCESS_KEY") {
+		t.Fatalf("stack.env persisted secret runtime configuration:\n%s", stack)
+	}
+}
+
 func TestRunProvisionLKEDeployPreservesOperatorStackOverrides(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -3508,6 +3588,8 @@ func TestRunProvisionLKEDeployWritesVideoCloudRuntimeEnv(t *testing.T) {
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"))
 	if !strings.Contains(body, "FACTORY_ENROLL_AUTH_KEY=test-seed-factory-enroll-auth") ||
+		!strings.Contains(body, "FACTORY_ENROLL_PRODUCTION_JWT_SECRET=test-seed-factory-production-jwt") ||
+		!strings.Contains(body, "FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE=factory-enroll") ||
 		!strings.Contains(body, "VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=test-seed-internal-auth") {
 		t.Fatalf("unexpected video cloud runtime env:\n%s", body)
 	}
@@ -3535,7 +3617,9 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	}
 
 	body := readTestFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager.env"))
-	if !strings.Contains(body, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-seed-internal-auth") {
+	if !strings.Contains(body, "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=test-seed-internal-auth") ||
+		!strings.Contains(body, "FACTORY_PRODUCTION_JWT_SECRET=test-seed-factory-production-jwt") ||
+		!strings.Contains(body, "FACTORY_PRODUCTION_JWT_AUDIENCE=factory-enroll") {
 		t.Fatalf("unexpected account-manager runtime env:\n%s", body)
 	}
 	info, err := os.Stat(filepath.Join(envRoot, "services", "account-manager", "account-manager.env"))
@@ -3544,6 +3628,55 @@ func TestRunProvisionLKEDeployWritesAccountManagerRuntimeEnv(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("account-manager runtime env permissions got %o want 600", info.Mode().Perm())
+	}
+}
+
+func TestFactoryProductionJWTSharedAcrossLKEWorkloadsAndChecksums(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
+	t.Setenv("FACTORY_PRODUCTION_JWT_SECRET", "factory-production-secret-one")
+	t.Setenv("FACTORY_PRODUCTION_JWT_AUDIENCE", "factory-enroll")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	accountSecret := lkeAccountManagerSecretManifest(env)
+	factorySecret := lkeFactoryEnrollRuntimeSecretManifest(env)
+	for name, manifest := range map[string]string{
+		"account manager": accountSecret,
+		"factory enroll":  factorySecret,
+	} {
+		if !strings.Contains(manifest, `"factory-production-secret-one"`) ||
+			!strings.Contains(manifest, `"factory-enroll"`) {
+			t.Fatalf("%s secret does not contain the shared production JWT configuration:\n%s", name, manifest)
+		}
+	}
+
+	var accountWorkload lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			accountWorkload = workload
+			break
+		}
+	}
+	if accountWorkload.Key == "" {
+		t.Fatal("account-manager workload not found")
+	}
+	material := lkeCertIssuerMaterial{
+		FactoryCert: "factory-cert",
+		FactoryKey:  "factory-key",
+		ClientCert:  "client-cert",
+		ClientKey:   "client-key",
+		ServiceCA:   "service-ca",
+	}
+	accountDeployment := lkeDeploymentManifest(env, accountWorkload, &material)
+	factoryDeployment := lkeFactoryEnrollDeploymentManifest(env, material)
+
+	t.Setenv("FACTORY_PRODUCTION_JWT_SECRET", "factory-production-secret-two")
+	if changed := lkeDeploymentManifest(env, accountWorkload, &material); changed == accountDeployment {
+		t.Fatal("production JWT secret change must update the account-manager pod template checksum")
+	}
+	if changed := lkeFactoryEnrollDeploymentManifest(env, material); changed == factoryDeployment {
+		t.Fatal("production JWT secret change must update the factory-enroll pod template checksum")
 	}
 }
 
@@ -5080,6 +5213,16 @@ if [[ "${1:-}" == "config" && "${2:-}" == "current-context" ]]; then
   exit 1
 fi
 if [[ "$*" == *"get --raw=/readyz"* ]]; then
+	if [[ -n "${FAKE_KUBECTL_REJECT_KUBECONFIG_CONTAINING:-}" ]]; then
+		for ((i=1; i<=$#; i++)); do
+			if [[ "${!i}" == "--kubeconfig" ]]; then
+				j=$((i + 1))
+				if grep -qF "$FAKE_KUBECTL_REJECT_KUBECONFIG_CONTAINING" "${!j}"; then
+					exit 1
+				fi
+			fi
+		done
+	fi
   printf 'ok\n'
   exit 0
 fi

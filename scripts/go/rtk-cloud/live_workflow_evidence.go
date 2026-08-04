@@ -92,7 +92,43 @@ func writeLiveOnboardingWorkflowEvidence(outDir string) error {
 			"assertions":  runtimeAssertions,
 		},
 	}
-	return writeJSON(filepath.Join(outDir, "provisioning-runtime-workflow.json"), runtimePayload)
+	if err := writeJSON(filepath.Join(outDir, "provisioning-runtime-workflow.json"), runtimePayload); err != nil {
+		return err
+	}
+	bulkSteps, bulkAssertions, err := qualifyBulkProvisioningFacts(bind)
+	if err != nil {
+		return err
+	}
+	bulkPayload := map[string]any{
+		"schema_version": "rtk-live-workflow-evidence/v1",
+		"workflow": map[string]any{
+			"workflow_id": "WF-PROV-BULK-001",
+			"steps":       bulkSteps,
+			"assertions":  bulkAssertions,
+		},
+	}
+	return writeJSON(filepath.Join(outDir, "bulk-provisioning-workflow.json"), bulkPayload)
+}
+
+func qualifyBulkProvisioningFacts(bind liveOnboardingBindEvidence) (map[string]string, map[string]map[string]string, error) {
+	if !strings.EqualFold(bind.Overall, "pass") || bind.Provisioning.Checked == 0 ||
+		bind.Provisioning.Ready != bind.Provisioning.Checked || bind.Provisioning.Pending != 0 || bind.Provisioning.Failed != 0 ||
+		len(bind.Provisioning.LastStates) != bind.Provisioning.Checked {
+		return nil, nil, errors.New("bulk provisioning evidence is not complete")
+	}
+	for deviceID, state := range bind.Provisioning.LastStates {
+		if state.DeviceID != deviceID || strings.TrimSpace(state.AccountDeviceID) == "" ||
+			!strings.EqualFold(state.BindStatus, "provisioned") || !strings.EqualFold(state.OperationStatus, "succeeded") {
+			return nil, nil, fmt.Errorf("bulk provisioning device %s is missing identity or successful operation evidence", deviceID)
+		}
+	}
+	return map[string]string{
+			"provision_registry_device": "PASS",
+			"wait_for_provisioning":     "PASS",
+		}, map[string]map[string]string{
+			"provision_registry_device": {"every_assignment_has_account_device": "PASS", "every_operation_succeeded": "PASS"},
+			"wait_for_provisioning":     {"checked_count_nonzero": "PASS", "all_operations_ready": "PASS", "zero_pending_or_failed": "PASS"},
+		}, nil
 }
 
 func qualifyLiveRuntimeFacts(mqtt liveOnboardingMQTTEvidence) (map[string]string, map[string]map[string]string, error) {

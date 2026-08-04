@@ -29,6 +29,7 @@ ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
 EOF_ENV
 
 COMMAND_LOG="$TMP/commands.log"
+CONTRACT_STEPS="reset,provision,data,mqtt,runtime-logs,billing-log,billing-db"
 make_stub() {
 	local path="$1"
 	local name="$2"
@@ -68,20 +69,11 @@ setup-data)
 	done
 	mkdir -p "\$out_dir/logs" "\$out_dir/bind-validation" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind"
 	test_data_db="$ENV_ROOT/artifacts/test-data/rtk-test-data.sqlite"
-	mkdir -p "$ENV_ROOT/artifacts/test-data"
-	python3 - "\$test_data_db" <<'PY'
-import sqlite3
-import sys
-
-db = sqlite3.connect(sys.argv[1])
-db.execute("DROP TABLE IF EXISTS device_bindings")
-db.execute("CREATE TABLE device_bindings (assignment_index INTEGER, device_id TEXT, brand_cloud_id TEXT)")
-db.execute("INSERT INTO device_bindings VALUES (0, 'dev-1', 'org-rtk')")
-db.commit()
-db.close()
-PY
 	printf '{"brandname":"RTK","users":[{"email":"rtk+001@users.local"}]}\\n' > "$ENV_ROOT/artifacts/users/rtk-users-test.json"
-	printf '{"brandname":"RTK","count":1,"assignments":[{"device_id":"dev-1"}]}\\n' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	mkdir -p "$ENV_ROOT/devices/test_device/manifests"
+	printf '[{"device_id":"dev-1","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"]}]\\n' > "$ENV_ROOT/devices/test_device/manifests/devices.json"
+	printf '{"brandname":"RTK","brand_cloud_id":"org-rtk","count":1,"assignments":[{"assigned_email":"rtk+001@users.local","device_id":"dev-1","device_type":"camera","service_options":["mqtt","video_streaming","video_storage"],"account_device_id":"account-dev-1","operation_id":"operation-1","status":"ready"}]}\\n' > "$ENV_ROOT/artifacts/device-bind/rtk-device-bind-test.json"
+	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- test-data import-legacy --env-root "$ENV_ROOT" --brandname RTK --latest-only >/dev/null
 	cat > "\$out_dir/summary.json" <<JSON
 {
   "overall": "pass",
@@ -261,6 +253,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--user-count 1 \
 	--device-count 3 \
 	--device-mix camera=1,light=1,smart_meter=1 \
+	--steps data,mqtt,runtime-logs,billing-log,billing-db \
 	--skip-mqtt-probe > "$ACCEPTANCE_RUN_OUT"
 expected_acceptance=$'setup-data\nmqtt-test\nmqtt-log-verify\nbilling-verify'
 actual_acceptance="$(cut -f1 "$COMMAND_LOG")"
@@ -306,6 +299,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--user-count 1 \
 	--device-count 3 \
 	--device-mix camera=1,light=1,smart_meter=1 \
+	--steps "$CONTRACT_STEPS" \
 	--skip-mqtt-probe > "$RUN_OUT" 2> "$RUN_ERR"
 
 expected=$'remove-k8s\nprovision-k8s\nsetup-data\nmqtt-test\nmqtt-log-verify\nbilling-verify'
@@ -363,6 +357,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--user-count 1 \
 	--device-count 3 \
 	--device-mix camera=1,light=1,smart_meter=1 \
+	--steps "$CONTRACT_STEPS" \
 	--skip-mqtt-probe \
 	--quiet > "$QUIET_OUT" 2> "$QUIET_ERR"
 
@@ -402,6 +397,7 @@ CLOUD_STAGING_E2E_K8S_PORT_FORWARD=0 \
 	--user-count 1 \
 	--device-count 3 \
 	--device-mix camera=1,light=1,smart_meter=1 \
+	--steps "$CONTRACT_STEPS" \
 	--skip-mqtt-probe > "$LKE_OUT" 2> "$LKE_ERR"
 
 grep -F $'remove\t--workspace '"$WORKSPACE"$' --env-root '"$LKE_ENV_ROOT"$' --yes' "$COMMAND_LOG" >/dev/null

@@ -21,7 +21,7 @@
     "duration_seconds": { "type": "integer", "minimum": 30, "maximum": 900 },
     "app": {
       "type": "object",
-      "required": ["base_url", "device_id", "access_token", "device_transport_access_token", "refresh_token", "expired_access_token", "foreign_device_id", "certificate_path", "private_key_path", "pkcs12_path", "pkcs12_password"],
+      "required": ["base_url", "device_id", "access_token", "device_transport_access_token", "refresh_token", "expired_access_token", "foreign_device_id", "certificate_path", "private_key_path", "pkcs12_path", "pkcs12_password", "revoked_pkcs12_path", "revoked_pkcs12_password"],
       "properties": {
         "base_url": { "type": "string" },
         "device_id": { "type": "string" },
@@ -34,7 +34,9 @@
         "certificate_path": { "type": "string" },
         "private_key_path": { "type": "string" },
         "pkcs12_path": { "type": "string" },
-        "pkcs12_password": { "type": "string" }
+        "pkcs12_password": { "type": "string" },
+        "revoked_pkcs12_path": { "type": "string" },
+        "revoked_pkcs12_password": { "type": "string" }
       },
       "additionalProperties": true
     },

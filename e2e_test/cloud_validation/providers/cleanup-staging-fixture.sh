@@ -30,24 +30,26 @@ cleanup_request() {
 
 while IFS=$'\t' read -r account_device_id device_id; do
   [[ -n "$account_device_id$device_id" ]] || continue
-  if [[ -n "$device_id" ]]; then
+  if [[ -n "$account_device_id" ]]; then
+    # Account Manager owns the cross-service unprovision workflow, including
+    # Video Cloud entitlement removal. Revoking Video first makes the later
+    # unprovision callback non-idempotent and can strand its outbox retry.
+    unprovision_body="$secret_root/admin-unprovision.json"
+    jq -n --arg run_id "${CLOUD_VALIDATION_RUN_ID:-unknown}" '{
+      reason:"SDK deployed-cloud validation cleanup",
+      evidence:{test_suite:"sdk_cloud_validation", run_id:$run_id}
+    }' > "$unprovision_body"
+    chmod 600 "$unprovision_body"
+    if ! cleanup_request POST "$secret_root/account-headers.txt" \
+      "${account_url%/}/v1/admin/devices/$account_device_id/unprovision" "$unprovision_body"; then
+      cleanup_failures=$((cleanup_failures + 1))
+    fi
+  elif [[ -n "$device_id" ]]; then
+    # Only an orphaned Video-only resource bypasses Account Manager.
     if ! cleanup_request POST "$secret_root/video-headers.txt" \
       "${video_url%/}/api/devices/$device_id/entitlement/revoke"; then
       cleanup_failures=$((cleanup_failures + 1))
     fi
-  fi
-  if [[ -z "$account_device_id" ]]; then
-    continue
-  fi
-  unprovision_body="$secret_root/admin-unprovision.json"
-  jq -n --arg run_id "${CLOUD_VALIDATION_RUN_ID:-unknown}" '{
-    reason:"SDK deployed-cloud validation cleanup",
-    evidence:{test_suite:"sdk_cloud_validation", run_id:$run_id}
-  }' > "$unprovision_body"
-  chmod 600 "$unprovision_body"
-  if ! cleanup_request POST "$secret_root/account-headers.txt" \
-    "${account_url%/}/v1/admin/devices/$account_device_id/unprovision" "$unprovision_body"; then
-    cleanup_failures=$((cleanup_failures + 1))
   fi
 done < <(jq -r '.resources[]? | select(.kind == "device_binding") | [(.id // ""), (.device_id // "")] | @tsv' "$bundle")
 

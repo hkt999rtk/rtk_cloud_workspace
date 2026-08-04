@@ -371,6 +371,11 @@ device_ca_bundle_path() {
   return 1
 }
 
+refresh_device_ca_bundle() {
+  (cd "$repo_root" && GOWORK=auto go run ./scripts/go/rtk-cloud refresh-runtime-client-ca \
+    --workspace "$repo_root" --env-root "$(local_env_root_path)") >/dev/null
+}
+
 run_fixture_preflight() {
   local ca_bundle="$1"
   local preflight_json="$local_out_dir/preflight.json"
@@ -2163,7 +2168,8 @@ run_video_live_workflow() {
   start_status_monitor
   workflow_rc=0
   ca_bundle_path=""
-  if ca_bundle_path="$(device_ca_bundle_path)"; then
+  refresh_device_ca_bundle || workflow_rc=$?
+  if [[ "$workflow_rc" -eq 0 ]] && ca_bundle_path="$(device_ca_bundle_path)"; then
     export HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle_path"
   else
     echo "CERTIFICATE_CA_MISSING: current device/app CA bundle is required for live workflow" >&2
@@ -2222,7 +2228,7 @@ run_video_live_workflow() {
     echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
   fi
   cleanup_rc=0
-  if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]; then
+  if should_shutdown_after_workflow; then
     set_phase "shutdown-vms"
     cleanup_live_vms || cleanup_rc=$?
   else
@@ -2344,6 +2350,7 @@ case "$command" in
     run_home100k plan "${plan_condition_args[@]}" "$@"
     ;;
   preflight)
+    refresh_device_ca_bundle
     ca_bundle="$(device_ca_bundle_path || true)"
     if [[ -z "$ca_bundle" ]]; then
       echo "CERTIFICATE_CA_MISSING: current device/app CA bundle not found" >&2
@@ -2454,7 +2461,8 @@ case "$command" in
     start_status_monitor
     workflow_rc=0
     ca_bundle_path=""
-    if ca_bundle_path="$(device_ca_bundle_path)"; then
+    refresh_device_ca_bundle || workflow_rc=$?
+    if [[ "$workflow_rc" -eq 0 ]] && ca_bundle_path="$(device_ca_bundle_path)"; then
       export HOME100K_DEVICE_CLIENT_CA_BUNDLE="$ca_bundle_path"
     else
       echo "CERTIFICATE_CA_MISSING: current device/app CA bundle is required for live workflow" >&2
@@ -2530,7 +2538,7 @@ case "$command" in
       echo "report status is $report_status result is $report_result; preserving VMs for investigation" >&2
     fi
     cleanup_rc=0
-    if should_shutdown_after_workflow || [[ "$workflow_rc" -ne 0 ]]; then
+    if should_shutdown_after_workflow; then
       set_phase "shutdown-vms"
       cleanup_live_vms || cleanup_rc=$?
     else
@@ -2557,6 +2565,7 @@ case "$command" in
       exit 2
     fi
     mkdir -p "$local_out_dir/shards" "$local_out_dir/bin"
+    refresh_device_ca_bundle
     ca_bundle_path="$(device_ca_bundle_path || true)"
     if [[ -z "$ca_bundle_path" ]]; then
       echo "CERTIFICATE_CA_MISSING: current device/app CA bundle is required for local-live workflow" >&2
@@ -2659,6 +2668,8 @@ case "$command" in
       exit 2
     fi
     mkdir -p "$local_out_dir"
+    refresh_device_ca_bundle
+    export HOME100K_DEVICE_CLIENT_CA_BUNDLE="$(device_ca_bundle_path)"
     shutdown_live_vms_on_exit=1
     start_status_monitor
     set_phase "sync"

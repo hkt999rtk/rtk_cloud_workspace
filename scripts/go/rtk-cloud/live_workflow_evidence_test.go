@@ -81,6 +81,51 @@ func TestQualifyLiveOnboardingFactsRequiresOneCompleteDeviceChain(t *testing.T) 
 		generated.Workflow.Assertions["read_device_info"]["response_device_identity_matched"] != "PASS" {
 		t.Fatalf("unexpected runtime workflow: %+v", generated.Workflow)
 	}
+	if err := readJSONFile(filepath.Join(outDir, "bulk-provisioning-workflow.json"), &generated); err != nil {
+		t.Fatal(err)
+	}
+	if generated.Workflow.WorkflowID != "WF-PROV-BULK-001" ||
+		generated.Workflow.Assertions["wait_for_provisioning"]["zero_pending_or_failed"] != "PASS" {
+		t.Fatalf("unexpected bulk workflow: %+v", generated.Workflow)
+	}
+	runtimeEvidencePath := filepath.Join(outDir, "provisioning-runtime-workflow.json")
+	if err := os.Remove(runtimeEvidencePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(runtimeEvidencePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveOnboardingWorkflowEvidence(outDir); err == nil {
+		t.Fatal("unwritable runtime workflow evidence unexpectedly passed")
+	}
+	if err := os.Remove(runtimeEvidencePath); err != nil {
+		t.Fatal(err)
+	}
+	brokenBulk := bind
+	brokenBulk.Provisioning.LastStates = map[string]liveOnboardingProvisionState{}
+	if _, _, err := qualifyBulkProvisioningFacts(brokenBulk); err == nil || !strings.Contains(err.Error(), "not complete") {
+		t.Fatalf("bulk evidence without per-device state passed: %v", err)
+	}
+	brokenBulk = bind
+	brokenState := brokenBulk.Provisioning.LastStates["device-1"]
+	brokenState.OperationStatus = "failed"
+	brokenBulk.Provisioning.LastStates = map[string]liveOnboardingProvisionState{"device-1": brokenState}
+	if _, _, err := qualifyBulkProvisioningFacts(brokenBulk); err == nil || !strings.Contains(err.Error(), "missing identity or successful operation evidence") {
+		t.Fatalf("bulk evidence with a failed operation passed: %v", err)
+	}
+
+	// Onboarding and runtime evidence can be complete for one device while the
+	// bulk summary still omits another checked device. The writer must reject
+	// that partial bulk evidence instead of emitting a PASS workflow.
+	partialBulk := bind
+	partialBulk.Provisioning.Checked = 2
+	partialBulk.Provisioning.Ready = 2
+	if err := writeJSON(filepath.Join(bindDir, "bulk-device-bind-validation-results.json"), partialBulk); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLiveOnboardingWorkflowEvidence(outDir); err == nil || !strings.Contains(err.Error(), "bulk provisioning evidence is not complete") {
+		t.Fatalf("partial bulk workflow evidence passed: %v", err)
+	}
 
 	mqtt.Devices[0].Trace[len(mqtt.Devices[0].Trace)-1].Status = "FAIL"
 	if _, _, err := qualifyLiveOnboardingFacts(bind, mqtt); err == nil || !strings.Contains(err.Error(), "no single") {

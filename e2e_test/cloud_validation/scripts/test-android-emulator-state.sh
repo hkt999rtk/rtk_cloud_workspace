@@ -19,6 +19,7 @@ cp "$workspace_root/e2e_test/cloud_validation/scripts/start-android-emulator.sh"
 cat > "$parser_dir/bin/adb" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+test "${ADB_LIBUSB:-}" = "1"
 if [[ "${1:-}" == "devices" ]]; then
   printf 'List of devices attached\nemulator-test\tdevice\n'
 elif [[ "$*" == *"getprop ro.kernel.qemu"* || "$*" == *"getprop sys.boot_completed"* ]]; then

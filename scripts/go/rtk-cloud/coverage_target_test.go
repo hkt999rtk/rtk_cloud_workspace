@@ -274,7 +274,7 @@ func TestStagingMultiBrandPlanAndArtifactResumeHelpers(t *testing.T) {
 	if got := deviceMixString(map[string]int{"smart_meter": 1, "light": 2}); got != "light=2,smart_meter=1" {
 		t.Fatalf("deviceMixString() = %q", got)
 	}
-	if e2eStepIndex("bind_devices") != 3 || e2eStepIndex("missing") != -1 || shouldRunE2EStep("create_users", "bind_devices") {
+	if e2eStepIndex("bind_devices") != 4 || e2eStepIndex("prepare_factory_production") != 2 || e2eStepIndex("missing") != -1 || shouldRunE2EStep("create_users", "bind_devices") {
 		t.Fatal("unexpected E2E step ordering")
 	}
 
@@ -424,6 +424,93 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	}
 	if results["device-1"].AccountDeviceID != "account-device-1" || results["device-2"].Status != "created" {
 		t.Fatalf("results = %#v", results)
+	}
+}
+
+func TestRunBindDevicesQualifiesEveryAssignmentThroughClaimResolve(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging")
+	usersPath := filepath.Join(workspace, "users.json")
+	devicesDir := filepath.Join(envRoot, "devices", "test_device")
+	writeCoverageFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=local\n")
+	writeCoverageFile(t, usersPath, `{"brandname":"RTK","users":[{"email":"one@example.test","password":"pw-one"},{"email":"two@example.test","password":"pw-two"}]}`)
+	writeCoverageFile(t, filepath.Join(devicesDir, "manifests", "devices.json"), `[
+		{"device_id":"device-claim","device_type":"camera","service_options":["mqtt","video_streaming"]},
+		{"device_id":"device-bulk","device_type":"camera","service_options":["mqtt","video_streaming"]}
+	]`)
+
+	var claimCreates, claimResolves, registryCreates, provisions int
+	var requestsMu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "platform-token", "refresh_token": "platform-refresh"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{"id": "brand-001", "name": "RTK", "tenant_slug": "rtk"}}})
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/brand-clouds/rtk/auth/login"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token", "refresh_token": "user-refresh"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
+			requestsMu.Lock()
+			claimCreates++
+			requestsMu.Unlock()
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{"claim_token": "created"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices/claim/resolve":
+			requestsMu.Lock()
+			claimResolves++
+			requestsMu.Unlock()
+			var request map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			deviceID := "device-claim"
+			if strings.HasSuffix(request["claim_token"], "device-bulk") {
+				deviceID = "device-bulk"
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"claim_id": "claim-" + deviceID, "device": map[string]string{"id": "account-" + deviceID},
+				"provision_input": map[string]any{"video_cloud_devid": deviceID, "service_options": []string{"mqtt", "video_streaming"}},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-001/device-bind-jobs":
+			registryCreates++
+			t.Fatal("nonexistent admin bulk registry route was called")
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-001/devices":
+			t.Fatal("synthetic member was used for registry creation")
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/provision"):
+			requestsMu.Lock()
+			provisions++
+			requestsMu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
+	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "2")
+
+	if err := runBindDevices([]string{
+		"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK",
+		"--users-file", usersPath, "--devices-dir", devicesDir, "--count", "2", "--concurrency", "2",
+		"--skip-bootstrap", "--skip-direct-provision-bridge",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requestsMu.Lock()
+	counts := []int{claimCreates, claimResolves, registryCreates, provisions}
+	requestsMu.Unlock()
+	if counts[0] != 2 || counts[1] != 2 || counts[2] != 0 || counts[3] != 2 {
+		t.Fatalf("claim-create/resolve registry-create provision counts=%v", counts)
+	}
+	artifact, err := readBindArtifactFromTestData(filepath.Join(envRoot, "lke"), "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifact.Assignments) != 2 || artifact.Assignments[0].ClaimID == "" || artifact.Assignments[1].ClaimID == "" {
+		t.Fatalf("assignments=%+v", artifact.Assignments)
 	}
 }
 

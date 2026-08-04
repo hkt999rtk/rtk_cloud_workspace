@@ -4,6 +4,25 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/sdk-cloud-provider-test.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
+
+# Live evidence is qualified against the workspace canonical contracts source.
+# The SDK's nested pinned copy is implementation input, not the spec inventory
+# ground truth consumed by the feature-evidence importer.
+grep -Fq '"$workspace_root/repos/rtk_cloud_contracts_doc"' "$root/e2e_test/cloud_validation/scripts/run-cloud-validation.sh"
+if grep -Fq '"$workspace_root/repos/rtk_cloud_client/docs/rtk_cloud_contracts_doc"' "$root/e2e_test/cloud_validation/scripts/run-cloud-validation.sh"; then
+  echo "cloud validation must not anchor evidence to the SDK nested contracts copy" >&2
+  exit 1
+fi
+offline_controller="$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
+grep -Fq 'CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600' "$offline_controller"
+grep -Fq 'CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1' "$offline_controller"
+grep -Fq '/data/user/0/com.rtk.cloud.sample/files/cloud-validation-offline-ready' "$offline_controller"
+grep -Fq 'offline ready handshake path is required for nightly validation' \
+  "$root/repos/rtk_cloud_client/samples/android/app/src/main/kotlin/com/rtk/cloud/sample/CloudValidation.kt"
+grep -Fq '.offline_ready_path = $offline_ready_path' \
+  "$root/repos/rtk_cloud_client/tools/run_android_sample_cloud_validation.sh"
+test "$(grep -Fc 'deadline=$((SECONDS + offline_timeout_seconds))' "$offline_controller")" -eq 3
+
 mkdir -p "$tmp/bin" "$tmp/workspace/scripts" "$tmp/source-env/state" "$tmp/out" "$tmp/secrets"
 printf 'state' > "$tmp/source-env/state/marker"
 printf 'test ca' > "$tmp/ca.pem"
@@ -13,6 +32,8 @@ cat > "$tmp/workspace/scripts/setup-staging-e2e-data.sh" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "${SETUP_ARGS_LOG:?SETUP_ARGS_LOG is required}"
+test "${FACTORY_ENROLL_PRODUCTION_JWT:-}" = "test-production-jwt"
+test -z "${FACTORY_ENROLL_AUTH_KEY:-}"
 env_root=""
 brandname=""
 while [[ $# -gt 0 ]]; do
@@ -39,6 +60,7 @@ create table users (brandname text, email text, brand_cloud_id text, tenant_slug
 create table device_bindings (brandname text, tenant_slug text, device_id text, account_device_id text, assigned_email text, assignment_index integer);
 create table device_credentials (brandname text, device_id text, cert_pem text, key_pem text, chain_pem text);
 insert into users values ('$brandname','run-user@users.local','$cloud_id','$tenant_slug','{"private_key_pem":"-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
+alter table users add column password text default 'fixture-password';
 insert into device_bindings values ('$brandname','$tenant_slug','$device_id','$account_device_id','run-user@users.local',1);
 insert into device_credentials values ('$brandname','$device_id','-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----','-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----','-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----');
 SQL
@@ -60,9 +82,36 @@ joined="$*"
 if [[ -n "${CURL_LOG:-}" ]]; then
   printf '%s\n' "$joined" >> "$CURL_LOG"
 fi
-if [[ "$joined" == *"--write-out"* && "$joined" == *"entitlement/revoke"* && "${FAIL_ENTITLEMENT_REVOKE:-0}" == "1" ]]; then
+if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
+  output=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output) output="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  test -n "$output"
+  if [[ -n "${AUTH_DEACTIVATED_STATE:-}" && -e "$AUTH_DEACTIVATED_STATE" && "$joined" == *"auth-resilience-foreign-cert.pem"* ]]; then
+    printf '%s\n' '{"error":"certificate_rejected"}' > "$output"
+    printf '403'
+  elif [[ -n "${ROTATION_TOKEN_STATE:-}" && ! -e "$ROTATION_TOKEN_STATE" ]]; then
+    : > "$ROTATION_TOKEN_STATE"
+    printf '%s\n' '{"error":"authorization_pending"}' > "$output"
+    printf '401'
+  else
+    printf '%s\n' '{"access_token":"live-access","refresh_token":"live-refresh"}' > "$output"
+    printf '200'
+  fi
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"/unprovision"* && "${FAIL_UNPROVISION:-0}" == "1" ]]; then
   printf '500'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/commands"* ]]; then
+  printf '200'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"auth-resilience-expired-headers.txt"* ]]; then
+  printf '401'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"/api/devices/"* && "$joined" == *"/deactivate"* ]]; then
+  : > "${AUTH_DEACTIVATED_STATE:?AUTH_DEACTIVATED_STATE is required}"
+  printf '204'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"auth-resilience-"* && "$joined" == *"/info"* ]]; then
   printf '200'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"device-sdk-e2e-android/info"* ]]; then
   printf '403'
@@ -70,12 +119,22 @@ elif [[ "$joined" == *"--write-out"* && "$joined" == *"direct-invalid-probe-head
   printf '401'
 elif [[ "$joined" == *"--write-out"* ]]; then
   printf '204'
+elif [[ "$joined" == *"/device-item-profiles/fixture-profile/production-runs"* ]]; then
+  printf '%s\n' '{"production_run":{"id":"fixture-production-run"},"factory_jwt":"test-production-jwt"}'
+elif [[ "$joined" == *"/device-item-profiles?status=active"* ]]; then
+  printf '%s\n' '{"device_item_profiles":[{"id":"fixture-profile","profile_key":"sdk-cloud-validation-v1","status":"active"}]}'
 elif [[ "$joined" == *"/v1/admin/brand-clouds"* ]]; then
   printf '%s\n' '{"brand_clouds":[{"id":"cloud-sdk-e2e-ios","name":"SDK E2E iOS","tenant_slug":"sdk-e2e-ios-a579a0e7","status":"active"},{"id":"cloud-sdk-e2e-android","name":"SDK E2E Android","tenant_slug":"sdk-e2e-android-0d152276","status":"active"}]}'
 elif [[ "$joined" == *"/request_token"* ]]; then
   printf '%s\n' '{"access_token":"live-access","refresh_token":"live-refresh"}'
-elif [[ "$joined" == *"/api/devices/device-sdk-e2e-ios/shadow"* ]]; then
-  printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"delta":{}},"version":3}'
+elif [[ "$joined" == *"/auth/login"* ]]; then
+  printf '%s\n' '{"tokens":{"access_token":"rotated-access","refresh_token":"rotated-refresh"},"app_certificate":{"status":"issued","certificate_pem":"-----BEGIN CERTIFICATE-----\nrotated\n-----END CERTIFICATE-----"}}'
+elif [[ "$joined" == *"/things/device-sdk-e2e-ios/shadow"* ]]; then
+  if [[ ! -e "${CLOUD_VALIDATION_OUT_DIR:?CLOUD_VALIDATION_OUT_DIR is required}/virtual-device/offline-reconnect.signal" ]]; then
+    printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","enabled":true},"delta":{"cloud_validation_scenario":"shadow_offline_reconnect"}},"version":2}'
+  else
+    printf '%s\n' '{"state":{"desired":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"reported":{"cloud_validation_run":"run-ios","cloud_validation_scenario":"shadow_offline_reconnect","enabled":true},"delta":{}},"version":3}'
+  fi
 elif [[ "$joined" == *"/v1/logs"* ]]; then
   printf '%s\n' '{"events":[
     {"event_id":"evt-token","ts":"2026-07-18T10:00:01Z","msg":"mTLS request_token issued success 200","device_id":"device-sdk-e2e-ios"},
@@ -116,17 +175,43 @@ cat > "$tmp/bin/request-device-token" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
 output=""
+cert=""
+expect_status=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --output) output="$2"; shift 2 ;;
+    --cert) cert="$2"; shift 2 ;;
+    --expect-http-status) expect_status="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 test -n "$output"
+if [[ -n "$expect_status" && "$cert" == *"auth-resilience-foreign-cert.pem" && -e "${AUTH_DEACTIVATED_STATE:?AUTH_DEACTIVATED_STATE is required}" ]]; then
+  exit 0
+fi
+if [[ -n "${DEVICE_TOKEN_STATE:-}" && ! -e "$DEVICE_TOKEN_STATE" ]]; then
+  : > "$DEVICE_TOKEN_STATE"
+  exit 1
+fi
 printf '%s\n' '{"access_token":"device-transport-token"}' > "$output"
 chmod 600 "$output"
 SCRIPT
-chmod +x "$tmp/bin/curl" "$tmp/bin/go" "$tmp/bin/openssl" "$tmp/bin/request-device-token"
+cat > "$tmp/bin/mtls-probe" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+expected=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --expect-http-status) expected="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+case "$expected" in
+  200|401,403) exit 0 ;;
+  *) exit 1 ;;
+esac
+SCRIPT
+chmod +x "$tmp/bin/curl" "$tmp/bin/go" "$tmp/bin/openssl" "$tmp/bin/request-device-token" "$tmp/bin/mtls-probe"
 
 export PATH="$tmp/bin:$PATH"
 export SQLITE_BIN="$sqlite_bin"
@@ -147,6 +232,10 @@ export CLOUD_VALIDATION_SECRET_ROOT="$tmp/secrets"
 export CLOUD_VALIDATION_IOS_CLOUD_SLUG="sdk-e2e-ios-a579a0e7"
 export CLOUD_VALIDATION_ANDROID_CLOUD_SLUG="sdk-e2e-android-0d152276"
 export CLOUD_VALIDATION_DEVICE_TOKEN_HELPER="$tmp/bin/request-device-token"
+export CLOUD_VALIDATION_MTLS_PROBE_HELPER="$tmp/bin/mtls-probe"
+export ROTATION_TOKEN_STATE="$tmp/rotation-token-ready"
+export DEVICE_TOKEN_STATE="$tmp/device-token-ready"
+export AUTH_DEACTIVATED_STATE="$tmp/auth-device-deactivated"
 
 (cd "$tmp" && "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh")
 test -e "$tmp/secrets/run-ios/environment/state"
@@ -159,7 +248,7 @@ done < <(sed -nE 's/.*--device-prefix ([^ ]+).*/\1/p' "$SETUP_ARGS_LOG")
 export CLOUD_VALIDATION_ENV_ROOT="$tmp/source-env"
 export CLOUD_VALIDATION_CA_BUNDLE="$tmp/ca.pem"
 test "$(stat -f '%Lp' "$CLOUD_VALIDATION_RUNTIME_BUNDLE")" = "600"
-jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
+jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.app.revoked_pkcs12_path | length > 0) and (.app.revoked_pkcs12_password | length > 0) and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
 
 export CLOUD_VALIDATION_READY_FILE="$tmp/out/virtual-device-ready.json"
 export CLOUD_VALIDATION_ACCOUNT_MANAGER_URL="https://account.test"
@@ -188,12 +277,24 @@ cat > "$tmp/out/platform-result.json" <<'JSON'
   {"scenario_id":"shadow_online_roundtrip","status":"PASS","duration_ms":1,"correlation_id":"run-ios-shadow"}
 ]}
 JSON
+mkdir -p "$tmp/out/ios"
+cp "$tmp/out/platform-result.json" "$tmp/out/ios/platform-result.json"
+touch "$ROTATION_TOKEN_STATE"
+"$root/e2e_test/cloud_validation/scripts/run-auth-resilience-scenarios.sh"
+jq -e '[.results[].scenario_id] | contains(["app_certificate_token_bootstrap","device_token_certificate_recovery","deactivated_certificate_rejected"])' "$tmp/out/ios/platform-result.json" >/dev/null
+jq -e '[.events[].type] | contains(["account_session_issued","app_certificate_issued","token_reissued","device_deactivated","certificate_rejected"])' "$tmp/out/auth-resilience-evidence.json" >/dev/null
 export CLOUD_VALIDATION_COMMAND_TRIGGER_TIMEOUT_SECONDS=2
 "$root/e2e_test/cloud_validation/scripts/run-cloud-command-trigger.sh"
 jq -e '.events[0].type == "command_dispatched" and .events[0].evidence.http_status == 200' "$tmp/out/cloud-command-trigger-evidence.json" >/dev/null
+cat > "$tmp/out/virtual-device/offline-ready" <<'JSON'
+{"schema_version":1,"run_id":"run-ios","status":"OFFLINE"}
+JSON
+chmod 600 "$tmp/out/virtual-device/offline-ready"
 export CURL_LOG="$tmp/offline-controller-curl.log"
-"$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
+CLOUD_VALIDATION_OFFLINE_READY_BRIDGE_COMMAND=true \
+  "$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -q -- '--cert .* --key ' "$CURL_LOG"
+grep -q -- '/things/device-sdk-e2e-ios/shadow' "$CURL_LOG"
 unset CURL_LOG
 test -f "$tmp/out/virtual-device/offline-reconnect.signal"
 jq -e '[.events[].type] | contains(["desired_queued","device_reconnected","reported_written","delta_cleared"])' "$tmp/out/offline-reconnect-evidence.json" >/dev/null
@@ -207,7 +308,7 @@ export CLOUD_VALIDATION_CLOUD_LOGGER_TOKEN="secret-logger"
 jq -e '[.events[].type] | contains(["token_issued","device_mtls_authenticated","authorized_device_read","transport_connected","transport_disconnected","command_dispatched","authorization_denied","desired_written","delta_delivered","desired_queued","device_reconnected","reported_written","delta_cleared"])' "$tmp/out/cloud-evidence.json" >/dev/null
 
 export CURL_LOG="$tmp/cleanup-curl.log"
-export FAIL_ENTITLEMENT_REVOKE=1
+export FAIL_UNPROVISION=1
 set +e
 "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"
 cleanup_rc=$?
@@ -218,7 +319,11 @@ grep -q '/v1/admin/devices/account-device-sdk-e2e-ios/unprovision' "$CURL_LOG"
 grep -q '/v1/admin/devices/account-device-sdk-e2e-android/unprovision' "$CURL_LOG"
 grep -q '/v1/admin/brand-clouds/cloud-sdk-e2e-ios/users/user-sdk-e2e-ios' "$CURL_LOG"
 grep -q '/v1/admin/brand-clouds/cloud-sdk-e2e-android/users/user-sdk-e2e-android' "$CURL_LOG"
-unset FAIL_ENTITLEMENT_REVOKE
+if grep -q 'entitlement/revoke' "$CURL_LOG"; then
+  echo "cleanup bypassed canonical Account Manager unprovision workflow" >&2
+  exit 1
+fi
+unset FAIL_UNPROVISION
 "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"
 test ! -e "$tmp/secrets/run-ios"
 

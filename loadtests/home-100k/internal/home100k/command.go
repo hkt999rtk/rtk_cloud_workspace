@@ -304,7 +304,11 @@ func validateFixtureCertificates(envRoot string, plan Plan, roots *x509.CertPool
 			return err
 		}
 		_ = rows.Close()
-		userRows, err := db.Query(`select email, app_credentials_json, app_certificate_json from users where brandname = ? and (role = 'member' or coalesce(role, '') = '')`, brand.Brandname)
+		userQuery := `select email, app_credentials_json, app_certificate_json from users where brandname = ?`
+		if homeSQLiteColumnExists(db, "users", "role") {
+			userQuery = `select email, app_credentials_json, app_certificate_json from users where brandname = ? and (` + homeRuntimeUserRolePredicate("users") + `)`
+		}
+		userRows, err := db.Query(userQuery, brand.Brandname)
 		if err != nil {
 			_ = db.Close()
 			return err
@@ -4649,8 +4653,8 @@ func inspectPlanDataCoverage(envRoot string, plan Plan) (planDataCoverage, error
 		userCountQuery := `select count(*) from users where brandname = ?`
 		bindingQuery := `select b.brandname, b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? order by b.assignment_index, b.device_id`
 		if homeSQLiteColumnExists(db, "users", "role") {
-			userCountQuery = `select count(*) from users where brandname = ? and (role = 'member' or coalesce(role, '') = '')`
-			bindingQuery = `select b.brandname, b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? and (u.role = 'member' or coalesce(u.role, '') = '') order by b.assignment_index, b.device_id`
+			userCountQuery = `select count(*) from users where brandname = ? and (` + homeRuntimeUserRolePredicate("users") + `)`
+			bindingQuery = `select b.brandname, b.assigned_email, b.device_type, b.service_options_json from device_bindings b join users u on u.brandname = b.brandname and u.email = b.assigned_email where b.brandname = ? and (` + homeRuntimeUserRolePredicate("u") + `) order by b.assignment_index, b.device_id`
 		}
 		if err := db.QueryRow(userCountQuery, brand.Brandname).Scan(&users); err != nil {
 			_ = db.Close()
@@ -4690,6 +4694,20 @@ func inspectPlanDataCoverage(envRoot string, plan Plan) (planDataCoverage, error
 	}
 	coverage.EligibleUsers = len(eligibleUsers)
 	return coverage, nil
+}
+
+// Runtime actors are ordinary members for load scenarios. Small qualification
+// fixtures intentionally contain only tenant admins because registry device
+// creation requires registry_device.manage; use those privileged users only
+// when the Brand Cloud has no ordinary member fixture.
+func homeRuntimeUserRolePredicate(alias string) string {
+	role := alias + ".role"
+	brandname := alias + ".brandname"
+	return `(` + role + ` = 'member' or coalesce(` + role + `, '') = '' or (` +
+		role + ` in ('owner', 'admin') and not exists (` +
+		`select 1 from users as members where members.brandname = ` + brandname +
+		` and (members.role = 'member' or coalesce(members.role, '') = '')` +
+		`)))`
 }
 
 func writePreflightFailure(outDir string, err error) {

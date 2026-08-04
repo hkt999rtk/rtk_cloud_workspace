@@ -528,6 +528,66 @@ func TestSpecInventoryCommandsWriteReportsAndEnforceMode(t *testing.T) {
 	}
 }
 
+func TestNativeAndOperatorLiveRequirementsUseExecutableGates(t *testing.T) {
+	inventory, err := loadSpecInventory(mustWorkspaceRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirements := map[string]testCatalogRequirement{}
+	for _, feature := range inventory.Features {
+		for _, requirement := range feature.Requirements {
+			requirements[requirement.ID] = requirement
+		}
+	}
+
+	sdkCriticalRequirements := []string{
+		"REQ-E2E-SDK-AUTH-001", "REQ-E2E-SDK-AUTH-002", "REQ-E2E-SDK-AUTH-003",
+		"REQ-E2E-SDK-CERT-001",
+	}
+	for _, requirementID := range sdkCriticalRequirements {
+		requirement, ok := requirements[requirementID]
+		if !ok {
+			t.Fatalf("SDK live requirement %s is missing from the spec inventory", requirementID)
+		}
+		if requirement.AcceptanceLayer != "live" || requirement.Gate != "scheduled" || requirement.FreshnessHours != 36 {
+			t.Fatalf("critical SDK live requirement %s layer=%q gate=%q freshness=%d, want live/scheduled/36", requirementID, requirement.AcceptanceLayer, requirement.Gate, requirement.FreshnessHours)
+		}
+	}
+
+	sdkHighRiskRequirements := []string{
+		"REQ-E2E-SDK-CONTROL-001", "REQ-E2E-SDK-ERROR-001",
+		"REQ-E2E-SDK-LIFECYCLE-001", "REQ-E2E-SDK-LIFECYCLE-002",
+		"REQ-E2E-SDK-SHADOW-001", "REQ-E2E-SDK-SHADOW-002",
+		"REQ-E2E-SDK-WS-001", "REQ-E2E-SDK-WS-002", "REQ-E2E-SDK-WS-003",
+	}
+	for _, requirementID := range sdkHighRiskRequirements {
+		requirement, ok := requirements[requirementID]
+		if !ok {
+			t.Fatalf("SDK live requirement %s is missing from the spec inventory", requirementID)
+		}
+		if requirement.AcceptanceLayer != "live" || requirement.Gate != "scheduled" || requirement.FreshnessHours != 168 {
+			t.Fatalf("high-risk SDK live requirement %s layer=%q gate=%q freshness=%d, want live/scheduled/168", requirementID, requirement.AcceptanceLayer, requirement.Gate, requirement.FreshnessHours)
+		}
+	}
+
+	operatorRequirements := []string{
+		"REQ-E2E-FACTORY-ENROLL-001", "REQ-CONTRACT-AUTH-FACTORY-ENROLL-001",
+		"REQ-VC-FACTORY-DEPLOYMENT-001", "REQ-VC-FACTORY-ISSUER-MTLS-001", "REQ-VC-FACTORY-SMOKE-001",
+		"REQ-LOAD-HOME-SHADOW-001", "REQ-LOAD-HOME-SHADOW-002",
+		"REQ-LOAD-HOME-VIDEO-001", "REQ-LOAD-HOME-TURN-001", "REQ-LOAD-HOME-TURN-002",
+		"REQ-LOAD-VC-CLIP-001", "REQ-LOAD-VC-CLIP-002",
+	}
+	for _, requirementID := range operatorRequirements {
+		requirement, ok := requirements[requirementID]
+		if !ok {
+			t.Fatalf("operator requirement %s is missing from the spec inventory", requirementID)
+		}
+		if requirement.AcceptanceLayer != "live" || requirement.Gate != "operator-release" || requirement.FreshnessHours != 168 {
+			t.Fatalf("operator requirement %s layer=%q gate=%q freshness=%d, want live/operator-release/168", requirementID, requirement.AcceptanceLayer, requirement.Gate, requirement.FreshnessHours)
+		}
+	}
+}
+
 func mustWorkspaceRoot(t *testing.T) string {
 	t.Helper()
 	workspace, err := workspaceRoot()

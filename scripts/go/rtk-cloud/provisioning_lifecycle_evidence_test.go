@@ -50,8 +50,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		t.Fatal(err)
 	}
 	assignments := []bindAssignment{
-		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-deactivate", Status: "provision_requested"},
-		{AssignmentIndex: 1, AssignedEmail: "unprovision@example.test", DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-unprovision", Status: "provision_requested"},
+		{AssignmentIndex: 0, AssignedEmail: "deactivate@example.test", DeviceID: "device-deactivate", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, AccountDeviceID: "account-deactivate", OperationID: "operation-deactivate", Status: "provision_requested"},
+		{AssignmentIndex: 1, AssignedEmail: "unprovision@example.test", DeviceID: "device-unprovision", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ClaimID: "claim-unprovision", AccountDeviceID: "account-unprovision", OperationID: "operation-unprovision", Status: "provision_requested"},
 	}
 	if err := store.ReplaceBindings("RTK", "org-1", "rtk", "run-1", assignments); err != nil {
 		t.Fatal(err)
@@ -62,6 +62,10 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 
 	deactivated := false
 	unprovisioned := false
+	registryDisabled := false
+	registryDeleteCalls := 0
+	registryUpdateRejected := false
+	registryStatusUpdateRejected := false
 	transportReady := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		path := req.URL.Path
@@ -70,6 +74,18 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 			deactivated = true
 			w.WriteHeader(http.StatusCreated)
 			_, _ = io.WriteString(w, `{"status":"accepted"}`)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodDelete:
+			registryDisabled = true
+			registryDeleteCalls++
+			w.WriteHeader(http.StatusNoContent)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodGet && registryDisabled:
+			_, _ = io.WriteString(w, `{"device":{"id":"account-deactivate","name":"device-deactivate","category":"ip_camera","status":"disabled","disabled_at":"2026-08-03T10:39:49Z"}}`)
+		case path == "/v1/orgs/org-1/devices/account-deactivate" && req.Method == http.MethodPatch && registryDisabled:
+			registryUpdateRejected = true
+			http.Error(w, `{"code":"conflict"}`, http.StatusConflict)
+		case path == "/v1/orgs/org-1/devices/account-deactivate/status" && req.Method == http.MethodPatch && registryDisabled:
+			registryStatusUpdateRejected = true
+			http.Error(w, `{"code":"conflict"}`, http.StatusConflict)
 		case path == "/v1/orgs/org-1/devices/account-deactivate/provisioning":
 			_ = json.NewEncoder(w).Encode(map[string]any{"operation": map[string]any{"status": "succeeded"}, "readiness": map[string]any{"state": "ready", "product_state": "deactivated", "sources": map[string]any{"video_cloud_activation_status": "deactivated"}}})
 		case path == "/v1/orgs/org-1/devices/account-unprovision/unprovision" && !unprovisioned:
@@ -99,8 +115,11 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	originalDeviceToken := requestLifecycleDeviceToken
 	originalRelayTest := executeLifecycleVideoRelayTest
 	appTokenCalls := 0
-	requestLifecycleAppToken = func(string, tls.Certificate, string) (videoRelayTokenResponse, error) {
+	requestLifecycleAppToken = func(_ string, _ tls.Certificate, deviceID string) (videoRelayTokenResponse, error) {
 		appTokenCalls++
+		if deviceID == "device-deactivate" {
+			return videoRelayTokenResponse{AccessToken: "deactivation-owner-app-token"}, nil
+		}
 		if appTokenCalls == 1 {
 			return videoRelayTokenResponse{AccessToken: "former-owner-app-token"}, nil
 		}
@@ -135,8 +154,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !deactivated || !unprovisioned || appTokenCalls != 2 {
-		t.Fatalf("deactivated=%t unprovisioned=%t app_token_calls=%d", deactivated, unprovisioned, appTokenCalls)
+	if !deactivated || !registryDisabled || registryDeleteCalls != 2 || !registryUpdateRejected || !registryStatusUpdateRejected || !unprovisioned || appTokenCalls != 3 {
+		t.Fatalf("deactivated=%t registry_disabled=%t delete_calls=%d update_rejected=%t status_update_rejected=%t unprovisioned=%t app_token_calls=%d", deactivated, registryDisabled, registryDeleteCalls, registryUpdateRejected, registryStatusUpdateRejected, unprovisioned, appTokenCalls)
 	}
 	var result map[string]any
 	resultBytes, err := os.ReadFile(filepath.Join(outDir, "results.json"))
@@ -150,10 +169,86 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if readiness["prepared_by_lifecycle"] != true || readiness["status"] != "PASS" {
 		t.Fatalf("transport readiness evidence = %#v", readiness)
 	}
-	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
+	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-account-workflow.json", "provisioning-claim-workflow.json", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
+	}
+	workflowBytes, err := os.ReadFile(filepath.Join(outDir, "provisioning-account-workflow.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, assertion := range []string{
+		"disabled_device_readable", "disabled_status_confirmed", "disabled_at_present",
+		"disabled_device_update_rejected", "disabled_device_status_update_rejected", "repeated_delete_idempotent",
+	} {
+		if !strings.Contains(string(workflowBytes), `"`+assertion+`": "PASS"`) {
+			t.Fatalf("provisioning workflow evidence missing %s: %s", assertion, workflowBytes)
+		}
+	}
+}
+
+func TestDisableAccountRegistryDeviceEnforcesSoftDisableContract(t *testing.T) {
+	validBody := `{"device":{"id":"device-1","name":"Device 1","category":"mqtt_device","status":"disabled","disabled_at":"2026-08-03T10:39:49Z"}}`
+	tests := []struct {
+		name               string
+		getStatus          int
+		getBody            string
+		updateStatus       int
+		statusUpdateStatus int
+		repeatDeleteStatus int
+		wantError          string
+	}{
+		{name: "soft disabled contract", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent},
+		{name: "device must remain readable", getStatus: http.StatusNotFound, getBody: `{"code":"not_found"}`, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "is not readable"},
+		{name: "disabled status required", getStatus: http.StatusOK, getBody: `{"device":{"id":"device-1","name":"Device 1","category":"mqtt_device","status":"online","disabled_at":"2026-08-03T10:39:49Z"}}`, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "did not persist soft-disabled state"},
+		{name: "disabled timestamp required", getStatus: http.StatusOK, getBody: `{"device":{"id":"device-1","name":"Device 1","category":"mqtt_device","status":"disabled"}}`, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "disabled_at_present=false"},
+		{name: "device update rejected", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusOK, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNoContent, wantError: "update was not rejected"},
+		{name: "status update rejected", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusOK, repeatDeleteStatus: http.StatusNoContent, wantError: "status update was not rejected"},
+		{name: "repeated delete idempotent", getStatus: http.StatusOK, getBody: validBody, updateStatus: http.StatusConflict, statusUpdateStatus: http.StatusConflict, repeatDeleteStatus: http.StatusNotFound, wantError: "was not idempotent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deleteCalls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.Header.Get("Authorization") != "Bearer user-token" {
+					t.Fatalf("authorization = %q", req.Header.Get("Authorization"))
+				}
+				switch {
+				case req.Method == http.MethodDelete && req.URL.Path == "/v1/orgs/org-1/devices/device-1":
+					deleteCalls++
+					if deleteCalls == 1 {
+						w.WriteHeader(http.StatusNoContent)
+						return
+					}
+					w.WriteHeader(tt.repeatDeleteStatus)
+				case req.Method == http.MethodGet && req.URL.Path == "/v1/orgs/org-1/devices/device-1":
+					w.WriteHeader(tt.getStatus)
+					_, _ = io.WriteString(w, tt.getBody)
+				case req.Method == http.MethodPatch && req.URL.Path == "/v1/orgs/org-1/devices/device-1":
+					w.WriteHeader(tt.updateStatus)
+				case req.Method == http.MethodPatch && req.URL.Path == "/v1/orgs/org-1/devices/device-1/status":
+					w.WriteHeader(tt.statusUpdateStatus)
+				default:
+					http.NotFound(w, req)
+				}
+			}))
+			defer server.Close()
+
+			err := disableAccountRegistryDevice(accountManagerContext{BaseURL: server.URL}, "org-1", "device-1", "user-token")
+			if tt.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if deleteCalls != 2 {
+					t.Fatalf("delete calls = %d, want 2", deleteCalls)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -173,6 +268,28 @@ func TestPrepareLifecycleTransportReadinessReportsRunnerFailures(t *testing.T) {
 	}
 	if err := prepareLifecycleTransportReadiness("workspace", "env", "RTK", t.TempDir()); err == nil || !strings.Contains(err.Error(), "status=FAIL") {
 		t.Fatalf("status error = %v", err)
+	}
+}
+
+func TestSelectReadyLifecycleAssignmentsRequiresClaimCorrelatedVideoUnprovision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		deviceID := strings.TrimSuffix(strings.TrimPrefix(req.URL.Path, "/api/devices/"), "/lifecycle")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "devid": deviceID, "activated": true, "provisioned": true, "revoked": false,
+			"transport": map[string]any{},
+		})
+	}))
+	defer server.Close()
+	assignments := []bindAssignment{
+		{DeviceID: "bulk-light", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "claimed-camera", ClaimID: "claim-1", AccountDeviceID: "account-claim", OperationID: "op-claim", ServiceOptions: []string{"mqtt", "video_streaming"}},
+	}
+	deactivation, unprovision, _, _, err := selectReadyLifecycleAssignments(server.URL, "token", assignments, 0, time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deactivation.DeviceID != "bulk-light" || unprovision.DeviceID != "claimed-camera" {
+		t.Fatalf("deactivation=%+v unprovision=%+v", deactivation, unprovision)
 	}
 }
 
@@ -239,8 +356,8 @@ func TestSelectReadyLifecycleAssignmentsSkipsUnprovisionedDevices(t *testing.T) 
 
 	assignments := []bindAssignment{
 		{DeviceID: "camera-not-connected", ServiceOptions: []string{"mqtt", "video_streaming"}},
-		{DeviceID: "light-connected", ServiceOptions: []string{"mqtt"}},
-		{DeviceID: "camera-connected", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
+		{DeviceID: "light-connected", AccountDeviceID: "account-light", OperationID: "op-light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "camera-connected", ClaimID: "claim-camera", AccountDeviceID: "account-camera", OperationID: "op-camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
 	}
 	deactivation, unprovision, deactivationState, unprovisionState, err := selectReadyLifecycleAssignments(server.URL, "admin-token", assignments, time.Second, time.Millisecond)
 	if err != nil {
@@ -407,7 +524,7 @@ func TestWriteProvisioningWorkflowEvidenceProducesAllCanonicalWorkflows(t *testi
 	}
 	wantSteps := map[string]map[string]bool{}
 	for _, workflow := range inventory.Workflows {
-		if workflow.ID != provisioningDeactivationWorkflowID && workflow.ID != provisioningUnprovisionWorkflowID && workflow.ID != provisioningSignoffWorkflowID {
+		if workflow.ID != "WF-PROV-ACCOUNT-001" && workflow.ID != "WF-PROV-CLAIM-001" && workflow.ID != provisioningDeactivationWorkflowID && workflow.ID != provisioningUnprovisionWorkflowID && workflow.ID != provisioningSignoffWorkflowID {
 			continue
 		}
 		wantSteps[workflow.ID] = map[string]bool{}
@@ -420,6 +537,8 @@ func TestWriteProvisioningWorkflowEvidenceProducesAllCanonicalWorkflows(t *testi
 		t.Fatal(err)
 	}
 	for file, workflowID := range map[string]string{
+		"provisioning-account-workflow.json":      "WF-PROV-ACCOUNT-001",
+		"provisioning-claim-workflow.json":        "WF-PROV-CLAIM-001",
 		"provisioning-deactivation-workflow.json": provisioningDeactivationWorkflowID,
 		"provisioning-unprovision-workflow.json":  provisioningUnprovisionWorkflowID,
 		"provisioning-signoff-workflow.json":      provisioningSignoffWorkflowID,
@@ -444,6 +563,57 @@ func TestWriteProvisioningWorkflowEvidenceProducesAllCanonicalWorkflows(t *testi
 			if !wantSteps[workflowID][stepID] {
 				t.Fatalf("%s emitted unknown step %s", workflowID, stepID)
 			}
+		}
+	}
+}
+
+func TestProvisioningLiveCasesProduceRequirementAndWorkflowEvidence(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	if err := writeProvisioningWorkflowEvidence(outDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(outDir, "bulk-provisioning-workflow.json"), map[string]any{
+		"schema_version": "rtk-live-workflow-evidence/v1",
+		"workflow": map[string]any{
+			"workflow_id": "WF-PROV-BULK-001",
+			"steps":       map[string]string{"provision_registry_device": "PASS", "wait_for_provisioning": "PASS"},
+			"assertions": map[string]map[string]string{
+				"provision_registry_device": {"operation_created": "PASS"},
+				"wait_for_provisioning":     {"all_devices_ready": "PASS"},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(outDir, "results.json"), map[string]any{"status": "PASS"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), []byte("# Provisioning PASS\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "junit.xml"), []byte(`<testsuite tests="1"><testcase name="provisioning"/></testsuite>`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, testID := range []string{"E2E-PROV-ACCOUNT-001", "E2E-PROV-BULK-001"} {
+		if err := writeCaseFeatureEvidence(workspace, outDir, testID, "provision-live-evidence", "staging", "", now, now.Add(time.Second)); err != nil {
+			t.Fatalf("write %s evidence: %v", testID, err)
+		}
+	}
+	var manifest featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(outDir, "feature-evidence.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Cases) != 2 {
+		t.Fatalf("cases = %d, want 2", len(manifest.Cases))
+	}
+	for _, item := range manifest.Cases {
+		if item.Status != "PASS" || len(item.Requirements) == 0 || len(item.Workflows) == 0 {
+			t.Fatalf("incomplete provisioning evidence: %+v", item)
 		}
 	}
 }

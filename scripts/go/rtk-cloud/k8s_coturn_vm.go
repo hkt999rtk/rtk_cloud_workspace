@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -455,9 +456,75 @@ func lkeInstallExternalCoturnVM(paths provisionPaths, opts provisionOptions, vm 
 	if err := copyLKECoturnRegistrarBinary(paths, sshKey, vm.PublicIP, binary); err != nil {
 		return err
 	}
-	turnSecret := shellQuote(lkeRuntimeSecretValue("turn-shared"))
-	registrySecret := shellQuote(lkeRuntimeSecretValue("turn-registry-node-auth"))
+	turnValue, registryValue, err := lkeCurrentCoturnRuntimeSecrets(paths, map[string]string{"CLOUD_STACK_NAME": strings.TrimSuffix(vm.Label, "-"+vm.Name)})
+	if err != nil {
+		return err
+	}
+	turnSecret := shellQuote(turnValue)
+	registrySecret := shellQuote(registryValue)
 	return runCmdWithInput("", install, "ssh", loggerSSHArgs(paths, sshKey, vm.PublicIP, "env", "VIDEO_CLOUD_COTURN_SHARED_SECRET="+turnSecret, "VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY="+registrySecret, "bash", "-s")...)
+}
+
+func lkeCurrentCoturnRuntimeSecrets(paths provisionPaths, env map[string]string) (string, string, error) {
+	if os.Getenv("LKE_TURN_SHARED") != "" || os.Getenv("LKE_TURN_REGISTRY_NODE_AUTH") != "" || os.Getenv("LKE_RUNTIME_SECRET_SEED") != "" {
+		return lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("turn-registry-node-auth"), nil
+	}
+	stack := firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")
+	if stack != "video-cloud-staging" {
+		return "", "", fmt.Errorf("coturn live secret sync requires the staging stack, got %s", stack)
+	}
+	turnSecret, err := lkeCurrentK8SSecretValue(stack+"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_TURN_SHARED_SECRET")
+	if err != nil {
+		return "", "", err
+	}
+	registrySecret, err := lkeCurrentK8SSecretValue(stack+"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY")
+	if err != nil {
+		return "", "", err
+	}
+	for name, value := range map[string]string{"turn-shared": turnSecret, "turn-registry-node-auth": registrySecret} {
+		if strings.TrimSpace(value) == "" {
+			return "", "", fmt.Errorf("live K8s runtime secret %s is empty", name)
+		}
+		if lkeRuntimeSecretStateDir != "" {
+			path := filepath.Join(lkeRuntimeSecretStateDir, lkeSecretFileName(name))
+			if err := writeSensitiveFile(path, value); err != nil {
+				return "", "", fmt.Errorf("sync live K8s runtime secret %s: %w", name, err)
+			}
+			if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+				return "", "", fmt.Errorf("secure live K8s runtime secret directory for %s: %w", name, err)
+			}
+			if err := os.Chmod(path, 0o600); err != nil {
+				return "", "", fmt.Errorf("secure live K8s runtime secret %s: %w", name, err)
+			}
+		}
+		lkeRuntimeSecretCache[name] = value
+	}
+	return turnSecret, registrySecret, nil
+}
+
+func lkeCurrentK8SSecretValue(namespace, secretName, key string) (string, error) {
+	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", secretName, "-o", "json")
+	if err != nil {
+		return "", fmt.Errorf("read live K8s secret %s/%s: %w: %s", namespace, secretName, err, truncateForLog(string(out), 300))
+	}
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(out, &secret); err != nil {
+		return "", fmt.Errorf("decode live K8s secret %s/%s: %w", namespace, secretName, err)
+	}
+	encoded := strings.TrimSpace(secret.Data[key])
+	if encoded == "" {
+		return "", fmt.Errorf("live K8s secret %s/%s missing %s", namespace, secretName, key)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", fmt.Errorf("decode live K8s secret %s/%s key %s: %w", namespace, secretName, key, err)
+	}
+	if strings.TrimSpace(string(decoded)) == "" {
+		return "", fmt.Errorf("live K8s secret %s/%s key %s is empty", namespace, secretName, key)
+	}
+	return string(decoded), nil
 }
 
 func buildLKECoturnRegistrarBinary(paths provisionPaths) (string, error) {

@@ -68,6 +68,48 @@ func TestLoadTestBrandPlan1KScenarioUsesOneFormalOwner(t *testing.T) {
 		brand.DeveloperUsers["admin"] != 0 {
 		t.Fatalf("brand %+v, want 1000 devices, 50 normal users, one owner, no admin", brand)
 	}
+	descriptionPath := filepath.Join("..", "..", "..", "loadtests", "home-100k", "scenarios", "mqtt-1k.description.env")
+	description, err := os.ReadFile(descriptionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prefix = "HOME100K_DEVICE_MIX="
+	var rawMix string
+	for _, line := range strings.Split(string(description), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			rawMix = strings.TrimPrefix(line, prefix)
+			break
+		}
+	}
+	if rawMix == "" {
+		t.Fatalf("%s does not define HOME100K_DEVICE_MIX", descriptionPath)
+	}
+	for _, required := range []string{
+		"HOME100K_MQTT_ADDR=auto-public-mqtt",
+		"HOME100K_VIDEO_CLOUD_PUBLIC_BASE_URL=https://video-cloud-staging.realtekconnect.com",
+		"HOME100K_ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-staging.realtekconnect.com",
+	} {
+		if !strings.Contains(string(description), required+"\n") {
+			t.Fatalf("%s does not define required remote live endpoint %q", descriptionPath, required)
+		}
+	}
+	wantMix, err := allocateDeviceMix(100, rawMix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deviceType, count := range wantMix {
+		if count == 0 {
+			delete(wantMix, deviceType)
+		}
+	}
+	if len(brand.DeviceMix) != len(wantMix) {
+		t.Fatalf("1K brand mix has %d types, scenario has %d: brand=%v scenario=%v", len(brand.DeviceMix), len(wantMix), brand.DeviceMix, wantMix)
+	}
+	for deviceType, want := range wantMix {
+		if got := brand.DeviceMix[deviceType]; got != want {
+			t.Fatalf("1K brand mix %s=%d, scenario wants %d", deviceType, got, want)
+		}
+	}
 }
 
 func TestPlannedUsersKeepsMemberEmailAndSeparatesDeveloperRoles(t *testing.T) {
@@ -284,6 +326,7 @@ func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 		t.Fatalf("formal activation was not sequenced before synthetic setup:\n%s", log)
 	}
 	if !strings.Contains(log, "--user-email-domain users.invalid") ||
+		!strings.Contains(log, "--user-role member") ||
 		!strings.Contains(log, "--user-email-prefix load-run-20260726-b01") ||
 		!strings.Contains(log, "--device-prefix load-run-20260726-b01") ||
 		!strings.Contains(log, "--no-resume") {

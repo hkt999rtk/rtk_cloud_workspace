@@ -7,6 +7,11 @@ if [[ -n "$android_root" ]]; then
   export PATH="$android_root/platform-tools:$android_root/emulator:$android_root/cmdline-tools/latest/bin:$PATH"
 fi
 
+# adb 37's native Darwin USB backend can block indefinitely while opening an
+# unrelated USB interface. The libusb backend avoids that startup deadlock and
+# remains overrideable for runner-specific diagnostics.
+export ADB_LIBUSB="${ADB_LIBUSB:-1}"
+
 find_emulator() {
   local serial
   while read -r serial; do

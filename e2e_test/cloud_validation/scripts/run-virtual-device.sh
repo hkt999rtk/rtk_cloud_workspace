@@ -15,13 +15,15 @@ duration_seconds="$(jq -er '.duration_seconds // 900' "$bundle")"
 ca_bundle="$(jq -er '.ca_bundle // empty' "$bundle")"
 validation_profile="$(jq -r '.validation_profile // "deploy"' "$bundle")"
 reconnect_signal="$out_dir/offline-reconnect.signal"
+disconnect_request="$out_dir/offline-disconnect.request"
+offline_ready="$out_dir/offline-ready"
 
 if [[ "$max_devices" -lt 1 || "$max_devices" -gt 5 ]]; then
   echo "max_devices must be between 1 and 5" >&2
   exit 2
 fi
 mkdir -p "$out_dir"
-rm -f "$reconnect_signal"
+rm -f "$reconnect_signal" "$disconnect_request" "$offline_ready"
 
 export HOME100K_DEVICE_CLIENT_CA_BUNDLE="${ca_bundle:-${CLOUD_VALIDATION_CA_BUNDLE:-}}"
 export ACCOUNT_MANAGER_BASE_URL="${CLOUD_VALIDATION_ACCOUNT_MANAGER_URL:?CLOUD_VALIDATION_ACCOUNT_MANAGER_URL is required}"

@@ -92,6 +92,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		`video_cloud_api_base_url="https://video.$RUNTIME_COVERAGE_STACK.invalid:18443"`,
 		`printf 'VIDEO_CLOUD_API_BASE_URL=%s\n' "$video_cloud_api_base_url"`,
 		`grep -Fxq "VIDEO_CLOUD_API_BASE_URL=$video_cloud_api_base_url"`,
+		`grep -qx "CLOUD_RUNTIME_COVERAGE_STACK=$RUNTIME_COVERAGE_STACK"`,
+		`grep -Fxq "VIDEO_CLOUD_API_BASE_URL=https://video.$RUNTIME_COVERAGE_STACK.invalid:18443"`,
 		"runtime-coverage-k8s.sh cleanup",
 		"RUNTIME_COVERAGE_DEPLOYED=1",
 		"RUNTIME_COVERAGE_PREPARED=1",
@@ -99,9 +101,15 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"--device-mix light=10,camera=2",
 		`export HOME100K_ENV_ROOT="$RUNTIME_ENV_ROOT"`,
 		"Aggregate runtime feature evidence",
+		"Download same-commit scheduled SDK evidence",
+		"actions: read",
+		"sdk-cloud-validation-nightly.yml",
+		"--event schedule",
+		"scheduled SDK evidence provenance mismatch",
+		"SCHEDULED_FEATURE_EVIDENCE_ROOT",
 		`test-feature-coverage "$action"`,
 		"test-spec-inventory check",
-		`--evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID"`,
+		`--evidence "$evidence_paths"`,
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("runtime workflow missing %q", required)
@@ -205,6 +213,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		!strings.Contains(onboarding, "--steps data,mqtt,runtime-logs,billing-log,billing-db ") {
 		t.Fatal("onboarding must use the isolated mTLS tunnel for token issuance without colliding with test-live factory/MQTT forwarding")
 	}
+	if strings.Contains(onboarding, "CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT") {
+		t.Fatal("onboarding must not split devices onto a nonexistent admin bulk registry route")
+	}
 	if strings.Contains(onboarding, "--steps lifecycle") || strings.Contains(onboarding, "billing-db,lifecycle") {
 		t.Fatal("onboarding must not mutate device eligibility before feature canaries")
 	}
@@ -245,6 +256,13 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(workflow, "go-version: \"1.26.3\"") {
 		t.Fatal("runtime runner must satisfy the Cloud Admin Go toolchain requirement")
 	}
+	sdkNightlyRaw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "sdk-cloud-validation-nightly.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sdkNightlyRaw), `cron: "30 15 * * *"`) {
+		t.Fatal("SDK scheduled validation must finish before the 17:30 UTC runtime aggregate")
+	}
 	deterministicStart := strings.Index(workflow, "- name: Run deterministic feature evidence")
 	loginStart := strings.Index(workflow, "- name: Log in to GHCR")
 	if deterministicStart < 0 || loginStart < 0 || deterministicStart > loginStart {
@@ -276,17 +294,23 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	ui := workflow[uiStart:]
 	for _, expected := range []string{
 		"svc/account-manager 18081:80",
+		"customer_email=\"runtime-ui+${RUNTIME_COVERAGE_RUN_ID}@users.local\"",
+		"customer_password=\"$(openssl rand -base64 24)\"",
+		"--arg organization_name \"Runtime Coverage UI ${RUNTIME_COVERAGE_RUN_ID}\"",
 		"http://127.0.0.1:18081/v1/auth/register",
-		"customer_register_payload",
-		"E2E_BRAND_CLOUD_ID",
-		"organization_name:\"Runtime Coverage Customer\"",
+		"E2E_BRAND_CLOUD_ID=\"$(jq -er '.organization.id // empty'",
 		"svc/video-cloud-prometheus 18091:9090",
 		"test-platform-live",
 		"--platform-session \"$E2E_PLATFORM_SESSION_ID\"",
 		"--customer-session \"$E2E_CUSTOMER_SESSION_ID\"",
 	} {
 		if !strings.Contains(ui, expected) {
-			t.Fatalf("runtime UI smoke must provision its run-scoped customer identity: missing %q", expected)
+			t.Fatalf("runtime UI smoke must create a run-scoped product customer identity: missing %q", expected)
+		}
+	}
+	for _, forbidden := range []string{"select email from users", "select password from users", "select email, password, brand_cloud_id", "customer_fixture"} {
+		if strings.Contains(ui, forbidden) {
+			t.Fatalf("runtime UI smoke must not use tenant-scoped load credentials for product customer login: found %q", forbidden)
 		}
 	}
 }

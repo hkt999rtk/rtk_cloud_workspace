@@ -17,6 +17,7 @@ on:
         required: false
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
@@ -354,6 +355,10 @@ jobs:
             --env-root "$RUNTIME_ENV_ROOT" \
             --preflight --plan --apply --deploy --artifacts \
             --confirm "$RUNTIME_COVERAGE_STACK"
+          grep -qx "CLOUD_ENV_NAME=runtime-coverage" "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -qx "CLOUD_RUNTIME_COVERAGE_STACK=$RUNTIME_COVERAGE_STACK" "$RUNTIME_ENV_ROOT/env/stack.env"
+          grep -Fxq "VIDEO_CLOUD_API_BASE_URL=https://video.$RUNTIME_COVERAGE_STACK.invalid:18443" \
+            "$RUNTIME_ENV_ROOT/env/stack.env"
           echo "RUNTIME_COVERAGE_DEPLOYED=1" >> "$GITHUB_ENV"
 
       - name: Verify isolated deployment image digests and commits
@@ -464,6 +469,7 @@ jobs:
           E2E_EVIDENCE_SAFE: "1"
         run: |
           set -euo pipefail
+          umask 077
           kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-admin" \
             port-forward svc/cloud-admin 18082:80 > "$RUNNER_TEMP/runtime-coverage-admin-port-forward.log" 2>&1 &
           admin_port_forward_pid=$!
@@ -505,22 +511,25 @@ jobs:
             get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL}' | openssl base64 -d -A)"
           platform_password="$(kubectl --kubeconfig "$KUBECONFIG" -n "$RUNTIME_COVERAGE_STACK-account-manager" \
             get secret account-manager-runtime -o jsonpath='{.data.ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD}' | openssl base64 -d -A)"
-          test_data_db="$RUNTIME_ENV_ROOT/artifacts/test-data/rtk-test-data.sqlite"
-          test -s "$test_data_db"
-          customer_email="$(sqlite3 "$test_data_db" "select email from users where role = 'member' order by email limit 1;")"
-          customer_password="$(sqlite3 "$test_data_db" "select password from users where role = 'member' order by email limit 1;")"
+          customer_email="runtime-ui+${RUNTIME_COVERAGE_RUN_ID}@users.local"
+          customer_password="$(openssl rand -base64 24)"
+          test -n "$customer_email"
+          test -n "$customer_password"
           jq -n --arg email "$platform_email" --arg password "$platform_password" \
             '{email:$email,password:$password}' > "$platform_payload"
           jq -n --arg email "$customer_email" --arg password "$customer_password" \
             '{email:$email,password:$password}' > "$customer_payload"
-          jq -n --arg email "$customer_email" --arg password "$customer_password" \
-            '{email:$email,password:$password,organization_name:"Runtime Coverage Customer"}' > "$customer_register_payload"
+          jq -n \
+            --arg email "$customer_email" \
+            --arg password "$customer_password" \
+            --arg organization_name "Runtime Coverage UI ${RUNTIME_COVERAGE_RUN_ID}" \
+            '{email:$email,password:$password,organization_name:$organization_name}' > "$customer_register_payload"
           chmod 0600 "$platform_payload" "$customer_payload" "$customer_register_payload"
           curl -fsS -o "$customer_register_response" \
             -H 'content-type: application/json' \
             --data-binary "@$customer_register_payload" \
             http://127.0.0.1:18081/v1/auth/register
-          E2E_BRAND_CLOUD_ID="$(jq -r '.organization.id // empty' "$customer_register_response")"
+          E2E_BRAND_CLOUD_ID="$(jq -er '.organization.id // empty' "$customer_register_response")"
           test -n "$E2E_BRAND_CLOUD_ID"
           curl -fsS -D "$platform_headers" -o /dev/null \
             -H 'content-type: application/json' \
@@ -573,6 +582,43 @@ jobs:
             --device-mix light=10,camera=2 \
             --out-dir "$live_dir"
 
+      - name: Download same-commit scheduled SDK evidence
+        if: github.event_name == 'schedule' && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          evidence_root="$RUNNER_TEMP/scheduled-feature-evidence"
+          mkdir -p "$evidence_root"
+          sdk_runs="$RUNNER_TEMP/scheduled-sdk-runs.json"
+          gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow sdk-cloud-validation-nightly.yml \
+            --event schedule \
+            --branch "$GITHUB_REF_NAME" \
+            --status success \
+            --limit 30 \
+            --json databaseId,headSha > "$sdk_runs"
+          sdk_run_id="$(jq -r --arg sha "$GITHUB_SHA" '[.[] | select(.headSha == $sha) | .databaseId][0] // empty' "$sdk_runs")"
+          if [[ -z "$sdk_run_id" ]]; then
+            echo "no successful scheduled SDK validation run matches commit $GITHUB_SHA" >&2
+            exit 1
+          fi
+          event="$(gh run view "$sdk_run_id" --repo "$GITHUB_REPOSITORY" --json event,conclusion,headSha --jq '[.event,.conclusion,.headSha] | @tsv')"
+          IFS=$'\t' read -r sdk_event sdk_conclusion sdk_head_sha <<<"$event"
+          if [[ "$sdk_event" != schedule || "$sdk_conclusion" != success || "$sdk_head_sha" != "$GITHUB_SHA" ]]; then
+            echo "scheduled SDK evidence provenance mismatch" >&2
+            exit 1
+          fi
+          gh run download "$sdk_run_id" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'sdk-cloud-validation-*-ios' \
+            --pattern 'sdk-cloud-validation-*-android' \
+            --dir "$evidence_root"
+          test "$(find "$evidence_root" -name feature-evidence.json -type f | wc -l | tr -d ' ')" -ge 2
+          echo "SCHEDULED_FEATURE_EVIDENCE_ROOT=$evidence_root" >> "$GITHUB_ENV"
+
       - name: Aggregate runtime feature evidence
         if: always() && env.RUNTIME_COVERAGE_MODE == 'run' && env.RUNTIME_COVERAGE_PREPARED == '1'
         shell: bash
@@ -594,9 +640,14 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then
             coverage_mode=scheduled
           fi
+          evidence_paths=".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID"
+          if [ "$coverage_mode" = "scheduled" ]; then
+            test -n "${SCHEDULED_FEATURE_EVIDENCE_ROOT:-}"
+            evidence_paths="$evidence_paths,$SCHEDULED_FEATURE_EVIDENCE_ROOT"
+          fi
           go run ./scripts/go/rtk-cloud -- test-feature-coverage "$action" \
             --mode "$coverage_mode" \
-            --evidence ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID" \
+            --evidence "$evidence_paths" \
             --output-dir ".artifacts/test-runs/$RUNTIME_COVERAGE_RUN_ID/feature-coverage"
 
       - name: Gracefully stop services and collect runtime counters

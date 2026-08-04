@@ -42,6 +42,9 @@ if [[ "${CLOUD_VALIDATION_PROFILE:-deploy}" == "nightly" ]]; then
 fi
 
 "$workspace_root/repos/rtk_cloud_client/tools/run_android_sample_cloud_validation.sh"
+if [[ "${CLOUD_VALIDATION_PROFILE:-deploy}" == "nightly" ]]; then
+  "$script_dir/run-auth-resilience-scenarios.sh"
+fi
 if [[ -n "$offline_pid" ]]; then
   wait "$offline_pid"
   offline_pid=""

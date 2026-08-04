@@ -92,6 +92,26 @@ class StagingEmailSignupE2ETest(unittest.TestCase):
         self.assertIn('"ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin"', source)
         self.assertNotIn('"provision", "--env-root", str(runtime_root), "--deploy"', source)
 
+    def test_copies_an_explicit_operator_runtime_into_a_temporary_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source = pathlib.Path(temp) / "operator-runtime"
+            (source / "env").mkdir(parents=True)
+            (source / "env" / "stack.env").write_text(
+                "CLOUD_PROVIDER=lke\n", encoding="utf-8"
+            )
+            generated = []
+            for runtime_root in runner.temporary_runtime_root(source):
+                generated.append(runtime_root)
+                self.assertNotEqual(runtime_root, source)
+                self.assertEqual(
+                    (runtime_root / "env" / "stack.env").read_text(
+                        encoding="utf-8"
+                    ),
+                    "CLOUD_PROVIDER=lke\n",
+                )
+            self.assertEqual(len(generated), 1)
+            self.assertFalse(generated[0].exists())
+
     def test_normalizes_signup_and_account_auth_workflows(self):
         with tempfile.TemporaryDirectory() as temp:
             evidence_dir = pathlib.Path(temp)

@@ -81,6 +81,7 @@ var commands = map[string]commandSpec{
 	"provision":                        {run: runProvision},
 	"provision-k8s":                    {run: runProvisionK8s},
 	"refresh-user-tokens":              {run: runRefreshUserTokens},
+	"refresh-runtime-client-ca":        {run: runRefreshRuntimeClientCA},
 	"remove-k8s":                       {run: runRemoveK8s},
 	"run-staging-e2e":                  {run: runStagingE2E},
 	"secrets-check":                    {run: runSecretsCheck},
@@ -102,6 +103,7 @@ var commands = map[string]commandSpec{
 	"test-e2e":                         {run: runTestE2E},
 	"test-feature":                     {run: runTestFeature},
 	"test-feature-coverage":            {run: runTestFeatureCoverage},
+	"test-factory-live":                {run: runTestFactoryLive},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
 	"test-platform-live":               {run: runPlatformLiveEvidence},
@@ -1994,10 +1996,15 @@ func runTestLive(args []string) error {
 	if err := writeLiveOnboardingWorkflowEvidence(outDir); err != nil {
 		return err
 	}
-	return writeCaseFeatureEvidence(
-		workspace, outDir, "LIVE-STG-ONBOARD-001", runID,
-		"staging", "", started, time.Now().UTC(),
-	)
+	for _, testID := range []string{"LIVE-STG-ONBOARD-001", "E2E-PROV-ACCOUNT-001", "E2E-PROV-BULK-001"} {
+		if err := writeCaseFeatureEvidence(
+			workspace, outDir, testID, runID,
+			"staging", "", started, time.Now().UTC(),
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func commandFlagValue(args []string, name string) string {
@@ -2091,6 +2098,7 @@ func runGenerateLoadDevices(args []string) error {
 	envRootFlag := fs.String("env-root", "", "environment root")
 	factoryURL := fs.String("factory-url", os.Getenv("FACTORY_ENROLL_URL"), "factory enroll URL")
 	factoryAuthKey := fs.String("factory-auth-key", os.Getenv("FACTORY_ENROLL_AUTH_KEY"), "factory enroll auth key")
+	factoryProductionJWT := strings.TrimSpace(os.Getenv("FACTORY_ENROLL_PRODUCTION_JWT"))
 	factoryID := fs.String("factory-id", firstNonEmpty(os.Getenv("FACTORY_ENROLL_FACTORY_ID"), "staging-loadtest"), "factory id")
 	lineID := fs.String("line-id", firstNonEmpty(os.Getenv("FACTORY_ENROLL_LINE_ID"), "loadtest-line"), "line id")
 	stationID := fs.String("station-id", firstNonEmpty(os.Getenv("FACTORY_ENROLL_STATION_ID"), "loadtest-station"), "station id")
@@ -2153,14 +2161,14 @@ func runGenerateLoadDevices(args []string) error {
 		if *factoryURL == "" {
 			*factoryURL = envFileValue(videoEnv, "FACTORY_ENROLL_URL")
 		}
-		if *factoryAuthKey == "" {
+		if factoryProductionJWT == "" && *factoryAuthKey == "" {
 			*factoryAuthKey = envFileValue(videoEnv, "FACTORY_ENROLL_AUTH_KEY")
 		}
 		if *factoryURL == "" {
 			return errors.New("factory enrollment URL missing; set FACTORY_ENROLL_URL in video-cloud env or pass --factory-url")
 		}
-		if *factoryAuthKey == "" {
-			return errors.New("factory enrollment auth key missing; set FACTORY_ENROLL_AUTH_KEY in video-cloud env or pass --factory-auth-key")
+		if factoryProductionJWT == "" && *factoryAuthKey == "" {
+			return errors.New("factory enrollment credential missing; set ephemeral FACTORY_ENROLL_PRODUCTION_JWT or FACTORY_ENROLL_AUTH_KEY")
 		}
 		*factoryURL = normalizeFactoryEnrollURLs(*factoryURL)
 	}
@@ -2243,6 +2251,7 @@ func runGenerateLoadDevices(args []string) error {
 				DeviceDays:     *deviceValidDays,
 				FactoryURL:     *factoryURL,
 				FactoryAuthKey: *factoryAuthKey,
+				ProductionJWT:  factoryProductionJWT,
 				FactoryID:      *factoryID,
 				LineID:         *lineID,
 				StationID:      *stationID,
@@ -2920,7 +2929,7 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		}
 		args := []string{"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname, "--user-count", strconv.Itoa(brand.NormalUsers), "--device-count", strconv.Itoa(brand.Devices), "--device-mix", deviceMix, "--device-prefix", devicePrefix, "--user-concurrency", strconv.Itoa(cfg.UserConcurrency), "--device-concurrency", strconv.Itoa(cfg.DeviceConcurrency), "--bind-concurrency", strconv.Itoa(cfg.BindConcurrency)}
 		if cfg.EmailOwners {
-			args = append(args, "--user-email-prefix", brand.MemberPrefix, "--user-email-domain", "users.invalid")
+			args = append(args, "--user-role", "member", "--user-email-prefix", brand.MemberPrefix, "--user-email-domain", "users.invalid")
 		}
 		if cfg.Resume {
 			args = append(args, "--resume")
@@ -3088,6 +3097,7 @@ func runStagingE2EDataSetup(args []string) error {
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
 	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped user email prefix")
 	userEmailDomain := fs.String("user-email-domain", "users.local", "test-only user email domain")
+	userRole := fs.String("user-role", firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_USER_ROLE"), "admin"), "role for run-scoped staging users: owner, admin, or member")
 	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
 	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
 	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
@@ -3106,6 +3116,9 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	if *userCount <= 0 {
 		return errors.New("--user-count must be a positive integer")
+	}
+	if *userRole != "owner" && *userRole != "admin" && *userRole != "member" {
+		return errors.New("--user-role must be owner, admin, or member")
 	}
 	if *deviceCount <= 0 {
 		return errors.New("--device-count must be a positive integer")
@@ -3185,6 +3198,11 @@ func runStagingE2EDataSetup(args []string) error {
 		steps = append(steps, step)
 		return err
 	}
+	runStepWithEnv := func(name string, env []string, argv ...string) error {
+		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet, Env: env}, argv...)
+		steps = append(steps, step)
+		return err
+	}
 	skipStep := func(name, reason string) {
 		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] skip: %s reason=%q\n", name, reason)
 		steps = append(steps, e2eStep{Name: name, Status: "SKIP", ExitCode: 0, DurationSeconds: 0, LogFile: ""})
@@ -3212,7 +3230,7 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	coverage := testDataCoverageFor(envRoot, *brandname)
 	if shouldRunStep("create_users") && !(*resume && coverage.Users == *userCount) {
-		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
+		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--role", *userRole, "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
 		if strings.TrimSpace(*userEmailPrefix) != "" {
 			args = append(args, "--user-email-prefix", *userEmailPrefix)
 		}
@@ -3235,8 +3253,34 @@ func runStagingE2EDataSetup(args []string) error {
 		}
 		skipStep("create_users", reason)
 	}
-	if shouldRunStep("create_devices") && !(*resume && testDataDeviceMatchesSetup(envRoot, *brandname, *deviceCount, *deviceMix)) {
-		if err := runStep("create_devices", commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force", "--concurrency", strconv.Itoa(*deviceConcurrency))...); err != nil {
+	deviceSetupRequired := shouldRunStep("create_devices") && !(*resume && testDataDeviceMatchesSetup(envRoot, *brandname, *deviceCount, *deviceMix))
+	managedFactoryGenerator := strings.TrimSpace(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT")) == ""
+	providedProductionJWT := strings.TrimSpace(os.Getenv("FACTORY_ENROLL_PRODUCTION_JWT"))
+	factoryEnv := append([]string(nil), childEnv...)
+	if deviceSetupRequired && managedFactoryGenerator {
+		factoryRunID := firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), *loadRunID, time.Now().UTC().Format("20060102T150405Z")+"-factory")
+		var credentialEnv []string
+		var step e2eStep
+		var err error
+		if providedProductionJWT != "" {
+			credentialEnv, step, err = useProvidedFactoryProductionCredential(logsDir, factoryRunID, providedProductionJWT)
+		} else {
+			credentialEnv, step, err = prepareFactoryProductionStep(workspace, envRoot, *outDir, logsDir, *brandname, factoryRunID, *deviceCount, time.Now().UTC(), prepareFactoryProductionCredential)
+		}
+		steps = append(steps, step)
+		if err != nil {
+			return err
+		}
+		factoryEnv = append(factoryEnv, credentialEnv...)
+	} else {
+		reason := "device generation not selected or resumed"
+		if deviceSetupRequired && !managedFactoryGenerator {
+			reason = "external device generator owns its factory credential contract"
+		}
+		skipStep("prepare_factory_production", reason)
+	}
+	if deviceSetupRequired {
+		if err := runStepWithEnv("create_devices", factoryEnv, commandWithArgs(scripts["generate-devices"], "--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*deviceCount), "--mix", *deviceMix, "--prefix", *devicePrefix, "--force", "--concurrency", strconv.Itoa(*deviceConcurrency))...); err != nil {
 			return err
 		}
 		coverage = testDataCoverageFor(envRoot, *brandname)
@@ -3382,7 +3426,7 @@ func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, devi
 }
 
 func e2eStepOrder() []string {
-	return []string{"create_brand", "create_users", "create_devices", "bind_devices", "validate_bind"}
+	return []string{"create_brand", "create_users", "prepare_factory_production", "create_devices", "bind_devices", "validate_bind"}
 }
 
 func e2eStepIndex(name string) int {
@@ -6563,6 +6607,25 @@ func plannedUsersWithPrefixAndDomain(brandname, slug, role string, count int, em
 	return users
 }
 
+func loadOwnerAdminBaseURL(stackEnv map[string]string) (string, error) {
+	environment := strings.ToLower(strings.TrimSpace(stackEnv["CLOUD_ENV_NAME"]))
+	stack := strings.ToLower(strings.TrimSpace(stackEnv["CLOUD_STACK_NAME"]))
+	dnsRoot := strings.ToLower(strings.Trim(strings.TrimSpace(stackEnv["CLOUD_DNS_ROOT_DOMAIN"]), "."))
+	if environment != "staging" || !strings.Contains(stack, "staging") || stack == "" || dnsRoot == "" {
+		return "", errors.New("load-owner activation requires a staging stack and DNS root")
+	}
+	expectedDomain := "admin." + stack + "." + dnsRoot
+	domain := strings.ToLower(strings.TrimSpace(firstNonEmpty(stackEnv["CLOUD_ADMIN_DOMAIN"], expectedDomain)))
+	adminBaseURL := "https://" + domain
+	parsed, err := url.Parse(adminBaseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Port() != "" ||
+		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		!strings.EqualFold(parsed.Hostname(), expectedDomain) {
+		return "", errors.New("staging Cloud Admin HTTPS origin is unavailable or does not match the runtime stack")
+	}
+	return adminBaseURL, nil
+}
+
 func runActivateLoadOwner(args []string) error {
 	fs := flag.NewFlagSet("activate-load-owner", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -6642,9 +6705,9 @@ func runActivateLoadOwner(args []string) error {
 		childEnv = append(childEnv, "IMAP_CONNECT_HOST="+connectHost)
 	}
 	stackEnv, _ := readEnvFile(filepath.Join(ctx.EnvRoot, "env", "stack.env"))
-	adminBaseURL := "https://" + strings.TrimSpace(stackEnv["CLOUD_ADMIN_DOMAIN"])
-	if parsed, parseErr := url.Parse(adminBaseURL); parseErr != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-		return errors.New("staging Cloud Admin HTTPS origin is unavailable")
+	adminBaseURL, err := loadOwnerAdminBaseURL(stackEnv)
+	if err != nil {
+		return err
 	}
 	helper := filepath.Join(workspace, "repos", "rtk_account_manager", "scripts", "email_signup_imap.py")
 	imapEnv := append(childEnv,
@@ -7503,6 +7566,7 @@ type loadDeviceInput struct {
 	DeviceDays     int
 	FactoryURL     string
 	FactoryAuthKey string
+	ProductionJWT  string
 	FactoryID      string
 	LineID         string
 	StationID      string
@@ -7881,8 +7945,6 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 	if err := os.WriteFile(requestPath, bodyBytes, 0o644); err != nil {
 		return factoryEnrollOutcome{}, err
 	}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	signature := signFactoryRequest(in.FactoryAuthKey, "POST", "/v1/factory/enroll", timestamp, requestID, bodyBytes)
 	client := &http.Client{Timeout: in.Timeout}
 	req, err := http.NewRequest(http.MethodPost, factoryURL+"/v1/factory/enroll", bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -7890,8 +7952,14 @@ func factoryEnrollDevice(in loadDeviceInput, deviceID, display, csrPath, certPat
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Video-Cloud-Request-ID", requestID)
-	req.Header.Set("X-Video-Cloud-Timestamp", timestamp)
-	req.Header.Set("X-Video-Cloud-Signature", signature)
+	if strings.TrimSpace(in.ProductionJWT) != "" {
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(in.ProductionJWT))
+	} else {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		signature := signFactoryRequest(in.FactoryAuthKey, "POST", "/v1/factory/enroll", timestamp, requestID, bodyBytes)
+		req.Header.Set("X-Video-Cloud-Timestamp", timestamp)
+		req.Header.Set("X-Video-Cloud-Signature", signature)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return factoryEnrollOutcome{Retryable: true, HTTPStatus: "000", ErrorText: err.Error(), Serial: serial, RequestID: requestID}, nil
@@ -9364,24 +9432,30 @@ func runBindDevices(args []string) error {
 		defer checkpointMu.Unlock()
 		return store.UpsertBinding(*brandname, brandCloudID, tenantSlug, runID, assignment)
 	}
+	claimEvidenceCount, err := bindClaimEvidenceCount(len(assignments))
+	if err != nil {
+		return err
+	}
 	bulkResults := map[string]accountBulkBindDeviceResult{}
-	if len(assignments) > 0 {
-		results, summary, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, assignments, bindDevicesBulkChunkSize())
-		if err != nil {
-			if strings.Contains(err.Error(), "HTTP 404") {
-				safeLog("bulk bind endpoint unavailable; falling back to claim-token resolve flow")
-				results, summary, err = accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, assignments, userSessions, runID, *concurrency)
-			}
-			if err != nil {
-				artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
-				_ = os.MkdirAll(artifactDir, 0o755)
-				failedPath := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-failed-%s.json", slug, runID))
-				_ = writeJSON(failedPath, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind-failed/v1", "brandname": *brandname, "brand_cloud_id": brandCloudID, "run_id": runID, "error": err.Error(), "results": results})
-				return fmt.Errorf("admin bulk bind failed: %w", err)
-			}
-		}
-		bulkResults = results
-		safeLog("bulk bind complete: requested=%d created=%d existing=%d failed=%d chunks=%d", summary.Requested, summary.Created, summary.Existing, summary.Failed, summary.Chunks)
+	claimBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		return accountBindDevicesViaClaimResolve(ctx, &session, &sessionMu, safeLog, brandCloudID, tenantSlug, items, userSessions, runID, *concurrency)
+	}
+	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		return accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, items, bindDevicesBulkChunkSize())
+	}
+	bulkResults, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, claimEvidenceCount, claimBind, bulkBind)
+	if err != nil {
+		artifactDir := filepath.Join(envRoot, "artifacts", "device-bind")
+		_ = os.MkdirAll(artifactDir, 0o755)
+		failedPath := filepath.Join(artifactDir, fmt.Sprintf("%s-device-bind-failed-%s.json", slug, runID))
+		_ = writeJSON(failedPath, map[string]any{"schema": "rtk-cloud-workspace.bulk-device-bind-failed/v1", "brandname": *brandname, "brand_cloud_id": brandCloudID, "run_id": runID, "error": err.Error(), "results": bulkResults})
+		return err
+	}
+	if claimSummary != nil {
+		safeLog("claim evidence bind complete: requested=%d created=%d failed=%d", claimSummary.Requested, claimSummary.Created, claimSummary.Failed)
+	}
+	if bulkSummary != nil {
+		safeLog("bulk bind complete: requested=%d created=%d existing=%d failed=%d chunks=%d", bulkSummary.Requested, bulkSummary.Created, bulkSummary.Existing, bulkSummary.Failed, bulkSummary.Chunks)
 	}
 	var progressMu sync.Mutex
 	done := 0
@@ -9402,6 +9476,7 @@ func runBindDevices(args []string) error {
 		if bulkResult.AccountDeviceID == "" {
 			return bindAssignment{}, fmt.Errorf("bulk bind result missing account_device_id: device=%s", assignment.DeviceID)
 		}
+		assignment.ClaimID = bulkResult.ClaimID
 		assignment.AccountDeviceID = bulkResult.AccountDeviceID
 		prov := bulkResult.ProvisionInput
 		if len(prov) == 0 {
@@ -9424,7 +9499,7 @@ func runBindDevices(args []string) error {
 		return assignment, nil
 	}
 	recreateAfterUnprovision := func(assignment bindAssignment, userSession *brandCloudUserSession) (bindAssignment, error) {
-		results, _, err := accountBulkBindDevicesInChunks(ctx, &session, &sessionMu, safeLog, brandCloudID, []bindAssignment{assignment}, 1)
+		results, _, err := accountRegisterDevicesDirect(ctx, brandCloudID, tenantSlug, []bindAssignment{assignment}, map[string]*brandCloudUserSession{assignment.AssignedEmail: userSession}, safeLog, 1)
 		if err != nil {
 			return bindAssignment{}, err
 		}
@@ -9714,11 +9789,61 @@ type accountBulkBindSummary struct {
 type accountBulkBindDeviceResult struct {
 	VideoCloudDevid string
 	Status          string
+	ClaimID         string
 	AccountDeviceID string
 	Device          map[string]any
 	ProvisionInput  map[string]any
 	ErrorCode       string
 	ErrorMessage    string
+}
+
+func bindClaimEvidenceCount(total int) (int, error) {
+	if total <= 0 {
+		return 0, errors.New("claim qualification requires at least one device")
+	}
+	raw := strings.TrimSpace(os.Getenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT"))
+	if raw == "" || raw == "0" {
+		return total, nil
+	}
+	count, err := strconv.Atoi(raw)
+	if err != nil || count < 0 {
+		return 0, fmt.Errorf("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT must be a non-negative integer")
+	}
+	if count != total {
+		return 0, fmt.Errorf("claim evidence count %d must cover all %d devices; Account Manager has no admin bulk registry route", count, total)
+	}
+	return count, nil
+}
+
+type accountAssignmentBinder func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error)
+
+func bindAssignmentsForQualification(assignments []bindAssignment, claimCount int, claimBind, bulkBind accountAssignmentBinder) (map[string]accountBulkBindDeviceResult, *accountBulkBindSummary, *accountBulkBindSummary, error) {
+	results := map[string]accountBulkBindDeviceResult{}
+	merge := func(items map[string]accountBulkBindDeviceResult) {
+		for deviceID, result := range items {
+			results[deviceID] = result
+		}
+	}
+	var claimSummary, bulkSummary *accountBulkBindSummary
+	bulkAssignments := assignments
+	if claimCount > 0 {
+		claimResults, summary, err := claimBind(assignments[:claimCount])
+		merge(claimResults)
+		if err != nil {
+			return results, nil, nil, fmt.Errorf("run-scoped claim evidence bind failed: %w", err)
+		}
+		claimSummary = &summary
+		bulkAssignments = assignments[claimCount:]
+	}
+	if len(bulkAssignments) > 0 {
+		bulkResults, summary, err := bulkBind(bulkAssignments)
+		merge(bulkResults)
+		if err != nil {
+			return results, claimSummary, nil, fmt.Errorf("admin bulk bind failed: %w", err)
+		}
+		bulkSummary = &summary
+	}
+	return results, claimSummary, bulkSummary, nil
 }
 
 func bindDevicesBulkChunkSize() int {
@@ -9730,6 +9855,92 @@ func bindDevicesBulkChunkSize() int {
 		return 5000
 	}
 	return size
+}
+
+func accountRegisterDevicesDirect(ctx accountManagerContext, brandCloudID, tenantSlug string, assignments []bindAssignment, userSessions map[string]*brandCloudUserSession, logf func(string, ...any), concurrency int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
+	if concurrency > 16 {
+		concurrency = 16
+	}
+	results := map[string]accountBulkBindDeviceResult{}
+	var resultsMu sync.Mutex
+	created := 0
+	existing := 0
+	failed := 0
+	_, err := boundedParallelMap(len(assignments), concurrency, func(i int) (struct{}, error) {
+		assignment := assignments[i]
+		userSession := userSessions[assignment.AssignedEmail]
+		if userSession == nil {
+			return struct{}{}, fmt.Errorf("missing assigned user session: email=%s device=%s", assignment.AssignedEmail, assignment.DeviceID)
+		}
+		metadata := map[string]any{
+			"video_cloud_devid":           assignment.DeviceID,
+			"video_cloud_activity_id":     "bulk-bind-" + assignment.DeviceID,
+			"video_cloud_clip_public_key": "bulk-bind-placeholder-public-key",
+			"device_type":                 assignment.DeviceType,
+			"service_options":             assignment.ServiceOptions,
+		}
+		payload, err := json.Marshal(map[string]any{
+			"name": assignment.DeviceID, "category": assignment.Category,
+			"serial_number": assignment.DeviceID, "metadata": metadata,
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		endpoint := fmt.Sprintf("%s/v1/orgs/%s/devices", ctx.BaseURL, url.PathEscape(brandCloudID))
+		body, status, err := curlJSONStatusWithBrandCloudUserRetryLocked(ctx, tenantSlug, userSession, logf, "create registry device", func(userToken string) ([]byte, int, error) {
+			return curlJSONStatus(endpoint, userToken, payload)
+		})
+		if err != nil {
+			return struct{}{}, err
+		}
+		var result accountBulkBindDeviceResult
+		switch status {
+		case http.StatusCreated:
+			var parsed struct {
+				Device map[string]any `json:"device"`
+			}
+			if err := json.Unmarshal(body, &parsed); err != nil {
+				return struct{}{}, err
+			}
+			result = accountBulkBindDeviceResult{
+				VideoCloudDevid: assignment.DeviceID, Status: "created",
+				AccountDeviceID: stringValue(parsed.Device["id"]), Device: parsed.Device,
+				ProvisionInput: provisionInputForAssignment(assignment),
+			}
+			if result.AccountDeviceID == "" {
+				return struct{}{}, fmt.Errorf("create device response missing device.id: device=%s", assignment.DeviceID)
+			}
+		case http.StatusConflict:
+			userToken, tokenErr := brandCloudUserAccessToken(ctx, tenantSlug, userSession, logf)
+			if tokenErr != nil {
+				return struct{}{}, tokenErr
+			}
+			result, err = accountFindExistingClaimedDevice(ctx, brandCloudID, userToken, assignment)
+			if err != nil {
+				return struct{}{}, err
+			}
+		default:
+			return struct{}{}, fmt.Errorf("create registry device failed: device=%s HTTP %d%s", assignment.DeviceID, status, errorBodySuffix(body))
+		}
+		resultsMu.Lock()
+		results[assignment.DeviceID] = result
+		if result.Status == "created" {
+			created++
+		} else {
+			existing++
+		}
+		resultsMu.Unlock()
+		return struct{}{}, nil
+	})
+	if err != nil {
+		failed = len(assignments) - len(results)
+	}
+	summary := accountBulkBindSummary{Requested: len(assignments), Created: created, Existing: existing, Failed: failed, Chunks: 1}
+	logf("bulk registry bind summary: requested=%d created=%d existing=%d failed=%d", summary.Requested, summary.Created, summary.Existing, summary.Failed)
+	return results, summary, err
 }
 
 func accountBulkBindDevicesInChunks(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID string, assignments []bindAssignment, chunkSize int) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
@@ -10008,12 +10219,16 @@ func parseAccountClaimResolveBindResult(body []byte, assignment bindAssignment) 
 	if accountDeviceID == "" {
 		return accountBulkBindDeviceResult{}, fmt.Errorf("claim resolve response missing device.id: device=%s", assignment.DeviceID)
 	}
+	if strings.TrimSpace(parsed.ClaimID) == "" {
+		return accountBulkBindDeviceResult{}, fmt.Errorf("claim resolve response missing claim_id: device=%s", assignment.DeviceID)
+	}
 	if parsed.ProvisionInput == nil {
 		parsed.ProvisionInput = provisionInputForAssignment(assignment)
 	}
 	return accountBulkBindDeviceResult{
 		VideoCloudDevid: assignment.DeviceID,
 		Status:          "created",
+		ClaimID:         parsed.ClaimID,
 		AccountDeviceID: accountDeviceID,
 		Device:          parsed.Device,
 		ProvisionInput:  parsed.ProvisionInput,

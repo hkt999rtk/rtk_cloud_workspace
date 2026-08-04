@@ -188,8 +188,7 @@ def use_deployed_images(workspace: pathlib.Path, env: dict[str, str]) -> None:
         env[key] = f"{image}:sha-{sha[:12]}"
 
 
-def temporary_runtime_root(workspace: pathlib.Path, env: dict[str, str]):
-    source = workspace / "cloud_env" / "staging" / "runtime"
+def temporary_runtime_root(source: pathlib.Path):
     if not (source / "env" / "stack.env").is_file():
         raise E2EError("staging LKE runtime environment is unavailable")
     with tempfile.TemporaryDirectory(prefix="rtk-email-e2e-runtime-") as temp:
@@ -258,6 +257,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--env-file", default=str(pathlib.Path.home() / ".env"))
+    parser.add_argument(
+        "--runtime-root",
+        default="",
+        help="read-only operator staging runtime root (defaults to the workspace runtime)",
+    )
     parser.add_argument("--confirm", required=True)
     parser.add_argument("--skip-deploy", action="store_true")
     parser.add_argument("--run-id", default="")
@@ -268,6 +272,11 @@ def main() -> int:
         raise E2EError(f"--confirm must equal {STACK}")
 
     workspace = pathlib.Path(args.workspace).expanduser().resolve()
+    runtime_source = (
+        pathlib.Path(args.runtime_root).expanduser().resolve()
+        if args.runtime_root
+        else workspace / "cloud_env" / "staging" / "runtime"
+    )
     account_repo = workspace / "repos" / "rtk_account_manager"
     admin_web = workspace / "repos" / "rtk_cloud_admin" / "web"
     if not (account_repo / "scripts" / "email_signup_imap.py").is_file() or not (admin_web / "package.json").is_file():
@@ -308,7 +317,7 @@ def main() -> int:
         if not kubeconfig.is_file():
             raise E2EError("KUBECONFIG or CLOUD_STAGING_K8S_KUBECONFIG is required for the LKE Send Mail rollout")
         use_deployed_images(workspace, child_env)
-        for runtime_root in temporary_runtime_root(workspace, child_env):
+        for runtime_root in temporary_runtime_root(runtime_source):
             run_checked(
                 [
                     "go", "run", "./scripts/go/rtk-cloud", "--",

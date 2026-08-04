@@ -84,6 +84,46 @@ func TestRuntimeBundleAndReadyArtifactBoundaries(t *testing.T) {
 	}
 }
 
+func TestIOSSimulatorToolchainPreflight(t *testing.T) {
+	bin := t.TempDir()
+	writeTool := func(name, body string) {
+		t.Helper()
+		path := filepath.Join(bin, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTool("xcodebuild", "exit 0")
+	writeTool("xcrun", "printf '%s\\n' '== Devices ==' '    iPhone 16 Pro (test-udid) (Shutdown)' ")
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if err := validateIOSSimulatorToolchain(); err != nil {
+		t.Fatalf("healthy simulator toolchain rejected: %v", err)
+	}
+
+	writeTool("xcodebuild", "echo 'additional components require authorization' >&2; exit 69")
+	err := validateIOSSimulatorToolchain()
+	if err == nil || !strings.Contains(err.Error(), "first-launch") {
+		t.Fatalf("incomplete Xcode first launch error = %v", err)
+	}
+}
+
+func TestIOSSimulatorToolchainPreflightRejectsMissingDevices(t *testing.T) {
+	bin := t.TempDir()
+	for name, body := range map[string]string{
+		"xcodebuild": "#!/bin/sh\nexit 0\n",
+		"xcrun":      "#!/bin/sh\nprintf '%s\\n' '== Devices =='\n",
+	} {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	err := validateIOSSimulatorToolchain()
+	if err == nil || !strings.Contains(err.Error(), "no available iPhone") {
+		t.Fatalf("missing simulator device error = %v", err)
+	}
+}
+
 func TestScenarioManifestValidationBoundaries(t *testing.T) {
 	valid := Scenario{
 		ID:                "valid_case",
@@ -234,6 +274,23 @@ func TestCommandEvidenceAndFileBoundaries(t *testing.T) {
 	}
 	if got := readServerVersion(filepath.Join(dir, "missing")); got != "unknown" {
 		t.Fatalf("missing server version = %q", got)
+	}
+}
+
+func TestCloudValidationCommandPreservesSelectedToolchainPath(t *testing.T) {
+	binDir := t.TempDir()
+	marker := filepath.Join(binDir, "selected-go")
+	if err := os.WriteFile(marker, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+	cfg := Config{OutDir: t.TempDir()}
+	cmd := cloudValidationCommand(context.Background(), cfg, "command -v selected-go")
+	if strings.Contains(strings.Join(cmd.Args, " "), " -l") {
+		t.Fatalf("cloud validation command unexpectedly uses a login shell: %v", cmd.Args)
+	}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("selected toolchain PATH was not preserved: %v: %s", err, output)
 	}
 }
 

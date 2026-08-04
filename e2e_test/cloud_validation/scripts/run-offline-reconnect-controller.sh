@@ -12,6 +12,8 @@ app_key="$(jq -er '.app.private_key_path' "$bundle")"
 secret_root="$(jq -er 'first(.resources[] | select(.kind == "local_fixture_root") | .path)' "$bundle")"
 header_file="$secret_root/app-headers.txt"
 signal_file="$out_dir/virtual-device/offline-reconnect.signal"
+disconnect_request="$out_dir/virtual-device/offline-disconnect.request"
+offline_ready="$out_dir/virtual-device/offline-ready"
 evidence_file="$out_dir/offline-reconnect-evidence.json"
 response="$secret_root/offline-shadow-response.json"
 headers="$secret_root/offline-shadow-headers.txt"
@@ -19,7 +21,12 @@ headers="$secret_root/offline-shadow-headers.txt"
 test -f "$header_file"
 mkdir -p "$(dirname "$signal_file")"
 offline_timeout_seconds="${CLOUD_VALIDATION_OFFLINE_TIMEOUT_SECONDS:-120}"
-deadline=$((SECONDS + offline_timeout_seconds))
+start_timeout_seconds="${CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600}"
+# Android can finish the online round-trip and begin the offline scenario in
+# less than one second. Poll frequently enough to observe that convergence
+# window before asking the virtual device to disconnect.
+poll_interval_seconds="${CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1}"
+deadline=$((SECONDS + start_timeout_seconds))
 queued_at=""
 
 read_shadow() {
@@ -30,20 +37,104 @@ read_shadow() {
   fi
   curl "${curl_mtls[@]}" \
     --header "@$header_file" --dump-header "$headers" \
-    "${base_url%/}/api/devices/$device_id/shadow" > "$response"
+    "${base_url%/}/things/$device_id/shadow" > "$response"
+}
+
+signal_platform_offline_ready() {
+  if [[ -n "${CLOUD_VALIDATION_OFFLINE_READY_BRIDGE_COMMAND:-}" ]]; then
+    bash -lc "$CLOUD_VALIDATION_OFFLINE_READY_BRIDGE_COMMAND"
+    return
+  fi
+  case "$platform" in
+    android)
+      local state_file="${CLOUD_VALIDATION_ANDROID_EMULATOR_STATE:?CLOUD_VALIDATION_ANDROID_EMULATOR_STATE is required}"
+      local serial
+      serial="$(jq -er '.serial' "$state_file")"
+      adb -s "$serial" shell \
+        "run-as com.rtk.cloud.sample sh -c 'umask 077; : > /data/user/0/com.rtk.cloud.sample/files/cloud-validation-offline-ready'"
+      ;;
+    ios)
+      local device data_container marker
+      device="$(xcrun simctl list devices booted | awk -F '[()]' '/Booted/ { print $2; exit }')"
+      test -n "$device"
+      data_container="$(xcrun simctl get_app_container "$device" com.rtk.cloud.sample.ios data)"
+      marker="$data_container/Documents/cloud-validation-offline-ready"
+      : > "$marker"
+      chmod 600 "$marker"
+      ;;
+    *)
+      echo "unsupported platform for offline-ready bridge: $platform" >&2
+      return 1
+      ;;
+  esac
 }
 
 while (( SECONDS < deadline )); do
+  if read_shadow; then
+    if jq -e --arg run_id "$run_id" '
+      .state.desired.cloud_validation_run == $run_id and
+      .state.reported.cloud_validation_run == $run_id and
+      .state.desired.enabled == true and
+      .state.reported.enabled == true and
+      ((.state.delta == null) or (.state.delta == {}))
+    ' "$response" >/dev/null || jq -e --arg run_id "$run_id" '
+      .state.desired.cloud_validation_run == $run_id and
+      .state.desired.cloud_validation_scenario == "shadow_offline_reconnect" and
+      .state.delta.cloud_validation_scenario == "shadow_offline_reconnect" and
+      (.state.reported.cloud_validation_scenario // "") != "shadow_offline_reconnect"
+    ' "$response" >/dev/null; then
+      : > "$disconnect_request"
+      chmod 600 "$disconnect_request"
+      break
+    fi
+  fi
+  sleep "$poll_interval_seconds"
+done
+
+if [[ ! -f "$disconnect_request" ]]; then
+  echo "offline controller did not observe online shadow convergence" >&2
+  exit 1
+fi
+
+deadline=$((SECONDS + offline_timeout_seconds))
+while (( SECONDS < deadline )); do
+  if [[ -f "$offline_ready" ]] && jq -e --arg run_id "$run_id" '
+    .schema_version == 1 and .run_id == $run_id and .status == "OFFLINE"
+  ' "$offline_ready" >/dev/null; then
+    break
+  fi
+  sleep "$poll_interval_seconds"
+done
+
+if [[ ! -f "$offline_ready" ]]; then
+  echo "virtual device did not confirm the offline phase" >&2
+  exit 1
+fi
+
+# Release the platform's desired-state write only after the virtual device has
+# closed MQTT and produced the run-scoped OFFLINE artifact. This removes the
+# race where the app could write the "offline" desired state while the device
+# was still connected and able to consume it.
+if ! signal_platform_offline_ready; then
+  echo "offline controller could not signal platform offline readiness" >&2
+  exit 1
+fi
+
+deadline=$((SECONDS + offline_timeout_seconds))
+while (( SECONDS < deadline )); do
   if read_shadow && jq -e --arg run_id "$run_id" '
     .state.desired.cloud_validation_run == $run_id and
-    .state.desired.cloud_validation_scenario == "shadow_offline_reconnect"
+    .state.desired.cloud_validation_scenario == "shadow_offline_reconnect" and
+    .state.desired.enabled == true and
+    .state.delta.cloud_validation_scenario == "shadow_offline_reconnect" and
+    (.state.reported.cloud_validation_scenario // "") != "shadow_offline_reconnect"
   ' "$response" >/dev/null; then
     queued_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     : > "$signal_file"
     chmod 600 "$signal_file"
     break
   fi
-  sleep 1
+  sleep "$poll_interval_seconds"
 done
 
 if [[ -z "$queued_at" ]]; then
@@ -77,7 +168,7 @@ while (( SECONDS < deadline )); do
     chmod 600 "$evidence_file"
     exit 0
   fi
-  sleep 1
+  sleep "$poll_interval_seconds"
 done
 
 echo "offline controller did not observe post-reconnect convergence" >&2

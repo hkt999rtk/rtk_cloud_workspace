@@ -344,6 +344,11 @@ func preflight(cfg Config) []StepResult {
 				steps = append(steps, blockedStep("preflight_runtime_bundle", "not_configured", "runtime credential bundle is missing and no fixture setup command is configured"))
 			}
 		}
+		if cfg.Platform == "ios" && runtime.GOOS == "darwin" {
+			if err := validateIOSSimulatorToolchain(); err != nil {
+				steps = append(steps, blockedStep("preflight_ios_simulator", "environment_unavailable", err.Error()))
+			}
+		}
 		if filepath.Base(cfg.SetupCommand) == "setup-fixture.sh" && !fileExists(cfg.RuntimeBundle) && strings.TrimSpace(os.Getenv("CLOUD_VALIDATION_FIXTURE_PROVIDER_COMMAND")) == "" {
 			for name, value := range map[string]string{
 				"env_root":                os.Getenv("CLOUD_VALIDATION_ENV_ROOT"),
@@ -376,6 +381,24 @@ func preflight(cfg Config) []StepResult {
 	return steps
 }
 
+func validateIOSSimulatorToolchain() error {
+	if output, err := exec.Command("xcodebuild", "-checkFirstLaunchStatus").CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("Xcode first-launch components are not ready: %s", detail)
+	}
+	output, err := exec.Command("xcrun", "simctl", "list", "devices", "available").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("CoreSimulator device discovery failed: %s", strings.TrimSpace(string(output)))
+	}
+	if !strings.Contains(string(output), "iPhone") {
+		return errors.New("CoreSimulator has no available iPhone device")
+	}
+	return nil
+}
+
 type managedCommand struct {
 	cmd  *exec.Cmd
 	done chan error
@@ -389,9 +412,8 @@ func startManagedCommand(ctx context.Context, cfg Config, name, command string) 
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-lc", command)
+	cmd := cloudValidationCommand(ctx, cfg, command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = commandEnv(cfg)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
@@ -459,9 +481,8 @@ func runCommandStep(ctx context.Context, cfg Config, name, command, reasonCode s
 		return failedStep(name, reasonCode, err.Error())
 	}
 	defer logFile.Close()
-	cmd := exec.CommandContext(ctx, "/bin/bash", "-lc", command)
+	cmd := cloudValidationCommand(ctx, cfg, command)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = commandEnv(cfg)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil && cmd.Process != nil {
@@ -478,6 +499,15 @@ func runCommandStep(ctx context.Context, cfg Config, name, command, reasonCode s
 		return failedStep(name, reasonCode, fmt.Sprintf("%s failed: %v; see %s", name, err, logPath))
 	}
 	return passedStep(name, logPath)
+}
+
+func cloudValidationCommand(ctx context.Context, cfg Config, command string) *exec.Cmd {
+	// A login shell reloads the host profile and can replace the toolchain PATH
+	// injected by Actions setup steps. Preserve the runner's explicit environment
+	// so live validation executes the selected Go and platform toolchains.
+	cmd := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc", "-c", command)
+	cmd.Env = commandEnv(cfg)
+	return cmd
 }
 
 func commandEnv(cfg Config) []string {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -55,6 +56,96 @@ func TestValidateDeviceBindAllowsMissingClaimIDWhenProvisionIdentifiersExist(t *
 	})
 	if err != nil {
 		t.Fatalf("runValidateDeviceBind() error = %v", err)
+	}
+}
+
+func TestBindClaimEvidenceCountRequiresCanonicalClaimForEveryDevice(t *testing.T) {
+	if got, err := bindClaimEvidenceCount(12); err != nil || got != 12 {
+		t.Fatalf("count=%d err=%v", got, err)
+	}
+	t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", "12")
+	if got, err := bindClaimEvidenceCount(12); err != nil || got != 12 {
+		t.Fatalf("explicit count=%d err=%v", got, err)
+	}
+	for _, tc := range []struct {
+		value string
+		total int
+	}{
+		{value: "invalid", total: 12},
+		{value: "-1", total: 12},
+		{value: "1", total: 12},
+		{value: "12", total: 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			t.Setenv("CLOUD_BIND_DEVICES_CLAIM_EVIDENCE_COUNT", tc.value)
+			if _, err := bindClaimEvidenceCount(tc.total); err == nil {
+				t.Fatalf("value=%q total=%d was accepted", tc.value, tc.total)
+			}
+		})
+	}
+}
+
+func TestParseAccountClaimResolveBindResultPreservesClaimCorrelation(t *testing.T) {
+	assignment := bindAssignment{DeviceID: "load-device-0001"}
+	result, err := parseAccountClaimResolveBindResult([]byte(`{
+  "claim_id":"claim-1",
+  "device":{"id":"account-device-1"},
+  "provision_input":{"video_cloud_devid":"load-device-0001"}
+}`), assignment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ClaimID != "claim-1" || result.AccountDeviceID != "account-device-1" || result.VideoCloudDevid != assignment.DeviceID {
+		t.Fatalf("result=%+v", result)
+	}
+	if _, err := parseAccountClaimResolveBindResult([]byte(`{"device":{"id":"account-device-1"}}`), assignment); err == nil {
+		t.Fatal("claim resolve response without claim_id was accepted")
+	}
+}
+
+func TestBindAssignmentsForQualificationUsesCanonicalClaimForEveryDevice(t *testing.T) {
+	assignments := []bindAssignment{{DeviceID: "claimed-1"}, {DeviceID: "claimed-2"}, {DeviceID: "claimed-3"}}
+	claimBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		if len(items) != 3 {
+			t.Fatalf("claim items=%+v", items)
+		}
+		return map[string]accountBulkBindDeviceResult{
+			"claimed-1": {ClaimID: "claim-1", AccountDeviceID: "account-1"},
+			"claimed-2": {ClaimID: "claim-2", AccountDeviceID: "account-2"},
+			"claimed-3": {ClaimID: "claim-3", AccountDeviceID: "account-3"},
+		}, accountBulkBindSummary{Requested: 3, Created: 3}, nil
+	}
+	bulkBind := func(items []bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+		t.Fatalf("unsupported admin bulk registry path called with %+v", items)
+		return nil, accountBulkBindSummary{}, nil
+	}
+	results, claimSummary, bulkSummary, err := bindAssignmentsForQualification(assignments, len(assignments), claimBind, bulkBind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 3 || results["claimed-1"].ClaimID != "claim-1" || claimSummary == nil || claimSummary.Requested != 3 || bulkSummary != nil {
+		t.Fatalf("results=%+v claim=%+v bulk=%+v", results, claimSummary, bulkSummary)
+	}
+}
+
+func TestBindAssignmentsForQualificationReportsPhaseFailures(t *testing.T) {
+	assignments := []bindAssignment{{DeviceID: "claimed"}, {DeviceID: "bulk"}}
+	failed := errors.New("failed")
+	if results, _, _, err := bindAssignmentsForQualification(assignments, 1,
+		func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+			return map[string]accountBulkBindDeviceResult{"claimed": {ClaimID: "partial"}}, accountBulkBindSummary{}, failed
+		}, nil,
+	); err == nil || len(results) != 1 {
+		t.Fatalf("claim failure results=%+v err=%v", results, err)
+	}
+	if results, claimSummary, _, err := bindAssignmentsForQualification(assignments, 1,
+		func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+			return map[string]accountBulkBindDeviceResult{"claimed": {ClaimID: "claim-1"}}, accountBulkBindSummary{Created: 1}, nil
+		}, func([]bindAssignment) (map[string]accountBulkBindDeviceResult, accountBulkBindSummary, error) {
+			return map[string]accountBulkBindDeviceResult{"bulk": {AccountDeviceID: "partial"}}, accountBulkBindSummary{}, failed
+		},
+	); err == nil || len(results) != 2 || claimSummary == nil {
+		t.Fatalf("bulk failure results=%+v claim=%+v err=%v", results, claimSummary, err)
 	}
 }
 
@@ -145,6 +236,100 @@ func TestAccountBulkBindDevicesUsesAdminEndpointAndDoesNotListDevices(t *testing
 	}
 	if results["load-device-0001"].Status != "existing" || results["load-device-0002"].AccountDeviceID != "account-device-2" {
 		t.Fatalf("unexpected results: %+v", results)
+	}
+}
+
+func TestAccountRegisterDevicesDirectUsesCanonicalOrganizationRoute(t *testing.T) {
+	created := map[string]map[string]any{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/orgs/brand-1/devices" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		if r.Header.Get("authorization") != "Bearer admin-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("authorization"))
+		}
+		var req map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatal(err)
+		}
+		metadata, _ := req["metadata"].(map[string]any)
+		deviceID, _ := metadata["video_cloud_devid"].(string)
+		if deviceID == "" || req["name"] != deviceID || metadata["device_type"] != "camera" {
+			t.Fatalf("unexpected create payload: %+v", req)
+		}
+		created[deviceID] = req
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"device": map[string]any{"id": "account-" + deviceID, "metadata": metadata}})
+	}))
+	defer server.Close()
+
+	assignments := []bindAssignment{
+		{AssignedEmail: "member@example.test", DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{AssignedEmail: "member@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_storage"}},
+	}
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1", assignments,
+		map[string]*brandCloudUserSession{"member@example.test": {Email: "member@example.test", Session: accountPlatformSession{AccessToken: "admin-token"}}},
+		func(string, ...any) {}, 1,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 2 || len(results) != 2 || summary.Requested != 2 || summary.Created != 2 || summary.Existing != 0 || summary.Failed != 0 {
+		t.Fatalf("created=%d results=%+v summary=%+v", len(created), results, summary)
+	}
+	for _, assignment := range assignments {
+		result := results[assignment.DeviceID]
+		if result.Status != "created" || result.AccountDeviceID != "account-"+assignment.DeviceID || result.ClaimID != "" {
+			t.Fatalf("result[%s] = %+v", assignment.DeviceID, result)
+		}
+	}
+}
+
+func TestAccountRegisterDevicesDirectReportsCreateFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":{"code":"forbidden"}}`, http.StatusForbidden)
+	}))
+	defer server.Close()
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1",
+		[]bindAssignment{{AssignedEmail: "admin@example.test", DeviceID: "device-1"}},
+		map[string]*brandCloudUserSession{"admin@example.test": {Email: "admin@example.test", Session: accountPlatformSession{AccessToken: "admin-token"}}},
+		func(string, ...any) {}, 0,
+	)
+	if err == nil || len(results) != 0 || summary.Requested != 1 || summary.Failed != 1 {
+		t.Fatalf("results=%+v summary=%+v err=%v", results, summary, err)
+	}
+}
+
+func TestAccountRegisterDevicesDirectReusesMatchingConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/orgs/brand-1/devices":
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"already_exists"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/orgs/brand-1/devices":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"devices":    []map[string]any{{"id": "account-device-1", "metadata": map[string]any{"video_cloud_devid": "device-1"}}},
+				"pagination": map[string]any{"total": 1},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	results, summary, err := accountRegisterDevicesDirect(
+		accountManagerContext{BaseURL: server.URL}, "brand-1", "tenant-1",
+		[]bindAssignment{{AssignedEmail: "admin@example.test", DeviceID: "device-1", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}}},
+		map[string]*brandCloudUserSession{"admin@example.test": {Email: "admin@example.test", Session: accountPlatformSession{AccessToken: "admin-token"}}},
+		func(string, ...any) {}, 17,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results["device-1"].Status != "existing" || results["device-1"].AccountDeviceID != "account-device-1" || summary.Existing != 1 || summary.Created != 0 || summary.Failed != 0 {
+		t.Fatalf("results=%+v summary=%+v", results, summary)
 	}
 }
 

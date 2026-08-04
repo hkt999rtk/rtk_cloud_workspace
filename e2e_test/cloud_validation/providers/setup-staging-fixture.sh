@@ -217,6 +217,8 @@ for required_slug in "$cloud_slug" "$foreign_cloud_slug"; do
 done
 cloud_name="$(jq -er --arg slug "$cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .name' "$cloud_list")"
 foreign_cloud_name="$(jq -er --arg slug "$foreign_cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .name' "$cloud_list")"
+cloud_id="$(jq -er --arg slug "$cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .id' "$cloud_list")"
+foreign_cloud_id="$(jq -er --arg slug "$foreign_cloud_slug" 'first((.brand_clouds // .items // [])[] | select(.tenant_slug == $slug)) | .id' "$cloud_list")"
 # The shared data setup keys its SQLite filename from the Brand Cloud display
 # name, while rows inside the DB retain the tenant slug. These values can differ
 # because Account Manager adds a uniqueness suffix to tenant slugs.
@@ -224,8 +226,74 @@ db="$isolated_env/artifacts/test-data/$(brand_slug "$cloud_name")-test-data.sqli
 foreign_db="$isolated_env/artifacts/test-data/$(brand_slug "$foreign_cloud_name")-test-data.sqlite"
 write_recovery_bundle "clouds_validated" 1
 
+future_rfc3339() {
+  if date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then
+    date -u -v+1H '+%Y-%m-%dT%H:%M:%SZ'
+  else
+    date -u -d '+1 hour' '+%Y-%m-%dT%H:%M:%SZ'
+  fi
+}
+
+issue_factory_production_jwt() {
+  local brand_cloud_id="$1" role="$2"
+  local profile_key="sdk-cloud-validation-v1"
+  local profiles_response="$secret_root/${role}-device-item-profiles.json"
+  local profile_request="$secret_root/${role}-device-item-profile-request.json"
+  local profile_response="$secret_root/${role}-device-item-profile-response.json"
+  local production_request="$secret_root/${role}-production-run-request.json"
+  local production_response="$secret_root/${role}-production-run-response.json"
+  local profile_id factory_jwt
+
+  curl --fail --silent --show-error --max-time 15 \
+    --header "@$account_headers" \
+    "${account_url%/}/v1/admin/brand-clouds/${brand_cloud_id}/device-item-profiles?status=active&limit=100&offset=0" > "$profiles_response"
+  chmod 600 "$profiles_response"
+  profile_id="$(jq -er --arg key "$profile_key" 'first((.device_item_profiles // .items // [])[] | select(.profile_key == $key and .status == "active")) | .id' "$profiles_response" 2>/dev/null || true)"
+  if [[ -z "$profile_id" ]]; then
+    jq -n --arg key "$profile_key" '{
+      profile_key:$key,
+      display_name:"SDK Cloud Validation",
+      category:"ip_camera",
+      ca_profile:"factory-device",
+      issuer_profile:"sdk-cloud-validation",
+      service_options:["mqtt","video_streaming","video_storage"]
+    }' > "$profile_request"
+    chmod 600 "$profile_request"
+    curl --fail --silent --show-error --max-time 15 \
+      --request POST \
+      --header "@$account_headers" \
+      --header 'Content-Type: application/json' \
+      --data-binary "@$profile_request" \
+      "${account_url%/}/v1/admin/brand-clouds/${brand_cloud_id}/device-item-profiles" > "$profile_response"
+    chmod 600 "$profile_response"
+    profile_id="$(jq -er '.device_item_profile.id' "$profile_response")"
+  fi
+
+  jq -n \
+    --arg batch_id "sdk-${safe_run}-${role}" \
+    --arg valid_from "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+    --arg valid_until "$(future_rfc3339)" '{
+      factory_id:"sdk-cloud-validation",
+      batch_id:$batch_id,
+      allowed_quantity:1,
+      valid_from:$valid_from,
+      valid_until:$valid_until
+    }' > "$production_request"
+  chmod 600 "$production_request"
+  curl --fail --silent --show-error --max-time 15 \
+    --request POST \
+    --header "@$account_headers" \
+    --header 'Content-Type: application/json' \
+    --data-binary "@$production_request" \
+    "${account_url%/}/v1/admin/brand-clouds/${brand_cloud_id}/device-item-profiles/${profile_id}/production-runs" > "$production_response"
+  chmod 600 "$production_response"
+  factory_jwt="$(jq -er 'select((.production_run.id | length) > 0 and (.factory_jwt | length) > 0) | .factory_jwt' "$production_response")"
+  rm -f -- "$profiles_response" "$profile_request" "$profile_response" "$production_request" "$production_response"
+  printf '%s' "$factory_jwt"
+}
+
 run_setup() {
-  local name="$1" role="$2" output="$3"
+  local name="$1" role="$2" output="$3" production_jwt="$4"
   local device_prefix_base="sdk-${platform}-${role}-"
   # OpenBao validates the common name as one IDNA label (63-byte maximum).
   # Reserve five characters for the generated -0001 suffix.
@@ -239,6 +307,11 @@ run_setup() {
   device_run_fragment="$(bounded_run_fragment "$run_fragment_length")"
   local device_prefix="${device_prefix_base}${device_run_fragment}"
   ACCOUNT_MANAGER_BASE_URL="$account_url" \
+    FACTORY_ENROLL_PRODUCTION_JWT="$production_jwt" \
+    FACTORY_ENROLL_AUTH_KEY= \
+    FACTORY_ENROLL_FACTORY_ID=sdk-cloud-validation \
+    FACTORY_ENROLL_BATCH_ID="sdk-${safe_run}-${role}" \
+    FACTORY_ENROLL_RUN_ID="$run_id" \
     RTK_CLOUD_APP_CERT_KEY_ALGORITHM=p256 \
     CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRIES="${CLOUD_VALIDATION_FACTORY_ENROLL_RETRIES:-3}" \
     CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRY_DELAY="${CLOUD_VALIDATION_FACTORY_ENROLL_RETRY_DELAY:-1s}" \
@@ -259,16 +332,20 @@ run_setup() {
     --no-resume
 }
 
+primary_production_jwt="$(issue_factory_production_jwt "$cloud_id" primary)"
+foreign_production_jwt="$(issue_factory_production_jwt "$foreign_cloud_id" foreign)"
 set +e
-run_setup "$cloud_name" primary "$setup_out"
+run_setup "$cloud_name" primary "$setup_out" "$primary_production_jwt"
 setup_rc=$?
 if (( setup_rc == 0 )); then
   # Persist the primary resources before starting the foreign fixture. A
   # failure in the second setup must not orphan the first user or device.
   write_recovery_bundle "primary_fixture_created" 1
-  run_setup "$foreign_cloud_name" foreign "$foreign_setup_out"
+  run_setup "$foreign_cloud_name" foreign "$foreign_setup_out" "$foreign_production_jwt"
   setup_rc=$?
 fi
+primary_production_jwt=""
+foreign_production_jwt=""
 set -e
 
 if (( setup_rc != 0 )); then
@@ -289,7 +366,7 @@ fi
 chmod 600 "$db" "$foreign_db"
 write_recovery_bundle "post_setup_validation" 1
 
-user_json="$($sqlite -json "$db" "select email, brand_cloud_id, tenant_slug, app_credentials_json, app_certificate_json, body_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
+user_json="$($sqlite -json "$db" "select email, password, brand_cloud_id, tenant_slug, app_credentials_json, app_certificate_json, body_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
 binding_json="$($sqlite -json "$db" "select device_id, account_device_id, assigned_email from device_bindings where tenant_slug = '$cloud_slug' order by assignment_index limit 1")"
 foreign_user_json="$($sqlite -json "$foreign_db" "select email, brand_cloud_id, tenant_slug, body_json from users where tenant_slug = '$foreign_cloud_slug' order by email limit 1")"
 foreign_binding_json="$($sqlite -json "$foreign_db" "select device_id, account_device_id, assigned_email from device_bindings where tenant_slug = '$foreign_cloud_slug' order by assignment_index limit 1")"
@@ -300,6 +377,7 @@ if ! jq -e 'length == 1' <<<"$user_json" >/dev/null || ! jq -e 'length == 1' <<<
 fi
 
 email="$(jq -er '.[0].email' <<<"$user_json")"
+password="$(jq -er '.[0].password' <<<"$user_json")"
 brand_cloud_id="$(jq -er '.[0].brand_cloud_id' <<<"$user_json")"
 tenant_slug="$(jq -er '.[0].tenant_slug' <<<"$user_json")"
 brand_cloud_user_id="$(jq -er '.[0].body_json | fromjson | .brand_cloud_user_id' <<<"$user_json")"
@@ -320,24 +398,62 @@ if ! jq -e --arg id "$brand_cloud_id" --arg slug "$tenant_slug" --arg foreign_id
   exit 1
 fi
 
+revoked_app_key="$secret_root/revoked-app-private-key.pem"
+revoked_app_cert="$secret_root/revoked-app-certificate-chain.pem"
+revoked_app_cert_raw="$secret_root/revoked-app-certificate-chain.raw.pem"
+revoked_app_identity="$secret_root/revoked-app-identity.p12"
+revoked_app_identity_password_file="$secret_root/revoked-app-identity-password.txt"
+jq -er '.[0].app_credentials_json | fromjson | .private_key_pem' <<<"$user_json" > "$revoked_app_key"
+jq -er '.[0].app_certificate_json | fromjson |
+  if ((.certificate_chain_pem // "") | length) > 0 then .certificate_chain_pem else .certificate_pem end' \
+  <<<"$user_json" > "$revoked_app_cert_raw"
+sed 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\
+-----BEGIN CERTIFICATE-----/g' "$revoked_app_cert_raw" > "$revoked_app_cert"
+rm -f -- "$revoked_app_cert_raw"
+revoked_app_identity_password="$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+printf '%s' "$revoked_app_identity_password" > "$revoked_app_identity_password_file"
+chmod 600 "$revoked_app_identity_password_file"
+openssl pkcs12 -export -out "$revoked_app_identity" -inkey "$revoked_app_key" -in "$revoked_app_cert" -passout "file:$revoked_app_identity_password_file"
+rm -f -- "$revoked_app_identity_password_file"
+
+# Rotate the fixture identity before platform execution. The mobile scenario
+# must prove that this preserved old identity is rejected while the newly
+# issued identity can obtain a token and perform an authorized device read.
+curl --fail --silent --show-error --max-time 15 --request POST \
+  --header "@$account_headers" --header 'Content-Type: application/json' --data '{}' \
+  "${account_url%/}/v1/admin/brand-clouds/$brand_cloud_id/users/$brand_cloud_user_id/app-certificate/revoke" >/dev/null
+
 app_key="$secret_root/app-private-key.pem"
+app_csr="$secret_root/app-certificate.csr.pem"
+app_login_request="$secret_root/app-certificate-login-request.json"
+app_login_response="$secret_root/app-certificate-login-response.json"
 app_cert="$secret_root/app-certificate-chain.pem"
 app_cert_raw="$secret_root/app-certificate-chain.raw.pem"
 app_identity="$secret_root/app-identity.p12"
 app_identity_password_file="$secret_root/app-identity-password.txt"
-jq -er '.[0].app_credentials_json | fromjson | .private_key_pem' <<<"$user_json" > "$app_key"
-jq -er '.[0].app_certificate_json | fromjson |
+openssl ecparam -name prime256v1 -genkey -noout -out "$app_key"
+openssl req -new -key "$app_key" -subj "/CN=app-brand-cloud-user:$brand_cloud_user_id" -out "$app_csr"
+jq -n --arg email "$email" --arg password "$password" --rawfile csr "$app_csr" \
+  '{email:$email,password:$password,app_csr_pem:$csr}' > "$app_login_request"
+curl --fail --silent --show-error --max-time 15 \
+  --header 'Content-Type: application/json' --data-binary "@$app_login_request" \
+  "${account_url%/}/v1/brand-clouds/$tenant_slug/auth/login" > "$app_login_response"
+jq -e '.app_certificate.status == "issued" and
+  (((.app_certificate.certificate_chain_pem // .app_certificate.certificate_pem // "") | length) > 0)' \
+  "$app_login_response" >/dev/null
+jq -r '.app_certificate |
   if ((.certificate_chain_pem // "") | length) > 0 then .certificate_chain_pem else .certificate_pem end' \
-  <<<"$user_json" > "$app_cert_raw"
+  "$app_login_response" > "$app_cert_raw"
 sed 's/-----END CERTIFICATE----------BEGIN CERTIFICATE-----/-----END CERTIFICATE-----\
 -----BEGIN CERTIFICATE-----/g' "$app_cert_raw" > "$app_cert"
-rm -f -- "$app_cert_raw"
+rm -f -- "$app_cert_raw" "$app_login_request" "$app_login_response" "$app_csr"
 app_identity_password="$(LC_ALL=C od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
 printf '%s' "$app_identity_password" > "$app_identity_password_file"
 chmod 600 "$app_identity_password_file"
 openssl pkcs12 -export -out "$app_identity" -inkey "$app_key" -in "$app_cert" -passout "file:$app_identity_password_file"
 rm -f -- "$app_identity_password_file"
-chmod 600 "$app_key" "$app_cert" "$app_identity" "$cloud_list"
+chmod 600 "$revoked_app_key" "$revoked_app_cert" "$revoked_app_identity" \
+  "$app_key" "$app_cert" "$app_identity" "$cloud_list"
 
 # The SDK WebSocket session is a device-transport API and must use a
 # device-scoped token. Issue it from the run-scoped virtual-device certificate;
@@ -369,30 +485,67 @@ token_helper_args=(
 if [[ -n "${CLOUD_VALIDATION_SERVER_CA_BUNDLE:-}" ]]; then
   token_helper_args+=(--ca "$CLOUD_VALIDATION_SERVER_CA_BUNDLE")
 fi
-if [[ -n "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER:-}" ]]; then
-  "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER}" "${token_helper_args[@]}"
-else
-  (cd "$workspace/e2e_test" && GOWORK=off go run ./cloud_validation/cmd/request-token "${token_helper_args[@]}")
+device_token_ready=0
+device_token_attempts="${CLOUD_VALIDATION_DEVICE_CERT_READY_ATTEMPTS:-30}"
+for ((attempt = 1; attempt <= device_token_attempts; attempt++)); do
+  set +e
+  if [[ -n "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER:-}" ]]; then
+    "${CLOUD_VALIDATION_DEVICE_TOKEN_HELPER}" "${token_helper_args[@]}"
+    device_token_rc=$?
+  else
+    (cd "$workspace/e2e_test" && GOWORK=off go run ./cloud_validation/cmd/request-token "${token_helper_args[@]}")
+    device_token_rc=$?
+  fi
+  set -e
+  if (( device_token_rc == 0 )) && jq -e '.access_token | type == "string" and length > 0' "$device_token_response" >/dev/null 2>&1; then
+    device_token_ready=1
+    break
+  fi
+  if (( attempt < device_token_attempts )); then
+    sleep "${CLOUD_VALIDATION_DEVICE_CERT_READY_DELAY_SECONDS:-1}"
+  fi
+done
+if [[ "$device_token_ready" != "1" ]]; then
+  echo "device certificate did not become ready after $device_token_attempts attempts" >&2
+  exit 1
 fi
 chmod 600 "$device_token_request" "$device_token_response"
-jq -e '.access_token | type == "string" and length > 0' "$device_token_response" >/dev/null
 
 token_response="$secret_root/app-token-response.json"
 token_request="$secret_root/app-token-request.json"
 jq -n --arg devid "$device_id" '{scope:"app", service:"mqtt", devid:$devid}' > "$token_request"
+app_token_curl=(curl --silent --show-error --max-time 15 --cert "$app_cert" --key "$app_key")
 if [[ -n "${CLOUD_VALIDATION_SERVER_CA_BUNDLE:-}" ]]; then
-  curl --fail --silent --show-error --max-time 15 \
-    --cacert "$CLOUD_VALIDATION_SERVER_CA_BUNDLE" --cert "$app_cert" --key "$app_key" \
+  app_token_curl+=(--cacert "$CLOUD_VALIDATION_SERVER_CA_BUNDLE")
+fi
+app_token_ready=0
+app_token_status="000"
+app_token_attempts="${CLOUD_VALIDATION_APP_CERT_READY_ATTEMPTS:-30}"
+for ((attempt = 1; attempt <= app_token_attempts; attempt++)); do
+  set +e
+  app_token_status="$("${app_token_curl[@]}" --output "$token_response" --write-out '%{http_code}' \
     -H 'Content-Type: application/json' --data-binary "@$token_request" \
-    "${device_url%/}/request_token" > "$token_response"
-else
-  curl --fail --silent --show-error --max-time 15 \
-    --cert "$app_cert" --key "$app_key" \
-    -H 'Content-Type: application/json' --data-binary "@$token_request" \
-    "${device_url%/}/request_token" > "$token_response"
+    "${device_url%/}/request_token")"
+  app_token_rc=$?
+  set -e
+  if (( app_token_rc == 0 )) && [[ "$app_token_status" == "200" ]] && \
+    jq -e '.access_token | type == "string" and length > 0' "$token_response" >/dev/null 2>&1; then
+    app_token_ready=1
+    break
+  fi
+  case "$app_token_status" in
+    000|401|403|404|409|425|429|5??) ;;
+    *) echo "rotated app certificate readiness failed with HTTP $app_token_status" >&2; exit 1 ;;
+  esac
+  if (( attempt < app_token_attempts )); then
+    sleep "${CLOUD_VALIDATION_APP_CERT_READY_DELAY_SECONDS:-1}"
+  fi
+done
+if [[ "$app_token_ready" != "1" ]]; then
+  echo "rotated app certificate did not become ready after $app_token_attempts attempts (last HTTP $app_token_status)" >&2
+  exit 1
 fi
 chmod 600 "$token_response"
-jq -e '.access_token | type == "string" and length > 0' "$token_response" >/dev/null
 app_headers="$secret_root/app-headers.txt"
 printf 'Authorization: Bearer %s\n' "$(jq -er '.access_token' "$token_response")" > "$app_headers"
 chmod 600 "$app_headers"
@@ -420,6 +573,10 @@ jq -n \
   --arg key_path "$app_key" \
   --arg pkcs12_path "$app_identity" \
   --arg pkcs12_password "$app_identity_password" \
+  --arg revoked_pkcs12_path "$revoked_app_identity" \
+  --arg revoked_pkcs12_password "$revoked_app_identity_password" \
+  --arg device_certificate_path "$device_cert" \
+  --arg device_private_key_path "$device_key" \
   --arg user_id "$brand_cloud_user_id" \
   --arg email "$email" \
   --arg cloud_id "$brand_cloud_id" \
@@ -459,7 +616,11 @@ jq -n \
       certificate_path: $cert_path,
       private_key_path: $key_path,
       pkcs12_path: $pkcs12_path,
-      pkcs12_password: $pkcs12_password
+      pkcs12_password: $pkcs12_password,
+      revoked_pkcs12_path: $revoked_pkcs12_path,
+      revoked_pkcs12_password: $revoked_pkcs12_password,
+      device_certificate_path: $device_certificate_path,
+      device_private_key_path: $device_private_key_path
     },
     local_temporary_files: [$token_file, $token_request_file, $cloud_file],
     resources: [

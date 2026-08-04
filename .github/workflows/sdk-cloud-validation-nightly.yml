@@ -2,7 +2,7 @@ name: SDK Cloud Validation Nightly
 
 on:
   schedule:
-    - cron: "23 17 * * *"
+    - cron: "30 15 * * *"
   workflow_dispatch:
 
 permissions:

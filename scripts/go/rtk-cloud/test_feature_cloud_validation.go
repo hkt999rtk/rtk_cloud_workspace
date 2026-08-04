@@ -25,10 +25,11 @@ type cloudValidationImportReport struct {
 	PlatformResult  *struct {
 		Status  string `json:"status"`
 		Results []struct {
-			TestID        string `json:"test_id"`
-			ScenarioID    string `json:"scenario_id"`
-			Status        string `json:"status"`
-			CorrelationID string `json:"correlation_id"`
+			TestID        string   `json:"test_id"`
+			ScenarioID    string   `json:"scenario_id"`
+			Status        string   `json:"status"`
+			CorrelationID string   `json:"correlation_id"`
+			Evidence      []string `json:"evidence"`
 		} `json:"results"`
 	} `json:"platform_result"`
 	Scenarios []struct {
@@ -43,10 +44,11 @@ type cloudValidationImportEvidence struct {
 	RunID         string `json:"run_id"`
 	Platform      string `json:"platform"`
 	Events        []struct {
-		ScenarioID    string `json:"scenario_id"`
-		CorrelationID string `json:"correlation_id"`
-		Type          string `json:"type"`
-		ObservedAt    string `json:"observed_at"`
+		ScenarioID    string         `json:"scenario_id"`
+		CorrelationID string         `json:"correlation_id"`
+		Type          string         `json:"type"`
+		ObservedAt    string         `json:"observed_at"`
+		Evidence      map[string]any `json:"evidence"`
 	} `json:"events"`
 }
 
@@ -161,11 +163,15 @@ func importCloudValidationFeatureEvidence(workspace string, catalog testCatalog,
 				Assertions: map[string]string{"native_scenario": "PASS", "cloud_evidence_contract": "PASS"}, Evidence: refs,
 			})
 		}
+		workflowAssertions, err := cloudValidationWorkflowAssertions(tc, inventory, result.ScenarioID, result.CorrelationID, result.Evidence, events)
+		if err != nil {
+			return err
+		}
 		cases = append(cases, featureCaseEvidenceV2{
 			TestID: tc.ID, Status: "PASS", Assessment: "native deployed SDK scenario passed",
 			Environment: report.Environment, Target: report.Platform, StartedAt: started.UTC().Format(time.RFC3339),
 			CompletedAt: completed.UTC().Format(time.RFC3339), WorkspaceCommit: commits["workspace"], Commits: commits,
-			Requirements: assertions, Workflows: cloudValidationWorkflowAssertions(tc, inventory, result.ScenarioID, result.CorrelationID, events),
+			Requirements: assertions, Workflows: workflowAssertions,
 		})
 	}
 	if len(cases) == 0 {
@@ -227,6 +233,7 @@ func cloudValidationEvidenceRefs(dir string) ([]featureCoverageEvidenceFile, err
 type cloudValidationEventKey struct {
 	CorrelationID string
 	Types         map[string]bool
+	Evidence      map[string]map[string]any
 }
 
 func cloudValidationEventsByScenario(evidence cloudValidationImportEvidence) map[string]cloudValidationEventKey {
@@ -236,8 +243,12 @@ func cloudValidationEventsByScenario(evidence cloudValidationImportEvidence) map
 		if item.Types == nil {
 			item.Types = map[string]bool{}
 		}
+		if item.Evidence == nil {
+			item.Evidence = map[string]map[string]any{}
+		}
 		item.CorrelationID = event.CorrelationID
 		item.Types[event.Type] = true
+		item.Evidence[event.Type] = event.Evidence
 		out[event.ScenarioID] = item
 	}
 	return out
@@ -256,17 +267,20 @@ func requireCloudValidationEvents(scenarioID, correlationID string, expected []s
 	return nil
 }
 
-func cloudValidationWorkflowAssertions(tc testCatalogCase, inventory specInventory, scenarioID, correlationID string, events map[string]cloudValidationEventKey) []featureWorkflowAssertion {
+func cloudValidationWorkflowAssertions(tc testCatalogCase, inventory specInventory, scenarioID, correlationID string, nativeEvidence []string, events map[string]cloudValidationEventKey) ([]featureWorkflowAssertion, error) {
 	eventSteps := map[string]map[string]string{
 		"WF-SDK-AUTH-001":                 {"request_sdk_token": "token_issued", "read_authorized_device": "authorized_device_read"},
 		"WF-CONTRACT-AUTH-APP-001":        {"discover_csr_requirement": "account_session_issued", "issue_app_certificate": "app_certificate_issued", "issue_app_runtime_token": "token_issued"},
 		"WF-CONTRACT-AUTH-RECOVERY-001":   {"issue_device_access_token": "token_issued", "reissue_valid_access_token": "token_reissued", "recover_with_device_certificate": "certificate_recovery_succeeded"},
 		"WF-CONTRACT-AUTH-REVOCATION-001": {"issue_pre_deactivation_token": "token_issued", "deactivate_device_identity": "device_deactivated", "reject_revoked_certificate": "certificate_rejected"},
-		"WF-SDK-WS-001":                   {"setup_sdk_eventhub": "eventhub_setup", "authorize_sdk_download": "download_authorized", "subscribe_sdk_eventhub": "eventhub_subscribed"},
 	}
 	item := events[scenarioID]
 	if item.CorrelationID != correlationID {
-		return nil
+		return nil, nil
+	}
+	native := map[string]bool{}
+	for _, value := range nativeEvidence {
+		native[strings.TrimSpace(value)] = true
 	}
 	var out []featureWorkflowAssertion
 	for _, workflow := range inventory.Workflows {
@@ -274,22 +288,69 @@ func cloudValidationWorkflowAssertions(tc testCatalogCase, inventory specInvento
 		for _, requirementID := range workflow.RequirementIDs {
 			bound = bound || catalogContainsString(tc.Verifies, requirementID)
 		}
+		if !bound {
+			continue
+		}
+		if workflow.ID == "WF-SDK-WS-001" {
+			assertion, err := cloudValidationWebSocketWorkflowAssertion(workflow, item, native)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, assertion)
+			continue
+		}
 		mapping, supported := eventSteps[workflow.ID]
-		if !bound || !supported {
+		if !supported {
 			continue
 		}
 		assertion := featureWorkflowAssertion{WorkflowID: workflow.ID, Revision: workflow.Revision, Status: "PASS"}
 		for _, step := range workflow.Steps {
 			eventType := mapping[step.ID]
 			if eventType == "" || !item.Types[eventType] {
-				assertion.Status = "INCOMPLETE"
-				continue
+				return nil, fmt.Errorf("cloud-validation workflow %s is missing PASS evidence for step %s", workflow.ID, step.ID)
 			}
 			assertion.Steps = append(assertion.Steps, featureWorkflowStepAssertion{StepID: step.ID, OperationRef: step.OperationRef, Status: "PASS", Assertions: map[string]string{"cloud_event_" + eventType: "PASS"}})
 		}
-		if assertion.Status == "PASS" && len(assertion.Steps) == len(workflow.Steps) {
-			out = append(out, assertion)
-		}
+		out = append(out, assertion)
 	}
-	return out
+	return out, nil
+}
+
+func cloudValidationWebSocketWorkflowAssertion(workflow specWorkflow, item cloudValidationEventKey, native map[string]bool) (featureWorkflowAssertion, error) {
+	assertions := map[string]map[string]string{
+		"dispatch_cloud_command":     {"cloud_command_http_200": "PASS", "cloud_event_correlation_match": "PASS"},
+		"receive_websocket_message":  {"transport_callback_received": "PASS"},
+		"verify_message_correlation": {"run_correlation_match": "PASS"},
+		"close_websocket_session":    {"session_disconnect_completed": "PASS"},
+	}
+	passed := map[string]bool{
+		"dispatch_cloud_command":     item.Types["command_dispatched"] && cloudValidationHTTPStatus(item.Evidence["command_dispatched"]) == 200,
+		"receive_websocket_message":  native["Cloud command received through SDK transport callback"],
+		"verify_message_correlation": native["message matched run correlation"],
+		"close_websocket_session":    native["WebSocket session disconnected after receive"],
+	}
+	assertion := featureWorkflowAssertion{WorkflowID: workflow.ID, Revision: workflow.Revision, Status: "PASS"}
+	for _, step := range workflow.Steps {
+		if !passed[step.ID] {
+			return featureWorkflowAssertion{}, fmt.Errorf("cloud-validation workflow %s is missing PASS evidence for step %s", workflow.ID, step.ID)
+		}
+		assertion.Steps = append(assertion.Steps, featureWorkflowStepAssertion{
+			StepID: step.ID, OperationRef: step.OperationRef, Status: "PASS", Assertions: assertions[step.ID],
+		})
+	}
+	return assertion, nil
+}
+
+func cloudValidationHTTPStatus(evidence map[string]any) int {
+	switch value := evidence["http_status"].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case json.Number:
+		status, _ := value.Int64()
+		return int(status)
+	default:
+		return 0
+	}
 }

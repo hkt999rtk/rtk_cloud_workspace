@@ -111,6 +111,43 @@ func TestRequestRejectsInvalidInputsAndResponses(t *testing.T) {
 	}
 }
 
+func TestHTTPStatusErrorExposesOnlyStatus(t *testing.T) {
+	err := &HTTPStatusError{StatusCode: http.StatusForbidden}
+	if err.Error() != "mTLS request returned HTTP 403" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestProbeBearerGETUsesMTLSAndBearerToken(t *testing.T) {
+	dir := t.TempDir()
+	ca, caKey, caPEM := newCertificateAuthority(t)
+	clientCert, clientKey := issueCertificate(t, ca, caKey, "device-probe", []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth})
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer probe-token" {
+			t.Fatalf("unexpected probe request: %s", r.Method)
+		}
+		if r.TLS == nil || len(r.TLS.PeerCertificates) != 1 || r.TLS.PeerCertificates[0].Subject.CommonName != "device-probe" {
+			t.Fatal("probe did not authenticate the expected client certificate")
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	server.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: certPool(t, caPEM)}
+	server.StartTLS()
+	defer server.Close()
+
+	serverCA := writeTestFile(t, dir, "server-ca.crt", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}))
+	certPath := writeTestFile(t, dir, "device.crt", clientCert)
+	keyPath := writeTestFile(t, dir, "device.key", clientKey)
+	tokenPath := writeTestFile(t, dir, "token.json", []byte(`{"access_token":"probe-token"}`))
+	status, err := ProbeBearerGET(context.Background(), server.URL, certPath, keyPath, serverCA, tokenPath, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusForbidden {
+		t.Fatalf("status=%d, want 403", status)
+	}
+}
+
 func newCertificateAuthority(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

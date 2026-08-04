@@ -13,6 +13,7 @@ ready_file="${CLOUD_VALIDATION_READY_FILE:?CLOUD_VALIDATION_READY_FILE is requir
 evidence_file="$out_dir/cloud-evidence.json"
 trigger_evidence="$out_dir/cloud-command-trigger-evidence.json"
 offline_evidence="$out_dir/offline-reconnect-evidence.json"
+auth_resilience_evidence="$out_dir/auth-resilience-evidence.json"
 
 device_id="$(jq -er '.app.device_id' "$bundle")"
 foreign_device_id="$(jq -er '.app.foreign_device_id' "$bundle")"
@@ -99,7 +100,7 @@ if status="$(curl "${curl_mtls[@]}" --output "$invalid_token_response" --write-o
 fi
 shadow_status="000"
 if status="$(curl "${curl_mtls[@]}" --output "$shadow_response" --write-out '%{http_code}' \
-  --header "@$probe_headers" "${base_url%/}/api/devices/${device_id}/shadow")"; then
+  --header "@$probe_headers" "${base_url%/}/things/${device_id}/shadow")"; then
   shadow_status="$status"
 fi
 for response_file in "$token_response" "$info_response" "$foreign_info_response" "$invalid_token_response" "$shadow_response"; do
@@ -219,6 +220,12 @@ if [[ -f "$offline_evidence" ]]; then
   merged="$evidence_file.tmp"
   jq -s '.[0] as $base | .[1] as $offline | $base | .events += ($offline.events // [])' \
     "$evidence_file" "$offline_evidence" > "$merged"
+  mv "$merged" "$evidence_file"
+fi
+if [[ -f "$auth_resilience_evidence" ]]; then
+  merged="$evidence_file.tmp"
+  jq -s '.[0] as $base | .[1] as $auth | $base | .events += ($auth.events // [])' \
+    "$evidence_file" "$auth_resilience_evidence" > "$merged"
   mv "$merged" "$evidence_file"
 fi
 chmod 600 "$evidence_file"

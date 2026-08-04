@@ -9,8 +9,10 @@ rtk-factory-enroll-test -> local cmd/factoryenroll -> certissuer -> device certi
 ```
 
 The runner generates per-device ECDSA P-256 keys and CSRs, derives `devid` as
-`pk-<sha256-spki-hex>`, signs `POST /v1/factory/enroll` with the factory HMAC
-headers, and validates the returned certificate.
+`pk-<sha256-spki-hex>`, authenticates `POST /v1/factory/enroll` with the
+production-run JWT when `FACTORY_ENROLL_TEST_PRODUCTION_JWT` is present, and
+validates the returned certificate and chain. HMAC remains available only for
+the repo-local compatibility flow.
 
 ## Local Run
 
@@ -69,6 +71,28 @@ Outputs:
 
 Device private keys are held in memory and are not written unless
 `--write-key-files` is explicitly set for a local debug run.
+
+## Staging Production Qualification
+
+The opt-in staging command creates a run-scoped Brand Cloud, device item
+profile, and production run in Account Manager; uses the returned production
+JWT for one factory enrollment; validates the returned chain; and uses the new
+device certificate to request a device token over mTLS:
+
+```sh
+ACCOUNT_MANAGER_BASE_URL=https://account-manager.example.test \
+ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=... \
+ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=... \
+FACTORY_ENROLL_TEST_URL=https://factory.example.test \
+VIDEO_CLOUD_DEVICE_BASE_URL=https://device.example.test \
+FACTORY_ENROLL_TEST_ARTIFACT_DIR=/private/operator/artifacts/factory-run \
+go run ./factory_enroll/cmd/rtk-factory-enroll-test qualify-staging
+```
+
+Admin credentials and the production JWT remain process-local and are omitted
+from all result files. The command rejects non-HTTPS staging endpoints. The
+run-scoped Brand Cloud, profile, production run, and device identity are kept
+as audit trace.
 
 ## Recorded Linode Certset
 

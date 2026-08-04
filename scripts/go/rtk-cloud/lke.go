@@ -1224,6 +1224,7 @@ func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
     nginx.ingress.kubernetes.io/configuration-snippet: |
       proxy_set_header X-Client-Verify $ssl_client_verify;
       proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;
+      proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
 `, lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env))
 }
 
@@ -2887,6 +2888,27 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 }
 
 func isSafeLKEOperatorStackOverride(key string) bool {
+	safeRuntimeKeys := map[string]bool{
+		"CLOUD_RUNTIME_COVERAGE_STACK":           true,
+		"VIDEO_CLOUD_API_BASE_URL":               true,
+		"VIDEO_CLOUD_BLOB_ENDPOINT":              true,
+		"VIDEO_CLOUD_BLOB_REGION":                true,
+		"VIDEO_CLOUD_BLOB_BUCKET":                true,
+		"VIDEO_CLOUD_BLOB_PREFIX":                true,
+		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":      true,
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": true,
+		"VIDEO_CLOUD_CLIP_VERIFIER_ADDR":         true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL":        true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL":    true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES":      true,
+		"VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES":   true,
+		"VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL":  true,
+		"VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL": true,
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS":           true,
+	}
+	if safeRuntimeKeys[key] {
+		return true
+	}
 	if !strings.HasPrefix(key, "LKE_") {
 		return false
 	}
@@ -4033,10 +4055,9 @@ if ! has_ca pki/app; then
   bao write -field=certificate pki/root/root/sign-intermediate csr=@/tmp/openbao-app.csr common_name=%s ttl=26280h >/tmp/openbao-app.crt
   bao write pki/app/intermediate/set-signed certificate=@/tmp/openbao-app.crt >/dev/null
 fi
-	bao write pki/device/roles/factory-device \
-	  allow_any_name=true enforce_hostnames=false server_flag=false client_flag=true \
-	  key_type=any key_usage=DigitalSignature ext_key_usage=ClientAuth \
-	  ttl=8760h max_ttl=26280h >/dev/null
+	bao write pki/device/roles/factory-device - >/dev/null <<'JSON'
+{"allow_any_name":true,"enforce_hostnames":false,"cn_validations":["disabled"],"server_flag":false,"client_flag":true,"key_type":"any","key_usage":["DigitalSignature"],"ext_key_usage":["ClientAuth"],"ttl":"8760h","max_ttl":"26280h"}
+JSON
 	bao write pki/device/roles/gateway-server \
 	  allow_any_name=true enforce_hostnames=false server_flag=true client_flag=false \
 	  key_type=any key_usage=DigitalSignature ext_key_usage=ServerAuth \
@@ -4281,8 +4302,10 @@ metadata:
 type: Opaque
 stringData:
   FACTORY_ENROLL_AUTH_KEY: %q
+  FACTORY_ENROLL_PRODUCTION_JWT_SECRET: %q
+  FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE: %q
   POSTGRES_PASSWORD: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeFactoryEnrollAuthKey(env), lkeRuntimeSecretValue("postgres"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeFactoryEnrollAuthKey(env), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("postgres"))
 }
 
 func lkeVideoCloudRuntimeSecretManifest(env map[string]string) string {
@@ -6100,6 +6123,8 @@ func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertI
 	checksum := lkeConfigChecksum(
 		lkeRuntimeSecretValue("postgres"),
 		lkeRuntimeSecretValue("factory-enroll-auth"),
+		lkeFactoryProductionJWTSecret(env),
+		lkeFactoryProductionJWTAudience(env),
 		lkeCertIssuerBaseURL(env),
 		material.FactoryCert,
 		material.ServiceCA,
@@ -6150,6 +6175,16 @@ spec:
                 secretKeyRef:
                   name: factoryenroll-runtime
                   key: FACTORY_ENROLL_AUTH_KEY
+            - name: FACTORY_ENROLL_PRODUCTION_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: factoryenroll-runtime
+                  key: FACTORY_ENROLL_PRODUCTION_JWT_SECRET
+            - name: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
+              valueFrom:
+                secretKeyRef:
+                  name: factoryenroll-runtime
+                  key: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
             - name: FACTORY_ENROLL_ADDR
               value: ":18443"
             - name: FACTORY_ENROLL_CERT_ISSUER_URL
@@ -6263,6 +6298,14 @@ func lkeFactoryEnrollAuthKey(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("FACTORY_ENROLL_AUTH_KEY"), lkeRuntimeSecretValue("factory-enroll-auth"))
 }
 
+func lkeFactoryProductionJWTSecret(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("FACTORY_PRODUCTION_JWT_SECRET"), env["FACTORY_PRODUCTION_JWT_SECRET"], lkeRuntimeSecretValue("factory-production-jwt"))
+}
+
+func lkeFactoryProductionJWTAudience(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("FACTORY_PRODUCTION_JWT_AUDIENCE"), env["FACTORY_PRODUCTION_JWT_AUDIENCE"], "factory-enroll")
+}
+
 func lkeInternalAuthToken() string {
 	return lkeRuntimeSecretValue("internal-auth")
 }
@@ -6305,6 +6348,8 @@ stringData:
   JWT_ACCESS_SECRET: %q
   JWT_REFRESH_SECRET: %q
   ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN: %q
+  FACTORY_PRODUCTION_JWT_SECRET: %q
+  FACTORY_PRODUCTION_JWT_AUDIENCE: %q
   ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL: %q
   ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD: %q
   ACCOUNT_MANAGER_USER_CACHE_ENABLED: "true"
@@ -6338,7 +6383,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
 }
 
 func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
@@ -6557,7 +6602,7 @@ func writeLKEAccountManagerRuntimeEnv(paths provisionPaths, env map[string]strin
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	body := fmt.Sprintf("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=%s\n", lkeInternalAuthToken())
+	body := fmt.Sprintf("ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN=%s\nFACTORY_PRODUCTION_JWT_SECRET=%s\nFACTORY_PRODUCTION_JWT_AUDIENCE=%s\n", lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env))
 	return os.WriteFile(path, []byte(body), 0o600)
 }
 
@@ -6566,7 +6611,7 @@ func writeLKEVideoCloudRuntimeEnv(paths provisionPaths, env map[string]string) e
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	body := fmt.Sprintf("FACTORY_ENROLL_AUTH_KEY=%s\nVIDEO_CLOUD_AUTH_SECRET=%s\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=%s\n", lkeFactoryEnrollAuthKey(env), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken())
+	body := fmt.Sprintf("FACTORY_ENROLL_AUTH_KEY=%s\nFACTORY_ENROLL_PRODUCTION_JWT_SECRET=%s\nFACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE=%s\nVIDEO_CLOUD_AUTH_SECRET=%s\nVIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN=%s\n", lkeFactoryEnrollAuthKey(env), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken())
 	return os.WriteFile(path, []byte(body), 0o600)
 }
 
@@ -6640,6 +6685,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeRuntimeSecretValue("jwt-access"),
 			lkeRuntimeSecretValue("jwt-refresh"),
 			lkeInternalAuthToken(),
+			lkeFactoryProductionJWTSecret(env),
+			lkeFactoryProductionJWTAudience(env),
 			lkePlatformAdminEmail(env),
 			lkeRuntimeSecretValue("platform-admin"),
 			lkeCertIssuerBaseURL(env),
@@ -7242,23 +7289,33 @@ spec:
 }
 
 func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreate bool) error {
+	expiredKubeconfig := false
 	if kubeconfig := firstNonEmpty(os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"), os.Getenv("LKE_KUBECONFIG")); kubeconfig != "" {
 		if _, statErr := os.Stat(kubeconfig); statErr != nil {
 			return statErr
 		}
-		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
-		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", kubeconfig)
-		return nil
+		if k8sKubeconfigReady(kubeconfig) {
+			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
+			fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", kubeconfig)
+			return nil
+		}
+		expiredKubeconfig = true
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig is unavailable or expired, refreshing: %s\n", kubeconfig)
 	}
 	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "kubeconfig.yaml")
 	if _, statErr := os.Stat(stateKubeconfig); statErr == nil {
-		_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
-		fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", stateKubeconfig)
-		return nil
+		if k8sKubeconfigReady(stateKubeconfig) {
+			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
+			fmt.Fprintf(os.Stderr, "[lke] kubeconfig: %s\n", stateKubeconfig)
+			return nil
+		}
+		expiredKubeconfig = true
+		fmt.Fprintf(os.Stderr, "[lke] kubeconfig is unavailable or expired, refreshing: %s\n", stateKubeconfig)
 	}
 	out, err := exec.Command(lkeKubectl(), "config", "current-context").CombinedOutput()
 	context := strings.TrimSpace(string(out))
-	if err == nil && context != "" {
+	ready := exec.Command(lkeKubectl(), "--request-timeout=5s", "get", "--raw=/readyz").Run() == nil
+	if !expiredKubeconfig && err == nil && context != "" && ready {
 		fmt.Fprintf(os.Stderr, "[lke] kubectl context: %s\n", context)
 		return nil
 	}

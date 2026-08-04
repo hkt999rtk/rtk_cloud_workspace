@@ -54,6 +54,7 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
 CLOUD_PROVIDER=test
 CLOUD_REGION=us-sea
+CLOUD_STACK_NAME=video-cloud-staging
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.realtekconnect.com
 `)
@@ -148,6 +149,51 @@ IMAP_EMAIL_FOLDER=INBOX
 	}
 }
 
+func TestLoadOwnerAdminBaseURLDerivesAndGuardsTheRunStack(t *testing.T) {
+	base := map[string]string{
+		"CLOUD_ENV_NAME":        "staging",
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"CLOUD_DNS_ROOT_DOMAIN": "realtekconnect.com",
+	}
+	got, err := loadOwnerAdminBaseURL(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://admin.video-cloud-staging.realtekconnect.com" {
+		t.Fatalf("derived admin URL = %q", got)
+	}
+
+	validExplicit := make(map[string]string, len(base)+1)
+	for key, value := range base {
+		validExplicit[key] = value
+	}
+	validExplicit["CLOUD_ADMIN_DOMAIN"] = "admin.video-cloud-staging.realtekconnect.com"
+	if _, err := loadOwnerAdminBaseURL(validExplicit); err != nil {
+		t.Fatalf("valid explicit domain rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func(map[string]string){
+		"production environment": func(env map[string]string) { env["CLOUD_ENV_NAME"] = "production" },
+		"production stack":       func(env map[string]string) { env["CLOUD_STACK_NAME"] = "video-cloud" },
+		"localhost":              func(env map[string]string) { env["CLOUD_ADMIN_DOMAIN"] = "localhost" },
+		"wrong stack":            func(env map[string]string) { env["CLOUD_ADMIN_DOMAIN"] = "admin.other-staging.realtekconnect.com" },
+		"URL instead of host": func(env map[string]string) {
+			env["CLOUD_ADMIN_DOMAIN"] = "http://admin.video-cloud-staging.realtekconnect.com"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := make(map[string]string, len(base))
+			for key, value := range base {
+				candidate[key] = value
+			}
+			mutate(candidate)
+			if got, err := loadOwnerAdminBaseURL(candidate); err == nil {
+				t.Fatalf("unsafe runtime accepted: %q", got)
+			}
+		})
+	}
+}
+
 func TestRunActivateLoadOwnerRejectsInvalidArgumentsAndMissingIMAP(t *testing.T) {
 	if err := runActivateLoadOwner([]string{"--unknown"}); err == nil {
 		t.Fatal("unknown flag accepted")
@@ -169,6 +215,7 @@ func TestRunActivateLoadOwnerRejectsInvalidArgumentsAndMissingIMAP(t *testing.T)
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
 CLOUD_PROVIDER=test
 CLOUD_REGION=us-sea
+CLOUD_STACK_NAME=video-cloud-staging
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.realtekconnect.com
 `)

@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -96,10 +97,347 @@ func TestRunnerEnrollsMultipleDevicesAndValidatesCertificates(t *testing.T) {
 		t.Fatalf("summary = %+v", result.Summary)
 	}
 	for _, device := range result.Devices {
-		if !device.Success || !device.ClientAuthUsable || device.CA {
+		if !device.Success || !device.ClientAuthUsable || !device.ChainVerified || device.CA || device.IssuerRequestID == "" {
 			t.Fatalf("device result = %+v", device)
 		}
 	}
+}
+
+func TestRunnerPrefersProductionJWTAndRedactsItFromEvidence(t *testing.T) {
+	const productionJWT = "header.payload.signature-secret-marker"
+	signer := newTestSigner(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+productionJWT {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("X-Video-Cloud-Signature"); got != "" {
+			t.Fatalf("production JWT request must not send legacy HMAC signature, got %q", got)
+		}
+		if got := r.Header.Get("X-Video-Cloud-Timestamp"); got != "" {
+			t.Fatalf("production JWT request must not send legacy timestamp, got %q", got)
+		}
+		var in EnrollRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(EnrollResponse{
+			RequestID:           in.RequestID,
+			IssuerRequestID:     "issuer-production-001",
+			DeviceID:            in.DeviceID,
+			SerialNumber:        in.SerialNumber,
+			CertificatePEM:      string(signer.signCSR(t, in.DeviceID, in.CSRPem)),
+			CertificateChainPEM: string(signer.caPEM),
+		})
+	}))
+	defer server.Close()
+
+	result, err := NewRunner(server.Client()).Run(context.Background(), Config{
+		FactoryURL:    server.URL,
+		AuthKey:       "legacy-key-must-not-be-used",
+		ProductionJWT: productionJWT,
+		Count:         1,
+		RunID:         "production-jwt-run",
+		Concurrency:   1,
+		Timeout:       time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Config.AuthMode != "production_jwt" || result.Summary.Successes != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), productionJWT) || strings.Contains(RenderMarkdown(result), productionJWT) {
+		t.Fatal("production JWT leaked into redacted evidence")
+	}
+}
+
+func TestConfigRequiresFactoryAuthentication(t *testing.T) {
+	cfg := Config{FactoryURL: "https://factory.example.test", Count: 1, Concurrency: 1}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "production JWT or auth key") {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+}
+
+func TestQualificationRunsCanonicalProductionWorkflowAndRedactsSecrets(t *testing.T) {
+	const (
+		adminPassword = "admin-password-secret-marker"
+		accessToken   = "admin-access-token-secret-marker"
+		productionJWT = "production-jwt-secret-marker"
+	)
+	signer := newTestSigner(t)
+	var paths []string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": accessToken}})
+		case "/v1/admin/brand-clouds":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_cloud": map[string]string{"id": "brand-001"}})
+		case "/v1/admin/brand-clouds/brand-001/device-item-profiles":
+			if r.Header.Get("Authorization") != "Bearer "+accessToken {
+				t.Fatalf("profile request authorization = %q", r.Header.Get("Authorization"))
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profile": map[string]string{"id": "profile-001"}})
+		case "/v1/admin/brand-clouds/brand-001/device-item-profiles/profile-001/production-runs":
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"production_run": map[string]string{"id": "run-001"}, "factory_jwt": productionJWT})
+		case enrollPath:
+			if r.Header.Get("Authorization") != "Bearer "+productionJWT {
+				t.Fatalf("factory authorization = %q", r.Header.Get("Authorization"))
+			}
+			var in EnrollRequest
+			if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(EnrollResponse{
+				RequestID: in.RequestID, IssuerRequestID: "issuer-001", DeviceID: in.DeviceID, SerialNumber: in.SerialNumber,
+				CertificatePEM: strings.TrimSpace(string(signer.signCSR(t, in.DeviceID, in.CSRPem))), CertificateChainPEM: strings.TrimSpace(string(signer.caPEM)),
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	artifactDir := t.TempDir()
+	tokenProbeCalled := false
+	result, err := NewQualificationRunner(server.Client(), func(_ context.Context, baseURL, certFile, keyFile, _ string, _ time.Duration) (int, error) {
+		tokenProbeCalled = true
+		if baseURL != server.URL {
+			t.Fatalf("device base URL = %q", baseURL)
+		}
+		for _, path := range []string{certFile, keyFile} {
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("mTLS material %s: %v", path, err)
+			}
+		}
+		if _, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+			t.Fatalf("load generated device TLS identity: %v", err)
+		}
+		return http.StatusOK, nil
+	}).Run(context.Background(), QualificationConfig{
+		AccountManagerURL: server.URL, AdminEmail: "admin@example.test", AdminPassword: adminPassword,
+		FactoryURL: server.URL, DeviceBaseURL: server.URL, RunID: "qualification-001", ArtifactDir: artifactDir, Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tokenProbeCalled || result.TokenHTTPStatus != http.StatusOK || result.Steps["bootstrap_device_token"] != "PASS" {
+		t.Fatalf("result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(artifactDir, "factory-runner", "device-material")); !os.IsNotExist(err) {
+		t.Fatalf("ephemeral device private material was not removed: %v", err)
+	}
+	if len(paths) != 5 {
+		t.Fatalf("paths = %v", paths)
+	}
+	raw, err := os.ReadFile(filepath.Join(artifactDir, "factory-qualification-results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{adminPassword, accessToken, productionJWT} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("qualification evidence leaked secret marker %q", secret)
+		}
+	}
+}
+
+func TestQualificationRejectsNonHTTPSEndpoints(t *testing.T) {
+	cfg := QualificationConfig{
+		AccountManagerURL: "http://account.example.test", FactoryURL: "https://factory.example.test",
+		DeviceBaseURL: "https://device.example.test", AdminEmail: "admin@example.test", AdminPassword: "password",
+		RunID: "run", ArtifactDir: t.TempDir(),
+	}
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "must be HTTPS") {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+}
+
+func TestQualificationAllowsOnlyExplicitAccountAndFactoryLoopbackTunnels(t *testing.T) {
+	cfg := QualificationConfig{
+		AccountManagerURL: "http://127.0.0.1:18081", FactoryURL: "http://127.0.0.1:18443",
+		DeviceBaseURL: "https://device.example.test", AdminEmail: "admin@example.test", AdminPassword: "password",
+		RunID: "run", ArtifactDir: t.TempDir(), AllowLoopbackTunnel: true,
+	}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	cfg.DeviceBaseURL = "http://127.0.0.1:18080"
+	if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), "device base URL must be HTTPS") {
+		t.Fatalf("Normalize() device tunnel error = %v", err)
+	}
+}
+
+func TestQualificationConfigRejectsIncompleteOrInvalidInputs(t *testing.T) {
+	valid := QualificationConfig{
+		AccountManagerURL: "https://account.example.test", FactoryURL: "https://factory.example.test",
+		DeviceBaseURL: "https://device.example.test", AdminEmail: "admin@example.test", AdminPassword: "password",
+		RunID: "run", ArtifactDir: t.TempDir(), Timeout: -time.Second,
+	}
+	tests := []struct {
+		name string
+		edit func(*QualificationConfig)
+		want string
+	}{
+		{name: "invalid URL", edit: func(c *QualificationConfig) { c.FactoryURL = "://bad" }, want: "valid URL"},
+		{name: "missing admin email", edit: func(c *QualificationConfig) { c.AdminEmail = "" }, want: "email and password"},
+		{name: "missing admin password", edit: func(c *QualificationConfig) { c.AdminPassword = "" }, want: "email and password"},
+		{name: "missing run ID", edit: func(c *QualificationConfig) { c.RunID = "" }, want: "run ID"},
+		{name: "missing artifact directory", edit: func(c *QualificationConfig) { c.ArtifactDir = "" }, want: "artifact directory"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := valid
+			tc.edit(&cfg)
+			if err := cfg.Normalize(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Normalize() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := valid.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if valid.Timeout != 30*time.Second {
+		t.Fatalf("default timeout = %s", valid.Timeout)
+	}
+}
+
+func TestQualificationAPIStepsRejectIncompleteResponses(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		status  int
+		body    string
+		invoke  func(*QualificationRunner, QualificationConfig) error
+		wantErr string
+	}{
+		{name: "login HTTP failure", path: "/v1/auth/login", status: http.StatusUnauthorized, body: `{"error":"denied"}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.login(context.Background(), c)
+			return err
+		}, wantErr: "platform admin login"},
+		{name: "login missing token", path: "/v1/auth/login", status: http.StatusOK, body: `{"tokens":{}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.login(context.Background(), c)
+			return err
+		}, wantErr: "no access token"},
+		{name: "brand missing ID", path: "/v1/admin/brand-clouds", status: http.StatusCreated, body: `{"brand_cloud":{}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.createBrandCloud(context.Background(), c, "token")
+			return err
+		}, wantErr: "no ID"},
+		{name: "profile missing ID", path: "/v1/admin/brand-clouds/brand/device-item-profiles", status: http.StatusCreated, body: `{"device_item_profile":{}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, err := r.createProfile(context.Background(), c, "token", "brand")
+			return err
+		}, wantErr: "no ID"},
+		{name: "production missing JWT", path: "/v1/admin/brand-clouds/brand/device-item-profiles/profile/production-runs", status: http.StatusCreated, body: `{"production_run":{"id":"run"}}`, invoke: func(r *QualificationRunner, c QualificationConfig) error {
+			_, _, err := r.createProductionRun(context.Background(), c, "token", "brand", "profile")
+			return err
+		}, wantErr: "incomplete production JWT"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path != tc.path {
+					t.Fatalf("path = %q, want %q", req.URL.Path, tc.path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			cfg := QualificationConfig{AccountManagerURL: server.URL, RunID: "run", AdminEmail: "admin", AdminPassword: "password"}
+			err := tc.invoke(NewQualificationRunner(server.Client(), func(context.Context, string, string, string, string, time.Duration) (int, error) { return 0, nil }), cfg)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestProbeDeviceTokenResponsesAndMaterialGuardrails(t *testing.T) {
+	clientCert, clientKey := deviceTokenTestIdentity(t)
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantStatus int
+		wantErr    string
+	}{
+		{name: "success", status: http.StatusOK, body: `{"access_token":"redacted"}`, wantStatus: http.StatusOK},
+		{name: "HTTP failure", status: http.StatusNotFound, body: `{"reason":"projection missing"}`, wantStatus: http.StatusNotFound, wantErr: "HTTP 404"},
+		{name: "invalid JSON", status: http.StatusOK, body: `{`, wantStatus: http.StatusOK, wantErr: "not JSON"},
+		{name: "missing access token", status: http.StatusOK, body: `{}`, wantStatus: http.StatusOK, wantErr: "missing access token"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if req.URL.Path != "/request_token" || req.Method != http.MethodPost {
+					t.Fatalf("request = %s %s", req.Method, req.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ClientAuth: tls.RequireAnyClientCert}
+			server.StartTLS()
+			defer server.Close()
+			caFile := filepath.Join(t.TempDir(), "server-ca.pem")
+			if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			status, err := ProbeDeviceToken(context.Background(), server.URL, clientCert, clientKey, caFile, time.Second)
+			if status != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", status, tc.wantStatus)
+			}
+			if tc.wantErr == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	t.Run("malformed identity diagnostics", func(t *testing.T) {
+		dir := t.TempDir()
+		certFile := filepath.Join(dir, "device-bundle.crt")
+		keyFile := filepath.Join(dir, "device.key")
+		_ = os.WriteFile(certFile, []byte("not a certificate"), 0o600)
+		_ = os.WriteFile(keyFile, []byte("not a key"), 0o600)
+		_, err := ProbeDeviceToken(context.Background(), "https://device.example.test", certFile, keyFile, "", time.Second)
+		if err == nil || !strings.Contains(err.Error(), "bundle public keys unavailable") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("invalid CA", func(t *testing.T) {
+		caFile := filepath.Join(t.TempDir(), "invalid-ca.pem")
+		_ = os.WriteFile(caFile, []byte("invalid"), 0o600)
+		_, err := ProbeDeviceToken(context.Background(), "https://device.example.test", clientCert, clientKey, caFile, time.Second)
+		if err == nil || !strings.Contains(err.Error(), "contains no certificates") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func deviceTokenTestIdentity(t *testing.T) (string, string) {
+	t.Helper()
+	_, deviceID, csrPEM, keyPEM, err := GenerateDeviceIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer := newTestSigner(t)
+	dir := t.TempDir()
+	certFile := filepath.Join(dir, "device-bundle.crt")
+	keyFile := filepath.Join(dir, "device.key")
+	if err := os.WriteFile(certFile, joinPEM(signer.signCSR(t, deviceID, string(csrPEM)), signer.caPEM), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return certFile, keyFile
 }
 
 func TestReportRoundTripRendersStableEvidenceAndSortedErrors(t *testing.T) {
@@ -143,7 +481,7 @@ func TestReportRoundTripRendersStableEvidenceAndSortedErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(report)
-	for _, want := range []string{"Overall result: `FAIL`", "certificate CN/public key/clientAuth validated", "invalid \\| certificate rejected", "`a_certificate`", "`z_transport`"} {
+	for _, want := range []string{"Overall result: `FAIL`", "issuer request recorded; certificate CN/public key/clientAuth/chain validated", "invalid \\| certificate rejected", "`a_certificate`", "`z_transport`"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("report missing %q:\n%s", want, text)
 		}
