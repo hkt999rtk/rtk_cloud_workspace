@@ -145,6 +145,13 @@ The wrapper writes video runner artifacts to
 `e2e_test/video_cloud/load` JSON output and folds WebRTC lifecycle, media, and
 TURN evidence into `TEST_REPORT.md`.
 
+The 1K qualification runs that video runner on the live `us-sea` load-generator
+VM (`HOME100K_VIDEO_LOADTEST_MODE=remote-sharded`) rather than on the operator
+workstation. This keeps the relay-capacity measurement inside the staging
+region; the functional threshold, 100 concurrent sessions, and relay-only
+assertions remain unchanged. The global shard model uses the single 1K
+generator and fails before launch if more than 100 viewers are assigned to it.
+
 For `video-1k-v1`, missing WebRTC create/setup/close evidence makes the report
 `INCOMPLETE`. A signaling success rate below the functional threshold is a
 `FAIL`. If H.264 media is enabled, missing ICE-connected or first-RTP evidence

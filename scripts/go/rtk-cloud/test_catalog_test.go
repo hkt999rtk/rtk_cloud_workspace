@@ -331,6 +331,27 @@ func TestLoadCasesUseScenarioProfilesAtTheirDeclaredScale(t *testing.T) {
 	}
 }
 
+func TestVideo1KQualificationUsesSameRegionGenerator(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenario := filepath.Join(workspace, "loadtests", "home-100k", "scenarios", "video-1k.description.env")
+	for key, want := range map[string]string{
+		"HOME100K_VIDEO_LOADTEST_MODE":                  "remote-sharded",
+		"HOME100K_VIDEO_LOADTEST_SHARD_MODE":            "global",
+		"HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST":  "100",
+		"HOME100K_VIDEO_LOADTEST_DEVICES":               "100",
+		"HOME100K_VIDEO_LOADTEST_VIEWERS":               "100",
+		"HOME100K_VIDEO_LOADTEST_CONCURRENCY":           "100",
+		"HOME100K_FUNCTIONAL_SUCCESS_THRESHOLD_PERCENT": "99.5",
+	} {
+		if got := envFileValue(scenario, key); got != want {
+			t.Fatalf("%s %s = %q, want %q", scenario, key, got, want)
+		}
+	}
+}
+
 func TestCatalogSurfaceExclusionRequiresOwnedUnexpiredReason(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
