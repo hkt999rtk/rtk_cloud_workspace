@@ -1906,7 +1906,10 @@ run_video_loadtest_step() {
   fi
   set_phase "run-video-loadtest"
   check_video_loadtest_remote_capacity || return $?
-  if [[ "$video_loadtest_mode" != "remote-sharded" ]]; then
+  # A proportional remote run derives the exact video-capable IDs from each
+  # MQTT shard's credential inventory. Every other mode needs the shared token
+  # inventory before it can build a local or global remote shard plan.
+  if [[ "$video_loadtest_mode" != "remote-sharded" || "$video_loadtest_shard_mode" != "proportional" ]]; then
     local max_devices
     max_devices="$(max_video_token_devices)"
     ensure_video_loadtest_tokens "$max_devices" || return $?

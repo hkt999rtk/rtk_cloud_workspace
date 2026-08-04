@@ -2610,6 +2610,115 @@ printf '%s,%s\n' "$VIDEO_CLOUD_LOAD_VIRTUAL_VIEWERS" "$VIDEO_CLOUD_LOAD_VIRTUAL_
 	}
 }
 
+func TestHome100KScriptGlobalRemoteVideoShardsBootstrapTokenInventory(t *testing.T) {
+	outDir := t.TempDir()
+	binDir := filepath.Join(outDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goLog := filepath.Join(outDir, "go.log")
+	goStub := filepath.Join(binDir, "go")
+	goStubBody := `#!/usr/bin/env bash
+printf '%s\n' "$*" >> ` + shellQuoteForTest(goLog) + `
+out_env=""
+ids_file=""
+max_devices=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out-env) out_env="$2"; shift 2 ;;
+    --device-ids-file) ids_file="$2"; shift 2 ;;
+    --max-devices) max_devices="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$(dirname "$out_env")"
+python3 - "$ids_file" "$max_devices" "$out_env" <<'PY'
+import json, pathlib, sys
+ids_file, max_devices, out_path = sys.argv[1:]
+if ids_file:
+    ids = [line.strip() for line in pathlib.Path(ids_file).read_text().splitlines() if line.strip()]
+else:
+    ids = [f"device-{index:03d}" for index in range(1, int(max_devices) + 1)]
+out = pathlib.Path(out_path)
+device_map = out.with_name("device-token-map.json")
+app_map = out.with_name("app-token-map.json")
+device_map.write_text(json.dumps({device_id: "device-token" for device_id in ids}), encoding="utf-8")
+app_map.write_text(json.dumps({device_id: "app-token" for device_id in ids}), encoding="utf-8")
+out.write_text(
+    "export VIDEO_CLOUD_LOAD_DEVICE_IDS='" + ",".join(ids) + "'\n"
+    "export VIDEO_CLOUD_LOAD_VIRTUAL_DEVICES='" + str(len(ids)) + "'\n"
+    "export VIDEO_CLOUD_LOAD_DEVICE_TOKEN_MAP_FILE='" + str(device_map) + "'\n"
+    "export VIDEO_CLOUD_LOAD_APP_TOKEN_MAP_FILE='" + str(app_map) + "'\n"
+    "export VIDEO_CLOUD_LOAD_ACCOUNT_TOKEN='account-token'\n",
+    encoding="utf-8",
+)
+PY
+`
+	if err := os.WriteFile(goStub, []byte(goStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sshLog := filepath.Join(outDir, "ssh.log")
+	sshStub := filepath.Join(binDir, "ssh")
+	sshStubBody := `#!/usr/bin/env bash
+printf 'SSH %s\n' "$*" >> ` + shellQuoteForTest(sshLog) + `
+cat >/dev/null || true
+`
+	if err := os.WriteFile(sshStub, []byte(sshStubBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(binDir, "scp"), []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	videoBinary := filepath.Join(outDir, "rtk-video-loadtest")
+	if err := os.WriteFile(videoBinary, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	artifactDir := filepath.Join(outDir, "video")
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "run-video-loadtest")
+	cmd.Env = home100KTestEnv(
+		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME100K_REGION=us-sea",
+		"HOME100K_RUN_ID=test-video-global-remote",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+		"HOME100K_SCENARIO_PROFILE=video-1k-v1",
+		"HOME100K_VIDEO_LOADTEST=on",
+		"HOME100K_VIDEO_LOADTEST_MODE=remote-sharded",
+		"HOME100K_VIDEO_LOADTEST_SHARD_MODE=global",
+		"HOME100K_VIDEO_LOADTEST_REMOTE_HOSTS=lg01=192.0.2.1",
+		"HOME100K_VIDEO_LOADTEST_BINARY="+videoBinary,
+		"HOME100K_VIDEO_LOADTEST_ARTIFACT_DIR="+artifactDir,
+		"HOME100K_VIDEO_LOADTEST_DEVICES=100",
+		"HOME100K_VIDEO_LOADTEST_VIEWERS=100",
+		"HOME100K_VIDEO_LOADTEST_MAX_VIEWERS_PER_HOST=100",
+	)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("run-video-loadtest failed: %v\n%s", err, raw)
+	}
+	goRaw, err := os.ReadFile(goLog)
+	if err != nil {
+		t.Fatalf("read go log: %v", err)
+	}
+	if !strings.Contains(string(goRaw), "--max-devices 100 --require-devices 100") {
+		t.Fatalf("global remote run did not bootstrap the maximum token inventory:\n%s", goRaw)
+	}
+	idsRaw, err := os.ReadFile(filepath.Join(artifactDir, "device-ids.txt"))
+	if err != nil {
+		t.Fatalf("read global remote device IDs: %v", err)
+	}
+	if got := len(strings.Fields(string(idsRaw))); got != 100 {
+		t.Fatalf("global remote device inventory = %d, want 100", got)
+	}
+	sshRaw, err := os.ReadFile(sshLog)
+	if err != nil {
+		t.Fatalf("read ssh log: %v", err)
+	}
+	if !strings.Contains(string(sshRaw), "--virtual-devices 100 --virtual-viewers 100") {
+		t.Fatalf("remote command missing the qualified device/viewer counts:\n%s", sshRaw)
+	}
+}
+
 func TestHome100KScriptProportionalVideoShardsUseMQTTShardInventory(t *testing.T) {
 	outDir := t.TempDir()
 	binDir := filepath.Join(outDir, "bin")
