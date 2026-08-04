@@ -259,6 +259,150 @@ func TestImportCloudValidationRejectsNonPassScenario(t *testing.T) {
 	}
 }
 
+func TestImportCloudValidationIgnoresUnselectedProfileExcludedScenario(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+	var report map[string]any
+	if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+		t.Fatal(err)
+	}
+	platform := report["platform_result"].(map[string]any)
+	platform["results"] = append(platform["results"].([]any), map[string]any{
+		"scenario_id": "repeated_connect_disconnect",
+		"status":      "SKIP",
+		"reason_code": "profile_excluded",
+	})
+	writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+	if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err != nil {
+		t.Fatal(err)
+	}
+	var manifest featureEvidenceManifestV2
+	if err := readJSONFile(filepath.Join(dir, "feature-evidence.json"), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Cases) != 1 || manifest.Cases[0].TestID != "E2E-SDK-AUTH-001" {
+		t.Fatalf("profile-excluded diagnostic changed imported coverage: %#v", manifest.Cases)
+	}
+}
+
+func TestImportCloudValidationRejectsUnexpectedUnselectedScenario(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, unexpected := range map[string]map[string]any{
+		"pass":                      {"scenario_id": "unexpected", "test_id": "E2E-SDK-AUTH-001", "status": "PASS"},
+		"wrong skip reason":         {"scenario_id": "unexpected", "status": "SKIP", "reason_code": "environment_unavailable"},
+		"profile skip with Test ID": {"scenario_id": "unexpected", "test_id": "E2E-SDK-AUTH-001", "status": "SKIP", "reason_code": "profile_excluded"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+			var report map[string]any
+			if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+				t.Fatal(err)
+			}
+			platform := report["platform_result"].(map[string]any)
+			platform["results"] = append(platform["results"].([]any), unexpected)
+			writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+			if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+				t.Fatal("unexpected unselected native scenario was accepted")
+			}
+		})
+	}
+}
+
+func TestImportCloudValidationRejectsMissingSelectedScenarioResult(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+	var report map[string]any
+	if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+		t.Fatal(err)
+	}
+	platform := report["platform_result"].(map[string]any)
+	platform["results"] = []any{}
+	writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+	if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+		t.Fatal("missing selected native scenario result was accepted")
+	}
+}
+
+func TestImportCloudValidationRejectsInvalidSelectedScenarioContract(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(map[string]any){
+		"missing scenario ID": func(report map[string]any) {
+			report["scenarios"].([]any)[0].(map[string]any)["id"] = ""
+		},
+		"missing Test ID": func(report map[string]any) {
+			report["scenarios"].([]any)[0].(map[string]any)["test_id"] = ""
+		},
+		"duplicate scenario ID": func(report map[string]any) {
+			scenarios := report["scenarios"].([]any)
+			report["scenarios"] = append(scenarios, scenarios[0])
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+			var report map[string]any
+			if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+				t.Fatal(err)
+			}
+			mutate(report)
+			writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+			if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+				t.Fatal("invalid selected scenario contract was accepted")
+			}
+		})
+	}
+}
+
+func TestImportCloudValidationRejectsDuplicateSelectedScenarioResult(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := loadAndValidateTestCatalog(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := writeCloudValidationImportFixture(t, workspace, []string{"token_issued", "device_mtls_authenticated", "authorized_device_read"})
+	var report map[string]any
+	if err := readJSONFile(filepath.Join(dir, "results.json"), &report); err != nil {
+		t.Fatal(err)
+	}
+	platform := report["platform_result"].(map[string]any)
+	results := platform["results"].([]any)
+	platform["results"] = append(results, results[0])
+	writeTestJSON(t, filepath.Join(dir, "results.json"), report)
+	if err := importCloudValidationFeatureEvidence(workspace, catalog, filepath.Join(dir, "results.json"), dir); err == nil {
+		t.Fatal("duplicate selected native scenario result was accepted")
+	}
+}
+
 func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
