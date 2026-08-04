@@ -545,7 +545,7 @@ func validateRequirementProofMappings(catalog testCatalog) error {
 		if requirement.Status != "active" || !requirementRequired(requirement) {
 			continue
 		}
-		var valid bool
+		var valid, gateReachable bool
 		for _, tc := range proofs[requirementID] {
 			if tc.Layer == "unit" || tc.Layer == "service" {
 				continue
@@ -564,13 +564,36 @@ func validateRequirementProofMappings(catalog testCatalog) error {
 				continue
 			}
 			valid = true
-			break
+			if requirement.Gate != "scheduled" || scheduledGateProofCase(tc) {
+				gateReachable = true
+			}
 		}
 		if !valid {
 			return fmt.Errorf("required requirement %s has no qualifying integration/UI/E2E/live proof case", requirementID)
 		}
+		if requirement.Gate == "scheduled" && !gateReachable {
+			return fmt.Errorf("scheduled requirement %s has no scheduled-executable proof case; capacity and qualification load profiles belong to operator-release", requirementID)
+		}
 	}
 	return nil
+}
+
+func scheduledGateProofCase(tc testCatalogCase) bool {
+	if !catalogContainsString(tc.Environments, "staging") {
+		return false
+	}
+	switch tc.Runner {
+	case "test-feature":
+		return tc.Profile == "canary"
+	case "test-ui":
+		return tc.Layer == "ui"
+	case "test-e2e":
+		return tc.Owner == "rtk_cloud_client"
+	case "test-live":
+		return tc.ID == "LIVE-STG-ONBOARD-001" || tc.ID == "LIVE-CA-SCRAPE-001"
+	default:
+		return false
+	}
 }
 
 func catalogSlicesOverlap(left, right []string) bool {

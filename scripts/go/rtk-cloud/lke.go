@@ -251,6 +251,10 @@ func runLKEResolveImages(args []string) error {
 			if err != nil {
 				return fmt.Errorf("resolve %s source commit from %s: %w", source.Key, source.RepoPath, err)
 			}
+			fullCommit = strings.TrimSpace(fullCommit)
+			if err := validatePinnedLKEImage(pinnedImage, *registryHost, *owner, source, fullCommit, *skipVerify); err != nil {
+				return err
+			}
 			artifacts = append(artifacts, lkeImageArtifact{
 				Key:          source.Key,
 				Name:         source.Name,
@@ -259,7 +263,7 @@ func runLKEResolveImages(args []string) error {
 				Digest:       strings.TrimSpace(os.Getenv(source.EnvKey + "_DIGEST")),
 				SourceRepo:   source.RepoName,
 				SourcePath:   source.RepoPath,
-				SourceCommit: strings.TrimSpace(fullCommit),
+				SourceCommit: fullCommit,
 			})
 			continue
 		}
@@ -317,6 +321,27 @@ func runLKEResolveImages(args []string) error {
 		return err
 	}
 	return os.WriteFile(outPath, body, 0o644)
+}
+
+func validatePinnedLKEImage(image, registryHost, owner string, source lkeServiceImageSource, fullCommit string, skipVerify bool) error {
+	officialRepository := strings.TrimRight(registryHost, "/") + "/" + strings.Trim(owner, "/") + "/" + source.RepoName + "/" + source.Name
+	if !strings.HasPrefix(image, officialRepository+":sha-") {
+		return nil
+	}
+	shortCommit := fullCommit
+	if len(shortCommit) > 12 {
+		shortCommit = shortCommit[:12]
+	}
+	expected := officialRepository + ":sha-" + shortCommit
+	if image != expected {
+		return fmt.Errorf("pinned %s image %s does not match source commit %s; use %s or remove the stale override", source.Key, image, fullCommit, expected)
+	}
+	if !skipVerify {
+		if err := inspectLKEImage(image); err != nil {
+			return fmt.Errorf("LKE image missing for %s at %s (%s): %s: %w: %v", source.Key, source.RepoPath, fullCommit, image, errLKEImageNotFound, err)
+		}
+	}
+	return nil
 }
 
 func loadLKEImageEnv(workspaceAbs, envRoot string) (envroot.Environment, error) {
