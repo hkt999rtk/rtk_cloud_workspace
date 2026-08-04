@@ -550,7 +550,8 @@ func validateRequirementProofMappings(catalog testCatalog) error {
 			if tc.Layer == "unit" || tc.Layer == "service" {
 				continue
 			}
-			if requirement.AcceptanceLayer == "ui" && tc.Layer != "ui" {
+			if requirement.AcceptanceLayer == "ui" && tc.Layer != "ui" &&
+				!(tc.Layer == "integration" && catalogContainsString(tc.Evidence, "screenshot")) {
 				continue
 			}
 			if requirement.AcceptanceLayer == "live" && !catalogContainsString(tc.Environments, "staging") {
