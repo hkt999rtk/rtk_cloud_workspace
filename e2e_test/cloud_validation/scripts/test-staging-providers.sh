@@ -104,6 +104,9 @@ if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
   fi
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/unprovision"* && "${FAIL_UNPROVISION:-0}" == "1" ]]; then
   printf '500'
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"/app-certificate/revoke"* && "${FAIL_APP_REVOKE_ONCE:-0}" == "1" && ! -e "${CURL_TRANSIENT_STATE:?CURL_TRANSIENT_STATE is required}" ]]; then
+  : > "$CURL_TRANSIENT_STATE"
+  exit 28
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/commands"* ]]; then
   printf '200'
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"auth-resilience-expired-headers.txt"* ]]; then
@@ -239,6 +242,7 @@ export CLOUD_VALIDATION_MTLS_PROBE_HELPER="$tmp/bin/mtls-probe"
 export ROTATION_TOKEN_STATE="$tmp/rotation-token-ready"
 export DEVICE_TOKEN_STATE="$tmp/device-token-ready"
 export AUTH_DEACTIVATED_STATE="$tmp/auth-device-deactivated"
+export CLOUD_VALIDATION_CLEANUP_RETRY_DELAY_SECONDS=0
 
 (cd "$tmp" && "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh")
 test -e "$tmp/secrets/run-ios/environment/state"
@@ -318,6 +322,7 @@ cleanup_rc=$?
 set -e
 test "$cleanup_rc" -eq 1
 test -f "$CLOUD_VALIDATION_RUNTIME_BUNDLE"
+jq -e '.status == "FAIL" and ([.attempts[].outcome] | index("RETRY") != null)' "$tmp/out/fixture-cleanup/cleanup-report.json" >/dev/null
 grep -q '/v1/admin/devices/account-device-sdk-e2e-ios/unprovision' "$CURL_LOG"
 grep -q '/v1/admin/devices/account-device-sdk-e2e-android/unprovision' "$CURL_LOG"
 grep -q '/v1/admin/brand-clouds/cloud-sdk-e2e-ios/users/user-sdk-e2e-ios' "$CURL_LOG"
@@ -327,8 +332,14 @@ if grep -q 'entitlement/revoke' "$CURL_LOG"; then
   exit 1
 fi
 unset FAIL_UNPROVISION
+export FAIL_APP_REVOKE_ONCE=1
+export CURL_TRANSIENT_STATE="$tmp/cleanup-transient-revoke"
+: > "$CURL_LOG"
 "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"
 test ! -e "$tmp/secrets/run-ios"
+jq -e '.status == "PASS" and ([.attempts[].outcome] | index("RETRY") != null)' "$tmp/out/fixture-cleanup/cleanup-report.json" >/dev/null
+test "$(grep -c '/app-certificate/revoke' "$CURL_LOG")" -eq 3
+unset FAIL_APP_REVOKE_ONCE CURL_TRANSIENT_STATE
 
 # A setup failure after remote resources are created must still produce a
 # secret-free recovery manifest and permit deterministic cleanup.

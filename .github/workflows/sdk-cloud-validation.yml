@@ -317,6 +317,8 @@ jobs:
             .artifacts/e2e_test/cloud_validation/**/platform-result.json
             .artifacts/e2e_test/cloud_validation/**/cloud-evidence.json
             .artifacts/e2e_test/cloud_validation/**/resource-manifest.json
+            .artifacts/e2e_test/cloud_validation/**/cleanup.log
+            .artifacts/e2e_test/cloud_validation/**/fixture-cleanup/cleanup-report.json
             .artifacts/e2e_test/cloud_validation/**/ready.json
             .artifacts/e2e_test/cloud_validation/**/readiness-results.json
             .artifacts/e2e_test/cloud_validation/**/CloudValidationUITests.xcresult/**
@@ -434,6 +436,8 @@ jobs:
             .artifacts/e2e_test/cloud_validation/**/platform-result.json
             .artifacts/e2e_test/cloud_validation/**/cloud-evidence.json
             .artifacts/e2e_test/cloud_validation/**/resource-manifest.json
+            .artifacts/e2e_test/cloud_validation/**/cleanup.log
+            .artifacts/e2e_test/cloud_validation/**/fixture-cleanup/cleanup-report.json
             .artifacts/e2e_test/cloud_validation/**/ready.json
             .artifacts/e2e_test/cloud_validation/**/readiness-results.json
             .artifacts/e2e_test/cloud_validation/**/android/*.log
