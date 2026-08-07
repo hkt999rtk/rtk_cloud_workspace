@@ -354,6 +354,7 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 		"HOME100K_RUN_ID":                  stageRunID,
 		"HOME100K_PRESERVE_VMS":            "0",
 		"HOME100K_AUTO_DESTROY_ON_EXIT":    "1",
+		"HOME100K_SHUTDOWN_ON_ERROR":       "1",
 	}
 	if spec.Profile == "qualification-1k" {
 		brandPlan, planErr := featureQualificationBrandPlanPath(envRoot)
