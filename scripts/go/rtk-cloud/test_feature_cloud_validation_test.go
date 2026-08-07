@@ -426,6 +426,8 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"runs-on: macos-15", "Select Swift 6 toolchain", "/Applications/Xcode_16.4.app/Contents/Developer", "Swift version 6",
 		"needs: [contract-and-source, ios-live]",
 		"(needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped')",
+		"Destroy any leftover 1K load generators", "if: always()",
+		"HOME100K_ENV_ROOT=cloud_env/staging/runtime", "destroy-vms --live --confirm-live",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("SDK cloud workflow is missing %q", required)

@@ -713,7 +713,7 @@ func TestExecuteFeatureSpecUsesSelectedWorkflowCommand(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n[ \"$HOME100K_SHUTDOWN_ON_ERROR\" = \"1\" ] || exit 42\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	spec := featureRunSpec{

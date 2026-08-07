@@ -151,6 +151,11 @@ func (c *LinodeClient) DestroyVM(ctx context.Context, id int) error {
 		return err
 	}
 	defer resp.Body.Close()
+	// Cleanup is intentionally idempotent. The workflow-level safety gate may
+	// run after the runner's exit trap has already removed the same instance.
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("Linode destroy failed: HTTP %d", resp.StatusCode)
 	}

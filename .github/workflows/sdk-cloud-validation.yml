@@ -506,3 +506,23 @@ jobs:
           name: sdk-followup-1k-${{ github.run_id }}-${{ github.run_attempt }}
           path: .artifacts/test-runs/${{ env.HOME100K_RUN_ID }}/features/device-shadow/**
           if-no-files-found: error
+      - name: Destroy any leftover 1K load generators
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=".artifacts/test-runs/${HOME100K_RUN_ID}/features/device-shadow"
+          [ -d "$root" ] || exit 0
+          while IFS= read -r state; do
+            out_dir="$(dirname "$state")"
+            stage_run_id="$(jq -r '.run_id // empty' "$out_dir/results.json" 2>/dev/null || true)"
+            if [ -z "$stage_run_id" ]; then
+              stage_run_id="$(jq -r '.run_id // (.created[0].run_id // empty) // (.vms[0].run_id // empty)' "$state" 2>/dev/null || true)"
+            fi
+            [ -n "$stage_run_id" ] || continue
+            HOME100K_ENV_ROOT=cloud_env/staging/runtime \
+            HOME100K_OUT_DIR="$out_dir" \
+            HOME100K_RUN_ID="$stage_run_id" \
+            HOME100K_PRESERVE_VMS=0 \
+              loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
+          done < <(find "$root" -name vms.json -type f -print)

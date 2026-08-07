@@ -102,6 +102,21 @@ func TestLinodeClientDestroyVMDeletesInstance(t *testing.T) {
 	}
 }
 
+func TestLinodeClientDestroyVMIsIdempotent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("method = %s, want DELETE", r.Method)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	client := NewLinodeClient(server.URL+"/v4", "test-token")
+	if err := client.DestroyVM(context.Background(), 123); err != nil {
+		t.Fatalf("DestroyVM() after prior cleanup error = %v", err)
+	}
+}
+
 func TestLinodeClientListVMsUsesRunIDTagFilter(t *testing.T) {
 	var gotFilter string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
