@@ -228,8 +228,8 @@ jq -n \
       architecture: $runner_arch
     },
     credential_strategy: {
-      cluster_access: "repository-secret",
-      clip_object_storage: "repository-secret-with-run-scoped-prefix",
+      cluster_access: "linode-api-runner-temp-kubeconfig",
+      clip_object_storage: "shared-staging-secret-with-run-scoped-prefix",
       admin_token: "run-scoped-after-deploy",
       clip_user_key: "run-scoped-after-deploy",
       clip_server_public_key: "derived-from-run-scoped-stack",

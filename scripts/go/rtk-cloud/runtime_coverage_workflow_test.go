@@ -125,9 +125,19 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"oid sha256:",
 		"sha256sum",
 		"H264 fixture is not materialized from Git LFS",
+		`cluster_access: "linode-api-runner-temp-kubeconfig"`,
+		`clip_object_storage: "shared-staging-secret-with-run-scoped-prefix"`,
 	} {
 		if !strings.Contains(preflight, required) {
 			t.Fatalf("runtime preflight missing H264 fixture guard %q", required)
+		}
+	}
+	for _, stale := range []string{
+		`cluster_access: "repository-secret"`,
+		`clip_object_storage: "repository-secret-with-run-scoped-prefix"`,
+	} {
+		if strings.Contains(preflight, stale) {
+			t.Fatalf("runtime preflight contains stale credential provenance %q", stale)
 		}
 	}
 	for _, forbidden := range []string{
@@ -598,6 +608,7 @@ func TestRuntimeCleanupWritesResidualAndStagingAnchorReport(t *testing.T) {
 		"persistentVolumeReclaimPolicy == \"Retain\"",
 		"https://api.linode.com/v4/volumes/$volume_id",
 		"staging deployment UID or image changed",
+		"KUBECONFIG must point to the run-scoped shared staging kubeconfig",
 		"rtk-cloud-run-id=$run_id",
 	} {
 		if !strings.Contains(script, required) {

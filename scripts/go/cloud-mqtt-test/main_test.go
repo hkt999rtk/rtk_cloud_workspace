@@ -451,12 +451,13 @@ func TestDeviceRequestTokenRetryRecoversTransientTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	var requests int32
+	releaseFirst := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/request_token" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
 		if atomic.AddInt32(&requests, 1) == 1 {
-			time.Sleep(80 * time.Millisecond)
+			<-releaseFirst
 			return
 		}
 		writeJSON(t, w, map[string]string{
@@ -465,9 +466,10 @@ func TestDeviceRequestTokenRetryRecoversTransientTimeout(t *testing.T) {
 		})
 	}))
 	defer server.Close()
+	defer close(releaseFirst)
 
 	var totals mqttIOTotals
-	token, err := requestDeviceTokenWithRetry(server.URL, cert, "device-1", time.Now().Add(time.Second), tokenRequestOptions{Timeout: 20 * time.Millisecond, Retries: 1}, func(update func(*mqttIOTotals)) {
+	token, err := requestDeviceTokenWithRetry(server.URL, cert, "device-1", time.Now().Add(5*time.Second), tokenRequestOptions{Timeout: time.Second, Retries: 1}, func(update func(*mqttIOTotals)) {
 		update(&totals)
 	})
 	if err != nil {
