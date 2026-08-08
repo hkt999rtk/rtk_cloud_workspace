@@ -651,7 +651,7 @@ validate_scope() {
     exit 2
   }
   [[ -n "$kubeconfig" && -f "$kubeconfig" ]] || {
-    echo "KUBECONFIG must point to the isolated runtime-coverage cluster credentials" >&2
+    echo "KUBECONFIG must point to the run-scoped shared staging kubeconfig" >&2
     exit 2
   }
 }
