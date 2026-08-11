@@ -96,7 +96,7 @@ func runTestFeature(args []string) error {
 	profile := fs.String("profile", "canary", "canary or qualification-1k")
 	environment := fs.String("environment", "staging", "target environment")
 	runID := fs.String("run-id", "", "stable feature qualification run ID")
-	envRootFlag := fs.String("env-root", "cloud_env/staging/lke", "staging environment root")
+	envRootFlag := fs.String("env-root", "cloud_env/staging/runtime", "staging environment runtime root")
 	planMode := fs.Bool("plan", false, "print the qualification plan")
 	runMode := fs.Bool("run", false, "execute the qualification")
 	confirm := fs.String("confirm", "", "required stack confirmation for --run")
@@ -355,10 +355,7 @@ func executeFeatureSpec(workspace, envRoot, runID, environment string, spec feat
 }
 
 func featureLoadEnvRoot(deploymentEnvRoot string) string {
-	if filepath.Base(filepath.Clean(deploymentEnvRoot)) == "lke" {
-		return filepath.Join(filepath.Dir(filepath.Clean(deploymentEnvRoot)), "runtime")
-	}
-	return deploymentEnvRoot
+	return filepath.Clean(deploymentEnvRoot)
 }
 
 func featureKubeconfigPath(deploymentEnvRoot string) string {
@@ -1019,7 +1016,7 @@ func selectFeatureQualifications(catalog testCatalog, changedFiles, labels []str
 		"cloud_env/*/deployment.env",
 		"cloud_env/*/environment.env",
 		"cloud_env/*/overrides/**",
-		"cloud_env/staging/lke/**",
+		"cloud_env/*/runtime/**",
 		".github/workflows/feature-qualification.yml",
 	}
 	for _, pattern := range sharedPatterns {

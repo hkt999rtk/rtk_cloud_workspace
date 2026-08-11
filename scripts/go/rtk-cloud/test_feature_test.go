@@ -239,7 +239,7 @@ func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingRe
 }
 
 func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
-	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "lke")
+	deploymentRoot := filepath.Join("/workspace", "cloud_env", "staging", "runtime")
 	if got, want := featureLoadEnvRoot(deploymentRoot), filepath.Join("/workspace", "cloud_env", "staging", "runtime"); got != want {
 		t.Fatalf("featureLoadEnvRoot() = %q, want %q", got, want)
 	}
@@ -265,8 +265,8 @@ func TestBoundedFeatureStageRunIDHonorsLinodeTagLimit(t *testing.T) {
 	}
 }
 
-func TestFeatureLoadEnvRootUsesRuntimeSiblingForLKEDeployment(t *testing.T) {
-	got := featureLoadEnvRoot("/workspace/cloud_env/staging/lke")
+func TestFeatureLoadEnvRootUsesCanonicalRuntime(t *testing.T) {
+	got := featureLoadEnvRoot("/workspace/cloud_env/staging/runtime")
 	if got != "/workspace/cloud_env/staging/runtime" {
 		t.Fatalf("load env root = %q", got)
 	}

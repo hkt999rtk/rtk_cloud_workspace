@@ -238,10 +238,10 @@ CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
 	--plan > "$ACCEPTANCE_PLAN_OUT"
-grep -F 'cloud-staging-e2e-test plan' "$ACCEPTANCE_PLAN_OUT" >/dev/null
+grep -F 'cloud-environment-e2e-test plan' "$ACCEPTANCE_PLAN_OUT" >/dev/null
 grep -F 'phase: acceptance' "$ACCEPTANCE_PLAN_OUT" >/dev/null
 grep -F 'setup brand/users/devices with '"$TMP/setup-data.sh" "$ACCEPTANCE_PLAN_OUT" >/dev/null
-if grep -F 'reset K8s staging' "$ACCEPTANCE_PLAN_OUT" >/dev/null || grep -F 'provision K8s staging' "$ACCEPTANCE_PLAN_OUT" >/dev/null; then
+if grep -F 'reset environment K8s' "$ACCEPTANCE_PLAN_OUT" >/dev/null || grep -F 'provision environment K8s' "$ACCEPTANCE_PLAN_OUT" >/dev/null; then
 	echo "staging-acceptance plan must not include reset/provision phases" >&2
 	exit 1
 fi
@@ -281,10 +281,10 @@ CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 	--env-root "$ENV_ROOT" \
 	--plan > "$PLAN_OUT"
 
-grep -F 'cloud-staging-e2e-test plan' "$PLAN_OUT" >/dev/null
+grep -F 'cloud-environment-e2e-test plan' "$PLAN_OUT" >/dev/null
 grep -F 'target: k8s' "$PLAN_OUT" >/dev/null
-grep -F 'reset K8s staging with '"$TMP/remove-k8s.sh" "$PLAN_OUT" >/dev/null
-grep -F 'provision K8s staging with '"$TMP/provision-k8s.sh" "$PLAN_OUT" >/dev/null
+grep -F 'reset environment K8s with '"$TMP/remove-k8s.sh" "$PLAN_OUT" >/dev/null
+grep -F 'provision environment K8s with '"$TMP/provision-k8s.sh" "$PLAN_OUT" >/dev/null
 test ! -s "$COMMAND_LOG"
 
 RUN_OUT="$TMP/run.out"

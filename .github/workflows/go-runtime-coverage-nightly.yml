@@ -22,8 +22,8 @@ jobs:
       RUNTIME_COVERAGE_RUN_ID: runtime-${{ github.run_id }}-${{ github.run_attempt }}
       RUNTIME_COVERAGE_STACK: coverage-${{ github.run_id }}-${{ github.run_attempt }}
       RUNTIME_COVERAGE_REGISTRY: ghcr.io/hkt999rtk/rtk_cloud_workspace/runtime-coverage
-      RUNTIME_SOURCE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/lke
-      RUNTIME_ENV_ROOT: ${{ github.workspace }}/cloud_env/runtime-coverage/${{ github.run_id }}-${{ github.run_attempt }}/lke
+      RUNTIME_SOURCE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/runtime
+      RUNTIME_ENV_ROOT: ${{ github.workspace }}/cloud_env/runtime-coverage/${{ github.run_id }}-${{ github.run_attempt }}/runtime
       RUNTIME_COVERAGE_OUTPUT_ROOT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}
       LINODE_TOKEN: ${{ secrets.linode_token }}
       VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}

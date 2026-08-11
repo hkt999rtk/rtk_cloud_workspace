@@ -68,6 +68,22 @@ func TestResolveStagingRootUsesNormalizedRuntime(t *testing.T) {
 	}
 }
 
+func TestResolveTrackedEnvironmentRootUsesNormalizedRuntime(t *testing.T) {
+	workspace := t.TempDir()
+	environmentRoot := filepath.Join(workspace, "cloud_env", "qa")
+	mkdir(t, environmentRoot)
+	write(t, filepath.Join(environmentRoot, "environment.env"), "CLOUD_STACK_NAME=video-cloud-qa\n")
+	write(t, filepath.Join(environmentRoot, "deployment.env"), "DEPLOYMENT_ADAPTER=lke\n")
+
+	root, err := Resolve(workspace, environmentRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root != filepath.Join(environmentRoot, "runtime") {
+		t.Fatalf("tracked environment root got %s", root)
+	}
+}
+
 func TestLoadAndValidate(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "metadata", "staging", "linode")
 	mkdir(t, filepath.Join(root, "env"))

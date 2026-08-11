@@ -18,18 +18,20 @@ The workspace snapshot includes:
 | `repos/rtk_cloud_admin` | `hkt999rtk/rtk_cloud_admin` | Admin dashboard for fleet, provisioning, lifecycle, health, and audit operations. |
 | `repos/rtk_cloud_logger` | `hkt999rtk/rtk_cloud_logger` | Shared structured logging package for RTK cloud Go services. |
 
-## Documentation Entry Points
+## Start Here
 
-| Scope | Entry point | Purpose |
-| --- | --- | --- |
-| Workspace docs | [`docs/README.md`](docs/README.md) | Cross-repository documentation index. |
-| Workspace architecture | [`docs/architecture.md`](docs/architecture.md) | Repository boundaries and source-of-truth model. |
-| Documentation governance | [`docs/documentation-governance.md`](docs/documentation-governance.md) | Ownership, status, review, and drift-prevention rules. |
-| Artifact release governance | [`docs/artifact-release-governance.md`](docs/artifact-release-governance.md) | Linode Object Storage release artifact policy and adoption matrix. |
-| Cross-repo contracts | [`repos/rtk_cloud_contracts_doc/README.md`](repos/rtk_cloud_contracts_doc/README.md) | Normative wire, payload, and integration contracts. |
-| Cross-repo testing | [`docs/testing.md`](docs/testing.md) | Local validation commands for pinned snapshots. |
-| Create an environment | [`cloud_env/README.md`](cloud_env/README.md) | Required settings, overrides, secrets boundary, validation, and provision flow. |
-| Deployment defaults | [`cloud_deploy/README.md`](cloud_deploy/README.md) | Architecture and adapter key ownership. |
+| Goal | Entry point |
+| --- | --- |
+| Prepare a controller, create or take over an environment, and deploy | [`docs/deployment-operations.zh-TW.md`](docs/deployment-operations.zh-TW.md) |
+| Prepare data and run local, acceptance, qualification, or load tests | [`docs/testing-operations.zh-TW.md`](docs/testing-operations.zh-TW.md) |
+| Create or review tracked environment configuration | [`cloud_env/README.md`](cloud_env/README.md) |
+| Troubleshoot a restored staging runtime | [`docs/staging-runtime-bootstrap.zh-TW.md`](docs/staging-runtime-bootstrap.zh-TW.md) |
+| Browse architecture, governance, contracts, and historical evidence | [`docs/README.md`](docs/README.md) |
+
+The only active generated runtime path is
+`cloud_env/<environment>/runtime`. Provider-specific staging roots such as
+`cloud_env/staging/lke` and `cloud_env/staging/linode` are not deployment
+inputs. Historical reports may still mention them as evidence of old runs.
 
 ## Bootstrap
 
@@ -61,43 +63,25 @@ pointer change in this workspace repository.
 
 ## Environment Operations
 
-Use the staging K8s lifecycle wrappers when you want explicit phase control.
-`reset` clears K8s resources, `provision` installs or updates workloads and
-resolves missing LKE GHCR image mapping automatically, and `acceptance` creates
-test users/devices and runs smoke/MQTT/log verification without changing the
-deployment. Reset preserves PV/PVC/provider storage by default; use
-`--purge-storage` only for an intentional data-layer wipe.
-`scripts/run-staging-e2e.sh` remains the full reset + provision + acceptance
-convenience entrypoint. The default acceptance profile is `10` users and `100`
-devices.
-The target LKE public edge contract is external HAProxy TCP passthrough, not
-Linode NodeBalancer; staging currently forwards public `443/TCP` to ingress
-NodePort `30443` and public `8883/TCP` to MQTT NodePort `31883` on each LKE
-node. The staging capacity baseline defaults to four LKE nodes, three
-`video-cloud-api` pods, one `account-manager` pod, and three MQTT replicas.
-MQTT uses anti-affinity so the HAProxy MQTT backend can round-robin across
-node-local NodePort backends; the broker runs as an EMQX StatefulSet cluster
-with stable `mqtt-0..2` pod DNS. See
-`docs/lke-external-haproxy-edge.md`.
+Start with the read-only preflight, then render and review the resolved plan.
+Do not rely on topology numbers copied from a previous report; node counts,
+replicas, storage, provider SKUs, and projected services are authoritative only
+in the current environment plan.
 
 ```sh
-scripts/reset-staging-k8s.sh --plan
-scripts/provision-staging.sh --plan
-scripts/run-staging-acceptance.sh --plan
-scripts/run-staging-e2e.sh --plan
-scripts/reset-staging-k8s.sh --confirm video-cloud-staging
-scripts/provision-staging.sh --confirm video-cloud-staging
-scripts/run-staging-acceptance.sh --confirm video-cloud-staging
-scripts/run-staging-e2e.sh --confirm video-cloud-staging
+go run ./scripts/go/rtk-cloud -- deployment preflight --environment staging --operation plan
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
+go run ./scripts/go/rtk-cloud -- deployment preflight --environment staging --operation provision
 go run ./scripts/go/rtk-cloud -- deployment provision --environment staging --confirm video-cloud-staging
-go run ./scripts/go/rtk-cloud -- create-brandname-cloud --environment staging --brandname RTK
-go run ./scripts/go/rtk-cloud -- list-brandname-clouds --environment staging
-go run ./scripts/go/rtk-cloud -- create-users --environment staging --brandname RTK --count 10
-go run ./scripts/go/rtk-cloud -- generate-load-devices --environment staging --count 100
-go run ./scripts/go/rtk-cloud -- bind-devices --environment staging --brandname RTK --count 100
-go run ./scripts/go/rtk-cloud -- mqtt-test --environment staging --brandname RTK
+go run ./scripts/go/rtk-cloud -- deployment preflight --environment staging --operation acceptance
+go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging --confirm video-cloud-staging
 ```
+
+Provision and acceptance details, credential boundaries, runtime restore, and
+destructive-operation warnings are in the
+[deployment operator guide](docs/deployment-operations.zh-TW.md). Test data,
+qualification, load profiles, monitoring, report gates, resume, and cleanup are
+in the [testing operator guide](docs/testing-operations.zh-TW.md).
 
 ## Workspace Rules
 

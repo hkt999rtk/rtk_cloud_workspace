@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,104 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestDeploymentPreflightPlanIsReadOnly(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	runtimeRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	if err := runDeploymentWithOperations([]string{
+		"preflight", "--workspace", workspace, "--environment", "staging", "--operation", "plan",
+	}, deploymentOperations{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runtimeRoot); !os.IsNotExist(err) {
+		t.Fatalf("preflight materialized runtime: %v", err)
+	}
+}
+
+func TestDeploymentPreflightProvisionChecksInputsWithoutSecrets(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LINODE_TOKEN", "")
+	t.Setenv("GHCR_PULL_USERNAME", "")
+	t.Setenv("GHCR_PULL_TOKEN", "")
+	t.Setenv("GODADDY_KEY", "")
+	t.Setenv("GODADDY_SECRET", "")
+
+	var out bytes.Buffer
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateDNS = func(deploymentConfig) error { return errors.New("GODADDY_SECRET is required") }
+	checks.validateLKEState = func(deploymentConfig) error { return errors.New("LINODE_TOKEN is required") }
+	err = runDeploymentPreflightWithChecks(cfg, "provision", checks, &out)
+	if err == nil {
+		t.Fatal("expected missing deployment inputs to fail")
+	}
+	for _, want := range []string{"FAIL credential:linode", "FAIL credential:ghcr", "FAIL credential:dns", "FAIL active-service-limit", "Preflight result: FAIL"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("preflight output missing %q:\n%s", want, out.String())
+		}
+	}
+	if strings.Contains(out.String(), "test-secret-value") {
+		t.Fatalf("preflight leaked a secret:\n%s", out.String())
+	}
+}
+
+func TestDeploymentPreflightAcceptanceRequiresMatchingRuntime(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateKube = func(deploymentConfig) error { return errors.New("kubeconfig unavailable") }
+	if err := runDeploymentPreflightWithChecks(cfg, "acceptance", checks, &out); err == nil {
+		t.Fatal("expected missing matching runtime to fail")
+	}
+	if !strings.Contains(out.String(), "required matching runtime file is missing") || !strings.Contains(out.String(), "FAIL kubernetes-access") {
+		t.Fatalf("unexpected acceptance preflight output:\n%s", out.String())
+	}
+}
+
+func TestDeploymentPreflightEphemeralRejectsExistingStack(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LINODE_TOKEN", "redacted-linode")
+	t.Setenv("GHCR_PULL_USERNAME", "operator")
+	t.Setenv("GHCR_PULL_TOKEN", "redacted-ghcr")
+	writeTestFile(t, filepath.Join(home, ".ssh", "id_ed25519_rtkcloud"), "private-placeholder")
+	writeTestFile(t, filepath.Join(home, ".ssh", "id_ed25519_rtkcloud.pub"), "public-placeholder")
+	writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "adapters", "lke", "account.env"), "LKE_ACTIVE_SERVICE_LIMIT=20\n")
+
+	var out bytes.Buffer
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateDNS = func(deploymentConfig) error { return nil }
+	checks.validateLKEState = func(deploymentConfig) error { return nil }
+	checks.validateEphemeral = func(deploymentConfig) error { return errors.New("stack already owns provider resources") }
+	if err := runDeploymentPreflightWithChecks(cfg, "ephemeral-test", checks, &out); err == nil {
+		t.Fatal("expected pre-existing stack to fail ephemeral preflight")
+	}
+	if !strings.Contains(out.String(), "FAIL ephemeral-ownership") {
+		t.Fatalf("unexpected ephemeral preflight output:\n%s", out.String())
+	}
+	for _, secret := range []string{"redacted-linode", "redacted-ghcr"} {
+		if strings.Contains(out.String(), secret) {
+			t.Fatalf("preflight output leaked %s", secret)
+		}
+	}
+}
 
 func TestDeploymentTestUsesIdenticalLifecycleForEveryEnvironment(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
@@ -191,9 +290,11 @@ func TestResolveDeploymentConfigSupportsMultipleEnvironments(t *testing.T) {
 }
 
 func TestResolveDeploymentConfigRejectsLegacyRoot(t *testing.T) {
-	_, err := resolveDeploymentConfig(t.TempDir(), "", filepath.Join(t.TempDir(), "cloud_env", "staging", "lke"))
-	if err == nil || !strings.Contains(err.Error(), "legacy provider env-root") {
-		t.Fatalf("got %v", err)
+	for _, providerRoot := range []string{"lke", "linode"} {
+		_, err := resolveDeploymentConfig(t.TempDir(), "", filepath.Join(t.TempDir(), "cloud_env", "staging", providerRoot))
+		if err == nil || !strings.Contains(err.Error(), "legacy provider env-root") {
+			t.Fatalf("%s got %v", providerRoot, err)
+		}
 	}
 }
 
@@ -363,12 +464,12 @@ func TestNormalizeEnvironmentArgs(t *testing.T) {
 	}
 }
 
-func TestNormalizeEnvironmentArgsUsesLKEDeploymentRootForFeatureQualification(t *testing.T) {
+func TestNormalizeEnvironmentArgsUsesCanonicalRuntimeForFeatureQualification(t *testing.T) {
 	args, err := normalizeEnvironmentArgs([]string{"test-feature", "--workspace", "/tmp/ws", "--environment", "staging", "--feature", "device-shadow"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"test-feature", "--workspace", "/tmp/ws", "--env-root", "/tmp/ws/cloud_env/staging/lke", "--feature", "device-shadow"}
+	want := []string{"test-feature", "--workspace", "/tmp/ws", "--env-root", "/tmp/ws/cloud_env/staging/runtime", "--feature", "device-shadow"}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("normalizeEnvironmentArgs() = %#v, want %#v", args, want)
 	}

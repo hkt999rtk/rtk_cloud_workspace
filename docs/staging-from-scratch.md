@@ -50,14 +50,23 @@ Edit `account.env` if the confirmed limit is not the example value.
 
 ## 2. Plan and Provision
 
+Run the read-only deployment preflight first:
+
+```sh
+go run ./scripts/go/rtk-cloud -- deployment preflight \
+  --environment staging \
+  --operation provision
+```
+
 Render and review the sanitized plan before creating paid resources:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
 ```
 
-Verify the stack name, region, five-node topology, workload replicas, projected
-active services, DNS names, and resolved image tags. Then provision:
+Verify the stack name, region, resolved node-class topology, workload replicas,
+projected active services, DNS names, and resolved image tags. The current plan,
+not a copied node count, is authoritative. Then provision:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \
@@ -197,6 +206,7 @@ KUBECONFIG=cloud_env/staging/runtime/state/kubeconfig.yaml \
   kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded
 ```
 
-All five nodes must be `Ready`, all deployment/stateful workload replicas must
-be ready, and the second command must return no resources. Preserve the ignored
+All nodes in the resolved deployment plan must be `Ready`, all
+deployment/stateful workload replicas must be ready, and the second command
+must return no resources. Preserve the ignored
 runtime in an approved encrypted backup before another controller takes over.

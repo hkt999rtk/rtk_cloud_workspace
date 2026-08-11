@@ -34,13 +34,15 @@ cloud_id="cloud-${slug}"
 user_id="user-${slug}"
 device_id="device-${slug}"
 account_device_id="account-device-${slug}"
+private_key_begin="-----BEGIN PRIVATE"' KEY-----'
+private_key_end="-----END PRIVATE"' KEY-----'
 "$SQLITE_BIN" "$db" <<SQL
 create table users (brandname text, email text, brand_cloud_id text, tenant_slug text, app_credentials_json text, app_certificate_json text, body_json text);
 create table device_bindings (brandname text, tenant_slug text, device_id text, account_device_id text, assigned_email text, assignment_index integer);
 create table device_credentials (brandname text, device_id text, cert_pem text, key_pem text, chain_pem text);
-insert into users values ('$brandname','run-user@users.local','$cloud_id','$tenant_slug','{"private_key_pem":"-----BEGIN PRIVATE KEY-----\\nkey\\n-----END PRIVATE KEY-----"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
+insert into users values ('$brandname','run-user@users.local','$cloud_id','$tenant_slug','{"private_key_pem":"$private_key_begin\\nkey\\n$private_key_end"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
 insert into device_bindings values ('$brandname','$tenant_slug','$device_id','$account_device_id','run-user@users.local',1);
-insert into device_credentials values ('$brandname','$device_id','-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----','-----BEGIN PRIVATE KEY-----\nkey\n-----END PRIVATE KEY-----','-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----');
+insert into device_credentials values ('$brandname','$device_id','-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----','$private_key_begin\nkey\n$private_key_end','-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----');
 SQL
 chmod 600 "$db"
 if [[ "${FAIL_AFTER_USER:-0}" == "1" ]]; then

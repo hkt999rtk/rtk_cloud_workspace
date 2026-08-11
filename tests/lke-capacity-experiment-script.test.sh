@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-ENV_ROOT="$TMP/cloud_env/staging/lke"
+ENV_ROOT="$TMP/cloud_env/staging/runtime"
 mkdir -p "$ENV_ROOT/env"
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
 CLOUD_PROVIDER=lke
@@ -81,11 +81,11 @@ jq -e '
 ' "$ENV_ROOT/artifacts/capacity-experiments/cap-derived/request.json" >/dev/null
 
 FAKE_ROOT="$TMP/fake-root"
-mkdir -p "$FAKE_ROOT/scripts" "$FAKE_ROOT/loadtests/home-100k/scripts" "$FAKE_ROOT/cloud_env/staging/lke/env"
+mkdir -p "$FAKE_ROOT/scripts" "$FAKE_ROOT/loadtests/home-100k/scripts" "$FAKE_ROOT/cloud_env/staging/runtime/env"
 cp "$ROOT/scripts/run-lke-capacity-experiment.sh" "$FAKE_ROOT/scripts/run-lke-capacity-experiment.sh"
 chmod +x "$FAKE_ROOT/scripts/run-lke-capacity-experiment.sh"
 
-cat > "$FAKE_ROOT/cloud_env/staging/lke/env/stack.env" <<'EOF_ENV'
+cat > "$FAKE_ROOT/cloud_env/staging/runtime/env/stack.env" <<'EOF_ENV'
 CLOUD_PROVIDER=lke
 CLOUD_STACK_NAME=video-cloud-staging
 EOF_ENV
@@ -143,7 +143,7 @@ chmod +x "$FAKE_ROOT/loadtests/home-100k/scripts/home-100k.sh"
 set +e
 LKE_VIDEO_CLOUD_IMAGE="registry.example.test/video-cloud:sha-current" \
 "$FAKE_ROOT/scripts/run-lke-capacity-experiment.sh" \
-	--env-root "$FAKE_ROOT/cloud_env/staging/lke" \
+	--env-root "$FAKE_ROOT/cloud_env/staging/runtime" \
 	--target-devices 1000 \
 	--mqtt-pods 1 \
 	--node-count 1 \
@@ -163,9 +163,9 @@ if [[ -f "$FAKE_ROOT/loadtests/destroy-vms.called" ]]; then
 	exit 1
 fi
 grep -F 'LKE_VIDEO_CLOUD_IMAGE=registry.example.test/video-cloud:sha-current' \
-	"$FAKE_ROOT/cloud_env/staging/lke/env/stack.env" >/dev/null
+	"$FAKE_ROOT/cloud_env/staging/runtime/env/stack.env" >/dev/null
 
-CAP_DIR="$FAKE_ROOT/cloud_env/staging/lke/artifacts/capacity-experiments/cap-workflow-141"
+CAP_DIR="$FAKE_ROOT/cloud_env/staging/runtime/artifacts/capacity-experiments/cap-workflow-141"
 grep -F 'fake workflow-live before SIGPIPE' "$CAP_DIR/logs/workflow-live.log" >/dev/null
 grep -F '141' "$CAP_DIR/workflow-live.exit" >/dev/null
 jq -e '
@@ -176,11 +176,11 @@ jq -e '
 grep -F 'workflow-live failed with rc=141; preserving load-generator VMs' "$TMP/workflow-141.err" >/dev/null
 
 FAKE_RETRY_ROOT="$TMP/fake-retry-root"
-mkdir -p "$FAKE_RETRY_ROOT/scripts/go" "$FAKE_RETRY_ROOT/fakebin" "$FAKE_RETRY_ROOT/loadtests/home-100k/scripts" "$FAKE_RETRY_ROOT/cloud_env/staging/lke/env"
+mkdir -p "$FAKE_RETRY_ROOT/scripts/go" "$FAKE_RETRY_ROOT/fakebin" "$FAKE_RETRY_ROOT/loadtests/home-100k/scripts" "$FAKE_RETRY_ROOT/cloud_env/staging/runtime/env"
 cp "$ROOT/scripts/run-lke-capacity-experiment.sh" "$FAKE_RETRY_ROOT/scripts/run-lke-capacity-experiment.sh"
 chmod +x "$FAKE_RETRY_ROOT/scripts/run-lke-capacity-experiment.sh"
 
-cat > "$FAKE_RETRY_ROOT/cloud_env/staging/lke/env/stack.env" <<'EOF_ENV'
+cat > "$FAKE_RETRY_ROOT/cloud_env/staging/runtime/env/stack.env" <<'EOF_ENV'
 CLOUD_PROVIDER=lke
 CLOUD_STACK_NAME=video-cloud-staging
 EOF_ENV
@@ -265,7 +265,7 @@ chmod +x "$FAKE_RETRY_ROOT/fakebin/go"
 PATH="$FAKE_RETRY_ROOT/fakebin:$PATH" \
 LKE_CAPACITY_DATA_SETUP_RETRY_SLEEP_SECONDS=0 \
 "$FAKE_RETRY_ROOT/scripts/run-lke-capacity-experiment.sh" \
-	--env-root "$FAKE_RETRY_ROOT/cloud_env/staging/lke" \
+	--env-root "$FAKE_RETRY_ROOT/cloud_env/staging/runtime" \
 	--target-devices 1000 \
 	--mqtt-pods 1 \
 	--node-count 1 \
@@ -275,7 +275,7 @@ LKE_CAPACITY_DATA_SETUP_RETRY_SLEEP_SECONDS=0 \
 	--live \
 	--confirm video-cloud-staging > "$TMP/data-retry.out" 2> "$TMP/data-retry.err"
 
-RETRY_CAP_DIR="$FAKE_RETRY_ROOT/cloud_env/staging/lke/artifacts/capacity-experiments/cap-data-retry"
+RETRY_CAP_DIR="$FAKE_RETRY_ROOT/cloud_env/staging/runtime/artifacts/capacity-experiments/cap-data-retry"
 grep -F 'data setup failed with retryable port-forward/network error; retrying with --resume' "$TMP/data-retry.err" >/dev/null
 grep -F 'last_progress=' "$TMP/data-retry.err" >/dev/null
 grep -F 'attempt=2 args=' "$FAKE_RETRY_ROOT/setup-args.log" | grep -F -- '--resume' | grep -F -- '--from-step bind_devices' >/dev/null

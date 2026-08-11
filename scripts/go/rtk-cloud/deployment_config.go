@@ -112,15 +112,19 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	environmentRoot := fs.String("environment-root", "", "explicit environment root for tests/custom environments")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for mutation")
+	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
+	if action != "preflight" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
 	if err != nil {
 		return err
+	}
+	if action == "preflight" {
+		return runDeploymentPreflight(cfg, *operation)
 	}
 	if err := materializeDeploymentRuntime(cfg); err != nil {
 		return err
@@ -423,6 +427,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
+  rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
@@ -440,8 +445,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 	}
 	if environmentRoot != "" {
-		if strings.HasSuffix(filepath.Clean(environmentRoot), filepath.Join("staging", "lke")) {
-			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment staging")
+		cleanRoot := filepath.Clean(environmentRoot)
+		if base := filepath.Base(cleanRoot); base == "lke" || base == "linode" {
+			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment NAME or cloud_env/<environment>/runtime")
 		}
 		environmentRoot, err = filepath.Abs(environmentRoot)
 		if err != nil {

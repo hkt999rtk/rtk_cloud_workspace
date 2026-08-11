@@ -240,7 +240,7 @@ func clearLKEImageEnvForTest(t *testing.T) {
 func makeStagingResetTestEnv(t *testing.T) (string, string) {
 	t.Helper()
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	return workspace, envRoot
 }

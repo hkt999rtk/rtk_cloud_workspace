@@ -118,7 +118,7 @@ func TestUnprovisionCommandPreflightsRouteAndWritesEvidence(t *testing.T) {
 	if !strings.Contains(output, `"action":"unprovisioned"`) || !strings.Contains(output, `"unprovisioned":1`) {
 		t.Fatalf("output = %s", output)
 	}
-	matches, err := filepath.Glob(filepath.Join(envRoot, "lke", "artifacts", "device-unprovision", "*.json"))
+	matches, err := filepath.Glob(filepath.Join(envRoot, "runtime", "artifacts", "device-unprovision", "*.json"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("artifacts = %v, %v", matches, err)
 	}

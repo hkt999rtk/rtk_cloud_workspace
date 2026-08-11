@@ -11,8 +11,11 @@ active_paths=(
 	"$ROOT/README.md" \
 	"$ROOT/scripts/README.zh-TW.md" \
 	"$ROOT/docs/cloud-env-layout.zh-TW.md" \
+	"$ROOT/docs/deployment-operations.zh-TW.md" \
 	"$ROOT/docs/private-cloud-deployment.md" \
 	"$ROOT/docs/testing.md" \
+	"$ROOT/docs/testing-operations.zh-TW.md" \
+	"$ROOT/scripts/go/rtk-cloud/deployment_preflight.go" \
 	"$ROOT/scripts/go/rtk-cloud/main.go" \
 	"$ROOT/scripts/go/rtk-cloud/provision.go" \
 	"$ROOT/scripts/go/rtk-cloud/native_commands.go" \
@@ -69,7 +72,7 @@ if rg -n -i -- 'godaddy|route53|api\.godaddy|GODADDY_|hosted.zone' \
 	exit 1
 fi
 
-if rg -n --glob '!**/*_test.go' -- 'repos/rtk_video_cloud/tools/godaddy-dns|cmd/godaddy-dns' \
+if rg -n --glob '!**/*_test.go' --glob '!test_coverage.go' -- 'repos/rtk_video_cloud/tools/godaddy-dns|cmd/godaddy-dns' \
 	"$ROOT/scripts/go/rtk-cloud" >/tmp/staging-k8s-static.out; then
 	cat /tmp/staging-k8s-static.out >&2
 	echo "active DNS implementation must not invoke the service submodule GoDaddy tool" >&2

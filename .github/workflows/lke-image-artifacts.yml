@@ -106,7 +106,7 @@ jobs:
           mkdir -p .artifacts/lke-images
           go run ./scripts/go/rtk-cloud -- lke-resolve-images \
             --workspace "$GITHUB_WORKSPACE" \
-            --env-root cloud_env/staging/lke \
+            --env-root cloud_env/staging/runtime \
             --registry-host "$registry_host" \
             --owner "$owner" \
             --out .artifacts/lke-images/lke-image-manifest.json

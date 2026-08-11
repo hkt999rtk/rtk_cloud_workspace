@@ -9,7 +9,7 @@ Run from the workspace root:
 
 ```sh
 scripts/cloud-validate-device-bind.sh \
-  --bind-artifact cloud_env/staging/linode/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
+  --bind-artifact cloud_env/staging/runtime/artifacts/device-bind/rtk-device-bind-<timestamp>.json \
   --expected-count 100 \
   --expected-devices-per-user 10
 ```

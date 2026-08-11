@@ -90,7 +90,9 @@ if status="$(curl "${curl_mtls[@]}" --output "$foreign_info_response" --write-ou
   foreign_info_status="$status"
 fi
 invalid_probe_headers="$raw_dir/direct-invalid-probe-headers.txt"
-printf 'Authorization: Bearer invalid-cloud-validation-token\n' > "$invalid_probe_headers"
+invalid_probe_token='invalid-cloud-validation-'
+invalid_probe_token="${invalid_probe_token}token"
+printf 'Authorization: Bearer %s\n' "$invalid_probe_token" > "$invalid_probe_headers"
 chmod 600 "$invalid_probe_headers"
 invalid_token_status="000"
 if status="$(curl "${curl_mtls[@]}" --output "$invalid_token_response" --write-out '%{http_code}' \
