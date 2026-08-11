@@ -104,11 +104,9 @@ func runLKEBuildImages(args []string) error {
 	if !filepath.IsAbs(resolvedEnvRoot) {
 		resolvedEnvRoot = filepath.Join(workspaceAbs, resolvedEnvRoot)
 	}
-	if filepath.Base(resolvedEnvRoot) != "lke" {
-		candidate := filepath.Join(resolvedEnvRoot, "lke")
-		if _, err := os.Stat(candidate); err == nil {
-			resolvedEnvRoot = candidate
-		}
+	resolvedEnvRoot, err = resolveEnvRoot(workspaceAbs, resolvedEnvRoot)
+	if err != nil {
+		return err
 	}
 	env, err := envroot.Load(resolvedEnvRoot, "")
 	if err != nil {
@@ -349,11 +347,10 @@ func loadLKEImageEnv(workspaceAbs, envRoot string) (envroot.Environment, error) 
 	if !filepath.IsAbs(resolvedEnvRoot) {
 		resolvedEnvRoot = filepath.Join(workspaceAbs, resolvedEnvRoot)
 	}
-	if filepath.Base(resolvedEnvRoot) != "lke" {
-		candidate := filepath.Join(resolvedEnvRoot, "lke")
-		if _, err := os.Stat(candidate); err == nil {
-			resolvedEnvRoot = candidate
-		}
+	var err error
+	resolvedEnvRoot, err = resolveEnvRoot(workspaceAbs, resolvedEnvRoot)
+	if err != nil {
+		return envroot.Environment{}, err
 	}
 	env, err := envroot.Load(resolvedEnvRoot, "")
 	if err != nil {

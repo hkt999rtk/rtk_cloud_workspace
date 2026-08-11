@@ -376,7 +376,7 @@ func TestEnsureLKENodePoolResizesExistingPoolToDesiredCount(t *testing.T) {
 
 func TestRunProvisionLKEPlanWithoutStackUsesProviderEnv(t *testing.T) {
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	t.Setenv("CLOUD_PROVIDER", "lke")
 
 	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--plan"}); err != nil {
@@ -542,11 +542,11 @@ func TestLKEVideoCloudAPIAndClipVerifierShareBaseURL(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEMergesLegacyOperatorObjectStorageCredentials(t *testing.T) {
+func TestRunProvisionLKEMergesRuntimeOperatorObjectStorageCredentials(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
-	legacyOperator := filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "operator.env")
-	writeTestFile(t, legacyOperator, "LINODE_OBJ_ACCESS_KEY_ID=test-access\\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret\\n")
+	operatorEnv := filepath.Join(envRoot, "env", "operator.env")
+	writeTestFile(t, operatorEnv, "LINODE_OBJ_ACCESS_KEY_ID=test-access\\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret\\n")
 	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
@@ -563,25 +563,18 @@ func TestRunProvisionLKEMergesLegacyOperatorObjectStorageCredentials(t *testing.
 	}
 }
 
-func TestRunProvisionLKEMergesSharedRuntimeBlobConfiguration(t *testing.T) {
+func TestRunProvisionLKEUsesCanonicalRuntimeBlobConfiguration(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
-	lkeStackPath := filepath.Join(envRoot, "env", "stack.env")
-	writeTestFile(t, lkeStackPath, `CLOUD_ENV_NAME=staging
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
 CLOUD_PROVIDER=lke
-CLOUD_REGION=us-sea
-CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
-`)
-	runtimeRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
-	writeTestFile(t, filepath.Join(runtimeRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
-CLOUD_PROVIDER=linode
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 VIDEO_CLOUD_BLOB_ENDPOINT=https://runtime-objects.example.test
 VIDEO_CLOUD_BLOB_REGION=runtime-region
 VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
 `)
-	writeTestFile(t, filepath.Join(runtimeRoot, "env", "operator.env"), "LINODE_OBJ_ACCESS_KEY_ID=test-access-key\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key\n")
+	writeTestFile(t, filepath.Join(envRoot, "env", "operator.env"), "LINODE_OBJ_ACCESS_KEY_ID=test-access-key\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key\n")
 	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
@@ -4606,7 +4599,7 @@ func seedStagingE2ETestData(t *testing.T, envRoot string, emails []string, assig
 func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
 		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
@@ -4649,7 +4642,7 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
 		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "camera", ServiceOptions: []string{"mqtt", "video_streaming", "video_storage"}},
@@ -4688,7 +4681,7 @@ func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
 func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
 		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "camera", ServiceOptions: []string{"mqtt"}},
@@ -4729,7 +4722,7 @@ func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testin
 func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_K8S_PORT_FORWARD", "0")
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	seedStagingE2ETestData(t, envRoot, []string{"rtk+001@users.local", "rtk+002@users.local"}, []bindAssignment{
 		{AssignmentIndex: 0, AssignedEmail: "rtk+001@users.local", DeviceID: "load-device-0001", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
@@ -5030,7 +5023,7 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	fakeHelm(t)
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}

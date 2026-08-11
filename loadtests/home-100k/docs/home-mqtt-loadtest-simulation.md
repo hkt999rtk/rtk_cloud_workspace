@@ -21,7 +21,7 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
 `<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/` and include both
 `results.json` and `TEST_REPORT.md`.
 
-The command resolves `cloud_env/staging` to `cloud_env/staging/linode`, reads
+The command resolves `cloud_env/staging` to `cloud_env/staging/runtime`, reads
 the existing user/device artifacts, and runs a "home daily use" workload where
 APP actors use Cloud APIs and device actors use mTLS only to bootstrap device
 tokens for MQTT.

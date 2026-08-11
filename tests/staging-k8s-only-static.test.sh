@@ -11,8 +11,11 @@ active_paths=(
 	"$ROOT/README.md" \
 	"$ROOT/scripts/README.zh-TW.md" \
 	"$ROOT/docs/cloud-env-layout.zh-TW.md" \
+	"$ROOT/docs/deployment-operations.zh-TW.md" \
 	"$ROOT/docs/private-cloud-deployment.md" \
 	"$ROOT/docs/testing.md" \
+	"$ROOT/docs/testing-operations.zh-TW.md" \
+	"$ROOT/scripts/go/rtk-cloud/deployment_preflight.go" \
 	"$ROOT/scripts/go/rtk-cloud/main.go" \
 	"$ROOT/scripts/go/rtk-cloud/provision.go" \
 	"$ROOT/scripts/go/rtk-cloud/native_commands.go" \

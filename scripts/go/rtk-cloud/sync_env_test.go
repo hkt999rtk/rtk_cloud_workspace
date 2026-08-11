@@ -23,7 +23,7 @@ func TestSyncEnvRewritesDerivedMetadata(t *testing.T) {
 		t.Fatalf("sync-env --check after sync returned error: %v", err)
 	}
 
-	resolved := filepath.Join(envRoot, "linode")
+	resolved := filepath.Join(envRoot, "runtime")
 	stack := readFile(t, filepath.Join(resolved, "env", "stack.env"))
 	for _, want := range []string{
 		"CLOUD_ENV_NAME=stg",
@@ -40,16 +40,6 @@ func TestSyncEnvRewritesDerivedMetadata(t *testing.T) {
 	for _, retired := range []string{"ACCOUNT_MANAGER_LINODE_", "ADMIN_LINODE_", "CLOUD_LOGGER_LINODE_", "VIDEO_CLOUD_LABEL_PREFIX", "VIDEO_CLOUD_VPC_LABEL", "VIDEO_CLOUD_SUBNET_LABEL"} {
 		if strings.Contains(stack, retired) {
 			t.Fatalf("stack.env still contains retired VM metadata %q:\n%s", retired, stack)
-		}
-	}
-	topology := readFile(t, filepath.Join(resolved, "topology", "video-cloud-staging.yaml"))
-	for _, want := range []string{
-		"stack: video-cloud-stg",
-		"domain: video-cloud-stg.realtekconnect.com",
-		"certissuer_domain: certissuer.video-cloud-stg.realtekconnect.com",
-	} {
-		if !strings.Contains(topology, want) {
-			t.Fatalf("topology missing %q:\n%s", want, topology)
 		}
 	}
 	account := readFile(t, filepath.Join(resolved, "services", "account-manager", "account-manager-public-staging.env"))
@@ -93,7 +83,7 @@ func TestSyncEnvRewritesDerivedMetadata(t *testing.T) {
 
 func TestSyncEnvRewritesLegacySlugAfterStackEnvWasSynced(t *testing.T) {
 	workspace, envRoot := writeSyncEnvFixture(t)
-	resolved := filepath.Join(envRoot, "linode")
+	resolved := filepath.Join(envRoot, "runtime")
 	writeFile(t, filepath.Join(resolved, "env", "stack.env"), `CLOUD_ENV_NAME=stg
 CLOUD_PROVIDER=linode
 CLOUD_REGION=us-sea
@@ -119,7 +109,7 @@ CLOUD_LOGGER_DOMAIN=logger.video-cloud-stg.realtekconnect.com
 
 func TestSyncEnvCheckAllowsLKEWithoutTopology(t *testing.T) {
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	mkdirAll(t, filepath.Join(envRoot, "env"))
 	mkdirAll(t, filepath.Join(envRoot, "services", "account-manager"))
 	mkdirAll(t, filepath.Join(envRoot, "services", "video-cloud"))
@@ -151,7 +141,7 @@ CLOUD_LOGGER_ENDPOINT=https://logger.video-cloud-staging.realtekconnect.com
 
 func TestSyncEnvCreatesLKECloudLoggerEnv(t *testing.T) {
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "lke")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	mkdirAll(t, filepath.Join(envRoot, "env"))
 	writeFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
 CLOUD_PROVIDER=lke
@@ -181,14 +171,14 @@ func writeSyncEnvFixture(t *testing.T) (string, string) {
 	t.Helper()
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging")
-	resolved := filepath.Join(envRoot, "linode")
+	resolved := filepath.Join(envRoot, "runtime")
 	mkdirAll(t, filepath.Join(resolved, "env"))
 	mkdirAll(t, filepath.Join(resolved, "topology"))
 	mkdirAll(t, filepath.Join(resolved, "services", "account-manager"))
 	mkdirAll(t, filepath.Join(resolved, "services", "cloud-admin"))
 	mkdirAll(t, filepath.Join(resolved, "services", "cloud-logger"))
 	writeFile(t, filepath.Join(resolved, "env", "stack.env"), `CLOUD_ENV_NAME=stg
-CLOUD_PROVIDER=linode
+CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_STACK_NAME=video-cloud-stg-0529

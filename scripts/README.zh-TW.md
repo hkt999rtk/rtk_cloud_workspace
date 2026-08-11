@@ -767,7 +767,7 @@ scripts/run-staging-e2e.sh --confirm video-cloud-staging \
 # 只驗證 billing log
 scripts/run-staging-e2e.sh --confirm video-cloud-staging \
   --skip-remove --steps billing-log \
-  --out-dir cloud_env/staging/lke/artifacts/staging-e2e/<existing-run>
+  --out-dir cloud_env/staging/runtime/artifacts/staging-e2e/<existing-run>
 
 # 只跑 MQTT 流量與 billing，不重建 users/devices
 scripts/run-staging-e2e.sh --confirm video-cloud-staging \
