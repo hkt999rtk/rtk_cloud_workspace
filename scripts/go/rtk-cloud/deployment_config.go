@@ -30,6 +30,7 @@ type deploymentConfig struct {
 }
 
 type deploymentOperations struct {
+	credentials func(deploymentConfig, string) error
 	plan        func(deploymentConfig) error
 	prepareTest func(deploymentConfig) error
 	provision   func(deploymentConfig) error
@@ -87,6 +88,7 @@ func runDeployment(args []string) error {
 
 func defaultDeploymentOperations() deploymentOperations {
 	return deploymentOperations{
+		credentials: validateDeploymentCredentials,
 		plan: func(cfg deploymentConfig) error {
 			return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--plan"})
 		},
@@ -112,25 +114,38 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	environmentRoot := fs.String("environment-root", "", "explicit environment root for tests/custom environments")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for mutation")
+	envFile := fs.String("env-file", defaultDeploymentCredentialEnvFile(), "operator credential env file")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
+	if action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
 	if err != nil {
 		return err
 	}
-	if err := materializeDeploymentRuntime(cfg); err != nil {
-		return err
-	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
-	if action != "plan" && *confirm != stack {
+	if action != "plan" && action != "credentials-check" && *confirm != stack {
 		return fmt.Errorf("--confirm %s is required", stack)
 	}
-	if cfg.Adapter != "lke" && action != "plan" {
+	if cfg.Adapter != "lke" && action != "plan" && action != "credentials-check" {
 		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
+	}
+	if action == "credentials-check" || action == "provision" || action == "test" {
+		if ops.credentials == nil {
+			if action == "credentials-check" {
+				return errors.New("deployment credential checker is not configured")
+			}
+		} else if err := ops.credentials(cfg, *envFile); err != nil {
+			return err
+		}
+		if action == "credentials-check" {
+			return nil
+		}
+	}
+	if err := materializeDeploymentRuntime(cfg); err != nil {
+		return err
 	}
 	switch action {
 	case "plan":
@@ -423,6 +438,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
+  rtk-cloud deployment credentials-check --environment NAME [--env-file PATH]
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK

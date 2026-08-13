@@ -159,6 +159,9 @@ func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]stri
 			filepath.Join(stagingRoot, "linode", "env", "operator.env"),
 		)
 	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		candidates = append(candidates, filepath.Join(home, ".env"))
+	}
 	for _, path := range candidates {
 		operator, err := readEnvFile(path)
 		if err != nil {
@@ -177,14 +180,19 @@ func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]stri
 				values[key] = operator[key]
 			}
 		}
+		mergeObjectStorageCredentialAliases(values)
 	}
+	mergeObjectStorageCredentialAliases(values)
+	return nil
+}
+
+func mergeObjectStorageCredentialAliases(values map[string]string) {
 	if values["LINODE_OBJ_ACCESS_KEY_ID"] == "" {
 		values["LINODE_OBJ_ACCESS_KEY_ID"] = values["AWS_ACCESS_KEY_ID"]
 	}
 	if values["LINODE_OBJ_SECRET_ACCESS_KEY"] == "" {
 		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = values["AWS_SECRET_ACCESS_KEY"]
 	}
-	return nil
 }
 
 func defaultProvisionEnvValues() map[string]string {

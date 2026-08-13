@@ -40,11 +40,11 @@ type provisionListBucketResult struct {
 
 func provisionObjectStoreFromEnv(operator map[string]string) (provisionObjectStore, error) {
 	store := provisionObjectStore{
-		bucket:    firstNonEmpty(operator["LINODE_OBJ_BUCKET"], os.Getenv("LINODE_OBJ_BUCKET")),
-		endpoint:  strings.TrimRight(firstNonEmpty(operator["LINODE_OBJ_ENDPOINT"], os.Getenv("LINODE_OBJ_ENDPOINT")), "/"),
-		accessKey: firstNonEmpty(operator["LINODE_OBJ_ACCESS_KEY_ID"], operator["AWS_ACCESS_KEY_ID"], os.Getenv("LINODE_OBJ_ACCESS_KEY_ID"), os.Getenv("AWS_ACCESS_KEY_ID")),
-		secretKey: firstNonEmpty(operator["LINODE_OBJ_SECRET_ACCESS_KEY"], operator["AWS_SECRET_ACCESS_KEY"], os.Getenv("LINODE_OBJ_SECRET_ACCESS_KEY"), os.Getenv("AWS_SECRET_ACCESS_KEY")),
-		region:    firstNonEmpty(operator["LINODE_OBJ_REGION"], os.Getenv("LINODE_OBJ_REGION")),
+		bucket:    firstNonEmpty(os.Getenv("LINODE_OBJ_BUCKET"), operator["LINODE_OBJ_BUCKET"]),
+		endpoint:  strings.TrimRight(firstNonEmpty(os.Getenv("LINODE_OBJ_ENDPOINT"), operator["LINODE_OBJ_ENDPOINT"]), "/"),
+		accessKey: firstNonEmpty(os.Getenv("LINODE_OBJ_ACCESS_KEY_ID"), os.Getenv("AWS_ACCESS_KEY_ID"), operator["LINODE_OBJ_ACCESS_KEY_ID"], operator["AWS_ACCESS_KEY_ID"]),
+		secretKey: firstNonEmpty(os.Getenv("LINODE_OBJ_SECRET_ACCESS_KEY"), os.Getenv("AWS_SECRET_ACCESS_KEY"), operator["LINODE_OBJ_SECRET_ACCESS_KEY"], operator["AWS_SECRET_ACCESS_KEY"]),
+		region:    firstNonEmpty(os.Getenv("LINODE_OBJ_REGION"), operator["LINODE_OBJ_REGION"]),
 	}
 	if store.bucket == "" {
 		return store, errors.New("LINODE_OBJ_BUCKET is required")
@@ -162,6 +162,10 @@ func provisionWriteObjectToFile(store provisionObjectStore, key, out string) err
 }
 
 func provisionSignedObjectRequest(store provisionObjectStore, method, key string, query url.Values, body []byte) ([]byte, error) {
+	return provisionSignedObjectRequestWithClient(http.DefaultClient, store, method, key, query, body)
+}
+
+func provisionSignedObjectRequestWithClient(client *http.Client, store provisionObjectStore, method, key string, query url.Values, body []byte) ([]byte, error) {
 	endpointURL, err := url.Parse(store.endpoint)
 	if err != nil {
 		return nil, err
@@ -204,7 +208,7 @@ func provisionSignedObjectRequest(store provisionObjectStore, method, key string
 	}, "\n")
 	signature := hex.EncodeToString(provisionHMACSHA256(provisionSigningKey(store.secretKey, date, store.region), []byte(stringToSign)))
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+store.accessKey+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +218,11 @@ func provisionSignedObjectRequest(store provisionObjectStore, method, key string
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Object Storage %s %s failed: HTTP %d", method, key, resp.StatusCode)
+		target := key
+		if target == "" {
+			target = "bucket"
+		}
+		return nil, fmt.Errorf("Object Storage %s %s failed: HTTP %d", method, target, resp.StatusCode)
 	}
 	return data, nil
 }

@@ -68,6 +68,29 @@ func TestParseProvisionArgsCoversModesValuesAndFailures(t *testing.T) {
 	}
 }
 
+func TestMergeObjectStorageCredentialDefaultsUsesHomeEnv(t *testing.T) {
+	for _, key := range []string{
+		"LINODE_OBJ_ACCESS_KEY_ID", "LINODE_OBJ_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+	} {
+		t.Setenv(key, "")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := writeEnvMap(filepath.Join(home, ".env"), map[string]string{
+		"LINODE_OBJ_ACCESS_KEY_ID":     "home-access",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "home-secret",
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]string{}
+	if err := mergeObjectStorageCredentialDefaults(t.TempDir(), values); err != nil {
+		t.Fatal(err)
+	}
+	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "home-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "home-secret" {
+		t.Fatalf("home object-storage credentials were not loaded: %#v", values)
+	}
+}
+
 func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 	root := t.TempDir()
 	opts := provisionOptions{operatorEnv: "/custom/operator.env"}
