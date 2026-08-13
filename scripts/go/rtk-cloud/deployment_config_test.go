@@ -44,6 +44,50 @@ func TestDeploymentRuntimeEndpointsDeriveLegacyDomains(t *testing.T) {
 	}
 }
 
+func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
+	for _, action := range []string{"provision", "test"} {
+		t.Run(action, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "staging", "lke")
+			calls := []string{}
+			ops := deploymentOperations{
+				credentials: func(deploymentConfig, string) error {
+					calls = append(calls, "credentials")
+					return errors.New("invalid token")
+				},
+				prepareTest: func(deploymentConfig) error {
+					calls = append(calls, "prepare-test")
+					return nil
+				},
+				provision: func(deploymentConfig) error {
+					calls = append(calls, "provision")
+					return nil
+				},
+				cleanup: func(deploymentConfig) error {
+					calls = append(calls, "cleanup")
+					return nil
+				},
+				normalize: func(deploymentConfig) error {
+					calls = append(calls, "normalize")
+					return nil
+				},
+			}
+			err := runDeploymentWithOperations([]string{
+				action, "--workspace", workspace, "--environment", "staging",
+				"--confirm", "video-cloud-staging", "--env-file", filepath.Join(workspace, "operator.env"),
+			}, ops)
+			if err == nil || !strings.Contains(err.Error(), "invalid token") {
+				t.Fatalf("error = %v", err)
+			}
+			if want := []string{"credentials"}; !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls = %v, want %v", calls, want)
+			}
+			if _, statErr := os.Stat(filepath.Join(workspace, "cloud_env", "staging", "runtime")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("runtime was materialized before credential validation: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestDeploymentTestUsesIdenticalLifecycleForEveryEnvironment(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {

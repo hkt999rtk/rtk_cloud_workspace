@@ -4494,6 +4494,13 @@ func runStagingProvision(args []string) error {
 		return fmt.Errorf("--confirm must be %s, got %s", ctx.stackName, *confirm)
 	}
 	if ctx.provider == "lke" {
+		cfg, err := resolveDeploymentConfig(ctx.workspace, "staging", "")
+		if err != nil {
+			return fmt.Errorf("resolve staging credential requirements: %w", err)
+		}
+		if err := validateDeploymentCredentials(cfg, defaultDeploymentCredentialEnvFile()); err != nil {
+			return err
+		}
 		if err := resolveLKEImagesIfNeeded(ctx.workspace, ctx.envRoot); err != nil {
 			return err
 		}

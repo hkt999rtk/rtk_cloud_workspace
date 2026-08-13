@@ -14,6 +14,7 @@
 正式操作入口是：
 
 ```sh
+scripts/check-deployment-credentials.sh --environment staging
 go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
 go run ./scripts/go/rtk-cloud -- deployment provision --environment staging --confirm video-cloud-staging
 go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging
@@ -56,10 +57,32 @@ Private GHCR image pull 使用 operator-local credentials。Local deployment
 ```env
 GHCR_PULL_USERNAME=你的 GitHub username
 GHCR_PULL_TOKEN=具備 read:packages 的 GitHub token
+GODADDY_KEY=GoDaddy API key
+GODADDY_SECRET=GoDaddy API secret
+LINODE_OBJ_ACCESS_KEY_ID=Object Storage access key
+LINODE_OBJ_SECRET_ACCESS_KEY=Object Storage secret key
+LINODE_OBJ_ENDPOINT=https://REGION.linodeobjects.com
+LINODE_OBJ_BUCKET=artifact bucket name
 ```
 
 `GHCR_PULL_TOKEN` 不得寫入 tracked `env/stack.env`、Git、PR 或 log。部署前
-先確認 Docker registry login 成功：
+先執行統一的唯讀 credential preflight：
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging
+```
+
+預設讀取 `~/.env`（也可傳 `--env-file PATH`），並要求檔案權限不得開放給
+group/others。檢查內容會依 environment 自動包含 Linode profile/LKE read、
+五個 service GHCR repository pull、GoDaddy domain read，以及啟用 clip direct
+upload 時的 Object Storage signed bucket list。任何一項失敗都回傳 non-zero；
+`deployment provision`、`deployment test` 與 legacy `staging-provision` 也會在
+建立 runtime 檔案、解析 image 或建立 cloud resource 前自動執行同一檢查。
+檢查不會輸出 token/key 值。由於預檢刻意只做
+唯讀操作，它能證明認證與讀取 scope，但 provider mutation scope 仍由實際
+provision API 在操作時判定。
+
+若要另外確認 Docker CLI login，可執行：
 
 ```sh
 printf '%s' "$GHCR_PULL_TOKEN" | \

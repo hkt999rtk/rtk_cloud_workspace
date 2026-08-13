@@ -42,6 +42,13 @@ func TestProvisionObjectStoreConfigurationAndHelpers(t *testing.T) {
 	if got := provisionObjectRegionFromEndpoint("https://objects.example.test"); got != "us-east-1" {
 		t.Fatalf("fallback region = %q", got)
 	}
+	t.Setenv("LINODE_OBJ_BUCKET", "process-bucket")
+	if overridden, err := provisionObjectStoreFromEnv(map[string]string{
+		"LINODE_OBJ_BUCKET": "file-bucket", "LINODE_OBJ_ENDPOINT": "file:///tmp/object-store",
+	}); err != nil || overridden.bucket != "process-bucket" {
+		t.Fatalf("process environment did not override file values: store=%#v error=%v", overridden, err)
+	}
+	t.Setenv("LINODE_OBJ_BUCKET", "")
 	if got := provisionEscapeObjectPath("folder/a b.txt"); got != "folder/a%20b.txt" {
 		t.Fatalf("escaped path = %q", got)
 	}
