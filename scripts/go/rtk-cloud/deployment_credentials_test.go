@@ -95,6 +95,119 @@ func TestDeploymentCredentialCheckerRejectsInsecureEnvFileBeforeNetwork(t *testi
 	}
 }
 
+func TestDeploymentCredentialDefaultsHonorEnvironmentOverrides(t *testing.T) {
+	t.Setenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE", "  /tmp/operator.env  ")
+	t.Setenv("RTK_CLOUD_LINODE_API_ROOT", "https://linode.example.test/v4")
+	t.Setenv("RTK_CLOUD_GHCR_TOKEN_ROOT", "https://registry.example.test/token")
+	t.Setenv("RTK_CLOUD_GHCR_REGISTRY_ROOT", "https://registry.example.test")
+	t.Setenv("RTK_CLOUD_GODADDY_API_ROOT", "https://dns.example.test/")
+
+	if got := defaultDeploymentCredentialEnvFile(); got != "/tmp/operator.env" {
+		t.Fatalf("credential env file = %q", got)
+	}
+	checker := defaultDeploymentCredentialChecker()
+	if checker.client == nil || checker.out == nil ||
+		checker.linodeAPIRoot != "https://linode.example.test/v4" ||
+		checker.ghcrTokenRoot != "https://registry.example.test/token" ||
+		checker.ghcrRegistryRoot != "https://registry.example.test" ||
+		checker.goDaddyAPIRoot != "https://dns.example.test" {
+		t.Fatalf("checker defaults = %#v", checker)
+	}
+}
+
+func TestDeploymentCredentialCheckerDefaultsNilDependencies(t *testing.T) {
+	checker := deploymentCredentialChecker{}
+	if err := checker.check(deploymentConfig{}, ""); err == nil {
+		t.Fatal("expected empty credential path to fail")
+	}
+}
+
+func TestDeploymentCredentialValuesRejectsInvalidPathsAndPrefersProcessEnvironment(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "empty", want: "path is empty"},
+		{name: "missing", path: filepath.Join(t.TempDir(), "missing.env"), want: "does not exist"},
+		{name: "directory", path: t.TempDir(), want: "not a regular file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, check := deploymentCredentialValues(tc.path)
+			if check.Passed || !strings.Contains(check.Detail, tc.want) {
+				t.Fatalf("check = %#v, want detail containing %q", check, tc.want)
+			}
+		})
+	}
+
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("LINODE_TOKEN=file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LINODE_TOKEN", "process-token")
+	values, check := deploymentCredentialValues(envFile)
+	if !check.Passed || values["LINODE_TOKEN"] != "process-token" {
+		t.Fatalf("values = %#v, check = %#v", values, check)
+	}
+}
+
+func TestDeploymentCredentialChecksReportMissingInputs(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	checker := deploymentCredentialChecker{}
+	if check := checker.checkLinode(nil); check.Passed || check.Detail != "LINODE_TOKEN is missing" {
+		t.Fatalf("Linode check = %#v", check)
+	}
+	if checks := checker.checkGHCR(nil); len(checks) != 1 || checks[0].Passed ||
+		checks[0].Detail != "GHCR_PULL_USERNAME and GHCR_PULL_TOKEN are missing" {
+		t.Fatalf("GHCR checks = %#v", checks)
+	}
+	if checks := checker.checkGHCR(map[string]string{"GHCR_PULL_USERNAME": "operator"}); len(checks) != 1 || checks[0].Detail != "GHCR_PULL_TOKEN is missing" {
+		t.Fatalf("GHCR token check = %#v", checks)
+	}
+	if check := checker.checkGoDaddy(deploymentConfig{}, nil); check.Passed ||
+		check.Detail != "GODADDY_KEY and GODADDY_SECRET are required" {
+		t.Fatalf("GoDaddy check = %#v", check)
+	}
+	if check := checker.checkObjectStorage(nil); check.Passed || check.Detail != "LINODE_OBJ_BUCKET is required" {
+		t.Fatalf("Object Storage check = %#v", check)
+	}
+}
+
+func TestExchangeGHCRTokenAcceptsAccessTokenAndRejectsMalformedResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		want    string
+		wantErr string
+	}{
+		{name: "access token", body: `{"access_token":"registry-token"}`, want: "registry-token"},
+		{name: "invalid JSON", body: `{`, wantErr: "invalid JSON"},
+		{name: "missing token", body: `{}`, wantErr: "no registry token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if got := r.URL.Query().Get("scope"); got != "repository:hkt999rtk/example:pull" {
+					t.Errorf("scope = %q", got)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			checker := deploymentCredentialChecker{client: server.Client(), ghcrTokenRoot: server.URL}
+			got, err := checker.exchangeGHCRToken("operator", "secret", "hkt999rtk/example")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("token = %q, error = %v", got, err)
+			}
+		})
+	}
+}
+
 func testDeploymentCredentialConfig() deploymentConfig {
 	return deploymentConfig{
 		Adapter:    "lke",
