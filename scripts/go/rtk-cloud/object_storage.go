@@ -38,6 +38,16 @@ type provisionListBucketResult struct {
 	NextContinuationToken string                 `xml:"NextContinuationToken"`
 }
 
+type provisionObjectStorageHTTPError struct {
+	Method     string
+	Target     string
+	StatusCode int
+}
+
+func (e *provisionObjectStorageHTTPError) Error() string {
+	return fmt.Sprintf("Object Storage %s %s failed: HTTP %d", e.Method, e.Target, e.StatusCode)
+}
+
 func provisionObjectStoreFromEnv(operator map[string]string) (provisionObjectStore, error) {
 	store := provisionObjectStore{
 		bucket:    firstNonEmpty(os.Getenv("LINODE_OBJ_BUCKET"), operator["LINODE_OBJ_BUCKET"]),
@@ -150,6 +160,18 @@ func provisionObjectExists(store provisionObjectStore, key string) error {
 	return err
 }
 
+func provisionCreateObjectBucketWithClient(client *http.Client, store provisionObjectStore) error {
+	if strings.HasPrefix(store.endpoint, "file://") {
+		root, err := provisionFileObjectRoot(store)
+		if err != nil {
+			return err
+		}
+		return os.MkdirAll(filepath.Join(root, store.bucket), 0o700)
+	}
+	_, err := provisionSignedObjectRequestWithClient(client, store, http.MethodPut, "", nil, nil)
+	return err
+}
+
 func provisionWriteObjectToFile(store provisionObjectStore, key, out string) error {
 	data, err := provisionReadObject(store, key)
 	if err != nil {
@@ -222,7 +244,7 @@ func provisionSignedObjectRequestWithClient(client *http.Client, store provision
 		if target == "" {
 			target = "bucket"
 		}
-		return nil, fmt.Errorf("Object Storage %s %s failed: HTTP %d", method, target, resp.StatusCode)
+		return nil, &provisionObjectStorageHTTPError{Method: method, Target: target, StatusCode: resp.StatusCode}
 	}
 	return data, nil
 }

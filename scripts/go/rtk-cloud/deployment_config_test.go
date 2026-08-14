@@ -88,6 +88,70 @@ func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	}
 }
 
+func TestDeploymentCredentialCheckExplicitlyBootstrapsMissingObjectStorageBucket(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	calls := []string{}
+	ops := deploymentOperations{
+		credentials: func(deploymentConfig, string) error {
+			calls = append(calls, "read-only")
+			return nil
+		},
+		bootstrapCredentials: func(deploymentConfig, string) error {
+			calls = append(calls, "bootstrap")
+			return nil
+		},
+	}
+	err := runDeploymentWithOperations([]string{
+		"credentials-check", "--workspace", workspace, "--environment", "staging",
+		"--env-file", filepath.Join(workspace, "operator.env"),
+		"--create-missing-object-storage-bucket",
+	}, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"bootstrap"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "cloud_env", "staging", "runtime")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("credential bootstrap materialized deployment runtime: %v", statErr)
+	}
+}
+
+func TestDeploymentCredentialCheckExplicitlyGrantsObjectStorageBucketAccess(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	calls := []string{}
+	ops := deploymentOperations{
+		credentials: func(deploymentConfig, string) error {
+			calls = append(calls, "read-only")
+			return nil
+		},
+		grantObjectStorageCredentials: func(deploymentConfig, string) error {
+			calls = append(calls, "grant")
+			return nil
+		},
+	}
+	err := runDeploymentWithOperations([]string{
+		"credentials-check", "--workspace", workspace, "--environment", "staging",
+		"--env-file", filepath.Join(workspace, "operator.env"),
+		"--grant-object-storage-bucket-access",
+	}, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"grant"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+}
+
+func TestDeploymentCredentialBucketBootstrapFlagIsRejectedForDeploymentMutation(t *testing.T) {
+	for _, flag := range []string{"--create-missing-object-storage-bucket", "--grant-object-storage-bucket-access"} {
+		err := runDeploymentWithOperations([]string{"provision", flag}, deploymentOperations{})
+		if err == nil || !strings.Contains(err.Error(), "only valid with deployment credentials-check") {
+			t.Fatalf("flag %s error = %v", flag, err)
+		}
+	}
+}
+
 func TestDeploymentTestUsesIdenticalLifecycleForEveryEnvironment(t *testing.T) {
 	for _, environment := range []string{"dev", "staging", "prod"} {
 		t.Run(environment, func(t *testing.T) {
