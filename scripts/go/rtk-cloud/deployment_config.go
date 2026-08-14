@@ -30,13 +30,15 @@ type deploymentConfig struct {
 }
 
 type deploymentOperations struct {
-	credentials func(deploymentConfig, string) error
-	plan        func(deploymentConfig) error
-	prepareTest func(deploymentConfig) error
-	provision   func(deploymentConfig) error
-	acceptance  func(deploymentConfig) error
-	cleanup     func(deploymentConfig) error
-	normalize   func(deploymentConfig) error
+	credentials                   func(deploymentConfig, string) error
+	bootstrapCredentials          func(deploymentConfig, string) error
+	grantObjectStorageCredentials func(deploymentConfig, string) error
+	plan                          func(deploymentConfig) error
+	prepareTest                   func(deploymentConfig) error
+	provision                     func(deploymentConfig) error
+	acceptance                    func(deploymentConfig) error
+	cleanup                       func(deploymentConfig) error
+	normalize                     func(deploymentConfig) error
 }
 
 var deploymentIntegerKeys = map[string]bool{
@@ -88,7 +90,9 @@ func runDeployment(args []string) error {
 
 func defaultDeploymentOperations() deploymentOperations {
 	return deploymentOperations{
-		credentials: validateDeploymentCredentials,
+		credentials:                   validateDeploymentCredentials,
+		bootstrapCredentials:          validateAndBootstrapDeploymentCredentials,
+		grantObjectStorageCredentials: validateAndGrantDeploymentObjectStorageAccess,
 		plan: func(cfg deploymentConfig) error {
 			return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--plan"})
 		},
@@ -115,11 +119,22 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for mutation")
 	envFile := fs.String("env-file", defaultDeploymentCredentialEnvFile(), "operator credential env file")
+	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
+	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
 		return fmt.Errorf("unknown deployment action %q", action)
+	}
+	if *createMissingObjectStorageBucket && action != "credentials-check" {
+		return errors.New("--create-missing-object-storage-bucket is only valid with deployment credentials-check")
+	}
+	if *grantObjectStorageBucketAccess && action != "credentials-check" {
+		return errors.New("--grant-object-storage-bucket-access is only valid with deployment credentials-check")
+	}
+	if *createMissingObjectStorageBucket && *grantObjectStorageBucketAccess {
+		return errors.New("Object Storage bucket creation and access grant must be run as separate credential-check operations")
 	}
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
 	if err != nil {
@@ -133,11 +148,18 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
 	}
 	if action == "credentials-check" || action == "provision" || action == "test" {
-		if ops.credentials == nil {
+		credentialCheck := ops.credentials
+		if *createMissingObjectStorageBucket {
+			credentialCheck = ops.bootstrapCredentials
+		}
+		if *grantObjectStorageBucketAccess {
+			credentialCheck = ops.grantObjectStorageCredentials
+		}
+		if credentialCheck == nil {
 			if action == "credentials-check" {
 				return errors.New("deployment credential checker is not configured")
 			}
-		} else if err := ops.credentials(cfg, *envFile); err != nil {
+		} else if err := credentialCheck(cfg, *envFile); err != nil {
 			return err
 		}
 		if action == "credentials-check" {
@@ -439,6 +461,8 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
   rtk-cloud deployment credentials-check --environment NAME [--env-file PATH]
+  rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket [--env-file PATH]
+  rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access [--env-file PATH]
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK

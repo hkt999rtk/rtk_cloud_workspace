@@ -22,6 +22,12 @@ type deploymentCredentialCheck struct {
 	Detail string
 }
 
+type deploymentCredentialCheckOptions struct {
+	createMissingObjectStorageBucket bool
+	grantObjectStorageBucketAccess   bool
+	envFile                          string
+}
+
 type deploymentCredentialChecker struct {
 	client           *http.Client
 	out              io.Writer
@@ -57,7 +63,25 @@ func validateDeploymentCredentials(cfg deploymentConfig, envFile string) error {
 	return defaultDeploymentCredentialChecker().check(cfg, envFile)
 }
 
+func validateAndBootstrapDeploymentCredentials(cfg deploymentConfig, envFile string) error {
+	return defaultDeploymentCredentialChecker().checkWithOptions(cfg, envFile, deploymentCredentialCheckOptions{
+		createMissingObjectStorageBucket: true,
+		envFile:                          envFile,
+	})
+}
+
+func validateAndGrantDeploymentObjectStorageAccess(cfg deploymentConfig, envFile string) error {
+	return defaultDeploymentCredentialChecker().checkWithOptions(cfg, envFile, deploymentCredentialCheckOptions{
+		grantObjectStorageBucketAccess: true,
+		envFile:                        envFile,
+	})
+}
+
 func (c deploymentCredentialChecker) check(cfg deploymentConfig, envFile string) error {
+	return c.checkWithOptions(cfg, envFile, deploymentCredentialCheckOptions{})
+}
+
+func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envFile string, options deploymentCredentialCheckOptions) error {
 	if c.client == nil {
 		c.client = &http.Client{Timeout: 15 * time.Second}
 	}
@@ -78,7 +102,7 @@ func (c deploymentCredentialChecker) check(cfg deploymentConfig, envFile string)
 		checks = append(checks, c.checkGoDaddy(cfg, values))
 	}
 	if strings.EqualFold(strings.TrimSpace(cfg.Values["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"]), "true") {
-		checks = append(checks, c.checkObjectStorage(values))
+		checks = append(checks, c.checkObjectStorageWithOptions(cfg, values, options))
 	}
 	return c.render(checks)
 }
@@ -245,6 +269,10 @@ func (c deploymentCredentialChecker) checkGoDaddy(cfg deploymentConfig, values m
 }
 
 func (c deploymentCredentialChecker) checkObjectStorage(values map[string]string) deploymentCredentialCheck {
+	return c.checkObjectStorageWithOptions(deploymentConfig{}, values, deploymentCredentialCheckOptions{})
+}
+
+func (c deploymentCredentialChecker) checkObjectStorageWithOptions(cfg deploymentConfig, values map[string]string, options deploymentCredentialCheckOptions) deploymentCredentialCheck {
 	store, err := provisionObjectStoreFromEnv(values)
 	if err != nil {
 		return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: err.Error()}
@@ -254,14 +282,208 @@ func (c deploymentCredentialChecker) checkObjectStorage(values map[string]string
 	query.Set("max-keys", "1")
 	query.Set("prefix", "__rtk_cloud_deployment_preflight__/")
 	body, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", query, nil)
+	created := false
+	granted := false
 	if err != nil {
-		return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: err.Error()}
+		var storageErr *provisionObjectStorageHTTPError
+		if options.createMissingObjectStorageBucket && errors.As(err, &storageErr) && storageErr.StatusCode == http.StatusNotFound {
+			if err := provisionCreateObjectBucketWithClient(c.client, store); err != nil {
+				return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: "configured bucket is missing and creation failed: " + err.Error()}
+			}
+			created = true
+			body, err = provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", query, nil)
+			if err != nil {
+				return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: "configured bucket was created but read revalidation failed: " + err.Error()}
+			}
+		} else if options.grantObjectStorageBucketAccess && errors.As(err, &storageErr) && storageErr.StatusCode == http.StatusForbidden {
+			accessKey, secretKey, keyErr := c.createLimitedObjectStorageKey(cfg, values, store)
+			if keyErr != nil {
+				return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: "create replacement limited access key failed: " + keyErr.Error()}
+			}
+			replacement := store
+			replacement.accessKey = accessKey
+			replacement.secretKey = secretKey
+			body, err = provisionSignedObjectRequestWithClient(c.client, replacement, http.MethodGet, "", query, nil)
+			if err != nil {
+				return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: "replacement limited access key read validation failed: " + err.Error()}
+			}
+			if err := updateDeploymentCredentialEnvFile(options.envFile, map[string]string{
+				"LINODE_OBJ_ACCESS_KEY_ID":     accessKey,
+				"LINODE_OBJ_SECRET_ACCESS_KEY": secretKey,
+			}); err != nil {
+				return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: "replacement limited access key passed validation but operator env update failed"}
+			}
+			granted = true
+		} else {
+			return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: err.Error()}
+		}
 	}
 	var response provisionListBucketResult
 	if err := xml.Unmarshal(body, &response); err != nil {
 		return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: "bucket list returned invalid XML"}
 	}
-	return deploymentCredentialCheck{Name: "Linode Object Storage", Passed: true, Detail: "signed read access for configured bucket verified"}
+	detail := "signed read access for configured bucket verified"
+	if created {
+		detail = "configured bucket created with Object Storage access key; signed read access revalidated"
+	}
+	if granted {
+		detail = "replacement limited access key created for configured bucket; signed read access revalidated; operator env updated"
+	}
+	return deploymentCredentialCheck{Name: "Linode Object Storage", Passed: true, Detail: detail}
+}
+
+func (c deploymentCredentialChecker) createLimitedObjectStorageKey(cfg deploymentConfig, values map[string]string, store provisionObjectStore) (string, string, error) {
+	token := strings.TrimSpace(values["LINODE_TOKEN"])
+	if token == "" {
+		return "", "", errors.New("LINODE_TOKEN is required")
+	}
+	bucketsURL := strings.TrimRight(c.linodeAPIRoot, "/") + "/object-storage/buckets?page_size=500"
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, bucketsURL, nil)
+	if err != nil {
+		return "", "", errors.New("bucket inventory request could not be created")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	body, err := c.request(req)
+	if err != nil {
+		return "", "", fmt.Errorf("bucket inventory request failed: %w", err)
+	}
+	var inventory struct {
+		Data []struct {
+			Label   string `json:"label"`
+			Region  string `json:"region"`
+			Cluster string `json:"cluster"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &inventory); err != nil {
+		return "", "", errors.New("bucket inventory returned invalid JSON")
+	}
+	region := ""
+	for _, bucket := range inventory.Data {
+		if bucket.Label != store.bucket {
+			continue
+		}
+		if bucket.Cluster == store.region || bucket.Region == store.region {
+			region = firstNonEmpty(bucket.Region, bucket.Cluster)
+			break
+		}
+		if region == "" {
+			region = firstNonEmpty(bucket.Region, bucket.Cluster)
+		}
+	}
+	if region == "" {
+		return "", "", errors.New("configured bucket was not found in Linode Object Storage inventory")
+	}
+	labelEnvironment := strings.TrimSpace(cfg.Environment)
+	if labelEnvironment == "" {
+		labelEnvironment = "deployment"
+	}
+	payload, err := json.Marshal(map[string]any{
+		"label": fmt.Sprintf("rtk-cloud-%s-artifacts-%d", labelEnvironment, time.Now().UTC().Unix()),
+		"bucket_access": []map[string]string{{
+			"bucket_name": store.bucket,
+			"permissions": "read_write",
+			"region":      region,
+		}},
+	})
+	if err != nil {
+		return "", "", errors.New("replacement key request could not be encoded")
+	}
+	keysURL := strings.TrimRight(c.linodeAPIRoot, "/") + "/object-storage/keys"
+	req, err = http.NewRequestWithContext(context.Background(), http.MethodPost, keysURL, bytes.NewReader(payload))
+	if err != nil {
+		return "", "", errors.New("replacement key request could not be created")
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	body, err = c.request(req)
+	if err != nil {
+		return "", "", fmt.Errorf("replacement key request failed: %w", err)
+	}
+	var created struct {
+		AccessKey string `json:"access_key"`
+		SecretKey string `json:"secret_key"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		return "", "", errors.New("replacement key response returned invalid JSON")
+	}
+	if strings.TrimSpace(created.AccessKey) == "" || strings.TrimSpace(created.SecretKey) == "" {
+		return "", "", errors.New("replacement key response omitted credential material")
+	}
+	return created.AccessKey, created.SecretKey, nil
+}
+
+func updateDeploymentCredentialEnvFile(path string, replacements map[string]string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("credential env path is empty")
+	}
+	for key, value := range replacements {
+		if strings.TrimSpace(key) == "" || value == "" || strings.ContainsAny(value, "\r\n") {
+			return errors.New("replacement credential is invalid")
+		}
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	updated := map[string]bool{}
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		prefix := ""
+		if strings.HasPrefix(trimmed, "export ") {
+			prefix = "export "
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "export "))
+		}
+		key, _, ok := strings.Cut(trimmed, "=")
+		key = strings.TrimSpace(key)
+		value, wanted := replacements[key]
+		if !ok || !wanted {
+			continue
+		}
+		lines[i] = prefix + key + "=" + value
+		updated[key] = true
+	}
+	for key, value := range replacements {
+		if !updated[key] {
+			lines = append(lines, key+"="+value)
+		}
+	}
+	body := []byte(strings.Join(lines, "\n"))
+	temp, err := os.CreateTemp(filepath.Dir(abs), "."+filepath.Base(abs)+".tmp-")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tempPath)
+		}
+	}()
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(body); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, abs); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func (c deploymentCredentialChecker) request(req *http.Request) ([]byte, error) {

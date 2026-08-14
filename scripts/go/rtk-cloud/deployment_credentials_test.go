@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,7 @@ import (
 
 func TestDeploymentCredentialCheckerValidatesAllRequiredServices(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
-	server := newDeploymentCredentialTestServer(t, false, nil)
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{})
 	defer server.Close()
 	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
 	var output bytes.Buffer
@@ -44,9 +45,177 @@ func TestDeploymentCredentialCheckerValidatesAllRequiredServices(t *testing.T) {
 	}
 }
 
+func TestDeploymentCredentialCheckerCreatesMissingObjectStorageBucketAndRevalidates(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	var bucketExists atomic.Bool
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{bucketExists: &bucketExists})
+	defer server.Close()
+	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
+	var output bytes.Buffer
+	checker := deploymentCredentialChecker{
+		client:           server.Client(),
+		out:              &output,
+		linodeAPIRoot:    server.URL + "/v4",
+		ghcrTokenRoot:    server.URL + "/token",
+		ghcrRegistryRoot: server.URL,
+		goDaddyAPIRoot:   server.URL,
+	}
+	if err := checker.checkWithOptions(testDeploymentCredentialConfig(), envFile, deploymentCredentialCheckOptions{createMissingObjectStorageBucket: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !bucketExists.Load() {
+		t.Fatal("missing Object Storage bucket was not created")
+	}
+	if !strings.Contains(output.String(), "configured bucket created with Object Storage access key; signed read access revalidated") ||
+		!strings.Contains(output.String(), "overall: PASS (9 checks)") {
+		t.Fatalf("unexpected bootstrap output:\n%s", output.String())
+	}
+}
+
+func TestDeploymentCredentialCheckerDoesNotCreateMissingObjectStorageBucketByDefault(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	var bucketExists atomic.Bool
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{bucketExists: &bucketExists})
+	defer server.Close()
+	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
+	var output bytes.Buffer
+	checker := deploymentCredentialChecker{
+		client:           server.Client(),
+		out:              &output,
+		linodeAPIRoot:    server.URL + "/v4",
+		ghcrTokenRoot:    server.URL + "/token",
+		ghcrRegistryRoot: server.URL,
+		goDaddyAPIRoot:   server.URL,
+	}
+	if err := checker.check(testDeploymentCredentialConfig(), envFile); err == nil {
+		t.Fatal("read-only credential check unexpectedly passed")
+	}
+	if bucketExists.Load() {
+		t.Fatal("read-only credential check created the bucket")
+	}
+	if !strings.Contains(output.String(), "Object Storage GET bucket failed: HTTP 404") {
+		t.Fatalf("missing safe 404 result:\n%s", output.String())
+	}
+}
+
+func TestDeploymentCredentialCheckerCreatesScopedObjectStorageKeyAndUpdatesEnvAfterValidation(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{rejectOriginalObjectKey: true})
+	defer server.Close()
+	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
+	var output bytes.Buffer
+	checker := deploymentCredentialChecker{
+		client:           server.Client(),
+		out:              &output,
+		linodeAPIRoot:    server.URL + "/v4",
+		ghcrTokenRoot:    server.URL + "/token",
+		ghcrRegistryRoot: server.URL,
+		goDaddyAPIRoot:   server.URL,
+	}
+	options := deploymentCredentialCheckOptions{grantObjectStorageBucketAccess: true, envFile: envFile}
+	if err := checker.checkWithOptions(testDeploymentCredentialConfig(), envFile, options); err != nil {
+		t.Fatal(err)
+	}
+	values, err := readEnvFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "replacement-object-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "replacement-object-secret" {
+		t.Fatalf("operator env did not receive replacement credentials")
+	}
+	info, err := os.Stat(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("operator env mode = %v", info.Mode().Perm())
+	}
+	if !strings.Contains(output.String(), "replacement limited access key created for configured bucket; signed read access revalidated; operator env updated") {
+		t.Fatalf("unexpected grant output:\n%s", output.String())
+	}
+	for _, secret := range []string{"object-secret", "replacement-object-access", "replacement-object-secret"} {
+		if strings.Contains(output.String(), secret) {
+			t.Fatalf("credential material leaked in output")
+		}
+	}
+}
+
+func TestDeploymentCredentialCheckerDoesNotUpdateEnvWhenReplacementKeyValidationFails(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{
+		rejectOriginalObjectKey:    true,
+		rejectReplacementObjectKey: true,
+	})
+	defer server.Close()
+	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
+	checker := deploymentCredentialChecker{
+		client:           server.Client(),
+		linodeAPIRoot:    server.URL + "/v4",
+		ghcrTokenRoot:    server.URL + "/token",
+		ghcrRegistryRoot: server.URL,
+		goDaddyAPIRoot:   server.URL,
+	}
+	options := deploymentCredentialCheckOptions{grantObjectStorageBucketAccess: true, envFile: envFile}
+	if err := checker.checkWithOptions(testDeploymentCredentialConfig(), envFile, options); err == nil {
+		t.Fatal("invalid replacement key unexpectedly passed")
+	}
+	values, err := readEnvFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "object-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "object-secret" {
+		t.Fatal("operator env changed before replacement key passed validation")
+	}
+}
+
+func TestUpdateDeploymentCredentialEnvFileValidatesAndPreservesLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		path         string
+		replacements map[string]string
+	}{
+		{name: "empty path", replacements: map[string]string{"KEY": "value"}},
+		{name: "empty key", path: "unused", replacements: map[string]string{"": "value"}},
+		{name: "empty value", path: "unused", replacements: map[string]string{"KEY": ""}},
+		{name: "multiline value", path: "unused", replacements: map[string]string{"KEY": "first\nsecond"}},
+		{name: "missing file", path: filepath.Join(t.TempDir(), "missing.env"), replacements: map[string]string{"KEY": "value"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := updateDeploymentCredentialEnvFile(tc.path, tc.replacements); err == nil {
+				t.Fatal("invalid credential env update unexpectedly passed")
+			}
+		})
+	}
+
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("export LINODE_OBJ_ACCESS_KEY_ID=old-access\nUNCHANGED=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateDeploymentCredentialEnvFile(envFile, map[string]string{
+		"LINODE_OBJ_ACCESS_KEY_ID":     "new-access",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "new-secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := string(data)
+	for _, want := range []string{
+		"export LINODE_OBJ_ACCESS_KEY_ID=new-access",
+		"UNCHANGED=value",
+		"LINODE_OBJ_SECRET_ACCESS_KEY=new-secret",
+	} {
+		if !strings.Contains(contents, want) {
+			t.Fatalf("updated env does not contain %q:\n%s", want, contents)
+		}
+	}
+}
+
 func TestDeploymentCredentialCheckerRejectsInvalidGHCRWithoutLeakingSecrets(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
-	server := newDeploymentCredentialTestServer(t, true, nil)
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{rejectGHCR: true})
 	defer server.Close()
 	const secret = "must-never-appear-in-output"
 	envFile := writeDeploymentCredentialEnv(t, server.URL, secret)
@@ -76,7 +245,7 @@ func TestDeploymentCredentialCheckerRejectsInvalidGHCRWithoutLeakingSecrets(t *t
 func TestDeploymentCredentialCheckerRejectsInsecureEnvFileBeforeNetwork(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	var requests atomic.Int32
-	server := newDeploymentCredentialTestServer(t, false, &requests)
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{requests: &requests})
 	defer server.Close()
 	envFile := writeDeploymentCredentialEnv(t, server.URL, "valid-ghcr-token")
 	if err := os.Chmod(envFile, 0o644); err != nil {
@@ -247,11 +416,19 @@ LINODE_OBJ_REGION=us-test-1
 	return path
 }
 
-func newDeploymentCredentialTestServer(t *testing.T, rejectGHCR bool, requests *atomic.Int32) *httptest.Server {
+type deploymentCredentialTestServerOptions struct {
+	rejectGHCR                 bool
+	requests                   *atomic.Int32
+	bucketExists               *atomic.Bool
+	rejectOriginalObjectKey    bool
+	rejectReplacementObjectKey bool
+}
+
+func newDeploymentCredentialTestServer(t *testing.T, options deploymentCredentialTestServerOptions) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests != nil {
-			requests.Add(1)
+		if options.requests != nil {
+			options.requests.Add(1)
 		}
 		switch {
 		case r.URL.Path == "/v4/profile":
@@ -264,7 +441,7 @@ func newDeploymentCredentialTestServer(t *testing.T, rejectGHCR bool, requests *
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case r.URL.Path == "/token":
 			username, token, ok := r.BasicAuth()
-			if rejectGHCR || !ok || username != "test-user" || token != "valid-ghcr-token" {
+			if options.rejectGHCR || !ok || username != "test-user" || token != "valid-ghcr-token" {
 				http.Error(w, "denied", http.StatusForbidden)
 				return
 			}
@@ -281,10 +458,53 @@ func newDeploymentCredentialTestServer(t *testing.T, rejectGHCR bool, requests *
 				return
 			}
 			_, _ = w.Write([]byte(`[]`))
-		case r.URL.Path == "/test-bucket":
-			if !strings.Contains(r.Header.Get("Authorization"), "Credential=object-access/") {
+		case r.URL.Path == "/v4/object-storage/buckets":
+			if r.Header.Get("Authorization") != "Bearer linode-secret" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
+			}
+			_, _ = w.Write([]byte(`{"data":[{"label":"test-bucket","region":"us-test-1","cluster":"us-test-1"}]}`))
+		case r.URL.Path == "/v4/object-storage/keys" && r.Method == http.MethodPost:
+			if r.Header.Get("Authorization") != "Bearer linode-secret" {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			var payload struct {
+				BucketAccess []struct {
+					BucketName  string `json:"bucket_name"`
+					Permissions string `json:"permissions"`
+					Region      string `json:"region"`
+				} `json:"bucket_access"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || len(payload.BucketAccess) != 1 ||
+				payload.BucketAccess[0].BucketName != "test-bucket" || payload.BucketAccess[0].Permissions != "read_write" ||
+				payload.BucketAccess[0].Region != "us-test-1" {
+				http.Error(w, "invalid grant", http.StatusBadRequest)
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_key":"replacement-object-access","secret_key":"replacement-object-secret"}`))
+		case r.URL.Path == "/test-bucket":
+			authorization := r.Header.Get("Authorization")
+			originalKey := strings.Contains(authorization, "Credential=object-access/")
+			replacementKey := strings.Contains(authorization, "Credential=replacement-object-access/")
+			if !originalKey && !replacementKey {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if (options.rejectOriginalObjectKey && originalKey) || (options.rejectReplacementObjectKey && replacementKey) {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			if options.bucketExists != nil {
+				if r.Method == http.MethodPut {
+					options.bucketExists.Store(true)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				if !options.bucketExists.Load() {
+					http.NotFound(w, r)
+					return
+				}
 			}
 			w.Header().Set("Content-Type", "application/xml")
 			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>`))

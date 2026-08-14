@@ -82,6 +82,37 @@ upload 時的 Object Storage signed bucket list。任何一項失敗都回傳 no
 唯讀操作，它能證明認證與讀取 scope，但 provider mutation scope 仍由實際
 provision API 在操作時判定。
 
+如果唯一失敗是 configured Object Storage bucket 回應 HTTP 404，可明確要求
+同一個 script 使用 Object Storage access key 建立該 bucket，並立即重做 signed
+read validation：
+
+```sh
+scripts/check-deployment-credentials.sh \
+  --environment staging \
+  --create-missing-object-storage-bucket
+```
+
+此旗標只允許用於 `credentials-check`。預設檢查、`deployment provision` 與
+`deployment test` 不會自動建立 bucket；建立失敗或建立後無法讀取仍回傳
+non-zero，deployment 不會繼續。
+
+Linode limited access key 可以建立新 bucket，但不會自動取得該 bucket 的內容
+權限。如果 bucket 已存在而 signed read 回應 HTTP 403，可明確要求 script 使用
+`LINODE_TOKEN` 建立一把只授權 configured bucket、權限為 `read_write` 的 replacement
+limited key：
+
+```sh
+scripts/check-deployment-credentials.sh \
+  --environment staging \
+  --grant-object-storage-bucket-access
+```
+
+script 會先用 replacement key 完成 signed read validation，成功後才以 `0600`
+權限原子更新 operator env 內的 `LINODE_OBJ_ACCESS_KEY_ID` 與
+`LINODE_OBJ_SECRET_ACCESS_KEY`。驗證失敗時不會改寫 env。舊 key 不會自動撤銷，
+因為它可能仍供原本授權的 bucket 使用；後續需獨立確認無 consumer 後再 revoke。
+bucket creation 與 access grant 是兩個明確操作，不允許在同一次 invocation 合併。
+
 若要另外確認 Docker CLI login，可執行：
 
 ```sh
