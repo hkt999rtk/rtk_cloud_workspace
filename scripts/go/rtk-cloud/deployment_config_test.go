@@ -150,6 +150,14 @@ func TestDeploymentCredentialBucketBootstrapFlagIsRejectedForDeploymentMutation(
 			t.Fatalf("flag %s error = %v", flag, err)
 		}
 	}
+	err := runDeploymentWithOperations([]string{
+		"credentials-check",
+		"--create-missing-object-storage-bucket",
+		"--grant-object-storage-bucket-access",
+	}, deploymentOperations{})
+	if err == nil || !strings.Contains(err.Error(), "must be run as separate") {
+		t.Fatalf("combined credential repair flags error = %v", err)
+	}
 }
 
 func TestDeploymentTestUsesIdenticalLifecycleForEveryEnvironment(t *testing.T) {

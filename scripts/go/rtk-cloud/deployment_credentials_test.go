@@ -168,6 +168,51 @@ func TestDeploymentCredentialCheckerDoesNotUpdateEnvWhenReplacementKeyValidation
 	}
 }
 
+func TestUpdateDeploymentCredentialEnvFileValidatesAndPreservesLayout(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		path         string
+		replacements map[string]string
+	}{
+		{name: "empty path", replacements: map[string]string{"KEY": "value"}},
+		{name: "empty key", path: "unused", replacements: map[string]string{"": "value"}},
+		{name: "empty value", path: "unused", replacements: map[string]string{"KEY": ""}},
+		{name: "multiline value", path: "unused", replacements: map[string]string{"KEY": "first\nsecond"}},
+		{name: "missing file", path: filepath.Join(t.TempDir(), "missing.env"), replacements: map[string]string{"KEY": "value"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := updateDeploymentCredentialEnvFile(tc.path, tc.replacements); err == nil {
+				t.Fatal("invalid credential env update unexpectedly passed")
+			}
+		})
+	}
+
+	envFile := filepath.Join(t.TempDir(), ".env")
+	if err := os.WriteFile(envFile, []byte("export LINODE_OBJ_ACCESS_KEY_ID=old-access\nUNCHANGED=value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateDeploymentCredentialEnvFile(envFile, map[string]string{
+		"LINODE_OBJ_ACCESS_KEY_ID":     "new-access",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "new-secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contents := string(data)
+	for _, want := range []string{
+		"export LINODE_OBJ_ACCESS_KEY_ID=new-access",
+		"UNCHANGED=value",
+		"LINODE_OBJ_SECRET_ACCESS_KEY=new-secret",
+	} {
+		if !strings.Contains(contents, want) {
+			t.Fatalf("updated env does not contain %q:\n%s", want, contents)
+		}
+	}
+}
+
 func TestDeploymentCredentialCheckerRejectsInvalidGHCRWithoutLeakingSecrets(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{rejectGHCR: true})
