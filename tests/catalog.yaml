@@ -48,6 +48,63 @@ cases:
     environments: [local, ci]
     evidence: [json, junit]
     status: active
+  - id: UNIT-AM-BALANCE-001
+    title: Balance arithmetic uses integer minor units and rejects overflow
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/payment/money_test.go
+    selector: TestApplyBalanceAllowsNegativeBalanceAndRejectsOverflow
+    method: Go unit tests apply signed debit and credit deltas in integer minor units and reject arithmetic overflow before persistence.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    status: active
+  - id: UNIT-AM-AUTOTOPUP-001
+    title: Automatic top-up uses strict crossing and bounded safety limits
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/payment/policy_test.go
+    selector: TestAutoTopUpUsesStrictThresholdAndSafetyLimits
+    method: Go unit tests evaluate balances at and below the threshold and enforce daily attempt and amount limits without recursive charging.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    status: active
+  - id: UNIT-AM-PAYMENT-001
+    title: Payment intents preserve unknown reconciliation state
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/payment/intent_test.go
+    selector: TestIntentTransitionsPreserveUnknownReconciliation
+    method: Go unit tests drive the provider-neutral intent state machine and require ambiguous calls to remain reconcilable instead of authorizing a second charge.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    status: active
+  - id: INT-AM-PAYMENT-001
+    title: Payment API ledger trigger and reconciliation remain exactly once
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: ./internal/api#TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction,./internal/paymentstore#TestLedgerTriggerAndIntentCreditAreExactlyOnce,./internal/paymentservice#TestTimeoutReconcilesToOneCredit
+    method: PostgreSQL-backed Go integration tests exercise customer authorization, append-only ledger updates, automatic intent creation, timeout reconciliation, one provider attempt, and one resulting credit.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-PAYMENT-OWNERSHIP-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-INTENT-001, REQ-AM-AUTO-TOPUP-001, REQ-AM-PAYMENT-AUTHZ-001, REQ-AM-PAYMENT-AUDIT-001]
+    status: active
+  - id: INT-AM-NEWEBPAY-001
+    title: NewebPay adapter verifies official cryptography query and webhook boundaries
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/paymentprovider/newebpay/adapter_test.go
+    selector: ./internal/paymentprovider/newebpay#TestOfficialNDNF123TradeSHAVector,./internal/paymentprovider/newebpay#TestQueryUsesFixedSandboxEndpointAndVerifiesResponse,./internal/paymentprovider/newebpay#TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields
+    method: Adapter contract tests apply official redacted cryptographic vectors, an isolated HTTP provider fixture, integrity verification, safe response normalization, and authenticated webhook parsing.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit, logs]
+    verifies: [REQ-AM-PAYMENT-PROVIDER-001, REQ-AM-PAYMENT-WEBHOOK-001]
+    status: active
   - id: INT-VC-AUTH-BOUNDARY-001
     title: Runtime token issuance rejects missing credentials and legacy certificate headers
     layer: integration
@@ -893,6 +950,7 @@ cases:
   - { <<: *ui_local, id: UI-CA-ACCESS-002, title: Customer users cannot read the platform admin API, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-002]", verifies: [REQ-UI-CA-ACCESS-002] }
   - { <<: *ui_local, id: UI-CA-ACCESS-003, title: Customer navigation remains separated from platform navigation, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-003]", verifies: [REQ-UI-CA-ACCESS-003, REQ-CA-BFF-UI-001, REQ-CA-BRAND-NAVIGATION-001] }
   - { <<: *ui_local, id: UI-CA-AUDIT-001, title: Platform admins can review audit records after a Brand Cloud action, source: repos/rtk_cloud_admin/web/e2e/audit.spec.mjs, selector: "[UI-CA-AUDIT-001]", verifies: [REQ-UI-CA-AUDIT-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-001, title: Customer billing remains organization scoped provider safe and visibly gated, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-001]", tags: [smoke, billing, payment], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-001, title: Partial batch failure preserves item results and supports a new retry attempt, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-001]", verifies: [REQ-UI-CA-BATCH-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-002, title: Batch jobs enforce valid pause resume and cancel transitions, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-002]", verifies: [REQ-UI-CA-BATCH-002] }
   - { <<: *ui_local, id: UI-CA-BATCH-003, title: Completed batch results can be downloaded as JSON and CSV, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-003]", verifies: [REQ-UI-CA-BATCH-003] }

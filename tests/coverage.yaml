@@ -75,7 +75,7 @@ modules:
     packages: [./...]
     cover_packages: [./internal/...]
     pr_required_env: [TEST_DATABASE_URL]
-    pr_required_tests: [TestIntegrationAuthorizationAndTenancyMatrix, TestIntegrationDatabaseSchemaInvariants]
+    pr_required_tests: [TestIntegrationAuthorizationAndTenancyMatrix, TestIntegrationDatabaseSchemaInvariants, TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction, TestLedgerTriggerAndIntentCreditAreExactlyOnce, TestTimeoutReconcilesToOneCredit, TestQueryUsesFixedSandboxEndpointAndVerifiesResponse, TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields]
     minimum_statement_percent: 29.1
     pr_minimum_statement_percent: 80.0
     target_statement_percent: 80.0
@@ -84,6 +84,11 @@ modules:
       - { package: rtk_account_manager/internal/auth, risk: critical, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/store, risk: critical, minimum_statement_percent: 4.0, pr_minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/database, risk: critical, minimum_statement_percent: 30.6, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/payment, risk: critical, minimum_statement_percent: 95.0, pr_minimum_statement_percent: 95.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/paymentcrypto, risk: critical, minimum_statement_percent: 87.5, pr_minimum_statement_percent: 87.5, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/paymentprovider/newebpay, risk: critical, minimum_statement_percent: 86.3, pr_minimum_statement_percent: 86.3, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/paymentservice, risk: critical, pr_minimum_statement_percent: 83.2, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/paymentstore, risk: critical, minimum_statement_percent: 4.1, pr_minimum_statement_percent: 77.6, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/usercache, risk: high, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 81.0, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/internal/worker/inbox, risk: high, minimum_statement_percent: 90.2, pr_minimum_statement_percent: 90.2, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/internal/worker/outbox, risk: high, minimum_statement_percent: 83.6, pr_minimum_statement_percent: 83.6, target_statement_percent: 70.0 }
@@ -93,6 +98,15 @@ modules:
       - test_id: UNIT-AM-AUTH-001
         canonical_key: go://account-manager/internal/auth#TestOIDCTokenErrorsDoNotContainProviderTokens
         purpose: OIDC failures must not expose provider tokens.
+      - test_id: UNIT-AM-BALANCE-001
+        canonical_key: go://account-manager/internal/payment#TestApplyBalanceAllowsNegativeBalanceAndRejectsOverflow
+        purpose: Balance projection arithmetic must use integer minor units and reject overflow.
+      - test_id: UNIT-AM-AUTOTOPUP-001
+        canonical_key: go://account-manager/internal/payment#TestAutoTopUpUsesStrictThresholdAndSafetyLimits
+        purpose: Automatic top-up must use a strict threshold and bounded safety limits.
+      - test_id: UNIT-AM-PAYMENT-001
+        canonical_key: go://account-manager/internal/payment#TestIntentTransitionsPreserveUnknownReconciliation
+        purpose: Ambiguous provider outcomes must remain reconcilable and never authorize a duplicate charge.
     purpose: Protect Account Manager unit and PostgreSQL-backed service behavior.
     method: Unit profile reports all packages; PR profile runs PostgreSQL integration with internal cross-package instrumentation.
 

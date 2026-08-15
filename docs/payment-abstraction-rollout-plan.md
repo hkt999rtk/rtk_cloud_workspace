@@ -1,6 +1,6 @@
 # Payment Abstraction And Automatic Top-Up Rollout Plan
 
-Status: documentation-first implementation plan.
+Status: implemented foundation with guarded provider rollout.
 
 Owner: `rtk_cloud_workspace` coordinates; repository ownership remains with the
 service listed for each deliverable.
@@ -22,23 +22,26 @@ The first planned provider is NewebPay. The design must permit a second provider
 without changing customer-facing balance, policy, payment-method, or intent
 semantics.
 
-This plan deliberately completes and reviews documentation before production
-code. Existing usage metering does not make payment ready: pricing/invoice,
-debit posting, consent, provider capability, reconciliation, and support
-operations are separate dependencies.
+Documentation was completed before production code. The provider-neutral
+ledger, policy, intent, reconciliation, HTTP/BFF, and UI foundation now exists.
+Existing usage metering still does not make production charging ready:
+pricing/invoice, approved provider capability, sandbox qualification, and
+support operations remain separate dependencies.
 
 ## Source Documents
 
 | Source | Repository | Purpose |
 | --- | --- | --- |
-| `PAYMENTS_AND_BALANCE.md` | `rtk_cloud_contracts_doc` | Proposed cross-repository product, ownership, state, security, and evidence contract. |
-| `PAYMENT_ABSTRACTION_AND_AUTO_TOPUP.md` | `rtk_account_manager` | Proposed package, schema, transaction, worker, API, provider, and test design. |
+| `PAYMENTS_AND_BALANCE.md` | `rtk_cloud_contracts_doc` | Cross-repository product, ownership, state, security, and evidence contract. |
+| `PAYMENT_ABSTRACTION_AND_AUTO_TOPUP.md` | `rtk_account_manager` | Implemented package, schema, transaction, worker, API, provider, and test design. |
 | `docs/adr/0001-commercial-settlement-ownership.md` | workspace | Cross-repository ownership decision and rejected alternatives. |
 | This document | workspace | Dependency graph, PR sequence, test gates, rollout, and outstanding decisions. |
 
-No document claims that payment routes currently exist. OpenAPI changes and
-active Test Catalog entries are intentionally deferred until executable sources
-are added.
+Account Manager and Cloud Admin OpenAPI contracts now contain the guarded
+payment routes. Executable unit, PostgreSQL integration, NewebPay contract, and
+desktop/mobile UI cases are active in the central Test Catalog. Provider-hosted
+E2E and live staging IDs remain deferred until their external prerequisites
+exist.
 
 ## Existing Baseline
 
@@ -47,12 +50,12 @@ are added.
 | Generic usage event and usage-fact contract | Contracts + metered services | Implemented foundation. |
 | MQTT and log usage ledgers | Video Cloud / Logger paths | Implemented for metering; not money. |
 | Brand Cloud identity, membership, authorization, audit | Account Manager | Implemented. |
-| Cloud Admin customer/operator surface | Cloud Admin | Implemented for other domains; payment UI absent. |
+| Cloud Admin customer/operator surface | Cloud Admin | Billing BFF/UI implemented; provider actions visibly blocked. |
 | Pricing plans and versioned pricing | None | Missing. |
 | Invoice generation and debit instruction | None | Missing. |
-| Commercial balance ledger | None | Missing. |
-| Payment abstraction/provider adapter | None | Missing. |
-| Automatic top-up and consent | None | Missing. |
+| Commercial balance ledger | Account Manager | Implemented with PostgreSQL idempotency and immutable entries. |
+| Payment abstraction/provider adapter | Account Manager | Implemented; NewebPay query/webhook only and charge disabled. |
+| Automatic top-up and consent | Account Manager | Implemented policy/orchestration; external charging disabled. |
 | Refund/chargeback reconciliation | None | Missing. |
 
 The usage pipeline remains valid and unchanged. It feeds a future pricing and
@@ -118,7 +121,7 @@ Optional optimization only:
 - Token/CAU services are available only to merchants with the relevant agreed
   card or periodic-payment functions enabled.
 
-### Must Be Confirmed Before Implementation
+### Must Be Confirmed Before Provider Enablement
 
 The public periodic-payment manual is designed around scheduled fixed-period
 charges. It does not by itself establish that the merchant can perform an
@@ -198,9 +201,10 @@ Deliverables:
 
 - exact OpenAPI schemas, status transitions, pagination, idempotency header,
   stable errors, and permissions;
-- Test Catalog entries initially marked planned;
+- active Test Catalog entries for executable unit, integration, and UI cases;
 - generated contract/client compatibility checks;
-- no routes enabled until implementation is available.
+- guarded routes that expose safe resources while unsupported provider actions
+  fail closed.
 
 Exit: OpenAPI validation and requirement traceability pass.
 
@@ -239,7 +243,10 @@ duplicate charge or credit.
 
 Owner: Account Manager payment adapter owner.
 
-Prerequisite: written capability approval and sandbox credentials.
+The query, cryptography, response normalization, and verified-webhook subset is
+implemented from official public documentation. Hosted setup and unattended
+charge support have this prerequisite: written capability approval and sandbox
+credentials.
 
 Deliverables:
 
@@ -306,8 +313,8 @@ Automatic top-up remains opt-in and disabled by default.
 
 ## Test Inventory
 
-Planned permanent IDs are reserved by the contract but stay out of the active
-catalog until sources exist.
+Executable permanent IDs are active in the catalog. E2E and live IDs that need
+provider-hosted setup or a qualified sandbox remain deferred.
 
 | ID | Layer | Purpose | Dependency | Evidence |
 | --- | --- | --- | --- | --- |
@@ -424,12 +431,20 @@ Documentation phase is complete when all source documents exist, links and
 metadata validate, each open decision has a named owner, and the PRs are
 reviewable without production code.
 
-Implementation is complete only when:
+The guarded software foundation is complete when:
 
 - exact OpenAPI and active Test Catalog entries match executable behavior;
-- monetary core, provider abstraction, NewebPay adapter, pricing/invoice debit,
-  and Cloud Admin UI are implemented;
-- all planned unit, integration, E2E, UI desktop/mobile, and staging cases pass;
+- monetary core, provider abstraction, safe NewebPay query/webhook subset, and
+  Cloud Admin UI are implemented;
+- unit, PostgreSQL integration, adapter contract, and UI desktop/mobile cases
+  pass with evidence;
+- unsupported setup and charge capabilities remain visibly blocked and
+  disabled.
+
+Production automatic charging is complete only when:
+
+- pricing/invoice debit ownership and authentication are implemented;
+- deferred provider-hosted E2E and staging cases pass;
 - ledger, provider, webhook, and refund/chargeback evidence reconcile;
 - provider capability and finance/legal/security approvals are recorded;
 - an allowlisted canary passes with no data/secret leakage or cleanup residue;
