@@ -234,7 +234,7 @@ Deliverables:
 - durable worker lease/retry/reconciliation;
 - provider registry/capabilities and kill switch;
 - fake-provider E2E for success, decline, timeout, unknown, duplicate callback,
-  query reconciliation, and refund compensation;
+  query reconciliation, and refund compensation without automatic recharge;
 - metrics, alerts, restricted support inspection, and artifact redaction.
 
 Exit: fake-provider full flow passes and process-failure injection produces no

@@ -123,8 +123,8 @@ cases:
     layer: e2e
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/paymentservice/integration_test.go
-    selector: ./internal/paymentservice#TestTimeoutReconcilesToOneCredit
-    method: PostgreSQL-backed payment orchestration crosses the configured balance threshold, records a provider attempt before I/O, reconciles an ambiguous fake-provider outcome by authoritative query, and proves exactly one resulting balance credit.
+    selector: ./internal/paymentservice#TestSuccessfulChargeCreditsExactlyOnceWithoutQuery,./internal/paymentservice#TestTimeoutReconcilesToOneCredit
+    method: PostgreSQL-backed payment orchestration crosses the configured balance threshold, proves both direct success and timeout/query reconciliation, records every provider attempt before I/O, and commits exactly one resulting balance credit without retrying a completed charge.
     runner: test-payment
     environments: [local, ci]
     tags: [payment, auto-topup, fake-provider]
@@ -136,8 +136,8 @@ cases:
     layer: e2e
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/paymentservice/integration_test.go
-    selector: ./internal/paymentservice#TestStaleIncompleteAttemptDoesNotRepeatCharge,./internal/paymentservice#TestVerifiedDuplicateWebhookSchedulesOneReconciliation,./internal/paymentservice#TestRepeatedUnknownQueryReusesDurableJobUntilConclusive,./internal/paymentservice#TestVerifiedWebhookMustMatchIntentAmountAndCurrency,./internal/paymentservice#TestInvalidWebhookIsQuarantinedAndProviderDisabledMakesNoCharge
-    method: Failure-injection E2E tests simulate a process crash before provider completion, repeated unknown query states, duplicate verified callbacks, amount mismatch, invalid signatures, and the provider kill switch; every path must converge without duplicate charge or credit.
+    selector: ./internal/paymentservice#TestDeclinedChargeFailsWithoutCreditOrRetry,./internal/paymentservice#TestRequiresActionStopsAutomaticFlowAndMarksAttention,./internal/paymentservice#TestStaleIncompleteAttemptDoesNotRepeatCharge,./internal/paymentservice#TestVerifiedDuplicateWebhookSchedulesOneReconciliation,./internal/paymentservice#TestRepeatedUnknownQueryReusesDurableJobUntilConclusive,./internal/paymentservice#TestVerifiedWebhookMustMatchIntentAmountAndCurrency,./internal/paymentservice#TestInvalidWebhookIsQuarantinedAndProviderDisabledMakesNoCharge,./internal/paymentstore#TestRefundCompensationDisarmsAutoTopUpWithoutRecharge
+    method: Failure-injection E2E tests simulate a hard decline, required customer action, process crash before provider completion, repeated unknown query states, duplicate verified callbacks, amount mismatch, invalid signatures, provider disable, and refund compensation; every path must converge without duplicate charge, credit, or automatic recharge.
     runner: test-payment
     environments: [local, ci]
     tags: [payment, reconciliation, fake-provider]
