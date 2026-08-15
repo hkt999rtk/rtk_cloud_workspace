@@ -52,7 +52,8 @@ exist.
 | Brand Cloud identity, membership, authorization, audit | Account Manager | Implemented. |
 | Cloud Admin customer/operator surface | Cloud Admin | Billing BFF/UI implemented; provider actions visibly blocked. |
 | Pricing plans and versioned pricing | None | Missing. |
-| Invoice generation and debit instruction | None | Missing. |
+| Invoice generation | None | Missing producer/owner. |
+| Authenticated debit instruction boundary | Account Manager | Implemented, dedicated credential, disabled until configured. |
 | Commercial balance ledger | Account Manager | Implemented with PostgreSQL idempotency and immutable entries. |
 | Payment abstraction/provider adapter | Account Manager | Implemented; NewebPay query/webhook only and charge disabled. |
 | Automatic top-up and consent | Account Manager | Implemented policy/orchestration; external charging disabled. |
@@ -280,6 +281,11 @@ Exit: desktop and mobile UI reports pass and screenshots are safe to retain.
 
 Owner: must be assigned before implementation.
 
+Account Manager's dedicated authenticated/idempotent debit-ingestion boundary
+is implemented and disabled unless its source and credential are explicitly
+configured. Pricing plans, invoice generation, historical price ownership, and
+the producer that calls this boundary remain unassigned.
+
 Deliverables:
 
 - versioned prices and immutable invoice/debit references;
@@ -323,6 +329,7 @@ that need a qualified provider sandbox remain deferred.
 | `UNIT-AM-AUTOTOPUP-001` | Unit | Strict threshold, re-arm, limits, cooldown, no loop. | Go only | JSON, JUnit |
 | `UNIT-AM-PAYMENT-001` | Unit | Intent state/idempotency/unknown behavior. | Go only | JSON, JUnit |
 | `INT-AM-PAYMENT-001` | Integration | Concurrent debit, trigger, callback, and credit transaction safety. | PostgreSQL 16 | JSON, JUnit, DB evidence |
+| `INT-AM-BILLING-DEBIT-001` | Integration | Dedicated service authentication and idempotent invoice/adjustment debit ingestion. | PostgreSQL 16 | JSON, JUnit |
 | `INT-AM-NEWEBPAY-001` | Integration | Provider crypto/field/error contract. | Official redacted fixtures | JSON, JUnit, logs |
 | `E2E-AM-PAYMENT-001` | E2E | Hosted setup and consent without card storage. | Fake provider, then sandbox | JSON, JUnit, provider correlation |
 | `E2E-AM-AUTOTOPUP-001` | E2E | Crossing to one transaction and one credit. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, ledger/provider evidence |

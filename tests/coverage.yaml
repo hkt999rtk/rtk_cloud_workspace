@@ -75,7 +75,7 @@ modules:
     packages: [./...]
     cover_packages: [./internal/...]
     pr_required_env: [TEST_DATABASE_URL]
-    pr_required_tests: [TestIntegrationAuthorizationAndTenancyMatrix, TestIntegrationDatabaseSchemaInvariants, TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction, TestLedgerTriggerAndIntentCreditAreExactlyOnce, TestTimeoutReconcilesToOneCredit, TestQueryUsesFixedSandboxEndpointAndVerifiesResponse, TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields]
+    pr_required_tests: [TestIntegrationAuthorizationAndTenancyMatrix, TestIntegrationDatabaseSchemaInvariants, TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction, TestIntegrationInternalBillingDebitAuthenticationAndIdempotency, TestLedgerTriggerAndIntentCreditAreExactlyOnce, TestTimeoutReconcilesToOneCredit, TestQueryUsesFixedSandboxEndpointAndVerifiesResponse, TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields]
     minimum_statement_percent: 29.1
     pr_minimum_statement_percent: 80.0
     target_statement_percent: 80.0
