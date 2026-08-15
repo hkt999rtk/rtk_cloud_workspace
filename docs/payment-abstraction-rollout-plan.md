@@ -313,8 +313,9 @@ Automatic top-up remains opt-in and disabled by default.
 
 ## Test Inventory
 
-Executable permanent IDs are active in the catalog. E2E and live IDs that need
-provider-hosted setup or a qualified sandbox remain deferred.
+Executable permanent IDs are active in the catalog. The fake-provider
+automatic top-up E2E cases are locally executable; hosted setup and live IDs
+that need a qualified provider sandbox remain deferred.
 
 | ID | Layer | Purpose | Dependency | Evidence |
 | --- | --- | --- | --- | --- |
@@ -324,8 +325,8 @@ provider-hosted setup or a qualified sandbox remain deferred.
 | `INT-AM-PAYMENT-001` | Integration | Concurrent debit, trigger, callback, and credit transaction safety. | PostgreSQL 16 | JSON, JUnit, DB evidence |
 | `INT-AM-NEWEBPAY-001` | Integration | Provider crypto/field/error contract. | Official redacted fixtures | JSON, JUnit, logs |
 | `E2E-AM-PAYMENT-001` | E2E | Hosted setup and consent without card storage. | Fake provider, then sandbox | JSON, JUnit, provider correlation |
-| `E2E-AM-AUTOTOPUP-001` | E2E | Crossing to one charge and one credit. | PostgreSQL + provider | JSON, JUnit, ledger/provider evidence |
-| `E2E-AM-AUTOTOPUP-002` | E2E | Timeout/duplicate/out-of-order/reconciliation safety. | PostgreSQL + provider | JSON, JUnit, logs |
+| `E2E-AM-AUTOTOPUP-001` | E2E | Crossing to one transaction and one credit. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, ledger/provider evidence |
+| `E2E-AM-AUTOTOPUP-002` | E2E | Timeout/duplicate/out-of-order/reconciliation safety. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, logs |
 | `UI-CA-BILLING-001` | UI | Owner config/status on desktop and mobile. | Account Manager + Cloud Admin + hosted sandbox | JSON, JUnit, screenshots |
 | `LIVE-STG-PAYMENT-001` | Live | Dedicated staging sandbox full flow and cleanup. | LKE + NewebPay sandbox | JSON, Markdown, JUnit, logs |
 

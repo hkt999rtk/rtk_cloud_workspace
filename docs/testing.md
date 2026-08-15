@@ -55,6 +55,7 @@ Use the explicit test layers when broader validation is needed:
 (cd scripts/go && go run ./rtk-cloud -- test-coverage --profile unit --base-ref origin/main)
 (cd scripts/go && go run ./rtk-cloud -- test-coverage --profile pr --run-id RUN_ID)
 (cd scripts/go && go run ./rtk-cloud -- test-coverage --profile runtime --runtime-dir GOCOVERDIR_ROOT --run-id RUN_ID)
+(cd scripts/go && TEST_DATABASE_URL=... go run ./rtk-cloud -- test-payment --profile fake-e2e --run-id RUN_ID)
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)
 (cd scripts/go && go run ./rtk-cloud -- test-ui)
 (cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)
@@ -110,6 +111,15 @@ writes:
 
 Coverage artifacts are scanned for private keys, bearer tokens, cookies, and
 credential-like JSON values before the run can pass.
+`test-payment --profile fake-e2e` reuses the Account Manager PR coverage run
+and its caller-supplied isolated PostgreSQL database. It resolves active
+`test-payment` catalog selectors against canonical Go test events and fails
+closed when an operation is missing, skipped, failed, or lacks the Account
+Manager coverage gate. The payment report records each Test ID's purpose,
+method, start/end time, duration, result, assessment, commit anchors, JUnit,
+raw events, SHA-256 evidence, redaction result, and zero-resource cleanup
+result under `.artifacts/test-runs/<run-id>/payments/fake-e2e/`. It never calls
+NewebPay and is not evidence of sandbox qualification.
 `test-e2e` runs deterministic workspace E2E and harness tests; add `--scripts`
 to opt into the root staging script contract tests. `test-ui` runs the Cloud
 Admin UI in a headless Chromium browser against the real local Go BFF and

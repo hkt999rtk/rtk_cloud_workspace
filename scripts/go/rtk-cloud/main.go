@@ -106,6 +106,7 @@ var commands = map[string]commandSpec{
 	"test-factory-live":                {run: runTestFactoryLive},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
+	"test-payment":                     {run: runTestPayment},
 	"test-platform-live":               {run: runPlatformLiveEvidence},
 	"test-services":                    {run: runTestServices},
 	"test-catalog":                     {run: runTestCatalog},

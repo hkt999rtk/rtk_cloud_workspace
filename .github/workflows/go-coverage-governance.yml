@@ -176,17 +176,19 @@ jobs:
         with:
           go-version: "1.26.3"
           cache: false
-      - name: Run integration-aware coverage
+      - name: Run integration-aware coverage and payment E2E
         working-directory: scripts/go
         env:
           TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
-        run: go run ./rtk-cloud -- test-coverage --profile pr --module account-manager --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
+        run: go run ./rtk-cloud -- test-payment --profile fake-e2e --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
       - name: Upload Account Manager evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: go-coverage-pr-account-manager-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/coverage/**
+          path: |
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/coverage/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/payments/**
           if-no-files-found: error
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
