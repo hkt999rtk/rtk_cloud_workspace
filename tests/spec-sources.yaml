@@ -17,6 +17,7 @@ sources:
   - { id: SPEC-CONTRACT-FIRMWARE, path: repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md, parser: markdown, authority: proposed, owner: rtk_cloud_admin }
   - { id: SPEC-CONTRACT-LOGGING, path: repos/rtk_cloud_contracts_doc/SERVICE_LOGGING.md, parser: markdown, authority: canonical, owner: rtk_cloud_logger }
   - { id: SPEC-CONTRACT-LOGGING-OPERATIONS, path: repos/rtk_cloud_contracts_doc/SERVICE_LOGGING_OPERATIONS.yaml, parser: operations, authority: canonical, owner: rtk_cloud_logger }
+  - { id: SPEC-CONTRACT-PAYMENTS, path: repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md, parser: markdown, authority: proposed, owner: rtk_account_manager }
   - { id: SPEC-CONTRACT-FRONTEND, path: repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md, parser: markdown, authority: canonical, owner: rtk_cloud_admin }
   - { id: SPEC-CONTRACT-OPENAPI, path: repos/rtk_cloud_contracts_doc/openapi.yaml, parser: openapi, authority: canonical, owner: cloud_platform }
   - { id: SPEC-CONTRACT-WORKFLOWS, path: repos/rtk_cloud_contracts_doc/FEATURE_WORKFLOWS.yaml, parser: workflow, authority: canonical, owner: cloud_platform }

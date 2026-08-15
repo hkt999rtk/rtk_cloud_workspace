@@ -25,6 +25,7 @@ repositories. Shared wire and payload contracts belong in
 | [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
 | [core-platform-gap-roadmap.md](core-platform-gap-roadmap.md) | Supporting note | Core platform gap roadmap for readiness, private cloud, account lifecycle, fleet, telemetry, SDK/app, WebRTC, and smart-home ecosystem boundaries. |
 | [business-model.md](business-model.md) | Source | Tier structure, evaluation limits, pricing model framing, SDK licensing posture, and website disclosure rules. |
+| [payment-abstraction-rollout-plan.md](payment-abstraction-rollout-plan.md) | Source | Documentation-first ownership, provider-neutral balance/payment architecture, NewebPay prerequisites, implementation sequence, test evidence, and rollout gates. |
 | [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, deployment order, profiles, operations runbook, support boundary, and follow-up routing. |
 | [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
 | [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
