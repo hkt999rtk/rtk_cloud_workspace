@@ -16,6 +16,7 @@ cloud_env/*
 cloud_env/*/*
 !cloud_env/*/environment.env
 !cloud_env/*/deployment.env
+!cloud_env/*/storage.env
 !cloud_env/*/overrides/
 cloud_env/*/overrides/*
 !cloud_env/*/overrides/*.env

@@ -25,22 +25,34 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
-func TestLKEGHCRPullCredentialsFallsBackToHomeEnv(t *testing.T) {
+func TestLKEGHCRPullCredentialsUsesSharedProfile(t *testing.T) {
 	home := t.TempDir()
-	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=home-user\nGHCR_PULL_TOKEN=home-token\n")
+	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GHCR_PULL_USERNAME=profile-user\nGHCR_PULL_TOKEN=profile-token\n")
 	t.Setenv("HOME", home)
 	t.Setenv("GHCR_PULL_USERNAME", "")
 	t.Setenv("GHCR_PULL_TOKEN", "")
 
 	username, token := lkeGHCRPullCredentials(nil)
-	if username != "home-user" || token != "home-token" {
-		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want home .env values", username, token)
+	if username != "profile-user" || token != "profile-token" {
+		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want shared profile values", username, token)
+	}
+}
+
+func TestLKEGHCRPullCredentialsNeverReadsHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=legacy-user\nGHCR_PULL_TOKEN=legacy-token\n")
+	t.Setenv("HOME", home)
+	t.Setenv("GHCR_PULL_USERNAME", "")
+	t.Setenv("GHCR_PULL_TOKEN", "")
+	username, token := lkeGHCRPullCredentials(nil)
+	if username != "" || token != "" {
+		t.Fatalf("legacy ~/.env must be ignored, got (%q, %q)", username, token)
 	}
 }
 
 func TestLKEGHCRPullCredentialsPrefersProcessEnv(t *testing.T) {
 	home := t.TempDir()
-	writeTestFile(t, filepath.Join(home, ".env"), "GHCR_PULL_USERNAME=home-user\nGHCR_PULL_TOKEN=home-token\n")
+	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GHCR_PULL_USERNAME=profile-user\nGHCR_PULL_TOKEN=profile-token\n")
 	t.Setenv("HOME", home)
 	t.Setenv("GHCR_PULL_USERNAME", "process-user")
 	t.Setenv("GHCR_PULL_TOKEN", "process-token")
@@ -542,11 +554,12 @@ func TestLKEVideoCloudAPIAndClipVerifierShareBaseURL(t *testing.T) {
 	}
 }
 
-func TestRunProvisionLKEMergesLegacyOperatorObjectStorageCredentials(t *testing.T) {
+func TestRunProvisionLKEMergesEnvironmentProfileObjectStorageCredentials(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
-	legacyOperator := filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "operator.env")
-	writeTestFile(t, legacyOperator, "LINODE_OBJ_ACCESS_KEY_ID=test-access\\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret\\n")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env"), "LINODE_MEDIA_OBJ_ACCESS_KEY_ID=test-access\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=test-secret\n")
 	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
@@ -581,7 +594,9 @@ VIDEO_CLOUD_BLOB_ENDPOINT=https://runtime-objects.example.test
 VIDEO_CLOUD_BLOB_REGION=runtime-region
 VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
 `)
-	writeTestFile(t, filepath.Join(runtimeRoot, "env", "operator.env"), "LINODE_OBJ_ACCESS_KEY_ID=test-access-key\nLINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key\n")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env"), "LINODE_MEDIA_OBJ_ACCESS_KEY_ID=test-access-key\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=test-secret-key\n")
 	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")

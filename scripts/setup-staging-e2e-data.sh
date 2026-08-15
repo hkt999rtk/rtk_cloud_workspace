@@ -14,7 +14,7 @@ USER_EMAIL_DOMAIN="users.local"
 LOAD_RUN_ID=""
 LOAD_TARGET=""
 EMAIL_ACTIVATE_OWNERS=0
-OPERATOR_ENV_FILE="${HOME}/.env"
+OPERATOR_ENV_FILE="${HOME}/.config/rtk-cloud/shared.env"
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
@@ -84,7 +84,7 @@ Options:
   --load-run-id ID                Run ID used in all resolved Brand/account names.
   --load-target TARGET            1K, 50K, 100K, or CANARY.
   --email-activate-owners         Require one Send Mail + local IMAP owner activation per Brand.
-  --operator-env-file FILE        Operator-only IMAP dotenv. Default: ~/.env.
+  --operator-env-file FILE        Operator credential profile. Default: ~/.config/rtk-cloud/shared.env.
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
   --device-prefix PREFIX          Device prefix. Default: load-device.

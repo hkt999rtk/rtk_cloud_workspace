@@ -313,6 +313,11 @@ func (s *testDataStore) ReplaceUsers(brandname, brandCloudID, tenantSlug, role s
 	return tx.Commit()
 }
 
+func (s *testDataStore) ClearUsers(brandname string) error {
+	_, err := s.DB.Exec(`delete from users where brandname = ?`, brandname)
+	return err
+}
+
 func (s *testDataStore) ReadUsersList(brandname string) (map[string]userCredential, []userCredential, error) {
 	rows, err := s.DB.Query(`
 		select email, password, tokens_json
@@ -545,7 +550,17 @@ func (s *testDataStore) ReadBindArtifact(brandname string) (bindArtifact, error)
 
 func (s *testDataStore) Coverage(brandname string) (testDataCoverage, error) {
 	out := testDataCoverage{DeviceMix: map[string]int{}}
-	if err := s.DB.QueryRow(`select count(*) from users where brandname = ? and (role = 'member' or coalesce(role, '') = '')`, brandname).Scan(&out.Users); err != nil {
+	if err := s.DB.QueryRow(`
+		select count(*)
+		from users
+		where brandname = ? and (
+			role = 'member' or coalesce(role, '') = '' or (
+				role in ('owner', 'admin') and not exists (
+					select 1 from users as members
+					where members.brandname = users.brandname and (members.role = 'member' or coalesce(members.role, '') = '')
+				)
+			)
+		)`, brandname).Scan(&out.Users); err != nil {
 		return out, err
 	}
 	if err := s.DB.QueryRow(`select count(*) from devices where brandname = ?`, brandname).Scan(&out.Devices); err != nil {

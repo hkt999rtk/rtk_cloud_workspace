@@ -55,12 +55,12 @@ func TestGoDaddyDNSAdapterCleanupPreservesOtherTXTValues(t *testing.T) {
 	}
 }
 
-func TestGoDaddyDNSAdapterCredentialsFallBackToHomeEnv(t *testing.T) {
+func TestGoDaddyDNSAdapterCredentialsUseSharedProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("GODADDY_KEY", "")
 	t.Setenv("GODADDY_SECRET", "")
-	writeTestFile(t, filepath.Join(home, ".env"), "GODADDY_KEY=home-key\nGODADDY_SECRET=home-secret\n")
+	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GODADDY_KEY=profile-key\nGODADDY_SECRET=profile-secret\n")
 
 	adapter := &goDaddyDNSAdapter{}
 	ctx := dnsAdapterContext{
@@ -68,11 +68,23 @@ func TestGoDaddyDNSAdapterCredentialsFallBackToHomeEnv(t *testing.T) {
 		Values:      map[string]string{"DNS_RECORD_TTL": "600"},
 	}
 	key, secret := adapter.credentials(ctx)
-	if key != "home-key" || secret != "home-secret" {
-		t.Fatalf("credentials did not use ~/.env fallback")
+	if key != "profile-key" || secret != "profile-secret" {
+		t.Fatalf("credentials did not use shared profile")
 	}
 	if err := adapter.Validate(context.Background(), ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGoDaddyDNSAdapterCredentialsNeverReadHomeEnv(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GODADDY_KEY", "")
+	t.Setenv("GODADDY_SECRET", "")
+	writeTestFile(t, filepath.Join(home, ".env"), "GODADDY_KEY=legacy-key\nGODADDY_SECRET=legacy-secret\n")
+	key, secret := (&goDaddyDNSAdapter{}).credentials(dnsAdapterContext{})
+	if key != "" || secret != "" {
+		t.Fatalf("legacy ~/.env must be ignored, got (%q, %q)", key, secret)
 	}
 }
 
@@ -81,7 +93,7 @@ func TestGoDaddyDNSAdapterCredentialPrecedence(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("GODADDY_KEY", "process-key")
 	t.Setenv("GODADDY_SECRET", "process-secret")
-	writeTestFile(t, filepath.Join(home, ".env"), "GODADDY_KEY=home-key\nGODADDY_SECRET=home-secret\n")
+	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GODADDY_KEY=profile-key\nGODADDY_SECRET=profile-secret\n")
 	operatorEnv := filepath.Join(t.TempDir(), "operator.env")
 	writeTestFile(t, operatorEnv, "GODADDY_KEY=operator-key\nGODADDY_SECRET=operator-secret\n")
 

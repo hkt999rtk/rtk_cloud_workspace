@@ -82,7 +82,7 @@ func runDestroyEnvironmentResources(args []string) error {
 	}
 	token := resolveLinodeToken(envRoot)
 	if token == "" {
-		return errors.New("LINODE_TOKEN is required in environment, env-root operator.env, or ~/.env")
+		return errors.New("LINODE_TOKEN is required in the process environment or ~/.config/rtk-cloud/shared.env")
 	}
 
 	stackValues, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))

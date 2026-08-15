@@ -302,13 +302,11 @@ type goDaddyDNSAdapter struct{ client *http.Client }
 func (*goDaddyDNSAdapter) Name() string { return "godaddy" }
 
 func (a *goDaddyDNSAdapter) credentials(ctx dnsAdapterContext) (string, string) {
-	operator, _ := readEnvFile(ctx.OperatorEnv)
-	home := map[string]string{}
-	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
-		home, _ = readEnvFile(filepath.Join(homeDir, ".env"))
-	}
-	return firstNonEmpty(os.Getenv("GODADDY_KEY"), operator["GODADDY_KEY"], home["GODADDY_KEY"]),
-		firstNonEmpty(os.Getenv("GODADDY_SECRET"), operator["GODADDY_SECRET"], home["GODADDY_SECRET"])
+	environment := firstNonEmpty(envFileValue(filepath.Join(ctx.RuntimeRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
+	environmentProfile, _ := readEnvFile(defaultDeploymentEnvironmentCredentialFile(environment))
+	sharedProfile, _ := readEnvFile(defaultDeploymentSharedCredentialFile())
+	return firstNonEmpty(os.Getenv("GODADDY_KEY"), environmentProfile["GODADDY_KEY"], sharedProfile["GODADDY_KEY"]),
+		firstNonEmpty(os.Getenv("GODADDY_SECRET"), environmentProfile["GODADDY_SECRET"], sharedProfile["GODADDY_SECRET"])
 }
 
 func (a *goDaddyDNSAdapter) Validate(_ context.Context, ctx dnsAdapterContext) error {

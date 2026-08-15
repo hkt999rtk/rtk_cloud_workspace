@@ -559,12 +559,9 @@ func lkeGHCRPullCredentials(env map[string]string) (string, string) {
 	if username != "" && token != "" {
 		return username, token
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return username, token
-	}
-	return firstNonEmpty(username, envFileValue(filepath.Join(home, ".env"), "GHCR_PULL_USERNAME")),
-		firstNonEmpty(token, envFileValue(filepath.Join(home, ".env"), "GHCR_PULL_TOKEN"))
+	shared, _ := readEnvFile(defaultDeploymentSharedCredentialFile())
+	return firstNonEmpty(username, shared["GHCR_PULL_USERNAME"]),
+		firstNonEmpty(token, shared["GHCR_PULL_TOKEN"])
 }
 
 type lkePublicHTTPSRoute struct {
