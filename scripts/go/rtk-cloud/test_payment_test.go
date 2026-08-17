@@ -105,6 +105,14 @@ func TestRunTestPaymentReportsCoverageAndEvidenceFailureTogether(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "payment coverage failed") || !strings.Contains(err.Error(), "unit evidence is unavailable") {
 		t.Fatalf("combined coverage/evidence error = %v", err)
 	}
+
+	paymentCoverageRunner = func([]string) error { return nil }
+	runID = "unit-payment-evidence-only-failure"
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(workspace, ".artifacts", "test-runs", runID)) })
+	err = runTestPayment([]string{"--profile", "fake-e2e", "--run-id", runID})
+	if err == nil || !strings.Contains(err.Error(), "read payment unit manifest") {
+		t.Fatalf("missing evidence error = %v", err)
+	}
 }
 
 func TestCoverageWorkflowPublishesPaymentEvidence(t *testing.T) {
