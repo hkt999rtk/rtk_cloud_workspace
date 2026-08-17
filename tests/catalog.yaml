@@ -110,12 +110,38 @@ cases:
     layer: integration
     owner: rtk_billing
     source: repos/rtk_billing/internal/api/integration_test.go
-    selector: ./internal/api#TestServiceAuthenticationPermissionAndAccessStateFailClosed,./internal/api#TestInternalAccessStateIsOwnedByBilling,./internal/api#TestIntegrationInternalBillingDebitAuthenticationAndIdempotency,./internal/accessstore#TestBillingAccessStateIsVersionedAndFailClosed
-    method: Go and PostgreSQL integration tests require a dedicated service credential and exact permission, enforce versioned fail-closed commercial access, persist opaque organization UUIDs without Account Manager foreign keys, and prove an idempotent monetary write belongs only to Billing.
+    selector: ./internal/api#TestServiceAuthenticationPermissionAndAccessStateFailClosed,./internal/api#TestInternalAccessStateIsOwnedByBilling,./internal/api#TestServerRejectsMissingOrReusedCredentialBoundaries,./internal/api#TestOpenAPIPreservesTenantInternalAndDebitSecuritySchemes,./internal/api#TestIntegrationInternalBillingDebitAuthenticationAndIdempotency,./internal/accessstore#TestBillingAccessStateIsVersionedAndFailClosed
+    method: Go and PostgreSQL integration tests require isolated tenant internal and debit credentials with exact permission and matching OpenAPI schemes, enforce versioned fail-closed commercial access, persist opaque organization UUIDs without Account Manager foreign keys, and prove an idempotent monetary write belongs only to Billing.
     runner: test-coverage
     environments: [ci]
     evidence: [json, junit]
     verifies: [REQ-BILL-OWNERSHIP-001, REQ-BILL-SERVICE-AUTH-001, REQ-BILL-ACCESS-001, REQ-BILL-DATA-BOUNDARY-001]
+    status: active
+  - id: UNIT-BILL-CONFIG-001
+    title: Billing startup preserves credential isolation and forbids production simulator use
+    layer: unit
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/config/config_test.go
+    selector: ./internal/config#TestLoadRequiresDistinctCredentialBoundaries,./internal/config#TestLoadSimulatorFailsClosedInProductionOrWithoutProtection
+    method: Go unit tests require distinct tenant internal and debit credentials and fail startup when a simulator is enabled in production or without reference protection.
+    runner: test-coverage
+    environments: [local, ci]
+    tags: [billing, security, configuration, simulator]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-SERVICE-AUTH-001, REQ-AM-PAYMENT-SIMULATOR-001]
+    status: active
+  - id: INT-BILL-API-001
+    title: Billing HTTP lifecycle prices usage issues an invoice and serves tenant evidence
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/integration_test.go
+    selector: ./internal/api#TestIntegrationBillingHTTPPricingInvoiceAndTenantReadLifecycle
+    method: PostgreSQL-backed HTTP integration uses the isolated internal credential to create and activate pricing, ingest usage, close an invoice, and then uses the tenant credential with exact permissions to read summary, invoice, PDF, and activity evidence.
+    runner: test-coverage
+    environments: [ci]
+    tags: [billing, pricing, invoice, activity, http]
+    evidence: [json, junit, pdf]
+    verifies: [REQ-BILL-SERVICE-AUTH-001, REQ-AM-PRICING-VERSION-001, REQ-AM-INVOICE-LIFECYCLE-001, REQ-AM-INVOICE-DOCUMENT-001, REQ-AM-BILLING-ACTIVITY-001]
     status: active
   - id: INT-AM-BILLING-DEBIT-001
     title: Dedicated billing service posts one authenticated idempotent debit

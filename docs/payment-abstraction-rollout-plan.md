@@ -38,12 +38,12 @@ support operations remain separate dependencies.
 | Source | Repository | Purpose |
 | --- | --- | --- |
 | `PAYMENTS_AND_BALANCE.md` | `rtk_cloud_contracts_doc` | Cross-repository product, ownership, state, security, and evidence contract. |
-| `PAYMENT_ABSTRACTION_AND_AUTO_TOPUP.md` | `rtk_account_manager` | Implemented package, schema, transaction, worker, API, provider, and test design. |
+| `PAYMENT_ABSTRACTION_AND_AUTO_TOPUP.md` | `rtk_billing` | Implemented package, schema, transaction, worker, API, provider, and test design. |
 | `docs/adr/0001-commercial-settlement-ownership.md` | workspace | Cross-repository ownership decision and rejected alternatives. |
 | This document | workspace | Dependency graph, PR sequence, test gates, rollout, and outstanding decisions. |
 
-Account Manager and Cloud Admin OpenAPI contracts now contain the guarded
-payment routes. Executable unit, PostgreSQL integration, NewebPay contract, and
+Billing and Cloud Admin OpenAPI contracts now contain the guarded payment
+routes. Executable unit, PostgreSQL integration, NewebPay contract, and
 desktop/mobile UI cases are active in the central Test Catalog. Fake-provider
 hosted setup is active; NewebPay-hosted and live staging execution remain
 deferred until their external prerequisites exist.
@@ -55,14 +55,14 @@ deferred until their external prerequisites exist.
 | Generic usage event and usage-fact contract | Contracts + metered services | Implemented foundation. |
 | MQTT and log usage ledgers | Video Cloud / Logger paths | Implemented for metering; not money. |
 | Brand Cloud identity, membership, authorization, audit | Account Manager | Implemented. |
-| Cloud Admin customer/operator surface | Cloud Admin | Billing BFF/UI implemented; provider actions visibly blocked. |
-| Pricing plans and versioned pricing | None | Missing. |
-| Invoice generation | None | Missing producer/owner. |
-| Authenticated debit instruction boundary | Account Manager | Implemented, dedicated credential, disabled until configured. |
-| Commercial balance ledger | Account Manager | Implemented with PostgreSQL idempotency and immutable entries. |
-| Payment abstraction/provider adapter | Account Manager | Implemented; NewebPay query/webhook only and charge disabled. |
-| Automatic top-up and consent | Account Manager | Implemented policy/orchestration; external charging disabled. |
-| Refund/chargeback reconciliation | None | Missing. |
+| Cloud Admin customer/operator surface | Cloud Admin | Billing BFF/UI implemented with simulator actions and visible provider gating. |
+| Pricing plans and versioned pricing | Billing | Implemented with fixed-precision rates and immutable versions. |
+| Invoice generation | Billing | Implemented period close, invoice snapshots, PDF digest, and settlement link. |
+| Authenticated debit instruction boundary | Billing | Implemented with a dedicated credential distinct from tenant/internal credentials. |
+| Commercial balance ledger | Billing | Implemented with PostgreSQL idempotency and immutable entries. |
+| Payment abstraction/provider adapter | Billing | Fake/simulator qualified; NewebPay query/webhook safe subset implemented and charge disabled. |
+| Automatic top-up and consent | Billing | Simulator policy/orchestration implemented; production external charging disabled. |
+| Refund/chargeback reconciliation | Billing | Simulator refund and compensating-ledger behavior implemented; production policy approval remains. |
 
 The usage pipeline remains valid and unchanged. It feeds a future pricing and
 invoice layer; it must not call NewebPay.
@@ -98,7 +98,7 @@ usage facts -> pricing/invoice -> debit ledger entry
 
 Hard dependencies for an automatic charge:
 
-- Account Manager PostgreSQL and migrations;
+- Billing PostgreSQL and migrations;
 - trusted Brand Cloud identity and explicit payment permissions;
 - customer consent and active tokenized/provider-hosted method;
 - provider credentials and approved capability;
@@ -185,7 +185,7 @@ versioned download URLs change independently of this repository.
 
 ### 0. Documentation And Approval
 
-Owners: Contracts, Account Manager, workspace architecture, finance/legal.
+Owners: Contracts, Billing, workspace architecture, finance/legal.
 
 Deliverables:
 
@@ -201,7 +201,7 @@ required for this exit.
 
 ### 1. Contract And API PR
 
-Owners: Contracts + Account Manager.
+Owners: Contracts + Billing.
 
 Deliverables:
 
@@ -216,7 +216,7 @@ Exit: OpenAPI validation and requirement traceability pass.
 
 ### 2. Monetary Core PR
 
-Owner: Account Manager.
+Owner: Billing.
 
 Deliverables:
 
@@ -232,7 +232,7 @@ one intent, and no external provider is called.
 
 ### 3. Provider Orchestration PR
 
-Owner: Account Manager.
+Owner: Billing.
 
 Deliverables:
 
@@ -247,7 +247,7 @@ duplicate charge or credit.
 
 ### 4. NewebPay Adapter PR
 
-Owner: Account Manager payment adapter owner.
+Owner: Billing payment adapter owner.
 
 The query, cryptography, response normalization, and verified-webhook subset is
 implemented from official public documentation. Hosted setup and unattended
@@ -272,7 +272,8 @@ Owners: Cloud Admin backend/web.
 
 Deliverables:
 
-- BFF proxies only Account Manager resources and session identity;
+- BFF resolves session identity/RBAC with Account Manager and proxies monetary
+  resources only from Billing;
 - owner-facing account, ledger, payment-method, consent, and policy UI;
 - explicit warning/confirmation for automatic charges and limits;
 - customer-visible `processing`, `requires_action`, `unknown`, failed, revoked,
@@ -284,12 +285,14 @@ Exit: desktop and mobile UI reports pass and screenshots are safe to retain.
 
 ### 6. Pricing/Invoice Debit Integration PR
 
-Owner: must be assigned before implementation.
+Owner: Billing.
 
-Account Manager's dedicated authenticated/idempotent debit-ingestion boundary
-is implemented and disabled unless its source and credential are explicitly
-configured. Pricing plans, invoice generation, historical price ownership, and
-the producer that calls this boundary remain unassigned.
+Status: implemented and covered by the Billing PostgreSQL integration suite.
+
+Billing owns versioned pricing, immutable usage facts, period close, invoices,
+documents, activity, and the authenticated/idempotent debit boundary. External
+debit ingestion remains disabled unless its dedicated source and credential are
+explicitly configured and distinct from tenant and internal credentials.
 
 Deliverables:
 
@@ -302,13 +305,13 @@ Deliverables:
 Exit: repeated period calculation cannot double debit, and historical pricing
 version remains auditable.
 
-This workstream may proceed in parallel with the provider adapter after the
-contract is accepted, but automatic balance behavior is not commercially useful
-until it exists.
+The external usage-producer onboarding and production schedule remain rollout
+work; the pricing, invoice, document, settlement, and idempotency core is no
+longer an unassigned dependency.
 
 ### 7. Staging, Canary, And Production Rollout
 
-Owners: workspace release engineering, Account Manager, Cloud Admin, finance,
+Owners: workspace release engineering, Billing, Account Manager, Cloud Admin, finance,
 support.
 
 Stages:
@@ -339,7 +342,7 @@ execution that need a qualified provider sandbox remain deferred.
 | `E2E-AM-PAYMENT-001` | E2E | Hosted setup and consent without card storage. | Fake provider (active); sandbox pending | JSON, JUnit, provider correlation |
 | `E2E-AM-AUTOTOPUP-001` | E2E | Crossing to one transaction and one credit. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, ledger/provider evidence |
 | `E2E-AM-AUTOTOPUP-002` | E2E | Timeout/duplicate/out-of-order/reconciliation safety. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, logs |
-| `UI-CA-BILLING-001` | UI | Owner config/status on desktop and mobile. | Account Manager + Cloud Admin + hosted sandbox | JSON, JUnit, screenshots |
+| `UI-CA-BILLING-001` | UI | Owner config/status on desktop and mobile. | Billing + Account Manager authorization + Cloud Admin | JSON, JUnit, screenshots |
 | `LIVE-STG-PAYMENT-001` | Live | Dedicated staging sandbox full flow and cleanup. | LKE + NewebPay sandbox | JSON, Markdown, JUnit, logs |
 
 Additional generated unit inventory covers every Go/JavaScript test function.
@@ -384,7 +387,7 @@ screenshots stop before or mask provider card-entry fields.
 PR required gates after implementation begins:
 
 - contract/OpenAPI validation;
-- Account Manager Go unit and PostgreSQL integration coverage;
+- Billing Go unit and PostgreSQL integration coverage;
 - payment inventory and permanent critical IDs pass;
 - fake-provider E2E and failure injection;
 - provider fixture/crypto tests where adapter code changes;
@@ -429,7 +432,6 @@ transactions exist.
 
 | Decision | Owner | Blocks |
 | --- | --- | --- |
-| Name the pricing/invoice service or Account Manager subdomain owner. | Architecture/product | Automated usage debits |
 | Confirm NewebPay variable-time merchant-initiated capability. | Business/NewebPay | NewebPay auto top-up adapter |
 | Approve consent text and customer cancellation flow. | Legal/product | Payment-method and policy setup |
 | Set threshold/top-up/daily platform limits. | Finance/product/risk | Policy validation and production |

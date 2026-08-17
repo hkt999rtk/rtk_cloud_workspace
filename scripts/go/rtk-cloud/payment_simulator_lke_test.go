@@ -15,6 +15,10 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 	}
 	secret := lkeBillingSecretManifest(env)
 	for _, want := range []string{
+		"BILLING_SERVICE_TOKEN:",
+		"BILLING_INTERNAL_TOKEN:",
+		"BILLING_DEBIT_TOKEN:",
+		`BILLING_DEBIT_SOURCE: "rtk_billing"`,
 		`PAYMENT_SIMULATOR_ENABLED: "true"`,
 		`PAYMENT_SIMULATOR_RUN_ID: "video-cloud-staging"`,
 		`PAYMENT_SIMULATOR_BASE_URL: "http://payment-simulator.video-cloud-staging-billing.svc.cluster.local:80"`,
@@ -26,6 +30,9 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 		if !strings.Contains(secret, want) {
 			t.Fatalf("runtime secret missing %q:\n%s", want, secret)
 		}
+	}
+	if lkeBillingServiceToken() == lkeBillingInternalToken() || lkeBillingServiceToken() == lkeBillingDebitToken() || lkeBillingInternalToken() == lkeBillingDebitToken() {
+		t.Fatal("Billing tenant, internal, and debit credentials must be distinct")
 	}
 	for name, manifest := range map[string]string{
 		"simulator": lkePaymentSimulatorDeploymentManifest(env),

@@ -87,6 +87,10 @@ existing staging ingress/load-balancer path.
 Billing API and payment worker:
 
 ```text
+BILLING_SERVICE_TOKEN=<Cloud Admin tenant API credential>
+BILLING_INTERNAL_TOKEN=<distinct pricing/usage/access credential>
+BILLING_DEBIT_TOKEN=<distinct debit producer credential>
+BILLING_DEBIT_SOURCE=rtk_billing
 PAYMENT_SIMULATOR_ENABLED=false
 PAYMENT_SIMULATOR_RUN_ID=<run-scoped-id>
 PAYMENT_SIMULATOR_BASE_URL=
@@ -97,6 +101,11 @@ PAYMENT_SIMULATOR_SCENARIO=success
 PAYMENT_REFERENCE_ENCRYPTION_KEY=<secret>
 PAYMENT_WORKER_ENABLED=false
 ```
+
+The three Billing bearer credentials must be different. The tenant credential
+cannot call pricing, usage, access-control, or debit routes; the internal
+credential cannot call tenant or debit routes; and the debit credential is
+accepted only by `/v1/internal/billing/debits`.
 
 Simulator process:
 

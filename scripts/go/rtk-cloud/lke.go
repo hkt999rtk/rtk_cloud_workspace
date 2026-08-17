@@ -6493,6 +6493,14 @@ func lkeBillingServiceToken() string {
 	return lkeRuntimeSecretValue("billing-service-token")
 }
 
+func lkeBillingInternalToken() string {
+	return lkeRuntimeSecretValue("billing-internal-token")
+}
+
+func lkeBillingDebitToken() string {
+	return lkeRuntimeSecretValue("billing-debit-token")
+}
+
 func lkeBillingDatabaseURL(env map[string]string) string {
 	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
 }
@@ -6513,6 +6521,9 @@ stringData:
   DATABASE_URL: %q
   POSTGRES_PASSWORD: %q
   BILLING_SERVICE_TOKEN: %q
+  BILLING_INTERNAL_TOKEN: %q
+  BILLING_DEBIT_TOKEN: %q
+  BILLING_DEBIT_SOURCE: "rtk_billing"
   PAYMENT_SIMULATOR_ENABLED: "true"
   PAYMENT_SIMULATOR_RUN_ID: %q
   PAYMENT_SIMULATOR_BASE_URL: %q
@@ -6524,7 +6535,7 @@ stringData:
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkePaymentReferenceEncryptionKey(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
