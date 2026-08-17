@@ -1,5 +1,10 @@
 # Payment Abstraction And Automatic Top-Up Rollout Plan
 
+The approved non-production provider and its exact TWD rules, hostname,
+security boundary, protocol, and qualification evidence are defined in
+[`payment-simulator.md`](payment-simulator.md). Simulator qualification now
+precedes any NewebPay sandbox work.
+
 Status: implemented foundation with guarded provider rollout.
 
 Owner: `rtk_cloud_workspace` coordinates; repository ownership remains with the
