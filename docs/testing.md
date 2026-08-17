@@ -65,6 +65,14 @@ go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_I
   --base-url https://account-manager.video-cloud-staging.realtekconnect.com \
   --org-id TEST_ORG_ID --access-token-file /secure/path/token \
   --run --confirm video-cloud-staging-lke --confirm-test-org TEST_ORG_ID
+
+# Or safely create/reuse the fixed dedicated organization with credentials read
+# from the LKE runtime secret. No access token is written to disk.
+go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID \
+  --base-url https://account-manager.video-cloud-staging.realtekconnect.com \
+  --bootstrap-test-org --env-root cloud_env/staging/lke \
+  --run --confirm video-cloud-staging-lke \
+  --confirm-test-org rtk-payment-simulator-qualification
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)
 (cd scripts/go && go run ./rtk-cloud -- test-ui)
 (cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)

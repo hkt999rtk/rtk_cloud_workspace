@@ -15,8 +15,23 @@ func TestPaymentLiveDefaultsToNonMutatingPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if !strings.Contains(output, "preflight -> hosted setup") {
+	if !strings.Contains(output, "preflight -> dedicated organization -> hosted setup") {
 		t.Fatalf("missing staging-live plan: %s", output)
+	}
+}
+
+func TestPaymentLiveBootstrapRequiresFixedOrganizationConfirmation(t *testing.T) {
+	cfg := paymentLiveConfig{Run: true, BootstrapTestOrg: true, Confirm: paymentLiveConfirmation, ConfirmTestOrg: "wrong", EnvRoot: t.TempDir(), BaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
+	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), paymentLiveBootstrapConfirmation) {
+		t.Fatalf("bootstrap must require fixed organization confirmation, got %v", err)
+	}
+	cfg.ConfirmTestOrg = paymentLiveBootstrapConfirmation
+	if err := validatePaymentLiveConfig(cfg); err != nil {
+		t.Fatalf("safe bootstrap configuration rejected: %v", err)
+	}
+	cfg.OrgID = "unexpected"
+	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("bootstrap with arbitrary org must fail, got %v", err)
 	}
 }
 

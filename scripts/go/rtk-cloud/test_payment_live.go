@@ -19,10 +19,13 @@ import (
 )
 
 const paymentLiveConfirmation = "video-cloud-staging-lke"
+const paymentLiveBootstrapConfirmation = "rtk-payment-simulator-qualification"
+const paymentLiveBootstrapOrgName = "RTK Payment Simulator Qualification"
 
 type paymentLiveConfig struct {
 	RunID, BaseURL, OrgID, TokenFile, Confirm, ConfirmTestOrg string
-	Run, Plan                                                 bool
+	EnvRoot                                                   string
+	Run, Plan, BootstrapTestOrg                               bool
 	Timeout                                                   time.Duration
 }
 
@@ -54,6 +57,8 @@ func runTestPaymentLive(args []string) error {
 	tokenFile := fs.String("access-token-file", os.Getenv("PAYMENT_TEST_ACCESS_TOKEN_FILE"), "file containing the dedicated test access token")
 	confirm := fs.String("confirm", "", "required staging stack confirmation")
 	confirmTestOrg := fs.String("confirm-test-org", "", "must exactly match --org-id")
+	bootstrapTestOrg := fs.Bool("bootstrap-test-org", false, "create or reuse the fixed dedicated qualification organization using LKE platform-admin credentials")
+	envRoot := fs.String("env-root", "", "staging environment root used only by --bootstrap-test-org")
 	run := fs.Bool("run", false, "execute the staging mutation")
 	plan := fs.Bool("plan", false, "print the execution plan without mutation")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum reconciliation wait")
@@ -72,9 +77,9 @@ func runTestPaymentLive(args []string) error {
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z") + "-payment-live"
 	}
-	cfg := paymentLiveConfig{RunID: *runID, BaseURL: strings.TrimRight(strings.TrimSpace(*baseURL), "/"), OrgID: strings.TrimSpace(*orgID), TokenFile: strings.TrimSpace(*tokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), Run: *run, Plan: *plan, Timeout: *timeout}
+	cfg := paymentLiveConfig{RunID: *runID, BaseURL: strings.TrimRight(strings.TrimSpace(*baseURL), "/"), OrgID: strings.TrimSpace(*orgID), TokenFile: strings.TrimSpace(*tokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
 	if cfg.Plan {
-		fmt.Printf("Payment staging-live plan (%s): preflight -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> TWD 300 charge -> reconcile ledger -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
+		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> TWD 300 charge -> reconcile ledger -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
 		return nil
 	}
 	if err := validatePaymentLiveConfig(cfg); err != nil {
@@ -84,13 +89,21 @@ func runTestPaymentLive(args []string) error {
 	if err != nil {
 		return err
 	}
-	tokenRaw, err := os.ReadFile(cfg.TokenFile)
-	if err != nil {
-		return fmt.Errorf("read dedicated payment test token: %w", err)
-	}
-	token := strings.TrimSpace(string(tokenRaw))
-	if len(token) < 24 {
-		return errors.New("dedicated payment test token is empty or implausibly short")
+	token := ""
+	if cfg.BootstrapTestOrg {
+		cfg, token, err = bootstrapPaymentLiveOrganization(workspace, cfg)
+		if err != nil {
+			return err
+		}
+	} else {
+		tokenRaw, readErr := os.ReadFile(cfg.TokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read dedicated payment test token: %w", readErr)
+		}
+		token = strings.TrimSpace(string(tokenRaw))
+		if len(token) < 24 {
+			return errors.New("dedicated payment test token is empty or implausibly short")
+		}
 	}
 	outDir := filepath.Join(workspace, ".artifacts", "test-runs", cfg.RunID, "payments", "staging-live")
 	if err := os.MkdirAll(filepath.Join(outDir, "evidence"), 0o755); err != nil {
@@ -131,19 +144,31 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 	if cfg.Confirm != paymentLiveConfirmation {
 		return fmt.Errorf("--run requires --confirm %s", paymentLiveConfirmation)
 	}
-	if cfg.OrgID == "" || cfg.ConfirmTestOrg != cfg.OrgID {
+	if cfg.BootstrapTestOrg {
+		if cfg.OrgID != "" || cfg.TokenFile != "" {
+			return errors.New("--bootstrap-test-org cannot be combined with --org-id or --access-token-file")
+		}
+		if cfg.ConfirmTestOrg != paymentLiveBootstrapConfirmation {
+			return fmt.Errorf("--bootstrap-test-org requires --confirm-test-org %s", paymentLiveBootstrapConfirmation)
+		}
+		if cfg.EnvRoot == "" {
+			return errors.New("--bootstrap-test-org requires --env-root")
+		}
+	} else if cfg.OrgID == "" || cfg.ConfirmTestOrg != cfg.OrgID {
 		return errors.New("--run requires a dedicated --org-id and an exact matching --confirm-test-org")
 	}
 	parsed, err := url.Parse(cfg.BaseURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || strings.ToLower(parsed.Hostname()) != "account-manager.video-cloud-staging.realtekconnect.com" {
 		return errors.New("--base-url must be the approved HTTPS Account Manager staging endpoint")
 	}
-	if cfg.TokenFile == "" {
+	if !cfg.BootstrapTestOrg && cfg.TokenFile == "" {
 		return errors.New("--access-token-file is required; raw token command-line arguments are intentionally unsupported")
 	}
-	info, err := os.Stat(cfg.TokenFile)
-	if err != nil || info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("access token file must exist, be a regular file, and not be group/world accessible")
+	if !cfg.BootstrapTestOrg {
+		info, err := os.Stat(cfg.TokenFile)
+		if err != nil || info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+			return errors.New("access token file must exist, be a regular file, and not be group/world accessible")
+		}
 	}
 	if cfg.Timeout < 10*time.Second || cfg.Timeout > 10*time.Minute {
 		return errors.New("--timeout must be between 10s and 10m")
@@ -152,6 +177,45 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 		return errors.New("npx is required for desktop/mobile screenshot evidence")
 	}
 	return nil
+}
+
+func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, error) {
+	ctx, err := accountManagerContextFromFlags(workspace, cfg.EnvRoot)
+	if err != nil {
+		return cfg, "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
+	}
+	defer ctx.Close()
+	ctx.BaseURL = cfg.BaseURL
+	token, err := accountLogin(ctx, func(string, ...any) {})
+	if err != nil {
+		return cfg, "", fmt.Errorf("staging platform-admin login: %w", err)
+	}
+	client := &http.Client{Timeout: 20 * time.Second}
+	var organizations map[string]any
+	if err := paymentLiveJSON(context.Background(), client, http.MethodGet, cfg.BaseURL+"/v1/orgs?limit=100", token, nil, nil, &organizations); err != nil {
+		return cfg, "", fmt.Errorf("list qualification organizations: %w", err)
+	}
+	for _, item := range paymentLiveAnySlice(organizations["organizations"]) {
+		organization := nestedMap(item)
+		name, _ := organization["name"].(string)
+		if name != paymentLiveBootstrapOrgName {
+			continue
+		}
+		cfg.OrgID, _ = organization["id"].(string)
+		if cfg.OrgID == "" {
+			return cfg, "", errors.New("dedicated qualification organization has no ID")
+		}
+		return cfg, token, nil
+	}
+	var created map[string]any
+	if err := paymentLiveJSON(context.Background(), client, http.MethodPost, cfg.BaseURL+"/v1/orgs", token, nil, map[string]any{"name": paymentLiveBootstrapOrgName}, &created); err != nil {
+		return cfg, "", fmt.Errorf("create dedicated qualification organization: %w", err)
+	}
+	cfg.OrgID, _ = nestedMap(created["organization"])["id"].(string)
+	if cfg.OrgID == "" {
+		return cfg, "", errors.New("created qualification organization has no ID")
+	}
+	return cfg, token, nil
 }
 
 func executePaymentLive(ctx context.Context, client *http.Client, workspace, outDir string, cfg paymentLiveConfig, token string, state *paymentLiveState) error {
@@ -163,15 +227,17 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	if !paymentSimulatorAvailable(account) {
 		return errors.New("billing preflight: simulator provider with hosted_setup and merchant_initiated_charge is unavailable")
 	}
-	if account["auto_topup"] != nil {
-		return errors.New("billing preflight: dedicated test organization already has an automatic top-up policy")
+	if policy := nestedMap(account["auto_topup"]); len(policy) > 0 && policy["enabled"] == true {
+		return errors.New("billing preflight: dedicated test organization already has an enabled automatic top-up policy")
 	}
 	var existingMethods map[string]any
 	if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/payment-methods", token, nil, nil, &existingMethods); err != nil {
 		return fmt.Errorf("payment method preflight: %w", err)
 	}
-	if len(paymentLiveAnySlice(existingMethods["payment_methods"])) != 0 {
-		return errors.New("payment method preflight: dedicated test organization is not empty")
+	for _, item := range paymentLiveAnySlice(existingMethods["payment_methods"]) {
+		if nestedMap(item)["status"] != "revoked" {
+			return errors.New("payment method preflight: dedicated test organization contains a non-revoked method")
+		}
 	}
 	setupBody := map[string]any{"provider": "simulator", "consent": map[string]any{"accepted": true, "text_version": "payment-simulator-live-v1", "text_sha256": strings.Repeat("a", 64), "locale": "zh-TW"}}
 	var setup map[string]any

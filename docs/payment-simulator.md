@@ -253,3 +253,8 @@ confirmation matching the dedicated test organization. It reads the access
 token only from a mode-`0600` file, captures desktop/mobile hosted-page
 screenshots, and always attempts to disable the created policy and revoke the
 synthetic method before emitting its cleanup and redaction reports.
+With `--bootstrap-test-org`, the runner reads platform-admin credentials from
+the LKE runtime secret, creates or reuses only the fixed `RTK Payment Simulator
+Qualification` organization, and keeps the resulting access token in memory.
+Repeated runs accept prior disabled policies and revoked synthetic methods but
+fail closed if the dedicated organization contains active payment state.
