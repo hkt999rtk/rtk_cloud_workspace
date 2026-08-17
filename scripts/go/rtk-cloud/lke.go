@@ -765,6 +765,7 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
 		{Host: lkeTurnRegistryPublicDomain(env), Namespace: videoNS, Service: "video-cloud-turnregistry", ServicePort: 18190, TargetPort: 18190},
 		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
+		{Host: lkePaymentSimulatorPublicDomain(env), Namespace: lkeNamespaceName(env, "account-manager"), Service: "payment-simulator", ServicePort: 80, TargetPort: 8081},
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
 	}
@@ -1338,6 +1339,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowAccountManagerPaymentSimulatorNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
@@ -1347,6 +1349,36 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowRedisClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowPrometheusScrapeNetworkPolicyManifest(env))
 	return manifests
+}
+
+func lkeAllowAccountManagerPaymentSimulatorNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-account-manager-payment-simulator
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [account-manager, payment-simulator]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [account-manager, account-manager-payment-worker, payment-simulator]
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8081 }
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"])
 }
 
 func firstNonZero(values ...int) int {
@@ -1945,6 +1977,15 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "deployment/account-manager-email-worker", "--ignore-not-found=true"); err != nil {
 			return err
 		}
+		if err := kubectlApply(lkePaymentSimulatorServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkePaymentSimulatorDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeAccountManagerPaymentWorkerManifest(env)); err != nil {
+			return err
+		}
 	}
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
 		return err
@@ -1957,6 +1998,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if lkeWorkloadSelected(env, opts, "account-manager") {
 		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-outbox-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return err
+		}
+		for _, deployment := range []string{"payment-simulator", "account-manager-payment-worker"} {
+			if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/"+deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+				return err
+			}
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
@@ -6408,7 +6454,149 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
+  PAYMENT_SIMULATOR_ENABLED: "true"
+  PAYMENT_SIMULATOR_BASE_URL: %q
+  PAYMENT_SIMULATOR_PUBLIC_BASE_URL: %q
+  PAYMENT_SIMULATOR_CALLBACK_URL: %q
+  PAYMENT_SIMULATOR_SHARED_SECRET: %q
+  PAYMENT_SIMULATOR_SETUP_CALLBACK_SECRET: %q
+  PAYMENT_SIMULATOR_SCENARIO: %q
+  PAYMENT_SIMULATOR_RETENTION: %q
+  PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
+  PAYMENT_WORKER_ENABLED: "true"
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeAccountManagerInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_RETENTION"), "168h"), lkePaymentReferenceEncryptionKey(env))
+}
+
+func lkePaymentSimulatorPublicDomain(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_DOMAIN"), env["PAYMENT_SIMULATOR_DOMAIN"], "payment-simulator."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
+func lkePaymentSimulatorInternalURL(env map[string]string) string {
+	return "http://payment-simulator." + lkeNamespaceName(env, "account-manager") + ".svc.cluster.local:80"
+}
+
+func lkePaymentReferenceEncryptionKey(env map[string]string) string {
+	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY"), env["PAYMENT_REFERENCE_ENCRYPTION_KEY"])); value != "" {
+		return value
+	}
+	seed := sha256.Sum256([]byte(lkeRuntimeSecretValue("payment-reference-encryption")))
+	return base64.StdEncoding.EncodeToString(seed[:])
+}
+
+func lkeAccountManagerImage(env map[string]string) string {
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			return workload.Image
+		}
+	}
+	return ""
+}
+
+func lkePaymentSimulatorServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: payment-simulator
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: payment-simulator
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  selector:
+    app.kubernetes.io/name: payment-simulator
+  ports:
+    - { name: http, port: 80, targetPort: 8081 }
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"])
+}
+
+func lkePaymentSimulatorDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-simulator
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: payment-simulator
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: payment-simulator }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: payment-simulator
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: simulator
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-payment-simulator"]
+          envFrom:
+            - secretRef: { name: account-manager-runtime }
+          env:
+            - { name: PORT, value: "8081" }
+          ports:
+            - { name: http, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /internal/v1/health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorInternalURL(env), lkePaymentSimulatorPublicDomain(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback")), lkeImagePullSecretName(env), lkeAccountManagerImage(env))
+}
+
+func lkeAccountManagerPaymentWorkerManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-manager-payment-worker
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-payment-worker
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: account-manager-payment-worker }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: account-manager-payment-worker
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: worker
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-payment-worker"]
+          envFrom:
+            - secretRef: { name: account-manager-runtime }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared")), lkeImagePullSecretName(env), lkeAccountManagerImage(env))
 }
 
 func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {

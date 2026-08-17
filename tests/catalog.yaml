@@ -131,6 +131,19 @@ cases:
     evidence: [json, junit, markdown, logs]
     verifies: [REQ-AM-PAYMENT-METHOD-001, REQ-AM-PAYMENT-PROVIDER-001, REQ-AM-PAYMENT-AUTHZ-001, REQ-AM-PAYMENT-AUDIT-001]
     status: active
+  - id: E2E-AM-SIMULATOR-001
+    title: Virtual hosted setup activates a safe payment method without persisting its raw token
+    layer: e2e
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: ./internal/api#TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingRawToken
+    method: PostgreSQL-backed HTTP E2E drives the Account Manager API through the simulator provider and hosted page, verifies the signed callback activates encrypted synthetic references, rejects payment-card fields, and confirms the raw hosted token is absent from durable simulator state.
+    runner: test-payment
+    environments: [local, ci]
+    tags: [payment, simulator, hosted-setup, redaction]
+    evidence: [json, junit, markdown, logs]
+    verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-METHOD-001, REQ-AM-PAYMENT-PROVIDER-001]
+    status: active
   - id: E2E-AM-AUTOTOPUP-001
     title: Balance crossing produces one fake-provider transaction and one credit
     layer: e2e
@@ -156,6 +169,19 @@ cases:
     tags: [payment, reconciliation, fake-provider]
     evidence: [json, junit, markdown, logs]
     verifies: [REQ-AM-PAYMENT-INTENT-001, REQ-AM-PAYMENT-PROVIDER-001, REQ-AM-PAYMENT-WEBHOOK-001, REQ-AM-PAYMENT-AUDIT-001]
+    status: active
+  - id: E2E-AM-AUTOTOPUP-003
+    title: TWD automatic top-up applies approved limits and disables after three failures
+    layer: e2e
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/paymentstore/integration_test.go
+    selector: ./internal/payment#TestValidateChargeAmountUsesZeroDecimalTWDUnits,./internal/payment#TestDailyLimitWindowUsesTaipeiCalendarDay,./internal/payment#TestAutoTopUpUsesStrictThresholdAndSafetyLimits,./internal/paymentstore#TestFirstFailedIntentKeepsAccountActiveAndManualCreditRearmsPolicy,./internal/paymentstore#TestThirdConsecutiveAutoTopUpFailureDisablesPolicy
+    method: Go and PostgreSQL-backed tests verify direct TWD integer units, strict below-threshold triggering, Asia/Taipei daily windows, continued operation after the first two conclusive failures, and automatic policy disablement with account attention after the third.
+    runner: test-payment
+    environments: [local, ci]
+    tags: [payment, auto-topup, twd, safety]
+    evidence: [json, junit, markdown, logs]
+    verifies: [REQ-AM-AUTO-TOPUP-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-INTENT-001]
     status: active
   - id: INT-VC-AUTH-BOUNDARY-001
     title: Runtime token issuance rejects missing credentials and legacy certificate headers
@@ -1003,6 +1029,7 @@ cases:
   - { <<: *ui_local, id: UI-CA-ACCESS-003, title: Customer navigation remains separated from platform navigation, source: repos/rtk_cloud_admin/web/e2e/access-control.spec.mjs, selector: "[UI-CA-ACCESS-003]", verifies: [REQ-UI-CA-ACCESS-003, REQ-CA-BFF-UI-001, REQ-CA-BRAND-NAVIGATION-001] }
   - { <<: *ui_local, id: UI-CA-AUDIT-001, title: Platform admins can review audit records after a Brand Cloud action, source: repos/rtk_cloud_admin/web/e2e/audit.spec.mjs, selector: "[UI-CA-AUDIT-001]", verifies: [REQ-UI-CA-AUDIT-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-001, title: Customer billing remains organization scoped provider safe and visibly gated, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-001]", tags: [smoke, billing, payment], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-002, title: Simulated hosted setup and approved automatic top-up defaults are actionable, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-002]", tags: [smoke, billing, payment, simulator], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-001, title: Partial batch failure preserves item results and supports a new retry attempt, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-001]", verifies: [REQ-UI-CA-BATCH-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-002, title: Batch jobs enforce valid pause resume and cancel transitions, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-002]", verifies: [REQ-UI-CA-BATCH-002] }
   - { <<: *ui_local, id: UI-CA-BATCH-003, title: Completed batch results can be downloaded as JSON and CSV, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-003]", verifies: [REQ-UI-CA-BATCH-003] }

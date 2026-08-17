@@ -64,6 +64,41 @@ cases:
       title: quota usage copy includes current usage and configured cap
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/billing.test.mjs#automatic%20top-up%20copy%20reflects%20crossing%20and%20armed%20state
+      module: cloud-admin-web
+      language: javascript
+      source: src/billing.test.mjs
+      title: automatic top-up copy reflects crossing and armed state
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/billing.test.mjs#billing%20money%20treats%20TWD%20as%20a%20zero-decimal%20currency
+      module: cloud-admin-web
+      language: javascript
+      source: src/billing.test.mjs
+      title: billing money treats TWD as a zero-decimal currency
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/billing.test.mjs#consent%20evidence%20is%20versioned%20and%20digest-shaped
+      module: cloud-admin-web
+      language: javascript
+      source: src/billing.test.mjs
+      title: consent evidence is versioned and digest-shaped
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/billing.test.mjs#intent%20states%20and%20payment%20failures%20are%20normalized%20for%20customers
+      module: cloud-admin-web
+      language: javascript
+      source: src/billing.test.mjs
+      title: intent states and payment failures are normalized for customers
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/billing.test.mjs#payment%20method%20display%20exposes%20only%20safe%20metadata
+      module: cloud-admin-web
+      language: javascript
+      source: src/billing.test.mjs
+      title: payment method display exposes only safe metadata
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/brand-clouds.test.mjs#Brand%20Clouds%20errors%20are%20stable%20and%20do%20not%20expose%20upstream%20payload%20details
       module: cloud-admin-web
       language: javascript

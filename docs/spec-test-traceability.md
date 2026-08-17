@@ -25,12 +25,12 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-OIDC-SECRET-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-OIDC-SECRET-001` | `independent` | `81c2810a30ee` | `service` | `active` | `INT-AM-OPERATIONS-OIDC-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `b5b70bd660f6` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BILLING-DEBIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001` | `independent` | `19154c805ea2` | `canonical` | `active` | `INT-AM-BILLING-DEBIT-001` | `test-coverage` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BALANCE-LEDGER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001` | `independent` | `5c260c451e4c` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `INT-AM-BILLING-DEBIT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-METHOD-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001` | `independent` | `29e04204e088` | `canonical` | `active` | `E2E-AM-PAYMENT-001` | `test-payment` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-INTENT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001` | `independent` | `f982dc3e0317` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-002`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-AUTO-TOPUP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001` | `independent` | `7e27f856267e` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-PROVIDER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-PROVIDER-001` | `independent` | `991a478b8f4a` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-002`, `E2E-AM-PAYMENT-001`, `INT-AM-NEWEBPAY-001` | `test-coverage`, `test-payment` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-SIMULATOR-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-SIMULATOR-001` | `independent` | `855d89496521` | `canonical` | `planned` | — | — |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BALANCE-LEDGER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001` | `independent` | `5c260c451e4c` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-003`, `INT-AM-BILLING-DEBIT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-METHOD-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001` | `independent` | `29e04204e088` | `canonical` | `active` | `E2E-AM-PAYMENT-001`, `E2E-AM-SIMULATOR-001` | `test-payment` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-INTENT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001` | `independent` | `f982dc3e0317` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-002`, `E2E-AM-AUTOTOPUP-003`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-AUTO-TOPUP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001` | `independent` | `7e27f856267e` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-003`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-PROVIDER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-PROVIDER-001` | `independent` | `991a478b8f4a` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-002`, `E2E-AM-PAYMENT-001`, `E2E-AM-SIMULATOR-001`, `INT-AM-NEWEBPAY-001` | `test-coverage`, `test-payment` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-SIMULATOR-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-SIMULATOR-001` | `independent` | `855d89496521` | `canonical` | `planned` | `E2E-AM-SIMULATOR-001` | `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-WEBHOOK-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-WEBHOOK-001` | `independent` | `235a84ecfb88` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-002`, `INT-AM-NEWEBPAY-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-AUTHZ-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-AUTHZ-001` | `independent` | `2db6b6fb9546` | `canonical` | `active` | `E2E-AM-PAYMENT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-AUDIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-AUDIT-001` | `independent` | `6d1ba024b6f0` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-002`, `E2E-AM-PAYMENT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
@@ -65,7 +65,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `3486cc975678` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `c82c1a79b3cf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `6ca993e5199e` | `service` | `active` | `UI-CA-BILLING-001` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `6ca993e5199e` | `service` | `active` | `UI-CA-BILLING-001`, `UI-CA-BILLING-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UI-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `` | `1bbb8497bf3c` | `service` | `active` | `UI-CA-ACCESS-003` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-BREAK-GLASS-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-BREAK-GLASS-001` | `` | `a58762f19fbf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-PROFILE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PROFILE-001` | `independent` | `241e157b1ec0` | `canonical` | `active` | `INT-AM-BRANDPROFILE-001` | `test-services` |
@@ -591,6 +591,7 @@
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
 | `SPEC-AM-OPENAPI#postInternalBillingDebit` | `POST /v1/internal/billing/debits` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001`, `REQ-AM-BALANCE-LEDGER-001` | `37f0d069c419` |
+| `SPEC-AM-OPENAPI#completeSimulatedPaymentMethodSetup` | `POST /v1/internal/payment-simulator/setup-callback` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-SIMULATOR-001` | `c7c323bc4b83` |
 | `SPEC-AM-OPENAPI#deleteCurrentUser` | `DELETE /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0bba6c394d35` |
 | `SPEC-AM-OPENAPI#getCurrentUser` | `GET /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0ce87dc89fa3` |
 | `SPEC-AM-OPENAPI#listCurrentUserIdentities` | `GET /v1/me/identities` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `506f1a49a50d` |
@@ -602,7 +603,7 @@
 | `SPEC-AM-OPENAPI#updateOrganization` | `PATCH /v1/orgs/{orgId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `b72b0b229a77` |
 | `SPEC-AM-OPENAPI#checkOrganizationResourceAccess` | `GET /v1/orgs/{orgId}/access/check` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `1a2e49aadcb0` |
 | `SPEC-AM-OPENAPI#disableAutoTopUpPolicy` | `DELETE /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUDIT-001` | `49d02c6dd0a8` |
-| `SPEC-AM-OPENAPI#getAutoTopUpPolicy` | `GET /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `256398a40075` |
+| `SPEC-AM-OPENAPI#getAutoTopUpPolicy` | `GET /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `7d4f3a6184ff` |
 | `SPEC-AM-OPENAPI#replaceAutoTopUpPolicy` | `PUT /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `753ce39b216f` |
 | `SPEC-AM-OPENAPI#getBillingAccount` | `GET /v1/orgs/{orgId}/billing/account` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `3621e3c9796b` |
 | `SPEC-AM-OPENAPI#listBillingLedger` | `GET /v1/orgs/{orgId}/billing/ledger` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `6d1dc14cdb3c` |
@@ -646,7 +647,7 @@
 | `SPEC-AM-OPENAPI#listPaymentIntents` | `GET /v1/orgs/{orgId}/payment-intents` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `adb5733f34bc` |
 | `SPEC-AM-OPENAPI#getPaymentIntent` | `GET /v1/orgs/{orgId}/payment-intents/{intentId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `263042502742` |
 | `SPEC-AM-OPENAPI#listPaymentMethods` | `GET /v1/orgs/{orgId}/payment-methods` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `3f6918ecf6b2` |
-| `SPEC-AM-OPENAPI#setupPaymentMethod` | `POST /v1/orgs/{orgId}/payment-methods/setup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `3d23192f9c08` |
+| `SPEC-AM-OPENAPI#setupPaymentMethod` | `POST /v1/orgs/{orgId}/payment-methods/setup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `f5721f54d6cd` |
 | `SPEC-AM-OPENAPI#revokePaymentMethod` | `DELETE /v1/orgs/{orgId}/payment-methods/{methodId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `9d42c8eac9b3` |
 | `SPEC-AM-OPENAPI#listOrganizationPermissions` | `GET /v1/orgs/{orgId}/permissions` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `743c80fa8f9d` |
 | `SPEC-AM-OPENAPI#createQuotaRaiseRequest` | `POST /v1/orgs/{orgId}/quota-raise-requests` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `3391eb18d64a` |

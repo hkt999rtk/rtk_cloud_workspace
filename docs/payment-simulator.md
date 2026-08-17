@@ -89,7 +89,10 @@ PAYMENT_SIMULATOR_ENABLED=false
 PAYMENT_SIMULATOR_BASE_URL=
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=
 PAYMENT_SIMULATOR_SHARED_SECRET=<secret>
+PAYMENT_SIMULATOR_SETUP_CALLBACK_SECRET=<secret>
+PAYMENT_SIMULATOR_SCENARIO=success
 PAYMENT_REFERENCE_ENCRYPTION_KEY=<secret>
+PAYMENT_WORKER_ENABLED=false
 ```
 
 Simulator process:
@@ -97,7 +100,7 @@ Simulator process:
 ```text
 PAYMENT_SIMULATOR_ENABLED=false
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=
-PAYMENT_SIMULATOR_ACCOUNT_MANAGER_BASE_URL=
+PAYMENT_SIMULATOR_CALLBACK_URL=
 PAYMENT_SIMULATOR_SHARED_SECRET=<secret>
 PAYMENT_SIMULATOR_SETUP_CALLBACK_SECRET=<secret>
 PAYMENT_SIMULATOR_RETENTION=168h
@@ -117,7 +120,7 @@ callback signatures.
 
 ## Simulator Protocol
 
-Internal endpoints require a constant-time verified bearer secret and accept
+Internal endpoints require a constant-time verified HMAC signature and accept
 only JSON with bounded bodies and strict unknown-field rejection.
 
 | Endpoint | Purpose |
@@ -136,20 +139,15 @@ Public endpoints use an unguessable, single-purpose, expiring token:
 | `POST /setup/{token}/complete` | Select and confirm an allowed synthetic setup/charge scenario. |
 
 The hosted page contains no PAN, CVV, expiry, cardholder-name, or arbitrary text
-fields. It always displays `TEST PAYMENT - NO REAL CHARGE`. Allowed scenarios
+fields. It always displays `TEST PAYMENT - NO REAL CHARGE`. Phase-one scenarios
 are enumerated server-side:
 
 ```text
-SUCCESS
-DECLINED
-REQUIRES_ACTION
-TIMEOUT_THEN_SUCCESS
-TIMEOUT_THEN_DECLINED
-DUPLICATE_WEBHOOK
-OUT_OF_ORDER_WEBHOOK
-INVALID_SIGNATURE
-REFUND
-CHARGEBACK
+success
+declined
+requires_action
+temporary_error
+unknown
 ```
 
 CI chooses a scenario in the authenticated setup request. Local and staging
@@ -161,14 +159,12 @@ arbitrary URLs.
 
 Simulator tables are separate from the monetary ledger:
 
-- `payment_simulator_setup_sessions`: run ID, Account Manager setup reference,
-  idempotency key hash, public-token hash, scenario, state, expiry, and safe
-  display metadata;
-- `payment_simulator_transactions`: merchant order reference, amount, currency,
-  selected scenario, normalized state, synthetic provider transaction
-  reference, query count, and timestamps;
-- `payment_simulator_callback_outbox`: signed callback body digest, delivery
-  state, attempt count, and next retry time.
+- `payment_simulator_setup_sessions`: Account Manager setup reference,
+  idempotency key, public-token hash, scenario, state, callback attempts,
+  expiry, and safe synthetic references;
+- `payment_simulator_operations`: charge/refund operation, merchant order
+  reference, amount, currency, selected scenario, normalized state, synthetic
+  provider transaction reference, and timestamps.
 
 Raw public tokens and shared secrets are never persisted. Setup idempotency is
 scoped by account plus client key. Charge idempotency is scoped by merchant
@@ -176,9 +172,10 @@ order reference. Replayed requests return the original synthetic result;
 semantic conflicts return a stable conflict and create no new session or
 transaction.
 
-All simulator data is run-scoped. Cleanup deletes expired synthetic sessions,
-transactions, and delivered callback rows after seven days. Monetary and
-consent evidence remains subject to the Account Manager retention contract.
+Expired simulator setup sessions and operations are pruned opportunistically
+from authenticated simulator traffic after the configured retention period
+(seven days by default). Monetary and consent evidence remains subject to the
+Account Manager retention contract.
 
 ## Setup Completion
 
@@ -189,7 +186,7 @@ URL SHA-256 before returning it to Cloud Admin.
 When the hosted page is completed, the simulator sends a signed, bounded setup
 callback containing the internal setup reference, synthetic event reference,
 normalized state, and opaque synthetic customer/method references. Account
-Manager verifies the signature, deduplicates the event, encrypts opaque
+Manager verifies the signature, converges duplicate completion, encrypts opaque
 references, and transitions the pending method once. Duplicate or out-of-order
 callbacks converge without duplicate methods or consent records.
 
@@ -215,7 +212,7 @@ Permanent IDs:
 
 | Test ID | Purpose | Targets | Evidence |
 | --- | --- | --- | --- |
-| `E2E-AM-SIMULATOR-001` | Hosted setup, signed callback, encrypted references, replay, and cleanup. | local, CI | JSON, JUnit, logs, manifest |
+| `E2E-AM-SIMULATOR-001` | Hosted setup, signed callback, encrypted references, token redaction, replay, and retention cleanup. | local, CI | JSON, JUnit, logs, manifest |
 | `E2E-AM-SIMULATOR-002` | Charge/query/refund scenarios and exactly-once ledger convergence. | local, CI | JSON, JUnit, logs, DB correlation |
 | `E2E-AM-AUTOTOPUP-003` | NT$300 crossing, configurable daily limits, Taipei reset, and three-failure disable. | local, CI | JSON, JUnit, Markdown, DB evidence |
 | `UI-CA-BILLING-002` | Simulator setup and automatic top-up behavior. | desktop, mobile | Final screenshot per target, trace/video on failure |
