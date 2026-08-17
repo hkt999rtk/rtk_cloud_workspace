@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,7 @@ func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T
 	t.Cleanup(func() { _ = os.RemoveAll(runRoot) })
 
 	oldRunner := paymentCoverageRunner
+	coverageShouldFail := false
 	paymentCoverageRunner = func(args []string) error {
 		if got := commandFlagValue(args, "--module"); got != "billing-service" {
 			t.Fatalf("coverage module = %q", got)
@@ -149,7 +151,8 @@ func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T
 				units = append(units, goUnitResult{CanonicalKey: canonical, Source: "integration_test.go", StartedAt: "2026-08-17T00:00:00Z", CompletedAt: "2026-08-17T00:00:00.001Z", DurationMS: 1, Status: "PASS"})
 			}
 		}
-		coverageDir := filepath.Join(runRoot, "coverage")
+		coverageRunID := commandFlagValue(args, "--run-id")
+		coverageDir := filepath.Join(workspace, ".artifacts", "test-runs", coverageRunID, "coverage")
 		moduleDir := filepath.Join(coverageDir, "modules", "billing-service")
 		if err := os.MkdirAll(moduleDir, 0o755); err != nil {
 			return err
@@ -171,6 +174,9 @@ func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T
 				return err
 			}
 		}
+		if coverageShouldFail {
+			return errors.New("synthetic coverage gate failure")
+		}
 		return nil
 	}
 	t.Cleanup(func() { paymentCoverageRunner = oldRunner })
@@ -184,5 +190,20 @@ func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T
 	}
 	if !strings.Contains(string(result), `"status": "PASS"`) || !strings.Contains(string(result), `"coverage_gate": "PASS"`) {
 		t.Fatalf("payment result is incomplete: %s", result)
+	}
+
+	failedRunID := "unit-payment-coverage-fail"
+	failedRunRoot := filepath.Join(workspace, ".artifacts", "test-runs", failedRunID)
+	t.Cleanup(func() { _ = os.RemoveAll(failedRunRoot) })
+	coverageShouldFail = true
+	if err := runTestPayment([]string{"--profile", "fake-e2e", "--run-id", failedRunID}); err == nil {
+		t.Fatal("failed coverage gate did not fail payment qualification")
+	}
+	failedResult, err := os.ReadFile(filepath.Join(failedRunRoot, "payments", "fake-e2e", "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(failedResult), `"status": "FAIL"`) || !strings.Contains(string(failedResult), `"coverage_gate": "FAIL"`) {
+		t.Fatalf("coverage failure was not preserved: %s", failedResult)
 	}
 }
