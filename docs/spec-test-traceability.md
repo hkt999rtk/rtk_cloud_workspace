@@ -4,6 +4,9 @@
 
 | Spec | Feature | Requirement | Operation model | Revision | Authority | Status | Test IDs | Runners |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md#REQ-AM-BILLING-ACTIVITY-001` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-001` | `independent` | `48adabe357b6` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md#REQ-AM-BILLING-ACTIVITY-002` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-002` | `independent` | `9bf6f15e3716` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md#REQ-AM-BILLING-ACTIVITY-003` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-003` | `independent` | `e5bed817097b` | `canonical` | `active` | — | — |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ORG-AUTHORITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ORG-AUTHORITY-001` | `independent` | `d63b94f0af53` | `service` | `active` | `INT-AM-IDENTITY-ORG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-END-USER-ISOLATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-END-USER-ISOLATION-001` | `workflow` | `7b4d2da0ea3b` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-DEVICE-IDENTITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-DEVICE-IDENTITY-001` | `independent` | `f3956f54946c` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
@@ -20,10 +23,16 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `independent` | `2852d1659641` | `service` | `active` | `INT-AM-IDENTITY-LIFECYCLE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `6688689f630e` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-APP-AUTHORIZATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `workflow` | `f4ac80279fa5` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-PRICING-VERSION-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `independent` | `fa34115eb7b9` | `canonical` | `active` | `INT-AM-INVOICE-001`, `UNIT-AM-INVOICE-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-ARITHMETIC-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-ARITHMETIC-001` | `independent` | `d0ddc3a1db7d` | `canonical` | `active` | `UNIT-AM-INVOICE-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-LIFECYCLE-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001` | `independent` | `c22a2cc850d6` | `canonical` | `active` | `INT-AM-INVOICE-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-DOCUMENT-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `independent` | `93b7a7884d0f` | `canonical` | `active` | `INT-AM-INVOICE-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-PROFILE-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `independent` | `77f0af957ea4` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-SUMMARY-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `independent` | `dba952197aaa` | `canonical` | `active` | — | — |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `3b87547f2d25` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-CACHE-RESILIENCE-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-CACHE-RESILIENCE-001` | `independent` | `be8af79a0c44` | `service` | `active` | `INT-AM-OPERATIONS-CACHE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-OIDC-SECRET-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-OIDC-SECRET-001` | `independent` | `81c2810a30ee` | `service` | `active` | `INT-AM-OPERATIONS-OIDC-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `b5b70bd660f6` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `b54f4c3ff81d` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BILLING-DEBIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001` | `independent` | `19154c805ea2` | `canonical` | `active` | `INT-AM-BILLING-DEBIT-001` | `test-coverage` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BALANCE-LEDGER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001` | `independent` | `5c260c451e4c` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-003`, `E2E-AM-SIMULATOR-002`, `INT-AM-BILLING-DEBIT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-METHOD-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001` | `independent` | `29e04204e088` | `canonical` | `active` | `E2E-AM-PAYMENT-001`, `E2E-AM-SIMULATOR-001`, `LIVE-STG-SIMULATOR-001` | `test-payment` |
@@ -65,7 +74,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `3486cc975678` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `c82c1a79b3cf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `6ca993e5199e` | `service` | `active` | `UI-CA-BILLING-001`, `UI-CA-BILLING-002` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `6ca993e5199e` | `service` | `active` | `UI-CA-BILLING-001`, `UI-CA-BILLING-002`, `UI-CA-BILLING-003`, `UI-CA-BILLING-004`, `UI-CA-BILLING-005` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UI-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `` | `1bbb8497bf3c` | `service` | `active` | `UI-CA-ACCESS-003` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-BREAK-GLASS-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-BREAK-GLASS-001` | `` | `a58762f19fbf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-PROFILE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PROFILE-001` | `independent` | `241e157b1ec0` | `canonical` | `active` | `INT-AM-BRANDPROFILE-001` | `test-services` |
@@ -467,7 +476,21 @@
 | `SPEC-CONTRACT-OPENAPI#getDirectClipUpload` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `0fcb641b1edd` |
 | `SPEC-CONTRACT-OPENAPI#completeDirectClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/complete` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `6b73504b6619` |
 | `SPEC-CONTRACT-OPENAPI#factoryEnroll` | `POST /v1/factory/enroll` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-FACTORY-ENROLL-001`, `REQ-CONTRACT-PROV-SIGNOFF-001` | `781a75e0a1c9` |
+| `SPEC-CONTRACT-OPENAPI#closeBillingPeriod` | `POST /v1/internal/billing/periods/close` | `` | — | `c529fb454d34` |
+| `SPEC-CONTRACT-OPENAPI#createBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions` | `` | — | `32de5424d3b1` |
+| `SPEC-CONTRACT-OPENAPI#activateBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/activate` | `` | — | `81d0b96ddd48` |
+| `SPEC-CONTRACT-OPENAPI#putBillingUsageFact` | `POST /v1/internal/billing/usage-facts` | `` | — | `210e39731cd0` |
 | `SPEC-CONTRACT-OPENAPI#ingestMqttUsageWindows` | `POST /v1/mqtt-usage/windows` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-LIFECYCLE-001` | `66fac1670d3c` |
+| `SPEC-CONTRACT-OPENAPI#listBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity` | `FEAT-AM-BILLING-ACTIVITY-001` | — | `c8f6f335fbb6` |
+| `SPEC-CONTRACT-OPENAPI#getBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity/{activityId}` | `FEAT-AM-BILLING-ACTIVITY-001` | — | `2cf2f44fac4e` |
+| `SPEC-CONTRACT-OPENAPI#listBillingInvoices` | `GET /v1/orgs/{orgId}/billing/invoices` | `FEAT-AM-INVOICE-001` | — | `0c2f1adf6255` |
+| `SPEC-CONTRACT-OPENAPI#getBillingInvoice` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}` | `FEAT-AM-INVOICE-001` | — | `aa27524a7924` |
+| `SPEC-CONTRACT-OPENAPI#downloadBillingInvoicePdf` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf` | `FEAT-AM-INVOICE-001` | — | `8545ea49ce9d` |
+| `SPEC-CONTRACT-OPENAPI#getBillingProfile` | `GET /v1/orgs/{orgId}/billing/profile` | `FEAT-AM-INVOICE-001` | — | `7fa737a07a94` |
+| `SPEC-CONTRACT-OPENAPI#putBillingProfile` | `PUT /v1/orgs/{orgId}/billing/profile` | `FEAT-AM-INVOICE-001` | — | `4bd259382ade` |
+| `SPEC-CONTRACT-OPENAPI#exportBillingStatement` | `GET /v1/orgs/{orgId}/billing/statements` | `FEAT-AM-INVOICE-001` | — | `ee4e4199bc43` |
+| `SPEC-CONTRACT-OPENAPI#getBillingSummary` | `GET /v1/orgs/{orgId}/billing/summary` | `FEAT-AM-INVOICE-001` | — | `b3a744fc27f0` |
+| `SPEC-CONTRACT-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `FEAT-AM-INVOICE-001` | — | `c35268fed0df` |
 | `SPEC-CONTRACT-OPENAPI#createQuotaRaiseRequest` | `POST /v1/orgs/{orgId}/quota-raise-requests` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `d500d11e9375` |
 | `SPEC-CONTRACT-OPENAPI#activateOtaCampaign` | `POST /v1/ota/campaigns/{campaign_id}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `f940ce4b8221` |
 | `SPEC-CONTRACT-OPENAPI#archiveOtaCampaign` | `POST /v1/ota/campaigns/{campaign_id}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `3cb2ca3c2e78` |
@@ -591,6 +614,10 @@
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
 | `SPEC-AM-OPENAPI#postInternalBillingDebit` | `POST /v1/internal/billing/debits` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001`, `REQ-AM-BALANCE-LEDGER-001` | `37f0d069c419` |
+| `SPEC-AM-OPENAPI#closeBillingPeriod` | `POST /v1/internal/billing/periods/close` | `` | — | `f7a50e32b130` |
+| `SPEC-AM-OPENAPI#createBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions` | `` | — | `211001cb9f24` |
+| `SPEC-AM-OPENAPI#activateBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/activate` | `` | — | `9d8add3c1ce5` |
+| `SPEC-AM-OPENAPI#putBillingUsageFact` | `POST /v1/internal/billing/usage-facts` | `` | — | `eedeedca1315` |
 | `SPEC-AM-OPENAPI#completeSimulatedPaymentMethodSetup` | `POST /v1/internal/payment-simulator/setup-callback` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-SIMULATOR-001` | `c7c323bc4b83` |
 | `SPEC-AM-OPENAPI#deleteCurrentUser` | `DELETE /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0bba6c394d35` |
 | `SPEC-AM-OPENAPI#getCurrentUser` | `GET /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0ce87dc89fa3` |
@@ -606,7 +633,17 @@
 | `SPEC-AM-OPENAPI#getAutoTopUpPolicy` | `GET /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `7d4f3a6184ff` |
 | `SPEC-AM-OPENAPI#replaceAutoTopUpPolicy` | `PUT /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `753ce39b216f` |
 | `SPEC-AM-OPENAPI#getBillingAccount` | `GET /v1/orgs/{orgId}/billing/account` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `3621e3c9796b` |
+| `SPEC-AM-OPENAPI#listBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity` | `` | — | `915ebef99317` |
+| `SPEC-AM-OPENAPI#getBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity/{activityId}` | `` | — | `6a0e4da6e01b` |
+| `SPEC-AM-OPENAPI#listBillingInvoices` | `GET /v1/orgs/{orgId}/billing/invoices` | `` | — | `39b990e1db16` |
+| `SPEC-AM-OPENAPI#getBillingInvoice` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}` | `` | — | `e03a87c2444d` |
+| `SPEC-AM-OPENAPI#downloadBillingInvoicePdf` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf` | `` | — | `be4374fa1801` |
 | `SPEC-AM-OPENAPI#listBillingLedger` | `GET /v1/orgs/{orgId}/billing/ledger` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `6d1dc14cdb3c` |
+| `SPEC-AM-OPENAPI#getBillingProfile` | `GET /v1/orgs/{orgId}/billing/profile` | `` | — | `fca9c44a05af` |
+| `SPEC-AM-OPENAPI#putBillingProfile` | `PUT /v1/orgs/{orgId}/billing/profile` | `` | — | `6f42981af65c` |
+| `SPEC-AM-OPENAPI#exportBillingStatement` | `GET /v1/orgs/{orgId}/billing/statements` | `` | — | `bcbd6149974a` |
+| `SPEC-AM-OPENAPI#getBillingSummary` | `GET /v1/orgs/{orgId}/billing/summary` | `` | — | `c789a7eebf38` |
+| `SPEC-AM-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `` | — | `37d145e62b41` |
 | `SPEC-AM-OPENAPI#createDeviceGroup` | `POST /v1/orgs/{orgId}/device-groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `6f927c19fe1f` |
 | `SPEC-AM-OPENAPI#listDeviceGroups` | `GET /v1/orgs/{orgId}/device-groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `bf470bb29434` |
 | `SPEC-AM-OPENAPI#deleteDeviceGroup` | `DELETE /v1/orgs/{orgId}/device-groups/{groupId}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `63cafbde929e` |
@@ -701,16 +738,26 @@
 | `SPEC-CA-OPENAPI#getApiAuthSsoCallback` | `GET /api/auth/sso/callback` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `41ec4013e531` |
 | `SPEC-CA-OPENAPI#postApiAuthSsoStart` | `POST /api/auth/sso/start` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `f509dc20ffae` |
 | `SPEC-CA-OPENAPI#getApiBillingAccount` | `GET /api/billing/account` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `37f573d66703` |
+| `SPEC-CA-OPENAPI#getApiBillingActivity` | `GET /api/billing/activity` | `` | — | `ff3e0f94eb70` |
+| `SPEC-CA-OPENAPI#getApiBillingActivityDetail` | `GET /api/billing/activity/{activityId}` | `` | — | `9e1b2d34442d` |
 | `SPEC-CA-OPENAPI#deleteApiBillingAutoTopUp` | `DELETE /api/billing/auto-topup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `bcd10e3adea5` |
 | `SPEC-CA-OPENAPI#getApiBillingAutoTopUp` | `GET /api/billing/auto-topup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `b0142381414c` |
 | `SPEC-CA-OPENAPI#putApiBillingAutoTopUp` | `PUT /api/billing/auto-topup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `f726cecc82bd` |
+| `SPEC-CA-OPENAPI#getApiBillingInvoices` | `GET /api/billing/invoices` | `` | — | `f5d75b1a9b7d` |
+| `SPEC-CA-OPENAPI#getApiBillingInvoice` | `GET /api/billing/invoices/{invoiceId}` | `` | — | `cc2052ec61bb` |
+| `SPEC-CA-OPENAPI#getApiBillingInvoicePdf` | `GET /api/billing/invoices/{invoiceId}/pdf` | `` | — | `1ed6fcc72c7c` |
 | `SPEC-CA-OPENAPI#getApiBillingLedger` | `GET /api/billing/ledger` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `3175bc46dc4a` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentIntents` | `GET /api/billing/payment-intents` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `4a3519eb404f` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentIntent` | `GET /api/billing/payment-intents/{intentId}` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `6e37020ff854` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentMethods` | `GET /api/billing/payment-methods` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `a68d3f2f61fe` |
 | `SPEC-CA-OPENAPI#postApiBillingPaymentMethodSetup` | `POST /api/billing/payment-methods/setup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `e8aa1c262434` |
 | `SPEC-CA-OPENAPI#deleteApiBillingPaymentMethod` | `DELETE /api/billing/payment-methods/{methodId}` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `97a26433a682` |
+| `SPEC-CA-OPENAPI#getApiBillingProfile` | `GET /api/billing/profile` | `` | — | `a8da0218eede` |
+| `SPEC-CA-OPENAPI#putApiBillingProfile` | `PUT /api/billing/profile` | `` | — | `00966e82e9c6` |
+| `SPEC-CA-OPENAPI#getApiBillingStatement` | `GET /api/billing/statements` | `` | — | `797d532067fd` |
+| `SPEC-CA-OPENAPI#getApiBillingSummary` | `GET /api/billing/summary` | `` | — | `a7caa8bfc304` |
 | `SPEC-CA-OPENAPI#postApiBillingTopUp` | `POST /api/billing/topups` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `12a3c83fec70` |
+| `SPEC-CA-OPENAPI#getApiBillingUsage` | `GET /api/billing/usage` | `` | — | `470d4d819ad5` |
 | `SPEC-CA-OPENAPI#getApiCustomers` | `GET /api/customers` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `076be6b37100` |
 | `SPEC-CA-OPENAPI#postApiDeveloperBrandCloudOwnerTransfersAccept` | `POST /api/developer/brand-cloud-owner-transfers/accept` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `aac2ac7a1109` |
 | `SPEC-CA-OPENAPI#getApiDeveloperBrandClouds` | `GET /api/developer/brand-clouds` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `a421cfa4950a` |
@@ -1179,6 +1226,8 @@
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Renewal Flow@L270` | `draft` | `planned` | `d1329890f56f` | it must fail with `RTKC_STATUS_PKI_NOT_PROVISIONED` rather than creating a CSR |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Error Codes@L329` | `draft` | `planned` | `2d3bd2a0314b` | The PKI helpers must use these stable error categories: |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Acceptance Checklist@L344` | `draft` | `planned` | `288cf003d209` | An SDK package implementing PKI device auth must verify: |
+| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Tenant API@L111` | `canonical` | `required` | `b31f4bf383e9` | reconciliation records but must remain organization scoped. IDs intended only |
+| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Audit And Retention@L121` | `canonical` | `required` | `dba5bf23a2b6` | CSV export uses the same redaction and authorization rules. Retention must be |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Purpose And Current Baseline@L33` | `proposed` | `planned` | `6e5b1d908db1` | `model` is descriptive compatibility metadata and MUST NOT be used as a tenant, |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L49` | `proposed` | `planned` | `4475148d45a1` | Video Cloud MUST resolve brand, SKU, and device identity from trusted |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L51` | `proposed` | `planned` | `c8a65c0f4234` | `device_id` MUST NOT override authenticated ownership facts. |
@@ -1195,6 +1244,9 @@
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Legacy Compatibility@L223` | `proposed` | `planned` | `90db148a3a77` | MUST NOT infer tenant ownership from `model` or create implicit campaigns. |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Implementation Gate@L228` | `proposed` | `planned` | `9a0351b2099f` | This contract, OpenAPI, authorization vocabulary, and migration design must be |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Implementation Gate@L230` | `proposed` | `planned` | `29cf5cdeb098` | Backend implementation must include tenant isolation, immutable release, |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L49` | `canonical` | `required` | `f6c615c60c99` | balance and remains a separate payment activity. UI and reports must not claim |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L56` | `canonical` | `required` | `347490298ee4` | point must not be persisted as authoritative usage or price. |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Compatibility@L229` | `canonical` | `required` | `02fd22c82946` | system must not fabricate invoice lines or PDFs from a ledger reason alone. |
 | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `SDK Local Onboarding Interface@L88` | `draft` | `planned` | `cf4653717c7e` | The first phase should define public interfaces or documented stubs for native, |
 | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `SDK Local Onboarding Interface@L106` | `draft` | `planned` | `9b06c9e7a44b` | Native and JavaScript/TypeScript must expose consistent concepts or explicit |
 | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `SDK Local Onboarding Interface@L108` | `draft` | `planned` | `53228cfd6237` | SDKs must not own account binding policy, account/video cross-service |
@@ -1246,6 +1298,20 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `activateBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `closeBillingPeriod` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `createBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `downloadBillingInvoicePdf` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `exportBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingInvoice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingSummary` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingUsage` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `listBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `listBillingInvoices` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `putBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `putBillingUsageFact` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_admin/docs/ROLES.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L264` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability contract@L183` | `false` | normative clause 789186a3cdd5 requires a stable FEAT-*/REQ-* source mapping: The active membership must project these machine-readable capabilities. Display |
@@ -1256,6 +1322,16 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L228` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `false` | normative clause 5ab164b3f034 requires a stable FEAT-*/REQ-* source mapping: persona, but route guards and enabled UI actions must use explicit |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Tier 2 — Brand Operator Roles@L126` | `false` | normative clause 0915d659e349 requires a stable FEAT-*/REQ-* source mapping: Tier 2 daily authentication should use Account Manager-backed SSO. Account |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivityDetail` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingInvoice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingInvoicePdf` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingInvoices` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingSummary` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingUsage` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `putApiBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Acceptance Checklist@L344` | `false` | normative clause 288cf003d209 requires a stable FEAT-*/REQ-* source mapping: An SDK package implementing PKI device auth must verify: |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `CSR Generation@L80` | `false` | normative clause 5de10c7a99e6 requires a stable FEAT-*/REQ-* source mapping: Subject CN must be the device identity string (serial number or MAC address) |
@@ -1272,6 +1348,8 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Renewal Flow@L270` | `false` | normative clause d1329890f56f requires a stable FEAT-*/REQ-* source mapping: it must fail with `RTKC_STATUS_PKI_NOT_PROVISIONED` rather than creating a CSR |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Renewal Trigger@L236` | `false` | normative clause 3e4913903392 requires a stable FEAT-*/REQ-* source mapping: The SDK must check certificate validity on each startup and trigger renewal |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Token Issuance After mTLS@L226` | `false` | normative clause 61bf80fd4134 requires a stable FEAT-*/REQ-* source mapping: issued token to that subject. The SDK must request `scope: "camera"` and must |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Audit And Retention@L121` | `true` | normative clause dba5bf23a2b6 requires a stable FEAT-*/REQ-* source mapping: CSV export uses the same redaction and authorization rules. Retention must be |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Tenant API@L111` | `true` | normative clause b31f4bf383e9 requires a stable FEAT-*/REQ-* source mapping: reconciliation records but must remain organization scoped. IDs intended only |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `DeviceDeployment And DeploymentEvent@L120` | `false` | normative clause 82d3c8d8ee60 requires a stable FEAT-*/REQ-* source mapping: campaigns MUST NOT overwrite earlier history. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `DeviceDeployment And DeploymentEvent@L141` | `false` | normative clause fff0ca8d8ff3 requires a stable FEAT-*/REQ-* source mapping: The authenticated device MUST provide a non-empty current version on every |
@@ -1289,6 +1367,9 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L49` | `false` | normative clause 4475148d45a1 requires a stable FEAT-*/REQ-* source mapping: Video Cloud MUST resolve brand, SKU, and device identity from trusted |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L51` | `false` | normative clause c8a65c0f4234 requires a stable FEAT-*/REQ-* source mapping: `device_id` MUST NOT override authenticated ownership facts. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Purpose And Current Baseline@L33` | `false` | normative clause 6e5b1d908db1 requires a stable FEAT-*/REQ-* source mapping: `model` is descriptive compatibility metadata and MUST NOT be used as a tenant, |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Compatibility@L229` | `true` | normative clause 02fd22c82946 requires a stable FEAT-*/REQ-* source mapping: system must not fabricate invoice lines or PDFs from a ledger reason alone. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L49` | `true` | normative clause f6c615c60c99 requires a stable FEAT-*/REQ-* source mapping: balance and remains a separate payment activity. UI and reports must not claim |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L56` | `true` | normative clause 347490298ee4 requires a stable FEAT-*/REQ-* source mapping: point must not be persisted as authoritative usage or price. |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `Account-Manager Claim Resolve Endpoint@L200` | `false` | normative clause 2b38cf3b431b requires a stable FEAT-*/REQ-* source mapping: Failure cases must distinguish invalid token, expired token, already claimed, |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `Account-Manager Claim Resolve Endpoint@L202` | `false` | normative clause 83350a36e143 requires a stable FEAT-*/REQ-* source mapping: and service-unavailable errors. Permission decisions must follow |
@@ -1334,6 +1415,20 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md` | `Required Source Facts@L112` | `false` | normative clause d07bca54f1f2 requires a stable FEAT-*/REQ-* source mapping: When the projection spans asynchronous events, consumers should surface stale or |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md` | `Required Source Facts@L97` | `false` | normative clause 6906088ad560 requires a stable FEAT-*/REQ-* source mapping: A product readiness projection must be derived from these source fact families. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md` | `Required Source Facts@L99` | `false` | normative clause 2ababc5e9a5b requires a stable FEAT-*/REQ-* source mapping: readiness API surface must preserve their meaning. |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `activateBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `closeBillingPeriod` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `createBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `downloadBillingInvoicePdf` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `exportBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getBillingInvoice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getBillingSummary` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getBillingUsage` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `listBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `listBillingInvoices` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `putBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `putBillingUsageFact` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_video_cloud/docs/turn-registry-design.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_video_cloud/docs/turn-registry-design.md` | `API contract (minimum set)@L173` | `false` | normative clause 066c55459bad requires a stable FEAT-*/REQ-* source mapping: TURN deployments should use the TURN-specific `/v1/turn/nodes/*` contract. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_video_cloud/docs/turn-registry-design.md` | `API contract (minimum set)@L97` | `false` | normative clause e6fa37588ff0 requires a stable FEAT-*/REQ-* source mapping: > All node APIs should use authenticated node identity (mTLS, JWT, or signed |

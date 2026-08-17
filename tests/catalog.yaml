@@ -81,6 +81,18 @@ cases:
     environments: [local, ci]
     evidence: [json, junit]
     status: active
+  - id: UNIT-AM-INVOICE-001
+    title: Invoice pricing uses fixed precision and reconciles immutable totals
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/billing/invoice_test.go
+    selector: ./internal/billing#TestBuildDraftInvoiceAggregatesUsageAndReconciles,./internal/billing#TestPriceUsageUsesFixedPrecisionAndHalfUpRounding
+    method: Go unit tests aggregate digest-anchored usage, apply versioned fixed-precision rates, and reconcile every line subtotal, tax, and total without floating point.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-PRICING-VERSION-001, REQ-AM-INVOICE-ARITHMETIC-001]
+    status: active
   - id: INT-AM-PAYMENT-001
     title: Payment API ledger trigger and reconciliation remain exactly once
     layer: integration
@@ -105,6 +117,18 @@ cases:
     tags: [payment, billing, invoice]
     evidence: [json, junit]
     verifies: [REQ-AM-BILLING-DEBIT-001, REQ-AM-BALANCE-LEDGER-001]
+    status: active
+  - id: INT-AM-INVOICE-001
+    title: PostgreSQL invoice lifecycle is idempotent immutable and document anchored
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/billingstore/integration_test.go
+    selector: TestBillingPersistenceInvoiceLifecycle
+    method: PostgreSQL 16 integration test migrates the schema, activates pricing, ingests usage, issues and settles one invoice, stores a digest-anchored PDF, accepts identical replay, and rejects late usage for the closed period.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit, pdf]
+    verifies: [REQ-AM-PRICING-VERSION-001, REQ-AM-INVOICE-LIFECYCLE-001, REQ-AM-INVOICE-DOCUMENT-001]
     status: active
   - id: INT-AM-NEWEBPAY-001
     title: NewebPay adapter verifies official cryptography query and webhook boundaries
@@ -1056,6 +1080,9 @@ cases:
   - { <<: *ui_local, id: UI-CA-AUDIT-001, title: Platform admins can review audit records after a Brand Cloud action, source: repos/rtk_cloud_admin/web/e2e/audit.spec.mjs, selector: "[UI-CA-AUDIT-001]", verifies: [REQ-UI-CA-AUDIT-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-001, title: Customer billing remains organization scoped provider safe and visibly gated, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-001]", tags: [smoke, billing, payment], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-002, title: Simulated hosted setup and approved automatic top-up defaults are actionable, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-002]", tags: [smoke, billing, payment, simulator], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-003, title: Invoice list opens immutable settlement detail and PDF evidence, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-003]", tags: [smoke, billing, invoice], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-004, title: Normalized billing activity opens a customer-safe timeline, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-004]", tags: [smoke, billing, activity], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-005, title: Billing profile update preserves immutable invoice snapshot semantics, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-005]", tags: [smoke, billing, invoice, profile], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-001, title: Partial batch failure preserves item results and supports a new retry attempt, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-001]", verifies: [REQ-UI-CA-BATCH-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-002, title: Batch jobs enforce valid pause resume and cancel transitions, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-002]", verifies: [REQ-UI-CA-BATCH-002] }
   - { <<: *ui_local, id: UI-CA-BATCH-003, title: Completed batch results can be downloaded as JSON and CSV, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-003]", verifies: [REQ-UI-CA-BATCH-003] }

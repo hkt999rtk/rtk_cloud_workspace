@@ -96,7 +96,7 @@ var catalogEnvironments = map[string]bool{"local": true, "ci": true, "staging": 
 var catalogProfiles = map[string]bool{"canary": true, "qualification-1k": true, "capacity": true}
 var catalogEvidence = map[string]bool{
 	"screenshot": true, "cloud-evidence": true, "junit": true, "json": true,
-	"markdown": true, "logs": true, "console": true,
+	"markdown": true, "logs": true, "console": true, "pdf": true,
 }
 var featureIDPattern = regexp.MustCompile(`^FEAT(-[A-Z0-9]+){2,3}-[0-9]{3}$`)
 var requirementIDPattern = regexp.MustCompile(`^REQ(-[A-Z0-9]+){2,4}-[0-9]{3}$`)
