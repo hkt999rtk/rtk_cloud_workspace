@@ -89,6 +89,24 @@ func TestReadPaymentUnitManifestRejectsMissingMalformedAndIncompleteEvidence(t *
 	}
 }
 
+func TestRunTestPaymentReportsCoverageAndEvidenceFailureTogether(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "unit-payment-missing-evidence"
+	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(workspace, ".artifacts", "test-runs", runID)) })
+
+	oldRunner := paymentCoverageRunner
+	paymentCoverageRunner = func([]string) error { return errors.New("synthetic coverage failure") }
+	t.Cleanup(func() { paymentCoverageRunner = oldRunner })
+
+	err = runTestPayment([]string{"--profile", "fake-e2e", "--run-id", runID})
+	if err == nil || !strings.Contains(err.Error(), "payment coverage failed") || !strings.Contains(err.Error(), "unit evidence is unavailable") {
+		t.Fatalf("combined coverage/evidence error = %v", err)
+	}
+}
+
 func TestCoverageWorkflowPublishesPaymentEvidence(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
