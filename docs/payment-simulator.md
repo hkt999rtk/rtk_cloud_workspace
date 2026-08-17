@@ -1,8 +1,8 @@
 # Payment Simulator Design And Qualification Contract
 
-Status: approved for implementation in local, CI, and shared staging only.
+Status: active for local, CI, and shared staging qualification only.
 
-Owners: `rtk_account_manager` for payment behavior and persistence;
+Owners: `rtk_billing` for payment behavior and persistence;
 `rtk_cloud_workspace` for Kubernetes, DNS, test orchestration, and evidence;
 `rtk_cloud_admin` for the customer UI and browser evidence.
 
@@ -38,26 +38,27 @@ cent-scaled fixtures must be recreated before simulator qualification.
 
 ## Architecture
 
-The simulator is a dedicated non-production process built from the Account
-Manager repository and image. It is not embedded into Cloud Admin and it does
+The simulator is a dedicated non-production process built from the Billing
+repository and image. It is not embedded into Cloud Admin and it does
 not bypass the provider abstraction.
 
 ```text
 Cloud Admin
-  -> Account Manager payment API
+  -> Account Manager authentication and tenant authorization
+  -> Billing payment API
        -> simulator PaymentProvider client
             -> payment-simulator internal service
                  -> PostgreSQL simulator sessions/outbox
                  -> hosted test payment page
-                 -> signed setup callback to Account Manager
+                 -> signed setup callback to Billing
 
 payment-worker
   -> simulator PaymentProvider client
        -> charge/query/refund simulator endpoints
 ```
 
-The Account Manager API and payment worker use the same provider adapter. The
-simulator process owns only synthetic provider state; Account Manager remains
+The Billing API and payment worker use the same provider adapter. The
+simulator process owns only synthetic provider state; Billing remains
 the source of truth for consent, payment methods, intents, attempts, balance,
 ledger entries, and reconciliation.
 
@@ -67,22 +68,23 @@ Public staging origin:
 
 ```text
 PAYMENT_SIMULATOR_DOMAIN=payment-simulator.video-cloud-staging.realtekconnect.com
+BILLING_DOMAIN=billing.video-cloud-staging.realtekconnect.com
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=https://payment-simulator.video-cloud-staging.realtekconnect.com
 ```
 
 Kubernetes callers use service discovery rather than the public ingress:
 
 ```text
-PAYMENT_SIMULATOR_BASE_URL=http://payment-simulator.<stack>-account-manager.svc.cluster.local:80
+PAYMENT_SIMULATOR_BASE_URL=http://payment-simulator.<stack>-billing.svc.cluster.local:80
 ```
 
-The simulator runs in the Account Manager namespace. The public ingress and
+The simulator runs in the Billing namespace. The public ingress and
 TLS certificate include the approved simulator hostname. DNS follows the
 existing staging ingress/load-balancer path.
 
 ## Configuration And Production Guard
 
-Account Manager API and payment worker:
+Billing API and payment worker:
 
 ```text
 PAYMENT_SIMULATOR_ENABLED=false
@@ -90,7 +92,7 @@ PAYMENT_SIMULATOR_RUN_ID=<run-scoped-id>
 PAYMENT_SIMULATOR_BASE_URL=
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=
 PAYMENT_SIMULATOR_SHARED_SECRET=<secret>
-PAYMENT_SIMULATOR_SETUP_CALLBACK_SECRET=<secret>
+PAYMENT_SIMULATOR_CALLBACK_SECRET=<secret>
 PAYMENT_SIMULATOR_SCENARIO=success
 PAYMENT_REFERENCE_ENCRYPTION_KEY=<secret>
 PAYMENT_WORKER_ENABLED=false
@@ -104,8 +106,7 @@ PAYMENT_SIMULATOR_RUN_ID=<run-scoped-id>
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=
 PAYMENT_SIMULATOR_CALLBACK_URL=
 PAYMENT_SIMULATOR_SHARED_SECRET=<secret>
-PAYMENT_SIMULATOR_SETUP_CALLBACK_SECRET=<secret>
-PAYMENT_SIMULATOR_RETENTION=168h
+PAYMENT_SIMULATOR_CALLBACK_SECRET=<secret>
 ```
 
 Startup must fail when the simulator is enabled and the normalized application
@@ -161,7 +162,7 @@ arbitrary URLs.
 
 Simulator tables are separate from the monetary ledger:
 
-- `payment_simulator_setup_sessions`: run ID, Account Manager setup reference,
+- `payment_simulator_setup_sessions`: run ID, Billing setup reference,
   idempotency key, public-token hash, scenario, state, callback attempts,
   expiry, and safe synthetic references;
 - `payment_simulator_operations`: run ID, charge/refund operation, merchant order
@@ -181,7 +182,7 @@ included in uniqueness boundaries and safe operation evidence.
 Expired simulator setup sessions and operations are pruned opportunistically
 from authenticated simulator traffic after the configured retention period
 (seven days by default). Monetary and consent evidence remains subject to the
-Account Manager retention contract.
+Billing retention contract.
 
 ## Setup Completion
 
@@ -222,7 +223,7 @@ Permanent IDs:
 | `E2E-AM-SIMULATOR-002` | Charge/query/refund scenarios and exactly-once ledger convergence. | local, CI | JSON, JUnit, logs, DB correlation |
 | `E2E-AM-AUTOTOPUP-003` | NT$300 crossing, configurable daily limits, Taipei reset, and three-failure disable. | local, CI | JSON, JUnit, Markdown, DB evidence |
 | `UI-CA-BILLING-002` | Simulator setup and automatic top-up behavior. | desktop, mobile | Final screenshot per target, trace/video on failure |
-| `LIVE-STG-SIMULATOR-001` | Public TLS hosted page, Account Manager callback, worker, ledger, and cleanup. | staging | JSON, Markdown, screenshots, runtime logs |
+| `LIVE-STG-SIMULATOR-001` | Public TLS hosted page, Billing callback, worker, ledger, and cleanup. | staging | JSON, Markdown, screenshots, runtime logs |
 
 Every case reports purpose, method, start/completion time, duration, status, and
 assessment. UI success and failure evidence must contain no token, card-like
@@ -244,7 +245,7 @@ catalog/contract checks
 
 The simulator remains non-production even after qualification. Replacing it
 with NewebPay changes only the provider adapter and provider-specific evidence;
-the Account Manager monetary model, policy, ledger, Cloud Admin BFF, Test IDs,
+the Billing monetary model, policy, ledger, Cloud Admin BFF, Test IDs,
 and report schema remain provider-neutral.
 
 The deployed qualification is plan-only by default. `test-payment --profile

@@ -359,6 +359,13 @@ cases:
       title: workload helpers map k8s status to stable labels and tones
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#billing%20subpaths%20remain%20addressable%20inside%20the%20tenant%20billing%20section
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: billing subpaths remain addressable inside the tenant billing section
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#builds%20devices%20URLs%20with%20supported%20filters%20only
       module: cloud-admin-web
       language: javascript

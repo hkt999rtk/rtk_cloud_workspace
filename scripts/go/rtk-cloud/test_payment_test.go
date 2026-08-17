@@ -15,8 +15,8 @@ func TestAggregatePaymentEvidenceMapsCatalogSelectorsAndStatuses(t *testing.T) {
 		},
 	}
 	units := []goUnitResult{
-		{CanonicalKey: "go://account-manager/internal/paymentservice#TestSuccess", Source: "internal/paymentservice/integration_test.go", StartedAt: "2026-08-15T10:00:00Z", CompletedAt: "2026-08-15T10:00:00.100Z", DurationMS: 100, Status: "PASS"},
-		{CanonicalKey: "go://account-manager/internal/paymentstore#TestLedger", Source: "internal/paymentstore/integration_test.go", StartedAt: "2026-08-15T10:00:00.200Z", CompletedAt: "2026-08-15T10:00:00.500Z", DurationMS: 300, Status: "PASS"},
+		{CanonicalKey: "go://billing-service/internal/paymentservice#TestSuccess", Source: "internal/paymentservice/integration_test.go", StartedAt: "2026-08-15T10:00:00Z", CompletedAt: "2026-08-15T10:00:00.100Z", DurationMS: 100, Status: "PASS"},
+		{CanonicalKey: "go://billing-service/internal/paymentstore#TestLedger", Source: "internal/paymentstore/integration_test.go", StartedAt: "2026-08-15T10:00:00.200Z", CompletedAt: "2026-08-15T10:00:00.500Z", DurationMS: 300, Status: "PASS"},
 	}
 	report, err := aggregatePaymentEvidence("run-1", "fake-e2e", cases, units)
 	if err != nil {
@@ -36,7 +36,7 @@ func TestAggregatePaymentEvidenceFailsClosedForMissingOrSkippedOperations(t *tes
 		Selector: "./internal/paymentservice#TestSkipped,./internal/paymentservice#TestMissing",
 	}}
 	units := []goUnitResult{{
-		CanonicalKey: "go://account-manager/internal/paymentservice#TestSkipped",
+		CanonicalKey: "go://billing-service/internal/paymentservice#TestSkipped",
 		StartedAt:    "2026-08-15T10:00:00Z", CompletedAt: "2026-08-15T10:00:00.010Z", DurationMS: 10, Status: "SKIP",
 	}}
 	report, err := aggregatePaymentEvidence("run-2", "fake-e2e", cases, units)
@@ -50,7 +50,7 @@ func TestAggregatePaymentEvidenceFailsClosedForMissingOrSkippedOperations(t *tes
 
 func TestPaymentSelectorCanonicalKeyRequiresExplicitPackage(t *testing.T) {
 	got, err := paymentSelectorCanonicalKey("./internal/paymentservice#TestTimeout")
-	if err != nil || got != "go://account-manager/internal/paymentservice#TestTimeout" {
+	if err != nil || got != "go://billing-service/internal/paymentservice#TestTimeout" {
 		t.Fatalf("canonical=%q err=%v", got, err)
 	}
 	for _, invalid := range []string{"TestTimeout", "./internal/paymentservice#", "#TestTimeout", "./internal/paymentservice#BenchmarkOnly"} {
@@ -72,8 +72,8 @@ func TestCoverageWorkflowPublishesPaymentEvidence(t *testing.T) {
 	workflow := string(raw)
 	for _, required := range []string{
 		"test-payment --profile fake-e2e",
-		"account-manager-pr/payments/**",
-		"account-manager-pr/coverage/**",
+		"billing-pr/payments/**",
+		"billing-pr/coverage/**",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("coverage workflow does not publish payment evidence %q", required)

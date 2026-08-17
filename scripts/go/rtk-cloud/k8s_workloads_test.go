@@ -17,6 +17,7 @@ func TestK8SWorkloadsRegistryIncludesServiceImages(t *testing.T) {
 	want := map[string]string{
 		"video-cloud":     "LKE_VIDEO_CLOUD_IMAGE",
 		"account-manager": "LKE_ACCOUNT_MANAGER_IMAGE",
+		"billing":         "LKE_BILLING_IMAGE",
 		"cloud-admin":     "LKE_CLOUD_ADMIN_IMAGE",
 		"frontend":        "LKE_FRONTEND_IMAGE",
 		"cloud-logger":    "LKE_CLOUD_LOGGER_IMAGE",
@@ -35,7 +36,7 @@ func TestK8SSelectedWorkloadsMatchLKESelectionModes(t *testing.T) {
 	}{
 		{
 			name: "default",
-			want: []string{"video-cloud", "account-manager", "cloud-admin", "frontend", "cloud-logger"},
+			want: []string{"video-cloud", "account-manager", "billing", "cloud-admin", "frontend", "cloud-logger"},
 		},
 		{
 			name: "video only",
@@ -70,7 +71,7 @@ func TestK8SMissingDeployImageWorkloadsUsesRegistryEnvKeys(t *testing.T) {
 	}
 
 	missing = k8sMissingDeployImageWorkloads(env, provisionOptions{})
-	if got, want := workloadKeys(missing), []string{"account-manager", "cloud-admin", "frontend"}; !reflect.DeepEqual(got, want) {
+	if got, want := workloadKeys(missing), []string{"account-manager", "billing", "cloud-admin", "frontend"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("default deploy missing got %#v want %#v", got, want)
 	}
 }
@@ -167,6 +168,7 @@ func k8sWorkloadTestEnv() map[string]string {
 		"CLOUD_ADMIN_DOMAIN":        "admin.video-cloud-staging.realtekconnect.com",
 		"CLOUD_LOGGER_DOMAIN":       "logger.video-cloud-staging.realtekconnect.com",
 		"LKE_ACCOUNT_MANAGER_IMAGE": "",
+		"LKE_BILLING_IMAGE":         "",
 		"LKE_CLOUD_ADMIN_IMAGE":     "",
 		"LKE_FRONTEND_IMAGE":        "",
 		"LKE_VIDEO_CLOUD_IMAGE":     "",

@@ -51,8 +51,8 @@ cases:
   - id: UNIT-AM-BALANCE-001
     title: Balance arithmetic uses integer minor units and rejects overflow
     layer: unit
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/payment/money_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/payment/money_test.go
     selector: TestApplyBalanceAllowsNegativeBalanceAndRejectsOverflow
     method: Go unit tests apply signed debit and credit deltas in integer minor units and reject arithmetic overflow before persistence.
     runner: test-coverage
@@ -62,8 +62,8 @@ cases:
   - id: UNIT-AM-AUTOTOPUP-001
     title: Automatic top-up uses strict crossing and bounded safety limits
     layer: unit
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/payment/policy_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/payment/policy_test.go
     selector: TestAutoTopUpUsesStrictThresholdAndSafetyLimits
     method: Go unit tests evaluate balances at and below the threshold and enforce daily attempt and amount limits without recursive charging.
     runner: test-coverage
@@ -73,8 +73,8 @@ cases:
   - id: UNIT-AM-PAYMENT-001
     title: Payment intents preserve unknown reconciliation state
     layer: unit
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/payment/intent_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/payment/intent_test.go
     selector: TestIntentTransitionsPreserveUnknownReconciliation
     method: Go unit tests drive the provider-neutral intent state machine and require ambiguous calls to remain reconcilable instead of authorizing a second charge.
     runner: test-coverage
@@ -84,8 +84,8 @@ cases:
   - id: UNIT-AM-INVOICE-001
     title: Invoice pricing uses fixed precision and reconciles immutable totals
     layer: unit
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/billing/invoice_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/billing/invoice_test.go
     selector: ./internal/billing#TestBuildDraftInvoiceAggregatesUsageAndReconciles,./internal/billing#TestPriceUsageUsesFixedPrecisionAndHalfUpRounding
     method: Go unit tests aggregate digest-anchored usage, apply versioned fixed-precision rates, and reconcile every line subtotal, tax, and total without floating point.
     runner: test-coverage
@@ -96,8 +96,8 @@ cases:
   - id: INT-AM-PAYMENT-001
     title: Payment API ledger trigger and reconciliation remain exactly once
     layer: integration
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/api/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/integration_test.go
     selector: ./internal/api#TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction,./internal/paymentstore#TestLedgerTriggerAndIntentCreditAreExactlyOnce,./internal/paymentservice#TestTimeoutReconcilesToOneCredit
     method: PostgreSQL-backed Go integration tests exercise customer authorization, append-only ledger updates, automatic intent creation, timeout reconciliation, one provider attempt, and one resulting credit.
     runner: test-coverage
@@ -105,11 +105,23 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-AM-PAYMENT-OWNERSHIP-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-INTENT-001, REQ-AM-AUTO-TOPUP-001, REQ-AM-PAYMENT-AUTHZ-001, REQ-AM-PAYMENT-AUDIT-001]
     status: active
+  - id: INT-BILL-BOUNDARY-001
+    title: Independent Billing enforces service authentication data isolation and access state
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/integration_test.go
+    selector: ./internal/api#TestServiceAuthenticationPermissionAndAccessStateFailClosed,./internal/api#TestInternalAccessStateIsOwnedByBilling,./internal/api#TestIntegrationInternalBillingDebitAuthenticationAndIdempotency,./internal/accessstore#TestBillingAccessStateIsVersionedAndFailClosed
+    method: Go and PostgreSQL integration tests require a dedicated service credential and exact permission, enforce versioned fail-closed commercial access, persist opaque organization UUIDs without Account Manager foreign keys, and prove an idempotent monetary write belongs only to Billing.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-OWNERSHIP-001, REQ-BILL-SERVICE-AUTH-001, REQ-BILL-ACCESS-001, REQ-BILL-DATA-BOUNDARY-001]
+    status: active
   - id: INT-AM-BILLING-DEBIT-001
     title: Dedicated billing service posts one authenticated idempotent debit
     layer: integration
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/api/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/integration_test.go
     selector: TestIntegrationInternalBillingDebitAuthenticationAndIdempotency
     method: PostgreSQL-backed API integration tests require a dedicated service credential, restrict debit reasons, preserve immutable external references and actor identity, accept semantic replay with a new request ID, and reject conflicting idempotency reuse.
     runner: test-coverage
@@ -121,8 +133,8 @@ cases:
   - id: INT-AM-INVOICE-001
     title: PostgreSQL invoice lifecycle is idempotent immutable and document anchored
     layer: integration
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/billingstore/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/billingstore/integration_test.go
     selector: TestBillingPersistenceInvoiceLifecycle
     method: PostgreSQL 16 integration test migrates the schema, activates pricing, ingests usage, issues and settles one invoice, stores a digest-anchored PDF, accepts identical replay, and rejects late usage for the closed period.
     runner: test-coverage
@@ -133,8 +145,8 @@ cases:
   - id: INT-AM-NEWEBPAY-001
     title: NewebPay adapter verifies official cryptography query and webhook boundaries
     layer: integration
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/paymentprovider/newebpay/adapter_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentprovider/newebpay/adapter_test.go
     selector: ./internal/paymentprovider/newebpay#TestOfficialNDNF123TradeSHAVector,./internal/paymentprovider/newebpay#TestQueryUsesFixedSandboxEndpointAndVerifiesResponse,./internal/paymentprovider/newebpay#TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields
     method: Adapter contract tests apply official redacted cryptographic vectors, an isolated HTTP provider fixture, integrity verification, safe response normalization, and authenticated webhook parsing.
     runner: test-coverage
@@ -145,8 +157,8 @@ cases:
   - id: E2E-AM-PAYMENT-001
     title: Hosted payment method setup records consent without card storage
     layer: e2e
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/api/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/integration_test.go
     selector: ./internal/api#TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction
     method: PostgreSQL-backed customer API E2E uses the deterministic fake hosted provider, persists setup idempotency and consent before provider I/O, encrypts opaque customer and method references, stores only the hosted URL SHA-256, rejects card fields, and proves semantic replay creates no duplicate method or consent.
     runner: test-payment
@@ -158,10 +170,10 @@ cases:
   - id: E2E-AM-SIMULATOR-001
     title: Virtual hosted setup activates a safe payment method without persisting its raw token
     layer: e2e
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/api/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/integration_test.go
     selector: ./internal/api#TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingRawToken
-    method: PostgreSQL-backed HTTP E2E drives the Account Manager API through the simulator provider and hosted page, verifies the signed callback activates encrypted synthetic references, rejects payment-card fields, and confirms the raw hosted token is absent from durable simulator state.
+    method: PostgreSQL-backed HTTP E2E drives the Billing API through the simulator provider and hosted page, verifies the signed callback activates encrypted synthetic references, rejects payment-card fields, and confirms the raw hosted token is absent from durable simulator state.
     runner: test-payment
     environments: [local, ci]
     tags: [payment, simulator, hosted-setup, redaction]
@@ -171,8 +183,8 @@ cases:
   - id: E2E-AM-SIMULATOR-002
     title: Virtual charge query refund and decline converge exactly once
     layer: e2e
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/paymentservice/simulator_integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentservice/simulator_integration_test.go
     selector: ./internal/paymentservice#TestSimulatorChargeCreditsExactlyOnceAndRefundIsIdempotent,./internal/paymentservice#TestSimulatorUnknownChargeQueriesToConclusiveSuccess,./internal/paymentservice#TestSimulatorDeclineFailsWithoutCredit
     method: PostgreSQL-backed worker E2E uses the real simulator HTTP adapter to prove one successful charge and ledger credit, idempotent refund, unknown-to-query reconciliation without a second charge, and a conclusive decline without credit.
     runner: test-payment
@@ -184,7 +196,7 @@ cases:
   - id: LIVE-STG-SIMULATOR-001
     title: Deployed payment simulator completes hosted setup and a reconciled TWD charge
     layer: live
-    owner: rtk_account_manager
+    owner: rtk_billing
     source: scripts/go/rtk-cloud/test_payment_live.go
     selector: staging-live
     method: A dedicated staging organization performs simulator hosted setup, captures desktop and mobile hosted-page evidence, enables the approved automatic top-up defaults, reconciles a TWD 300 charge to the ledger, and then disables the policy and revokes the synthetic method.
@@ -197,8 +209,8 @@ cases:
   - id: E2E-AM-AUTOTOPUP-001
     title: Balance crossing produces one fake-provider transaction and one credit
     layer: e2e
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/paymentservice/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentservice/integration_test.go
     selector: ./internal/paymentservice#TestSuccessfulChargeCreditsExactlyOnceWithoutQuery,./internal/paymentservice#TestTimeoutReconcilesToOneCredit
     method: PostgreSQL-backed payment orchestration crosses the configured balance threshold, proves both direct success and timeout/query reconciliation, records every provider attempt before I/O, and commits exactly one resulting balance credit without retrying a completed charge.
     runner: test-payment
@@ -210,8 +222,8 @@ cases:
   - id: E2E-AM-AUTOTOPUP-002
     title: Ambiguous duplicate and out-of-order payment events reconcile safely
     layer: e2e
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/paymentservice/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentservice/integration_test.go
     selector: ./internal/paymentservice#TestDeclinedChargeFailsWithoutCreditOrRetry,./internal/paymentservice#TestRequiresActionStopsAutomaticFlowAndMarksAttention,./internal/paymentservice#TestStaleIncompleteAttemptDoesNotRepeatCharge,./internal/paymentservice#TestVerifiedDuplicateWebhookSchedulesOneReconciliation,./internal/paymentservice#TestRepeatedUnknownQueryReusesDurableJobUntilConclusive,./internal/paymentservice#TestVerifiedWebhookMustMatchIntentAmountAndCurrency,./internal/paymentservice#TestInvalidWebhookIsQuarantinedAndProviderDisabledMakesNoCharge,./internal/paymentstore#TestRefundCompensationDisarmsAutoTopUpWithoutRecharge
     method: Failure-injection E2E tests simulate a hard decline, required customer action, process crash before provider completion, repeated unknown query states, duplicate verified callbacks, amount mismatch, invalid signatures, provider disable, and refund compensation; every path must converge without duplicate charge, credit, or automatic recharge.
     runner: test-payment
@@ -223,8 +235,8 @@ cases:
   - id: E2E-AM-AUTOTOPUP-003
     title: TWD automatic top-up applies approved limits and disables after three failures
     layer: e2e
-    owner: rtk_account_manager
-    source: repos/rtk_account_manager/internal/paymentstore/integration_test.go
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentstore/integration_test.go
     selector: ./internal/payment#TestValidateChargeAmountUsesZeroDecimalTWDUnits,./internal/payment#TestDailyLimitWindowUsesTaipeiCalendarDay,./internal/payment#TestAutoTopUpUsesStrictThresholdAndSafetyLimits,./internal/paymentstore#TestFirstFailedIntentKeepsAccountActiveAndManualCreditRearmsPolicy,./internal/paymentstore#TestThirdConsecutiveAutoTopUpFailureDisablesPolicy
     method: Go and PostgreSQL-backed tests verify direct TWD integer units, strict below-threshold triggering, Asia/Taipei daily windows, continued operation after the first two conclusive failures, and automatic policy disablement with account attention after the third.
     runner: test-payment
@@ -1220,6 +1232,7 @@ cases:
     status: active
 
   - { id: SVC-AM-SUITE-001, title: Account Manager unit and service suite passes, layer: service, owner: rtk_account_manager, source: repos/rtk_account_manager/go.mod, selector: "module", method: Go test executes all Account Manager packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }
+  - { id: SVC-BILL-SUITE-001, title: Billing unit integration and service suite passes, layer: service, owner: rtk_billing, source: repos/rtk_billing/go.mod, selector: "module", method: Go tests execute provider-neutral billing payment invoice access and PostgreSQL lifecycle packages., runner: test-services, environments: [local, ci], evidence: [console, json, junit], status: active }
   - { id: SVC-CA-SUITE-001, title: Cloud Admin unit and service suite passes, layer: service, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/go.mod, selector: "module", method: Go test and Node test execute Cloud Admin backend and frontend unit suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }
   - { id: SVC-CLIENT-SUITE-001, title: Cloud Client SDK unit suites pass, layer: service, owner: rtk_cloud_client, source: repos/rtk_cloud_client/README.md, selector: "rtk_cloud_client", method: JavaScript and Python test runners execute Cloud Client SDK and tooling suites., runner: test-services, environments: [local, ci], evidence: [console], status: active }
   - { id: SVC-FRONTEND-SUITE-001, title: Cloud Frontend service suite passes, layer: service, owner: rtk_cloud_frontend, source: repos/rtk_cloud_frontend/go.mod, selector: "module", method: Go test executes all Cloud Frontend packages., runner: test-services, environments: [local, ci], evidence: [console], status: active }

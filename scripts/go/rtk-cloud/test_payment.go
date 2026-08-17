@@ -99,11 +99,11 @@ func runTestPayment(args []string) error {
 
 	coverageErr := runTestCoverage([]string{
 		"--profile", "pr",
-		"--module", "account-manager",
+		"--module", "billing-service",
 		"--run-id", *runID,
 	})
 	coverageDir := filepath.Join(workspace, ".artifacts", "test-runs", *runID, "coverage")
-	moduleDir := filepath.Join(coverageDir, "modules", "account-manager")
+	moduleDir := filepath.Join(coverageDir, "modules", "billing-service")
 	manifest, err := readPaymentUnitManifest(filepath.Join(moduleDir, "unit-manifest.json"))
 	if err != nil {
 		if coverageErr != nil {
@@ -132,17 +132,17 @@ func runTestPayment(args []string) error {
 	report.Environment = "local-postgresql-fake-provider"
 	report.WorkspaceCommit, _ = gitOutput(workspace, "rev-parse", "HEAD")
 	report.WorkspaceCommit = strings.TrimSpace(report.WorkspaceCommit)
-	report.ServiceCommit, _ = gitOutput(filepath.Join(workspace, "repos", "rtk_account_manager"), "rev-parse", "HEAD")
+	report.ServiceCommit, _ = gitOutput(filepath.Join(workspace, "repos", "rtk_billing"), "rev-parse", "HEAD")
 	report.ServiceCommit = strings.TrimSpace(report.ServiceCommit)
 	report.CoverageGate = "PASS"
 	if coverageErr != nil {
 		report.CoverageGate = "FAIL"
 		report.Status = "FAIL"
-		report.Assessment = "Payment case assertions completed, but the required Account Manager PR coverage gate failed."
+		report.Assessment = "Payment case assertions completed, but the required Billing PR coverage gate failed."
 	}
 
 	outDir := filepath.Join(workspace, ".artifacts", "test-runs", *runID, "payments", *profile)
-	if err := os.MkdirAll(filepath.Join(outDir, "account-manager"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(outDir, "billing-service"), 0o755); err != nil {
 		return err
 	}
 	evidenceSources := []struct {
@@ -150,14 +150,14 @@ func runTestPayment(args []string) error {
 		name   string
 	}{
 		{source: filepath.Join(moduleDir, "coverage.out"), name: "coverage.out"},
-		{source: filepath.Join(coverageDir, "logs", "account-manager.log"), name: "coverage.log"},
+		{source: filepath.Join(coverageDir, "logs", "billing-service.log"), name: "coverage.log"},
 		{source: filepath.Join(moduleDir, "junit.xml"), name: "junit.xml"},
 		{source: filepath.Join(moduleDir, "package-coverage.json"), name: "package-coverage.json"},
 		{source: filepath.Join(moduleDir, "test-events.json"), name: "test-events.json"},
 		{source: filepath.Join(moduleDir, "unit-manifest.json"), name: "unit-manifest.json"},
 	}
 	for _, item := range evidenceSources {
-		if err := copyFile(item.source, filepath.Join(outDir, "account-manager", item.name)); err != nil {
+		if err := copyFile(item.source, filepath.Join(outDir, "billing-service", item.name)); err != nil {
 			return fmt.Errorf("copy payment evidence %s: %w", item.name, err)
 		}
 	}
@@ -204,8 +204,8 @@ func runTestPayment(args []string) error {
 
 	evidenceNames := []string{
 		"results.json", "TEST_REPORT.md", "cleanup-report.json", "redaction-report.json",
-		"account-manager/coverage.out", "account-manager/coverage.log", "account-manager/junit.xml",
-		"account-manager/package-coverage.json", "account-manager/test-events.json", "account-manager/unit-manifest.json",
+		"billing-service/coverage.out", "billing-service/coverage.log", "billing-service/junit.xml",
+		"billing-service/package-coverage.json", "billing-service/test-events.json", "billing-service/unit-manifest.json",
 	}
 	evidence := make([]paymentEvidenceFile, 0, len(evidenceNames))
 	for _, name := range evidenceNames {
@@ -244,7 +244,7 @@ func readPaymentUnitManifest(path string) (paymentUnitManifest, error) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		return paymentUnitManifest{}, fmt.Errorf("parse payment unit manifest: %w", err)
 	}
-	if manifest.SchemaVersion != 1 || manifest.Module != "account-manager" || len(manifest.Tests) == 0 {
+	if manifest.SchemaVersion != 1 || manifest.Module != "billing-service" || len(manifest.Tests) == 0 {
 		return paymentUnitManifest{}, errors.New("payment unit manifest is incomplete or belongs to another module")
 	}
 	return manifest, nil
@@ -350,7 +350,7 @@ func paymentSelectorCanonicalKey(selector string) (string, error) {
 	if !ok || pkg == "" || testName == "" || !strings.HasPrefix(testName, "Test") {
 		return "", fmt.Errorf("selector %q must use ./package#TestName", selector)
 	}
-	return "go://account-manager/" + filepath.ToSlash(pkg) + "#" + testName, nil
+	return "go://billing-service/" + filepath.ToSlash(pkg) + "#" + testName, nil
 }
 
 func mustParseEvidenceTime(value string) time.Time {
@@ -368,7 +368,7 @@ func renderPaymentEvidenceReport(report paymentEvidenceReport) []byte {
 	fmt.Fprintf(&out, "- Completed: `%s`\n", report.CompletedAt)
 	fmt.Fprintf(&out, "- Duration: `%d ms`\n", report.DurationMS)
 	fmt.Fprintf(&out, "- Workspace commit: `%s`\n", report.WorkspaceCommit)
-	fmt.Fprintf(&out, "- Account Manager commit: `%s`\n", report.ServiceCommit)
+	fmt.Fprintf(&out, "- Billing service commit: `%s`\n", report.ServiceCommit)
 	fmt.Fprintf(&out, "- Coverage gate: **%s**\n", report.CoverageGate)
 	fmt.Fprintf(&out, "- Overall result: **%s**\n\n", report.Status)
 	out.WriteString("| Test ID | Start time (UTC) | End time (UTC) | Duration ms | Purpose | Method | Result | Assessment |\n")

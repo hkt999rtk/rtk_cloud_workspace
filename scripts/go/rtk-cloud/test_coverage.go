@@ -328,6 +328,7 @@ func validateRequiredGoCoverageModules(workspace string, cfg coverageConfig) err
 		"workspace-e2e":       "e2e_test",
 		"home-load-runner":    "loadtests/home-100k",
 		"account-manager":     "repos/rtk_account_manager",
+		"billing-service":     "repos/rtk_billing",
 		"cloud-admin-backend": "repos/rtk_cloud_admin",
 		"cloud-client-golang": "repos/rtk_cloud_client/packages/golang",
 		"cloud-frontend":      "repos/rtk_cloud_frontend",

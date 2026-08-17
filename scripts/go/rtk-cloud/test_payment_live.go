@@ -23,10 +23,11 @@ const paymentLiveBootstrapConfirmation = "rtk-payment-simulator-qualification"
 const paymentLiveBootstrapOrgName = "RTK Payment Simulator Qualification"
 
 type paymentLiveConfig struct {
-	RunID, BaseURL, OrgID, TokenFile, Confirm, ConfirmTestOrg string
-	EnvRoot                                                   string
-	Run, Plan, BootstrapTestOrg                               bool
-	Timeout                                                   time.Duration
+	RunID, AccountManagerBaseURL, BillingBaseURL, OrgID         string
+	AccountTokenFile, BillingTokenFile, Confirm, ConfirmTestOrg string
+	EnvRoot                                                     string
+	Run, Plan, BootstrapTestOrg                                 bool
+	Timeout                                                     time.Duration
 }
 
 type paymentLiveState struct {
@@ -52,9 +53,12 @@ func runTestPaymentLive(args []string) error {
 	fs.SetOutput(os.Stderr)
 	profile := fs.String("profile", "staging-live", "payment profile")
 	runID := fs.String("run-id", "", "artifact run ID")
-	baseURL := fs.String("base-url", os.Getenv("ACCOUNT_MANAGER_PUBLIC_URL"), "staging Account Manager base URL")
+	accountManagerBaseURL := fs.String("base-url", os.Getenv("ACCOUNT_MANAGER_PUBLIC_URL"), "staging Account Manager base URL (deprecated alias)")
+	fs.StringVar(accountManagerBaseURL, "account-manager-base-url", os.Getenv("ACCOUNT_MANAGER_PUBLIC_URL"), "staging Account Manager base URL")
+	billingBaseURL := fs.String("billing-base-url", firstNonEmpty(os.Getenv("BILLING_PUBLIC_URL"), "https://billing.video-cloud-staging.realtekconnect.com"), "staging Billing service base URL")
 	orgID := fs.String("org-id", os.Getenv("PAYMENT_TEST_ORG_ID"), "dedicated staging test organization")
-	tokenFile := fs.String("access-token-file", os.Getenv("PAYMENT_TEST_ACCESS_TOKEN_FILE"), "file containing the dedicated test access token")
+	accountTokenFile := fs.String("access-token-file", os.Getenv("PAYMENT_TEST_ACCESS_TOKEN_FILE"), "file containing the dedicated Account Manager test access token")
+	billingTokenFile := fs.String("billing-token-file", os.Getenv("PAYMENT_TEST_BILLING_TOKEN_FILE"), "file containing the dedicated Billing service token")
 	confirm := fs.String("confirm", "", "required staging stack confirmation")
 	confirmTestOrg := fs.String("confirm-test-org", "", "must exactly match --org-id")
 	bootstrapTestOrg := fs.Bool("bootstrap-test-org", false, "create or reuse the fixed dedicated qualification organization using LKE platform-admin credentials")
@@ -77,7 +81,7 @@ func runTestPaymentLive(args []string) error {
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z") + "-payment-live"
 	}
-	cfg := paymentLiveConfig{RunID: *runID, BaseURL: strings.TrimRight(strings.TrimSpace(*baseURL), "/"), OrgID: strings.TrimSpace(*orgID), TokenFile: strings.TrimSpace(*tokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
+	cfg := paymentLiveConfig{RunID: *runID, AccountManagerBaseURL: strings.TrimRight(strings.TrimSpace(*accountManagerBaseURL), "/"), BillingBaseURL: strings.TrimRight(strings.TrimSpace(*billingBaseURL), "/"), OrgID: strings.TrimSpace(*orgID), AccountTokenFile: strings.TrimSpace(*accountTokenFile), BillingTokenFile: strings.TrimSpace(*billingTokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
 	if cfg.Plan {
 		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> TWD 300 charge -> reconcile ledger -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
 		return nil
@@ -89,20 +93,20 @@ func runTestPaymentLive(args []string) error {
 	if err != nil {
 		return err
 	}
-	token := ""
+	billingToken := ""
 	if cfg.BootstrapTestOrg {
-		cfg, token, err = bootstrapPaymentLiveOrganization(workspace, cfg)
+		cfg, _, billingToken, err = bootstrapPaymentLiveOrganization(workspace, cfg)
 		if err != nil {
 			return err
 		}
 	} else {
-		tokenRaw, readErr := os.ReadFile(cfg.TokenFile)
+		billingRaw, readErr := os.ReadFile(cfg.BillingTokenFile)
 		if readErr != nil {
-			return fmt.Errorf("read dedicated payment test token: %w", readErr)
+			return fmt.Errorf("read dedicated Billing service token: %w", readErr)
 		}
-		token = strings.TrimSpace(string(tokenRaw))
-		if len(token) < 24 {
-			return errors.New("dedicated payment test token is empty or implausibly short")
+		billingToken = strings.TrimSpace(string(billingRaw))
+		if len(billingToken) < 24 {
+			return errors.New("dedicated Billing token is empty or implausibly short")
 		}
 	}
 	outDir := filepath.Join(workspace, ".artifacts", "test-runs", cfg.RunID, "payments", "staging-live")
@@ -113,8 +117,8 @@ func runTestPaymentLive(args []string) error {
 	state := paymentLiveState{}
 	caseResult := paymentEvidenceCase{TestID: "LIVE-STG-SIMULATOR-001", Purpose: "Qualify the deployed virtual payment flow with hosted UI evidence and a reconciled TWD charge.", Method: "Dedicated staging organization performs simulator hosted setup, desktop/mobile viewport capture, policy activation with approved defaults, a TWD 300 manual charge, ledger reconciliation, and mandatory cleanup.", StartedAt: started.Format(time.RFC3339), Status: "PASS"}
 	client := &http.Client{Timeout: 20 * time.Second}
-	runErr := executePaymentLive(context.Background(), client, workspace, outDir, cfg, token, &state)
-	cleanupErr := cleanupPaymentLive(context.Background(), client, cfg, token, state)
+	runErr := executePaymentLive(context.Background(), client, workspace, outDir, cfg, billingToken, &state)
+	cleanupErr := cleanupPaymentLive(context.Background(), client, cfg, billingToken, state)
 	completed := time.Now().UTC()
 	caseResult.CompletedAt = completed.Format(time.RFC3339)
 	caseResult.DurationMS = completed.Sub(started).Milliseconds()
@@ -128,7 +132,7 @@ func runTestPaymentLive(args []string) error {
 		caseResult.Assessment = strings.TrimSpace(caseResult.Assessment + "; cleanup: " + cleanupErr.Error())
 	}
 	workspaceCommit, _ := gitOutput(workspace, "rev-parse", "HEAD")
-	serviceCommit, _ := gitOutput(filepath.Join(workspace, "repos", "rtk_account_manager"), "rev-parse", "HEAD")
+	serviceCommit, _ := gitOutput(filepath.Join(workspace, "repos", "rtk_billing"), "rev-parse", "HEAD")
 	report := paymentEvidenceReport{SchemaVersion: 1, RunID: cfg.RunID, Profile: "staging-live", Environment: "staging", WorkspaceCommit: strings.TrimSpace(workspaceCommit), ServiceCommit: strings.TrimSpace(serviceCommit), StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), DurationMS: completed.Sub(started).Milliseconds(), Status: caseResult.Status, Assessment: caseResult.Assessment, CoverageGate: "N/A", Cases: []paymentEvidenceCase{caseResult}}
 	if err := writePaymentLiveReports(outDir, report, cleanupErr); err != nil {
 		return err
@@ -145,7 +149,7 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 		return fmt.Errorf("--run requires --confirm %s", paymentLiveConfirmation)
 	}
 	if cfg.BootstrapTestOrg {
-		if cfg.OrgID != "" || cfg.TokenFile != "" {
+		if cfg.OrgID != "" || cfg.AccountTokenFile != "" || cfg.BillingTokenFile != "" {
 			return errors.New("--bootstrap-test-org cannot be combined with --org-id or --access-token-file")
 		}
 		if cfg.ConfirmTestOrg != paymentLiveBootstrapConfirmation {
@@ -157,17 +161,27 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 	} else if cfg.OrgID == "" || cfg.ConfirmTestOrg != cfg.OrgID {
 		return errors.New("--run requires a dedicated --org-id and an exact matching --confirm-test-org")
 	}
-	parsed, err := url.Parse(cfg.BaseURL)
+	parsed, err := url.Parse(cfg.AccountManagerBaseURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || strings.ToLower(parsed.Hostname()) != "account-manager.video-cloud-staging.realtekconnect.com" {
 		return errors.New("--base-url must be the approved HTTPS Account Manager staging endpoint")
 	}
-	if !cfg.BootstrapTestOrg && cfg.TokenFile == "" {
-		return errors.New("--access-token-file is required; raw token command-line arguments are intentionally unsupported")
+	billingParsed, billingErr := url.Parse(cfg.BillingBaseURL)
+	if billingErr != nil || billingParsed.Scheme != "https" || billingParsed.Host == "" || billingParsed.User != nil || strings.ToLower(billingParsed.Hostname()) != "billing.video-cloud-staging.realtekconnect.com" {
+		return errors.New("--billing-base-url must be the approved HTTPS Billing staging endpoint")
+	}
+	if !cfg.BootstrapTestOrg && cfg.BillingTokenFile == "" {
+		return errors.New("--billing-token-file is required; raw token command-line arguments are intentionally unsupported")
 	}
 	if !cfg.BootstrapTestOrg {
-		info, err := os.Stat(cfg.TokenFile)
-		if err != nil || info.IsDir() || info.Mode().Perm()&0o077 != 0 {
-			return errors.New("access token file must exist, be a regular file, and not be group/world accessible")
+		paths := []string{cfg.BillingTokenFile}
+		if cfg.AccountTokenFile != "" {
+			paths = append(paths, cfg.AccountTokenFile)
+		}
+		for _, path := range paths {
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() || info.Mode().Perm()&0o077 != 0 {
+				return errors.New("token files must exist, be regular files, and not be group/world accessible")
+			}
 		}
 	}
 	if cfg.Timeout < 10*time.Second || cfg.Timeout > 10*time.Minute {
@@ -179,21 +193,25 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 	return nil
 }
 
-func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, error) {
+func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, string, error) {
 	ctx, err := accountManagerContextFromFlags(workspace, cfg.EnvRoot)
 	if err != nil {
-		return cfg, "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
+		return cfg, "", "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
 	}
 	defer ctx.Close()
-	ctx.BaseURL = cfg.BaseURL
+	ctx.BaseURL = cfg.AccountManagerBaseURL
 	token, err := accountLogin(ctx, func(string, ...any) {})
 	if err != nil {
-		return cfg, "", fmt.Errorf("staging platform-admin login: %w", err)
+		return cfg, "", "", fmt.Errorf("staging platform-admin login: %w", err)
+	}
+	billingToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_SERVICE_TOKEN")
+	if err != nil {
+		return cfg, "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
 	}
 	client := &http.Client{Timeout: 20 * time.Second}
 	var organizations map[string]any
-	if err := paymentLiveJSON(context.Background(), client, http.MethodGet, cfg.BaseURL+"/v1/orgs?limit=100", token, nil, nil, &organizations); err != nil {
-		return cfg, "", fmt.Errorf("list qualification organizations: %w", err)
+	if err := paymentLiveJSON(context.Background(), client, http.MethodGet, cfg.AccountManagerBaseURL+"/v1/orgs?limit=100", token, nil, nil, &organizations); err != nil {
+		return cfg, "", "", fmt.Errorf("list qualification organizations: %w", err)
 	}
 	for _, item := range paymentLiveAnySlice(organizations["organizations"]) {
 		organization := nestedMap(item)
@@ -203,25 +221,25 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		}
 		cfg.OrgID, _ = organization["id"].(string)
 		if cfg.OrgID == "" {
-			return cfg, "", errors.New("dedicated qualification organization has no ID")
+			return cfg, "", "", errors.New("dedicated qualification organization has no ID")
 		}
-		return cfg, token, nil
+		return cfg, token, billingToken, nil
 	}
 	var created map[string]any
-	if err := paymentLiveJSON(context.Background(), client, http.MethodPost, cfg.BaseURL+"/v1/orgs", token, nil, map[string]any{"name": paymentLiveBootstrapOrgName}, &created); err != nil {
-		return cfg, "", fmt.Errorf("create dedicated qualification organization: %w", err)
+	if err := paymentLiveJSON(context.Background(), client, http.MethodPost, cfg.AccountManagerBaseURL+"/v1/orgs", token, nil, map[string]any{"name": paymentLiveBootstrapOrgName}, &created); err != nil {
+		return cfg, "", "", fmt.Errorf("create dedicated qualification organization: %w", err)
 	}
 	cfg.OrgID, _ = nestedMap(created["organization"])["id"].(string)
 	if cfg.OrgID == "" {
-		return cfg, "", errors.New("created qualification organization has no ID")
+		return cfg, "", "", errors.New("created qualification organization has no ID")
 	}
-	return cfg, token, nil
+	return cfg, token, billingToken, nil
 }
 
 func executePaymentLive(ctx context.Context, client *http.Client, workspace, outDir string, cfg paymentLiveConfig, token string, state *paymentLiveState) error {
-	base := cfg.BaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
+	base := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
 	var account map[string]any
-	if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/billing/account", token, nil, nil, &account); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/billing/account", token, "billing_account.read", nil, nil, &account); err != nil {
 		return fmt.Errorf("billing preflight: %w", err)
 	}
 	if !paymentSimulatorAvailable(account) {
@@ -231,7 +249,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 		return errors.New("billing preflight: dedicated test organization already has an enabled automatic top-up policy")
 	}
 	var existingMethods map[string]any
-	if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/payment-methods", token, nil, nil, &existingMethods); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-methods", token, "payment_method.read", nil, nil, &existingMethods); err != nil {
 		return fmt.Errorf("payment method preflight: %w", err)
 	}
 	for _, item := range paymentLiveAnySlice(existingMethods["payment_methods"]) {
@@ -242,7 +260,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	setupBody := map[string]any{"provider": "simulator", "consent": map[string]any{"accepted": true, "text_version": "payment-simulator-live-v1", "text_sha256": strings.Repeat("a", 64), "locale": "zh-TW"}}
 	var setup map[string]any
 	headers := map[string]string{"Idempotency-Key": "setup-" + cfg.RunID, "X-Request-Id": "setup-" + cfg.RunID}
-	if err := paymentLiveJSON(ctx, client, http.MethodPost, base+"/payment-methods/setup", token, headers, setupBody, &setup); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodPost, base+"/payment-methods/setup", token, "payment_method.manage", headers, setupBody, &setup); err != nil {
 		return fmt.Errorf("hosted setup: %w", err)
 	}
 	hostedURL, _ := setup["hosted_url"].(string)
@@ -279,7 +297,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	}
 	if err := pollPaymentLive(ctx, cfg.Timeout, func() (bool, error) {
 		var methods map[string]any
-		if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/payment-methods", token, nil, nil, &methods); err != nil {
+		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-methods", token, "payment_method.read", nil, nil, &methods); err != nil {
 			return false, err
 		}
 		for _, item := range paymentLiveAnySlice(methods["payment_methods"]) {
@@ -293,18 +311,18 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 		return fmt.Errorf("payment method activation: %w", err)
 	}
 	var current map[string]any
-	if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/auto-topup", token, nil, nil, &current); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/auto-topup", token, "auto_topup.read", nil, nil, &current); err != nil {
 		return err
 	}
 	state.PolicyVersion = nestedInt64(current["auto_topup"], "version")
 	policyBody := map[string]any{"enabled": true, "threshold_minor": 300, "top_up_amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID, "daily_attempt_limit": 2, "daily_amount_limit_minor": 1000, "cooldown_seconds": 3600, "consent": map[string]any{"accepted": true, "text_version": "auto-topup-live-v1", "text_sha256": strings.Repeat("b", 64), "locale": "zh-TW"}}
 	var policy map[string]any
-	if err := paymentLiveJSON(ctx, client, http.MethodPut, base+"/auto-topup", token, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10)), "X-Request-Id": "policy-" + cfg.RunID}, policyBody, &policy); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodPut, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10)), "X-Request-Id": "policy-" + cfg.RunID}, policyBody, &policy); err != nil {
 		return fmt.Errorf("enable automatic top-up: %w", err)
 	}
 	state.PolicyVersion = nestedInt64(policy["auto_topup"], "version")
 	var topup map[string]any
-	if err := paymentLiveJSON(ctx, client, http.MethodPost, base+"/topups", token, map[string]string{"Idempotency-Key": "topup-" + cfg.RunID, "X-Request-Id": "topup-" + cfg.RunID}, map[string]any{"amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID}, &topup); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodPost, base+"/topups", token, "payment_intent.create", map[string]string{"Idempotency-Key": "topup-" + cfg.RunID, "X-Request-Id": "topup-" + cfg.RunID}, map[string]any{"amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID}, &topup); err != nil {
 		return fmt.Errorf("create TWD 300 top-up: %w", err)
 	}
 	state.IntentID, _ = nestedMap(topup["payment_intent"])["id"].(string)
@@ -313,7 +331,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	}
 	if err := pollPaymentLive(ctx, cfg.Timeout, func() (bool, error) {
 		var intent map[string]any
-		if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/payment-intents/"+url.PathEscape(state.IntentID), token, nil, nil, &intent); err != nil {
+		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-intents/"+url.PathEscape(state.IntentID), token, "payment_intent.read", nil, nil, &intent); err != nil {
 			return false, err
 		}
 		status, _ := nestedMap(intent["payment_intent"])["state"].(string)
@@ -325,7 +343,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 		return fmt.Errorf("payment reconciliation: %w", err)
 	}
 	var ledger map[string]any
-	if err := paymentLiveJSON(ctx, client, http.MethodGet, base+"/billing/ledger", token, nil, nil, &ledger); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/billing/ledger", token, "billing_ledger.read", nil, nil, &ledger); err != nil {
 		return err
 	}
 	for _, item := range paymentLiveAnySlice(ledger["ledger_entries"]) {
@@ -338,18 +356,18 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 }
 
 func cleanupPaymentLive(ctx context.Context, client *http.Client, cfg paymentLiveConfig, token string, state paymentLiveState) error {
-	base := cfg.BaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
+	base := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
 	var issues []string
 	if state.PolicyVersion > 0 {
 		var disabled map[string]any
-		err := paymentLiveJSON(ctx, client, http.MethodDelete, base+"/auto-topup", token, map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10))}, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &disabled)
+		err := paymentLiveBillingJSON(ctx, client, http.MethodDelete, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10))}, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &disabled)
 		if err != nil {
 			issues = append(issues, "disable policy: "+err.Error())
 		}
 	}
 	if state.MethodID != "" {
 		var revoked map[string]any
-		if err := paymentLiveJSON(ctx, client, http.MethodDelete, base+"/payment-methods/"+url.PathEscape(state.MethodID), token, nil, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &revoked); err != nil {
+		if err := paymentLiveBillingJSON(ctx, client, http.MethodDelete, base+"/payment-methods/"+url.PathEscape(state.MethodID), token, "payment_method.manage", nil, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &revoked); err != nil {
 			issues = append(issues, "revoke method: "+err.Error())
 		}
 	}
@@ -357,6 +375,16 @@ func cleanupPaymentLive(ctx context.Context, client *http.Client, cfg paymentLiv
 		return errors.New(strings.Join(issues, "; "))
 	}
 	return nil
+}
+
+func paymentLiveBillingJSON(ctx context.Context, client *http.Client, method, endpoint, token, permission string, headers map[string]string, body any, output any) error {
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	headers["X-Billing-Permissions"] = permission
+	headers["X-Billing-Actor-Type"] = "service_test"
+	headers["X-Billing-Actor-ID"] = "staging-payment-qualification"
+	return paymentLiveJSON(ctx, client, method, endpoint, token, headers, body, output)
 }
 
 func paymentLiveJSON(ctx context.Context, client *http.Client, method, endpoint, token string, headers map[string]string, body any, output any) error {

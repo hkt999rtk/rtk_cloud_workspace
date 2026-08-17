@@ -1,13 +1,37 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPaymentLiveBillingRequestUsesServiceIdentityAndExactPermission(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if got := request.Header.Get("Authorization"); got != "Bearer "+strings.Repeat("b", 32) {
+			t.Errorf("authorization = %q", got)
+		}
+		if got := request.Header.Get("X-Billing-Permissions"); got != "billing_account.read" {
+			t.Errorf("permission = %q", got)
+		}
+		if request.Header.Get("X-Billing-Actor-Type") != "service_test" || request.Header.Get("X-Billing-Actor-ID") == "" {
+			t.Error("missing service-test actor identity")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+	var output map[string]any
+	if err := paymentLiveBillingJSON(context.Background(), server.Client(), http.MethodGet, server.URL, strings.Repeat("b", 32), "billing_account.read", nil, nil, &output); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestPaymentLiveDefaultsToNonMutatingPlan(t *testing.T) {
 	output := captureStdout(t, func() {
@@ -21,7 +45,7 @@ func TestPaymentLiveDefaultsToNonMutatingPlan(t *testing.T) {
 }
 
 func TestPaymentLiveBootstrapRequiresFixedOrganizationConfirmation(t *testing.T) {
-	cfg := paymentLiveConfig{Run: true, BootstrapTestOrg: true, Confirm: paymentLiveConfirmation, ConfirmTestOrg: "wrong", EnvRoot: t.TempDir(), BaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
+	cfg := paymentLiveConfig{Run: true, BootstrapTestOrg: true, Confirm: paymentLiveConfirmation, ConfirmTestOrg: "wrong", EnvRoot: t.TempDir(), AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), paymentLiveBootstrapConfirmation) {
 		t.Fatalf("bootstrap must require fixed organization confirmation, got %v", err)
 	}
@@ -40,7 +64,11 @@ func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("x", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := paymentLiveConfig{Run: true, BaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", OrgID: "org-test", TokenFile: tokenFile, Timeout: time.Minute}
+	billingTokenFile := filepath.Join(t.TempDir(), "billing-token")
+	if err := os.WriteFile(billingTokenFile, []byte(strings.Repeat("y", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "--confirm") {
 		t.Fatalf("wrong stack confirmation must fail, got %v", err)
 	}
@@ -55,13 +83,14 @@ func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 }
 
 func TestPaymentLiveRejectsRawOrInsecureCredentials(t *testing.T) {
-	cfg := paymentLiveConfig{Run: true, Confirm: paymentLiveConfirmation, OrgID: "org-test", ConfirmTestOrg: "org-test", BaseURL: "http://account-manager.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
+	cfg := paymentLiveConfig{Run: true, Confirm: paymentLiveConfirmation, OrgID: "org-test", ConfirmTestOrg: "org-test", AccountManagerBaseURL: "http://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "approved HTTPS") {
 		t.Fatalf("insecure URL must fail, got %v", err)
 	}
-	cfg.BaseURL = "https://account-manager.video-cloud-staging.realtekconnect.com"
-	cfg.TokenFile = filepath.Join(t.TempDir(), "missing")
-	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "access token file") {
+	cfg.AccountManagerBaseURL = "https://account-manager.video-cloud-staging.realtekconnect.com"
+	cfg.AccountTokenFile = filepath.Join(t.TempDir(), "missing")
+	cfg.BillingTokenFile = filepath.Join(t.TempDir(), "missing-billing")
+	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "token files") {
 		t.Fatalf("missing token file must fail, got %v", err)
 	}
 }

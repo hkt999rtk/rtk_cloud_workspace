@@ -32,14 +32,14 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `3b87547f2d25` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-CACHE-RESILIENCE-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-CACHE-RESILIENCE-001` | `independent` | `be8af79a0c44` | `service` | `active` | `INT-AM-OPERATIONS-CACHE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-OIDC-SECRET-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-OIDC-SECRET-001` | `independent` | `81c2810a30ee` | `service` | `active` | `INT-AM-OPERATIONS-OIDC-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `b54f4c3ff81d` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BILLING-DEBIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001` | `independent` | `19154c805ea2` | `canonical` | `active` | `INT-AM-BILLING-DEBIT-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `f83374280ed4` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BILLING-DEBIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001` | `independent` | `c13f5f363c80` | `canonical` | `active` | `INT-AM-BILLING-DEBIT-001` | `test-coverage` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-BALANCE-LEDGER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001` | `independent` | `5c260c451e4c` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-003`, `E2E-AM-SIMULATOR-002`, `INT-AM-BILLING-DEBIT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-METHOD-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001` | `independent` | `29e04204e088` | `canonical` | `active` | `E2E-AM-PAYMENT-001`, `E2E-AM-SIMULATOR-001`, `LIVE-STG-SIMULATOR-001` | `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-INTENT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001` | `independent` | `f982dc3e0317` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-002`, `E2E-AM-AUTOTOPUP-003`, `E2E-AM-SIMULATOR-002`, `INT-AM-PAYMENT-001`, `LIVE-STG-SIMULATOR-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-AUTO-TOPUP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001` | `independent` | `7e27f856267e` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-003`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-PROVIDER-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-PROVIDER-001` | `independent` | `991a478b8f4a` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-001`, `E2E-AM-AUTOTOPUP-002`, `E2E-AM-PAYMENT-001`, `E2E-AM-SIMULATOR-001`, `E2E-AM-SIMULATOR-002`, `INT-AM-NEWEBPAY-001` | `test-coverage`, `test-payment` |
-| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-SIMULATOR-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-SIMULATOR-001` | `independent` | `855d89496521` | `canonical` | `planned` | `E2E-AM-SIMULATOR-001`, `E2E-AM-SIMULATOR-002`, `LIVE-STG-SIMULATOR-001` | `test-payment` |
+| `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-SIMULATOR-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-SIMULATOR-001` | `independent` | `ca2e7bfcc61e` | `canonical` | `planned` | `E2E-AM-SIMULATOR-001`, `E2E-AM-SIMULATOR-002`, `LIVE-STG-SIMULATOR-001` | `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-WEBHOOK-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-WEBHOOK-001` | `independent` | `235a84ecfb88` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-002`, `INT-AM-NEWEBPAY-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-AUTHZ-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-AUTHZ-001` | `independent` | `2db6b6fb9546` | `canonical` | `active` | `E2E-AM-PAYMENT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-AUDIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-AUDIT-001` | `independent` | `6d1ba024b6f0` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-002`, `E2E-AM-PAYMENT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
@@ -57,6 +57,10 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-EMAIL-DELIVERY-001` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001` | `independent` | `c1c83ce3e028` | `service` | `active` | `INT-AM-SIGNUP-EMAIL-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-E2E-CA-SIGNUP-EMAIL-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `workflow` | `9640268f55d8` | `service` | `active` | `E2E-CA-SIGNUP-EMAIL-001` | `test-live` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-E2E-LOAD-ACCOUNT-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-LOAD-ACCOUNT-001` | `` | `4926a2c1dba9` | `service` | `active` | `E2E-LOAD-ACCOUNT-001` | `test-live` |
+| `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md#REQ-BILL-OWNERSHIP-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-OWNERSHIP-001` | `independent` | `eb1cb0e70a6f` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md#REQ-BILL-SERVICE-AUTH-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-SERVICE-AUTH-001` | `independent` | `c32cb9ba25a9` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md#REQ-BILL-ACCESS-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-ACCESS-001` | `independent` | `1333eae910e3` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
+| `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md#REQ-BILL-DATA-BOUNDARY-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-DATA-BOUNDARY-001` | `independent` | `9aad65bd1536` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-ACCESS-001` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-001` | `independent` | `2b2815f39ec0` | `service` | `active` | `UI-CA-ACCESS-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-ACCESS-002` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-002` | `` | `f5eea37537f1` | `service` | `active` | `UI-CA-ACCESS-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-ACCESS-003` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `independent` | `c58445a9d29e` | `service` | `active` | `UI-CA-ACCESS-003` | `test-ui` |
@@ -76,7 +80,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `6ca993e5199e` | `service` | `active` | `UI-CA-BILLING-001`, `UI-CA-BILLING-002`, `UI-CA-BILLING-003`, `UI-CA-BILLING-004`, `UI-CA-BILLING-005` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UI-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `` | `1bbb8497bf3c` | `service` | `active` | `UI-CA-ACCESS-003` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-BREAK-GLASS-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-BREAK-GLASS-001` | `` | `a58762f19fbf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-BREAK-GLASS-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-BREAK-GLASS-001` | `` | `999082bbc29f` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-PROFILE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PROFILE-001` | `independent` | `241e157b1ec0` | `canonical` | `active` | `INT-AM-BRANDPROFILE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-SOURCE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-SOURCE-001` | `independent` | `f2de797b0093` | `canonical` | `active` | `INT-CA-BRANDBFF-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-IDENTITY-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `workflow` | `32734b4b9b85` | `canonical` | `active` | `INT-AM-BRANDIDENT-001` | `test-services` |
@@ -613,12 +617,6 @@
 | `SPEC-AM-OPENAPI#listDeveloperChipsets` | `GET /v1/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `a1573dd57b4b` |
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
-| `SPEC-AM-OPENAPI#postInternalBillingDebit` | `POST /v1/internal/billing/debits` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001`, `REQ-AM-BALANCE-LEDGER-001` | `37f0d069c419` |
-| `SPEC-AM-OPENAPI#closeBillingPeriod` | `POST /v1/internal/billing/periods/close` | `` | — | `f7a50e32b130` |
-| `SPEC-AM-OPENAPI#createBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions` | `` | — | `211001cb9f24` |
-| `SPEC-AM-OPENAPI#activateBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/activate` | `` | — | `9d8add3c1ce5` |
-| `SPEC-AM-OPENAPI#putBillingUsageFact` | `POST /v1/internal/billing/usage-facts` | `` | — | `eedeedca1315` |
-| `SPEC-AM-OPENAPI#completeSimulatedPaymentMethodSetup` | `POST /v1/internal/payment-simulator/setup-callback` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-SIMULATOR-001` | `c7c323bc4b83` |
 | `SPEC-AM-OPENAPI#deleteCurrentUser` | `DELETE /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0bba6c394d35` |
 | `SPEC-AM-OPENAPI#getCurrentUser` | `GET /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0ce87dc89fa3` |
 | `SPEC-AM-OPENAPI#listCurrentUserIdentities` | `GET /v1/me/identities` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `506f1a49a50d` |
@@ -629,21 +627,6 @@
 | `SPEC-AM-OPENAPI#getOrganization` | `GET /v1/orgs/{orgId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `205e4f05bc59` |
 | `SPEC-AM-OPENAPI#updateOrganization` | `PATCH /v1/orgs/{orgId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `b72b0b229a77` |
 | `SPEC-AM-OPENAPI#checkOrganizationResourceAccess` | `GET /v1/orgs/{orgId}/access/check` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `1a2e49aadcb0` |
-| `SPEC-AM-OPENAPI#disableAutoTopUpPolicy` | `DELETE /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUDIT-001` | `49d02c6dd0a8` |
-| `SPEC-AM-OPENAPI#getAutoTopUpPolicy` | `GET /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `7d4f3a6184ff` |
-| `SPEC-AM-OPENAPI#replaceAutoTopUpPolicy` | `PUT /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `753ce39b216f` |
-| `SPEC-AM-OPENAPI#getBillingAccount` | `GET /v1/orgs/{orgId}/billing/account` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `3621e3c9796b` |
-| `SPEC-AM-OPENAPI#listBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity` | `` | — | `915ebef99317` |
-| `SPEC-AM-OPENAPI#getBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity/{activityId}` | `` | — | `6a0e4da6e01b` |
-| `SPEC-AM-OPENAPI#listBillingInvoices` | `GET /v1/orgs/{orgId}/billing/invoices` | `` | — | `39b990e1db16` |
-| `SPEC-AM-OPENAPI#getBillingInvoice` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}` | `` | — | `e03a87c2444d` |
-| `SPEC-AM-OPENAPI#downloadBillingInvoicePdf` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf` | `` | — | `be4374fa1801` |
-| `SPEC-AM-OPENAPI#listBillingLedger` | `GET /v1/orgs/{orgId}/billing/ledger` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `6d1dc14cdb3c` |
-| `SPEC-AM-OPENAPI#getBillingProfile` | `GET /v1/orgs/{orgId}/billing/profile` | `` | — | `fca9c44a05af` |
-| `SPEC-AM-OPENAPI#putBillingProfile` | `PUT /v1/orgs/{orgId}/billing/profile` | `` | — | `6f42981af65c` |
-| `SPEC-AM-OPENAPI#exportBillingStatement` | `GET /v1/orgs/{orgId}/billing/statements` | `` | — | `bcbd6149974a` |
-| `SPEC-AM-OPENAPI#getBillingSummary` | `GET /v1/orgs/{orgId}/billing/summary` | `` | — | `c789a7eebf38` |
-| `SPEC-AM-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `` | — | `37d145e62b41` |
 | `SPEC-AM-OPENAPI#createDeviceGroup` | `POST /v1/orgs/{orgId}/device-groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `6f927c19fe1f` |
 | `SPEC-AM-OPENAPI#listDeviceGroups` | `GET /v1/orgs/{orgId}/device-groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `bf470bb29434` |
 | `SPEC-AM-OPENAPI#deleteDeviceGroup` | `DELETE /v1/orgs/{orgId}/device-groups/{groupId}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `63cafbde929e` |
@@ -681,11 +664,6 @@
 | `SPEC-AM-OPENAPI#updateMemberRole` | `PATCH /v1/orgs/{orgId}/members/{userId}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-MEMBERSHIP-INVARIANT-001` | `834210af6976` |
 | `SPEC-AM-OPENAPI#disableMemberUser` | `PATCH /v1/orgs/{orgId}/members/{userId}/disable` | `FEAT-AM-IDENTITY-001` | `REQ-AM-MEMBERSHIP-INVARIANT-001` | `8c4e79787ee1` |
 | `SPEC-AM-OPENAPI#enableMemberUser` | `PATCH /v1/orgs/{orgId}/members/{userId}/enable` | `FEAT-AM-IDENTITY-001` | `REQ-AM-MEMBERSHIP-INVARIANT-001` | `57854cc812b6` |
-| `SPEC-AM-OPENAPI#listPaymentIntents` | `GET /v1/orgs/{orgId}/payment-intents` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `adb5733f34bc` |
-| `SPEC-AM-OPENAPI#getPaymentIntent` | `GET /v1/orgs/{orgId}/payment-intents/{intentId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `263042502742` |
-| `SPEC-AM-OPENAPI#listPaymentMethods` | `GET /v1/orgs/{orgId}/payment-methods` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `3f6918ecf6b2` |
-| `SPEC-AM-OPENAPI#setupPaymentMethod` | `POST /v1/orgs/{orgId}/payment-methods/setup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `f5721f54d6cd` |
-| `SPEC-AM-OPENAPI#revokePaymentMethod` | `DELETE /v1/orgs/{orgId}/payment-methods/{methodId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `9d42c8eac9b3` |
 | `SPEC-AM-OPENAPI#listOrganizationPermissions` | `GET /v1/orgs/{orgId}/permissions` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `743c80fa8f9d` |
 | `SPEC-AM-OPENAPI#createQuotaRaiseRequest` | `POST /v1/orgs/{orgId}/quota-raise-requests` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `3391eb18d64a` |
 | `SPEC-AM-OPENAPI#createOrganizationRoleAssignment` | `POST /v1/orgs/{orgId}/role-assignments` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `4b9ff56c3022` |
@@ -693,8 +671,36 @@
 | `SPEC-AM-OPENAPI#deleteOrganizationRoleAssignment` | `DELETE /v1/orgs/{orgId}/role-assignments/{assignmentId}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `ea067788e181` |
 | `SPEC-AM-OPENAPI#listOrganizationRoles` | `GET /v1/orgs/{orgId}/roles` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `0351a2af2c07` |
 | `SPEC-AM-OPENAPI#listOrganizationTags` | `GET /v1/orgs/{orgId}/tags` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001`, `REQ-CONTRACT-PROV-IDENTITY-MAP-001`, `REQ-CONTRACT-PROV-SIGNOFF-001` | `6cf511e8344c` |
-| `SPEC-AM-OPENAPI#createManualTopUp` | `POST /v1/orgs/{orgId}/topups` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUDIT-001` | `abdce714fb92` |
-| `SPEC-AM-OPENAPI#ingestPaymentWebhook` | `POST /v1/payment-webhooks/{provider}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-WEBHOOK-001` | `c7f4137bd968` |
+| `SPEC-BILLING-OPENAPI#getBillingAccess` | `GET /v1/internal/billing/access/{orgId}` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-ACCESS-001` | `79a9039c0e4e` |
+| `SPEC-BILLING-OPENAPI#putBillingAccess` | `PUT /v1/internal/billing/access/{orgId}` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-ACCESS-001` | `26bd8c45ffc3` |
+| `SPEC-BILLING-OPENAPI#postInternalBillingDebit` | `POST /v1/internal/billing/debits` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BILLING-DEBIT-001`, `REQ-AM-BALANCE-LEDGER-001` | `432276553dbf` |
+| `SPEC-BILLING-OPENAPI#closeBillingPeriod` | `POST /v1/internal/billing/periods/close` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001`, `REQ-AM-INVOICE-ARITHMETIC-001` | `04edfe875caa` |
+| `SPEC-BILLING-OPENAPI#createBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `3c93d8c428f9` |
+| `SPEC-BILLING-OPENAPI#activateBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/activate` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `f7145dd491f3` |
+| `SPEC-BILLING-OPENAPI#putBillingUsageFact` | `POST /v1/internal/billing/usage-facts` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001`, `REQ-AM-INVOICE-ARITHMETIC-001` | `8aea562b206d` |
+| `SPEC-BILLING-OPENAPI#completeSimulatedPaymentMethodSetup` | `POST /v1/internal/payment-simulator/setup-callback` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-SIMULATOR-001` | `4f51d0a7f7f5` |
+| `SPEC-BILLING-OPENAPI#disableAutoTopUpPolicy` | `DELETE /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUDIT-001` | `d5e3cf7ded6a` |
+| `SPEC-BILLING-OPENAPI#getAutoTopUpPolicy` | `GET /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `b38b8961fedd` |
+| `SPEC-BILLING-OPENAPI#replaceAutoTopUpPolicy` | `PUT /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `398ad72cc613` |
+| `SPEC-BILLING-OPENAPI#getBillingAccount` | `GET /v1/orgs/{orgId}/billing/account` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `490417f22dce` |
+| `SPEC-BILLING-OPENAPI#listBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-001`, `REQ-AM-BILLING-ACTIVITY-002`, `REQ-AM-BILLING-ACTIVITY-003` | `6f722dd3cf58` |
+| `SPEC-BILLING-OPENAPI#getBillingActivity` | `GET /v1/orgs/{orgId}/billing/activity/{activityId}` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-001`, `REQ-AM-BILLING-ACTIVITY-002`, `REQ-AM-BILLING-ACTIVITY-003` | `a4ade559b310` |
+| `SPEC-BILLING-OPENAPI#listBillingInvoices` | `GET /v1/orgs/{orgId}/billing/invoices` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001` | `c3009c0bc3a1` |
+| `SPEC-BILLING-OPENAPI#getBillingInvoice` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001` | `bdacc6f0914a` |
+| `SPEC-BILLING-OPENAPI#downloadBillingInvoicePdf` | `GET /v1/orgs/{orgId}/billing/invoices/{invoiceId}/pdf` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `abbeaf6982a4` |
+| `SPEC-BILLING-OPENAPI#listBillingLedger` | `GET /v1/orgs/{orgId}/billing/ledger` | `FEAT-AM-PAYMENT-001` | `REQ-AM-BALANCE-LEDGER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `93a7aeca7b60` |
+| `SPEC-BILLING-OPENAPI#getBillingProfile` | `GET /v1/orgs/{orgId}/billing/profile` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `65e962527698` |
+| `SPEC-BILLING-OPENAPI#putBillingProfile` | `PUT /v1/orgs/{orgId}/billing/profile` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `b89b8b19d4f4` |
+| `SPEC-BILLING-OPENAPI#exportBillingStatement` | `GET /v1/orgs/{orgId}/billing/statements` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `2a889753b016` |
+| `SPEC-BILLING-OPENAPI#getBillingSummary` | `GET /v1/orgs/{orgId}/billing/summary` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `054988a8242b` |
+| `SPEC-BILLING-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `6daddb377e09` |
+| `SPEC-BILLING-OPENAPI#listPaymentIntents` | `GET /v1/orgs/{orgId}/payment-intents` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `b598daafd9a7` |
+| `SPEC-BILLING-OPENAPI#getPaymentIntent` | `GET /v1/orgs/{orgId}/payment-intents/{intentId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `b27bcee98fd9` |
+| `SPEC-BILLING-OPENAPI#listPaymentMethods` | `GET /v1/orgs/{orgId}/payment-methods` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `c6eec097fab0` |
+| `SPEC-BILLING-OPENAPI#setupPaymentMethod` | `POST /v1/orgs/{orgId}/payment-methods/setup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `75fae7da2910` |
+| `SPEC-BILLING-OPENAPI#revokePaymentMethod` | `DELETE /v1/orgs/{orgId}/payment-methods/{methodId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `f4446ac4b885` |
+| `SPEC-BILLING-OPENAPI#createManualTopUp` | `POST /v1/orgs/{orgId}/topups` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUDIT-001` | `1ad12fa51694` |
+| `SPEC-BILLING-OPENAPI#ingestPaymentWebhook` | `POST /v1/payment-webhooks/{provider}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-WEBHOOK-001` | `5722b69bae96` |
 | `SPEC-CA-OPERATIONS#customer_login` | ` ` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `37a1e03c927b` |
 | `SPEC-CA-OPERATIONS#customer_read_session` | ` ` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `b3be9505b867` |
 | `SPEC-CA-OPERATIONS#customer_reject_platform_only` | ` ` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `231fe4c372f9` |
@@ -738,26 +744,26 @@
 | `SPEC-CA-OPENAPI#getApiAuthSsoCallback` | `GET /api/auth/sso/callback` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `41ec4013e531` |
 | `SPEC-CA-OPENAPI#postApiAuthSsoStart` | `POST /api/auth/sso/start` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `f509dc20ffae` |
 | `SPEC-CA-OPENAPI#getApiBillingAccount` | `GET /api/billing/account` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `37f573d66703` |
-| `SPEC-CA-OPENAPI#getApiBillingActivity` | `GET /api/billing/activity` | `` | — | `ff3e0f94eb70` |
-| `SPEC-CA-OPENAPI#getApiBillingActivityDetail` | `GET /api/billing/activity/{activityId}` | `` | — | `9e1b2d34442d` |
+| `SPEC-CA-OPENAPI#getApiBillingActivity` | `GET /api/billing/activity` | `FEAT-CA-BFF-001` | — | `150956e50771` |
+| `SPEC-CA-OPENAPI#getApiBillingActivityDetail` | `GET /api/billing/activity/{activityId}` | `FEAT-CA-BFF-001` | — | `877e61b035c9` |
 | `SPEC-CA-OPENAPI#deleteApiBillingAutoTopUp` | `DELETE /api/billing/auto-topup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `bcd10e3adea5` |
 | `SPEC-CA-OPENAPI#getApiBillingAutoTopUp` | `GET /api/billing/auto-topup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `b0142381414c` |
 | `SPEC-CA-OPENAPI#putApiBillingAutoTopUp` | `PUT /api/billing/auto-topup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `f726cecc82bd` |
-| `SPEC-CA-OPENAPI#getApiBillingInvoices` | `GET /api/billing/invoices` | `` | — | `f5d75b1a9b7d` |
-| `SPEC-CA-OPENAPI#getApiBillingInvoice` | `GET /api/billing/invoices/{invoiceId}` | `` | — | `cc2052ec61bb` |
-| `SPEC-CA-OPENAPI#getApiBillingInvoicePdf` | `GET /api/billing/invoices/{invoiceId}/pdf` | `` | — | `1ed6fcc72c7c` |
+| `SPEC-CA-OPENAPI#getApiBillingInvoices` | `GET /api/billing/invoices` | `FEAT-CA-BFF-001` | — | `0b6cbf001f38` |
+| `SPEC-CA-OPENAPI#getApiBillingInvoice` | `GET /api/billing/invoices/{invoiceId}` | `FEAT-CA-BFF-001` | — | `59b1e4aea688` |
+| `SPEC-CA-OPENAPI#getApiBillingInvoicePdf` | `GET /api/billing/invoices/{invoiceId}/pdf` | `FEAT-CA-BFF-001` | — | `8417063c94f9` |
 | `SPEC-CA-OPENAPI#getApiBillingLedger` | `GET /api/billing/ledger` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `3175bc46dc4a` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentIntents` | `GET /api/billing/payment-intents` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `4a3519eb404f` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentIntent` | `GET /api/billing/payment-intents/{intentId}` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `6e37020ff854` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentMethods` | `GET /api/billing/payment-methods` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `a68d3f2f61fe` |
 | `SPEC-CA-OPENAPI#postApiBillingPaymentMethodSetup` | `POST /api/billing/payment-methods/setup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `e8aa1c262434` |
 | `SPEC-CA-OPENAPI#deleteApiBillingPaymentMethod` | `DELETE /api/billing/payment-methods/{methodId}` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `97a26433a682` |
-| `SPEC-CA-OPENAPI#getApiBillingProfile` | `GET /api/billing/profile` | `` | — | `a8da0218eede` |
-| `SPEC-CA-OPENAPI#putApiBillingProfile` | `PUT /api/billing/profile` | `` | — | `00966e82e9c6` |
-| `SPEC-CA-OPENAPI#getApiBillingStatement` | `GET /api/billing/statements` | `` | — | `797d532067fd` |
-| `SPEC-CA-OPENAPI#getApiBillingSummary` | `GET /api/billing/summary` | `` | — | `a7caa8bfc304` |
+| `SPEC-CA-OPENAPI#getApiBillingProfile` | `GET /api/billing/profile` | `FEAT-CA-BFF-001` | — | `ddfe2a9a9f91` |
+| `SPEC-CA-OPENAPI#putApiBillingProfile` | `PUT /api/billing/profile` | `FEAT-CA-BFF-001` | — | `2fa8063f1a85` |
+| `SPEC-CA-OPENAPI#getApiBillingStatement` | `GET /api/billing/statements` | `FEAT-CA-BFF-001` | — | `228532e064aa` |
+| `SPEC-CA-OPENAPI#getApiBillingSummary` | `GET /api/billing/summary` | `FEAT-CA-BFF-001` | — | `268923159f3d` |
 | `SPEC-CA-OPENAPI#postApiBillingTopUp` | `POST /api/billing/topups` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `12a3c83fec70` |
-| `SPEC-CA-OPENAPI#getApiBillingUsage` | `GET /api/billing/usage` | `` | — | `470d4d819ad5` |
+| `SPEC-CA-OPENAPI#getApiBillingUsage` | `GET /api/billing/usage` | `FEAT-CA-BFF-001` | — | `789b9df7da4b` |
 | `SPEC-CA-OPENAPI#getApiCustomers` | `GET /api/customers` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `076be6b37100` |
 | `SPEC-CA-OPENAPI#postApiDeveloperBrandCloudOwnerTransfersAccept` | `POST /api/developer/brand-cloud-owner-transfers/accept` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `aac2ac7a1109` |
 | `SPEC-CA-OPENAPI#getApiDeveloperBrandClouds` | `GET /api/developer/brand-clouds` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `a421cfa4950a` |
@@ -1226,8 +1232,6 @@
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Renewal Flow@L270` | `draft` | `planned` | `d1329890f56f` | it must fail with `RTKC_STATUS_PKI_NOT_PROVISIONED` rather than creating a CSR |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Error Codes@L329` | `draft` | `planned` | `2d3bd2a0314b` | The PKI helpers must use these stable error categories: |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Acceptance Checklist@L344` | `draft` | `planned` | `288cf003d209` | An SDK package implementing PKI device auth must verify: |
-| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Tenant API@L111` | `canonical` | `required` | `b31f4bf383e9` | reconciliation records but must remain organization scoped. IDs intended only |
-| `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Audit And Retention@L121` | `canonical` | `required` | `dba5bf23a2b6` | CSV export uses the same redaction and authorization rules. Retention must be |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Purpose And Current Baseline@L33` | `proposed` | `planned` | `6e5b1d908db1` | `model` is descriptive compatibility metadata and MUST NOT be used as a tenant, |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L49` | `proposed` | `planned` | `4475148d45a1` | Video Cloud MUST resolve brand, SKU, and device identity from trusted |
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L51` | `proposed` | `planned` | `c8a65c0f4234` | `device_id` MUST NOT override authenticated ownership facts. |
@@ -1246,7 +1250,7 @@
 | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Implementation Gate@L230` | `proposed` | `planned` | `29cf5cdeb098` | Backend implementation must include tenant isolation, immutable release, |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L49` | `canonical` | `required` | `f6c615c60c99` | balance and remains a separate payment activity. UI and reports must not claim |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L56` | `canonical` | `required` | `347490298ee4` | point must not be persisted as authoritative usage or price. |
-| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Compatibility@L229` | `canonical` | `required` | `02fd22c82946` | system must not fabricate invoice lines or PDFs from a ledger reason alone. |
+| `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Compatibility@L230` | `canonical` | `required` | `02fd22c82946` | system must not fabricate invoice lines or PDFs from a ledger reason alone. |
 | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `SDK Local Onboarding Interface@L88` | `draft` | `planned` | `cf4653717c7e` | The first phase should define public interfaces or documented stubs for native, |
 | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `SDK Local Onboarding Interface@L106` | `draft` | `planned` | `9b06c9e7a44b` | Native and JavaScript/TypeScript must expose consistent concepts or explicit |
 | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `SDK Local Onboarding Interface@L108` | `draft` | `planned` | `53228cfd6237` | SDKs must not own account binding policy, account/video cross-service |
@@ -1298,20 +1302,6 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `activateBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `closeBillingPeriod` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `createBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `downloadBillingInvoicePdf` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `exportBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingInvoice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingSummary` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `getBillingUsage` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `listBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `listBillingInvoices` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `putBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `putBillingUsageFact` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_admin/docs/ROLES.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L264` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability contract@L183` | `false` | normative clause 789186a3cdd5 requires a stable FEAT-*/REQ-* source mapping: The active membership must project these machine-readable capabilities. Display |
@@ -1348,8 +1338,6 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Renewal Flow@L270` | `false` | normative clause d1329890f56f requires a stable FEAT-*/REQ-* source mapping: it must fail with `RTKC_STATUS_PKI_NOT_PROVISIONED` rather than creating a CSR |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Renewal Trigger@L236` | `false` | normative clause 3e4913903392 requires a stable FEAT-*/REQ-* source mapping: The SDK must check certificate validity on each startup and trigger renewal |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Token Issuance After mTLS@L226` | `false` | normative clause 61bf80fd4134 requires a stable FEAT-*/REQ-* source mapping: issued token to that subject. The SDK must request `scope: "camera"` and must |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Audit And Retention@L121` | `true` | normative clause dba5bf23a2b6 requires a stable FEAT-*/REQ-* source mapping: CSV export uses the same redaction and authorization rules. Retention must be |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md` | `Tenant API@L111` | `true` | normative clause b31f4bf383e9 requires a stable FEAT-*/REQ-* source mapping: reconciliation records but must remain organization scoped. IDs intended only |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `DeviceDeployment And DeploymentEvent@L120` | `false` | normative clause 82d3c8d8ee60 requires a stable FEAT-*/REQ-* source mapping: campaigns MUST NOT overwrite earlier history. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `DeviceDeployment And DeploymentEvent@L141` | `false` | normative clause fff0ca8d8ff3 requires a stable FEAT-*/REQ-* source mapping: The authenticated device MUST provide a non-empty current version on every |
@@ -1367,7 +1355,7 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L49` | `false` | normative clause 4475148d45a1 requires a stable FEAT-*/REQ-* source mapping: Video Cloud MUST resolve brand, SKU, and device identity from trusted |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Ownership Boundary@L51` | `false` | normative clause c8a65c0f4234 requires a stable FEAT-*/REQ-* source mapping: `device_id` MUST NOT override authenticated ownership facts. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md` | `Purpose And Current Baseline@L33` | `false` | normative clause 6e5b1d908db1 requires a stable FEAT-*/REQ-* source mapping: `model` is descriptive compatibility metadata and MUST NOT be used as a tenant, |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Compatibility@L229` | `true` | normative clause 02fd22c82946 requires a stable FEAT-*/REQ-* source mapping: system must not fabricate invoice lines or PDFs from a ledger reason alone. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Compatibility@L230` | `true` | normative clause 02fd22c82946 requires a stable FEAT-*/REQ-* source mapping: system must not fabricate invoice lines or PDFs from a ledger reason alone. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L49` | `true` | normative clause f6c615c60c99 requires a stable FEAT-*/REQ-* source mapping: balance and remains a separate payment activity. UI and reports must not claim |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md` | `Product Boundary@L56` | `true` | normative clause 347490298ee4 requires a stable FEAT-*/REQ-* source mapping: point must not be persisted as authoritative usage or price. |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |

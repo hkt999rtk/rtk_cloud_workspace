@@ -1,6 +1,6 @@
 # ADR 0001: Commercial Settlement Ownership And Provider Boundary
 
-Status: proposed
+Status: accepted
 
 Date: 2026-08-15
 
@@ -26,12 +26,14 @@ an operator/customer UI and BFF, not a durable business source of truth.
 
 ## Decision
 
-1. Account Manager owns the phase-one commercial settlement domain:
+1. The independent `rtk_billing` service owns the commercial settlement domain:
    commercial account, immutable balance ledger, payment method, customer
    consent, automatic top-up policy, payment intent/attempt, webhook inbox, and
    reconciliation worker.
-2. This domain is isolated behind service-local interfaces and schema tables so
-   it can later be extracted to a dedicated Billing Service.
+2. Account Manager owns organization identity, membership, and RBAC only.
+   Cloud Admin resolves those facts, then calls Billing through a dedicated
+   service credential and explicit organization, actor, and permission context.
+   The services do not share tables or database foreign keys.
 3. Usage metering remains separate. A pricing/invoice owner converts immutable
    usage facts into authenticated idempotent debit instructions.
 4. Payment providers implement a capability-aware adapter interface. Public APIs
@@ -59,16 +61,15 @@ Positive:
 - payment-provider replacement does not require redesigning public resources;
 - balance correctness is auditable and resilient to retries and duplicate
   callbacks;
-- organization authorization and audit can be reused;
+- organization authorization remains reusable without making Account Manager a
+  monetary database;
 - provider outages do not corrupt usage or identity domains;
-- a later Billing Service extraction has a defined seam.
+- pricing, wallet, payment, invoice, and billing access have one runtime owner.
 
 Tradeoffs:
 
-- Account Manager temporarily gains a commercial responsibility outside its
-  original identity/registry scope;
-- pricing and invoice ownership must still be implemented before metered usage
-  can debit customer balance automatically;
+- an additional service, database, deployment, credential, and operational
+  ownership boundary must be maintained;
 - provider-hosted setup and merchant capability approval constrain UI and
   rollout timing;
 - reconciliation, support tooling, finance operations, consent, and dispute
@@ -80,9 +81,10 @@ Rejected alternatives:
   and makes future non-video usage or provider changes harder.
 - **Store payment state in Cloud Admin.** A UI/BFF cannot be the durable monetary
   source of truth.
-- **Create a new Billing Service immediately.** The workspace has no existing
-  commercial domain or deployment package; starting in an isolated Account
-  Manager module is the shortest safe path and preserves later extraction.
+- **Keep Billing in Account Manager.** This couples identity availability and
+  schema lifecycle to all monetary operations and creates duplicate ownership
+  once pricing and invoicing are introduced. The temporary implementation was
+  useful to establish semantics, but is superseded by the independent service.
 - **Treat a successful callback as a mutable balance assignment.** This cannot
   provide append-only audit, replay safety, or exactly-once credit.
 - **Use NewebPay periodic payment directly as the product model.** A fixed
@@ -91,9 +93,14 @@ Rejected alternatives:
 
 ## Review And Promotion
 
-Promote this ADR to `accepted` only after:
+This ADR was promoted after:
 
-- the contracts and Account Manager architecture documents are reviewed;
-- finance/legal name the consent, refund, chargeback, and retention owners;
-- NewebPay confirms the required merchant-initiated capability in writing; and
-- service owners accept the pricing/invoice-to-debit integration boundary.
+- the pricing, wallet, payment, invoice, and billing-activity contracts were
+  implemented and exercised with the virtual provider;
+- the dedicated service and database boundary was accepted as the target
+  architecture; and
+- Cloud Admin adopted a separate Billing service client.
+
+Acceptance of this ownership ADR does not enable NewebPay. Merchant capability,
+finance/legal, consent, refund, chargeback, and live-sandbox gates remain
+separate release prerequisites.
