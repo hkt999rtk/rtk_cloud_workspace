@@ -910,6 +910,11 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 				return nil, fmt.Errorf("resolve submodule repository for %s", modulePath)
 			}
 			repositoryRel = filepath.ToSlash(repositoryRel)
+			if !gitObjectExists(workspace, baseRef+":"+repositoryRel) {
+				// A newly introduced submodule has no meaningful predecessor to diff.
+				// Its committed module/package baseline gates still apply in this run.
+				return map[string]map[int]bool{}, nil
+			}
 			baseCommit, err := gitOutput(workspace, "rev-parse", baseRef+":"+repositoryRel)
 			if err != nil {
 				return nil, fmt.Errorf("resolve %s base gitlink: %w", modulePath, err)
@@ -951,6 +956,14 @@ func changedGoLines(workspace, baseRef, headRef, modulePath string) (map[string]
 		return nil, fmt.Errorf("read differential coverage diff: %w", err)
 	}
 	return parseChangedGoLines(output)
+}
+
+func gitObjectExists(repository, object string) bool {
+	cmd := exec.Command("git", "cat-file", "-e", object)
+	cmd.Dir = repository
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }
 
 func ensureGitCommit(repository, commit string) error {

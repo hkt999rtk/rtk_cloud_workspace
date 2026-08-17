@@ -48,6 +48,10 @@ var paymentLiveScreenshot = func(workdir, target, targetURL, output string) erro
 	return cmd.Run()
 }
 
+var paymentLiveHTTPClient = func() *http.Client {
+	return &http.Client{Timeout: 20 * time.Second}
+}
+
 func runTestPaymentLive(args []string) error {
 	fs := flag.NewFlagSet("test-payment staging-live", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -116,7 +120,7 @@ func runTestPaymentLive(args []string) error {
 	started := time.Now().UTC()
 	state := paymentLiveState{}
 	caseResult := paymentEvidenceCase{TestID: "LIVE-STG-SIMULATOR-001", Purpose: "Qualify the deployed virtual payment flow with hosted UI evidence and a reconciled TWD charge.", Method: "Dedicated staging organization performs simulator hosted setup, desktop/mobile viewport capture, policy activation with approved defaults, a TWD 300 manual charge, ledger reconciliation, and mandatory cleanup.", StartedAt: started.Format(time.RFC3339), Status: "PASS"}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := paymentLiveHTTPClient()
 	runErr := executePaymentLive(context.Background(), client, workspace, outDir, cfg, billingToken, &state)
 	cleanupErr := cleanupPaymentLive(context.Background(), client, cfg, billingToken, state)
 	completed := time.Now().UTC()
@@ -208,7 +212,7 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 	if err != nil {
 		return cfg, "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
 	}
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := paymentLiveHTTPClient()
 	var organizations map[string]any
 	if err := paymentLiveJSON(context.Background(), client, http.MethodGet, cfg.AccountManagerBaseURL+"/v1/orgs?limit=100", token, nil, nil, &organizations); err != nil {
 		return cfg, "", "", fmt.Errorf("list qualification organizations: %w", err)

@@ -78,3 +78,27 @@ func TestBillingUsesApprovedPublicTLSRoute(t *testing.T) {
 		t.Fatalf("approved Billing route missing: %+v", routes)
 	}
 }
+
+func TestLKEBillingRuntimeHelpersResolveExplicitSecretsAndImages(t *testing.T) {
+	t.Setenv("PAYMENT_REFERENCE_ENCRYPTION_KEY", "explicit-reference-key")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/account-manager:test",
+		"LKE_BILLING_IMAGE":         "registry.example.test/billing:test",
+	}
+	if got := lkePaymentReferenceEncryptionKey(env); got != "explicit-reference-key" {
+		t.Fatalf("reference key = %q", got)
+	}
+	if got := lkeAccountManagerImage(env); got != env["LKE_ACCOUNT_MANAGER_IMAGE"] {
+		t.Fatalf("account-manager image = %q", got)
+	}
+	if got := lkeBillingImage(env); got != env["LKE_BILLING_IMAGE"] {
+		t.Fatalf("billing image = %q", got)
+	}
+	if got := lkeAccountManagerImage(map[string]string{}); got != "" {
+		t.Fatalf("missing account-manager image = %q", got)
+	}
+	if got := lkeBillingImage(map[string]string{}); got != "" {
+		t.Fatalf("missing billing image = %q", got)
+	}
+}

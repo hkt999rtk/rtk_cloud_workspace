@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,33 @@ func TestPaymentSelectorCanonicalKeyRequiresExplicitPackage(t *testing.T) {
 	}
 }
 
+func TestReadPaymentUnitManifestRejectsMissingMalformedAndIncompleteEvidence(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.json")
+	if _, err := readPaymentUnitManifest(missing); err == nil || !strings.Contains(err.Error(), "read payment unit manifest") {
+		t.Fatalf("missing manifest error = %v", err)
+	}
+	malformed := filepath.Join(t.TempDir(), "malformed.json")
+	if err := os.WriteFile(malformed, []byte("{bad json}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPaymentUnitManifest(malformed); err == nil || !strings.Contains(err.Error(), "parse payment unit manifest") {
+		t.Fatalf("malformed manifest error = %v", err)
+	}
+	incomplete := filepath.Join(t.TempDir(), "incomplete.json")
+	if err := os.WriteFile(incomplete, []byte(`{"schema_version":1,"module":"other","tests":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPaymentUnitManifest(incomplete); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("incomplete manifest error = %v", err)
+	}
+	if err := runTestPayment([]string{"--profile", "unsupported"}); err == nil || !strings.Contains(err.Error(), "unsupported payment profile") {
+		t.Fatalf("unsupported fake profile error = %v", err)
+	}
+	if err := runTestPayment([]string{"--unknown"}); err == nil {
+		t.Fatal("unknown payment flag passed")
+	}
+}
+
 func TestCoverageWorkflowPublishesPaymentEvidence(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
@@ -87,5 +115,74 @@ func TestFakePaymentProfileExcludesStagingLiveCases(t *testing.T) {
 	}
 	if isFakePaymentCase(testCatalogCase{ID: "LIVE-STG-SIMULATOR-001", Status: "active", Runner: "test-payment", Layer: "live"}) {
 		t.Fatal("fake profile included staging-live case")
+	}
+}
+
+func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := "unit-payment-evidence"
+	runRoot := filepath.Join(workspace, ".artifacts", "test-runs", runID)
+	t.Cleanup(func() { _ = os.RemoveAll(runRoot) })
+
+	oldRunner := paymentCoverageRunner
+	paymentCoverageRunner = func(args []string) error {
+		if got := commandFlagValue(args, "--module"); got != "billing-service" {
+			t.Fatalf("coverage module = %q", got)
+		}
+		catalog, err := loadAndValidateTestCatalog(workspace)
+		if err != nil {
+			return err
+		}
+		units := make([]goUnitResult, 0)
+		for _, tc := range catalog.Cases {
+			if !isFakePaymentCase(tc) {
+				continue
+			}
+			for _, selector := range strings.Split(tc.Selector, ",") {
+				canonical, err := paymentSelectorCanonicalKey(selector)
+				if err != nil {
+					return err
+				}
+				units = append(units, goUnitResult{CanonicalKey: canonical, Source: "integration_test.go", StartedAt: "2026-08-17T00:00:00Z", CompletedAt: "2026-08-17T00:00:00.001Z", DurationMS: 1, Status: "PASS"})
+			}
+		}
+		coverageDir := filepath.Join(runRoot, "coverage")
+		moduleDir := filepath.Join(coverageDir, "modules", "billing-service")
+		if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+			return err
+		}
+		manifest, _ := json.Marshal(paymentUnitManifest{SchemaVersion: 1, Module: "billing-service", Profile: "pr", Tests: units})
+		files := map[string][]byte{
+			filepath.Join(moduleDir, "unit-manifest.json"):            manifest,
+			filepath.Join(moduleDir, "coverage.out"):                  []byte("mode: set\n"),
+			filepath.Join(moduleDir, "junit.xml"):                     []byte("<testsuites/>\n"),
+			filepath.Join(moduleDir, "package-coverage.json"):         []byte("{}\n"),
+			filepath.Join(moduleDir, "test-events.json"):              []byte("[]\n"),
+			filepath.Join(coverageDir, "logs", "billing-service.log"): []byte("billing integration PASS\n"),
+		}
+		for path, body := range files {
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(path, body, 0o644); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() { paymentCoverageRunner = oldRunner })
+
+	if err := runTestPayment([]string{"--profile", "fake-e2e", "--run-id", runID}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := os.ReadFile(filepath.Join(runRoot, "payments", "fake-e2e", "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result), `"status": "PASS"`) || !strings.Contains(string(result), `"coverage_gate": "PASS"`) {
+		t.Fatalf("payment result is incomplete: %s", result)
 	}
 }

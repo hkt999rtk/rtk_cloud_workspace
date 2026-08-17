@@ -736,6 +736,42 @@ func TestChangedGoLinesResolvesWorkspaceSubmoduleGitlinks(t *testing.T) {
 	}
 }
 
+func TestChangedGoLinesTreatsNewSubmoduleAsHavingNoComparableBase(t *testing.T) {
+	root := t.TempDir()
+	root, _ = filepath.EvalSymlinks(root)
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, workspace, "git", "init", "-q")
+	runTestCommand(t, workspace, "git", "config", "user.email", "coverage@example.test")
+	runTestCommand(t, workspace, "git", "config", "user.name", "Coverage Test")
+	writeTestFile(t, filepath.Join(workspace, "README.md"), "workspace\n")
+	runTestCommand(t, workspace, "git", "add", "README.md")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "base")
+
+	sourceDir := filepath.Join(root, "new_service_source")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runTestCommand(t, sourceDir, "git", "init", "-q")
+	runTestCommand(t, sourceDir, "git", "config", "user.email", "coverage@example.test")
+	runTestCommand(t, sourceDir, "git", "config", "user.name", "Coverage Test")
+	writeTestFile(t, filepath.Join(sourceDir, "main.go"), "package newservice\n")
+	runTestCommand(t, sourceDir, "git", "add", "main.go")
+	runTestCommand(t, sourceDir, "git", "commit", "-q", "-m", "initial")
+	runTestCommand(t, workspace, "git", "-c", "protocol.file.allow=always", "submodule", "add", "-q", sourceDir, "repos/new_service")
+	runTestCommand(t, workspace, "git", "commit", "-q", "-m", "add service")
+
+	changed, err := changedGoLines(workspace, "HEAD^", "HEAD", "repos/new_service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("new submodule should rely on committed baselines, got %#v", changed)
+	}
+}
+
 func TestEnsureGitCommitFetchesMissingCommitFromOrigin(t *testing.T) {
 	root := t.TempDir()
 	remote := filepath.Join(root, "remote.git")

@@ -75,6 +75,8 @@ type paymentEvidenceManifest struct {
 	Evidence        []paymentEvidenceFile `json:"evidence"`
 }
 
+var paymentCoverageRunner = runTestCoverage
+
 func runTestPayment(args []string) error {
 	if commandFlagValue(args, "--profile") == "staging-live" {
 		return runTestPaymentLive(args)
@@ -97,7 +99,7 @@ func runTestPayment(args []string) error {
 		return err
 	}
 
-	coverageErr := runTestCoverage([]string{
+	coverageErr := paymentCoverageRunner([]string{
 		"--profile", "pr",
 		"--module", "billing-service",
 		"--run-id", *runID,
