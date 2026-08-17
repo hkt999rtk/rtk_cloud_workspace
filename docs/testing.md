@@ -56,6 +56,15 @@ Use the explicit test layers when broader validation is needed:
 (cd scripts/go && go run ./rtk-cloud -- test-coverage --profile pr --run-id RUN_ID)
 (cd scripts/go && go run ./rtk-cloud -- test-coverage --profile runtime --runtime-dir GOCOVERDIR_ROOT --run-id RUN_ID)
 (cd scripts/go && TEST_DATABASE_URL=... go run ./rtk-cloud -- test-payment --profile fake-e2e --run-id RUN_ID)
+
+# Non-mutating staging plan (the default when --run is absent).
+go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID
+
+# Dedicated staging organization only. The access token is read from a 0600 file.
+go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID \
+  --base-url https://account-manager.video-cloud-staging.realtekconnect.com \
+  --org-id TEST_ORG_ID --access-token-file /secure/path/token \
+  --run --confirm video-cloud-staging-lke --confirm-test-org TEST_ORG_ID
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)
 (cd scripts/go && go run ./rtk-cloud -- test-ui)
 (cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --plan)

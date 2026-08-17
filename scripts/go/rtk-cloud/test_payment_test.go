@@ -80,3 +80,12 @@ func TestCoverageWorkflowPublishesPaymentEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestFakePaymentProfileExcludesStagingLiveCases(t *testing.T) {
+	if !isFakePaymentCase(testCatalogCase{ID: "E2E-AM-SIMULATOR-001", Status: "active", Runner: "test-payment", Layer: "e2e"}) {
+		t.Fatal("active local payment E2E case was excluded")
+	}
+	if isFakePaymentCase(testCatalogCase{ID: "LIVE-STG-SIMULATOR-001", Status: "active", Runner: "test-payment", Layer: "live"}) {
+		t.Fatal("fake profile included staging-live case")
+	}
+}

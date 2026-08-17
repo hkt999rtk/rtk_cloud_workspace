@@ -16,6 +16,7 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 	secret := lkeAccountManagerSecretManifest(env)
 	for _, want := range []string{
 		`PAYMENT_SIMULATOR_ENABLED: "true"`,
+		`PAYMENT_SIMULATOR_RUN_ID: "video-cloud-staging"`,
 		`PAYMENT_SIMULATOR_BASE_URL: "http://payment-simulator.video-cloud-staging-account-manager.svc.cluster.local:80"`,
 		`PAYMENT_SIMULATOR_PUBLIC_BASE_URL: "https://payment-simulator.video-cloud-staging.realtekconnect.com"`,
 		`PAYMENT_SIMULATOR_CALLBACK_URL: "http://account-manager.video-cloud-staging-account-manager.svc.cluster.local:80/v1/internal/payment-simulator/setup-callback"`,

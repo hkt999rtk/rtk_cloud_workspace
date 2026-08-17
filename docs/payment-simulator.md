@@ -86,6 +86,7 @@ Account Manager API and payment worker:
 
 ```text
 PAYMENT_SIMULATOR_ENABLED=false
+PAYMENT_SIMULATOR_RUN_ID=<run-scoped-id>
 PAYMENT_SIMULATOR_BASE_URL=
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=
 PAYMENT_SIMULATOR_SHARED_SECRET=<secret>
@@ -99,6 +100,7 @@ Simulator process:
 
 ```text
 PAYMENT_SIMULATOR_ENABLED=false
+PAYMENT_SIMULATOR_RUN_ID=<run-scoped-id>
 PAYMENT_SIMULATOR_PUBLIC_BASE_URL=
 PAYMENT_SIMULATOR_CALLBACK_URL=
 PAYMENT_SIMULATOR_SHARED_SECRET=<secret>
@@ -159,18 +161,22 @@ arbitrary URLs.
 
 Simulator tables are separate from the monetary ledger:
 
-- `payment_simulator_setup_sessions`: Account Manager setup reference,
+- `payment_simulator_setup_sessions`: run ID, Account Manager setup reference,
   idempotency key, public-token hash, scenario, state, callback attempts,
   expiry, and safe synthetic references;
-- `payment_simulator_operations`: charge/refund operation, merchant order
+- `payment_simulator_operations`: run ID, charge/refund operation, merchant order
   reference, amount, currency, selected scenario, normalized state, synthetic
   provider transaction reference, and timestamps.
 
 Raw public tokens and shared secrets are never persisted. Setup idempotency is
-scoped by account plus client key. Charge idempotency is scoped by merchant
-order reference. Replayed requests return the original synthetic result;
+scoped by run ID, account, and client key. Charge/refund idempotency is scoped
+by run ID, operation, and merchant order reference. Replayed requests return the original synthetic result;
 semantic conflicts return a stable conflict and create no new session or
 transaction.
+
+Every synthetic row carries the validated run ID supplied by the provider
+client. Run IDs use only letters, digits, dot, underscore, and hyphen and are
+included in uniqueness boundaries and safe operation evidence.
 
 Expired simulator setup sessions and operations are pruned opportunistically
 from authenticated simulator traffic after the configured retention period
@@ -240,3 +246,10 @@ The simulator remains non-production even after qualification. Replacing it
 with NewebPay changes only the provider adapter and provider-specific evidence;
 the Account Manager monetary model, policy, ledger, Cloud Admin BFF, Test IDs,
 and report schema remain provider-neutral.
+
+The deployed qualification is plan-only by default. `test-payment --profile
+staging-live` requires both the exact staging stack confirmation and a second
+confirmation matching the dedicated test organization. It reads the access
+token only from a mode-`0600` file, captures desktop/mobile hosted-page
+screenshots, and always attempts to disable the created policy and revoke the
+synthetic method before emitting its cleanup and redaction reports.

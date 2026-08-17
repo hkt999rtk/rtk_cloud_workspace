@@ -76,6 +76,9 @@ type paymentEvidenceManifest struct {
 }
 
 func runTestPayment(args []string) error {
+	if commandFlagValue(args, "--profile") == "staging-live" {
+		return runTestPaymentLive(args)
+	}
 	fs := flag.NewFlagSet("test-payment", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	profile := fs.String("profile", "fake-e2e", "payment profile; currently fake-e2e")
@@ -114,7 +117,7 @@ func runTestPayment(args []string) error {
 	}
 	cases := make([]testCatalogCase, 0)
 	for _, tc := range catalog.Cases {
-		if tc.Status == "active" && tc.Runner == "test-payment" {
+		if isFakePaymentCase(tc) {
 			cases = append(cases, tc)
 		}
 	}
@@ -226,6 +229,10 @@ func runTestPayment(args []string) error {
 		return exitCode(1)
 	}
 	return nil
+}
+
+func isFakePaymentCase(tc testCatalogCase) bool {
+	return tc.Status == "active" && tc.Runner == "test-payment" && tc.Layer != "live"
 }
 
 func readPaymentUnitManifest(path string) (paymentUnitManifest, error) {
