@@ -225,6 +225,37 @@ func TestDeploymentPreflightAcceptanceRequiresMatchingRuntime(t *testing.T) {
 	}
 }
 
+func TestDeploymentPreflightAcceptancePassesWithMatchingRuntime(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string]string{
+		"state/provider-preflight.env": "LKE_CLUSTER_ID=123\n",
+		"state/kubeconfig.yaml":        "apiVersion: v1\n",
+		"env/stack.env":                "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
+		"state/openbao/unseal-key":     "test-unseal-key\n",
+		"state/openbao/root-token":     "test-root-token\n",
+		"state/secrets/postgres":       "test-postgres-password\n",
+	} {
+		writeTestFile(t, filepath.Join(cfg.RuntimeRoot, path), contents)
+	}
+
+	var out bytes.Buffer
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateKube = func(deploymentConfig) error { return nil }
+	if err := runDeploymentPreflightWithChecks(cfg, "acceptance", checks, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"PASS runtime-state", "PASS runtime-identity", "PASS kubernetes-access", "Preflight result: PASS"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("preflight output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 func TestDeploymentPreflightEphemeralRejectsExistingStack(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
