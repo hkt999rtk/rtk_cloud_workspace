@@ -952,8 +952,12 @@ func paymentLiveBillingJSON(ctx context.Context, client *http.Client, method, en
 		headers = map[string]string{}
 	}
 	headers["X-Billing-Permissions"] = permission
-	headers["X-Billing-Actor-Type"] = "service_test"
+	headers["X-Billing-Actor-Type"] = "brand_cloud_user"
 	headers["X-Billing-Actor-ID"] = "staging-payment-qualification"
+	if headers["X-Request-Id"] == "" {
+		digest := sha256.Sum256([]byte(method + " " + endpoint))
+		headers["X-Request-Id"] = fmt.Sprintf("payment-qualification-%x", digest[:8])
+	}
 	return paymentLiveJSON(ctx, client, method, endpoint, token, headers, body, output)
 }
 
