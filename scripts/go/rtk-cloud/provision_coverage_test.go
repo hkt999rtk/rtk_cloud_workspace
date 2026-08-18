@@ -14,6 +14,7 @@ func TestParseProvisionArgsCoversModesValuesAndFailures(t *testing.T) {
 		"--preflight", "--plan", "--reset", "--apply", "--dns", "--deploy", "--artifacts", "--e2e",
 		"--workspace", "/workspace",
 		"--env-root", "/runtime",
+		"--workloads", "billing,cloud-admin,billing",
 		"--operator-env", "/operator.env",
 		"--ssh-key", "/id_ed25519",
 		"--dns-root-domain", "example.test",
@@ -39,11 +40,11 @@ func TestParseProvisionArgsCoversModesValuesAndFailures(t *testing.T) {
 		opts.artifactDir != "/artifacts" || opts.videoRelease != "video.tgz" ||
 		opts.accountRelease != "account.tgz" || opts.accountReleaseBundle != "account-bundle.tgz" ||
 		opts.adminRelease != "admin.tgz" || opts.adminReleaseBundle != "admin-bundle.tgz" ||
-		opts.confirm != "video-cloud-staging" || !opts.verbose {
+		opts.confirm != "video-cloud-staging" || !opts.verbose || strings.Join(opts.workloads, ",") != "billing,cloud-admin" {
 		t.Fatalf("options = %#v", opts)
 	}
 	for _, flagName := range []string{
-		"--workspace", "--env-root", "--secrets-root", "--operator-env", "--ssh-key",
+		"--workspace", "--env-root", "--secrets-root", "--workloads", "--operator-env", "--ssh-key",
 		"--dns-root-domain", "--artifact-dir", "--video-release", "--account-release",
 		"--account-release-bundle", "--admin-release", "--admin-release-bundle", "--confirm",
 	} {

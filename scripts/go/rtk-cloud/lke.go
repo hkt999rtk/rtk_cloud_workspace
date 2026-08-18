@@ -477,7 +477,7 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 	fmt.Fprintf(os.Stdout, "  - turn_registry: domain=%s registrar_node_id=%s\n", lkeTurnRegistryPublicDomain(env), lkeCoturnVMName(env))
 	fmt.Fprintln(os.Stdout, "- secrets: OpenBao standalone/AppRole for environment PKI; certissuer delegates device/app signing to OpenBao and Kubernetes Secrets do not carry CA private keys")
 	fmt.Fprintln(os.Stdout, "- deploy images:")
-	for _, workload := range lkeWorkloads(env) {
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
 		status := "TODO"
 		if workload.Image != "" {
 			status = workload.Image
@@ -487,8 +487,21 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 	lkePrintCapacityPlan(env, opts)
 }
 
-func lkeApplyBase(env map[string]string) error {
-	for _, ns := range lkeNamespaces(env) {
+func lkeApplyBase(env map[string]string, opts provisionOptions) error {
+	namespaces := lkeNamespaces(env)
+	if len(opts.workloads) > 0 {
+		wanted := map[string]bool{}
+		for _, workload := range lkeSelectedWorkloads(env, opts) {
+			wanted[workload.Namespace] = true
+		}
+		namespaces = []lkeNamespace{}
+		for _, ns := range lkeNamespaces(env) {
+			if wanted[ns.Name] {
+				namespaces = append(namespaces, ns)
+			}
+		}
+	}
+	for _, ns := range namespaces {
 		manifest, err := renderK8SNamespaceManifest(ns.Name, env["CLOUD_STACK_NAME"])
 		if err != nil {
 			return err
@@ -497,10 +510,13 @@ func lkeApplyBase(env map[string]string) error {
 			return err
 		}
 	}
-	for _, ns := range lkeNamespaces(env) {
+	for _, ns := range namespaces {
 		if err := lkeApplyImagePullSecret(env, ns.Name); err != nil {
 			return err
 		}
+	}
+	if len(opts.workloads) > 0 {
+		return nil
 	}
 	config := fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
@@ -1944,7 +1960,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := lkeApplyCloudLogger(env, opts); err != nil {
 		return err
 	}
-	if err := lkeApplyRuntimeDependencies(paths, env, opts); err != nil {
+	dependencyApply := lkeApplyRuntimeDependencies
+	if len(opts.workloads) > 0 {
+		dependencyApply = lkeApplyTargetedRuntimeDependencies
+	}
+	if err := dependencyApply(paths, env, opts); err != nil {
 		return err
 	}
 	var certIssuerMaterial *lkeCertIssuerMaterial
@@ -2430,6 +2450,91 @@ func lkeImageWorkloads(env map[string]string, opts provisionOptions) []lkeWorklo
 
 func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWorkload {
 	return k8sSelectedWorkloads(env, opts)
+}
+
+func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string, opts provisionOptions) error {
+	if _, err := lkeImportExistingRuntimeSecret(env, "platform", "postgresql-runtime", map[string]string{
+		"POSTGRES_PASSWORD": "postgres",
+	}, true); err != nil {
+		return err
+	}
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if _, err := lkeImportExistingRuntimeSecret(env, "billing", "billing-runtime", map[string]string{
+			"BILLING_SERVICE_TOKEN":             "billing-service-token",
+			"BILLING_INTERNAL_TOKEN":            "billing-internal-token",
+			"BILLING_DEBIT_TOKEN":               "billing-debit-token",
+			"PAYMENT_SIMULATOR_SHARED_SECRET":   "payment-simulator-shared",
+			"PAYMENT_SIMULATOR_CALLBACK_SECRET": "payment-simulator-callback",
+			"PAYMENT_REFERENCE_ENCRYPTION_KEY":  "payment-reference-encryption-key",
+		}, false); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
+		if err := kubectlApply(lkeBillingDatabaseEnsureJobManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "wait", "--for=condition=complete", "job/billing-database-ensure", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "cloud-admin") {
+		if !lkeWorkloadSelected(env, opts, "billing") {
+			if _, err := lkeImportExistingRuntimeSecret(env, "billing", "billing-runtime", map[string]string{
+				"BILLING_SERVICE_TOKEN": "billing-service-token",
+			}, true); err != nil {
+				return err
+			}
+		}
+		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lkeImportExistingRuntimeSecret(env map[string]string, namespaceKey, secretName string, mappings map[string]string, required bool) (bool, error) {
+	namespace := lkeNamespaceName(env, namespaceKey)
+	raw, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", secretName, "--ignore-not-found=true", "-o", "json")
+	if err != nil {
+		return false, fmt.Errorf("read existing K8s secret %s/%s: %w", namespace, secretName, err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		if required {
+			return false, fmt.Errorf("required existing K8s secret %s/%s is missing", namespace, secretName)
+		}
+		return false, nil
+	}
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw, mappings); err != nil {
+		return false, fmt.Errorf("import existing K8s secret %s/%s: %w", namespace, secretName, err)
+	}
+	return true, nil
+}
+
+func lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw []byte, mappings map[string]string) error {
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return err
+	}
+	for key, cacheKey := range mappings {
+		encoded := strings.TrimSpace(secret.Data[key])
+		if encoded == "" {
+			return fmt.Errorf("secret key %s is missing", key)
+		}
+		value, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return fmt.Errorf("decode secret key %s: %w", key, err)
+		}
+		if len(value) == 0 {
+			return fmt.Errorf("secret key %s is empty", key)
+		}
+		lkeRuntimeSecretCache[cacheKey] = string(value)
+	}
+	return nil
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
@@ -6635,6 +6740,9 @@ func lkeBillingInternalURL(env map[string]string) string {
 
 func lkePaymentReferenceEncryptionKey(env map[string]string) string {
 	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY"), env["PAYMENT_REFERENCE_ENCRYPTION_KEY"])); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(lkeRuntimeSecretCache["payment-reference-encryption-key"]); value != "" {
 		return value
 	}
 	seed := sha256.Sum256([]byte(lkeRuntimeSecretValue("payment-reference-encryption")))

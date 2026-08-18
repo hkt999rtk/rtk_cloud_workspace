@@ -1,9 +1,183 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLKEApplyBaseTargetsOnlyRequestedBillingWorkloads(t *testing.T) {
+	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	opts := provisionOptions{workloads: []string{"billing", "cloud-admin"}}
+
+	if err := lkeApplyBase(env, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{"name: video-cloud-staging-billing", "name: video-cloud-staging-admin"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("targeted base apply missing %q:\n%s", want, log)
+		}
+	}
+	for _, unwanted := range []string{"name: video-cloud-staging-video-cloud", "rtk-cloud-runtime", "metrics-server"} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("targeted base apply unexpectedly included %q:\n%s", unwanted, log)
+		}
+	}
+}
+
+func TestLKEImportExistingRuntimeSecretReadsClusterWithoutPrintingValues(t *testing.T) {
+	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	found, err := lkeImportExistingRuntimeSecret(env, "platform", "postgresql-runtime", map[string]string{"POSTGRES_PASSWORD": "postgres"}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || lkeRuntimeSecretCache["postgres"] != "existing-postgres" {
+		t.Fatal("existing PostgreSQL credential was not imported")
+	}
+	found, err = lkeImportExistingRuntimeSecret(env, "billing", "billing-runtime", map[string]string{"BILLING_SERVICE_TOKEN": "billing-service-token"}, false)
+	if err != nil || found {
+		t.Fatalf("optional missing Billing secret: found=%t err=%v", found, err)
+	}
+	if _, err := lkeImportExistingRuntimeSecret(env, "billing", "missing-required", map[string]string{"VALUE": "value"}, true); err == nil || !strings.Contains(err.Error(), "is missing") {
+		t.Fatalf("required missing secret error = %v", err)
+	}
+	if strings.Contains(readTestFile(t, logPath), "existing-postgres") {
+		t.Fatal("kubectl command log exposed an imported secret value")
+	}
+}
+
+func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
+	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-billing-test-seed")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	opts := provisionOptions{workloads: []string{"billing", "cloud-admin"}}
+
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{"name: billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: cloud-admin-billing-client"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("targeted dependency apply missing %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(strings.ToLower(log), "openbao") {
+		t.Fatalf("targeted Billing dependency apply touched OpenBao:\n%s", log)
+	}
+	if lkeRuntimeSecretCache["postgres"] != "existing-postgres" {
+		t.Fatal("targeted dependency apply rotated the PostgreSQL credential")
+	}
+}
+
+func fakeKubectlForTargetedBillingDeploy(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(logPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"get secret postgresql-runtime"* ]]; then
+  printf '{"data":{"POSTGRES_PASSWORD":"ZXhpc3RpbmctcG9zdGdyZXM="}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret billing-runtime"* || "$*" == *"get secret missing-required"* ]]; then
+  exit 0
+fi
+{
+  printf 'ARGS'
+  for arg in "$@"; do
+    printf ' %s' "$arg"
+  done
+  printf '\n'
+  if [[ "$*" == *"apply -f -"* ]]; then
+    cat
+    printf '\n---\n'
+  fi
+} >> "` + logPath + `"
+`
+	if err := os.WriteFile(kubectl, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	return logPath
+}
+
+func TestTargetedBillingDeployImportsExistingRuntimeSecretsWithoutRotation(t *testing.T) {
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	values := map[string]string{
+		"POSTGRES_PASSWORD":                 "existing-postgres",
+		"BILLING_SERVICE_TOKEN":             "existing-service-token",
+		"BILLING_INTERNAL_TOKEN":            "existing-internal-token",
+		"BILLING_DEBIT_TOKEN":               "existing-debit-token",
+		"PAYMENT_SIMULATOR_SHARED_SECRET":   "existing-simulator-secret",
+		"PAYMENT_SIMULATOR_CALLBACK_SECRET": "existing-callback-secret",
+		"PAYMENT_REFERENCE_ENCRYPTION_KEY":  "existing-reference-key",
+	}
+	data := map[string]string{}
+	for key, value := range values {
+		data[key] = base64.StdEncoding.EncodeToString([]byte(value))
+	}
+	raw, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mappings := map[string]string{
+		"POSTGRES_PASSWORD":                 "postgres",
+		"BILLING_SERVICE_TOKEN":             "billing-service-token",
+		"BILLING_INTERNAL_TOKEN":            "billing-internal-token",
+		"BILLING_DEBIT_TOKEN":               "billing-debit-token",
+		"PAYMENT_SIMULATOR_SHARED_SECRET":   "payment-simulator-shared",
+		"PAYMENT_SIMULATOR_CALLBACK_SECRET": "payment-simulator-callback",
+		"PAYMENT_REFERENCE_ENCRYPTION_KEY":  "payment-reference-encryption-key",
+	}
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw, mappings); err != nil {
+		t.Fatal(err)
+	}
+	for key, cacheKey := range mappings {
+		if lkeRuntimeSecretCache[cacheKey] != values[key] {
+			t.Fatalf("runtime secret %s was not preserved", key)
+		}
+	}
+	if got := lkePaymentReferenceEncryptionKey(map[string]string{}); got != "existing-reference-key" {
+		t.Fatalf("payment reference key rotated: %q", got)
+	}
+}
+
+func TestTargetedBillingDeployRejectsMalformedExistingRuntimeSecret(t *testing.T) {
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON([]byte(`{"data":{}}`), map[string]string{"BILLING_SERVICE_TOKEN": "billing-service-token"}); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing existing credential error = %v", err)
+	}
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON([]byte(`{"data":{"BILLING_SERVICE_TOKEN":"not-base64"}}`), map[string]string{"BILLING_SERVICE_TOKEN": "billing-service-token"}); err == nil || !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("malformed existing credential error = %v", err)
+	}
+}
 
 func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "payment-simulator-test-seed")
