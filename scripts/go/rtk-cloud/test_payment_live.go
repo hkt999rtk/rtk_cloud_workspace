@@ -49,7 +49,7 @@ var paymentLiveScreenshot = func(workdir, target, targetURL, output string) erro
 	if target == "mobile" {
 		device = "iPhone 13"
 	}
-	cmd := exec.Command("npx", "playwright", "screenshot", "--device="+device, "--wait-for-timeout=1000", targetURL, output)
+	cmd := exec.Command("npx", "playwright", "screenshot", "--browser=chromium", "--device="+device, "--wait-for-timeout=1000", targetURL, output)
 	cmd.Dir = workdir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
