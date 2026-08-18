@@ -165,7 +165,7 @@ go run ./scripts/go/rtk-cloud -- test-feature \
   --feature device-shadow \
   --profile qualification-1k \
   --environment staging \
-  --env-root cloud_env/staging/lke \
+  --env-root cloud_env/staging/runtime \
   --run-id manual-shadow-001 \
   --run \
   --confirm video-cloud-staging

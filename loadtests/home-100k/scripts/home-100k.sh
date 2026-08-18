@@ -58,11 +58,15 @@ load_linode_token_from_env_file
 
 environment="${HOME100K_ENVIRONMENT:-staging}"
 environment_root="${HOME100K_ENVIRONMENT_ROOT:-cloud_env/${environment}}"
-if [[ "$environment_root" == */staging/lke || "$environment_root" == cloud_env/staging/lke ]]; then
+if [[ "$environment_root" == */staging/lke || "$environment_root" == cloud_env/staging/lke || "$environment_root" == */staging/linode || "$environment_root" == cloud_env/staging/linode ]]; then
   echo "legacy provider env-root is not supported; use HOME100K_ENVIRONMENT=staging" >&2
   exit 2
 fi
 env_root="${HOME100K_ENV_ROOT:-${environment_root}/runtime}"
+if [[ "$env_root" == */staging/lke || "$env_root" == cloud_env/staging/lke || "$env_root" == */staging/linode || "$env_root" == cloud_env/staging/linode ]]; then
+  echo "legacy provider env-root is not supported; use cloud_env/staging/runtime" >&2
+  exit 2
+fi
 brandname="${HOME100K_BRANDNAME:-RTK}"
 brand_plan="${HOME100K_BRAND_PLAN:-}"
 if [[ -n "$brand_plan" && "$brand_plan" != /* ]]; then

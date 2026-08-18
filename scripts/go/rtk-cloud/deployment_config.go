@@ -121,10 +121,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	envFile := fs.String("env-file", defaultDeploymentCredentialEnvFile(), "operator credential env file")
 	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
+	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -139,6 +140,9 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
 	if err != nil {
 		return err
+	}
+	if action == "preflight" {
+		return runDeploymentPreflight(cfg, *operation)
 	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
 	if action != "plan" && action != "credentials-check" && *confirm != stack {
@@ -463,6 +467,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME [--env-file PATH]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket [--env-file PATH]
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access [--env-file PATH]
+  rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
@@ -480,8 +485,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 	}
 	if environmentRoot != "" {
-		if strings.HasSuffix(filepath.Clean(environmentRoot), filepath.Join("staging", "lke")) {
-			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment staging")
+		cleanRoot := filepath.Clean(environmentRoot)
+		if base := filepath.Base(cleanRoot); base == "lke" || base == "linode" {
+			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment NAME or cloud_env/<environment>/runtime")
 		}
 		environmentRoot, err = filepath.Abs(environmentRoot)
 		if err != nil {

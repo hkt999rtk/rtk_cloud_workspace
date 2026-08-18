@@ -118,7 +118,7 @@ func TestUnprovisionCommandPreflightsRouteAndWritesEvidence(t *testing.T) {
 	if !strings.Contains(output, `"action":"unprovisioned"`) || !strings.Contains(output, `"unprovisioned":1`) {
 		t.Fatalf("output = %s", output)
 	}
-	matches, err := filepath.Glob(filepath.Join(envRoot, "lke", "artifacts", "device-unprovision", "*.json"))
+	matches, err := filepath.Glob(filepath.Join(envRoot, "runtime", "artifacts", "device-unprovision", "*.json"))
 	if err != nil || len(matches) != 1 {
 		t.Fatalf("artifacts = %v, %v", matches, err)
 	}
@@ -505,7 +505,7 @@ func TestRunBindDevicesQualifiesEveryAssignmentThroughClaimResolve(t *testing.T)
 	if counts[0] != 2 || counts[1] != 2 || counts[2] != 0 || counts[3] != 2 {
 		t.Fatalf("claim-create/resolve registry-create provision counts=%v", counts)
 	}
-	artifact, err := readBindArtifactFromTestData(filepath.Join(envRoot, "lke"), "RTK")
+	artifact, err := readBindArtifactFromTestData(filepath.Join(envRoot, "runtime"), "RTK")
 	if err != nil {
 		t.Fatal(err)
 	}
