@@ -933,10 +933,20 @@ func cleanupPaymentLive(ctx context.Context, client *http.Client, cfg paymentLiv
 	base := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
 	var issues []string
 	if state.PolicyVersion > 0 {
-		var disabled map[string]any
-		err := paymentLiveBillingJSON(ctx, client, http.MethodDelete, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10))}, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &disabled)
-		if err != nil {
-			issues = append(issues, "disable policy: "+err.Error())
+		var current map[string]any
+		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/auto-topup", token, "auto_topup.read", nil, nil, &current); err != nil {
+			issues = append(issues, "read policy for cleanup: "+err.Error())
+		} else if policy := nestedMap(current["auto_topup"]); policy["enabled"] != false {
+			version := int64Value(policy["version"])
+			if version <= 0 {
+				issues = append(issues, "disable policy: current policy has no version")
+			} else {
+				var disabled map[string]any
+				err := paymentLiveBillingJSON(ctx, client, http.MethodDelete, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(version, 10))}, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &disabled)
+				if err != nil {
+					issues = append(issues, "disable policy: "+err.Error())
+				}
+			}
 		}
 	}
 	if state.MethodID != "" {

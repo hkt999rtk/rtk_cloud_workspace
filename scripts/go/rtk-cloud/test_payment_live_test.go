@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -597,6 +599,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	methodActive := false
 	debitPosted := false
 	manualPosted := false
+	policyVersion := int64(1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/v1/internal/billing/access/org-test" {
@@ -639,10 +642,15 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			methodActive = true
 			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodGet:
-			_, _ = w.Write([]byte(`{"auto_topup":{"version":1}}`))
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"auto_topup":{"enabled":true,"version":%d}}`, policyVersion)))
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodPut:
+			policyVersion = 2
 			_, _ = w.Write([]byte(`{"auto_topup":{"version":2}}`))
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodDelete:
+			if got := r.Header.Get("If-Match"); got != strconv.Quote(strconv.FormatInt(policyVersion, 10)) {
+				t.Fatalf("cleanup If-Match = %q, want current version %d", got, policyVersion)
+			}
+			policyVersion++
 			_, _ = w.Write([]byte(`{"auto_topup":{"enabled":false,"version":3}}`))
 		case r.URL.Path == "/v1/internal/billing/debits":
 			if got := r.Header.Get("Authorization"); got != "Bearer "+strings.Repeat("d", 32) {
@@ -650,6 +658,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			}
 			duplicate := debitPosted
 			debitPosted = true
+			policyVersion = 3
 			_, _ = w.Write([]byte(`{"ledger_entry_id":"debit-1","payment_intent_id":"intent-auto","duplicate":` + map[bool]string{true: "true", false: "false"}[duplicate] + `}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-auto":
 			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"charge","status":"succeeded"}]}`))
