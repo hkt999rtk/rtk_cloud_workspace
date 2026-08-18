@@ -1992,6 +1992,52 @@ func TestLKEEnsureOpenBaoSkipsRestartWhenTLSSecretUnchanged(t *testing.T) {
 	}
 }
 
+func TestLKEEnsureOpenBaoRejectsMismatchedOperatorStateBeforeTLSMutation(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
+	kubectlLog := fakeKubectl(t)
+	helmLog := fakeHelm(t)
+	writeTestFile(t, kubectlLog, "")
+	writeTestFile(t, helmLog, "")
+	if err := writeSensitiveFile(filepath.Join(envRoot, "state", "openbao", "root-token"), "stale-root-token"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_OPENBAO_TLS_SECRET_JSON", `{"data":{"ca.crt":"old","tls.crt":"old","tls.key":"old"}}`)
+	t.Setenv("FAKE_OPENBAO_STATUS_JSON", `{"initialized":true,"sealed":false}`)
+	t.Setenv("FAKE_OPENBAO_TOKEN_LOOKUP_FAIL", "1")
+
+	_, err := lkeEnsureOpenBao(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, lkeOpenBaoTLSMaterial{
+		CACert: "new-ca", ServerCert: "new-cert", ServerKey: "new-key",
+	})
+	if err == nil || !strings.Contains(err.Error(), "local operator state does not manage") {
+		t.Fatalf("mismatched OpenBao state must fail closed, got %v", err)
+	}
+	if strings.Contains(readTestFile(t, kubectlLog), "apply -f") {
+		t.Fatal("OpenBao TLS Secret was mutated before operator-state validation")
+	}
+	if strings.TrimSpace(readTestFile(t, helmLog)) != "" {
+		t.Fatal("Helm was invoked before operator-state validation")
+	}
+}
+
+func TestLKEEnsureOpenBaoRejectsTLSChangeWhileSealed(t *testing.T) {
+	_, envRoot := makeLKETestEnv(t)
+	kubectlLog := fakeKubectl(t)
+	fakeHelm(t)
+	writeTestFile(t, kubectlLog, "")
+	t.Setenv("FAKE_OPENBAO_TLS_SECRET_JSON", `{"data":{"ca.crt":"old","tls.crt":"old","tls.key":"old"}}`)
+	t.Setenv("FAKE_OPENBAO_STATUS_JSON", `{"initialized":true,"sealed":true}`)
+
+	_, err := lkeEnsureOpenBao(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, lkeOpenBaoTLSMaterial{
+		CACert: "new-ca", ServerCert: "new-cert", ServerKey: "new-key",
+	})
+	if err == nil || !strings.Contains(err.Error(), "while the existing instance is sealed") {
+		t.Fatalf("sealed OpenBao TLS change must fail closed, got %v", err)
+	}
+	if strings.Contains(readTestFile(t, kubectlLog), "apply -f") {
+		t.Fatal("sealed OpenBao TLS Secret was mutated")
+	}
+}
+
 func TestLKEEnsureOpenBaoSkipsHelmRepoUpdateWhenTemplateWorks(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	_ = workspace
@@ -5288,7 +5334,11 @@ if [[ "$*" == *"get nodes -o name"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
-  printf '{"initialized":false,"sealed":true}\n'
+	if [[ -n "${FAKE_OPENBAO_STATUS_JSON:-}" ]]; then
+		printf '%s\n' "$FAKE_OPENBAO_STATUS_JSON"
+	else
+		printf '{"initialized":false,"sealed":true}\n'
+	fi
   exit 0
 fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao operator init "* ]]; then
@@ -5369,6 +5419,9 @@ if [[ "$*" == *"rollout status"* ]]; then
 fi
 if [[ "$*" == *"exec -i openbao-0 -- sh -s"* ]]; then
   body="$(cat)"
+	if [[ "$body" == *"bao token lookup"* && "${FAKE_OPENBAO_TOKEN_LOOKUP_FAIL:-}" == "1" ]]; then
+		exit 22
+	fi
   if [[ "$body" == *"bao operator unseal"* ]]; then
     exit 0
   fi
