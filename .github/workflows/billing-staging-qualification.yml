@@ -98,7 +98,7 @@ jobs:
           fi
           echo "LKE_BILLING_IMAGE=$image" >> "$GITHUB_ENV"
           commit="$(git -C repos/rtk_account_manager rev-parse --short=12 HEAD)"
-          image="ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-$commit"
+          image="ghcr.io/hkt999rtk/rtk_cloud_workspace/account-manager-migrate:sha-$commit"
           if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
             go run ./scripts/go/rtk-cloud -- lke-build-images \
               --workspace "$GITHUB_WORKSPACE" \
