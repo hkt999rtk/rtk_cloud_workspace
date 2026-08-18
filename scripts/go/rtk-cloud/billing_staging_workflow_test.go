@@ -35,6 +35,8 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"BILLING_STAGING_ENV_ROOT",
 		"$RUNNER_TEMP/billing-staging-runtime",
 		"lke-build-images",
+		"ghcr.io/hkt999rtk/rtk_cloud_workspace/account-manager-migrate:sha-$commit",
+		"ghcr.io/hkt999rtk/rtk_cloud_workspace/cloud-admin:sha-$commit",
 		"--workloads billing,cloud-admin",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"Deploy only Billing and Cloud Admin without rotating shared PKI",
