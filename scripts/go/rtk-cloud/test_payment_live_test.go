@@ -164,6 +164,9 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 	oldCreateCloud := paymentLiveAccountCreateCloud
 	oldCreateUser := paymentLiveAccountCreateUser
 	oldPassword := paymentLiveGeneratePassword
+	oldLoadCustomer := paymentLiveLoadCustomer
+	oldSaveCustomer := paymentLiveSaveCustomer
+	oldEnsureCustomer := paymentLiveEnsureCustomer
 	oldClient := paymentLiveHTTPClient
 	t.Cleanup(func() {
 		paymentLiveAccountManagerContext = oldContext
@@ -173,7 +176,13 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 		paymentLiveAccountCreateCloud = oldCreateCloud
 		paymentLiveAccountCreateUser = oldCreateUser
 		paymentLiveGeneratePassword = oldPassword
+		paymentLiveLoadCustomer = oldLoadCustomer
+		paymentLiveSaveCustomer = oldSaveCustomer
+		paymentLiveEnsureCustomer = oldEnsureCustomer
 		paymentLiveHTTPClient = oldClient
+		paymentLiveLoadCustomer = oldLoadCustomer
+		paymentLiveSaveCustomer = oldSaveCustomer
+		paymentLiveEnsureCustomer = oldEnsureCustomer
 	})
 
 	closed := false
@@ -213,6 +222,14 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 		return accountCreateUserResult{Action: "rotated"}, nil
 	}
 	paymentLiveHTTPClient = func() *http.Client { return server.Client() }
+	paymentLiveLoadCustomer = func(workspace, envRoot string) (paymentLiveQualificationCustomer, bool, error) {
+		return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "qualification-org"}, true, nil
+	}
+	paymentLiveSaveCustomer = func(string, string, paymentLiveQualificationCustomer) error { return nil }
+	paymentLiveEnsureCustomer = func(_ context.Context, _ *http.Client, _ string, customer paymentLiveQualificationCustomer) (paymentLiveQualificationCustomer, error) {
+		customer.AccessToken = "customer-token"
+		return customer, nil
+	}
 
 	sessionFile := filepath.Join(t.TempDir(), "session", "customer")
 	cfg := paymentLiveConfig{
@@ -223,10 +240,10 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !closed {
-		t.Fatal("Account Manager context was not closed")
+	if closed {
+		t.Fatal("qualification bootstrap must not load platform-admin credentials")
 	}
-	if got.OrgID != "qualification-org" || accountToken != "platform-token" || billingToken != "secret-BILLING_SERVICE_TOKEN" || internalToken != "secret-BILLING_INTERNAL_TOKEN" || debitToken != "secret-BILLING_DEBIT_TOKEN" {
+	if got.OrgID != "qualification-org" || accountToken != "customer-token" || billingToken != "secret-BILLING_SERVICE_TOKEN" || internalToken != "secret-BILLING_INTERNAL_TOKEN" || debitToken != "secret-BILLING_DEBIT_TOKEN" {
 		t.Fatalf("unexpected bootstrap result: org=%q account=%q billing=%q internal=%q debit=%q", got.OrgID, accountToken, billingToken, internalToken, debitToken)
 	}
 	if raw, err := os.ReadFile(sessionFile); err != nil || string(raw) != strings.Repeat("s", 32) {
@@ -240,12 +257,20 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 	oldSecret := paymentLiveRuntimeSecretValue
 	oldList := paymentLiveAccountListClouds
 	oldCreateCloud := paymentLiveAccountCreateCloud
+	oldLoadCustomer := paymentLiveLoadCustomer
+	oldSaveCustomer := paymentLiveSaveCustomer
+	oldEnsureCustomer := paymentLiveEnsureCustomer
+	oldPassword := paymentLiveGeneratePassword
 	t.Cleanup(func() {
 		paymentLiveAccountManagerContext = oldContext
 		paymentLiveAccountLoginSession = oldLogin
 		paymentLiveRuntimeSecretValue = oldSecret
 		paymentLiveAccountListClouds = oldList
 		paymentLiveAccountCreateCloud = oldCreateCloud
+		paymentLiveLoadCustomer = oldLoadCustomer
+		paymentLiveSaveCustomer = oldSaveCustomer
+		paymentLiveEnsureCustomer = oldEnsureCustomer
+		paymentLiveGeneratePassword = oldPassword
 	})
 	paymentLiveAccountManagerContext = func(string, string) (accountManagerContext, error) { return accountManagerContext{}, nil }
 	paymentLiveAccountLoginSession = func(accountManagerContext, func(string, ...any)) (accountPlatformSession, error) {
@@ -261,6 +286,17 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 		}
 		return map[string]any{"brand_cloud": map[string]any{"id": "created-org", "name": name}}, http.StatusCreated, nil
 	}
+	paymentLiveLoadCustomer = func(string, string) (paymentLiveQualificationCustomer, bool, error) {
+		return paymentLiveQualificationCustomer{}, false, nil
+	}
+	saves := 0
+	paymentLiveSaveCustomer = func(string, string, paymentLiveQualificationCustomer) error { saves++; return nil }
+	paymentLiveGeneratePassword = func() (string, error) { return "Q!temporary-password", nil }
+	paymentLiveEnsureCustomer = func(_ context.Context, _ *http.Client, _ string, customer paymentLiveQualificationCustomer) (paymentLiveQualificationCustomer, error) {
+		customer.OrganizationID = "created-org"
+		customer.AccessToken = "customer-token"
+		return customer, nil
+	}
 
 	cfg, _, _, _, _, err := bootstrapPaymentLiveOrganization("/workspace", paymentLiveConfig{EnvRoot: "/staging", AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com"})
 	if err != nil {
@@ -268,6 +304,9 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 	}
 	if cfg.OrgID != "created-org" {
 		t.Fatalf("created Brand Cloud ID = %q", cfg.OrgID)
+	}
+	if saves != 2 {
+		t.Fatalf("qualification customer secret saves = %d, want 2", saves)
 	}
 }
 
@@ -279,6 +318,9 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 	oldCreateCloud := paymentLiveAccountCreateCloud
 	oldCreateUser := paymentLiveAccountCreateUser
 	oldPassword := paymentLiveGeneratePassword
+	oldLoadCustomer := paymentLiveLoadCustomer
+	oldSaveCustomer := paymentLiveSaveCustomer
+	oldEnsureCustomer := paymentLiveEnsureCustomer
 	t.Cleanup(func() {
 		paymentLiveAccountManagerContext = oldContext
 		paymentLiveAccountLoginSession = oldLogin
@@ -287,23 +329,23 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 		paymentLiveAccountCreateCloud = oldCreateCloud
 		paymentLiveAccountCreateUser = oldCreateUser
 		paymentLiveGeneratePassword = oldPassword
+		paymentLiveLoadCustomer = oldLoadCustomer
+		paymentLiveSaveCustomer = oldSaveCustomer
+		paymentLiveEnsureCustomer = oldEnsureCustomer
 	})
 
 	for _, test := range []struct {
 		stage string
 		want  string
 	}{
-		{stage: "context", want: "platform-admin credentials"},
-		{stage: "login", want: "platform-admin login"},
 		{stage: "BILLING_SERVICE_TOKEN", want: "Billing service credential"},
 		{stage: "BILLING_INTERNAL_TOKEN", want: "Billing internal credential"},
 		{stage: "BILLING_DEBIT_TOKEN", want: "Billing debit credential"},
-		{stage: "list", want: "list qualification Brand Clouds"},
-		{stage: "create", want: "create dedicated qualification Brand Cloud"},
-		{stage: "status", want: "HTTP 409"},
-		{stage: "missing-id", want: "has no ID"},
+		{stage: "load-customer", want: "load dedicated qualification customer"},
 		{stage: "password", want: "password generation failed"},
-		{stage: "user", want: "rotate qualification customer"},
+		{stage: "save-bootstrap", want: "persist qualification customer bootstrap credential"},
+		{stage: "ensure-customer", want: "ensure dedicated qualification customer"},
+		{stage: "save-org", want: "persist qualification customer organization"},
 		{stage: "session", want: "missing protocol scheme"},
 	} {
 		t.Run(test.stage, func(t *testing.T) {
@@ -350,6 +392,29 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 				}
 				return "Q!temporary-password", nil
 			}
+			paymentLiveLoadCustomer = func(string, string) (paymentLiveQualificationCustomer, bool, error) {
+				if test.stage == "load-customer" {
+					return paymentLiveQualificationCustomer{}, false, errors.New("load failed")
+				}
+				if test.stage == "password" || test.stage == "save-bootstrap" {
+					return paymentLiveQualificationCustomer{}, false, nil
+				}
+				return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "qualification-org"}, true, nil
+			}
+			saveCalls := 0
+			paymentLiveSaveCustomer = func(string, string, paymentLiveQualificationCustomer) error {
+				saveCalls++
+				if test.stage == "save-bootstrap" || (test.stage == "save-org" && saveCalls == 1) {
+					return errors.New("save failed")
+				}
+				return nil
+			}
+			paymentLiveEnsureCustomer = func(context.Context, *http.Client, string, paymentLiveQualificationCustomer) (paymentLiveQualificationCustomer, error) {
+				if test.stage == "ensure-customer" {
+					return paymentLiveQualificationCustomer{}, errors.New("ensure failed")
+				}
+				return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "qualification-org", AccessToken: "customer-token"}, nil
+			}
 			paymentLiveAccountCreateUser = func(accountManagerContext, *accountPlatformSession, func(string, ...any), string, string, string, string, string, bool) (accountCreateUserResult, error) {
 				if test.stage == "user" {
 					return accountCreateUserResult{}, errors.New("user failed")
@@ -358,7 +423,7 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 			}
 
 			cfg := paymentLiveConfig{EnvRoot: "/staging", AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com"}
-			if test.stage == "password" || test.stage == "user" || test.stage == "session" {
+			if test.stage == "session" {
 				cfg.CloudAdminBaseURL = "://invalid"
 				cfg.CustomerSessionFile = filepath.Join(t.TempDir(), "session")
 			}
@@ -367,6 +432,63 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 				t.Fatalf("stage %q: expected %q failure, got %v", test.stage, test.want, err)
 			}
 		})
+	}
+}
+
+func TestEnsurePaymentLiveQualificationCustomerRegistersCustomerOrganization(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/auth/login":
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/v1/auth/register":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["organization_name"] != paymentLiveBootstrapOrgName || body["email"] != paymentLiveBootstrapCustomerEmail {
+				t.Fatalf("unexpected registration body: %+v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"organization":{"id":"customer-org"},"tokens":{"access_token":"customer-access-token"}}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	customer, err := ensurePaymentLiveQualificationCustomer(context.Background(), server.Client(), server.URL, paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if customer.OrganizationID != "customer-org" || customer.AccessToken != "customer-access-token" {
+		t.Fatalf("unexpected registered customer: %+v", customer)
+	}
+}
+
+func TestEnsurePaymentLiveQualificationCustomerRecoversOrganizationFromLogin(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/auth/login":
+			_, _ = w.Write([]byte(`{"tokens":{"access_token":"customer-access-token"}}`))
+		case "/v1/orgs":
+			if r.Header.Get("Authorization") != "Bearer customer-access-token" {
+				t.Fatal("organization recovery did not use the customer token")
+			}
+			_, _ = w.Write([]byte(`{"organizations":[{"id":"other","name":"Other","organization_kind":"customer_org"},{"id":"customer-org","name":"RTK Payment Simulator Qualification","organization_kind":"customer_org"}]}`))
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	customer, err := ensurePaymentLiveQualificationCustomer(context.Background(), server.Client(), server.URL, paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if customer.OrganizationID != "customer-org" || customer.AccessToken != "customer-access-token" {
+		t.Fatalf("unexpected recovered customer: %+v", customer)
 	}
 }
 
