@@ -33,6 +33,7 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"::add-mask::",
 		"/api/auth/logout",
 		"BILLING_STAGING_ENV_ROOT",
+		"$RUNNER_TEMP/billing-staging-runtime",
 		"lke-build-images",
 		"--workloads billing,cloud-admin",
 		"LKE_CLOUD_ADMIN_IMAGE",
