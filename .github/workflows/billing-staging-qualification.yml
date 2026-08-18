@@ -40,6 +40,8 @@ jobs:
       CLOUD_STACK_NAME: video-cloud-staging
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+      GODADDY_KEY: ${{ secrets.GODADDY_KEY }}
+      GODADDY_SECRET: ${{ secrets.GODADDY_SECRET }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -73,7 +75,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish the pinned Billing production image when missing
+      - name: Build and publish pinned Billing and Cloud Admin production images when missing
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         shell: bash
         run: |
@@ -94,6 +96,16 @@ jobs:
               --image "$image"
           fi
           echo "LKE_BILLING_IMAGE=$image" >> "$GITHUB_ENV"
+          commit="$(git -C repos/rtk_cloud_admin rev-parse --short=12 HEAD)"
+          image="ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-$commit"
+          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            go run ./scripts/go/rtk-cloud -- lke-build-images \
+              --workspace "$GITHUB_WORKSPACE" \
+              --env-root "$BILLING_STAGING_ENV_ROOT" \
+              --workloads cloud-admin \
+              --image "$image"
+          fi
+          echo "LKE_CLOUD_ADMIN_IMAGE=$image" >> "$GITHUB_ENV"
 
       - name: Validate qualification mode and catalog
         shell: bash
@@ -133,6 +145,24 @@ jobs:
           jq -er '.kubeconfig' "$response" | openssl base64 -d -A > "$kubeconfig"
           chmod 0600 "$kubeconfig"
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Deploy only Billing and Cloud Admin without rotating shared PKI
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        env:
+          GHCR_PULL_USERNAME: ${{ github.actor }}
+          GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- provision \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$BILLING_STAGING_ENV_ROOT" \
+            --preflight \
+            --apply \
+            --deploy \
+            --dns \
+            --workloads billing,cloud-admin \
+            --confirm video-cloud-staging
 
       - name: Verify deployed Billing rollout and public health
         if: env.BILLING_QUALIFICATION_MODE == 'run'

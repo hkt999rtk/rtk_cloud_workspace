@@ -48,6 +48,11 @@ func TestK8SSelectedWorkloadsMatchLKESelectionModes(t *testing.T) {
 			opts: provisionOptions{loggerOnly: true},
 			want: []string{"cloud-logger"},
 		},
+		{
+			name: "explicit Billing portal qualification",
+			opts: provisionOptions{workloads: []string{"billing", "cloud-admin"}},
+			want: []string{"billing", "cloud-admin"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -57,6 +62,30 @@ func TestK8SSelectedWorkloadsMatchLKESelectionModes(t *testing.T) {
 				t.Fatalf("selected workload keys got %#v want %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestK8SWorkloadSelectionValidation(t *testing.T) {
+	env := k8sWorkloadTestEnv()
+	if got := splitK8SWorkloadKeys(" billing,cloud-admin,billing, "); !reflect.DeepEqual(got, []string{"billing", "cloud-admin"}) {
+		t.Fatalf("split workload keys = %#v", got)
+	}
+	if err := validateK8SWorkloadSelection(env, provisionOptions{workloads: []string{"billing", "cloud-admin"}}); err != nil {
+		t.Fatalf("valid targeted workload selection rejected: %v", err)
+	}
+	if err := validateK8SWorkloadSelection(env, provisionOptions{workloads: []string{"billing"}, videoOnly: true}); err == nil {
+		t.Fatal("explicit workloads combined with a legacy selection flag must fail")
+	}
+	if err := validateK8SWorkloadSelection(env, provisionOptions{workloads: []string{"unknown"}}); err == nil || !strings.Contains(err.Error(), "unknown K8s workload") {
+		t.Fatalf("unknown workload error = %v", err)
+	}
+	mutating := provisionOptions{workloads: []string{"billing"}, mode: provisionMode{deploy: true}}
+	if err := validateK8SWorkloadSelection(env, mutating); err == nil || !strings.Contains(err.Error(), "--confirm") {
+		t.Fatalf("unconfirmed targeted mutation error = %v", err)
+	}
+	mutating.confirm = env["CLOUD_STACK_NAME"]
+	if err := validateK8SWorkloadSelection(env, mutating); err != nil {
+		t.Fatalf("confirmed targeted mutation rejected: %v", err)
 	}
 }
 

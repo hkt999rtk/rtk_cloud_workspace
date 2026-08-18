@@ -57,6 +57,7 @@ type provisionOptions struct {
 	localBuild           bool
 	loggerOnly           bool
 	videoOnly            bool
+	workloads            []string
 	binaryOnly           bool
 	confirm              string
 	verbose              bool
@@ -95,6 +96,9 @@ func runProvision(args []string) error {
 		}
 	}
 	if err := mergeObjectStorageCredentialDefaults(envRoot, env.Values); err != nil {
+		return err
+	}
+	if err := validateK8SWorkloadSelection(env.Values, opts); err != nil {
 		return err
 	}
 	provider, err := newCloudProvider(env.Values["CLOUD_PROVIDER"])
@@ -201,6 +205,12 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 				return opts, err
 			}
 			opts.envRoot = v
+		case "--workloads":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.workloads = splitK8SWorkloadKeys(v)
 		case "--operator-env":
 			v, err := next()
 			if err != nil {
@@ -282,7 +292,7 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 
 func printProvisionUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
-  rtk-cloud provision --env-root cloud_env/staging [--all|--plan|--apply|--deploy|--artifacts]
+  rtk-cloud provision --env-root cloud_env/staging [--all|--plan|--apply|--deploy|--artifacts] [--workloads billing,cloud-admin]
 
 Default:
   no mode flags is the same as --all.

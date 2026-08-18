@@ -1,7 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"sort"
+	"strings"
 )
 
 type k8sWorkload struct {
@@ -107,6 +110,19 @@ func k8sImageWorkloads(env map[string]string, opts provisionOptions) []k8sWorklo
 
 func k8sSelectedWorkloads(env map[string]string, opts provisionOptions) []k8sWorkload {
 	workloads := k8sWorkloads(env)
+	if len(opts.workloads) > 0 {
+		wanted := map[string]bool{}
+		for _, key := range opts.workloads {
+			wanted[key] = true
+		}
+		selected := []k8sWorkload{}
+		for _, workload := range workloads {
+			if wanted[workload.Key] {
+				selected = append(selected, workload)
+			}
+		}
+		return selected
+	}
 	if opts.loggerOnly {
 		selected := []k8sWorkload{}
 		for _, workload := range workloads {
@@ -126,6 +142,46 @@ func k8sSelectedWorkloads(env map[string]string, opts provisionOptions) []k8sWor
 		}
 	}
 	return selected
+}
+
+func splitK8SWorkloadKeys(raw string) []string {
+	seen := map[string]bool{}
+	keys := []string{}
+	for _, item := range strings.Split(raw, ",") {
+		key := strings.TrimSpace(item)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+func validateK8SWorkloadSelection(env map[string]string, opts provisionOptions) error {
+	if len(opts.workloads) == 0 {
+		return nil
+	}
+	if opts.loggerOnly || opts.videoOnly {
+		return fmt.Errorf("--workloads cannot be combined with legacy workload selection flags")
+	}
+	valid := map[string]bool{}
+	validKeys := []string{}
+	for _, workload := range k8sWorkloads(env) {
+		valid[workload.Key] = true
+		validKeys = append(validKeys, workload.Key)
+	}
+	for _, key := range opts.workloads {
+		if !valid[key] {
+			sort.Strings(validKeys)
+			return fmt.Errorf("unknown K8s workload %q; valid workloads: %s", key, strings.Join(validKeys, ","))
+		}
+	}
+	mutating := opts.mode.reset || opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.e2e
+	if mutating && opts.confirm != env["CLOUD_STACK_NAME"] {
+		return fmt.Errorf("targeted K8s mutation requires --confirm %s", env["CLOUD_STACK_NAME"])
+	}
+	return nil
 }
 
 func k8sMissingDeployImageWorkloads(env map[string]string, opts provisionOptions) []k8sWorkload {

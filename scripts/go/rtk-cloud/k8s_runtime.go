@@ -126,7 +126,7 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.apply },
 			Run: func(ctx provisionContext) error {
-				if err := lkeApplyBase(ctx.Env); err != nil {
+				if err := lkeApplyBase(ctx.Env, ctx.Opts); err != nil {
 					return err
 				}
 				if !ctx.Opts.mode.deploy {
@@ -185,12 +185,9 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 	class := firstNonEmpty(ctx.Env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
 	labelKey := firstNonEmpty(ctx.Env["NODE_CLASS_LABEL_KEY"], "rtk.io/node-class")
 	patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"nodeSelector":{%q:%q}}}}}`, labelKey, class)
-	targets := []struct{ namespace, deployment string }{
-		{lkeNamespaceName(ctx.Env, "video-cloud"), "video-cloud-api"},
-		{lkeNamespaceName(ctx.Env, "account-manager"), "account-manager"},
-		{lkeNamespaceName(ctx.Env, "admin"), "cloud-admin"},
-		{lkeNamespaceName(ctx.Env, "frontend"), "frontend"},
-		{lkeNamespaceName(ctx.Env, "logger"), "cloud-logger"},
+	targets := []struct{ namespace, deployment string }{}
+	for _, workload := range lkeSelectedWorkloads(ctx.Env, ctx.Opts) {
+		targets = append(targets, struct{ namespace, deployment string }{workload.Namespace, workload.Name})
 	}
 	for _, target := range targets {
 		if err := runKubectl("-n", target.namespace, "patch", "deployment", target.deployment, "--type=merge", "-p", patch); err != nil {
