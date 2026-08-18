@@ -75,6 +75,7 @@ var (
 	paymentLiveLoadCustomer          = loadPaymentLiveQualificationCustomer
 	paymentLiveSaveCustomer          = savePaymentLiveQualificationCustomer
 	paymentLiveEnsureCustomer        = ensurePaymentLiveQualificationCustomer
+	paymentLiveCreateCustomerOrg     = createPaymentLiveQualificationOrganization
 )
 
 type paymentLiveQualificationCustomer struct {
@@ -300,16 +301,24 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("ensure dedicated qualification customer: %w", err)
 	}
-	if customer.OrganizationID == "" || customer.AccessToken == "" {
-		return cfg, "", "", "", "", errors.New("dedicated qualification customer has no organization or access token")
+	if customer.AccessToken == "" {
+		return cfg, "", "", "", "", errors.New("dedicated qualification customer has no access token")
 	}
-	if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, customer); err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("persist qualification customer organization: %w", err)
+	persistentCustomer := customer
+	persistentCustomer.OrganizationID = ""
+	if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, persistentCustomer); err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("persist qualification customer credential: %w", err)
 	}
-	cfg.OrgID = customer.OrganizationID
+	cfg.OrgID, err = paymentLiveCreateCustomerOrg(context.Background(), client, cfg.AccountManagerBaseURL, customer.AccessToken, paymentLiveBootstrapOrgName+" "+cfg.RunID)
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("create run-scoped qualification organization: %w", err)
+	}
 	if cfg.CustomerSessionFile != "" {
 		if loginErr := writePaymentLiveCustomerSession(context.Background(), client, cfg.CloudAdminBaseURL, customer.Email, customer.Password, cfg.CustomerSessionFile); loginErr != nil {
 			return cfg, "", "", "", "", loginErr
+		}
+		if activateErr := activatePaymentLiveCustomerOrganization(context.Background(), client, cfg.CloudAdminBaseURL, cfg.OrgID, cfg.CustomerSessionFile); activateErr != nil {
+			return cfg, "", "", "", "", activateErr
 		}
 	}
 	return cfg, customer.AccessToken, billingToken, internalToken, debitToken, nil
@@ -496,6 +505,46 @@ func paymentLiveJSONStatus(ctx context.Context, client *http.Client, method, end
 		_, _ = io.Copy(io.Discard, response.Body)
 	}
 	return response.StatusCode, nil
+}
+
+func createPaymentLiveQualificationOrganization(ctx context.Context, client *http.Client, baseURL, token, name string) (string, error) {
+	var created map[string]any
+	status, err := paymentLiveJSONStatus(ctx, client, http.MethodPost, baseURL+"/v1/orgs", token, map[string]string{"name": strings.TrimSpace(name)}, &created)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusCreated {
+		return "", fmt.Errorf("HTTP %d", status)
+	}
+	organizationID, _ := nestedMap(created["organization"])["id"].(string)
+	if organizationID == "" {
+		return "", errors.New("organization response has no ID")
+	}
+	return organizationID, nil
+}
+
+func activatePaymentLiveCustomerOrganization(ctx context.Context, client *http.Client, baseURL, organizationID, sessionFile string) error {
+	session, err := os.ReadFile(sessionFile)
+	if err != nil {
+		return fmt.Errorf("read qualification customer session: %w", err)
+	}
+	body, _ := json.Marshal(map[string]string{"organization_id": organizationID})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/me/active-org", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: "rtk_admin_session", Value: strings.TrimSpace(string(session))})
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("activate qualification customer organization: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("activate qualification customer organization: HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func writePaymentLiveCustomerSession(ctx context.Context, client *http.Client, baseURL, email, password, output string) error {
