@@ -1353,6 +1353,8 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowCloudAdminBillingNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
@@ -1585,6 +1587,41 @@ spec:
         - protocol: TCP
           port: 8080
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env map[string]string) string {
+	return lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "account-manager", "account-manager", 8080)
+}
+
+func lkeAllowCloudAdminBillingNetworkPolicyManifest(env map[string]string) string {
+	return lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "billing", "billing", 8080)
+}
+
+func lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env map[string]string, namespaceKey, workload string, port int) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cloud-admin-%s
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: %s
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+      ports:
+        - protocol: TCP
+          port: %d
+`, workload, lkeNamespaceName(env, namespaceKey), env["CLOUD_STACK_NAME"], workload, lkeNamespaceName(env, "admin"), port)
 }
 
 func lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env map[string]string) string {
@@ -2484,6 +2521,14 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "cloud-admin") {
+		for _, manifest := range []string{
+			lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env),
+			lkeAllowCloudAdminBillingNetworkPolicyManifest(env),
+		} {
+			if err := kubectlApply(manifest); err != nil {
+				return err
+			}
+		}
 		if !lkeWorkloadSelected(env, opts, "billing") {
 			if _, err := lkeImportExistingRuntimeSecret(env, "billing", "billing-runtime", map[string]string{
 				"BILLING_SERVICE_TOKEN": "billing-service-token",

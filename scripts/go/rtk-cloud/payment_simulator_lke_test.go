@@ -74,7 +74,7 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	}
 
 	log := readTestFile(t, logPath)
-	for _, want := range []string{"name: allow-postgres-clients", "name: billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: cloud-admin-billing-client"} {
+	for _, want := range []string{"name: allow-postgres-clients", "name: allow-cloud-admin-account-manager", "name: allow-cloud-admin-billing", "name: billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: cloud-admin-billing-client"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted dependency apply missing %q:\n%s", want, log)
 		}
