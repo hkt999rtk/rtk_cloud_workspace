@@ -57,6 +57,16 @@ var paymentLiveHTTPClient = func() *http.Client {
 	return &http.Client{Timeout: 20 * time.Second}
 }
 
+var (
+	paymentLiveAccountManagerContext = accountManagerContextFromFlags
+	paymentLiveAccountLoginSession   = accountLoginSession
+	paymentLiveRuntimeSecretValue    = lkeRuntimeSecretValueFromFlags
+	paymentLiveAccountListClouds     = accountListBrandClouds
+	paymentLiveAccountCreateCloud    = accountCreateBrandCloud
+	paymentLiveAccountCreateUser     = accountCreateUser
+	paymentLiveGeneratePassword      = paymentLiveRandomPassword
+)
+
 func runTestPaymentLive(args []string) error {
 	fs := flag.NewFlagSet("test-payment staging-live", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -245,32 +255,32 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 }
 
 func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, string, string, string, error) {
-	ctx, err := accountManagerContextFromFlags(workspace, cfg.EnvRoot)
+	ctx, err := paymentLiveAccountManagerContext(workspace, cfg.EnvRoot)
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
 	}
 	defer ctx.Close()
 	ctx.BaseURL = cfg.AccountManagerBaseURL
-	session, err := accountLoginSession(ctx, func(string, ...any) {})
+	session, err := paymentLiveAccountLoginSession(ctx, func(string, ...any) {})
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("staging platform-admin login: %w", err)
 	}
 	token := session.AccessToken
-	billingToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_SERVICE_TOKEN")
+	billingToken, err := paymentLiveRuntimeSecretValue(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_SERVICE_TOKEN")
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
 	}
-	internalToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN")
+	internalToken, err := paymentLiveRuntimeSecretValue(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN")
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing internal credential: %w", err)
 	}
-	debitToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_DEBIT_TOKEN")
+	debitToken, err := paymentLiveRuntimeSecretValue(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_DEBIT_TOKEN")
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing debit credential: %w", err)
 	}
 	client := paymentLiveHTTPClient()
 	var brandCloud map[string]any
-	clouds, err := accountListBrandClouds(ctx, token, 200)
+	clouds, err := paymentLiveAccountListClouds(ctx, token, 200)
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("list qualification Brand Clouds: %w", err)
 	}
@@ -284,7 +294,7 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		break
 	}
 	if len(brandCloud) == 0 {
-		created, status, createErr := accountCreateBrandCloud(ctx, token, paymentLiveBootstrapOrgName)
+		created, status, createErr := paymentLiveAccountCreateCloud(ctx, token, paymentLiveBootstrapOrgName)
 		if createErr != nil {
 			return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification Brand Cloud: %w", createErr)
 		}
@@ -298,12 +308,12 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		return cfg, "", "", "", "", errors.New("dedicated qualification Brand Cloud has no ID")
 	}
 	if cfg.CustomerSessionFile != "" {
-		password, randomErr := paymentLiveRandomPassword()
+		password, randomErr := paymentLiveGeneratePassword()
 		if randomErr != nil {
 			return cfg, "", "", "", "", randomErr
 		}
 		const email = "billing-qualification@users.local"
-		if _, createErr := accountCreateUser(ctx, &session, func(string, ...any) {}, cfg.OrgID, email, "Billing Qualification", password, "member", true); createErr != nil {
+		if _, createErr := paymentLiveAccountCreateUser(ctx, &session, func(string, ...any) {}, cfg.OrgID, email, "Billing Qualification", password, "member", true); createErr != nil {
 			return cfg, "", "", "", "", fmt.Errorf("create or rotate qualification customer: %w", createErr)
 		}
 		if loginErr := writePaymentLiveCustomerSession(context.Background(), client, cfg.CloudAdminBaseURL, email, password, cfg.CustomerSessionFile); loginErr != nil {
