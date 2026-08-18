@@ -181,7 +181,7 @@ jobs:
     env:
       FEATURE_LIST_JSON: ${{ needs.select.outputs.features }}
       FEATURE_RUN_ID: fq-${{ github.run_id }}-${{ github.run_attempt }}
-      FEATURE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/lke
+      FEATURE_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/runtime
       FEATURE_LOAD_ENV_ROOT: ${{ github.workspace }}/cloud_env/staging/runtime
       LKE_IMAGE_REGISTRY: ghcr.io/hkt999rtk/rtk_cloud_workspace/qualification
       LINODE_TOKEN: ${{ secrets.linode_token }}

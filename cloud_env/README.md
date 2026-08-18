@@ -113,10 +113,14 @@ DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environm
 
 ## 驗證與 provision
 
-先確認 tracked config 不會被 Git ignore，再產生 sanitized plan：
+先確認 tracked config 不會被 Git ignore，再執行不寫入 runtime、不修改 cloud resource
+的 preflight：
 
 ```sh
 git check-ignore "cloud_env/qa/environment.env" || true
+go run ./scripts/go/rtk-cloud -- deployment preflight \
+  --environment qa \
+  --operation provision
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 

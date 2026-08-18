@@ -151,6 +151,7 @@ verify_deployments() {
       }' >> "$entries_file"
   done <<EOF
 account-manager|$stack-account-manager|account-manager|LKE_ACCOUNT_MANAGER_IMAGE|LKE_ACCOUNT_MANAGER_IMAGE_DIGEST|repos/rtk_account_manager
+billing-service|$stack-billing|billing|LKE_BILLING_IMAGE|LKE_BILLING_IMAGE_DIGEST|repos/rtk_billing
 cloud-admin-backend|$stack-admin|cloud-admin|LKE_CLOUD_ADMIN_IMAGE|LKE_CLOUD_ADMIN_IMAGE_DIGEST|repos/rtk_cloud_admin
 cloud-frontend|$stack-frontend|frontend|LKE_FRONTEND_IMAGE|LKE_FRONTEND_IMAGE_DIGEST|repos/rtk_cloud_frontend
 cloud-logger|$stack-logger|cloud-logger|LKE_CLOUD_LOGGER_IMAGE|LKE_CLOUD_LOGGER_IMAGE_DIGEST|repos/rtk_cloud_logger
@@ -659,6 +660,7 @@ validate_scope() {
 namespace_module() {
   case "$1" in
     "$stack-account-manager") echo "account-manager" ;;
+    "$stack-billing") echo "billing-service" ;;
     "$stack-admin") echo "cloud-admin-backend" ;;
     "$stack-frontend") echo "cloud-frontend" ;;
     "$stack-logger") echo "cloud-logger" ;;
@@ -670,6 +672,7 @@ namespace_module() {
 coverage_namespaces() {
   printf '%s\n' \
     "$stack-account-manager" \
+    "$stack-billing" \
     "$stack-admin" \
     "$stack-frontend" \
     "$stack-logger" \
@@ -681,6 +684,7 @@ stack_namespaces() {
     "$stack-platform" \
     "$stack-secrets" \
     "$stack-account-manager" \
+    "$stack-billing" \
     "$stack-admin" \
     "$stack-frontend" \
     "$stack-logger" \
@@ -944,12 +948,13 @@ collect() {
   done < <(coverage_namespaces)
 
   write_anchor account-manager repos/rtk_account_manager
+  write_anchor billing-service repos/rtk_billing
   write_anchor cloud-admin-backend repos/rtk_cloud_admin
   write_anchor cloud-frontend repos/rtk_cloud_frontend
   write_anchor cloud-logger repos/rtk_cloud_logger
   write_anchor video-cloud repos/rtk_video_cloud
 
-  for module in account-manager cloud-admin-backend cloud-frontend cloud-logger video-cloud; do
+  for module in account-manager billing-service cloud-admin-backend cloud-frontend cloud-logger video-cloud; do
     find "$output_root/$module" -type f -name 'covmeta.*' -print -quit | grep -q . || {
       echo "$module runtime coverage has no covmeta files" >&2
       exit 1

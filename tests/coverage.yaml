@@ -96,6 +96,48 @@ modules:
     purpose: Protect Account Manager unit and PostgreSQL-backed service behavior.
     method: Unit profile reports all packages; PR profile runs PostgreSQL integration with internal cross-package instrumentation.
 
+  - test_id: SVC-BILL-SUITE-001
+    name: billing-service
+    kind: go
+    owner: rtk_billing
+    default_risk: high
+    path: repos/rtk_billing
+    packages: [./...]
+    cover_packages: [./internal/...]
+    pr_required_env: [TEST_DATABASE_URL]
+    pr_required_tests: [TestBillingPersistenceInvoiceLifecycle, TestBillingAccessStateIsVersionedAndFailClosed, TestIntegrationInternalBillingDebitAuthenticationAndIdempotency, TestIntegrationPaymentAPIAuthorizationLifecycleAndRedaction, TestIntegrationPaymentSimulatorHostedSetupActivatesMethodWithoutPersistingRawToken, TestLedgerTriggerAndIntentCreditAreExactlyOnce, TestTimeoutReconcilesToOneCredit, TestQueryUsesFixedSandboxEndpointAndVerifiesResponse, TestVerifyWebhookAuthenticatesAndNormalizesOnlySafeFields]
+    minimum_statement_percent: 21.8
+    pr_minimum_statement_percent: 61.5
+    target_statement_percent: 80.0
+    differential: true
+    package_policies:
+      - { package: github.com/hkt999rtk/rtk_billing/internal/billing, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/payment, risk: critical, minimum_statement_percent: 95.0, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/paymentcrypto, risk: critical, minimum_statement_percent: 87.5, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/paymentprovider/newebpay, risk: critical, minimum_statement_percent: 86.3, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/paymentservice, risk: critical, pr_minimum_statement_percent: 83.2, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/paymentstore, risk: critical, pr_minimum_statement_percent: 77.5, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/billingstore, risk: critical, pr_minimum_statement_percent: 37.8, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/internal/api, risk: critical, minimum_statement_percent: 5.0, pr_minimum_statement_percent: 28.1, target_statement_percent: 80.0 }
+      - { package: github.com/hkt999rtk/rtk_billing/cmd/server, risk: wiring, exclusion_reason: Server bootstrap delegates to governed API and persistence packages. }
+      - { package: github.com/hkt999rtk/rtk_billing/cmd/payment-worker, risk: wiring, exclusion_reason: Worker bootstrap delegates to governed paymentservice orchestration. }
+      - { package: github.com/hkt999rtk/rtk_billing/cmd/payment-simulator, risk: wiring, exclusion_reason: Simulator bootstrap delegates to the governed paymentsimulator package. }
+    critical_cases:
+      - test_id: UNIT-AM-BALANCE-001
+        canonical_key: go://billing-service/internal/payment#TestApplyBalanceAllowsNegativeBalanceAndRejectsOverflow
+        purpose: Balance projection arithmetic must use integer minor units and reject overflow.
+      - test_id: UNIT-AM-AUTOTOPUP-001
+        canonical_key: go://billing-service/internal/payment#TestAutoTopUpUsesStrictThresholdAndSafetyLimits
+        purpose: Automatic top-up must use a strict threshold and bounded safety limits.
+      - test_id: UNIT-AM-PAYMENT-001
+        canonical_key: go://billing-service/internal/payment#TestIntentTransitionsPreserveUnknownReconciliation
+        purpose: Ambiguous provider outcomes must remain reconcilable and never authorize a duplicate charge.
+      - test_id: UNIT-AM-INVOICE-001
+        canonical_key: go://billing-service/internal/billing#TestBuildDraftInvoiceAggregatesUsageAndReconciles
+        purpose: Invoice pricing must remain fixed-precision and immutable.
+    purpose: Protect the independent pricing wallet payment invoice and billing access source of truth.
+    method: Unit profile runs pure domain tests; PR profile adds isolated PostgreSQL 16 lifecycle and reconciliation tests.
+
   - test_id: SVC-CA-SUITE-001
     name: cloud-admin-backend
     kind: go
@@ -109,6 +151,7 @@ modules:
       - { package: rtk_cloud_admin/internal/app, risk: critical, minimum_statement_percent: 79.9, target_statement_percent: 80.0 }
       - { package: rtk_cloud_admin/internal/store, risk: critical, minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk_cloud_admin/internal/accountclient, risk: high, minimum_statement_percent: 87.5, target_statement_percent: 70.0 }
+      - { package: rtk_cloud_admin/internal/billingclient, risk: critical, minimum_statement_percent: 24.3, target_statement_percent: 80.0 }
       - { package: rtk_cloud_admin/internal/videoclient, risk: high, minimum_statement_percent: 86.2, target_statement_percent: 70.0 }
       - { package: rtk_cloud_admin/cmd/server, risk: wiring, exclusion_reason: Thin server bootstrap is covered by real-BFF Playwright and service integration tests. }
     purpose: Protect Cloud Admin backend authorization BFF store and upstream client behavior.

@@ -55,11 +55,11 @@ func Resolve(workspace, envRoot string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if filepath.Base(abs) == "staging" {
+	if filepath.Base(abs) == "staging" || (isFile(filepath.Join(abs, "environment.env")) && isFile(filepath.Join(abs, "deployment.env"))) {
 		return filepath.Join(abs, "runtime"), nil
 	}
-	if filepath.Base(abs) == "lke" && filepath.Base(filepath.Dir(abs)) == "staging" {
-		return "", fmt.Errorf("legacy provider env-root is not supported; use %s", filepath.Dir(abs))
+	if base := filepath.Base(abs); base == "lke" || base == "linode" {
+		return "", fmt.Errorf("legacy provider env-root is not supported; use cloud_env/<environment>/runtime")
 	}
 	return abs, nil
 }
@@ -333,8 +333,13 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
 func nameFromRoot(root string) string {
-	if filepath.Base(root) == "linode" {
+	if filepath.Base(root) == "runtime" {
 		return filepath.Base(filepath.Dir(root))
 	}
 	return filepath.Base(root)

@@ -140,11 +140,12 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
 	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
+	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
-	if action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -163,9 +164,14 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if *envFile == "" {
 		*envFile = defaultDeploymentEnvironmentCredentialFile(cfg.Environment)
 	}
+	_ = os.Setenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE", *envFile)
+	defer os.Unsetenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")
 	if *sharedEnvFile != "" {
 		_ = os.Setenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE", *sharedEnvFile)
 		defer os.Unsetenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE")
+	}
+	if action == "preflight" {
+		return runDeploymentPreflight(cfg, *operation)
 	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
 	if action != "plan" && action != "credentials-check" && action != "storage-plan" && *confirm != stack {
@@ -511,6 +517,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME [--env-file PATH]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket [--env-file PATH]
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access [--env-file PATH]
+  rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
@@ -533,8 +540,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 	}
 	if environmentRoot != "" {
-		if strings.HasSuffix(filepath.Clean(environmentRoot), filepath.Join("staging", "lke")) {
-			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment staging")
+		cleanRoot := filepath.Clean(environmentRoot)
+		if base := filepath.Base(cleanRoot); base == "lke" || base == "linode" {
+			return deploymentConfig{}, errors.New("legacy provider env-root is not supported; use --environment NAME or cloud_env/<environment>/runtime")
 		}
 		environmentRoot, err = filepath.Abs(environmentRoot)
 		if err != nil {

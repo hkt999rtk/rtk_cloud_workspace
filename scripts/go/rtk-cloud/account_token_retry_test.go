@@ -233,7 +233,7 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
 	defer server.Close()
 
 	workspace := t.TempDir()
-	envRoot := filepath.Join(workspace, "cloud_env", "staging", "linode")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}

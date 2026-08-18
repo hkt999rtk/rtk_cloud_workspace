@@ -104,11 +104,9 @@ func runLKEBuildImages(args []string) error {
 	if !filepath.IsAbs(resolvedEnvRoot) {
 		resolvedEnvRoot = filepath.Join(workspaceAbs, resolvedEnvRoot)
 	}
-	if filepath.Base(resolvedEnvRoot) != "lke" {
-		candidate := filepath.Join(resolvedEnvRoot, "lke")
-		if _, err := os.Stat(candidate); err == nil {
-			resolvedEnvRoot = candidate
-		}
+	resolvedEnvRoot, err = resolveEnvRoot(workspaceAbs, resolvedEnvRoot)
+	if err != nil {
+		return err
 	}
 	env, err := envroot.Load(resolvedEnvRoot, "")
 	if err != nil {
@@ -349,11 +347,10 @@ func loadLKEImageEnv(workspaceAbs, envRoot string) (envroot.Environment, error) 
 	if !filepath.IsAbs(resolvedEnvRoot) {
 		resolvedEnvRoot = filepath.Join(workspaceAbs, resolvedEnvRoot)
 	}
-	if filepath.Base(resolvedEnvRoot) != "lke" {
-		candidate := filepath.Join(resolvedEnvRoot, "lke")
-		if _, err := os.Stat(candidate); err == nil {
-			resolvedEnvRoot = candidate
-		}
+	var err error
+	resolvedEnvRoot, err = resolveEnvRoot(workspaceAbs, resolvedEnvRoot)
+	if err != nil {
+		return envroot.Environment{}, err
 	}
 	env, err := envroot.Load(resolvedEnvRoot, "")
 	if err != nil {
@@ -394,6 +391,7 @@ func loadLKEImageManifestDefaults(envRoot string, env map[string]string) error {
 		"LKE_POSTGRES_IMAGE",
 		"LKE_VIDEO_CLOUD_IMAGE",
 		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_BILLING_IMAGE",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"LKE_FRONTEND_IMAGE",
 		"LKE_CLOUD_LOGGER_IMAGE",
@@ -413,6 +411,7 @@ func lkeServiceImageSources() []lkeServiceImageSource {
 	return []lkeServiceImageSource{
 		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", RepoName: "rtk_video_cloud", RepoPath: filepath.Join("repos", "rtk_video_cloud")},
 		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", RepoName: "rtk_account_manager", RepoPath: filepath.Join("repos", "rtk_account_manager")},
+		{Key: "billing", Name: "billing", EnvKey: "LKE_BILLING_IMAGE", RepoName: "rtk_billing", RepoPath: filepath.Join("repos", "rtk_billing")},
 		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", RepoName: "rtk_cloud_admin", RepoPath: filepath.Join("repos", "rtk_cloud_admin")},
 		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", RepoName: "rtk_cloud_frontend", RepoPath: filepath.Join("repos", "rtk_cloud_frontend")},
 		{Key: "cloud-logger", Name: "rtk-cloud-logger", EnvKey: "LKE_CLOUD_LOGGER_IMAGE", RepoName: "rtk_cloud_logger", RepoPath: filepath.Join("repos", "rtk_cloud_logger")},
@@ -762,6 +761,8 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
 		{Host: lkeTurnRegistryPublicDomain(env), Namespace: videoNS, Service: "video-cloud-turnregistry", ServicePort: 18190, TargetPort: 18190},
 		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
+		{Host: lkeBillingPublicDomain(env), Namespace: lkeNamespaceName(env, "billing"), Service: "billing", ServicePort: 80, TargetPort: envIntDefault("LKE_BILLING_PORT", 8080)},
+		{Host: lkePaymentSimulatorPublicDomain(env), Namespace: lkeNamespaceName(env, "billing"), Service: "payment-simulator", ServicePort: 80, TargetPort: 8081},
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
 	}
@@ -1314,6 +1315,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 		lkeNamespaceName(env, "platform"),
 		lkeNamespaceName(env, "video-cloud"),
 		lkeNamespaceName(env, "account-manager"),
+		lkeNamespaceName(env, "billing"),
 		lkeNamespaceName(env, "admin"),
 		lkeNamespaceName(env, "frontend"),
 		lkeNamespaceName(env, "observability"),
@@ -1335,6 +1337,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
@@ -1344,6 +1347,36 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowRedisClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowPrometheusScrapeNetworkPolicyManifest(env))
 	return manifests
+}
+
+func lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-billing-payment-simulator
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [billing, payment-simulator]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [billing, billing-payment-worker, payment-simulator]
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 8081 }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"])
 }
 
 func firstNonZero(values ...int) int {
@@ -1443,10 +1476,13 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: %s
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
       ports:
         - protocol: TCP
           port: 5432
-`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"), lkeNamespaceName(env, "account-manager"))
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"), lkeNamespaceName(env, "account-manager"), lkeNamespaceName(env, "billing"))
 }
 
 func lkeAllowOpenBaoClientsNetworkPolicyManifest(env map[string]string) string {
@@ -1946,6 +1982,22 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := kubectlApply(lkePaymentSimulatorServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkePaymentSimulatorDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeBillingPaymentWorkerManifest(env)); err != nil {
+			return err
+		}
+		for _, deployment := range []string{"payment-simulator", "billing-payment-worker"} {
+			if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "rollout", "status", "deployment/"+deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+				return err
+			}
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "account-manager") && lkeEmailDeliveryEnabled(env) {
 		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-email-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return err
@@ -2341,6 +2393,7 @@ func lkeNamespaces(env map[string]string) []lkeNamespace {
 		{Key: "platform", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_PLATFORM"), stack+"-platform")},
 		{Key: "video-cloud", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_VIDEO_CLOUD"), stack+"-video-cloud")},
 		{Key: "account-manager", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_ACCOUNT_MANAGER"), stack+"-account-manager")},
+		{Key: "billing", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_BILLING"), stack+"-billing")},
 		{Key: "admin", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_ADMIN"), stack+"-admin")},
 		{Key: "frontend", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_FRONTEND"), stack+"-frontend")},
 		{Key: "observability", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_OBSERVABILITY"), stack+"-observability")},
@@ -2517,6 +2570,23 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := lkeConfigureEMQXBilling(paths, env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
+		if err := kubectlApply(lkeBillingDatabaseEnsureJobManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "wait", "--for=condition=complete", "job/billing-database-ensure", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "cloud-admin") {
+		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -3030,6 +3100,7 @@ metadata:
 data:
   001-create-databases.sql: |
     CREATE DATABASE rtk_account_manager;
+    CREATE DATABASE rtk_billing;
     CREATE DATABASE video_cloud;
 `, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
 }
@@ -6408,6 +6479,263 @@ stringData:
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
 }
 
+func lkePaymentSimulatorRunID(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_RUN_ID"), env["PAYMENT_SIMULATOR_RUN_ID"], env["CLOUD_STACK_NAME"])
+}
+
+func lkeBillingServiceToken() string {
+	return lkeRuntimeSecretValue("billing-service-token")
+}
+
+func lkeBillingInternalToken() string {
+	return lkeRuntimeSecretValue("billing-internal-token")
+}
+
+func lkeBillingDebitToken() string {
+	return lkeRuntimeSecretValue("billing-debit-token")
+}
+
+func lkeBillingDatabaseURL(env map[string]string) string {
+	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
+}
+
+func lkeBillingSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: billing-runtime
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  DATABASE_URL: %q
+  POSTGRES_PASSWORD: %q
+  BILLING_SERVICE_TOKEN: %q
+  BILLING_INTERNAL_TOKEN: %q
+  BILLING_DEBIT_TOKEN: %q
+  BILLING_DEBIT_SOURCE: "rtk_billing"
+  PAYMENT_SIMULATOR_ENABLED: "true"
+  PAYMENT_SIMULATOR_RUN_ID: %q
+  PAYMENT_SIMULATOR_BASE_URL: %q
+  PAYMENT_SIMULATOR_PUBLIC_BASE_URL: %q
+  PAYMENT_SIMULATOR_CALLBACK_URL: %q
+  PAYMENT_SIMULATOR_SHARED_SECRET: %q
+  PAYMENT_SIMULATOR_CALLBACK_SECRET: %q
+  PAYMENT_SIMULATOR_SCENARIO: %q
+  PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
+  PAYMENT_WORKER_ENABLED: "true"
+  ENVIRONMENT: "staging"
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkePaymentReferenceEncryptionKey(env))
+}
+
+func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: cloud-admin-billing-client
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: cloud-admin
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  BILLING_SERVICE_TOKEN: %q
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken())
+}
+
+func lkeBillingDatabaseEnsureJobManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-database-ensure
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing-database-ensure
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: billing-database-ensure
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/stack: %s
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ensure
+          image: %s
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              present="$(psql -h postgresql.%s.svc.cluster.local -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='rtk_billing'")"
+              if [ "$present" != "1" ]; then
+                psql -h postgresql.%s.svc.cluster.local -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rtk_billing'
+              fi
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: billing-runtime, key: POSTGRES_PASSWORD }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"))
+}
+
+func lkePaymentSimulatorPublicDomain(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_DOMAIN"), env["PAYMENT_SIMULATOR_DOMAIN"], "payment-simulator."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
+func lkeBillingPublicDomain(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("BILLING_DOMAIN"), env["BILLING_DOMAIN"], "billing."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
+func lkePaymentSimulatorInternalURL(env map[string]string) string {
+	return "http://payment-simulator." + lkeNamespaceName(env, "billing") + ".svc.cluster.local:80"
+}
+
+func lkeBillingInternalURL(env map[string]string) string {
+	return "http://billing." + lkeNamespaceName(env, "billing") + ".svc.cluster.local:80"
+}
+
+func lkePaymentReferenceEncryptionKey(env map[string]string) string {
+	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY"), env["PAYMENT_REFERENCE_ENCRYPTION_KEY"])); value != "" {
+		return value
+	}
+	seed := sha256.Sum256([]byte(lkeRuntimeSecretValue("payment-reference-encryption")))
+	return base64.StdEncoding.EncodeToString(seed[:])
+}
+
+func lkeAccountManagerImage(env map[string]string) string {
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			return workload.Image
+		}
+	}
+	return ""
+}
+
+func lkeBillingImage(env map[string]string) string {
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "billing" {
+			return workload.Image
+		}
+	}
+	return ""
+}
+
+func lkePaymentSimulatorServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: payment-simulator
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: payment-simulator
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  selector:
+    app.kubernetes.io/name: payment-simulator
+  ports:
+    - { name: http, port: 80, targetPort: 8081 }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"])
+}
+
+func lkePaymentSimulatorDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-simulator
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: payment-simulator
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: payment-simulator }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: payment-simulator
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: simulator
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/rtk-billing-payment-simulator"]
+          envFrom:
+            - secretRef: { name: billing-runtime }
+          env:
+            - { name: PORT, value: "8081" }
+          ports:
+            - { name: http, containerPort: 8081 }
+          readinessProbe:
+            httpGet: { path: /internal/v1/health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentSimulatorPublicDomain(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback")), lkeImagePullSecretName(env), lkeBillingImage(env))
+}
+
+func lkeBillingPaymentWorkerManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-payment-worker
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing-payment-worker
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: billing-payment-worker }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: billing-payment-worker
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: worker
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/rtk-billing-payment-worker"]
+          envFrom:
+            - secretRef: { name: billing-runtime }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared")), lkeImagePullSecretName(env), lkeBillingImage(env))
+}
+
 func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
 	return "http://video-cloud-api." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:80"
 }
@@ -6747,6 +7075,15 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
             secretName: account-manager-certissuer-client
 `
 	}
+	if workload.Key == "billing" {
+		templateAnnotations = fmt.Sprintf(`      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env)))
+		envFrom = `          envFrom:
+            - secretRef:
+                name: billing-runtime
+`
+	}
 	if workload.Key == "video-cloud" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
@@ -6989,11 +7326,17 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "cloud-admin" {
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
+            - name: BILLING_SERVICE_BASE_URL
+              value: %q
             - name: CLOUD_ADMIN_GRAFANA_BASE_URL
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeAccountManagerInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+`, lkeAccountManagerInternalURL(env), lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+		envFrom = `          envFrom:
+            - secretRef:
+                name: cloud-admin-billing-client
+`
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -7142,7 +7485,7 @@ func lkeDeploymentStrategyManifest(workload lkeWorkload) string {
 }
 
 func lkeDeploymentProbeManifest(name string) string {
-	if name != "video-cloud-api" {
+	if name != "video-cloud-api" && name != "billing" {
 		return ""
 	}
 	return `          readinessProbe:

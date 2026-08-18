@@ -3,11 +3,17 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+CREDENTIAL_SERVER_PID=""
+trap 'if [[ -n "$CREDENTIAL_SERVER_PID" ]]; then kill "$CREDENTIAL_SERVER_PID" 2>/dev/null || true; wait "$CREDENTIAL_SERVER_PID" 2>/dev/null || true; fi; rm -rf "$TMP"' EXIT
 
 WORKSPACE="$TMP/workspace"
 ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
-mkdir -p "$WORKSPACE" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
+mkdir -p "$WORKSPACE/cloud_env/staging/overrides" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
+cp -R "$ROOT/cloud_deploy" "$WORKSPACE/cloud_deploy"
+cp "$ROOT/cloud_env/staging/environment.env" "$WORKSPACE/cloud_env/staging/environment.env"
+cp "$ROOT/cloud_env/staging/deployment.env" "$WORKSPACE/cloud_env/staging/deployment.env"
+cp "$ROOT/cloud_env/staging/overrides/architecture.env" "$WORKSPACE/cloud_env/staging/overrides/architecture.env"
+cp "$ROOT/cloud_env/staging/overrides/adapter.env" "$WORKSPACE/cloud_env/staging/overrides/adapter.env"
 
 cat > "$ENV_ROOT/env/stack.env" <<'EOF_ENV'
 CLOUD_ENV_NAME=staging
@@ -27,6 +33,83 @@ ACCOUNT_MANAGER_LINODE_FIREWALL_LABEL=rtk-account-manager-staging-fw
 ADMIN_LINODE_LABEL=rtk-cloud-admin-staging
 ADMIN_LINODE_FIREWALL_LABEL=rtk-cloud-admin-staging-firewall
 EOF_ENV
+
+cat > "$TMP/credential-server.py" <<'PY'
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = self.path.split("?", 1)[0]
+        if path == "/v4/profile":
+            body, content_type = json.dumps({"username": "operator"}), "application/json"
+        elif path == "/v4/lke/clusters":
+            body, content_type = json.dumps({"data": []}), "application/json"
+        elif path == "/token":
+            body, content_type = json.dumps({"token": "registry-token"}), "application/json"
+        elif path.startswith("/v2/") and path.endswith("/tags/list"):
+            body, content_type = json.dumps({"name": "fixture", "tags": ["sha-test"]}), "application/json"
+        elif path.startswith("/v1/domains/") and path.endswith("/records"):
+            body, content_type = "[]", "application/json"
+        elif path == "/test-bucket":
+            body, content_type = "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>", "application/xml"
+        else:
+            self.send_error(404)
+            return
+        encoded = body.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def log_message(self, _format, *_args):
+        return
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+print(server.server_port, flush=True)
+server.serve_forever()
+PY
+
+python3 "$TMP/credential-server.py" > "$TMP/credential-server.port" &
+CREDENTIAL_SERVER_PID=$!
+for _ in {1..100}; do
+	[[ -s "$TMP/credential-server.port" ]] && break
+	sleep 0.05
+done
+test -s "$TMP/credential-server.port"
+CREDENTIAL_SERVER="http://127.0.0.1:$(cat "$TMP/credential-server.port")"
+CREDENTIAL_ENV="$TMP/operator.env"
+cat > "$CREDENTIAL_ENV" <<EOF_CREDENTIALS
+LINODE_TOKEN=linode-secret
+GHCR_PULL_USERNAME=test-user
+GHCR_PULL_TOKEN=valid-ghcr-token
+GODADDY_KEY=godaddy-key
+GODADDY_SECRET=godaddy-secret
+LINODE_OBJ_ACCESS_KEY_ID=object-access
+LINODE_OBJ_SECRET_ACCESS_KEY=object-secret
+LINODE_OBJ_ENDPOINT=$CREDENTIAL_SERVER
+LINODE_OBJ_BUCKET=test-bucket
+LINODE_OBJ_REGION=us-test-1
+EOF_CREDENTIALS
+chmod 600 "$CREDENTIAL_ENV"
+export RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE="$CREDENTIAL_ENV"
+export RTK_CLOUD_LINODE_API_ROOT="$CREDENTIAL_SERVER/v4"
+export RTK_CLOUD_GHCR_TOKEN_ROOT="$CREDENTIAL_SERVER/token"
+export RTK_CLOUD_GHCR_REGISTRY_ROOT="$CREDENTIAL_SERVER"
+export RTK_CLOUD_GODADDY_API_ROOT="$CREDENTIAL_SERVER"
+export LINODE_TOKEN=linode-secret
+export GHCR_PULL_USERNAME=test-user
+export GHCR_PULL_TOKEN=valid-ghcr-token
+export GODADDY_KEY=godaddy-key
+export GODADDY_SECRET=godaddy-secret
+export LINODE_OBJ_ACCESS_KEY_ID=object-access
+export LINODE_OBJ_SECRET_ACCESS_KEY=object-secret
+export LINODE_OBJ_ENDPOINT="$CREDENTIAL_SERVER"
+export LINODE_OBJ_BUCKET=test-bucket
+export LINODE_OBJ_REGION=us-test-1
 
 COMMAND_LOG="$TMP/commands.log"
 CONTRACT_STEPS="reset,provision,data,mqtt,runtime-logs,billing-log,billing-db"
@@ -233,7 +316,7 @@ CLOUD_STAGING_E2E_MQTT_LOG_VERIFY_SCRIPT="$TMP/mqtt-log-verify.sh" \
 grep -F 'cloud-environment-e2e-test plan' "$ACCEPTANCE_PLAN_OUT" >/dev/null
 grep -F 'phase: acceptance' "$ACCEPTANCE_PLAN_OUT" >/dev/null
 grep -F 'setup brand/users/devices with '"$TMP/setup-data.sh" "$ACCEPTANCE_PLAN_OUT" >/dev/null
-if grep -F 'reset K8s staging' "$ACCEPTANCE_PLAN_OUT" >/dev/null || grep -F 'provision K8s staging' "$ACCEPTANCE_PLAN_OUT" >/dev/null; then
+if grep -F 'reset environment K8s' "$ACCEPTANCE_PLAN_OUT" >/dev/null || grep -F 'provision environment K8s' "$ACCEPTANCE_PLAN_OUT" >/dev/null; then
 	echo "staging-acceptance plan must not include reset/provision phases" >&2
 	exit 1
 fi

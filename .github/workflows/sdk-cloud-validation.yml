@@ -494,7 +494,7 @@ jobs:
             --feature device-shadow \
             --profile qualification-1k \
             --environment staging \
-            --env-root cloud_env/staging/lke \
+            --env-root cloud_env/staging/runtime \
             --run-id "$HOME100K_RUN_ID" \
             --run \
             --confirm video-cloud-staging
