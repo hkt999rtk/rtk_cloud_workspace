@@ -19,7 +19,14 @@ cd rtk_cloud_workspace
 git submodule update --init --recursive
 ```
 
-Create `~/.env` with the applicable operator values. Never commit this file:
+Create the shared profile and environment media profile. Never commit either file:
+
+```sh
+mkdir -p ~/.config/rtk-cloud/environments
+chmod 700 ~/.config/rtk-cloud ~/.config/rtk-cloud/environments
+```
+
+`~/.config/rtk-cloud/shared.env`:
 
 ```env
 LINODE_TOKEN=<Linode API token>
@@ -27,6 +34,19 @@ GHCR_PULL_USERNAME=<GitHub username>
 GHCR_PULL_TOKEN=<GitHub token with read:packages>
 GODADDY_KEY=<GoDaddy API key>
 GODADDY_SECRET=<GoDaddy API secret>
+LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID=<Seattle artifact key>
+LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY=<Seattle artifact secret>
+```
+
+`~/.config/rtk-cloud/environments/staging.env`:
+
+```env
+LINODE_MEDIA_OBJ_ACCESS_KEY_ID=<Singapore media key>
+LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=<Singapore media secret>
+```
+
+```sh
+chmod 600 ~/.config/rtk-cloud/shared.env ~/.config/rtk-cloud/environments/staging.env
 ```
 
 Create the SSH key used by ephemeral load generators if it does not exist:

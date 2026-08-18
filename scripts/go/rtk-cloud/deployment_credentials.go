@@ -45,7 +45,25 @@ func defaultDeploymentCredentialEnvFile() string {
 	if err != nil || home == "" {
 		return ""
 	}
-	return filepath.Join(home, ".env")
+	return filepath.Join(home, ".config", "rtk-cloud", "shared.env")
+}
+
+func defaultDeploymentEnvironmentCredentialFile(environment string) string {
+	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")); path != "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" || strings.TrimSpace(environment) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "rtk-cloud", "environments", environment+".env")
+}
+
+func defaultDeploymentSharedCredentialFile() string {
+	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE")); path != "" {
+		return path
+	}
+	return defaultDeploymentCredentialEnvFile()
 }
 
 func defaultDeploymentCredentialChecker() deploymentCredentialChecker {
@@ -64,6 +82,13 @@ func validateDeploymentCredentials(cfg deploymentConfig, envFile string) error {
 }
 
 func validateAndBootstrapDeploymentCredentials(cfg deploymentConfig, envFile string) error {
+	if cfg.Storage.RuntimeMedia.Bucket != "" {
+		values, check := deploymentCredentialProfileValues(cfg.Environment, envFile, defaultDeploymentSharedCredentialFile())
+		if !check.Passed {
+			return errors.New(check.Detail)
+		}
+		return defaultDeploymentCredentialChecker().bootstrapRuntimeStorage(cfg, values, envFile)
+	}
 	return defaultDeploymentCredentialChecker().checkWithOptions(cfg, envFile, deploymentCredentialCheckOptions{
 		createMissingObjectStorageBucket: true,
 		envFile:                          envFile,
@@ -71,6 +96,9 @@ func validateAndBootstrapDeploymentCredentials(cfg deploymentConfig, envFile str
 }
 
 func validateAndGrantDeploymentObjectStorageAccess(cfg deploymentConfig, envFile string) error {
+	if cfg.Storage.RuntimeMedia.Bucket != "" {
+		return validateAndBootstrapDeploymentCredentials(cfg, envFile)
+	}
 	return defaultDeploymentCredentialChecker().checkWithOptions(cfg, envFile, deploymentCredentialCheckOptions{
 		grantObjectStorageBucketAccess: true,
 		envFile:                        envFile,
@@ -88,7 +116,7 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 	if c.out == nil {
 		c.out = io.Discard
 	}
-	values, fileCheck := deploymentCredentialValues(envFile)
+	values, fileCheck := deploymentCredentialProfileValues(cfg.Environment, envFile, defaultDeploymentSharedCredentialFile())
 	checks := []deploymentCredentialCheck{fileCheck}
 	if !fileCheck.Passed {
 		return c.render(checks)
@@ -103,6 +131,9 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 	}
 	if strings.EqualFold(strings.TrimSpace(cfg.Values["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"]), "true") {
 		checks = append(checks, c.checkObjectStorageWithOptions(cfg, values, options))
+		if cfg.Storage.ReleaseArtifacts.Bucket != "" {
+			checks = append(checks, c.checkResolvedArtifactStorage(cfg, values))
+		}
 	}
 	return c.render(checks)
 }
@@ -140,13 +171,122 @@ func deploymentCredentialValues(envFile string) (map[string]string, deploymentCr
 	return values, deploymentCredentialCheck{Name: "credential env file", Passed: true, Detail: abs + " loaded with secure permissions"}
 }
 
+func deploymentCredentialProfileValues(environment, environmentFile, sharedFile string) (map[string]string, deploymentCredentialCheck) {
+	environmentFile = strings.TrimSpace(environmentFile)
+	sharedFile = strings.TrimSpace(sharedFile)
+	if environmentFile == "" && strings.TrimSpace(environment) == "" {
+		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: "path is empty"}
+	}
+	if environmentFile == "" {
+		environmentFile = defaultDeploymentEnvironmentCredentialFile(environment)
+	}
+	defaultEnvironmentFile := defaultDeploymentEnvironmentCredentialFile(environment)
+	paths := []string{}
+	if sharedFile != "" && sharedFile != environmentFile {
+		if _, err := os.Stat(sharedFile); err == nil {
+			paths = append(paths, sharedFile)
+		} else if os.IsNotExist(err) {
+			if environmentFile == defaultEnvironmentFile {
+				return nil, deploymentCredentialCheck{Name: "credential env file", Detail: sharedFile + " does not exist"}
+			}
+		} else if !os.IsNotExist(err) {
+			return nil, deploymentCredentialCheck{Name: "credential env file", Detail: "shared profile cannot be inspected"}
+		}
+	}
+	if _, err := os.Stat(environmentFile); err == nil {
+		paths = append(paths, environmentFile)
+	} else if os.IsNotExist(err) {
+		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: environmentFile + " does not exist"}
+	} else {
+		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: "environment profile cannot be inspected"}
+	}
+	values := map[string]string{}
+	for _, path := range paths {
+		part, check := deploymentCredentialValuesFromFile(path)
+		if !check.Passed {
+			check.Name = "credential env file"
+			return nil, check
+		}
+		for key, value := range part {
+			values[key] = value
+		}
+	}
+	for _, key := range deploymentCredentialKeys() {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			values[key] = value
+		}
+	}
+	// Scoped credentials are canonical. Legacy names exist only in this in-memory
+	// child/runtime view so older deployment code never needs to read profile files.
+	if value := values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"]; value != "" {
+		values["LINODE_OBJ_ACCESS_KEY_ID"] = value
+	}
+	if value := values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"]; value != "" {
+		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = value
+	}
+	detail := strings.Join(paths, ", ") + " loaded with secure permissions (process environment > environment profile > shared profile)"
+	return values, deploymentCredentialCheck{Name: "credential env file", Passed: true, Detail: detail}
+}
+
+func deploymentCredentialValuesFromFile(path string) (map[string]string, deploymentCredentialCheck) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, deploymentCredentialCheck{Detail: "path cannot be resolved"}
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, deploymentCredentialCheck{Detail: abs + " does not exist"}
+		}
+		return nil, deploymentCredentialCheck{Detail: "cannot be inspected"}
+	}
+	if !info.Mode().IsRegular() {
+		return nil, deploymentCredentialCheck{Detail: abs + " is not a regular file"}
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, deploymentCredentialCheck{Detail: abs + " must not be readable or writable by group/others (run chmod 600)"}
+	}
+	values, err := readEnvFile(abs)
+	if err != nil {
+		return nil, deploymentCredentialCheck{Detail: "cannot be read"}
+	}
+	return values, deploymentCredentialCheck{Passed: true, Detail: abs + " loaded with secure permissions"}
+}
+
 func deploymentCredentialKeys() []string {
 	return []string{
 		"LINODE_TOKEN",
 		"GHCR_PULL_USERNAME", "GHCR_PULL_TOKEN",
 		"GODADDY_KEY", "GODADDY_SECRET",
 		"LINODE_OBJ_ACCESS_KEY_ID", "LINODE_OBJ_SECRET_ACCESS_KEY", "LINODE_OBJ_ENDPOINT", "LINODE_OBJ_BUCKET", "LINODE_OBJ_REGION",
+		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY",
+		"LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID", "LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+	}
+}
+
+func installDeploymentChildCredentialEnvironment(values map[string]string) func() {
+	keys := deploymentCredentialKeys()
+	previous := make(map[string]*string, len(keys))
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok {
+			copy := value
+			previous[key] = &copy
+		} else {
+			previous[key] = nil
+		}
+		if value := strings.TrimSpace(values[key]); value != "" {
+			_ = os.Setenv(key, value)
+		}
+	}
+	return func() {
+		for _, key := range keys {
+			if previous[key] == nil {
+				_ = os.Unsetenv(key)
+			} else {
+				_ = os.Setenv(key, *previous[key])
+			}
+		}
 	}
 }
 
@@ -273,6 +413,9 @@ func (c deploymentCredentialChecker) checkObjectStorage(values map[string]string
 }
 
 func (c deploymentCredentialChecker) checkObjectStorageWithOptions(cfg deploymentConfig, values map[string]string, options deploymentCredentialCheckOptions) deploymentCredentialCheck {
+	if cfg.Storage.RuntimeMedia.Bucket != "" {
+		return c.checkResolvedObjectStorage(cfg, values)
+	}
 	store, err := provisionObjectStoreFromEnv(values)
 	if err != nil {
 		return deploymentCredentialCheck{Name: "Linode Object Storage", Detail: err.Error()}
@@ -377,8 +520,12 @@ func (c deploymentCredentialChecker) createLimitedObjectStorageKey(cfg deploymen
 	if labelEnvironment == "" {
 		labelEnvironment = "deployment"
 	}
+	purpose := "runtime-media"
+	if store.bucket == cfg.Storage.ReleaseArtifacts.Bucket {
+		purpose = "release-artifacts"
+	}
 	payload, err := json.Marshal(map[string]any{
-		"label": fmt.Sprintf("rtk-cloud-%s-artifacts-%d", labelEnvironment, time.Now().UTC().Unix()),
+		"label": fmt.Sprintf("rtk-cloud-%s-%s-%d", labelEnvironment, purpose, time.Now().UTC().Unix()),
 		"bucket_access": []map[string]string{{
 			"bucket_name": store.bucket,
 			"permissions": "read_write",

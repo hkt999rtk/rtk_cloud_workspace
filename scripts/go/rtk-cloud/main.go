@@ -839,15 +839,9 @@ func resolveLinodeToken(envRoot string) string {
 	if token := os.Getenv("LINODE_TOKEN"); token != "" {
 		return token
 	}
-	if envRoot != "" {
-		if token := envFileValue(filepath.Join(envRoot, "env", "operator.env"), "LINODE_TOKEN"); token != "" {
-			return token
-		}
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if token := envFileValue(filepath.Join(home, ".env"), "LINODE_TOKEN"); token != "" {
-			return token
-		}
+	_ = envRoot
+	if token := envFileValue(defaultDeploymentSharedCredentialFile(), "LINODE_TOKEN"); token != "" {
+		return token
 	}
 	return ""
 }
@@ -3091,7 +3085,7 @@ func runStagingE2EDataSetup(args []string) error {
 	loadRunID := fs.String("load-run-id", "", "run ID for run-scoped Brand Cloud/account names")
 	loadTarget := fs.String("load-target", "", "load target: 1K, 50K, 100K, or CANARY")
 	emailActivateOwners := fs.Bool("email-activate-owners", false, "activate one formal owner per Brand through Send Mail and local IMAP")
-	operatorEnvFile := fs.String("operator-env-file", filepath.Join(userHomeDir(), ".env"), "operator dotenv containing IMAP settings")
+	operatorEnvFile := fs.String("operator-env-file", defaultDeploymentSharedCredentialFile(), "operator credential profile containing IMAP settings")
 	userCount := fs.Int("user-count", 10, "user count")
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
@@ -3231,6 +3225,19 @@ func runStagingE2EDataSetup(args []string) error {
 	}
 	coverage := testDataCoverageFor(envRoot, *brandname)
 	if shouldRunStep("create_users") && !(*resume && coverage.Users == *userCount) {
+		if !*resume {
+			store, err := openTestDataStore(envRoot, *brandname)
+			if err != nil {
+				return err
+			}
+			if err := store.ClearUsers(*brandname); err != nil {
+				_ = store.Close()
+				return fmt.Errorf("clear stale local users for %s: %w", *brandname, err)
+			}
+			if err := store.Close(); err != nil {
+				return err
+			}
+		}
 		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--count", strconv.Itoa(*userCount), "--role", *userRole, "--rotate-password", "--concurrency", strconv.Itoa(*userConcurrency)}
 		if strings.TrimSpace(*userEmailPrefix) != "" {
 			args = append(args, "--user-email-prefix", *userEmailPrefix)
@@ -4177,7 +4184,11 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 	env := []string{
 		"ACCOUNT_MANAGER_BASE_URL=http://127.0.0.1:" + accountPort,
 		"VIDEO_CLOUD_BASE_URL=http://127.0.0.1:" + videoPort,
-		"VIDEO_CLOUD_TOKEN_BASE_URL=" + k8sE2ETokenBaseURL(videoPort),
+		"VIDEO_CLOUD_TOKEN_BASE_URL=" + firstNonEmpty(
+			os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE"),
+			envFileValue(filepath.Join(envRoot, "env", "stack.env"), "VIDEO_CLOUD_TOKEN_BASE_URL"),
+			k8sE2ETokenBaseURL(videoPort),
+		),
 		"FACTORY_ENROLL_URL=" + strings.Join(factoryURLs, ","),
 		"VIDEO_CLOUD_LOAD_MQTT_SET=broker",
 		"CLOUD_STAGING_E2E_SKIP_BOOTSTRAP=1",
@@ -4488,7 +4499,7 @@ func runStagingProvision(args []string) error {
 		if err != nil {
 			return fmt.Errorf("resolve staging credential requirements: %w", err)
 		}
-		if err := validateDeploymentCredentials(cfg, defaultDeploymentCredentialEnvFile()); err != nil {
+		if err := validateDeploymentCredentials(cfg, defaultDeploymentEnvironmentCredentialFile(cfg.Environment)); err != nil {
 			return err
 		}
 		if err := resolveLKEImagesIfNeeded(ctx.workspace, ctx.envRoot); err != nil {
@@ -4781,6 +4792,14 @@ func runStagingE2ETest(args []string) error {
 		}
 	}
 	if selection.Lifecycle {
+		lifecycleEnv := append([]string(nil), childEnv...)
+		if strings.TrimSpace(os.Getenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN")) == "" && provider == "lke" {
+			token, tokenErr := videoCloudAdminTokenValue(workspace, envRoot, 30*time.Minute)
+			if tokenErr != nil {
+				return fmt.Errorf("issue short-lived video-cloud admin token for lifecycle acceptance: %w", tokenErr)
+			}
+			lifecycleEnv = append(lifecycleEnv, "VIDEO_CLOUD_LOAD_ADMIN_TOKEN="+token)
+		}
 		lifecycleArgs := []string{
 			"--workspace", workspace,
 			"--env-root", envRoot,
@@ -4788,7 +4807,7 @@ func runStagingE2ETest(args []string) error {
 			"--run-id", firstNonEmpty(os.Getenv("RUNTIME_COVERAGE_RUN_ID"), filepath.Base(*outDir)),
 			"--out-dir", filepath.Join(*outDir, "provisioning-lifecycle"),
 		}
-		step, lifecycleErr := runE2EStepWithOptions("verify_provisioning_lifecycle", filepath.Join(logsDir, "verify_provisioning_lifecycle.log"), e2eStepOptions{Quiet: *quiet, Env: childEnv}, commandWithArgs(scripts["lifecycle-verify"], lifecycleArgs...)...)
+		step, lifecycleErr := runE2EStepWithOptions("verify_provisioning_lifecycle", filepath.Join(logsDir, "verify_provisioning_lifecycle.log"), e2eStepOptions{Quiet: *quiet, Env: lifecycleEnv}, commandWithArgs(scripts["lifecycle-verify"], lifecycleArgs...)...)
 		steps = append(steps, step)
 		if lifecycleErr != nil {
 			return lifecycleErr
@@ -6699,7 +6718,7 @@ func runActivateLoadOwner(args []string) error {
 	displayName := fs.String("display-name", "", "owner display name")
 	runID := fs.String("run-id", "", "load run ID")
 	evidencePath := fs.String("evidence-path", "", "redacted evidence output")
-	operatorEnvFile := fs.String("operator-env-file", filepath.Join(userHomeDir(), ".env"), "operator dotenv containing IMAP settings")
+	operatorEnvFile := fs.String("operator-env-file", defaultDeploymentSharedCredentialFile(), "operator credential profile containing IMAP settings")
 	resume := fs.Bool("resume", false, "reuse only a matching verified owner artifact from this run")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -7171,23 +7190,41 @@ func runVideoCloudAdminToken(args []string) error {
 	if *ttl <= 0 || *ttl > time.Hour {
 		return errors.New("--ttl must be greater than zero and no more than 1h")
 	}
-	secret, err := lkeRuntimeSecretValueFromFlags(*workspaceFlag, *envRootFlag, "-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_AUTH_SECRET")
-	if err != nil {
-		return err
-	}
 	workspace := *workspaceFlag
+	var err error
 	if workspace == "" {
 		workspace, err = workspaceRoot()
 		if err != nil {
 			return err
 		}
 	}
+	token, err := videoCloudAdminTokenValue(workspace, *envRootFlag, *ttl)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, token)
+	return nil
+}
+
+func videoCloudAdminTokenValue(workspace, envRoot string, ttl time.Duration) (string, error) {
+	secret, err := lkeRuntimeSecretValueFromFlags(workspace, envRoot, "-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_AUTH_SECRET")
+	if err != nil {
+		return "", err
+	}
 	cmd := exec.Command("go", "run", "./cmd/admin-token", "--ttl", ttl.String())
 	cmd.Dir = filepath.Join(workspace, "repos", "rtk_video_cloud")
 	cmd.Env = append(os.Environ(), "GOWORK=off", "VIDEO_CLOUD_AUTH_SECRET="+secret)
-	cmd.Stdout = os.Stdout
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	token := strings.TrimSpace(stdout.String())
+	if token == "" {
+		return "", errors.New("video-cloud admin token command returned an empty token")
+	}
+	return token, nil
 }
 
 func runCloudLoggerToken(args []string) error {

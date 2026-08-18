@@ -27,6 +27,22 @@ type deploymentConfig struct {
 	AdapterResolved map[string]string
 	DNSValues       map[string]string
 	Capacity        sharedCapacityPlan
+	Storage         deploymentStoragePlan
+}
+
+type deploymentStorageTarget struct {
+	Purpose         string `json:"purpose"`
+	Policy          string `json:"policy"`
+	LogicalLocation string `json:"logical_location"`
+	Bucket          string `json:"bucket"`
+	Prefix          string `json:"prefix"`
+	Region          string `json:"region"`
+	Endpoint        string `json:"endpoint,omitempty"`
+}
+
+type deploymentStoragePlan struct {
+	RuntimeMedia     deploymentStorageTarget `json:"runtime_media"`
+	ReleaseArtifacts deploymentStorageTarget `json:"release_artifacts"`
 }
 
 type deploymentOperations struct {
@@ -118,14 +134,18 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	environmentRoot := fs.String("environment-root", "", "explicit environment root for tests/custom environments")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for mutation")
-	envFile := fs.String("env-file", defaultDeploymentCredentialEnvFile(), "operator credential env file")
+	envFile := fs.String("env-file", "", "environment credential profile (defaults to ~/.config/rtk-cloud/environments/NAME.env)")
+	sharedEnvFile := fs.String("shared-env-file", "", "shared credential profile (defaults to ~/.config/rtk-cloud/shared.env)")
 	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
+	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
+	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" {
+	storageAction := strings.HasPrefix(action, "storage-")
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -141,18 +161,31 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if err != nil {
 		return err
 	}
+	if *envFile == "" {
+		*envFile = defaultDeploymentEnvironmentCredentialFile(cfg.Environment)
+	}
+	_ = os.Setenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE", *envFile)
+	defer os.Unsetenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")
+	if *sharedEnvFile != "" {
+		_ = os.Setenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE", *sharedEnvFile)
+		defer os.Unsetenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE")
+	}
 	if action == "preflight" {
 		return runDeploymentPreflight(cfg, *operation)
 	}
 	stack := cfg.Values["CLOUD_STACK_NAME"]
-	if action != "plan" && action != "credentials-check" && *confirm != stack {
+	if action != "plan" && action != "credentials-check" && action != "storage-plan" && *confirm != stack {
 		return fmt.Errorf("--confirm %s is required", stack)
+	}
+	if storageAction {
+		return runDeploymentStorageLifecycle(action, cfg, *envFile, *sourceEnvFile, *keyID)
 	}
 	if cfg.Adapter != "lke" && action != "plan" && action != "credentials-check" {
 		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
 	}
 	if action == "credentials-check" || action == "provision" || action == "test" {
 		credentialCheck := ops.credentials
+		credentialsValidated := false
 		if *createMissingObjectStorageBucket {
 			credentialCheck = ops.bootstrapCredentials
 		}
@@ -165,9 +198,26 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 			}
 		} else if err := credentialCheck(cfg, *envFile); err != nil {
 			return err
+		} else {
+			credentialsValidated = true
 		}
 		if action == "credentials-check" {
 			return nil
+		}
+		if credentialsValidated {
+			values, profileCheck := deploymentCredentialProfileValues(cfg.Environment, *envFile, defaultDeploymentSharedCredentialFile())
+			if !profileCheck.Passed {
+				return errors.New(profileCheck.Detail)
+			}
+			receipt, receiptErr := readDeploymentStorageReceipt(cfg.RuntimeRoot)
+			if receiptErr != nil {
+				return errors.New("validated storage receipt is required before provisioning")
+			}
+			values["LINODE_OBJ_BUCKET"] = cfg.Storage.RuntimeMedia.Bucket
+			values["LINODE_OBJ_REGION"] = cfg.Storage.RuntimeMedia.Region
+			values["LINODE_OBJ_ENDPOINT"] = receipt.Endpoint
+			restore := installDeploymentChildCredentialEnvironment(values)
+			defer restore()
 		}
 	}
 	if err := materializeDeploymentRuntime(cfg); err != nil {
@@ -473,6 +523,11 @@ func printDeploymentUsage() {
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
   rtk-cloud deployment test --environment NAME --confirm STACK
+  rtk-cloud deployment storage-plan --environment NAME
+  rtk-cloud deployment storage-bootstrap --environment NAME --confirm STACK
+  rtk-cloud deployment storage-migrate --environment NAME --source-env-file PATH --confirm STACK
+  rtk-cloud deployment storage-cutover --environment NAME --confirm STACK
+  rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK
 `)
 }
 
@@ -684,7 +739,64 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			return deploymentConfig{}, err
 		}
 	}
-	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity}, nil
+	storage, err := resolveDeploymentStoragePlan(workspace, environmentRoot, envIdentity, adapterResolved)
+	if err != nil {
+		return deploymentConfig{}, err
+	}
+	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity, Storage: storage}, nil
+}
+
+func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, adapterResolved map[string]string) (deploymentStoragePlan, error) {
+	runtime, err := readOptionalStrictEnv(filepath.Join(environmentRoot, "storage.env"))
+	if err != nil {
+		return deploymentStoragePlan{}, err
+	}
+	if len(runtime) == 0 {
+		suffix := strings.ReplaceAll(identity["DEPLOYMENT_LOCATION"], "asia-southeast", "sg")
+		runtime = map[string]string{"RUNTIME_MEDIA_STORAGE_POLICY": "colocated", "RUNTIME_MEDIA_STORAGE_BUCKET": "rtk-video-" + filepath.Base(environmentRoot) + "-" + suffix, "RUNTIME_MEDIA_STORAGE_PREFIX": "environments/" + identity["CLOUD_STACK_NAME"]}
+	}
+	for key := range runtime {
+		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX")[key] {
+			return deploymentStoragePlan{}, fmt.Errorf("unknown runtime storage key %s", key)
+		}
+	}
+	if runtime["RUNTIME_MEDIA_STORAGE_POLICY"] != "colocated" {
+		return deploymentStoragePlan{}, errors.New("RUNTIME_MEDIA_STORAGE_POLICY must be colocated")
+	}
+	for _, key := range []string{"RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX"} {
+		if strings.TrimSpace(runtime[key]) == "" {
+			return deploymentStoragePlan{}, fmt.Errorf("%s is required in storage.env", key)
+		}
+	}
+	shared, err := readOptionalStrictEnv(filepath.Join(workspace, "cloud_deploy", "storage", "release-artifacts.env"))
+	if err != nil {
+		return deploymentStoragePlan{}, err
+	}
+	if len(shared) == 0 {
+		shared = map[string]string{"RELEASE_ARTIFACT_STORAGE_POLICY": "shared-cross-region", "RELEASE_ARTIFACT_STORAGE_BUCKET": "rtk-cloud-client-artifacts", "RELEASE_ARTIFACT_STORAGE_LOCATION": "us-west", "RELEASE_ARTIFACT_STORAGE_REGION": "us-sea", "RELEASE_ARTIFACT_STORAGE_PREFIX": "releases"}
+	}
+	allowed := keySet("RELEASE_ARTIFACT_STORAGE_POLICY", "RELEASE_ARTIFACT_STORAGE_BUCKET", "RELEASE_ARTIFACT_STORAGE_LOCATION", "RELEASE_ARTIFACT_STORAGE_REGION", "RELEASE_ARTIFACT_STORAGE_PREFIX")
+	for key := range shared {
+		if !allowed[key] {
+			return deploymentStoragePlan{}, fmt.Errorf("unknown release artifact storage key %s", key)
+		}
+	}
+	if shared["RELEASE_ARTIFACT_STORAGE_POLICY"] != "shared-cross-region" {
+		return deploymentStoragePlan{}, errors.New("RELEASE_ARTIFACT_STORAGE_POLICY must be shared-cross-region")
+	}
+	for _, key := range []string{"RELEASE_ARTIFACT_STORAGE_BUCKET", "RELEASE_ARTIFACT_STORAGE_LOCATION", "RELEASE_ARTIFACT_STORAGE_REGION"} {
+		if strings.TrimSpace(shared[key]) == "" {
+			return deploymentStoragePlan{}, fmt.Errorf("%s is required in release-artifacts.env", key)
+		}
+	}
+	computeRegion := strings.TrimSpace(adapterResolved["LKE_REGION"])
+	if computeRegion == "" && len(adapterResolved) > 0 {
+		return deploymentStoragePlan{}, errors.New("resolved compute region is required for colocated runtime storage")
+	}
+	return deploymentStoragePlan{
+		RuntimeMedia:     deploymentStorageTarget{Purpose: "runtime-media", Policy: "colocated", LogicalLocation: identity["DEPLOYMENT_LOCATION"], Bucket: runtime["RUNTIME_MEDIA_STORAGE_BUCKET"], Prefix: strings.Trim(runtime["RUNTIME_MEDIA_STORAGE_PREFIX"], "/"), Region: computeRegion},
+		ReleaseArtifacts: deploymentStorageTarget{Purpose: "release-artifacts", Policy: "shared-cross-region", LogicalLocation: shared["RELEASE_ARTIFACT_STORAGE_LOCATION"], Bucket: shared["RELEASE_ARTIFACT_STORAGE_BUCKET"], Prefix: strings.Trim(shared["RELEASE_ARTIFACT_STORAGE_PREFIX"], "/"), Region: shared["RELEASE_ARTIFACT_STORAGE_REGION"]},
+	}, nil
 }
 
 func appendMap(a, b map[string]string) map[string]string {
@@ -778,6 +890,12 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	stack["CLOUD_ENV_NAME"] = cfg.Environment
 	stack["CLOUD_PROVIDER"] = cfg.Adapter
 	stack["CLOUD_REGION"] = cfg.AdapterResolved["LKE_REGION"]
+	stack["VIDEO_CLOUD_BLOB_BUCKET"] = cfg.Storage.RuntimeMedia.Bucket
+	stack["VIDEO_CLOUD_BLOB_REGION"] = cfg.Storage.RuntimeMedia.Region
+	stack["VIDEO_CLOUD_BLOB_PREFIX"] = cfg.Storage.RuntimeMedia.Prefix
+	if receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
+		stack["VIDEO_CLOUD_BLOB_ENDPOINT"] = receipt.Endpoint
+	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
 		return err
 	}
@@ -823,7 +941,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "state", "dns.env"), map[string]string{"DNS_ADAPTER": cfg.DNSAdapter, "DNS_ROOT_DOMAIN": cfg.Values["CLOUD_DNS_ROOT_DOMAIN"]}, 0o600); err != nil {
 		return err
 	}
-	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "dns_adapter": cfg.DNSAdapter, "values": resolved, "capacity": cfg.Capacity}
+	plan := map[string]any{"environment": cfg.Environment, "architecture": cfg.Architecture, "adapter": cfg.Adapter, "dns_adapter": cfg.DNSAdapter, "values": resolved, "capacity": cfg.Capacity, "storage": cfg.Storage}
 	body, _ := json.MarshalIndent(plan, "", "  ")
 	body = append(body, '\n')
 	return os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment-plan.json"), body, 0o600)

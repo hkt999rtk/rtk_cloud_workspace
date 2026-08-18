@@ -121,6 +121,13 @@ func TestReadUsersListFallsBackToPrivilegedStagingUsersWithoutMembers(t *testing
 	if len(users) != 1 || users[0].Email != "admin@example.test" {
 		t.Fatalf("privileged fallback users = %+v", users)
 	}
+	coverage, err := store.Coverage("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Users != 1 {
+		t.Fatalf("privileged fallback coverage users = %d, want 1", coverage.Users)
+	}
 	if err := store.ReplaceUsers("RTK", "org-rtk", "rtk", "member", []map[string]any{{"email": "member@example.test", "password": "pw"}}); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +137,45 @@ func TestReadUsersListFallsBackToPrivilegedStagingUsersWithoutMembers(t *testing
 	}
 	if len(users) != 1 || users[0].Email != "member@example.test" {
 		t.Fatalf("member-preferred users = %+v", users)
+	}
+	coverage, err = store.Coverage("RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coverage.Users != 1 {
+		t.Fatalf("member-preferred coverage users = %d, want 1", coverage.Users)
+	}
+}
+
+func TestTestDataStoreClearUsersRemovesEveryRoleForBrandOnly(t *testing.T) {
+	store, err := openTestDataStore(t.TempDir(), "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	for _, tc := range []struct {
+		brand string
+		role  string
+		email string
+	}{
+		{brand: "RTK", role: "member", email: "member@users.local"},
+		{brand: "RTK", role: "admin", email: "admin@users.local"},
+		{brand: "Other", role: "member", email: "other@users.local"},
+	} {
+		if err := store.ReplaceUsers(tc.brand, "brand-id", "tenant", tc.role, []map[string]any{{"email": tc.email, "role": tc.role}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := store.ClearUsers("RTK"); err != nil {
+		t.Fatal(err)
+	}
+	if got := testDataUsersCount(store.DB, "RTK"); got != 0 {
+		t.Fatalf("expected RTK users to be cleared, got %d", got)
+	}
+	if got := testDataUsersCount(store.DB, "Other"); got != 1 {
+		t.Fatalf("expected other brand users to remain, got %d", got)
 	}
 }
 

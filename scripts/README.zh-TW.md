@@ -52,7 +52,7 @@ fail-fast adapter，會在任何 cloud API、DNS 或 state mutation 前停止。
 現階段唯一應被 live 驗證的 Kubernetes provider 仍是 `lke`。
 
 Private GHCR image pull 使用 operator-local credentials。Local deployment
-會依序讀取 process environment、runtime env map，以及 `~/.env`：
+會依序讀取 process environment、environment profile 與 shared profile；不讀取 `~/.env`：
 
 ```env
 GHCR_PULL_USERNAME=你的 GitHub username
@@ -72,15 +72,16 @@ LINODE_OBJ_BUCKET=artifact bucket name
 scripts/check-deployment-credentials.sh --environment staging
 ```
 
-預設讀取 `~/.env`（也可傳 `--env-file PATH`），並要求檔案權限不得開放給
-group/others。檢查內容會依 environment 自動包含 Linode profile/LKE read、
+預設分層讀取 `~/.config/rtk-cloud/shared.env` 與
+`~/.config/rtk-cloud/environments/<environment>.env`（也可傳 `--env-file PATH`），
+並要求檔案權限不得開放給 group/others。所有 cloud credential loader 都不讀取 `~/.env`；任一 profile
+缺少時直接 fail closed。檢查內容會依 environment 自動包含 Linode profile/LKE read、
 五個 service GHCR repository pull、GoDaddy domain read，以及啟用 clip direct
-upload 時的 Object Storage signed bucket list。任何一項失敗都回傳 non-zero；
+upload 時的 Object Storage inventory、limited-key scope、signed list 與
+write/read/delete canary。任何一項失敗都回傳 non-zero；
 `deployment provision`、`deployment test` 與 legacy `staging-provision` 也會在
 建立 runtime 檔案、解析 image 或建立 cloud resource 前自動執行同一檢查。
-檢查不會輸出 token/key 值。由於預檢刻意只做
-唯讀操作，它能證明認證與讀取 scope，但 provider mutation scope 仍由實際
-provision API 在操作時判定。
+檢查不會輸出 token/key 值，並把 redacted receipt 寫到 ignored runtime state。
 
 如果唯一失敗是 configured Object Storage bucket 回應 HTTP 404，可明確要求
 同一個 script 使用 Object Storage access key 建立該 bucket，並立即重做 signed
@@ -107,9 +108,9 @@ scripts/check-deployment-credentials.sh \
   --grant-object-storage-bucket-access
 ```
 
-script 會先用 replacement key 完成 signed read validation，成功後才以 `0600`
-權限原子更新 operator env 內的 `LINODE_OBJ_ACCESS_KEY_ID` 與
-`LINODE_OBJ_SECRET_ACCESS_KEY`。驗證失敗時不會改寫 env。舊 key 不會自動撤銷，
+script 會先用 replacement key 完成 read/write/delete validation，成功後才以 `0600`
+權限原子更新 environment profile 內的 `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` 與
+`LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`。驗證失敗時不會改寫 profile。舊 key 不會自動撤銷，
 因為它可能仍供原本授權的 bucket 使用；後續需獨立確認無 consumer 後再 revoke。
 bucket creation 與 access grant 是兩個明確操作，不允許在同一次 invocation 合併。
 
@@ -122,8 +123,8 @@ printf '%s' "$GHCR_PULL_TOKEN" | \
     --password-stdin
 ```
 
-若只放在 `~/.env`，deployment command 會自動讀取；不需要每次手動
-`export`。GitHub Actions 則使用 repository secrets
+若放在上述 shared/environment profiles，deployment command 會自動讀取；不需要每次手動
+`export`。完整 storage lifecycle 見 `docs/storage-credential-lifecycle.md`。GitHub Actions 則使用 repository secrets
 `GHCR_PULL_USERNAME` 與 `GHCR_PULL_TOKEN`。
 
 Kubernetes runtime manifest 的新增規則：非 secret YAML 優先放在
@@ -630,7 +631,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 
 必要輸入：
 
-- `DNS_ADAPTER=godaddy` 時，`GODADDY_KEY` / `GODADDY_SECRET` 依序從 process environment、environment runtime 的 `env/operator.env`、`~/.env` 讀取；`DNS_ADAPTER=route53` 時使用 AWS SDK default credential chain。
+- `DNS_ADAPTER=godaddy` 時，`GODADDY_KEY` / `GODADDY_SECRET` 依序從 process environment、`~/.config/rtk-cloud/environments/<environment>.env`、`~/.config/rtk-cloud/shared.env` 讀取；`DNS_ADAPTER=route53` 時使用 AWS SDK default credential chain。
 - `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。

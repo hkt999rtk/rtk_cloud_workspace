@@ -45,6 +45,71 @@ func TestDeploymentRuntimeEndpointsDeriveLegacyDomains(t *testing.T) {
 	}
 }
 
+func TestDeploymentRejectsUnknownActionAndMissingConfirmation(t *testing.T) {
+	if err := runDeploymentWithOperations([]string{"unknown"}, deploymentOperations{}); err == nil || !strings.Contains(err.Error(), "unknown deployment action") {
+		t.Fatalf("unknown action error = %v", err)
+	}
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	if err := runDeploymentWithOperations([]string{"acceptance", "--workspace", workspace, "--environment", "staging"}, deploymentOperations{}); err == nil || !strings.Contains(err.Error(), "--confirm video-cloud-staging is required") {
+		t.Fatalf("missing confirmation error = %v", err)
+	}
+}
+
+func TestResolveDeploymentStoragePlanRejectsInvalidProfiles(t *testing.T) {
+	identity := map[string]string{"DEPLOYMENT_LOCATION": "asia-southeast", "CLOUD_STACK_NAME": "video-cloud-staging"}
+	validRuntime := "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=media\nRUNTIME_MEDIA_STORAGE_PREFIX=environments/staging\n"
+	validShared := "RELEASE_ARTIFACT_STORAGE_POLICY=shared-cross-region\nRELEASE_ARTIFACT_STORAGE_BUCKET=artifacts\nRELEASE_ARTIFACT_STORAGE_LOCATION=us-west\nRELEASE_ARTIFACT_STORAGE_REGION=us-sea\nRELEASE_ARTIFACT_STORAGE_PREFIX=releases\n"
+	tests := []struct {
+		name, runtime, shared string
+		adapterResolved       map[string]string
+		makeRuntimeDir        bool
+		makeSharedDir         bool
+	}{
+		{name: "runtime read error", makeRuntimeDir: true},
+		{name: "unknown runtime key", runtime: validRuntime + "UNKNOWN=value\n"},
+		{name: "runtime policy", runtime: strings.Replace(validRuntime, "colocated", "shared", 1)},
+		{name: "runtime required value", runtime: strings.Replace(validRuntime, "media", "", 1)},
+		{name: "shared read error", runtime: validRuntime, makeSharedDir: true},
+		{name: "unknown shared key", runtime: validRuntime, shared: validShared + "UNKNOWN=value\n"},
+		{name: "shared policy", runtime: validRuntime, shared: strings.Replace(validShared, "shared-cross-region", "colocated", 1)},
+		{name: "shared required value", runtime: validRuntime, shared: strings.Replace(validShared, "artifacts", "", 1)},
+		{name: "missing compute region", runtime: validRuntime, shared: validShared, adapterResolved: map[string]string{"LKE_REGION": ""}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			environmentRoot := filepath.Join(workspace, "cloud_env", "staging")
+			if err := os.MkdirAll(environmentRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			runtimePath := filepath.Join(environmentRoot, "storage.env")
+			sharedPath := filepath.Join(workspace, "cloud_deploy", "storage", "release-artifacts.env")
+			if tc.makeRuntimeDir {
+				if err := os.Mkdir(runtimePath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.runtime != "" {
+				writeTestFile(t, runtimePath, tc.runtime)
+			}
+			if tc.makeSharedDir {
+				if err := os.MkdirAll(sharedPath, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if tc.shared != "" {
+				writeTestFile(t, sharedPath, tc.shared)
+			}
+			if _, err := resolveDeploymentStoragePlan(workspace, environmentRoot, identity, tc.adapterResolved); err == nil {
+				t.Fatal("invalid storage profile unexpectedly resolved")
+			}
+		})
+	}
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "storage.env"), "UNKNOWN=value\n")
+	if _, err := resolveDeploymentConfig(workspace, "staging", ""); err == nil {
+		t.Fatal("deployment config accepted invalid storage profile")
+	}
+}
+
 func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	for _, action := range []string{"provision", "test"} {
 		t.Run(action, func(t *testing.T) {
@@ -86,6 +151,59 @@ func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 				t.Fatalf("runtime was materialized before credential validation: %v", statErr)
 			}
 		})
+	}
+}
+
+func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedFile := filepath.Join(t.TempDir(), "shared.env")
+	environmentFile := filepath.Join(t.TempDir(), "staging.env")
+	if err := os.WriteFile(sharedFile, []byte("LINODE_TOKEN=token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(environmentFile, []byte("LINODE_MEDIA_OBJ_ACCESS_KEY_ID=media-access\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=media-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeDeploymentStorageReceipt(cfg.RuntimeRoot, deploymentStorageReceipt{
+		Purpose: "runtime-media", Bucket: cfg.Storage.RuntimeMedia.Bucket, Region: cfg.Storage.RuntimeMedia.Region, Endpoint: "https://example.invalid",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := []string{}
+	ops := deploymentOperations{
+		credentials: func(deploymentConfig, string) error { calls = append(calls, "credentials"); return nil },
+		provision: func(deploymentConfig) error {
+			calls = append(calls, "provision")
+			if os.Getenv("LINODE_OBJ_ACCESS_KEY_ID") != "media-access" || os.Getenv("LINODE_OBJ_ENDPOINT") != "https://example.invalid" {
+				return errors.New("validated storage credentials were not installed")
+			}
+			return nil
+		},
+		normalize: func(deploymentConfig) error { calls = append(calls, "normalize"); return nil },
+	}
+	if err := runDeploymentWithOperations([]string{
+		"provision", "--workspace", workspace, "--environment", "staging", "--confirm", "video-cloud-staging",
+		"--env-file", environmentFile, "--shared-env-file", sharedFile,
+	}, ops); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"credentials", "provision", "normalize"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	if os.Getenv("LINODE_OBJ_ACCESS_KEY_ID") != "" {
+		t.Fatal("child storage credential leaked after provisioning")
+	}
+
+	missingReceiptWorkspace := writeDeploymentFixture(t, "staging", "lke")
+	err = runDeploymentWithOperations([]string{
+		"provision", "--workspace", missingReceiptWorkspace, "--environment", "staging", "--confirm", "video-cloud-staging", "--env-file", environmentFile,
+	}, deploymentOperations{credentials: func(deploymentConfig, string) error { return nil }})
+	if err == nil || !strings.Contains(err.Error(), "validated storage receipt is required") {
+		t.Fatalf("missing receipt error = %v", err)
 	}
 }
 

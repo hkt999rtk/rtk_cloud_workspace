@@ -109,19 +109,8 @@ func runProvision(args []string) error {
 }
 
 func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]string) error {
-	candidates := []string{
-		filepath.Join(envRoot, "env", "operator.env"),
-	}
-	if filepath.Base(envRoot) == "lke" {
-		stagingRoot := filepath.Dir(envRoot)
-		candidates = append(candidates,
-			filepath.Join(stagingRoot, "runtime", "env", "operator.env"),
-			filepath.Join(stagingRoot, "linode", "env", "operator.env"),
-		)
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		candidates = append(candidates, filepath.Join(home, ".env"))
-	}
+	environment := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
+	candidates := []string{defaultDeploymentEnvironmentCredentialFile(environment), defaultDeploymentSharedCredentialFile()}
 	for _, path := range candidates {
 		operator, err := readEnvFile(path)
 		if err != nil {
@@ -133,6 +122,8 @@ func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]stri
 		for _, key := range []string{
 			"LINODE_OBJ_ACCESS_KEY_ID",
 			"LINODE_OBJ_SECRET_ACCESS_KEY",
+			"LINODE_MEDIA_OBJ_ACCESS_KEY_ID",
+			"LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY",
 			"AWS_ACCESS_KEY_ID",
 			"AWS_SECRET_ACCESS_KEY",
 		} {
@@ -148,10 +139,10 @@ func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]stri
 
 func mergeObjectStorageCredentialAliases(values map[string]string) {
 	if values["LINODE_OBJ_ACCESS_KEY_ID"] == "" {
-		values["LINODE_OBJ_ACCESS_KEY_ID"] = values["AWS_ACCESS_KEY_ID"]
+		values["LINODE_OBJ_ACCESS_KEY_ID"] = firstNonEmpty(values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"], values["AWS_ACCESS_KEY_ID"])
 	}
 	if values["LINODE_OBJ_SECRET_ACCESS_KEY"] == "" {
-		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = values["AWS_SECRET_ACCESS_KEY"]
+		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = firstNonEmpty(values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"], values["AWS_SECRET_ACCESS_KEY"])
 	}
 }
 

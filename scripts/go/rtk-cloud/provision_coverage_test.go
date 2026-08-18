@@ -68,7 +68,7 @@ func TestParseProvisionArgsCoversModesValuesAndFailures(t *testing.T) {
 	}
 }
 
-func TestMergeObjectStorageCredentialDefaultsUsesHomeEnv(t *testing.T) {
+func TestMergeObjectStorageCredentialDefaultsUsesEnvironmentProfile(t *testing.T) {
 	for _, key := range []string{
 		"LINODE_OBJ_ACCESS_KEY_ID", "LINODE_OBJ_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 	} {
@@ -76,9 +76,9 @@ func TestMergeObjectStorageCredentialDefaultsUsesHomeEnv(t *testing.T) {
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := writeEnvMap(filepath.Join(home, ".env"), map[string]string{
-		"LINODE_OBJ_ACCESS_KEY_ID":     "home-access",
-		"LINODE_OBJ_SECRET_ACCESS_KEY": "home-secret",
+	if err := writeEnvMap(filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env"), map[string]string{
+		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID":     "profile-access",
+		"LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "profile-secret",
 	}, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -86,8 +86,8 @@ func TestMergeObjectStorageCredentialDefaultsUsesHomeEnv(t *testing.T) {
 	if err := mergeObjectStorageCredentialDefaults(t.TempDir(), values); err != nil {
 		t.Fatal(err)
 	}
-	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "home-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "home-secret" {
-		t.Fatalf("home object-storage credentials were not loaded: %#v", values)
+	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "profile-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "profile-secret" {
+		t.Fatalf("environment profile object-storage credentials were not loaded: %#v", values)
 	}
 }
 
@@ -123,8 +123,10 @@ func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 		t.Fatal("conversion helper mismatch")
 	}
 
-	operatorPath := filepath.Join(root, "env", "operator.env")
-	if err := writeEnvMap(operatorPath, map[string]string{
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profilePath := filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env")
+	if err := writeEnvMap(profilePath, map[string]string{
 		"AWS_ACCESS_KEY_ID":     "access",
 		"AWS_SECRET_ACCESS_KEY": "secret",
 	}, 0o600); err != nil {
@@ -135,7 +137,7 @@ func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "secret" {
-		t.Fatalf("credentials = %#v", values)
+		t.Fatal("environment profile credentials were not mapped to compatibility keys")
 	}
 
 	merged := mergeEnv(map[string]string{"one": "base", "two": "base"}, map[string]string{"two": "overlay"})

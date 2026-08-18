@@ -74,7 +74,7 @@ Conflicts and outdated areas:
 
 ## Provider-neutral adapter migration
 
-Tracked environments no longer set `LKE_REGION`, `LKE_GENERAL_NODE_TYPE`, `LKE_BROKER_NODE_TYPE`, `LKE_DATABASE_NODE_TYPE`, or `LINODE_ACTIVE_SERVICE_LIMIT`. They set `DEPLOYMENT_LOCATION` and provider-neutral node-class vCPU/memory minima. LKE maps `us-west` to `us-sea` and selects the smallest matching Linode type using memory surplus, then vCPU surplus, then type name.
+Tracked environments no longer set `LKE_REGION`, `LKE_GENERAL_NODE_TYPE`, `LKE_BROKER_NODE_TYPE`, `LKE_DATABASE_NODE_TYPE`, or `LINODE_ACTIVE_SERVICE_LIMIT`. They set `DEPLOYMENT_LOCATION` and provider-neutral node-class vCPU/memory minima. LKE maps `us-west` to `us-sea` and `asia-southeast` to `sg-sin-2`, then selects the smallest matching Linode type using memory surplus, vCPU surplus, and finally type name.
 
 Before the first mutation after this change, the operator must create `cloud_env/<environment>/runtime/adapters/lke/account.env` with `LKE_ACTIVE_SERVICE_LIMIT`. There is no automatic migration from tracked config. The adapter writes selected region and types to `resolved-resources.env`; provider IDs remain in the existing adapter-private state files.
 

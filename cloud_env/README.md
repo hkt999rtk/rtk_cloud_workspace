@@ -1,6 +1,6 @@
 # 建立與設定 environment
 
-這是新增 `dev`、`staging`、`prod`、`qa` 或其他 deployment environment 的操作入口。架構責任與解析原理見 [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md)；共用 defaults 與 adapter keys 見 [`cloud_deploy/README.md`](../cloud_deploy/README.md)。
+這是新增 `dev`、`staging`、`prod`、`qa` 或其他 deployment environment 的操作入口。架構責任與解析原理見 [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md)；共用 defaults 與 adapter keys 見 [`cloud_deploy/README.md`](../cloud_deploy/README.md)；多環境 Object Storage 與憑證生命週期見 [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md)。
 
 要從全新 clone 建立 LKE staging、完成服務驗收並執行 1K MQTT/Device
 Shadow 測試，請依序執行 [`staging-from-scratch.md`](../docs/staging-from-scratch.md)。不要把該流程用於
@@ -107,7 +107,9 @@ chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
 
 Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
 
-DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 依序從 process environment、environment runtime operator file、`~/.env` 讀取；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
+每個 environment 也必須追蹤 `storage.env`，宣告 runtime media policy、bucket 與 environment-owned prefix；範例與 lifecycle 見 [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md)。
+
+DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 依序從 process environment、`~/.config/rtk-cloud/environments/<environment>.env`、`~/.config/rtk-cloud/shared.env` 讀取，且不會 fallback `~/.env`；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
 
 ## 驗證與 provision
 
