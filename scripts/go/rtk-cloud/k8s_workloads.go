@@ -63,6 +63,11 @@ func k8sWorkloads(env map[string]string) []k8sWorkload {
 			MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80, ServiceEnabled: true, RolloutTimeout: "LKE_WORKLOAD_ROLLOUT_TIMEOUT",
 		},
 		{
+			Key: "billing", Name: "billing", EnvKey: "LKE_BILLING_IMAGE", Image: lkeEnvValue(env, "LKE_BILLING_IMAGE"),
+			Namespace: lkeNamespaceName(env, "billing"), NamespaceKey: "billing", Port: envIntDefault("LKE_BILLING_PORT", 8080),
+			ServiceEnabled: true, RolloutTimeout: "LKE_WORKLOAD_ROLLOUT_TIMEOUT",
+		},
+		{
 			Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", Image: lkeEnvValue(env, "LKE_CLOUD_ADMIN_IMAGE"),
 			Namespace: lkeNamespaceName(env, "admin"), NamespaceKey: "admin", Port: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080), Host: env["CLOUD_ADMIN_DOMAIN"],
 			MetricsEnabled: true, MetricsPath: "/metrics/prometheus", MetricsPort: 80, ServiceEnabled: true, RolloutTimeout: "LKE_WORKLOAD_ROLLOUT_TIMEOUT",

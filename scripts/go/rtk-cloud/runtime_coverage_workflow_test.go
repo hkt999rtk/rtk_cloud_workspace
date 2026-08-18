@@ -167,8 +167,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(dockerfiles) != 5 {
-		t.Fatalf("runtime coverage Dockerfiles = %d, want 5", len(dockerfiles))
+	if len(dockerfiles) != 6 {
+		t.Fatalf("runtime coverage Dockerfiles = %d, want 6", len(dockerfiles))
 	}
 	for _, dockerfile := range dockerfiles {
 		raw, err := os.ReadFile(dockerfile)
@@ -740,6 +740,8 @@ esac
 		"FAKE_IMAGE="+image,
 		"LKE_ACCOUNT_MANAGER_IMAGE="+image,
 		"LKE_ACCOUNT_MANAGER_IMAGE_DIGEST="+digest,
+		"LKE_BILLING_IMAGE="+image,
+		"LKE_BILLING_IMAGE_DIGEST="+digest,
 		"LKE_CLOUD_ADMIN_IMAGE="+image,
 		"LKE_CLOUD_ADMIN_IMAGE_DIGEST="+digest,
 		"LKE_FRONTEND_IMAGE="+image,
@@ -764,7 +766,7 @@ esac
 	if err := json.Unmarshal(raw, &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Status != "FAIL" || len(report.Deployments) != 5 ||
+	if report.Status != "FAIL" || len(report.Deployments) != 6 ||
 		!strings.Contains(strings.Join(report.Errors, "\n"), "running pod image IDs do not match the expected digest") {
 		t.Fatalf("deployment anchor report = %#v", report)
 	}

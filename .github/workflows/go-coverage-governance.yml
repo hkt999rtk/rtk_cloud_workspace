@@ -43,6 +43,7 @@ jobs:
           - workspace-e2e
           - home-load-runner
           - account-manager
+          - billing-service
           - cloud-admin-backend
           - cloud-client-golang
           - cloud-frontend
@@ -191,6 +192,54 @@ jobs:
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
 
+  billing-postgres:
+    name: Billing PostgreSQL and virtual-payment coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: billing_${{ github.run_id }}_${{ github.run_attempt }}
+          POSTGRES_USER: billing_${{ github.run_id }}_${{ github.run_attempt }}
+          POSTGRES_PASSWORD: integration_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: false
+      - name: Run Billing integration-aware coverage and payment E2E
+        working-directory: scripts/go
+        env:
+          TEST_DATABASE_URL: postgres://billing_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/billing_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+        run: go run ./rtk-cloud -- test-payment --profile fake-e2e --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-billing-pr"
+      - name: Upload Billing evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: go-coverage-pr-billing-service-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-billing-pr/coverage/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-billing-pr/payments/**
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+
   video-cloud-postgres-emqx:
     name: Video Cloud PostgreSQL and EMQX coverage
     runs-on: ubuntu-latest
@@ -269,7 +318,7 @@ jobs:
   aggregate:
     name: Coverage aggregate and redaction
     if: always()
-    needs: [policy, unit, node, account-manager-postgres, video-cloud-postgres-emqx]
+    needs: [policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

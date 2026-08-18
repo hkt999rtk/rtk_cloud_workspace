@@ -421,6 +421,7 @@ func TestValidateLKEDeployInputsRequiresBlobConfiguration(t *testing.T) {
 		"LKE_POSTGRES_IMAGE":           "postgres:16-alpine",
 		"LKE_VIDEO_CLOUD_IMAGE":        "registry.example.test/video-cloud:test",
 		"LKE_ACCOUNT_MANAGER_IMAGE":    "registry.example.test/account-manager:test",
+		"LKE_BILLING_IMAGE":            "registry.example.test/billing:test",
 		"LKE_CLOUD_ADMIN_IMAGE":        "registry.example.test/cloud-admin:test",
 		"LKE_FRONTEND_IMAGE":           "registry.example.test/frontend:test",
 		"LKE_CLOUD_LOGGER_IMAGE":       "registry.example.test/cloud-logger:test",
@@ -443,6 +444,7 @@ func TestValidateLKEDeployInputsRequiresObjectStorageCredentials(t *testing.T) {
 		"LKE_POSTGRES_IMAGE":        "postgres:16-alpine",
 		"LKE_VIDEO_CLOUD_IMAGE":     "registry.example.test/video-cloud:test",
 		"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/account-manager:test",
+		"LKE_BILLING_IMAGE":         "registry.example.test/billing:test",
 		"LKE_CLOUD_ADMIN_IMAGE":     "registry.example.test/cloud-admin:test",
 		"LKE_FRONTEND_IMAGE":        "registry.example.test/frontend:test",
 		"LKE_CLOUD_LOGGER_IMAGE":    "registry.example.test/cloud-logger:test",
@@ -603,12 +605,14 @@ VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
 
 func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("LKE_BILLING_IMAGE", "")
 	logPath := fakeKubectl(t)
 	writeTestFile(t, filepath.Join(envRoot, "artifacts", "lke-images", "lke-image-manifest.json"), `{
   "env": {
     "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
     "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
     "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
+    "LKE_BILLING_IMAGE": "registry.example.test/rtk/billing:manifest",
     "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
     "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
     "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
@@ -623,6 +627,7 @@ func TestRunProvisionLKEDeployUsesImageManifestDefaults(t *testing.T) {
 	for _, want := range []string{
 		"image: registry.example.test/rtk/video-cloud:manifest",
 		"image: registry.example.test/rtk/account-manager:manifest",
+		"image: registry.example.test/rtk/billing:manifest",
 		"image: registry.example.test/rtk/cloud-admin:manifest",
 		"image: registry.example.test/rtk/frontend:manifest",
 		"image: registry.example.test/rtk/cloud-logger:manifest",
@@ -809,6 +814,7 @@ func TestRunLKEResolveImagesWritesPinnedSubmoduleManifest(t *testing.T) {
 		`"LKE_POSTGRES_IMAGE": "postgres:16-alpine"`,
 		`"LKE_VIDEO_CLOUD_IMAGE": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-` + commits["rtk_video_cloud"] + `"`,
 		`"LKE_ACCOUNT_MANAGER_IMAGE": "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-` + commits["rtk_account_manager"] + `"`,
+		`"LKE_BILLING_IMAGE": "ghcr.io/hkt999rtk/rtk_billing/billing:sha-` + commits["rtk_billing"] + `"`,
 		`"LKE_CLOUD_ADMIN_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-` + commits["rtk_cloud_admin"] + `"`,
 		`"LKE_FRONTEND_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-` + commits["rtk_cloud_frontend"] + `"`,
 		`"LKE_CLOUD_LOGGER_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_logger/rtk-cloud-logger:sha-` + commits["rtk_cloud_logger"] + `"`,
@@ -884,7 +890,7 @@ func TestRunLKEResolveImagesVerifiesCurrentOfficialPinnedServiceImage(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(inspected) != 5 || inspected[0] != image {
+	if len(inspected) != 6 || inspected[0] != image {
 		t.Fatalf("official pinned image was not verified exactly once: %v", inspected)
 	}
 }
@@ -915,8 +921,8 @@ func TestRunLKEResolveImagesFailsWhenServiceImageIsMissing(t *testing.T) {
 	if !strings.Contains(err.Error(), wantImage) || !strings.Contains(err.Error(), "repos/rtk_cloud_frontend") {
 		t.Fatalf("expected missing image and repo path in error, got %v", err)
 	}
-	if len(inspected) != 4 {
-		t.Fatalf("expected four service image inspections before frontend failure, got %d: %v", len(inspected), inspected)
+	if len(inspected) != 5 {
+		t.Fatalf("expected five service image inspections before frontend failure, got %d: %v", len(inspected), inspected)
 	}
 }
 
@@ -5021,6 +5027,7 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
+	t.Setenv("LKE_BILLING_IMAGE", "registry.example.test/rtk/billing:test")
 	fakeHelm(t)
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
@@ -5044,9 +5051,11 @@ LINODE_OBJ_SECRET_ACCESS_KEY=test-secret-key
 
 func makeLKEServiceRepos(t *testing.T, workspace string) map[string]string {
 	t.Helper()
+	t.Setenv("LKE_BILLING_IMAGE", "")
 	repos := []string{
 		"rtk_video_cloud",
 		"rtk_account_manager",
+		"rtk_billing",
 		"rtk_cloud_admin",
 		"rtk_cloud_frontend",
 		"rtk_cloud_logger",

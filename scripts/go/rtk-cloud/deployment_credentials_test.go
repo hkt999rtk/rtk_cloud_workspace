@@ -37,7 +37,7 @@ func TestDeploymentCredentialCheckerValidatesAllRequiredServices(t *testing.T) {
 		"[PASS] GHCR pull hkt999rtk/rtk_cloud_logger/rtk-cloud-logger",
 		"[PASS] GoDaddy DNS",
 		"[PASS] Linode Object Storage",
-		"overall: PASS (9 checks)",
+		"overall: PASS (10 checks)",
 	} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("output does not contain %q:\n%s", want, output.String())
@@ -67,7 +67,7 @@ func TestDeploymentCredentialCheckerCreatesMissingObjectStorageBucketAndRevalida
 		t.Fatal("missing Object Storage bucket was not created")
 	}
 	if !strings.Contains(output.String(), "configured bucket created with Object Storage access key; signed read access revalidated") ||
-		!strings.Contains(output.String(), "overall: PASS (9 checks)") {
+		!strings.Contains(output.String(), "overall: PASS (10 checks)") {
 		t.Fatalf("unexpected bootstrap output:\n%s", output.String())
 	}
 }

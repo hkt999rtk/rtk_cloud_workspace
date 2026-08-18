@@ -14,6 +14,43 @@ in the owning service repository; shared wire and payload contracts belong in
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
 | Build a fresh staging environment and run canonical 1K validation | [Staging from scratch](staging-from-scratch.md) |
 
+## Workspace Documents
+
+| Document | Classification | Purpose |
+| --- | --- | --- |
+| [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
+| [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
+| [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
+| [contracts-submodule-governance.md](contracts-submodule-governance.md) | Source | Contracts submodule path, URL, and commit alignment policy. |
+| [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
+| [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
+| [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
+| [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [lke-migration-inventory.md](lke-migration-inventory.md) | Source | Documentation-first LKE migration inventory, current architecture review, target summary, and implementation gates. |
+| [cost/README.md](cost/README.md) | Index | AWS cost estimation materials, including service mapping, sizing worksheet, pricing sources, and support-plan assumptions. |
+| [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
+| [postgres-capacity-expansion-runbook.md](postgres-capacity-expansion-runbook.md) | Source | PostgreSQL storage-pressure classification, LKE PVC expansion, Linode fallback, HA, cache/API boundaries, and validation evidence. |
+| [realtek-connect-plus-gap-analysis.md](realtek-connect-plus-gap-analysis.md) | Discussion note | Evidence-backed gaps between Realtek Connect+ promotion content and current implementation. |
+| [implementation-gap-backlog.md](implementation-gap-backlog.md) | Supporting note | Post-interface implementation and test gaps to open as owner-repo issues. |
+| [core-platform-gap-roadmap.md](core-platform-gap-roadmap.md) | Supporting note | Core platform gap roadmap for readiness, private cloud, account lifecycle, fleet, telemetry, SDK/app, WebRTC, and smart-home ecosystem boundaries. |
+| [business-model.md](business-model.md) | Source | Tier structure, evaluation limits, pricing model framing, SDK licensing posture, and website disclosure rules. |
+| [payment-abstraction-rollout-plan.md](payment-abstraction-rollout-plan.md) | Source | Documentation-first ownership, provider-neutral balance/payment architecture, NewebPay prerequisites, implementation sequence, test evidence, and rollout gates. |
+| [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, deployment order, profiles, operations runbook, support boundary, and follow-up routing. |
+| [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
+| [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
+| [staging-from-scratch.md](staging-from-scratch.md) | Source | Fresh-clone LKE staging deployment, billing setup, acceptance, and canonical 1K MQTT/Device Shadow validation. |
+| [linode-ci-runners.md](linode-ci-runners.md) | Source | Linode self-hosted CI runner VM topology, lifecycle, artifact archive, and shutdown policy. |
+| [linode-100k-home-iot-shadow-loadtest.md](linode-100k-home-iot-shadow-loadtest.md) | Pointer | Moved pointer for the 100,000-device Home IoT Device Shadow load-test package under `loadtests/home-100k/`. |
+| [status-reports/README.md](status-reports/README.md) | Source | Reusable weekly status report framework, material index, and builder workflow. |
+| [webrtc-only-streaming-migration.md](webrtc-only-streaming-migration.md) | Supporting note | WebRTC-only video migration issue roadmap and validation checklist. |
+| [video-cloud-load-test-roadmap.md](video-cloud-load-test-roadmap.md) | Supporting note | API-level video cloud E2E load test roadmap, issue owner matrix, and validation checklist. |
+| [home-mqtt-loadtest-simulation.md](home-mqtt-loadtest-simulation.md) | Pointer | Moved pointer for the home MQTT simulation reference now centralized under `loadtests/home-100k/docs/`. |
+| [cross-service-broker-packaging.md](cross-service-broker-packaging.md) | Supporting note | Retired cross-service broker packaging decision and future reintroduction bar. |
+| [provisioning-issue-roadmap.md](provisioning-issue-roadmap.md) | Supporting note | Interface-first provisioning issue plan and repository ownership matrix. |
+| [ota-issue-roadmap.md](ota-issue-roadmap.md) | Supporting note | Interface-first OTA campaign issue plan and repository ownership matrix. |
+| [testing.md](testing.md) | Source | Cross-repository validation commands for pinned snapshots. |
+| [adr/README.md](adr/README.md) | Index | Workspace architecture decision record location and format. |
+
 The active runtime contract is `cloud_env/<environment>/runtime`. References to
 `cloud_env/staging/lke` or `cloud_env/staging/linode` below are historical
 evidence, not current operator instructions.

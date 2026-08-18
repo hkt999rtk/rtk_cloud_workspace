@@ -295,6 +295,7 @@ jobs:
           metadata_dir="$RUNNER_TEMP/runtime-coverage-image-metadata"
           mkdir -p "$metadata_dir"
           account_image="$RUNTIME_COVERAGE_REGISTRY/account-manager:$RUNTIME_COVERAGE_RUN_ID"
+          billing_image="$RUNTIME_COVERAGE_REGISTRY/billing:$RUNTIME_COVERAGE_RUN_ID"
           admin_image="$RUNTIME_COVERAGE_REGISTRY/cloud-admin:$RUNTIME_COVERAGE_RUN_ID"
           frontend_image="$RUNTIME_COVERAGE_REGISTRY/cloud-frontend:$RUNTIME_COVERAGE_RUN_ID"
           logger_image="$RUNTIME_COVERAGE_REGISTRY/cloud-logger:$RUNTIME_COVERAGE_RUN_ID"
@@ -327,6 +328,7 @@ jobs:
             } >> "$GITHUB_ENV"
           }
           build_coverage_image LKE_ACCOUNT_MANAGER_IMAGE account-manager "$account_image" tests/runtime-coverage/Dockerfile.account-manager repos/rtk_account_manager
+          build_coverage_image LKE_BILLING_IMAGE billing "$billing_image" tests/runtime-coverage/Dockerfile.billing repos/rtk_billing
           build_coverage_image LKE_CLOUD_ADMIN_IMAGE cloud-admin "$admin_image" tests/runtime-coverage/Dockerfile.cloud-admin repos/rtk_cloud_admin
           build_coverage_image LKE_FRONTEND_IMAGE cloud-frontend "$frontend_image" tests/runtime-coverage/Dockerfile.cloud-frontend repos/rtk_cloud_frontend
           build_coverage_image LKE_CLOUD_LOGGER_IMAGE cloud-logger "$logger_image" tests/runtime-coverage/Dockerfile.cloud-logger repos/rtk_cloud_logger
@@ -342,7 +344,7 @@ jobs:
             [.images[]
               | select(.source_path != null)
               | select((.digest | startswith("sha256:")) and (.source_commit | length == 40))
-            ] | length == 5
+            ] | length == 6
           ' "$manifest" >/dev/null
 
       - name: Deploy isolated stack without public DNS, edge VMs, or cluster changes
@@ -661,7 +663,7 @@ jobs:
           set -euo pipefail
           go run ./scripts/go/rtk-cloud -- test-coverage \
             --profile runtime \
-            --module account-manager,cloud-admin-backend,cloud-frontend,cloud-logger,video-cloud \
+            --module account-manager,billing-service,cloud-admin-backend,cloud-frontend,cloud-logger,video-cloud \
             --runtime-dir "$RUNTIME_COVERAGE_OUTPUT_ROOT" \
             --run-id "$RUNTIME_COVERAGE_RUN_ID"
 

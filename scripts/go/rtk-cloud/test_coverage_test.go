@@ -108,8 +108,8 @@ func TestLoadCoverageConfigLinksEveryModuleToCatalog(t *testing.T) {
 	if cfg.SchemaVersion != 3 || cfg.Differential.MinimumStatementPercent != 80 {
 		t.Fatalf("coverage config header = %#v", cfg)
 	}
-	if len(cfg.Modules) != 12 {
-		t.Fatalf("coverage policy entries = %d, want 12 (10 Go and 2 Node)", len(cfg.Modules))
+	if len(cfg.Modules) != 13 {
+		t.Fatalf("coverage policy entries = %d, want 13 (11 Go and 2 Node)", len(cfg.Modules))
 	}
 	for _, module := range cfg.Modules {
 		if module.TestID == "" || module.Name == "" || module.Purpose == "" || module.Method == "" {
