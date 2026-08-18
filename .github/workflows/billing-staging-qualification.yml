@@ -39,8 +39,6 @@ jobs:
       CLOUD_STACK_NAME: video-cloud-staging
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-      GODADDY_KEY: ${{ secrets.GODADDY_KEY }}
-      GODADDY_SECRET: ${{ secrets.GODADDY_SECRET }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -163,7 +161,6 @@ jobs:
             --preflight \
             --apply \
             --deploy \
-            --dns \
             --workloads billing,cloud-admin \
             --confirm video-cloud-staging
 

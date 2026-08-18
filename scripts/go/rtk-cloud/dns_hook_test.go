@@ -81,6 +81,23 @@ func TestDNSOperationTimeoutAndTXTConvergence(t *testing.T) {
 	}
 }
 
+func TestACMEFinalDNSSettleOnlyWaitsAfterLastChallenge(t *testing.T) {
+	t.Setenv("DNS_ACME_FINAL_SETTLE_SECONDS", "0")
+	if err := waitACMEFinalDNSSettle(context.Background(), "0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitACMEFinalDNSSettle(context.Background(), "3"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("DNS_ACME_FINAL_SETTLE_SECONDS", "1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitACMEFinalDNSSettle(ctx, "0"); err == nil || !strings.Contains(err.Error(), "interrupted") {
+		t.Fatalf("cancelled final settle error = %v", err)
+	}
+}
+
 func TestDNSHookRejectsInvalidInvocation(t *testing.T) {
 	if err := runDNSHook(nil); err == nil {
 		t.Fatal("missing action unexpectedly passed")

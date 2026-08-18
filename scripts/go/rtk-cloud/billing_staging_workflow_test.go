@@ -38,8 +38,6 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"--workloads billing,cloud-admin",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"Deploy only Billing and Cloud Admin without rotating shared PKI",
-		"GODADDY_KEY",
-		"GODADDY_SECRET",
 		"packages: write",
 		"rollout status deployment/billing",
 		"e2e:billing:staging",
@@ -57,5 +55,8 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 	}
 	if strings.Contains(body, "linode_deploy") || strings.Contains(body, "deploy/linode") {
 		t.Fatal("Billing staging qualification must remain K8s-only")
+	}
+	if strings.Contains(body, "            --dns \\") {
+		t.Fatal("recurring Billing qualification must not reconcile shared public edge infrastructure")
 	}
 }

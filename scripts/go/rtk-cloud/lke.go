@@ -2459,6 +2459,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		return err
 	}
 	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := kubectlApply(lkeAllowPostgresClientsNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
 		if _, err := lkeImportExistingRuntimeSecret(env, "billing", "billing-runtime", map[string]string{
 			"BILLING_SERVICE_TOKEN":             "billing-service-token",
 			"BILLING_INTERNAL_TOKEN":            "billing-internal-token",
