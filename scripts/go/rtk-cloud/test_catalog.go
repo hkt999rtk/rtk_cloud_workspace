@@ -88,15 +88,15 @@ var catalogLayers = map[string]string{"service": "SVC-", "unit": "UNIT-", "integ
 var catalogOwners = map[string]bool{
 	"cloud_platform": true, "factory_enroll": true, "home_cloud": true, "provisioning": true,
 	"rtk_account_manager": true, "rtk_cloud_admin": true, "rtk_cloud_client": true,
-	"rtk_cloud_frontend": true, "rtk_cloud_logger": true, "rtk_video_cloud": true, "video_cloud": true,
+	"rtk_billing": true, "rtk_cloud_frontend": true, "rtk_cloud_logger": true, "rtk_video_cloud": true, "video_cloud": true,
 }
-var catalogRunners = map[string]bool{"test-services": true, "test-coverage": true, "test-e2e": true, "test-ui": true, "test-live": true, "test-feature": true}
+var catalogRunners = map[string]bool{"test-services": true, "test-coverage": true, "test-e2e": true, "test-ui": true, "test-live": true, "test-feature": true, "test-payment": true}
 var catalogTargets = map[string]bool{"desktop": true, "mobile": true, "ios": true, "android": true}
 var catalogEnvironments = map[string]bool{"local": true, "ci": true, "staging": true}
 var catalogProfiles = map[string]bool{"canary": true, "qualification-1k": true, "capacity": true}
 var catalogEvidence = map[string]bool{
 	"screenshot": true, "cloud-evidence": true, "junit": true, "json": true,
-	"markdown": true, "logs": true, "console": true,
+	"markdown": true, "logs": true, "console": true, "pdf": true,
 }
 var featureIDPattern = regexp.MustCompile(`^FEAT(-[A-Z0-9]+){2,3}-[0-9]{3}$`)
 var requirementIDPattern = regexp.MustCompile(`^REQ(-[A-Z0-9]+){2,4}-[0-9]{3}$`)

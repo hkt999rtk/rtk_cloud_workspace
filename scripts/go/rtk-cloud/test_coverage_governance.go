@@ -89,7 +89,7 @@ func runCoverageJSONCommand(dir, logPath, eventsPath string, env map[string]stri
 	cmd.Env = withEnv(os.Environ(), env)
 	cmd.Stdin = os.Stdin
 	// The JSON stream is evidence, not useful console progress. Keeping it out of
-	// stdout makes the 10-module matrix readable while preserving every event.
+	// stdout makes the governed module matrix readable while preserving every event.
 	cmd.Stdout = io.MultiWriter(logFile, eventsFile)
 	cmd.Stderr = io.MultiWriter(os.Stderr, logFile)
 	err = cmd.Run()

@@ -34,3 +34,7 @@ Superseded by: ADR NNNN or none
 
 Keep ADRs focused on decisions and tradeoffs. Put implementation checklists in
 plans or service docs instead.
+
+## Records
+
+- [ADR 0001: Commercial Settlement Ownership And Provider Boundary](0001-commercial-settlement-ownership.md)
