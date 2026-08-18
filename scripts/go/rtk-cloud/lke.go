@@ -2521,6 +2521,15 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "cloud-admin") {
+		if lkeWorkloadSelected(env, opts, "billing") {
+			_ = runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "job", "account-manager-migrate", "--ignore-not-found")
+			if err := kubectlApply(lkeAccountManagerMigrationJobManifest(env)); err != nil {
+				return err
+			}
+			if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "wait", "--for=condition=complete", "job/account-manager-migrate", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m")); err != nil {
+				return err
+			}
+		}
 		for _, manifest := range []string{
 			lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env),
 			lkeAllowCloudAdminBillingNetworkPolicyManifest(env),

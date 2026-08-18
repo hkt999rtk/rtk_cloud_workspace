@@ -76,7 +76,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish pinned Billing and Cloud Admin production images when missing
+      - name: Build and publish pinned Billing, Account Manager, and Cloud Admin production images when missing
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         shell: bash
         run: |
@@ -97,6 +97,16 @@ jobs:
               --image "$image"
           fi
           echo "LKE_BILLING_IMAGE=$image" >> "$GITHUB_ENV"
+          commit="$(git -C repos/rtk_account_manager rev-parse --short=12 HEAD)"
+          image="ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-$commit"
+          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            go run ./scripts/go/rtk-cloud -- lke-build-images \
+              --workspace "$GITHUB_WORKSPACE" \
+              --env-root "$BILLING_STAGING_ENV_ROOT" \
+              --workloads account-manager \
+              --image "$image"
+          fi
+          echo "LKE_ACCOUNT_MANAGER_IMAGE=$image" >> "$GITHUB_ENV"
           commit="$(git -C repos/rtk_cloud_admin rev-parse --short=12 HEAD)"
           image="ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-$commit"
           if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
