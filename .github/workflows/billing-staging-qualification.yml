@@ -35,7 +35,6 @@ jobs:
       BILLING_QUALIFICATION_MODE: ${{ github.event_name == 'schedule' && 'run' || inputs.mode }}
       BILLING_QUALIFICATION_CONFIRM: ${{ github.event_name == 'schedule' && 'video-cloud-staging-lke' || inputs.confirm }}
       BILLING_QUALIFICATION_RUN_ID: billing-staging-${{ github.run_id }}-${{ github.run_attempt }}
-      BILLING_STAGING_ENV_ROOT: ${{ runner.temp }}/billing-staging-runtime
       CLOUD_PROVIDER: lke
       CLOUD_STACK_NAME: video-cloud-staging
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
@@ -47,6 +46,10 @@ jobs:
         with:
           fetch-depth: 0
           submodules: false
+
+      - name: Initialize qualification runtime path
+        shell: bash
+        run: echo "BILLING_STAGING_ENV_ROOT=$RUNNER_TEMP/billing-staging-runtime" >> "$GITHUB_ENV"
 
       - name: Initialize private Billing and Cloud Admin sources
         env:
