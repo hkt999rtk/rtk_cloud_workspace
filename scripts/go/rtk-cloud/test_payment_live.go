@@ -45,15 +45,19 @@ type paymentLiveState struct {
 }
 
 var paymentLiveScreenshot = func(workdir, target, targetURL, output string) error {
-	device := "Desktop Chrome"
+	viewport := "1280,720"
 	if target == "mobile" {
-		device = "iPhone 13"
+		viewport = "390,844"
 	}
-	cmd := exec.Command("npx", "playwright", "screenshot", "--browser=chromium", "--device="+device, "--wait-for-timeout=1000", targetURL, output)
+	cmd := exec.Command("npx", paymentLiveScreenshotArgs(viewport, targetURL, output)...)
 	cmd.Dir = workdir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func paymentLiveScreenshotArgs(viewport, targetURL, output string) []string {
+	return []string{"playwright", "screenshot", "--browser=chromium", "--viewport-size=" + viewport, "--wait-for-timeout=1000", targetURL, output}
 }
 
 var paymentLiveHTTPClient = func() *http.Client {

@@ -38,6 +38,13 @@ func TestPaymentLiveBillingRequestUsesServiceIdentityAndExactPermission(t *testi
 	}
 }
 
+func TestPaymentLiveScreenshotUsesInstalledChromiumAndExplicitViewport(t *testing.T) {
+	args := strings.Join(paymentLiveScreenshotArgs("390,844", "https://example.test", "mobile.png"), " ")
+	if !strings.Contains(args, "--browser=chromium") || !strings.Contains(args, "--viewport-size=390,844") || strings.Contains(args, "--device=") {
+		t.Fatalf("unexpected screenshot args: %s", args)
+	}
+}
+
 func TestPaymentLiveDefaultsToNonMutatingPlan(t *testing.T) {
 	output := captureStdout(t, func() {
 		if err := runTestPayment([]string{"--profile", "staging-live", "--run-id", "plan-test"}); err != nil {
