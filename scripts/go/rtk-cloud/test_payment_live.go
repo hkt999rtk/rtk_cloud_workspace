@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,8 @@ import (
 const paymentLiveConfirmation = "video-cloud-staging-lke"
 const paymentLiveBootstrapConfirmation = "rtk-payment-simulator-qualification"
 const paymentLiveBootstrapOrgName = "RTK Payment Simulator Qualification"
+const paymentLiveBootstrapCustomerEmail = "billing-qualification-customer@users.local"
+const paymentLiveBootstrapCustomerSecret = "billing-qualification-customer"
 
 type paymentLiveConfig struct {
 	RunID, AccountManagerBaseURL, BillingBaseURL, CloudAdminBaseURL, OrgID string
@@ -42,15 +45,19 @@ type paymentLiveState struct {
 }
 
 var paymentLiveScreenshot = func(workdir, target, targetURL, output string) error {
-	device := "Desktop Chrome"
+	viewport := "1280,720"
 	if target == "mobile" {
-		device = "iPhone 13"
+		viewport = "390,844"
 	}
-	cmd := exec.Command("npx", "playwright", "screenshot", "--device="+device, "--wait-for-timeout=1000", targetURL, output)
+	cmd := exec.Command("npx", paymentLiveScreenshotArgs(viewport, targetURL, output)...)
 	cmd.Dir = workdir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func paymentLiveScreenshotArgs(viewport, targetURL, output string) []string {
+	return []string{"playwright", "screenshot", "--browser=chromium", "--viewport-size=" + viewport, "--wait-for-timeout=1000", targetURL, output}
 }
 
 var paymentLiveHTTPClient = func() *http.Client {
@@ -65,7 +72,15 @@ var (
 	paymentLiveAccountCreateCloud    = accountCreateBrandCloud
 	paymentLiveAccountCreateUser     = accountCreateUser
 	paymentLiveGeneratePassword      = paymentLiveRandomPassword
+	paymentLiveLoadCustomer          = loadPaymentLiveQualificationCustomer
+	paymentLiveSaveCustomer          = savePaymentLiveQualificationCustomer
+	paymentLiveEnsureCustomer        = ensurePaymentLiveQualificationCustomer
+	paymentLiveCreateCustomerOrg     = createPaymentLiveQualificationOrganization
 )
+
+type paymentLiveQualificationCustomer struct {
+	Email, Password, OrganizationID, AccessToken string
+}
 
 func runTestPaymentLive(args []string) error {
 	fs := flag.NewFlagSet("test-payment staging-live", flag.ContinueOnError)
@@ -255,17 +270,6 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 }
 
 func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, string, string, string, error) {
-	ctx, err := paymentLiveAccountManagerContext(workspace, cfg.EnvRoot)
-	if err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
-	}
-	defer ctx.Close()
-	ctx.BaseURL = cfg.AccountManagerBaseURL
-	session, err := paymentLiveAccountLoginSession(ctx, func(string, ...any) {})
-	if err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("staging platform-admin login: %w", err)
-	}
-	token := session.AccessToken
 	billingToken, err := paymentLiveRuntimeSecretValue(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_SERVICE_TOKEN")
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
@@ -279,48 +283,45 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing debit credential: %w", err)
 	}
 	client := paymentLiveHTTPClient()
-	var brandCloud map[string]any
-	clouds, err := paymentLiveAccountListClouds(ctx, token, 200)
+	customer, found, err := paymentLiveLoadCustomer(workspace, cfg.EnvRoot)
 	if err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("list qualification Brand Clouds: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("load dedicated qualification customer: %w", err)
 	}
-	for _, item := range paymentLiveAnySlice(clouds["brand_clouds"]) {
-		organization := nestedMap(item)
-		name, _ := organization["name"].(string)
-		if name != paymentLiveBootstrapOrgName {
-			continue
+	if !found {
+		customer.Email = paymentLiveBootstrapCustomerEmail
+		customer.Password, err = paymentLiveGeneratePassword()
+		if err != nil {
+			return cfg, "", "", "", "", err
 		}
-		brandCloud = organization
-		break
+		if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, customer); err != nil {
+			return cfg, "", "", "", "", fmt.Errorf("persist qualification customer bootstrap credential: %w", err)
+		}
 	}
-	if len(brandCloud) == 0 {
-		created, status, createErr := paymentLiveAccountCreateCloud(ctx, token, paymentLiveBootstrapOrgName)
-		if createErr != nil {
-			return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification Brand Cloud: %w", createErr)
-		}
-		if status != http.StatusOK && status != http.StatusCreated {
-			return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification Brand Cloud: HTTP %d", status)
-		}
-		brandCloud = nestedMap(created["brand_cloud"])
+	customer, err = paymentLiveEnsureCustomer(context.Background(), client, cfg.AccountManagerBaseURL, customer)
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("ensure dedicated qualification customer: %w", err)
 	}
-	cfg.OrgID, _ = brandCloud["id"].(string)
-	if cfg.OrgID == "" {
-		return cfg, "", "", "", "", errors.New("dedicated qualification Brand Cloud has no ID")
+	if customer.AccessToken == "" {
+		return cfg, "", "", "", "", errors.New("dedicated qualification customer has no access token")
+	}
+	persistentCustomer := customer
+	persistentCustomer.OrganizationID = ""
+	if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, persistentCustomer); err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("persist qualification customer credential: %w", err)
+	}
+	cfg.OrgID, err = paymentLiveCreateCustomerOrg(context.Background(), client, cfg.AccountManagerBaseURL, customer.AccessToken, paymentLiveBootstrapOrgName+" "+cfg.RunID)
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("create run-scoped qualification organization: %w", err)
 	}
 	if cfg.CustomerSessionFile != "" {
-		password, randomErr := paymentLiveGeneratePassword()
-		if randomErr != nil {
-			return cfg, "", "", "", "", randomErr
-		}
-		const email = "billing-qualification@users.local"
-		if _, createErr := paymentLiveAccountCreateUser(ctx, &session, func(string, ...any) {}, cfg.OrgID, email, "Billing Qualification", password, "member", true); createErr != nil {
-			return cfg, "", "", "", "", fmt.Errorf("create or rotate qualification customer: %w", createErr)
-		}
-		if loginErr := writePaymentLiveCustomerSession(context.Background(), client, cfg.CloudAdminBaseURL, email, password, cfg.CustomerSessionFile); loginErr != nil {
+		if loginErr := writePaymentLiveCustomerSession(context.Background(), client, cfg.CloudAdminBaseURL, customer.Email, customer.Password, cfg.CustomerSessionFile); loginErr != nil {
 			return cfg, "", "", "", "", loginErr
 		}
+		if activateErr := activatePaymentLiveCustomerOrganization(context.Background(), client, cfg.CloudAdminBaseURL, cfg.OrgID, cfg.CustomerSessionFile); activateErr != nil {
+			return cfg, "", "", "", "", activateErr
+		}
 	}
-	return cfg, token, billingToken, internalToken, debitToken, nil
+	return cfg, customer.AccessToken, billingToken, internalToken, debitToken, nil
 }
 
 func paymentLiveRandomPassword() (string, error) {
@@ -329,6 +330,221 @@ func paymentLiveRandomPassword() (string, error) {
 		return "", fmt.Errorf("generate qualification customer password: %w", err)
 	}
 	return "Q!" + hex.EncodeToString(raw), nil
+}
+
+func paymentLiveQualificationKubeTarget(workspace, envRootFlag string) (string, string, error) {
+	envRoot, err := resolveEnvRoot(workspace, envRootFlag)
+	if err != nil {
+		return "", "", err
+	}
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	if firstNonEmpty(os.Getenv("CLOUD_PROVIDER"), stackEnv["CLOUD_PROVIDER"]) != "lke" {
+		return "", "", errors.New("qualification customer credentials require CLOUD_PROVIDER=lke")
+	}
+	stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
+	kubeconfig, err := lkeRuntimeKubeconfig(workspace, envRoot, stack)
+	if err != nil {
+		return "", "", err
+	}
+	return kubeconfig, stack + "-billing", nil
+}
+
+func loadPaymentLiveQualificationCustomer(workspace, envRoot string) (paymentLiveQualificationCustomer, bool, error) {
+	kubeconfig, namespace, err := paymentLiveQualificationKubeTarget(workspace, envRoot)
+	if err != nil {
+		return paymentLiveQualificationCustomer{}, false, err
+	}
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", namespace, "get", "secret", paymentLiveBootstrapCustomerSecret, "--ignore-not-found=true", "-o", "json")
+	raw, err := cmd.Output()
+	if err != nil {
+		return paymentLiveQualificationCustomer{}, false, fmt.Errorf("read K8s secret %s/%s: %w", namespace, paymentLiveBootstrapCustomerSecret, err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return paymentLiveQualificationCustomer{}, false, nil
+	}
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return paymentLiveQualificationCustomer{}, false, err
+	}
+	decode := func(key string) (string, error) {
+		value, err := base64.StdEncoding.DecodeString(secret.Data[key])
+		if err != nil {
+			return "", fmt.Errorf("decode qualification customer secret key %s: %w", key, err)
+		}
+		return strings.TrimSpace(string(value)), nil
+	}
+	email, err := decode("EMAIL")
+	if err != nil {
+		return paymentLiveQualificationCustomer{}, false, err
+	}
+	password, err := decode("PASSWORD")
+	if err != nil {
+		return paymentLiveQualificationCustomer{}, false, err
+	}
+	organizationID, err := decode("ORGANIZATION_ID")
+	if err != nil {
+		return paymentLiveQualificationCustomer{}, false, err
+	}
+	if email == "" || password == "" {
+		return paymentLiveQualificationCustomer{}, false, errors.New("qualification customer secret is missing EMAIL or PASSWORD")
+	}
+	return paymentLiveQualificationCustomer{Email: email, Password: password, OrganizationID: organizationID}, true, nil
+}
+
+func savePaymentLiveQualificationCustomer(workspace, envRoot string, customer paymentLiveQualificationCustomer) error {
+	if customer.Email == "" || customer.Password == "" {
+		return errors.New("qualification customer email and password are required")
+	}
+	kubeconfig, namespace, err := paymentLiveQualificationKubeTarget(workspace, envRoot)
+	if err != nil {
+		return err
+	}
+	secret := map[string]any{
+		"apiVersion": "v1", "kind": "Secret",
+		"metadata": map[string]any{"name": paymentLiveBootstrapCustomerSecret, "namespace": namespace, "labels": map[string]string{"app.kubernetes.io/managed-by": "rtk-cloud", "app.kubernetes.io/part-of": "billing-qualification"}},
+		"type":     "Opaque", "stringData": map[string]string{"EMAIL": customer.Email, "PASSWORD": customer.Password, "ORGANIZATION_ID": customer.OrganizationID},
+	}
+	raw, err := json.Marshal(secret)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "apply", "-f", "-")
+	cmd.Stdin = bytes.NewReader(raw)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("apply K8s secret %s/%s: %w", namespace, paymentLiveBootstrapCustomerSecret, err)
+	}
+	return nil
+}
+
+func ensurePaymentLiveQualificationCustomer(ctx context.Context, client *http.Client, baseURL string, customer paymentLiveQualificationCustomer) (paymentLiveQualificationCustomer, error) {
+	login := func() (paymentLiveQualificationCustomer, int, error) {
+		var result map[string]any
+		status, err := paymentLiveJSONStatus(ctx, client, http.MethodPost, baseURL+"/v1/auth/login", "", map[string]string{"email": customer.Email, "password": customer.Password}, &result)
+		if err != nil || status != http.StatusOK {
+			return customer, status, err
+		}
+		customer.AccessToken, _ = nestedMap(result["tokens"])["access_token"].(string)
+		return customer, status, nil
+	}
+	loggedIn, status, err := login()
+	if err != nil {
+		return customer, err
+	}
+	if status == http.StatusUnauthorized {
+		var registered map[string]any
+		status, err = paymentLiveJSONStatus(ctx, client, http.MethodPost, baseURL+"/v1/auth/register", "", map[string]any{"email": customer.Email, "password": customer.Password, "display_name": "Billing Qualification", "organization_name": paymentLiveBootstrapOrgName}, &registered)
+		if err != nil {
+			return customer, err
+		}
+		if status != http.StatusCreated {
+			return customer, fmt.Errorf("register qualification customer: HTTP %d", status)
+		}
+		customer.OrganizationID, _ = nestedMap(registered["organization"])["id"].(string)
+		customer.AccessToken, _ = nestedMap(registered["tokens"])["access_token"].(string)
+	} else if status == http.StatusOK {
+		customer = loggedIn
+	} else {
+		return customer, fmt.Errorf("login qualification customer: HTTP %d", status)
+	}
+	if customer.AccessToken == "" {
+		return customer, errors.New("qualification customer login returned no access token")
+	}
+	if customer.OrganizationID == "" {
+		var organizations map[string]any
+		status, err := paymentLiveJSONStatus(ctx, client, http.MethodGet, baseURL+"/v1/orgs", customer.AccessToken, nil, &organizations)
+		if err != nil {
+			return customer, err
+		}
+		if status != http.StatusOK {
+			return customer, fmt.Errorf("list qualification customer organizations: HTTP %d", status)
+		}
+		for _, item := range paymentLiveAnySlice(organizations["organizations"]) {
+			organization := nestedMap(item)
+			if organization["name"] == paymentLiveBootstrapOrgName && organization["organization_kind"] == "customer_org" {
+				customer.OrganizationID, _ = organization["id"].(string)
+				break
+			}
+		}
+	}
+	return customer, nil
+}
+
+func paymentLiveJSONStatus(ctx context.Context, client *http.Client, method, endpoint, token string, body any, out any) (int, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return 0, err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return 0, err
+	}
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	defer response.Body.Close()
+	if out != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+		if err := json.NewDecoder(response.Body).Decode(out); err != nil {
+			return response.StatusCode, err
+		}
+	} else {
+		_, _ = io.Copy(io.Discard, response.Body)
+	}
+	return response.StatusCode, nil
+}
+
+func createPaymentLiveQualificationOrganization(ctx context.Context, client *http.Client, baseURL, token, name string) (string, error) {
+	var created map[string]any
+	status, err := paymentLiveJSONStatus(ctx, client, http.MethodPost, baseURL+"/v1/orgs", token, map[string]string{"name": strings.TrimSpace(name)}, &created)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusCreated {
+		return "", fmt.Errorf("HTTP %d", status)
+	}
+	organizationID, _ := nestedMap(created["organization"])["id"].(string)
+	if organizationID == "" {
+		return "", errors.New("organization response has no ID")
+	}
+	return organizationID, nil
+}
+
+func activatePaymentLiveCustomerOrganization(ctx context.Context, client *http.Client, baseURL, organizationID, sessionFile string) error {
+	session, err := os.ReadFile(sessionFile)
+	if err != nil {
+		return fmt.Errorf("read qualification customer session: %w", err)
+	}
+	body, _ := json.Marshal(map[string]string{"organization_id": organizationID})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/me/active-org", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.AddCookie(&http.Cookie{Name: "rtk_admin_session", Value: strings.TrimSpace(string(session))})
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("activate qualification customer organization: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("activate qualification customer organization: HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 func writePaymentLiveCustomerSession(ctx context.Context, client *http.Client, baseURL, email, password, output string) error {
@@ -738,7 +954,7 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/pricing-versions/"+url.PathEscape(pricingID)+"/activate", internalToken, headers, nil, nil); err != nil {
 		return "", fmt.Errorf("activate qualification pricing: %w", err)
 	}
-	usageID := "qualification-" + periodStart.Format("20060102T1504Z")
+	usageID := paymentLiveQualificationUsageID(cfg.RunID, cfg.OrgID)
 	digest := sha256.Sum256([]byte(usageID + ":" + cfg.OrgID))
 	usageBody := map[string]any{
 		"usage_id": usageID, "organization_id": cfg.OrgID,
@@ -762,14 +978,29 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 	return invoiceID, nil
 }
 
+func paymentLiveQualificationUsageID(runID, organizationID string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(runID) + ":" + strings.TrimSpace(organizationID)))
+	return "qualification-" + hex.EncodeToString(digest[:12])
+}
+
 func cleanupPaymentLive(ctx context.Context, client *http.Client, cfg paymentLiveConfig, token string, state paymentLiveState) error {
 	base := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
 	var issues []string
 	if state.PolicyVersion > 0 {
-		var disabled map[string]any
-		err := paymentLiveBillingJSON(ctx, client, http.MethodDelete, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10))}, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &disabled)
-		if err != nil {
-			issues = append(issues, "disable policy: "+err.Error())
+		var current map[string]any
+		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/auto-topup", token, "auto_topup.read", nil, nil, &current); err != nil {
+			issues = append(issues, "read policy for cleanup: "+err.Error())
+		} else if policy := nestedMap(current["auto_topup"]); policy["enabled"] != false {
+			version := int64Value(policy["version"])
+			if version <= 0 {
+				issues = append(issues, "disable policy: current policy has no version")
+			} else {
+				var disabled map[string]any
+				err := paymentLiveBillingJSON(ctx, client, http.MethodDelete, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(version, 10))}, map[string]any{"reason": "staging qualification cleanup " + cfg.RunID}, &disabled)
+				if err != nil {
+					issues = append(issues, "disable policy: "+err.Error())
+				}
+			}
 		}
 	}
 	if state.MethodID != "" {
@@ -789,8 +1020,12 @@ func paymentLiveBillingJSON(ctx context.Context, client *http.Client, method, en
 		headers = map[string]string{}
 	}
 	headers["X-Billing-Permissions"] = permission
-	headers["X-Billing-Actor-Type"] = "service_test"
+	headers["X-Billing-Actor-Type"] = "brand_cloud_user"
 	headers["X-Billing-Actor-ID"] = "staging-payment-qualification"
+	if headers["X-Request-Id"] == "" {
+		digest := sha256.Sum256([]byte(method + " " + endpoint))
+		headers["X-Request-Id"] = fmt.Sprintf("payment-qualification-%x", digest[:8])
+	}
 	return paymentLiveJSON(ctx, client, method, endpoint, token, headers, body, output)
 }
 

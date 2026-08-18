@@ -3818,6 +3818,26 @@ func TestBillingImageBuildContextUsesProductionMultiProcessImage(t *testing.T) {
 	}
 }
 
+func TestCloudAdminImageBuildContextUsesProductionWebImage(t *testing.T) {
+	contextDir, dockerfile, cleanup, err := lkeImageBuildContext(lkeWorkload{Key: "cloud-admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	body, err := os.ReadFile(dockerfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"FROM node:22-bookworm AS web", "RUN npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
+		if !strings.Contains(string(body), required) {
+			t.Fatalf("Cloud Admin production Dockerfile missing %q: %s", required, body)
+		}
+	}
+	if filepath.Base(contextDir) != "rtk_cloud_admin" {
+		t.Fatalf("Cloud Admin build context = %s", contextDir)
+	}
+}
+
 func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T) {
 	contextDir := t.TempDir()
 	writeTestFile(t, filepath.Join(contextDir, "go.mod"), "module video_cloud\n\ngo 1.25.1\n")

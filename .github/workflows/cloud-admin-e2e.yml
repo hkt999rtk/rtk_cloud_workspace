@@ -26,7 +26,7 @@ jobs:
   playwright:
     name: Playwright ${{ matrix.ui }} E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +69,9 @@ jobs:
         working-directory: repos/rtk_cloud_admin/web
         run: |
           npm ci
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
           npx playwright install --with-deps chromium
 
       - name: Run headless UI-to-BFF E2E

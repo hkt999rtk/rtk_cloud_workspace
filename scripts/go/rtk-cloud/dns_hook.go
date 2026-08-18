@@ -62,7 +62,28 @@ func runDNSHook(args []string) error {
 	if err != nil {
 		return err
 	}
-	return waitDNSTXT(ctx, name, validation, adapterCtx.Values)
+	if err := waitDNSTXT(ctx, name, validation, adapterCtx.Values); err != nil {
+		return err
+	}
+	return waitACMEFinalDNSSettle(ctx, os.Getenv("CERTBOT_REMAINING_CHALLENGES"))
+}
+
+func waitACMEFinalDNSSettle(ctx context.Context, remaining string) error {
+	if strings.TrimSpace(remaining) != "0" {
+		return nil
+	}
+	seconds, _ := strconv.Atoi(firstNonEmpty(os.Getenv("DNS_ACME_FINAL_SETTLE_SECONDS"), "60"))
+	if seconds <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(seconds) * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("ACME DNS final settle interrupted: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 type dnsChallengeState struct {
