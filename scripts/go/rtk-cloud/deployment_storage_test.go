@@ -333,6 +333,15 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	if err := runDeploymentStorageLifecycle("storage-bootstrap", cfg, environmentFile, "", 0); err != nil {
 		t.Fatal(err)
 	}
+	if err := validateDeploymentCredentials(deploymentConfig{Environment: "staging"}, environmentFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAndBootstrapDeploymentCredentials(cfg, environmentFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAndGrantDeploymentObjectStorageAccess(cfg, environmentFile); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		action, source string
 		keyID          int
@@ -350,6 +359,14 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 		t.Fatal(check.Detail)
 	}
 	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
+	if check := checker.checkObjectStorageWithOptions(cfg, values, deploymentCredentialCheckOptions{}); !check.Passed {
+		t.Fatal(check.Detail)
+	}
+	credentialCfg := cfg
+	credentialCfg.Values = map[string]string{"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "true"}
+	if err := checker.checkWithOptions(credentialCfg, environmentFile, deploymentCredentialCheckOptions{}); err != nil {
+		t.Fatal(err)
+	}
 	if check := checker.checkResolvedObjectStorage(cfg, values); !check.Passed {
 		t.Fatal(check.Detail)
 	}

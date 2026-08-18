@@ -45,6 +45,57 @@ func TestDeploymentCredentialCheckerValidatesAllRequiredServices(t *testing.T) {
 	}
 }
 
+func TestDeploymentCredentialProfileErrorAndEnvironmentBranches(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	sharedFile := defaultDeploymentSharedCredentialFile()
+	if _, check := deploymentCredentialProfileValues("staging", "", sharedFile); check.Passed || !strings.Contains(check.Detail, "does not exist") {
+		t.Fatalf("missing default profiles check = %#v", check)
+	}
+
+	customEnvironment := filepath.Join(t.TempDir(), "custom.env")
+	if err := os.WriteFile(customEnvironment, []byte("LINODE_MEDIA_OBJ_ACCESS_KEY_ID=media-access\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=media-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	values, check := deploymentCredentialProfileValues("staging", customEnvironment, filepath.Join(t.TempDir(), "optional-shared.env"))
+	if !check.Passed || values["LINODE_OBJ_ACCESS_KEY_ID"] != "media-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "media-secret" {
+		t.Fatalf("custom profile values = %#v, check = %#v", values, check)
+	}
+
+	for _, tc := range []struct {
+		name string
+		make func(string) error
+	}{
+		{name: "directory", make: func(path string) error { return os.Mkdir(path, 0o700) }},
+		{name: "insecure permissions", make: func(path string) error { return os.WriteFile(path, []byte("KEY=value\n"), 0o644) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "profile.env")
+			if err := tc.make(path); err != nil {
+				t.Fatal(err)
+			}
+			if _, check := deploymentCredentialValuesFromFile(path); check.Passed {
+				t.Fatalf("invalid file check = %#v", check)
+			}
+		})
+	}
+	if _, check := deploymentCredentialValuesFromFile(filepath.Join(t.TempDir(), "missing.env")); check.Passed {
+		t.Fatalf("missing file check = %#v", check)
+	}
+
+	t.Setenv("LINODE_TOKEN", "old-token")
+	restore := installDeploymentChildCredentialEnvironment(map[string]string{"LINODE_TOKEN": "new-token", "GHCR_PULL_TOKEN": "new-ghcr"})
+	if os.Getenv("LINODE_TOKEN") != "new-token" || os.Getenv("GHCR_PULL_TOKEN") != "new-ghcr" {
+		t.Fatal("child credentials were not installed")
+	}
+	restore()
+	if os.Getenv("LINODE_TOKEN") != "old-token" || os.Getenv("GHCR_PULL_TOKEN") != "" {
+		t.Fatal("child credentials were not restored")
+	}
+
+}
+
 func TestDeploymentCredentialCheckerCreatesMissingObjectStorageBucketAndRevalidates(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	var bucketExists atomic.Bool
