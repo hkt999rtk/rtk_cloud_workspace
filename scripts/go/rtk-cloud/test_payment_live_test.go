@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -134,6 +135,96 @@ func TestPaymentLiveGeneratesStrongTemporaryPassword(t *testing.T) {
 	}
 	if !strings.HasPrefix(password, "Q!") || len(password) != 50 {
 		t.Fatalf("unexpected generated password shape: prefix=%v length=%d", strings.HasPrefix(password, "Q!"), len(password))
+	}
+}
+
+func TestPaymentLiveQualificationCustomerSecretRoundTripContract(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(envRoot, "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=qualification-test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(envRoot, "state", "kubeconfig.yaml"), []byte("safe-test-kubeconfig\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	applyPath := filepath.Join(binDir, "applied.json")
+	kubectl := filepath.Join(binDir, "kubectl")
+	writeExecutable(t, kubectl, `#!/bin/sh
+if [ "$*" = "--kubeconfig `+filepath.Join(envRoot, "state", "kubeconfig.yaml")+` --request-timeout=5s get --raw=/readyz" ]; then
+  exit 0
+fi
+if echo "$*" | grep -q "get secret billing-qualification-customer"; then
+  printf '%s' "$PAYMENT_LIVE_TEST_SECRET"
+  exit "${PAYMENT_LIVE_TEST_GET_EXIT:-0}"
+fi
+if echo "$*" | grep -q "apply -f -"; then
+  cat > "$PAYMENT_LIVE_TEST_APPLY_PATH"
+  exit "${PAYMENT_LIVE_TEST_APPLY_EXIT:-0}"
+fi
+exit 1
+`)
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("PAYMENT_LIVE_TEST_APPLY_PATH", applyPath)
+	t.Setenv("CLOUD_PROVIDER", "lke")
+
+	encode := func(value string) string { return base64.StdEncoding.EncodeToString([]byte(value)) }
+	secret := fmt.Sprintf(`{"data":{"EMAIL":%q,"PASSWORD":%q,"ORGANIZATION_ID":%q}}`, encode("billing@example.test"), encode("Q!qualification-password"), encode("org-qualified"))
+	t.Setenv("PAYMENT_LIVE_TEST_SECRET", secret)
+	customer, found, err := loadPaymentLiveQualificationCustomer(workspace, envRoot)
+	if err != nil || !found {
+		t.Fatalf("load qualification customer: found=%t err=%v", found, err)
+	}
+	if customer.Email != "billing@example.test" || customer.Password != "Q!qualification-password" || customer.OrganizationID != "org-qualified" {
+		t.Fatalf("unexpected qualification customer: %+v", customer)
+	}
+
+	t.Setenv("PAYMENT_LIVE_TEST_SECRET", "")
+	if _, found, err := loadPaymentLiveQualificationCustomer(workspace, envRoot); err != nil || found {
+		t.Fatalf("missing qualification customer: found=%t err=%v", found, err)
+	}
+
+	t.Setenv("PAYMENT_LIVE_TEST_SECRET", secret)
+	if err := savePaymentLiveQualificationCustomer(workspace, envRoot, customer); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(applyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var applied map[string]any
+	if err := json.Unmarshal(raw, &applied); err != nil {
+		t.Fatalf("saved secret is not JSON: %v", err)
+	}
+	metadata := nestedMap(applied["metadata"])
+	stringData := nestedMap(applied["stringData"])
+	if metadata["namespace"] != "qualification-test-billing" || stringData["EMAIL"] != customer.Email || stringData["ORGANIZATION_ID"] != customer.OrganizationID {
+		t.Fatalf("unexpected saved qualification secret: %+v", applied)
+	}
+	if err := savePaymentLiveQualificationCustomer(workspace, envRoot, paymentLiveQualificationCustomer{}); err == nil {
+		t.Fatal("empty qualification customer unexpectedly saved")
+	}
+}
+
+func TestPaymentLiveQualificationCustomerSecretFailsClosed(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "runtime")
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := paymentLiveQualificationKubeTarget(workspace, ""); err == nil || !strings.Contains(err.Error(), "--env-root") {
+		t.Fatalf("missing env root error = %v", err)
+	}
+	t.Setenv("CLOUD_PROVIDER", "docker")
+	if _, _, err := paymentLiveQualificationKubeTarget(workspace, envRoot); err == nil || !strings.Contains(err.Error(), "CLOUD_PROVIDER=lke") {
+		t.Fatalf("non-LKE provider error = %v", err)
 	}
 }
 
