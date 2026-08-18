@@ -3751,6 +3751,27 @@ func TestGeneratedGoServiceDockerfileUsesGoModVersion(t *testing.T) {
 	}
 }
 
+func TestBillingImageBuildContextUsesProductionMultiProcessImage(t *testing.T) {
+	workload := lkeWorkload{Key: "billing"}
+	contextDir, dockerfile, cleanup, err := lkeImageBuildContext(workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	body, err := os.ReadFile(dockerfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"/rtk-billing", "/rtk-billing-payment-worker", "/rtk-billing-payment-simulator", "COPY --from=build /src/migrations /migrations"} {
+		if !strings.Contains(string(body), required) {
+			t.Fatalf("Billing production Dockerfile missing %q: %s", required, body)
+		}
+	}
+	if filepath.Base(contextDir) != "rtk_billing" {
+		t.Fatalf("Billing build context = %s", contextDir)
+	}
+}
+
 func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T) {
 	contextDir := t.TempDir()
 	writeTestFile(t, filepath.Join(contextDir, "go.mod"), "module video_cloud\n\ngo 1.25.1\n")

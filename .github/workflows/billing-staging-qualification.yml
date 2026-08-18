@@ -1,0 +1,193 @@
+name: Billing Staging Qualification
+
+on:
+  schedule:
+    - cron: "15 18 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Validate the plan or execute the dedicated staging qualification
+        type: choice
+        options: [plan, run]
+        default: plan
+        required: true
+      confirm:
+        description: Run mode requires video-cloud-staging-lke
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: staging-mutating-tests
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Deployed Billing payment and portal qualification
+    if: github.event_name == 'workflow_dispatch' || vars.BILLING_STAGING_QUALIFICATION_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: staging
+    env:
+      BILLING_QUALIFICATION_MODE: ${{ github.event_name == 'schedule' && 'run' || inputs.mode }}
+      BILLING_QUALIFICATION_CONFIRM: ${{ github.event_name == 'schedule' && 'video-cloud-staging-lke' || inputs.confirm }}
+      BILLING_QUALIFICATION_RUN_ID: billing-staging-${{ github.run_id }}-${{ github.run_attempt }}
+      BILLING_STAGING_ENV_ROOT: ${{ runner.temp }}/billing-staging-runtime
+      CLOUD_PROVIDER: lke
+      CLOUD_STACK_NAME: video-cloud-staging
+      CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
+      LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize private Billing and Cloud Admin sources
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.work
+          cache-dependency-path: scripts/go/go.sum
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: repos/rtk_cloud_admin/web/package-lock.json
+
+      - uses: docker/setup-buildx-action@v3
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+
+      - name: Log in to GHCR for the pinned Billing image
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish the pinned Billing production image when missing
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$BILLING_STAGING_ENV_ROOT/env"
+          cp cloud_env/staging/linode/env/stack.env "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          perl -0pi -e 's/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m' "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          go run ./scripts/go/rtk-cloud -- sync-env \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$BILLING_STAGING_ENV_ROOT"
+          commit="$(git -C repos/rtk_billing rev-parse --short=12 HEAD)"
+          image="ghcr.io/hkt999rtk/rtk_billing/billing:sha-$commit"
+          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
+            go run ./scripts/go/rtk-cloud -- lke-build-images \
+              --workspace "$GITHUB_WORKSPACE" \
+              --env-root "$BILLING_STAGING_ENV_ROOT" \
+              --workloads billing \
+              --image "$image"
+          fi
+          echo "LKE_BILLING_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Validate qualification mode and catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$BILLING_QUALIFICATION_MODE" = "run" ] && [ "$BILLING_QUALIFICATION_CONFIRM" != "video-cloud-staging-lke" ]; then
+            echo "run mode requires the exact video-cloud-staging-lke confirmation" >&2
+            exit 1
+          fi
+          go run ./scripts/go/rtk-cloud -- test-catalog check
+          go run ./scripts/go/rtk-cloud -- test-payment \
+            --profile staging-live \
+            --run-id "$BILLING_QUALIFICATION_RUN_ID"
+
+      - name: Install responsive browser runtime
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        working-directory: repos/rtk_cloud_admin/web
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Acquire staging kubeconfig without printing credentials
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          clusters="$RUNNER_TEMP/billing-clusters.json"
+          response="$RUNNER_TEMP/billing-kubeconfig.json"
+          kubeconfig="$RUNNER_TEMP/billing-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.kubeconfig"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $LINODE_TOKEN" \
+            "https://api.linode.com/v4/lke/clusters?page_size=100" > "$clusters"
+          cluster_id="$(jq -er --arg label "$CLOUD_STAGING_LKE_CLUSTER_LABEL" '.data[] | select(.label == $label) | .id' "$clusters")"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $LINODE_TOKEN" \
+            "https://api.linode.com/v4/lke/clusters/$cluster_id/kubeconfig" > "$response"
+          jq -er '.kubeconfig' "$response" | openssl base64 -d -A > "$kubeconfig"
+          chmod 0600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Verify deployed Billing rollout and public health
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          namespace="video-cloud-staging-billing"
+          kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing --timeout=180s
+          kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing-payment-worker --timeout=180s
+          kubectl --request-timeout=15s -n "$namespace" rollout status deployment/payment-simulator --timeout=180s
+          curl --fail --silent --show-error --retry 5 --retry-all-errors \
+            --max-time 15 \
+            https://billing.video-cloud-staging.realtekconnect.com/readyz >/dev/null
+
+      - name: Execute dedicated Billing staging qualification
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- test-payment \
+            --profile staging-live \
+            --run-id "$BILLING_QUALIFICATION_RUN_ID" \
+            --account-manager-base-url https://account-manager.video-cloud-staging.realtekconnect.com \
+            --billing-base-url https://billing.video-cloud-staging.realtekconnect.com \
+            --bootstrap-test-org \
+            --env-root "$BILLING_STAGING_ENV_ROOT" \
+            --run \
+            --confirm "$BILLING_QUALIFICATION_CONFIRM" \
+            --confirm-test-org rtk-payment-simulator-qualification
+
+      - name: Execute real Cloud Admin Billing smoke on desktop and mobile
+        if: env.BILLING_QUALIFICATION_MODE == 'run'
+        working-directory: repos/rtk_cloud_admin/web
+        env:
+          E2E_BASE_URL: https://admin.video-cloud-staging.realtekconnect.com
+          E2E_CUSTOMER_SESSION_ID: ${{ secrets.BILLING_STAGING_CUSTOMER_SESSION_ID }}
+          E2E_BILLING_OTHER_ORG_ID: ${{ vars.BILLING_STAGING_OTHER_ORG_ID }}
+          E2E_TEST_ENVIRONMENT: staging
+          E2E_TEST_RUN_ID: ${{ env.BILLING_QUALIFICATION_RUN_ID }}
+          E2E_TEST_RUN_DIR: ${{ github.workspace }}/.artifacts/test-runs/${{ env.BILLING_QUALIFICATION_RUN_ID }}/cloud-admin-billing
+          E2E_EXPECTED_TEST_IDS: UI-CA-BILLING-STG-001,UI-CA-BILLING-STG-002,UI-CA-BILLING-STG-003
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$E2E_CUSTOMER_SESSION_ID"
+          context="$GITHUB_WORKSPACE/.artifacts/test-runs/$BILLING_QUALIFICATION_RUN_ID/payments/staging-live/qualification-context.json"
+          export E2E_BILLING_ORG_ID="$(jq -er '.organization_id' "$context")"
+          export E2E_BILLING_INVOICE_ID="$(jq -er '.invoice_id' "$context")"
+          npm run e2e:billing:staging
+
+      - name: Upload sanitized qualification evidence
+        if: always() && env.BILLING_QUALIFICATION_MODE == 'run'
+        uses: actions/upload-artifact@v6
+        with:
+          name: billing-staging-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .artifacts/test-runs/${{ env.BILLING_QUALIFICATION_RUN_ID }}/**
+          if-no-files-found: warn
+          retention-days: 90

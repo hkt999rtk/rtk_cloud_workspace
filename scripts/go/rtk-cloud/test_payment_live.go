@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,17 +24,18 @@ const paymentLiveBootstrapConfirmation = "rtk-payment-simulator-qualification"
 const paymentLiveBootstrapOrgName = "RTK Payment Simulator Qualification"
 
 type paymentLiveConfig struct {
-	RunID, AccountManagerBaseURL, BillingBaseURL, OrgID         string
-	AccountTokenFile, BillingTokenFile, Confirm, ConfirmTestOrg string
-	EnvRoot                                                     string
-	Run, Plan, BootstrapTestOrg                                 bool
-	Timeout                                                     time.Duration
+	RunID, AccountManagerBaseURL, BillingBaseURL, OrgID                   string
+	AccountTokenFile, BillingTokenFile, InternalTokenFile, DebitTokenFile string
+	Confirm, ConfirmTestOrg                                               string
+	EnvRoot                                                               string
+	Run, Plan, BootstrapTestOrg                                           bool
+	Timeout                                                               time.Duration
 }
 
 type paymentLiveState struct {
-	MethodID      string
-	PolicyVersion int64
-	IntentID      string
+	MethodID, AutoIntentID, ManualIntentID, DebitLedgerEntryID, InvoiceID string
+	PolicyVersion                                                         int64
+	HostedSetupPassed, AutoTopUpPassed, ManualTopUpPassed, InvoicePassed  bool
 }
 
 var paymentLiveScreenshot = func(workdir, target, targetURL, output string) error {
@@ -63,6 +65,8 @@ func runTestPaymentLive(args []string) error {
 	orgID := fs.String("org-id", os.Getenv("PAYMENT_TEST_ORG_ID"), "dedicated staging test organization")
 	accountTokenFile := fs.String("access-token-file", os.Getenv("PAYMENT_TEST_ACCESS_TOKEN_FILE"), "file containing the dedicated Account Manager test access token")
 	billingTokenFile := fs.String("billing-token-file", os.Getenv("PAYMENT_TEST_BILLING_TOKEN_FILE"), "file containing the dedicated Billing service token")
+	internalTokenFile := fs.String("internal-token-file", os.Getenv("PAYMENT_TEST_INTERNAL_TOKEN_FILE"), "file containing the dedicated Billing internal token")
+	debitTokenFile := fs.String("debit-token-file", os.Getenv("PAYMENT_TEST_DEBIT_TOKEN_FILE"), "file containing the dedicated Billing debit-source token")
 	confirm := fs.String("confirm", "", "required staging stack confirmation")
 	confirmTestOrg := fs.String("confirm-test-org", "", "must exactly match --org-id")
 	bootstrapTestOrg := fs.Bool("bootstrap-test-org", false, "create or reuse the fixed dedicated qualification organization using LKE platform-admin credentials")
@@ -85,9 +89,9 @@ func runTestPaymentLive(args []string) error {
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z") + "-payment-live"
 	}
-	cfg := paymentLiveConfig{RunID: *runID, AccountManagerBaseURL: strings.TrimRight(strings.TrimSpace(*accountManagerBaseURL), "/"), BillingBaseURL: strings.TrimRight(strings.TrimSpace(*billingBaseURL), "/"), OrgID: strings.TrimSpace(*orgID), AccountTokenFile: strings.TrimSpace(*accountTokenFile), BillingTokenFile: strings.TrimSpace(*billingTokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
+	cfg := paymentLiveConfig{RunID: *runID, AccountManagerBaseURL: strings.TrimRight(strings.TrimSpace(*accountManagerBaseURL), "/"), BillingBaseURL: strings.TrimRight(strings.TrimSpace(*billingBaseURL), "/"), OrgID: strings.TrimSpace(*orgID), AccountTokenFile: strings.TrimSpace(*accountTokenFile), BillingTokenFile: strings.TrimSpace(*billingTokenFile), InternalTokenFile: strings.TrimSpace(*internalTokenFile), DebitTokenFile: strings.TrimSpace(*debitTokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
 	if cfg.Plan {
-		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> TWD 300 charge -> reconcile ledger -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
+		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> debit threshold crossing -> idempotent replay -> one automatic charge/credit -> separate manual TWD 300 top-up -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
 		return nil
 	}
 	if err := validatePaymentLiveConfig(cfg); err != nil {
@@ -97,9 +101,9 @@ func runTestPaymentLive(args []string) error {
 	if err != nil {
 		return err
 	}
-	billingToken := ""
+	billingToken, internalToken, debitToken := "", "", ""
 	if cfg.BootstrapTestOrg {
-		cfg, _, billingToken, err = bootstrapPaymentLiveOrganization(workspace, cfg)
+		cfg, _, billingToken, internalToken, debitToken, err = bootstrapPaymentLiveOrganization(workspace, cfg)
 		if err != nil {
 			return err
 		}
@@ -112,6 +116,22 @@ func runTestPaymentLive(args []string) error {
 		if len(billingToken) < 24 {
 			return errors.New("dedicated Billing token is empty or implausibly short")
 		}
+		internalRaw, readErr := os.ReadFile(cfg.InternalTokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read dedicated Billing internal token: %w", readErr)
+		}
+		internalToken = strings.TrimSpace(string(internalRaw))
+		if len(internalToken) < 24 {
+			return errors.New("dedicated Billing internal token is empty or implausibly short")
+		}
+		debitRaw, readErr := os.ReadFile(cfg.DebitTokenFile)
+		if readErr != nil {
+			return fmt.Errorf("read dedicated Billing debit token: %w", readErr)
+		}
+		debitToken = strings.TrimSpace(string(debitRaw))
+		if len(debitToken) < 24 {
+			return errors.New("dedicated Billing debit token is empty or implausibly short")
+		}
 	}
 	outDir := filepath.Join(workspace, ".artifacts", "test-runs", cfg.RunID, "payments", "staging-live")
 	if err := os.MkdirAll(filepath.Join(outDir, "evidence"), 0o755); err != nil {
@@ -119,25 +139,35 @@ func runTestPaymentLive(args []string) error {
 	}
 	started := time.Now().UTC()
 	state := paymentLiveState{}
-	caseResult := paymentEvidenceCase{TestID: "LIVE-STG-SIMULATOR-001", Purpose: "Qualify the deployed virtual payment flow with hosted UI evidence and a reconciled TWD charge.", Method: "Dedicated staging organization performs simulator hosted setup, desktop/mobile viewport capture, policy activation with approved defaults, a TWD 300 manual charge, ledger reconciliation, and mandatory cleanup.", StartedAt: started.Format(time.RFC3339), Status: "PASS"}
 	client := paymentLiveHTTPClient()
-	runErr := executePaymentLive(context.Background(), client, workspace, outDir, cfg, billingToken, &state)
+	runErr := executePaymentLive(context.Background(), client, workspace, outDir, cfg, billingToken, internalToken, debitToken, &state)
 	cleanupErr := cleanupPaymentLive(context.Background(), client, cfg, billingToken, state)
-	completed := time.Now().UTC()
-	caseResult.CompletedAt = completed.Format(time.RFC3339)
-	caseResult.DurationMS = completed.Sub(started).Milliseconds()
-	caseResult.Assessment = "Deployed simulator setup, responsive hosted UI, safe policy defaults, payment execution, and ledger reconciliation passed."
-	if runErr != nil {
-		caseResult.Status = "FAIL"
-		caseResult.Assessment = runErr.Error()
+	if runErr == nil && cleanupErr == nil {
+		state.InvoiceID, runErr = seedPaymentLiveInvoice(context.Background(), client, cfg, internalToken)
+		if runErr != nil {
+			runErr = fmt.Errorf("invoice qualification: %w", runErr)
+		} else {
+			state.InvoicePassed = true
+		}
 	}
-	if cleanupErr != nil {
-		caseResult.Status = "FAIL"
-		caseResult.Assessment = strings.TrimSpace(caseResult.Assessment + "; cleanup: " + cleanupErr.Error())
+	completed := time.Now().UTC()
+	cases := paymentLiveCases(started, completed, state, runErr, cleanupErr)
+	status, assessment := "PASS", "Deployed hosted setup, debit-triggered automatic top-up, idempotency, manual top-up, ledger reconciliation, and cleanup passed."
+	if runErr != nil || cleanupErr != nil {
+		status = "FAIL"
+		assessment = joinPaymentLiveErrors(runErr, cleanupErr)
 	}
 	workspaceCommit, _ := gitOutput(workspace, "rev-parse", "HEAD")
 	serviceCommit, _ := gitOutput(filepath.Join(workspace, "repos", "rtk_billing"), "rev-parse", "HEAD")
-	report := paymentEvidenceReport{SchemaVersion: 1, RunID: cfg.RunID, Profile: "staging-live", Environment: "staging", WorkspaceCommit: strings.TrimSpace(workspaceCommit), ServiceCommit: strings.TrimSpace(serviceCommit), StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), DurationMS: completed.Sub(started).Milliseconds(), Status: caseResult.Status, Assessment: caseResult.Assessment, CoverageGate: "N/A", Cases: []paymentEvidenceCase{caseResult}}
+	report := paymentEvidenceReport{SchemaVersion: 1, RunID: cfg.RunID, Profile: "staging-live", Environment: "staging", WorkspaceCommit: strings.TrimSpace(workspaceCommit), ServiceCommit: strings.TrimSpace(serviceCommit), StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), DurationMS: completed.Sub(started).Milliseconds(), Status: status, Assessment: assessment, CoverageGate: "N/A", Cases: cases}
+	if err := writeJSON(filepath.Join(outDir, "qualification-context.json"), map[string]any{
+		"schema_version": 1, "run_id": cfg.RunID, "organization_id": cfg.OrgID,
+		"hosted_setup_passed": state.HostedSetupPassed, "auto_topup_passed": state.AutoTopUpPassed,
+		"manual_topup_passed": state.ManualTopUpPassed, "invoice_passed": state.InvoicePassed,
+		"invoice_id": state.InvoiceID,
+	}); err != nil {
+		return err
+	}
 	if err := writePaymentLiveReports(outDir, report, cleanupErr); err != nil {
 		return err
 	}
@@ -153,7 +183,7 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 		return fmt.Errorf("--run requires --confirm %s", paymentLiveConfirmation)
 	}
 	if cfg.BootstrapTestOrg {
-		if cfg.OrgID != "" || cfg.AccountTokenFile != "" || cfg.BillingTokenFile != "" {
+		if cfg.OrgID != "" || cfg.AccountTokenFile != "" || cfg.BillingTokenFile != "" || cfg.InternalTokenFile != "" || cfg.DebitTokenFile != "" {
 			return errors.New("--bootstrap-test-org cannot be combined with --org-id or --access-token-file")
 		}
 		if cfg.ConfirmTestOrg != paymentLiveBootstrapConfirmation {
@@ -173,11 +203,11 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 	if billingErr != nil || billingParsed.Scheme != "https" || billingParsed.Host == "" || billingParsed.User != nil || strings.ToLower(billingParsed.Hostname()) != "billing.video-cloud-staging.realtekconnect.com" {
 		return errors.New("--billing-base-url must be the approved HTTPS Billing staging endpoint")
 	}
-	if !cfg.BootstrapTestOrg && cfg.BillingTokenFile == "" {
-		return errors.New("--billing-token-file is required; raw token command-line arguments are intentionally unsupported")
+	if !cfg.BootstrapTestOrg && (cfg.BillingTokenFile == "" || cfg.InternalTokenFile == "" || cfg.DebitTokenFile == "") {
+		return errors.New("--billing-token-file, --internal-token-file, and --debit-token-file are required; raw token command-line arguments are intentionally unsupported")
 	}
 	if !cfg.BootstrapTestOrg {
-		paths := []string{cfg.BillingTokenFile}
+		paths := []string{cfg.BillingTokenFile, cfg.InternalTokenFile, cfg.DebitTokenFile}
 		if cfg.AccountTokenFile != "" {
 			paths = append(paths, cfg.AccountTokenFile)
 		}
@@ -197,25 +227,33 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 	return nil
 }
 
-func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, string, error) {
+func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (paymentLiveConfig, string, string, string, string, error) {
 	ctx, err := accountManagerContextFromFlags(workspace, cfg.EnvRoot)
 	if err != nil {
-		return cfg, "", "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("load LKE platform-admin credentials: %w", err)
 	}
 	defer ctx.Close()
 	ctx.BaseURL = cfg.AccountManagerBaseURL
 	token, err := accountLogin(ctx, func(string, ...any) {})
 	if err != nil {
-		return cfg, "", "", fmt.Errorf("staging platform-admin login: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("staging platform-admin login: %w", err)
 	}
 	billingToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_SERVICE_TOKEN")
 	if err != nil {
-		return cfg, "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
+	}
+	internalToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN")
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing internal credential: %w", err)
+	}
+	debitToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_DEBIT_TOKEN")
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing debit credential: %w", err)
 	}
 	client := paymentLiveHTTPClient()
 	var organizations map[string]any
 	if err := paymentLiveJSON(context.Background(), client, http.MethodGet, cfg.AccountManagerBaseURL+"/v1/orgs?limit=100", token, nil, nil, &organizations); err != nil {
-		return cfg, "", "", fmt.Errorf("list qualification organizations: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("list qualification organizations: %w", err)
 	}
 	for _, item := range paymentLiveAnySlice(organizations["organizations"]) {
 		organization := nestedMap(item)
@@ -225,23 +263,26 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		}
 		cfg.OrgID, _ = organization["id"].(string)
 		if cfg.OrgID == "" {
-			return cfg, "", "", errors.New("dedicated qualification organization has no ID")
+			return cfg, "", "", "", "", errors.New("dedicated qualification organization has no ID")
 		}
-		return cfg, token, billingToken, nil
+		return cfg, token, billingToken, internalToken, debitToken, nil
 	}
 	var created map[string]any
 	if err := paymentLiveJSON(context.Background(), client, http.MethodPost, cfg.AccountManagerBaseURL+"/v1/orgs", token, nil, map[string]any{"name": paymentLiveBootstrapOrgName}, &created); err != nil {
-		return cfg, "", "", fmt.Errorf("create dedicated qualification organization: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification organization: %w", err)
 	}
 	cfg.OrgID, _ = nestedMap(created["organization"])["id"].(string)
 	if cfg.OrgID == "" {
-		return cfg, "", "", errors.New("created qualification organization has no ID")
+		return cfg, "", "", "", "", errors.New("created qualification organization has no ID")
 	}
-	return cfg, token, billingToken, nil
+	return cfg, token, billingToken, internalToken, debitToken, nil
 }
 
-func executePaymentLive(ctx context.Context, client *http.Client, workspace, outDir string, cfg paymentLiveConfig, token string, state *paymentLiveState) error {
+func executePaymentLive(ctx context.Context, client *http.Client, workspace, outDir string, cfg paymentLiveConfig, token, internalToken, debitToken string, state *paymentLiveState) error {
 	base := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID)
+	if err := verifyPaymentLiveCredentialIsolation(ctx, client, cfg, token, internalToken, debitToken); err != nil {
+		return fmt.Errorf("credential isolation preflight: %w", err)
+	}
 	var account map[string]any
 	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/billing/account", token, "billing_account.read", nil, nil, &account); err != nil {
 		return fmt.Errorf("billing preflight: %w", err)
@@ -252,6 +293,12 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	if policy := nestedMap(account["auto_topup"]); len(policy) > 0 && policy["enabled"] == true {
 		return errors.New("billing preflight: dedicated test organization already has an enabled automatic top-up policy")
 	}
+	initialBalance := nestedInt64(account["account"], "available_balance_minor")
+	initialLedger, err := readPaymentLiveLedger(ctx, client, base, token)
+	if err != nil {
+		return fmt.Errorf("ledger preflight: %w", err)
+	}
+	initialLedgerIDs := paymentLiveLedgerIDs(initialLedger)
 	var existingMethods map[string]any
 	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-methods", token, "payment_method.read", nil, nil, &existingMethods); err != nil {
 		return fmt.Errorf("payment method preflight: %w", err)
@@ -314,6 +361,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	}); err != nil {
 		return fmt.Errorf("payment method activation: %w", err)
 	}
+	state.HostedSetupPassed = true
 	var current map[string]any
 	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/auto-topup", token, "auto_topup.read", nil, nil, &current); err != nil {
 		return err
@@ -325,38 +373,290 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 		return fmt.Errorf("enable automatic top-up: %w", err)
 	}
 	state.PolicyVersion = nestedInt64(policy["auto_topup"], "version")
+	debitAmount := initialBalance - 300 + 1
+	if debitAmount < 1 {
+		debitAmount = 1
+	}
+	debitHeaders := map[string]string{"Idempotency-Key": "debit-" + cfg.RunID, "X-Request-Id": "debit-" + cfg.RunID}
+	debitBody := map[string]any{"organization_id": cfg.OrgID, "amount_minor": debitAmount, "currency": "TWD", "reason": "usage_adjustment_debit", "external_id": "qualification-" + cfg.RunID}
+	var debit map[string]any
+	if err := paymentLiveJSON(ctx, client, http.MethodPost, cfg.BillingBaseURL+"/v1/internal/billing/debits", debitToken, debitHeaders, debitBody, &debit); err != nil {
+		return fmt.Errorf("debit threshold crossing: %w", err)
+	}
+	state.AutoIntentID, _ = debit["payment_intent_id"].(string)
+	state.DebitLedgerEntryID, _ = debit["ledger_entry_id"].(string)
+	if state.AutoIntentID == "" || state.DebitLedgerEntryID == "" || debit["duplicate"] == true {
+		return errors.New("debit threshold crossing did not create one new payment intent and ledger entry")
+	}
+	var replay map[string]any
+	if err := paymentLiveJSON(ctx, client, http.MethodPost, cfg.BillingBaseURL+"/v1/internal/billing/debits", debitToken, debitHeaders, debitBody, &replay); err != nil {
+		return fmt.Errorf("debit idempotent replay: %w", err)
+	}
+	if replay["duplicate"] != true || replay["payment_intent_id"] != state.AutoIntentID || replay["ledger_entry_id"] != state.DebitLedgerEntryID {
+		return errors.New("debit idempotent replay changed the monetary result")
+	}
+	if err := waitPaymentLiveIntent(ctx, client, base, token, state.AutoIntentID, cfg.Timeout, true); err != nil {
+		return fmt.Errorf("automatic top-up reconciliation: %w", err)
+	}
+	autoLedger, err := readPaymentLiveLedger(ctx, client, base, token)
+	if err != nil {
+		return fmt.Errorf("automatic top-up ledger: %w", err)
+	}
+	if err := verifyPaymentLiveLedgerDelta(autoLedger, initialLedgerIDs, state.DebitLedgerEntryID, debitAmount, 300, initialBalance-debitAmount+300); err != nil {
+		return err
+	}
+	state.AutoTopUpPassed = true
+
+	manualLedgerIDs := paymentLiveLedgerIDs(autoLedger)
 	var topup map[string]any
-	if err := paymentLiveBillingJSON(ctx, client, http.MethodPost, base+"/topups", token, "payment_intent.create", map[string]string{"Idempotency-Key": "topup-" + cfg.RunID, "X-Request-Id": "topup-" + cfg.RunID}, map[string]any{"amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID}, &topup); err != nil {
-		return fmt.Errorf("create TWD 300 top-up: %w", err)
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodPost, base+"/topups", token, "payment_intent.create", map[string]string{"Idempotency-Key": "manual-topup-" + cfg.RunID, "X-Request-Id": "manual-topup-" + cfg.RunID}, map[string]any{"amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID}, &topup); err != nil {
+		return fmt.Errorf("create separate manual TWD 300 top-up: %w", err)
 	}
-	state.IntentID, _ = nestedMap(topup["payment_intent"])["id"].(string)
-	if state.IntentID == "" {
-		return errors.New("create TWD 300 top-up: missing intent ID")
+	state.ManualIntentID, _ = nestedMap(topup["payment_intent"])["id"].(string)
+	if state.ManualIntentID == "" || state.ManualIntentID == state.AutoIntentID {
+		return errors.New("manual TWD 300 top-up did not create a distinct intent")
 	}
-	if err := pollPaymentLive(ctx, cfg.Timeout, func() (bool, error) {
-		var intent map[string]any
-		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-intents/"+url.PathEscape(state.IntentID), token, "payment_intent.read", nil, nil, &intent); err != nil {
+	if err := waitPaymentLiveIntent(ctx, client, base, token, state.ManualIntentID, cfg.Timeout, true); err != nil {
+		return fmt.Errorf("manual top-up reconciliation: %w", err)
+	}
+	manualLedger, err := readPaymentLiveLedger(ctx, client, base, token)
+	if err != nil {
+		return fmt.Errorf("manual top-up ledger: %w", err)
+	}
+	newCredits := 0
+	for _, item := range paymentLiveAnySlice(manualLedger["ledger_entries"]) {
+		entry := nestedMap(item)
+		id, _ := entry["id"].(string)
+		if !manualLedgerIDs[id] && entry["direction"] == "credit" && entry["reason"] == "payment_top_up_credit" && int64Value(entry["amount_minor"]) == 300 {
+			newCredits++
+		}
+	}
+	if newCredits != 1 {
+		return fmt.Errorf("manual top-up created %d new TWD 300 credits; want exactly one", newCredits)
+	}
+	state.ManualTopUpPassed = true
+	return nil
+}
+
+func verifyPaymentLiveCredentialIsolation(ctx context.Context, client *http.Client, cfg paymentLiveConfig, tenantToken, internalToken, debitToken string) error {
+	if tenantToken == internalToken || tenantToken == debitToken || internalToken == debitToken {
+		return errors.New("tenant, internal, and debit credentials are not distinct")
+	}
+	tenantEndpoint := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID) + "/billing/account"
+	internalEndpoint := cfg.BillingBaseURL + "/v1/internal/billing/access/" + url.PathEscape(cfg.OrgID)
+	debitEndpoint := cfg.BillingBaseURL + "/v1/internal/billing/debits"
+	checks := []struct {
+		method, endpoint, token string
+		body                    any
+	}{
+		{http.MethodGet, tenantEndpoint, internalToken, nil},
+		{http.MethodGet, tenantEndpoint, debitToken, nil},
+		{http.MethodGet, internalEndpoint, tenantToken, nil},
+		{http.MethodGet, internalEndpoint, debitToken, nil},
+		{http.MethodPost, debitEndpoint, tenantToken, map[string]any{}},
+		{http.MethodPost, debitEndpoint, internalToken, map[string]any{}},
+	}
+	for _, check := range checks {
+		status, err := paymentLiveHTTPStatus(ctx, client, check.method, check.endpoint, check.token, check.body)
+		if err != nil {
+			return err
+		}
+		if status != http.StatusUnauthorized {
+			return fmt.Errorf("%s %s with the wrong credential returned HTTP %d; want 401", check.method, urlPathOnly(check.endpoint), status)
+		}
+	}
+	return nil
+}
+
+func paymentLiveHTTPStatus(ctx context.Context, client *http.Client, method, endpoint, token string, body any) (int, error) {
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return 0, err
+		}
+		reader = bytes.NewReader(raw)
+	}
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return 0, err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, err
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+	return response.StatusCode, nil
+}
+
+func urlPathOnly(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "invalid-endpoint"
+	}
+	return parsed.Path
+}
+
+func readPaymentLiveLedger(ctx context.Context, client *http.Client, base, token string) (map[string]any, error) {
+	var ledger map[string]any
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/billing/ledger?limit=100", token, "billing_ledger.read", nil, nil, &ledger); err != nil {
+		return nil, err
+	}
+	return ledger, nil
+}
+
+func paymentLiveLedgerIDs(ledger map[string]any) map[string]bool {
+	ids := map[string]bool{}
+	for _, item := range paymentLiveAnySlice(ledger["ledger_entries"]) {
+		if id, _ := nestedMap(item)["id"].(string); id != "" {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+func verifyPaymentLiveLedgerDelta(ledger map[string]any, before map[string]bool, debitID string, debitAmount, creditAmount, finalBalance int64) error {
+	newEntries, debitMatches, creditMatches, finalBalanceMatches := 0, 0, 0, 0
+	for _, item := range paymentLiveAnySlice(ledger["ledger_entries"]) {
+		entry := nestedMap(item)
+		id, _ := entry["id"].(string)
+		if id == "" || before[id] {
+			continue
+		}
+		newEntries++
+		if id == debitID && entry["direction"] == "debit" && entry["reason"] == "usage_adjustment_debit" && int64Value(entry["amount_minor"]) == debitAmount {
+			debitMatches++
+		}
+		if entry["direction"] == "credit" && entry["reason"] == "payment_top_up_credit" && int64Value(entry["amount_minor"]) == creditAmount {
+			creditMatches++
+			if int64Value(entry["balance_after_minor"]) == finalBalance {
+				finalBalanceMatches++
+			}
+		}
+	}
+	if newEntries != 2 || debitMatches != 1 || creditMatches != 1 || finalBalanceMatches != 1 {
+		return fmt.Errorf("automatic top-up ledger delta invalid: entries=%d debit=%d credit=%d final_balance=%d", newEntries, debitMatches, creditMatches, finalBalanceMatches)
+	}
+	return nil
+}
+
+func waitPaymentLiveIntent(ctx context.Context, client *http.Client, base, token, intentID string, timeout time.Duration, requireSingleCharge bool) error {
+	return pollPaymentLive(ctx, timeout, func() (bool, error) {
+		var detail map[string]any
+		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-intents/"+url.PathEscape(intentID), token, "payment_intent.read", nil, nil, &detail); err != nil {
 			return false, err
 		}
-		status, _ := nestedMap(intent["payment_intent"])["state"].(string)
+		status, _ := nestedMap(detail["payment_intent"])["state"].(string)
 		if status == "failed" || status == "requires_action" {
 			return false, fmt.Errorf("intent reached %s", status)
 		}
-		return status == "succeeded", nil
-	}); err != nil {
-		return fmt.Errorf("payment reconciliation: %w", err)
-	}
-	var ledger map[string]any
-	if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/billing/ledger", token, "billing_ledger.read", nil, nil, &ledger); err != nil {
-		return err
-	}
-	for _, item := range paymentLiveAnySlice(ledger["ledger_entries"]) {
-		entry := nestedMap(item)
-		if entry["reason"] == "payment_top_up_credit" && int64Value(entry["amount_minor"]) == 300 {
-			return nil
+		if status != "succeeded" {
+			return false, nil
 		}
+		if requireSingleCharge {
+			charges := 0
+			for _, item := range paymentLiveAnySlice(detail["attempts"]) {
+				if nestedMap(item)["operation"] == "charge" {
+					charges++
+				}
+			}
+			if charges != 1 {
+				return false, fmt.Errorf("succeeded intent has %d charge attempts; want exactly one", charges)
+			}
+		}
+		return true, nil
+	})
+}
+
+func paymentLiveCases(started, completed time.Time, state paymentLiveState, runErr, cleanupErr error) []paymentEvidenceCase {
+	duration := completed.Sub(started).Milliseconds()
+	definitions := []struct {
+		id, purpose, method, pass string
+		completed                 bool
+	}{
+		{"LIVE-STG-SIMULATOR-001", "Qualify deployed simulator hosted setup and responsive customer-safe UI.", "Dedicated staging organization activates one simulator method and captures desktop/mobile hosted-page evidence.", "Hosted setup and responsive evidence passed.", state.HostedSetupPassed},
+		{"LIVE-STG-AUTOTOPUP-001", "Prove a deployed debit threshold crossing produces exactly one automatic charge and credit.", "Dedicated debit credential posts and replays one usage-adjustment debit; Billing must create one intent, one charge attempt, and one ledger credit.", "Debit-triggered automatic top-up and idempotent replay passed.", state.AutoTopUpPassed},
+		{"LIVE-STG-MANUAL-TOPUP-001", "Keep manual top-up qualification distinct from automatic top-up.", "Tenant service identity creates one explicit TWD 300 top-up and verifies a distinct intent, one charge attempt, and one ledger credit.", "Separate manual top-up passed.", state.ManualTopUpPassed},
+		{"LIVE-STG-BILLING-DOCUMENT-001", "Create immutable deployed invoice and PDF evidence for the real Cloud Admin smoke.", "Internal Billing identity activates qualification pricing, ingests digest-anchored usage, closes one dedicated organization period after payment cleanup, and records the resulting invoice ID.", "Staging invoice and document seed passed.", state.InvoicePassed},
 	}
-	return errors.New("reconciled payment has no matching TWD 300 ledger credit")
+	cases := make([]paymentEvidenceCase, 0, len(definitions))
+	for _, definition := range definitions {
+		status, assessment := "PASS", definition.pass
+		if !definition.completed || cleanupErr != nil {
+			status = "FAIL"
+			assessment = joinPaymentLiveErrors(runErr, cleanupErr)
+			if assessment == "" {
+				assessment = "Qualification did not reach this case."
+			}
+		}
+		cases = append(cases, paymentEvidenceCase{TestID: definition.id, Purpose: definition.purpose, Method: definition.method, StartedAt: started.Format(time.RFC3339), CompletedAt: completed.Format(time.RFC3339), DurationMS: duration, Status: status, Assessment: assessment})
+	}
+	return cases
+}
+
+func joinPaymentLiveErrors(runErr, cleanupErr error) string {
+	parts := make([]string, 0, 2)
+	if runErr != nil {
+		parts = append(parts, runErr.Error())
+	}
+	if cleanupErr != nil {
+		parts = append(parts, "cleanup: "+cleanupErr.Error())
+	}
+	return strings.Join(parts, "; ")
+}
+
+func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymentLiveConfig, internalToken string) (string, error) {
+	now := time.Now().UTC()
+	periodStart := now.Truncate(time.Hour).Add(-2 * time.Hour)
+	periodEnd := periodStart.Add(time.Hour)
+	version := now.Unix()
+	internalBase := cfg.BillingBaseURL + "/v1/internal/billing"
+	headers := map[string]string{"X-Request-Id": "invoice-seed-" + cfg.RunID}
+	pricingBody := map[string]any{
+		"plan_key": "qualification", "version": version, "currency": "TWD", "effective_from": periodStart,
+		"rates": []map[string]any{{
+			"service_code": "qualification", "metric_code": "staging_units", "description": "Staging qualification units",
+			"unit": "unit", "unit_price_minor": 2, "unit_price_scale": 0, "rounding_mode": "half_up", "tax_rate_basis_points": 0,
+		}},
+	}
+	var pricing map[string]any
+	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/pricing-versions", internalToken, headers, pricingBody, &pricing); err != nil {
+		return "", fmt.Errorf("create qualification pricing: %w", err)
+	}
+	pricingID, _ := nestedMap(pricing["pricing_version"])["id"].(string)
+	if pricingID == "" {
+		return "", errors.New("create qualification pricing returned no ID")
+	}
+	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/pricing-versions/"+url.PathEscape(pricingID)+"/activate", internalToken, headers, nil, nil); err != nil {
+		return "", fmt.Errorf("activate qualification pricing: %w", err)
+	}
+	usageID := "qualification-" + periodStart.Format("20060102T1504Z")
+	digest := sha256.Sum256([]byte(usageID + ":" + cfg.OrgID))
+	usageBody := map[string]any{
+		"usage_id": usageID, "organization_id": cfg.OrgID,
+		"service_code": "qualification", "metric_code": "staging_units", "quantity": 100,
+		"quantity_scale": 0, "unit": "unit", "window_start": periodStart,
+		"window_end": periodEnd, "source": "staging-qualification", "source_sha256": fmt.Sprintf("%x", digest),
+	}
+	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/usage-facts", internalToken, headers, usageBody, nil); err != nil {
+		return "", fmt.Errorf("create qualification usage: %w", err)
+	}
+	var closed map[string]any
+	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/periods/close", internalToken, headers, map[string]any{
+		"organization_id": cfg.OrgID, "period_start": periodStart, "period_end": periodEnd, "due_at": periodEnd.Add(15 * 24 * time.Hour),
+	}, &closed); err != nil {
+		return "", fmt.Errorf("close qualification period: %w", err)
+	}
+	invoiceID, _ := nestedMap(closed["invoice"])["id"].(string)
+	if invoiceID == "" {
+		return "", errors.New("close qualification period returned no invoice ID")
+	}
+	return invoiceID, nil
 }
 
 func cleanupPaymentLive(ctx context.Context, client *http.Client, cfg paymentLiveConfig, token string, state paymentLiveState) error {

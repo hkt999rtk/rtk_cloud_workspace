@@ -220,17 +220,56 @@ cases:
     verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-INTENT-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-PROVIDER-001]
     status: active
   - id: LIVE-STG-SIMULATOR-001
-    title: Deployed payment simulator completes hosted setup and a reconciled TWD charge
+    title: Deployed payment simulator completes responsive hosted setup
     layer: live
     owner: rtk_billing
     source: scripts/go/rtk-cloud/test_payment_live.go
     selector: staging-live
-    method: A dedicated staging organization performs simulator hosted setup, captures desktop and mobile hosted-page evidence, enables the approved automatic top-up defaults, reconciles a TWD 300 charge to the ledger, and then disables the policy and revokes the synthetic method.
+    method: A dedicated staging organization performs simulator hosted setup, captures desktop and mobile hosted-page evidence, activates the synthetic method, and then revokes it during mandatory cleanup.
     runner: test-payment
     environments: [staging]
     evidence: [json, markdown, logs, screenshot]
     tags: [payment, simulator, staging, hosted-setup, responsive]
-    verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-METHOD-001, REQ-AM-PAYMENT-INTENT-001]
+    verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-METHOD-001]
+    status: active
+  - id: LIVE-STG-AUTOTOPUP-001
+    title: Deployed debit threshold crossing produces exactly one automatic charge and credit
+    layer: live
+    owner: rtk_billing
+    source: scripts/go/rtk-cloud/test_payment_live.go
+    selector: staging-live
+    method: A dedicated debit credential posts and idempotently replays one usage-adjustment debit that crosses the configured threshold; the deployed Billing worker must create one automatic intent, one provider charge attempt, and one TWD 300 ledger credit with the exact final balance.
+    runner: test-payment
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    tags: [payment, auto-topup, staging, debit, idempotency]
+    verifies: [REQ-AM-BILLING-DEBIT-001, REQ-AM-AUTO-TOPUP-001, REQ-AM-PAYMENT-INTENT-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-SIMULATOR-001]
+    status: active
+  - id: LIVE-STG-MANUAL-TOPUP-001
+    title: Deployed manual top-up remains distinct and reconciles exactly once
+    layer: live
+    owner: rtk_billing
+    source: scripts/go/rtk-cloud/test_payment_live.go
+    selector: staging-live
+    method: After automatic top-up qualification, the dedicated organization explicitly creates a separate TWD 300 manual top-up and proves a distinct intent, one provider charge attempt, and one new ledger credit.
+    runner: test-payment
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    tags: [payment, manual-topup, staging, idempotency]
+    verifies: [REQ-AM-PAYMENT-INTENT-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-SIMULATOR-001]
+    status: active
+  - id: LIVE-STG-BILLING-DOCUMENT-001
+    title: Deployed Billing closes an immutable qualification invoice with PDF evidence
+    layer: live
+    owner: rtk_billing
+    source: scripts/go/rtk-cloud/test_payment_live.go
+    selector: staging-live
+    method: After payment policy and method cleanup, the isolated internal credential activates qualification pricing, ingests digest-anchored usage for the dedicated organization, closes one period, and records the immutable invoice ID used by real Cloud Admin PDF smoke tests.
+    runner: test-payment
+    environments: [staging]
+    evidence: [json, markdown, logs, pdf]
+    tags: [billing, invoice, staging, document]
+    verifies: [REQ-AM-PRICING-VERSION-001, REQ-AM-INVOICE-LIFECYCLE-001, REQ-AM-INVOICE-DOCUMENT-001, REQ-BILL-SERVICE-AUTH-001]
     status: active
   - id: E2E-AM-AUTOTOPUP-001
     title: Balance crossing produces one fake-provider transaction and one credit
@@ -1121,6 +1160,9 @@ cases:
   - { <<: *ui_smoke, id: UI-CA-BILLING-003, title: Invoice list opens immutable settlement detail and PDF evidence, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-003]", tags: [smoke, billing, invoice], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-004, title: Normalized billing activity opens a customer-safe timeline, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-004]", tags: [smoke, billing, activity], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-005, title: Billing profile update preserves immutable invoice snapshot semantics, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-005]", tags: [smoke, billing, invoice, profile], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_staging, id: UI-CA-BILLING-STG-001, title: Real staging billing overview remains tenant scoped and provider safe, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-001]", tags: [smoke, staging, billing, payment], verifies: [REQ-CA-BILLING-001, REQ-BILL-DATA-BOUNDARY-001] }
+  - { <<: *ui_staging, id: UI-CA-BILLING-STG-002, title: Real staging invoice detail serves immutable PDF evidence, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-002]", tags: [smoke, staging, billing, invoice], verifies: [REQ-CA-BILLING-001, REQ-AM-INVOICE-DOCUMENT-001] }
+  - { <<: *ui_staging, id: UI-CA-BILLING-STG-003, title: Real staging billing activity and profile remain customer safe, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-003]", tags: [smoke, staging, billing, activity, profile], verifies: [REQ-CA-BILLING-001, REQ-AM-BILLING-ACTIVITY-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-001, title: Partial batch failure preserves item results and supports a new retry attempt, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-001]", verifies: [REQ-UI-CA-BATCH-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-002, title: Batch jobs enforce valid pause resume and cancel transitions, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-002]", verifies: [REQ-UI-CA-BATCH-002] }
   - { <<: *ui_local, id: UI-CA-BATCH-003, title: Completed batch results can be downloaded as JSON and CSV, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-003]", verifies: [REQ-UI-CA-BATCH-003] }

@@ -69,7 +69,15 @@ func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 	if err := os.WriteFile(billingTokenFile, []byte(strings.Repeat("y", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, Timeout: time.Minute}
+	debitTokenFile := filepath.Join(t.TempDir(), "debit-token")
+	if err := os.WriteFile(debitTokenFile, []byte(strings.Repeat("z", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	internalTokenFile := filepath.Join(t.TempDir(), "internal-token")
+	if err := os.WriteFile(internalTokenFile, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, InternalTokenFile: internalTokenFile, DebitTokenFile: debitTokenFile, Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "--confirm") {
 		t.Fatalf("wrong stack confirmation must fail, got %v", err)
 	}
@@ -91,6 +99,8 @@ func TestPaymentLiveRejectsRawOrInsecureCredentials(t *testing.T) {
 	cfg.AccountManagerBaseURL = "https://account-manager.video-cloud-staging.realtekconnect.com"
 	cfg.AccountTokenFile = filepath.Join(t.TempDir(), "missing")
 	cfg.BillingTokenFile = filepath.Join(t.TempDir(), "missing-billing")
+	cfg.InternalTokenFile = filepath.Join(t.TempDir(), "missing-internal")
+	cfg.DebitTokenFile = filepath.Join(t.TempDir(), "missing-debit")
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "token files") {
 		t.Fatalf("missing token file must fail, got %v", err)
 	}
@@ -143,11 +153,38 @@ func TestPaymentLiveReportFailsClosedWithoutResponsiveEvidence(t *testing.T) {
 
 func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.T) {
 	methodActive := false
+	debitPosted := false
+	manualPosted := false
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/internal/billing/access/org-test" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/internal/billing/debits" && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("d", 32) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/internal/billing/") && r.URL.Path != "/v1/internal/billing/debits" && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("i", 32) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/orgs/org-test/") && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("b", 32) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/orgs/org-test/billing/account":
-			_, _ = w.Write([]byte(`{"payment_providers":[{"name":"simulator","environment":"simulated","capabilities":{"hosted_setup":true,"merchant_initiated_charge":true}}],"auto_topup":null}`))
+			_, _ = w.Write([]byte(`{"account":{"available_balance_minor":0},"payment_providers":[{"name":"simulator","environment":"simulated","capabilities":{"hosted_setup":true,"merchant_initiated_charge":true}}],"auto_topup":null}`))
+		case r.URL.Path == "/v1/orgs/org-test/billing/ledger":
+			entries := `[]`
+			if debitPosted {
+				entries = `[{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+			}
+			if manualPosted {
+				entries = `[{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+			}
+			_, _ = w.Write([]byte(`{"ledger_entries":` + entries + `}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods" && r.Method == http.MethodGet:
 			status := "revoked"
 			if methodActive {
@@ -165,15 +202,31 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			_, _ = w.Write([]byte(`{"auto_topup":{"version":2}}`))
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodDelete:
 			_, _ = w.Write([]byte(`{"auto_topup":{"enabled":false,"version":3}}`))
+		case r.URL.Path == "/v1/internal/billing/debits":
+			if got := r.Header.Get("Authorization"); got != "Bearer "+strings.Repeat("d", 32) {
+				t.Fatalf("debit authorization = %q", got)
+			}
+			duplicate := debitPosted
+			debitPosted = true
+			_, _ = w.Write([]byte(`{"ledger_entry_id":"debit-1","payment_intent_id":"intent-auto","duplicate":` + map[bool]string{true: "true", false: "false"}[duplicate] + `}`))
+		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-auto":
+			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"charge","status":"succeeded"}]}`))
 		case r.URL.Path == "/v1/orgs/org-test/topups":
-			_, _ = w.Write([]byte(`{"payment_intent":{"id":"intent-1"}}`))
-		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-1":
-			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"}}`))
-		case r.URL.Path == "/v1/orgs/org-test/billing/ledger":
-			_, _ = w.Write([]byte(`{"ledger_entries":[{"reason":"payment_top_up_credit","amount_minor":300}]}`))
+			manualPosted = true
+			_, _ = w.Write([]byte(`{"payment_intent":{"id":"intent-manual"}}`))
+		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-manual":
+			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"charge","status":"succeeded"}]}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods/method-1" && r.Method == http.MethodDelete:
 			methodActive = false
 			_, _ = w.Write([]byte(`{"payment_method":{"status":"revoked"}}`))
+		case r.URL.Path == "/v1/internal/billing/pricing-versions" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification"}}`))
+		case r.URL.Path == "/v1/internal/billing/pricing-versions/pricing-qualification/activate" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification","status":"active"}}`))
+		case r.URL.Path == "/v1/internal/billing/usage-facts" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"usage_fact":{"id":"usage-qualification"}}`))
+		case r.URL.Path == "/v1/internal/billing/periods/close" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"invoice":{"id":"invoice-qualification","state":"settled"}}`))
 		default:
 			t.Fatalf("unexpected payment qualification request: %s %s", r.Method, r.URL.Path)
 		}
@@ -198,18 +251,28 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	t.Cleanup(func() { paymentLiveScreenshot = oldScreenshot })
 	cfg := paymentLiveConfig{RunID: "live-success", BillingBaseURL: server.URL, OrgID: "org-test", Timeout: time.Second}
 	state := paymentLiveState{}
-	if err := executePaymentLive(context.Background(), client, t.TempDir(), outDir, cfg, strings.Repeat("b", 32), &state); err != nil {
+	if err := executePaymentLive(context.Background(), client, t.TempDir(), outDir, cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.MethodID != "method-1" || state.IntentID != "intent-1" || state.PolicyVersion != 2 {
+	if state.MethodID != "method-1" || state.AutoIntentID != "intent-auto" || state.ManualIntentID != "intent-manual" || state.PolicyVersion != 2 || !state.HostedSetupPassed || !state.AutoTopUpPassed || !state.ManualTopUpPassed {
 		t.Fatalf("unexpected qualification state: %+v", state)
 	}
 	if err := cleanupPaymentLive(context.Background(), client, cfg, strings.Repeat("b", 32), state); err != nil {
 		t.Fatal(err)
 	}
+	debitPosted = false
+	manualPosted = false
 
 	tokenFile := filepath.Join(t.TempDir(), "billing-token")
 	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("b", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	debitTokenFile := filepath.Join(t.TempDir(), "debit-token")
+	if err := os.WriteFile(debitTokenFile, []byte(strings.Repeat("d", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	internalTokenFile := filepath.Join(t.TempDir(), "internal-token")
+	if err := os.WriteFile(internalTokenFile, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	oldClientFactory := paymentLiveHTTPClient
@@ -225,7 +288,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		"--profile", "staging-live", "--run-id", runID, "--run",
 		"--account-manager-base-url", "https://account-manager.video-cloud-staging.realtekconnect.com",
 		"--billing-base-url", "https://billing.video-cloud-staging.realtekconnect.com",
-		"--org-id", "org-test", "--billing-token-file", tokenFile,
+		"--org-id", "org-test", "--billing-token-file", tokenFile, "--internal-token-file", internalTokenFile, "--debit-token-file", debitTokenFile,
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	}); err != nil {
 		t.Fatal(err)
@@ -243,11 +306,19 @@ func TestPaymentLiveCommandAndHTTPFailuresFailClosed(t *testing.T) {
 	if err := os.WriteFile(shortToken, []byte("short"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	validDebitToken := filepath.Join(t.TempDir(), "debit-token")
+	if err := os.WriteFile(validDebitToken, []byte(strings.Repeat("d", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validInternalToken := filepath.Join(t.TempDir(), "internal-token")
+	if err := os.WriteFile(validInternalToken, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	err := runTestPaymentLive([]string{
 		"--run", "--run-id", "short-token",
 		"--account-manager-base-url", "https://account-manager.video-cloud-staging.realtekconnect.com",
 		"--billing-base-url", "https://billing.video-cloud-staging.realtekconnect.com",
-		"--org-id", "org-test", "--billing-token-file", shortToken,
+		"--org-id", "org-test", "--billing-token-file", shortToken, "--internal-token-file", validInternalToken, "--debit-token-file", validDebitToken,
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	})
 	if err == nil || !strings.Contains(err.Error(), "implausibly short") {
@@ -304,9 +375,15 @@ func TestExecutePaymentLiveRejectsUnsafePreflightStates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/v1/internal/billing/access/org-test" || r.URL.Path == "/v1/internal/billing/debits" || (strings.HasPrefix(r.URL.Path, "/v1/orgs/org-test/") && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("b", 32)) {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
 				switch r.URL.Path {
 				case "/v1/orgs/org-test/billing/account":
 					_, _ = w.Write([]byte(tt.account))
+				case "/v1/orgs/org-test/billing/ledger":
+					_, _ = w.Write([]byte(`{"ledger_entries":[]}`))
 				case "/v1/orgs/org-test/payment-methods":
 					_, _ = w.Write([]byte(tt.methods))
 				case "/v1/orgs/org-test/payment-methods/setup":
@@ -317,7 +394,7 @@ func TestExecutePaymentLiveRejectsUnsafePreflightStates(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := paymentLiveConfig{RunID: "unsafe", BillingBaseURL: server.URL, OrgID: "org-test", Timeout: time.Second}
-			err := executePaymentLive(context.Background(), server.Client(), t.TempDir(), t.TempDir(), cfg, "token", &paymentLiveState{})
+			err := executePaymentLive(context.Background(), server.Client(), t.TempDir(), t.TempDir(), cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &paymentLiveState{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}

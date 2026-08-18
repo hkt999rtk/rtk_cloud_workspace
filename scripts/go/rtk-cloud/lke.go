@@ -2134,6 +2134,9 @@ func lkeImageBuildContext(workload lkeWorkload) (contextDir, dockerfile string, 
 		return generatedVideoCloudDockerfile(filepath.Join(workspace, "repos", "rtk_video_cloud"))
 	case "account-manager":
 		return generatedAccountManagerDockerfile(filepath.Join(workspace, "repos", "rtk_account_manager"))
+	case "billing":
+		contextDir := filepath.Join(workspace, "repos", "rtk_billing")
+		return contextDir, filepath.Join(contextDir, "Dockerfile"), func() {}, nil
 	case "cloud-admin":
 		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_cloud_admin"), "./cmd/server", "rtk-cloud-admin")
 	case "frontend":

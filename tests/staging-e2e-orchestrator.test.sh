@@ -40,20 +40,38 @@ import json
 
 
 class Handler(BaseHTTPRequestHandler):
+    objects = {}
+
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/v4/profile":
             body, content_type = json.dumps({"username": "operator"}), "application/json"
         elif path == "/v4/lke/clusters":
             body, content_type = json.dumps({"data": []}), "application/json"
+        elif path in ("/v4/regions/sg-sin-2", "/v4/regions/us-sea"):
+            region = path.rsplit("/", 1)[-1]
+            body, content_type = json.dumps({"id": region, "status": "ok", "capabilities": ["Kubernetes", "Object Storage"]}), "application/json"
+        elif path == "/v4/object-storage/buckets":
+            endpoint = f"http://{self.headers['Host']}"
+            body, content_type = json.dumps({"data": [
+                {"label": "rtk-video-staging-sg", "region": "sg-sin-2", "s3_endpoint": endpoint},
+                {"label": "rtk-cloud-client-artifacts", "region": "us-sea", "s3_endpoint": endpoint},
+            ]}), "application/json"
+        elif path == "/v4/object-storage/keys":
+            body, content_type = json.dumps({"data": [
+                {"id": 41, "access_key": "media-access", "bucket_access": [{"bucket_name": "rtk-video-staging-sg", "region": "sg-sin-2", "permissions": "read_write"}]},
+                {"id": 42, "access_key": "artifact-access", "bucket_access": [{"bucket_name": "rtk-cloud-client-artifacts", "region": "us-sea", "permissions": "read_write"}]},
+            ]}), "application/json"
         elif path == "/token":
             body, content_type = json.dumps({"token": "registry-token"}), "application/json"
         elif path.startswith("/v2/") and path.endswith("/tags/list"):
             body, content_type = json.dumps({"name": "fixture", "tags": ["sha-test"]}), "application/json"
         elif path.startswith("/v1/domains/") and path.endswith("/records"):
             body, content_type = "[]", "application/json"
-        elif path == "/test-bucket":
+        elif path in ("/test-bucket", "/rtk-video-staging-sg", "/rtk-cloud-client-artifacts"):
             body, content_type = "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>", "application/xml"
+        elif path in self.objects:
+            body, content_type = self.objects[path].decode(), "application/octet-stream"
         else:
             self.send_error(404)
             return
@@ -63,6 +81,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)
+
+    def do_PUT(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        self.objects[self.path.split("?", 1)[0]] = self.rfile.read(length)
+        self.send_response(200)
+        self.end_headers()
+
+    def do_DELETE(self):
+        self.objects.pop(self.path.split("?", 1)[0], None)
+        self.send_response(204)
+        self.end_headers()
 
     def log_message(self, _format, *_args):
         return
@@ -93,6 +122,10 @@ LINODE_OBJ_SECRET_ACCESS_KEY=object-secret
 LINODE_OBJ_ENDPOINT=$CREDENTIAL_SERVER
 LINODE_OBJ_BUCKET=test-bucket
 LINODE_OBJ_REGION=us-test-1
+LINODE_MEDIA_OBJ_ACCESS_KEY_ID=media-access
+LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=media-secret
+LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID=artifact-access
+LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY=artifact-secret
 EOF_CREDENTIALS
 chmod 600 "$CREDENTIAL_ENV"
 export RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE="$CREDENTIAL_ENV"
@@ -110,6 +143,10 @@ export LINODE_OBJ_SECRET_ACCESS_KEY=object-secret
 export LINODE_OBJ_ENDPOINT="$CREDENTIAL_SERVER"
 export LINODE_OBJ_BUCKET=test-bucket
 export LINODE_OBJ_REGION=us-test-1
+export LINODE_MEDIA_OBJ_ACCESS_KEY_ID=media-access
+export LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=media-secret
+export LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID=artifact-access
+export LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY=artifact-secret
 
 COMMAND_LOG="$TMP/commands.log"
 CONTRACT_STEPS="reset,provision,data,mqtt,runtime-logs,billing-log,billing-db"
@@ -240,6 +277,7 @@ export LKE_ACCOUNT_MANAGER_IMAGE=registry.example.test/rtk/account-manager:test
 export LKE_CLOUD_ADMIN_IMAGE=registry.example.test/rtk/cloud-admin:test
 export LKE_FRONTEND_IMAGE=registry.example.test/rtk/frontend:test
 export LKE_CLOUD_LOGGER_IMAGE=registry.example.test/rtk/cloud-logger:test
+export LKE_BILLING_IMAGE=registry.example.test/rtk/billing:test
 
 RESET_PLAN_OUT="$TMP/reset-plan.out"
 CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT="$TMP/remove-k8s.sh" \
@@ -296,11 +334,14 @@ grep -F 'provision K8s staging with '"$TMP/provision-k8s.sh" "$PROVISION_PLAN_OU
 test ! -s "$COMMAND_LOG"
 
 PROVISION_RUN_OUT="$TMP/provision-run.out"
-CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
+if ! CLOUD_STAGING_E2E_PROVISION_K8S_SCRIPT="$TMP/provision-k8s.sh" \
 	"/usr/local/go/bin/go" run "$ROOT/scripts/go/rtk-cloud" -- staging-provision \
 	--workspace "$WORKSPACE" \
 	--env-root "$ENV_ROOT" \
-	--confirm video-cloud-staging > "$PROVISION_RUN_OUT"
+	--confirm video-cloud-staging > "$PROVISION_RUN_OUT"; then
+	cat "$PROVISION_RUN_OUT" >&2
+	exit 1
+fi
 grep -F $'provision-k8s\t--workspace '"$WORKSPACE"$' --env-root '"$WORKSPACE/cloud_env/staging/runtime"$' --confirm video-cloud-staging' "$COMMAND_LOG" >/dev/null
 grep -F '"overall":"pass"' "$PROVISION_RUN_OUT" >/dev/null
 

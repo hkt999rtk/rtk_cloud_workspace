@@ -259,12 +259,16 @@ and report schema remain provider-neutral.
 
 The deployed qualification is plan-only by default. `test-payment --profile
 staging-live` requires both the exact staging stack confirmation and a second
-confirmation matching the dedicated test organization. It reads the access
-token only from a mode-`0600` file, captures desktop/mobile hosted-page
-screenshots, and always attempts to disable the created policy and revoke the
-synthetic method before emitting its cleanup and redaction reports.
+confirmation matching the dedicated test organization. Explicit organization
+runs read distinct tenant, internal, and debit credentials only from mode-`0600`
+files. The runner proves those credentials cannot cross boundaries, captures
+desktop/mobile hosted-page screenshots, posts and replays a debit that truly
+crosses the automatic top-up threshold, requires one charge attempt and one
+ledger credit, and then qualifies a separate manual top-up. It always attempts
+to disable the created policy and revoke the synthetic method before emitting
+its cleanup and redaction reports.
 With `--bootstrap-test-org`, the runner reads platform-admin credentials from
 the LKE runtime secret, creates or reuses only the fixed `RTK Payment Simulator
-Qualification` organization, and keeps the resulting access token in memory.
+Qualification` organization, and keeps all resulting credentials in memory.
 Repeated runs accept prior disabled policies and revoked synthetic methods but
 fail closed if the dedicated organization contains active payment state.
