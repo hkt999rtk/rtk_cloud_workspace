@@ -47,6 +47,22 @@ func TestPaymentLiveScreenshotUsesInstalledChromiumAndExplicitViewport(t *testin
 	}
 }
 
+func TestPaymentLiveQualificationUsageIDIsStableAndRunScoped(t *testing.T) {
+	first := paymentLiveQualificationUsageID("run-1", "org-1")
+	if first != paymentLiveQualificationUsageID("run-1", "org-1") {
+		t.Fatal("qualification usage ID must be stable within one run")
+	}
+	if first == paymentLiveQualificationUsageID("run-2", "org-1") {
+		t.Fatal("qualification usage ID must differ across runs")
+	}
+	if first == paymentLiveQualificationUsageID("run-1", "org-2") {
+		t.Fatal("qualification usage ID must differ across organizations")
+	}
+	if !strings.HasPrefix(first, "qualification-") || len(first) != len("qualification-")+24 {
+		t.Fatalf("unexpected qualification usage ID shape %q", first)
+	}
+}
+
 func TestPaymentLiveDefaultsToNonMutatingPlan(t *testing.T) {
 	output := captureStdout(t, func() {
 		if err := runTestPayment([]string{"--profile", "staging-live", "--run-id", "plan-test"}); err != nil {
@@ -880,7 +896,7 @@ func TestPaymentLiveCleanupAndRedactionFailuresAreReported(t *testing.T) {
 	}))
 	defer server.Close()
 	err := cleanupPaymentLive(context.Background(), server.Client(), paymentLiveConfig{BillingBaseURL: server.URL, OrgID: "org-test", RunID: "cleanup"}, "token", paymentLiveState{MethodID: "method-1", PolicyVersion: 2})
-	if err == nil || !strings.Contains(err.Error(), "disable policy") || !strings.Contains(err.Error(), "revoke method") {
+	if err == nil || !strings.Contains(err.Error(), "read policy for cleanup") || !strings.Contains(err.Error(), "revoke method") {
 		t.Fatalf("cleanup error = %v", err)
 	}
 

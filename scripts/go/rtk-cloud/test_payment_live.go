@@ -954,7 +954,7 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/pricing-versions/"+url.PathEscape(pricingID)+"/activate", internalToken, headers, nil, nil); err != nil {
 		return "", fmt.Errorf("activate qualification pricing: %w", err)
 	}
-	usageID := "qualification-" + periodStart.Format("20060102T1504Z")
+	usageID := paymentLiveQualificationUsageID(cfg.RunID, cfg.OrgID)
 	digest := sha256.Sum256([]byte(usageID + ":" + cfg.OrgID))
 	usageBody := map[string]any{
 		"usage_id": usageID, "organization_id": cfg.OrgID,
@@ -976,6 +976,11 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 		return "", errors.New("close qualification period returned no invoice ID")
 	}
 	return invoiceID, nil
+}
+
+func paymentLiveQualificationUsageID(runID, organizationID string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(runID) + ":" + strings.TrimSpace(organizationID)))
+	return "qualification-" + hex.EncodeToString(digest[:12])
 }
 
 func cleanupPaymentLive(ctx context.Context, client *http.Client, cfg paymentLiveConfig, token string, state paymentLiveState) error {
