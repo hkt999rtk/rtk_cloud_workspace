@@ -632,6 +632,62 @@ func TestEnsurePaymentLiveQualificationCustomerRecoversOrganizationFromLogin(t *
 	}
 }
 
+func TestPaymentLiveQualificationOrganizationAPIFailsClosed(t *testing.T) {
+	t.Run("create success", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/v1/orgs" || r.Header.Get("Authorization") != "Bearer customer-token" {
+				t.Fatalf("unexpected organization request: %s %s", r.Method, r.URL.Path)
+			}
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["name"] != "Qualification run-1" {
+				t.Fatalf("organization name = %q", body["name"])
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"organization":{"id":"run-org"}}`))
+		}))
+		defer server.Close()
+		organizationID, err := createPaymentLiveQualificationOrganization(context.Background(), server.Client(), server.URL, "customer-token", " Qualification run-1 ")
+		if err != nil || organizationID != "run-org" {
+			t.Fatalf("create organization: id=%q err=%v", organizationID, err)
+		}
+	})
+
+	for _, test := range []struct {
+		name, login, organizations       string
+		loginStatus, organizationsStatus int
+		want                             string
+	}{
+		{name: "login rejected", loginStatus: http.StatusForbidden, want: "login qualification customer: HTTP 403"},
+		{name: "login missing token", loginStatus: http.StatusOK, login: `{"tokens":{}}`, want: "no access token"},
+		{name: "organization list rejected", loginStatus: http.StatusOK, login: `{"tokens":{"access_token":"customer-token"}}`, organizationsStatus: http.StatusServiceUnavailable, want: "list qualification customer organizations: HTTP 503"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/v1/auth/login":
+					w.WriteHeader(test.loginStatus)
+					_, _ = w.Write([]byte(test.login))
+				case "/v1/orgs":
+					w.WriteHeader(test.organizationsStatus)
+					_, _ = w.Write([]byte(test.organizations))
+				default:
+					t.Fatalf("unexpected path %q", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			_, err := ensurePaymentLiveQualificationCustomer(context.Background(), server.Client(), server.URL, paymentLiveQualificationCustomer{Email: "billing@example.test", Password: "Q!qualification-password"})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("expected %q, got %v", test.want, err)
+			}
+		})
+	}
+}
+
 func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("x", 32)), 0o600); err != nil {
