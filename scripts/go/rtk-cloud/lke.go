@@ -2134,6 +2134,9 @@ func lkeImageBuildContext(workload lkeWorkload) (contextDir, dockerfile string, 
 		return generatedVideoCloudDockerfile(filepath.Join(workspace, "repos", "rtk_video_cloud"))
 	case "account-manager":
 		return generatedAccountManagerDockerfile(filepath.Join(workspace, "repos", "rtk_account_manager"))
+	case "billing":
+		contextDir := filepath.Join(workspace, "repos", "rtk_billing")
+		return contextDir, filepath.Join(contextDir, "Dockerfile"), func() {}, nil
 	case "cloud-admin":
 		return generatedGoServiceDockerfile(filepath.Join(workspace, "repos", "rtk_cloud_admin"), "./cmd/server", "rtk-cloud-admin")
 	case "frontend":
@@ -3815,7 +3818,12 @@ func lkeOpenBaoDNSNames(env map[string]string) []string {
 }
 
 func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBaoTLSMaterial) (lkeOpenBaoBootstrapResult, error) {
-	tlsUnchanged := lkeOpenBaoTLSSecretUnchanged(env, tls)
+	tlsExists, tlsUnchanged := lkeOpenBaoTLSSecretState(env, tls)
+	if tlsExists && !tlsUnchanged {
+		if err := lkeValidateOpenBaoOperatorStateBeforeTLSChange(paths, env); err != nil {
+			return lkeOpenBaoBootstrapResult{}, err
+		}
+	}
 	if err := kubectlApply(lkeOpenBaoTLSSecretManifest(env, tls)); err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
@@ -3872,21 +3880,43 @@ func lkeEnsureOpenBao(paths provisionPaths, env map[string]string, tls lkeOpenBa
 	return result, nil
 }
 
-func lkeOpenBaoTLSSecretUnchanged(env map[string]string, tls lkeOpenBaoTLSMaterial) bool {
+func lkeOpenBaoTLSSecretState(env map[string]string, tls lkeOpenBaoTLSMaterial) (bool, bool) {
 	namespace := lkeNamespaceName(env, "secrets")
 	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", "openbao-tls", "-o", "json")
 	if err != nil {
-		return false
+		return false, false
 	}
 	var parsed struct {
 		Data map[string]string `json:"data"`
 	}
 	if err := json.Unmarshal(out, &parsed); err != nil {
-		return false
+		return true, false
 	}
-	return parsed.Data["ca.crt"] == base64.StdEncoding.EncodeToString([]byte(tls.CACert)) &&
+	return true, parsed.Data["ca.crt"] == base64.StdEncoding.EncodeToString([]byte(tls.CACert)) &&
 		parsed.Data["tls.crt"] == base64.StdEncoding.EncodeToString([]byte(tls.ServerCert)) &&
 		parsed.Data["tls.key"] == base64.StdEncoding.EncodeToString([]byte(tls.ServerKey))
+}
+
+func lkeValidateOpenBaoOperatorStateBeforeTLSChange(paths provisionPaths, env map[string]string) error {
+	status, err := lkeOpenBaoStatusValue(env)
+	if err != nil {
+		return fmt.Errorf("refuse OpenBao TLS change before validating the existing instance: %w", err)
+	}
+	if !status.Initialized {
+		return nil
+	}
+	if status.Sealed {
+		return errors.New("refuse OpenBao TLS change while the existing instance is sealed; recover it with matching operator state first")
+	}
+	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), filepath.Join(paths.EnvRoot, "state", "openbao"))
+	rootToken, err := readSensitiveFile(filepath.Join(stateDir, "root-token"), "OpenBao root token")
+	if err != nil {
+		return fmt.Errorf("refuse OpenBao TLS change: %w", err)
+	}
+	if _, err := openBaoSensitiveScript(env, rootToken, `BAO_TOKEN="$OPENBAO_SECRET_INPUT" bao token lookup >/dev/null`); err != nil {
+		return fmt.Errorf("refuse OpenBao TLS change because local operator state does not manage the existing instance: %w", err)
+	}
+	return nil
 }
 
 func lkeOpenBaoChartVersion() string {

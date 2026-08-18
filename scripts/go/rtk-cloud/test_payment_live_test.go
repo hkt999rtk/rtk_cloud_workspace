@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -54,9 +55,318 @@ func TestPaymentLiveBootstrapRequiresFixedOrganizationConfirmation(t *testing.T)
 	if err := validatePaymentLiveConfig(cfg); err != nil {
 		t.Fatalf("safe bootstrap configuration rejected: %v", err)
 	}
+	cfg.CloudAdminBaseURL = "https://admin.video-cloud-staging.realtekconnect.com"
+	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "provided together") {
+		t.Fatalf("Cloud Admin URL without a session file must fail, got %v", err)
+	}
+	cfg.CustomerSessionFile = filepath.Join(t.TempDir(), "customer-session")
+	if err := validatePaymentLiveConfig(cfg); err != nil {
+		t.Fatalf("safe ephemeral session configuration rejected: %v", err)
+	}
 	cfg.OrgID = "unexpected"
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("bootstrap with arbitrary org must fail, got %v", err)
+	}
+}
+
+func TestPaymentLiveWritesProtectedEphemeralCustomerSession(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/customer/login" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "rtk_admin_session", Value: strings.Repeat("s", 32), Path: "/", HttpOnly: true})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "private", "customer-session")
+	if err := writePaymentLiveCustomerSession(context.Background(), server.Client(), server.URL, "billing@example.com", "secret", path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("session file mode = %o", info.Mode().Perm())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != strings.Repeat("s", 32) {
+		t.Fatal("session file did not contain the session cookie")
+	}
+}
+
+func TestPaymentLiveGeneratesStrongTemporaryPassword(t *testing.T) {
+	password, err := paymentLiveRandomPassword()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(password, "Q!") || len(password) != 50 {
+		t.Fatalf("unexpected generated password shape: prefix=%v length=%d", strings.HasPrefix(password, "Q!"), len(password))
+	}
+}
+
+func TestPaymentLiveCustomerSessionRejectsLoginFailures(t *testing.T) {
+	if err := writePaymentLiveCustomerSession(context.Background(), http.DefaultClient, "://invalid", "billing@example.com", "secret", filepath.Join(t.TempDir(), "session")); err == nil {
+		t.Fatal("invalid Cloud Admin login URL must fail")
+	}
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := writePaymentLiveCustomerSession(canceled, http.DefaultClient, "https://admin.example.invalid", "billing@example.com", "secret", filepath.Join(t.TempDir(), "session")); err == nil || !strings.Contains(err.Error(), "customer login") {
+		t.Fatalf("canceled Cloud Admin login must fail safely, got %v", err)
+	}
+
+	for _, test := range []struct {
+		name       string
+		status     int
+		wantStatus bool
+	}{
+		{name: "HTTP rejection", status: http.StatusUnauthorized, wantStatus: true},
+		{name: "missing session cookie", status: http.StatusOK},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+			}))
+			defer server.Close()
+			err := writePaymentLiveCustomerSession(context.Background(), server.Client(), server.URL, "billing@example.com", "secret", filepath.Join(t.TempDir(), "session"))
+			if err == nil {
+				t.Fatal("login without a valid session must fail")
+			}
+			if test.wantStatus && !strings.Contains(err.Error(), "HTTP 401") {
+				t.Fatalf("HTTP rejection was not preserved: %v", err)
+			}
+			if !test.wantStatus && !strings.Contains(err.Error(), "no session cookie") {
+				t.Fatalf("missing-cookie rejection was not preserved: %v", err)
+			}
+		})
+	}
+}
+
+func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/customer/login" {
+			t.Errorf("unexpected login path %q", r.URL.Path)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "rtk_admin_session", Value: strings.Repeat("s", 32)})
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	oldContext := paymentLiveAccountManagerContext
+	oldLogin := paymentLiveAccountLoginSession
+	oldSecret := paymentLiveRuntimeSecretValue
+	oldList := paymentLiveAccountListClouds
+	oldCreateCloud := paymentLiveAccountCreateCloud
+	oldCreateUser := paymentLiveAccountCreateUser
+	oldPassword := paymentLiveGeneratePassword
+	oldClient := paymentLiveHTTPClient
+	t.Cleanup(func() {
+		paymentLiveAccountManagerContext = oldContext
+		paymentLiveAccountLoginSession = oldLogin
+		paymentLiveRuntimeSecretValue = oldSecret
+		paymentLiveAccountListClouds = oldList
+		paymentLiveAccountCreateCloud = oldCreateCloud
+		paymentLiveAccountCreateUser = oldCreateUser
+		paymentLiveGeneratePassword = oldPassword
+		paymentLiveHTTPClient = oldClient
+	})
+
+	closed := false
+	paymentLiveAccountManagerContext = func(workspace, envRoot string) (accountManagerContext, error) {
+		if workspace != "/workspace" || envRoot != "/staging" {
+			t.Fatalf("unexpected bootstrap roots %q %q", workspace, envRoot)
+		}
+		return accountManagerContext{cleanup: func() { closed = true }}, nil
+	}
+	paymentLiveAccountLoginSession = func(ctx accountManagerContext, logf func(string, ...any)) (accountPlatformSession, error) {
+		if ctx.BaseURL != "https://account-manager.video-cloud-staging.realtekconnect.com" {
+			t.Fatalf("bootstrap did not pin Account Manager URL: %q", ctx.BaseURL)
+		}
+		return accountPlatformSession{AccessToken: "platform-token"}, nil
+	}
+	paymentLiveRuntimeSecretValue = func(_, _, namespaceSuffix, secretName, key string) (string, error) {
+		if namespaceSuffix != "-billing" || secretName != "billing-runtime" {
+			t.Fatalf("unexpected runtime secret source %q %q", namespaceSuffix, secretName)
+		}
+		return "secret-" + key, nil
+	}
+	paymentLiveAccountListClouds = func(accountManagerContext, string, int) (map[string]any, error) {
+		return map[string]any{"brand_clouds": []any{
+			map[string]any{"id": "ignored", "name": "Another Brand Cloud"},
+			map[string]any{"id": "qualification-org", "name": paymentLiveBootstrapOrgName},
+		}}, nil
+	}
+	paymentLiveAccountCreateCloud = func(accountManagerContext, string, string) (map[string]any, int, error) {
+		t.Fatal("existing dedicated Brand Cloud must be reused")
+		return nil, 0, nil
+	}
+	paymentLiveGeneratePassword = func() (string, error) { return "Q!temporary-password", nil }
+	paymentLiveAccountCreateUser = func(_ accountManagerContext, session *accountPlatformSession, _ func(string, ...any), orgID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
+		if session.AccessToken != "platform-token" || orgID != "qualification-org" || email != "billing-qualification@users.local" || displayName != "Billing Qualification" || password != "Q!temporary-password" || role != "member" || !rotate {
+			t.Fatalf("unexpected qualification customer request: org=%q email=%q display=%q role=%q rotate=%v", orgID, email, displayName, role, rotate)
+		}
+		return accountCreateUserResult{Action: "rotated"}, nil
+	}
+	paymentLiveHTTPClient = func() *http.Client { return server.Client() }
+
+	sessionFile := filepath.Join(t.TempDir(), "session", "customer")
+	cfg := paymentLiveConfig{
+		EnvRoot: "/staging", AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com",
+		CloudAdminBaseURL: server.URL, CustomerSessionFile: sessionFile,
+	}
+	got, accountToken, billingToken, internalToken, debitToken, err := bootstrapPaymentLiveOrganization("/workspace", cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !closed {
+		t.Fatal("Account Manager context was not closed")
+	}
+	if got.OrgID != "qualification-org" || accountToken != "platform-token" || billingToken != "secret-BILLING_SERVICE_TOKEN" || internalToken != "secret-BILLING_INTERNAL_TOKEN" || debitToken != "secret-BILLING_DEBIT_TOKEN" {
+		t.Fatalf("unexpected bootstrap result: org=%q account=%q billing=%q internal=%q debit=%q", got.OrgID, accountToken, billingToken, internalToken, debitToken)
+	}
+	if raw, err := os.ReadFile(sessionFile); err != nil || string(raw) != strings.Repeat("s", 32) {
+		t.Fatalf("ephemeral customer session was not written safely: value=%q err=%v", raw, err)
+	}
+}
+
+func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
+	oldContext := paymentLiveAccountManagerContext
+	oldLogin := paymentLiveAccountLoginSession
+	oldSecret := paymentLiveRuntimeSecretValue
+	oldList := paymentLiveAccountListClouds
+	oldCreateCloud := paymentLiveAccountCreateCloud
+	t.Cleanup(func() {
+		paymentLiveAccountManagerContext = oldContext
+		paymentLiveAccountLoginSession = oldLogin
+		paymentLiveRuntimeSecretValue = oldSecret
+		paymentLiveAccountListClouds = oldList
+		paymentLiveAccountCreateCloud = oldCreateCloud
+	})
+	paymentLiveAccountManagerContext = func(string, string) (accountManagerContext, error) { return accountManagerContext{}, nil }
+	paymentLiveAccountLoginSession = func(accountManagerContext, func(string, ...any)) (accountPlatformSession, error) {
+		return accountPlatformSession{AccessToken: "platform-token"}, nil
+	}
+	paymentLiveRuntimeSecretValue = func(_, _, _, _, key string) (string, error) { return key, nil }
+	paymentLiveAccountListClouds = func(accountManagerContext, string, int) (map[string]any, error) {
+		return map[string]any{"brand_clouds": []any{}}, nil
+	}
+	paymentLiveAccountCreateCloud = func(_ accountManagerContext, token, name string) (map[string]any, int, error) {
+		if token != "platform-token" || name != paymentLiveBootstrapOrgName {
+			t.Fatalf("unexpected Brand Cloud create request: token=%q name=%q", token, name)
+		}
+		return map[string]any{"brand_cloud": map[string]any{"id": "created-org", "name": name}}, http.StatusCreated, nil
+	}
+
+	cfg, _, _, _, _, err := bootstrapPaymentLiveOrganization("/workspace", paymentLiveConfig{EnvRoot: "/staging", AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OrgID != "created-org" {
+		t.Fatalf("created Brand Cloud ID = %q", cfg.OrgID)
+	}
+}
+
+func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *testing.T) {
+	oldContext := paymentLiveAccountManagerContext
+	oldLogin := paymentLiveAccountLoginSession
+	oldSecret := paymentLiveRuntimeSecretValue
+	oldList := paymentLiveAccountListClouds
+	oldCreateCloud := paymentLiveAccountCreateCloud
+	oldCreateUser := paymentLiveAccountCreateUser
+	oldPassword := paymentLiveGeneratePassword
+	t.Cleanup(func() {
+		paymentLiveAccountManagerContext = oldContext
+		paymentLiveAccountLoginSession = oldLogin
+		paymentLiveRuntimeSecretValue = oldSecret
+		paymentLiveAccountListClouds = oldList
+		paymentLiveAccountCreateCloud = oldCreateCloud
+		paymentLiveAccountCreateUser = oldCreateUser
+		paymentLiveGeneratePassword = oldPassword
+	})
+
+	for _, test := range []struct {
+		stage string
+		want  string
+	}{
+		{stage: "context", want: "platform-admin credentials"},
+		{stage: "login", want: "platform-admin login"},
+		{stage: "BILLING_SERVICE_TOKEN", want: "Billing service credential"},
+		{stage: "BILLING_INTERNAL_TOKEN", want: "Billing internal credential"},
+		{stage: "BILLING_DEBIT_TOKEN", want: "Billing debit credential"},
+		{stage: "list", want: "list qualification Brand Clouds"},
+		{stage: "create", want: "create dedicated qualification Brand Cloud"},
+		{stage: "status", want: "HTTP 409"},
+		{stage: "missing-id", want: "has no ID"},
+		{stage: "password", want: "password generation failed"},
+		{stage: "user", want: "rotate qualification customer"},
+		{stage: "session", want: "missing protocol scheme"},
+	} {
+		t.Run(test.stage, func(t *testing.T) {
+			paymentLiveAccountManagerContext = func(string, string) (accountManagerContext, error) {
+				if test.stage == "context" {
+					return accountManagerContext{}, errors.New("context failed")
+				}
+				return accountManagerContext{}, nil
+			}
+			paymentLiveAccountLoginSession = func(accountManagerContext, func(string, ...any)) (accountPlatformSession, error) {
+				if test.stage == "login" {
+					return accountPlatformSession{}, errors.New("login failed")
+				}
+				return accountPlatformSession{AccessToken: "platform-token"}, nil
+			}
+			paymentLiveRuntimeSecretValue = func(_, _, _, _, key string) (string, error) {
+				if test.stage == key {
+					return "", errors.New("secret failed")
+				}
+				return "secret-" + key, nil
+			}
+			paymentLiveAccountListClouds = func(accountManagerContext, string, int) (map[string]any, error) {
+				if test.stage == "list" {
+					return nil, errors.New("list failed")
+				}
+				if test.stage == "create" || test.stage == "status" {
+					return map[string]any{"brand_clouds": []any{}}, nil
+				}
+				organization := map[string]any{"id": "qualification-org", "name": paymentLiveBootstrapOrgName}
+				if test.stage == "missing-id" {
+					delete(organization, "id")
+				}
+				return map[string]any{"brand_clouds": []any{organization}}, nil
+			}
+			paymentLiveAccountCreateCloud = func(accountManagerContext, string, string) (map[string]any, int, error) {
+				if test.stage == "create" {
+					return nil, 0, errors.New("create failed")
+				}
+				return nil, http.StatusConflict, nil
+			}
+			paymentLiveGeneratePassword = func() (string, error) {
+				if test.stage == "password" {
+					return "", errors.New("password generation failed")
+				}
+				return "Q!temporary-password", nil
+			}
+			paymentLiveAccountCreateUser = func(accountManagerContext, *accountPlatformSession, func(string, ...any), string, string, string, string, string, bool) (accountCreateUserResult, error) {
+				if test.stage == "user" {
+					return accountCreateUserResult{}, errors.New("user failed")
+				}
+				return accountCreateUserResult{}, nil
+			}
+
+			cfg := paymentLiveConfig{EnvRoot: "/staging", AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com"}
+			if test.stage == "password" || test.stage == "user" || test.stage == "session" {
+				cfg.CloudAdminBaseURL = "://invalid"
+				cfg.CustomerSessionFile = filepath.Join(t.TempDir(), "session")
+			}
+			_, _, _, _, _, err := bootstrapPaymentLiveOrganization("/workspace", cfg)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("stage %q: expected %q failure, got %v", test.stage, test.want, err)
+			}
+		})
 	}
 }
 
@@ -69,7 +379,15 @@ func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 	if err := os.WriteFile(billingTokenFile, []byte(strings.Repeat("y", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, Timeout: time.Minute}
+	debitTokenFile := filepath.Join(t.TempDir(), "debit-token")
+	if err := os.WriteFile(debitTokenFile, []byte(strings.Repeat("z", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	internalTokenFile := filepath.Join(t.TempDir(), "internal-token")
+	if err := os.WriteFile(internalTokenFile, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, InternalTokenFile: internalTokenFile, DebitTokenFile: debitTokenFile, Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "--confirm") {
 		t.Fatalf("wrong stack confirmation must fail, got %v", err)
 	}
@@ -91,6 +409,8 @@ func TestPaymentLiveRejectsRawOrInsecureCredentials(t *testing.T) {
 	cfg.AccountManagerBaseURL = "https://account-manager.video-cloud-staging.realtekconnect.com"
 	cfg.AccountTokenFile = filepath.Join(t.TempDir(), "missing")
 	cfg.BillingTokenFile = filepath.Join(t.TempDir(), "missing-billing")
+	cfg.InternalTokenFile = filepath.Join(t.TempDir(), "missing-internal")
+	cfg.DebitTokenFile = filepath.Join(t.TempDir(), "missing-debit")
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "token files") {
 		t.Fatalf("missing token file must fail, got %v", err)
 	}
@@ -143,11 +463,38 @@ func TestPaymentLiveReportFailsClosedWithoutResponsiveEvidence(t *testing.T) {
 
 func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.T) {
 	methodActive := false
+	debitPosted := false
+	manualPosted := false
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/internal/billing/access/org-test" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/internal/billing/debits" && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("d", 32) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/internal/billing/") && r.URL.Path != "/v1/internal/billing/debits" && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("i", 32) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/orgs/org-test/") && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("b", 32) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/orgs/org-test/billing/account":
-			_, _ = w.Write([]byte(`{"payment_providers":[{"name":"simulator","environment":"simulated","capabilities":{"hosted_setup":true,"merchant_initiated_charge":true}}],"auto_topup":null}`))
+			_, _ = w.Write([]byte(`{"account":{"available_balance_minor":0},"payment_providers":[{"name":"simulator","environment":"simulated","capabilities":{"hosted_setup":true,"merchant_initiated_charge":true}}],"auto_topup":null}`))
+		case r.URL.Path == "/v1/orgs/org-test/billing/ledger":
+			entries := `[]`
+			if debitPosted {
+				entries = `[{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+			}
+			if manualPosted {
+				entries = `[{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+			}
+			_, _ = w.Write([]byte(`{"ledger_entries":` + entries + `}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods" && r.Method == http.MethodGet:
 			status := "revoked"
 			if methodActive {
@@ -165,15 +512,31 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			_, _ = w.Write([]byte(`{"auto_topup":{"version":2}}`))
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodDelete:
 			_, _ = w.Write([]byte(`{"auto_topup":{"enabled":false,"version":3}}`))
+		case r.URL.Path == "/v1/internal/billing/debits":
+			if got := r.Header.Get("Authorization"); got != "Bearer "+strings.Repeat("d", 32) {
+				t.Fatalf("debit authorization = %q", got)
+			}
+			duplicate := debitPosted
+			debitPosted = true
+			_, _ = w.Write([]byte(`{"ledger_entry_id":"debit-1","payment_intent_id":"intent-auto","duplicate":` + map[bool]string{true: "true", false: "false"}[duplicate] + `}`))
+		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-auto":
+			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"charge","status":"succeeded"}]}`))
 		case r.URL.Path == "/v1/orgs/org-test/topups":
-			_, _ = w.Write([]byte(`{"payment_intent":{"id":"intent-1"}}`))
-		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-1":
-			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"}}`))
-		case r.URL.Path == "/v1/orgs/org-test/billing/ledger":
-			_, _ = w.Write([]byte(`{"ledger_entries":[{"reason":"payment_top_up_credit","amount_minor":300}]}`))
+			manualPosted = true
+			_, _ = w.Write([]byte(`{"payment_intent":{"id":"intent-manual"}}`))
+		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-manual":
+			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"charge","status":"succeeded"}]}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods/method-1" && r.Method == http.MethodDelete:
 			methodActive = false
 			_, _ = w.Write([]byte(`{"payment_method":{"status":"revoked"}}`))
+		case r.URL.Path == "/v1/internal/billing/pricing-versions" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification"}}`))
+		case r.URL.Path == "/v1/internal/billing/pricing-versions/pricing-qualification/activate" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification","status":"active"}}`))
+		case r.URL.Path == "/v1/internal/billing/usage-facts" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"usage_fact":{"id":"usage-qualification"}}`))
+		case r.URL.Path == "/v1/internal/billing/periods/close" && r.Method == http.MethodPost:
+			_, _ = w.Write([]byte(`{"invoice":{"id":"invoice-qualification","state":"settled"}}`))
 		default:
 			t.Fatalf("unexpected payment qualification request: %s %s", r.Method, r.URL.Path)
 		}
@@ -198,18 +561,28 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	t.Cleanup(func() { paymentLiveScreenshot = oldScreenshot })
 	cfg := paymentLiveConfig{RunID: "live-success", BillingBaseURL: server.URL, OrgID: "org-test", Timeout: time.Second}
 	state := paymentLiveState{}
-	if err := executePaymentLive(context.Background(), client, t.TempDir(), outDir, cfg, strings.Repeat("b", 32), &state); err != nil {
+	if err := executePaymentLive(context.Background(), client, t.TempDir(), outDir, cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.MethodID != "method-1" || state.IntentID != "intent-1" || state.PolicyVersion != 2 {
+	if state.MethodID != "method-1" || state.AutoIntentID != "intent-auto" || state.ManualIntentID != "intent-manual" || state.PolicyVersion != 2 || !state.HostedSetupPassed || !state.AutoTopUpPassed || !state.ManualTopUpPassed {
 		t.Fatalf("unexpected qualification state: %+v", state)
 	}
 	if err := cleanupPaymentLive(context.Background(), client, cfg, strings.Repeat("b", 32), state); err != nil {
 		t.Fatal(err)
 	}
+	debitPosted = false
+	manualPosted = false
 
 	tokenFile := filepath.Join(t.TempDir(), "billing-token")
 	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("b", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	debitTokenFile := filepath.Join(t.TempDir(), "debit-token")
+	if err := os.WriteFile(debitTokenFile, []byte(strings.Repeat("d", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	internalTokenFile := filepath.Join(t.TempDir(), "internal-token")
+	if err := os.WriteFile(internalTokenFile, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	oldClientFactory := paymentLiveHTTPClient
@@ -225,7 +598,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		"--profile", "staging-live", "--run-id", runID, "--run",
 		"--account-manager-base-url", "https://account-manager.video-cloud-staging.realtekconnect.com",
 		"--billing-base-url", "https://billing.video-cloud-staging.realtekconnect.com",
-		"--org-id", "org-test", "--billing-token-file", tokenFile,
+		"--org-id", "org-test", "--billing-token-file", tokenFile, "--internal-token-file", internalTokenFile, "--debit-token-file", debitTokenFile,
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	}); err != nil {
 		t.Fatal(err)
@@ -243,11 +616,19 @@ func TestPaymentLiveCommandAndHTTPFailuresFailClosed(t *testing.T) {
 	if err := os.WriteFile(shortToken, []byte("short"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	validDebitToken := filepath.Join(t.TempDir(), "debit-token")
+	if err := os.WriteFile(validDebitToken, []byte(strings.Repeat("d", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validInternalToken := filepath.Join(t.TempDir(), "internal-token")
+	if err := os.WriteFile(validInternalToken, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	err := runTestPaymentLive([]string{
 		"--run", "--run-id", "short-token",
 		"--account-manager-base-url", "https://account-manager.video-cloud-staging.realtekconnect.com",
 		"--billing-base-url", "https://billing.video-cloud-staging.realtekconnect.com",
-		"--org-id", "org-test", "--billing-token-file", shortToken,
+		"--org-id", "org-test", "--billing-token-file", shortToken, "--internal-token-file", validInternalToken, "--debit-token-file", validDebitToken,
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	})
 	if err == nil || !strings.Contains(err.Error(), "implausibly short") {
@@ -304,9 +685,15 @@ func TestExecutePaymentLiveRejectsUnsafePreflightStates(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/v1/internal/billing/access/org-test" || r.URL.Path == "/v1/internal/billing/debits" || (strings.HasPrefix(r.URL.Path, "/v1/orgs/org-test/") && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("b", 32)) {
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
 				switch r.URL.Path {
 				case "/v1/orgs/org-test/billing/account":
 					_, _ = w.Write([]byte(tt.account))
+				case "/v1/orgs/org-test/billing/ledger":
+					_, _ = w.Write([]byte(`{"ledger_entries":[]}`))
 				case "/v1/orgs/org-test/payment-methods":
 					_, _ = w.Write([]byte(tt.methods))
 				case "/v1/orgs/org-test/payment-methods/setup":
@@ -317,7 +704,7 @@ func TestExecutePaymentLiveRejectsUnsafePreflightStates(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := paymentLiveConfig{RunID: "unsafe", BillingBaseURL: server.URL, OrgID: "org-test", Timeout: time.Second}
-			err := executePaymentLive(context.Background(), server.Client(), t.TempDir(), t.TempDir(), cfg, "token", &paymentLiveState{})
+			err := executePaymentLive(context.Background(), server.Client(), t.TempDir(), t.TempDir(), cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &paymentLiveState{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
 			}

@@ -60,17 +60,25 @@ Use the explicit test layers when broader validation is needed:
 # Non-mutating staging plan (the default when --run is absent).
 go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID
 
-# Dedicated staging organization only. The access token is read from a 0600 file.
+# Dedicated staging organization only. Distinct Billing credentials are read
+# from mode-0600 files and never accepted as raw command-line values.
 go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID \
   --base-url https://account-manager.video-cloud-staging.realtekconnect.com \
-  --org-id TEST_ORG_ID --access-token-file /secure/path/token \
+  --org-id TEST_ORG_ID \
+  --billing-token-file /secure/path/billing-service-token \
+  --internal-token-file /secure/path/billing-internal-token \
+  --debit-token-file /secure/path/billing-debit-token \
   --run --confirm video-cloud-staging-lke --confirm-test-org TEST_ORG_ID
 
-# Or safely create/reuse the fixed dedicated organization with credentials read
-# from the LKE runtime secret. No access token is written to disk.
+# Or safely create/reuse the fixed dedicated Brand Cloud with credentials read
+# from the LKE runtime secret. The optional Cloud Admin session is written only
+# to a caller-selected mode-0600 temporary file and must be revoked after use.
 go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID \
   --base-url https://account-manager.video-cloud-staging.realtekconnect.com \
-  --bootstrap-test-org --env-root cloud_env/staging/lke \
+  --billing-base-url https://billing.video-cloud-staging.realtekconnect.com \
+  --cloud-admin-base-url https://admin.video-cloud-staging.realtekconnect.com \
+  --customer-session-file /secure/temporary/customer-session \
+  --bootstrap-test-org --env-root cloud_env/staging/linode \
   --run --confirm video-cloud-staging-lke \
   --confirm-test-org rtk-payment-simulator-qualification
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)
