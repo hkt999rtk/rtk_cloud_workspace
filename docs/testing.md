@@ -70,10 +70,14 @@ go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_I
   --debit-token-file /secure/path/billing-debit-token \
   --run --confirm video-cloud-staging-lke --confirm-test-org TEST_ORG_ID
 
-# Or safely create/reuse the fixed dedicated organization with credentials read
-# from the LKE runtime secret. No access token is written to disk.
+# Or safely create/reuse the fixed dedicated Brand Cloud with credentials read
+# from the LKE runtime secret. The optional Cloud Admin session is written only
+# to a caller-selected mode-0600 temporary file and must be revoked after use.
 go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_ID \
   --base-url https://account-manager.video-cloud-staging.realtekconnect.com \
+  --billing-base-url https://billing.video-cloud-staging.realtekconnect.com \
+  --cloud-admin-base-url https://admin.video-cloud-staging.realtekconnect.com \
+  --customer-session-file /secure/temporary/customer-session \
   --bootstrap-test-org --env-root cloud_env/staging/linode \
   --run --confirm video-cloud-staging-lke \
   --confirm-test-org rtk-payment-simulator-qualification

@@ -29,6 +29,9 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"test-payment",
 		"--profile staging-live",
 		"--bootstrap-test-org",
+		"--customer-session-file",
+		"::add-mask::",
+		"/api/auth/logout",
 		"BILLING_STAGING_ENV_ROOT",
 		"lke-build-images",
 		"packages: write",
@@ -42,6 +45,9 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 	}
 	if strings.Contains(body, "pull_request:") || strings.Contains(body, "cancel-in-progress: true") {
 		t.Fatal("Billing staging mutation must not run for pull requests or cancel an in-progress cleanup")
+	}
+	if strings.Contains(body, "BILLING_STAGING_CUSTOMER_SESSION_ID") {
+		t.Fatal("Billing staging qualification must mint an ephemeral customer session instead of storing one in repository secrets")
 	}
 	if strings.Contains(body, "linode_deploy") || strings.Contains(body, "deploy/linode") {
 		t.Fatal("Billing staging qualification must remain K8s-only")

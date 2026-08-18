@@ -54,9 +54,47 @@ func TestPaymentLiveBootstrapRequiresFixedOrganizationConfirmation(t *testing.T)
 	if err := validatePaymentLiveConfig(cfg); err != nil {
 		t.Fatalf("safe bootstrap configuration rejected: %v", err)
 	}
+	cfg.CloudAdminBaseURL = "https://admin.video-cloud-staging.realtekconnect.com"
+	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "provided together") {
+		t.Fatalf("Cloud Admin URL without a session file must fail, got %v", err)
+	}
+	cfg.CustomerSessionFile = filepath.Join(t.TempDir(), "customer-session")
+	if err := validatePaymentLiveConfig(cfg); err != nil {
+		t.Fatalf("safe ephemeral session configuration rejected: %v", err)
+	}
 	cfg.OrgID = "unexpected"
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Fatalf("bootstrap with arbitrary org must fail, got %v", err)
+	}
+}
+
+func TestPaymentLiveWritesProtectedEphemeralCustomerSession(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth/customer/login" || r.Method != http.MethodPost {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		http.SetCookie(w, &http.Cookie{Name: "rtk_admin_session", Value: strings.Repeat("s", 32), Path: "/", HttpOnly: true})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "private", "customer-session")
+	if err := writePaymentLiveCustomerSession(context.Background(), server.Client(), server.URL, "billing@example.com", "secret", path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("session file mode = %o", info.Mode().Perm())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != strings.Repeat("s", 32) {
+		t.Fatal("session file did not contain the session cookie")
 	}
 }
 

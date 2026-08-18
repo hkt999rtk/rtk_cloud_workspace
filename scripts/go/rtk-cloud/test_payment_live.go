@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -24,12 +26,13 @@ const paymentLiveBootstrapConfirmation = "rtk-payment-simulator-qualification"
 const paymentLiveBootstrapOrgName = "RTK Payment Simulator Qualification"
 
 type paymentLiveConfig struct {
-	RunID, AccountManagerBaseURL, BillingBaseURL, OrgID                   string
-	AccountTokenFile, BillingTokenFile, InternalTokenFile, DebitTokenFile string
-	Confirm, ConfirmTestOrg                                               string
-	EnvRoot                                                               string
-	Run, Plan, BootstrapTestOrg                                           bool
-	Timeout                                                               time.Duration
+	RunID, AccountManagerBaseURL, BillingBaseURL, CloudAdminBaseURL, OrgID string
+	AccountTokenFile, BillingTokenFile, InternalTokenFile, DebitTokenFile  string
+	CustomerSessionFile                                                    string
+	Confirm, ConfirmTestOrg                                                string
+	EnvRoot                                                                string
+	Run, Plan, BootstrapTestOrg                                            bool
+	Timeout                                                                time.Duration
 }
 
 type paymentLiveState struct {
@@ -62,6 +65,8 @@ func runTestPaymentLive(args []string) error {
 	accountManagerBaseURL := fs.String("base-url", os.Getenv("ACCOUNT_MANAGER_PUBLIC_URL"), "staging Account Manager base URL (deprecated alias)")
 	fs.StringVar(accountManagerBaseURL, "account-manager-base-url", os.Getenv("ACCOUNT_MANAGER_PUBLIC_URL"), "staging Account Manager base URL")
 	billingBaseURL := fs.String("billing-base-url", firstNonEmpty(os.Getenv("BILLING_PUBLIC_URL"), "https://billing.video-cloud-staging.realtekconnect.com"), "staging Billing service base URL")
+	cloudAdminBaseURL := fs.String("cloud-admin-base-url", "", "staging Cloud Admin base URL used to mint an ephemeral customer session")
+	customerSessionFile := fs.String("customer-session-file", "", "0600 output file for the ephemeral Cloud Admin customer session")
 	orgID := fs.String("org-id", os.Getenv("PAYMENT_TEST_ORG_ID"), "dedicated staging test organization")
 	accountTokenFile := fs.String("access-token-file", os.Getenv("PAYMENT_TEST_ACCESS_TOKEN_FILE"), "file containing the dedicated Account Manager test access token")
 	billingTokenFile := fs.String("billing-token-file", os.Getenv("PAYMENT_TEST_BILLING_TOKEN_FILE"), "file containing the dedicated Billing service token")
@@ -89,7 +94,7 @@ func runTestPaymentLive(args []string) error {
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z") + "-payment-live"
 	}
-	cfg := paymentLiveConfig{RunID: *runID, AccountManagerBaseURL: strings.TrimRight(strings.TrimSpace(*accountManagerBaseURL), "/"), BillingBaseURL: strings.TrimRight(strings.TrimSpace(*billingBaseURL), "/"), OrgID: strings.TrimSpace(*orgID), AccountTokenFile: strings.TrimSpace(*accountTokenFile), BillingTokenFile: strings.TrimSpace(*billingTokenFile), InternalTokenFile: strings.TrimSpace(*internalTokenFile), DebitTokenFile: strings.TrimSpace(*debitTokenFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
+	cfg := paymentLiveConfig{RunID: *runID, AccountManagerBaseURL: strings.TrimRight(strings.TrimSpace(*accountManagerBaseURL), "/"), BillingBaseURL: strings.TrimRight(strings.TrimSpace(*billingBaseURL), "/"), CloudAdminBaseURL: strings.TrimRight(strings.TrimSpace(*cloudAdminBaseURL), "/"), OrgID: strings.TrimSpace(*orgID), AccountTokenFile: strings.TrimSpace(*accountTokenFile), BillingTokenFile: strings.TrimSpace(*billingTokenFile), InternalTokenFile: strings.TrimSpace(*internalTokenFile), DebitTokenFile: strings.TrimSpace(*debitTokenFile), CustomerSessionFile: strings.TrimSpace(*customerSessionFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
 	if cfg.Plan {
 		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> debit threshold crossing -> idempotent replay -> one automatic charge/credit -> separate manual TWD 300 top-up -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
 		return nil
@@ -164,7 +169,7 @@ func runTestPaymentLive(args []string) error {
 		"schema_version": 1, "run_id": cfg.RunID, "organization_id": cfg.OrgID,
 		"hosted_setup_passed": state.HostedSetupPassed, "auto_topup_passed": state.AutoTopUpPassed,
 		"manual_topup_passed": state.ManualTopUpPassed, "invoice_passed": state.InvoicePassed,
-		"invoice_id": state.InvoiceID,
+		"invoice_id": state.InvoiceID, "ephemeral_customer_session_created": cfg.CustomerSessionFile != "",
 	}); err != nil {
 		return err
 	}
@@ -203,6 +208,18 @@ func validatePaymentLiveConfig(cfg paymentLiveConfig) error {
 	if billingErr != nil || billingParsed.Scheme != "https" || billingParsed.Host == "" || billingParsed.User != nil || strings.ToLower(billingParsed.Hostname()) != "billing.video-cloud-staging.realtekconnect.com" {
 		return errors.New("--billing-base-url must be the approved HTTPS Billing staging endpoint")
 	}
+	if (cfg.CloudAdminBaseURL == "") != (cfg.CustomerSessionFile == "") {
+		return errors.New("--cloud-admin-base-url and --customer-session-file must be provided together")
+	}
+	if cfg.CloudAdminBaseURL != "" {
+		cloudAdminParsed, cloudAdminErr := url.Parse(cfg.CloudAdminBaseURL)
+		if cloudAdminErr != nil || cloudAdminParsed.Scheme != "https" || cloudAdminParsed.Host == "" || cloudAdminParsed.User != nil || strings.ToLower(cloudAdminParsed.Hostname()) != "admin.video-cloud-staging.realtekconnect.com" {
+			return errors.New("--cloud-admin-base-url must be the approved HTTPS Cloud Admin staging endpoint")
+		}
+		if !cfg.BootstrapTestOrg {
+			return errors.New("ephemeral Cloud Admin customer sessions require --bootstrap-test-org")
+		}
+	}
 	if !cfg.BootstrapTestOrg && (cfg.BillingTokenFile == "" || cfg.InternalTokenFile == "" || cfg.DebitTokenFile == "") {
 		return errors.New("--billing-token-file, --internal-token-file, and --debit-token-file are required; raw token command-line arguments are intentionally unsupported")
 	}
@@ -234,10 +251,11 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 	}
 	defer ctx.Close()
 	ctx.BaseURL = cfg.AccountManagerBaseURL
-	token, err := accountLogin(ctx, func(string, ...any) {})
+	session, err := accountLoginSession(ctx, func(string, ...any) {})
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("staging platform-admin login: %w", err)
 	}
+	token := session.AccessToken
 	billingToken, err := lkeRuntimeSecretValueFromFlags(workspace, cfg.EnvRoot, "-billing", "billing-runtime", "BILLING_SERVICE_TOKEN")
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing service credential: %w", err)
@@ -251,31 +269,106 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing debit credential: %w", err)
 	}
 	client := paymentLiveHTTPClient()
-	var organizations map[string]any
-	if err := paymentLiveJSON(context.Background(), client, http.MethodGet, cfg.AccountManagerBaseURL+"/v1/orgs?limit=100", token, nil, nil, &organizations); err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("list qualification organizations: %w", err)
+	var brandCloud map[string]any
+	clouds, err := accountListBrandClouds(ctx, token, 200)
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("list qualification Brand Clouds: %w", err)
 	}
-	for _, item := range paymentLiveAnySlice(organizations["organizations"]) {
+	for _, item := range paymentLiveAnySlice(clouds["brand_clouds"]) {
 		organization := nestedMap(item)
 		name, _ := organization["name"].(string)
 		if name != paymentLiveBootstrapOrgName {
 			continue
 		}
-		cfg.OrgID, _ = organization["id"].(string)
-		if cfg.OrgID == "" {
-			return cfg, "", "", "", "", errors.New("dedicated qualification organization has no ID")
+		brandCloud = organization
+		break
+	}
+	if len(brandCloud) == 0 {
+		created, status, createErr := accountCreateBrandCloud(ctx, token, paymentLiveBootstrapOrgName)
+		if createErr != nil {
+			return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification Brand Cloud: %w", createErr)
 		}
-		return cfg, token, billingToken, internalToken, debitToken, nil
+		if status != http.StatusOK && status != http.StatusCreated {
+			return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification Brand Cloud: HTTP %d", status)
+		}
+		brandCloud = nestedMap(created["brand_cloud"])
 	}
-	var created map[string]any
-	if err := paymentLiveJSON(context.Background(), client, http.MethodPost, cfg.AccountManagerBaseURL+"/v1/orgs", token, nil, map[string]any{"name": paymentLiveBootstrapOrgName}, &created); err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification organization: %w", err)
-	}
-	cfg.OrgID, _ = nestedMap(created["organization"])["id"].(string)
+	cfg.OrgID, _ = brandCloud["id"].(string)
 	if cfg.OrgID == "" {
-		return cfg, "", "", "", "", errors.New("created qualification organization has no ID")
+		return cfg, "", "", "", "", errors.New("dedicated qualification Brand Cloud has no ID")
+	}
+	if cfg.CustomerSessionFile != "" {
+		password, randomErr := paymentLiveRandomPassword()
+		if randomErr != nil {
+			return cfg, "", "", "", "", randomErr
+		}
+		const email = "billing-qualification@users.local"
+		if _, createErr := accountCreateUser(ctx, &session, func(string, ...any) {}, cfg.OrgID, email, "Billing Qualification", password, "member", true); createErr != nil {
+			return cfg, "", "", "", "", fmt.Errorf("create or rotate qualification customer: %w", createErr)
+		}
+		if loginErr := writePaymentLiveCustomerSession(context.Background(), client, cfg.CloudAdminBaseURL, email, password, cfg.CustomerSessionFile); loginErr != nil {
+			return cfg, "", "", "", "", loginErr
+		}
 	}
 	return cfg, token, billingToken, internalToken, debitToken, nil
+}
+
+func paymentLiveRandomPassword() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate qualification customer password: %w", err)
+	}
+	return "Q!" + hex.EncodeToString(raw), nil
+}
+
+func writePaymentLiveCustomerSession(ctx context.Context, client *http.Client, baseURL, email, password, output string) error {
+	body, err := json.Marshal(map[string]string{"email": email, "password": password})
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/auth/customer/login", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("Cloud Admin qualification customer login: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("Cloud Admin qualification customer login: HTTP %d", response.StatusCode)
+	}
+	value := ""
+	for _, cookie := range response.Cookies() {
+		if cookie.Name == "rtk_admin_session" {
+			value = cookie.Value
+			break
+		}
+	}
+	if len(value) < 16 {
+		return errors.New("Cloud Admin qualification customer login returned no session cookie")
+	}
+	if err := os.MkdirAll(filepath.Dir(output), 0o700); err != nil {
+		return fmt.Errorf("create customer session directory: %w", err)
+	}
+	file, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("create customer session file: %w", err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("protect customer session file: %w", err)
+	}
+	if _, err := file.WriteString(value); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write customer session file: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close customer session file: %w", err)
+	}
+	return nil
 }
 
 func executePaymentLive(ctx context.Context, client *http.Client, workspace, outDir string, cfg paymentLiveConfig, token, internalToken, debitToken string, state *paymentLiveState) error {

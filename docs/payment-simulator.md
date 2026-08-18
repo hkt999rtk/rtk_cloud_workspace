@@ -268,7 +268,11 @@ ledger credit, and then qualifies a separate manual top-up. It always attempts
 to disable the created policy and revoke the synthetic method before emitting
 its cleanup and redaction reports.
 With `--bootstrap-test-org`, the runner reads platform-admin credentials from
-the LKE runtime secret, creates or reuses only the fixed `RTK Payment Simulator
-Qualification` organization, and keeps all resulting credentials in memory.
+the LKE runtime secret and creates or reuses only the fixed `RTK Payment
+Simulator Qualification` Brand Cloud. When Cloud Admin qualification is
+requested, it rotates a random password for the dedicated customer, logs in,
+writes only the short-lived session to a mode-`0600` runner-temporary file, and
+the workflow revokes that session after Playwright finishes. Neither the
+password nor session is uploaded as evidence or stored as a repository secret.
 Repeated runs accept prior disabled policies and revoked synthetic methods but
 fail closed if the dedicated organization contains active payment state.

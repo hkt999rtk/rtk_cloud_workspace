@@ -157,6 +157,8 @@ jobs:
             --run-id "$BILLING_QUALIFICATION_RUN_ID" \
             --account-manager-base-url https://account-manager.video-cloud-staging.realtekconnect.com \
             --billing-base-url https://billing.video-cloud-staging.realtekconnect.com \
+            --cloud-admin-base-url https://admin.video-cloud-staging.realtekconnect.com \
+            --customer-session-file "$RUNNER_TEMP/billing-customer-session" \
             --bootstrap-test-org \
             --env-root "$BILLING_STAGING_ENV_ROOT" \
             --run \
@@ -168,7 +170,6 @@ jobs:
         working-directory: repos/rtk_cloud_admin/web
         env:
           E2E_BASE_URL: https://admin.video-cloud-staging.realtekconnect.com
-          E2E_CUSTOMER_SESSION_ID: ${{ secrets.BILLING_STAGING_CUSTOMER_SESSION_ID }}
           E2E_BILLING_OTHER_ORG_ID: ${{ vars.BILLING_STAGING_OTHER_ORG_ID }}
           E2E_TEST_ENVIRONMENT: staging
           E2E_TEST_RUN_ID: ${{ env.BILLING_QUALIFICATION_RUN_ID }}
@@ -177,11 +178,30 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          E2E_CUSTOMER_SESSION_ID="$(<"$RUNNER_TEMP/billing-customer-session")"
           test -n "$E2E_CUSTOMER_SESSION_ID"
+          echo "::add-mask::$E2E_CUSTOMER_SESSION_ID"
+          export E2E_CUSTOMER_SESSION_ID
           context="$GITHUB_WORKSPACE/.artifacts/test-runs/$BILLING_QUALIFICATION_RUN_ID/payments/staging-live/qualification-context.json"
           export E2E_BILLING_ORG_ID="$(jq -er '.organization_id' "$context")"
           export E2E_BILLING_INVOICE_ID="$(jq -er '.invoice_id' "$context")"
           npm run e2e:billing:staging
+
+      - name: Revoke ephemeral Cloud Admin customer session
+        if: always() && env.BILLING_QUALIFICATION_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          session_file="$RUNNER_TEMP/billing-customer-session"
+          if [ -s "$session_file" ]; then
+            session="$(<"$session_file")"
+            echo "::add-mask::$session"
+            curl --fail --silent --show-error --max-time 15 \
+              -X POST \
+              -H "Cookie: rtk_admin_session=$session" \
+              https://admin.video-cloud-staging.realtekconnect.com/api/auth/logout >/dev/null
+            rm -f "$session_file"
+          fi
 
       - name: Upload sanitized qualification evidence
         if: always() && env.BILLING_QUALIFICATION_MODE == 'run'
