@@ -50,6 +50,11 @@ repository/submodule status. It does not run every service or product E2E test.
 
 Use the explicit test layers when broader validation is needed:
 
+Delegated agents must use the canonical
+[`Billing Staging Qualification Runbook`](billing-staging-qualification.md)
+instead of assembling a local live staging mutation. The local commands below
+are for operators who already own a matching staging runtime.
+
 ```sh
 (cd scripts/go && go run ./rtk-cloud -- test-services)
 (cd scripts/go && go run ./rtk-cloud -- test-coverage --profile unit --base-ref origin/main)
@@ -78,7 +83,7 @@ go run ./scripts/go/rtk-cloud test-payment --profile staging-live --run-id RUN_I
   --billing-base-url https://billing.video-cloud-staging.realtekconnect.com \
   --cloud-admin-base-url https://admin.video-cloud-staging.realtekconnect.com \
   --customer-session-file /secure/temporary/customer-session \
-  --bootstrap-test-org --env-root cloud_env/staging/linode \
+  --bootstrap-test-org --env-root cloud_env/staging/runtime \
   --run --confirm video-cloud-staging-lke \
   --confirm-test-org rtk-payment-simulator-qualification
 (cd scripts/go && go run ./rtk-cloud -- test-e2e)

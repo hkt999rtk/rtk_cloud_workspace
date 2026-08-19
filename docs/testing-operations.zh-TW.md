@@ -20,6 +20,7 @@ acceptance、1K feature qualification 與 capacity/load test；不同層級不�
 | Deterministic E2E | `test-e2e` | 本機 fixture；不需要 shared staging |
 | UI tests | `test-ui` | Chromium 與 local BFF/fixture |
 | 已部署環境驗收 | `deployment acceptance` | matching runtime + kube access |
+| Billing staging qualification | GitHub Actions `billing-staging-qualification.yml` | Actions dispatch 權限 + staging 授權 |
 | Feature 1K qualification | `test-feature` | acceptance PASS + 專用 test identity |
 | Capacity test | `home-100k.sh workflow-live` | 明確 target、容量計畫、足量 inventory 與 generator |
 
@@ -85,6 +86,15 @@ go run ./scripts/go/rtk-cloud -- deployment acceptance \
 
 Acceptance 必須證明 user/device setup、MQTT flow、runtime-log persistence 與所選 billing
 checks。任一步失敗都應停止後續付費 load-generator 建立。
+
+## Billing staging qualification
+
+Billing payment、invoice 與 Cloud Admin portal 的 deployed E2E 使用獨立的 GitHub
+Actions workflow。交給其他 agent 執行時，預設先跑 non-mutating `plan`，通過後才可用正確
+確認字串執行 live staging mutation；不要讓 agent 自行拼接本機 credential 或 runtime。
+
+完整權限、dispatch/watch 命令、七個必要 Test ID、PASS gate、artifact、cleanup 與失敗交接
+規則見 [`billing-staging-qualification.md`](billing-staging-qualification.md)。
 
 ## 1K feature qualification
 
