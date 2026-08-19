@@ -72,6 +72,7 @@ evidence, not current operator instructions.
 | Document | Purpose |
 | --- | --- |
 | [testing.md](testing.md) | Test governance, commands, coverage, artifacts, and evidence schemas. |
+| [billing-staging-qualification.md](billing-staging-qualification.md) | Canonical agent/operator workflow for deployed Billing payment and Cloud Admin portal qualification. |
 | [test-catalog.md](test-catalog.md) | Generated human-readable Test ID catalog. |
 | [../e2e_test/README.md](../e2e_test/README.md) | Workspace E2E taxonomy and runner ownership. |
 | [../loadtests/home-100k/README.md](../loadtests/home-100k/README.md) | Home MQTT/shadow and WebRTC/TURN load profiles. |
@@ -82,6 +83,7 @@ evidence, not current operator instructions.
 | Document | Purpose |
 | --- | --- |
 | [staging-runtime-bootstrap.zh-TW.md](staging-runtime-bootstrap.zh-TW.md) | Restore or validate matching ignored runtime on another controller. |
+| [billing-staging-qualification.md](billing-staging-qualification.md) | Dispatch, monitor, assess, and hand off the Billing staging qualification without exposing credentials. |
 | [../loadtests/home-100k/docs/prepare-another-machine.md](../loadtests/home-100k/docs/prepare-another-machine.md) | Prepare another Home load-test controller or generator. |
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Cross-service startup/request/async dependency failure policy. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Backend validation status and release evidence checklist. |
@@ -123,5 +125,6 @@ points unless linked from one of the active guides above.
 | Client SDK | [repos/rtk_cloud_client/docs](../repos/rtk_cloud_client/docs/README.md) |
 | Video Cloud | [repos/rtk_video_cloud/docs](../repos/rtk_video_cloud/docs/architecture.md) |
 | Account Manager | [repos/rtk_account_manager/docs](../repos/rtk_account_manager/docs/SPEC.md) |
+| Billing | [repos/rtk_billing](../repos/rtk_billing/README.md) |
 | Frontend | [repos/rtk_cloud_frontend](../repos/rtk_cloud_frontend/README.md) |
 | Cloud Admin | [repos/rtk_cloud_admin](../repos/rtk_cloud_admin/README.md) |
