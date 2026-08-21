@@ -2260,6 +2260,146 @@ func TestLKEInternalTLSMaterialReusesMatchingAlgorithmState(t *testing.T) {
 	}
 }
 
+func TestLKEMQTTMaterialRotatesConfiguredAlgorithm(t *testing.T) {
+	envRoot := t.TempDir()
+	paths := provisionPaths{EnvRoot: envRoot}
+	p256Env := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"}
+	first, err := loadOrCreateLKEMQTTMaterial(paths, p256Env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ed25519Env := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"}
+	rotated, err := loadOrCreateLKEMQTTMaterial(paths, ed25519Env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ServerCert == rotated.ServerCert || first.ServerKey == rotated.ServerKey {
+		t.Fatal("MQTT algorithm change did not rotate persisted material")
+	}
+	stateDir := filepath.Join(envRoot, "state", "mqtt-tls")
+	if algorithm, err := lkePEMPrivateKeyAlgorithm(filepath.Join(stateDir, "server.key")); err != nil || algorithm != "ed25519" {
+		t.Fatalf("rotated MQTT private key algorithm = %q, err=%v", algorithm, err)
+	}
+	if algorithm, err := lkePEMCertificatePublicKeyAlgorithm(filepath.Join(stateDir, "server.crt")); err != nil || algorithm != "ed25519" {
+		t.Fatalf("rotated MQTT certificate algorithm = %q, err=%v", algorithm, err)
+	}
+}
+
+func TestLKEInternalTLSMaterialRejectsIncompletePersistedState(t *testing.T) {
+	env := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"}
+	tests := []struct {
+		name  string
+		setup func(string)
+		load  func(provisionPaths, map[string]string) error
+		want  string
+	}{
+		{
+			name: "mqtt",
+			setup: func(envRoot string) {
+				writeTestFile(t, filepath.Join(envRoot, "state", "mqtt-tls", "server.crt"), "partial")
+			},
+			load: func(paths provisionPaths, env map[string]string) error {
+				_, err := loadOrCreateLKEMQTTMaterial(paths, env)
+				return err
+			},
+			want: "MQTT TLS state is incomplete",
+		},
+		{
+			name: "certissuer",
+			setup: func(envRoot string) {
+				writeTestFile(t, filepath.Join(envRoot, "state", "certissuer", "server.crt"), "partial")
+			},
+			load: func(paths provisionPaths, env map[string]string) error {
+				_, err := loadOrCreateLKECertIssuerMaterial(paths, env)
+				return err
+			},
+			want: "certissuer TLS state is incomplete",
+		},
+		{
+			name: "openbao",
+			setup: func(envRoot string) {
+				writeTestFile(t, filepath.Join(envRoot, "state", "openbao", "tls.crt"), "partial")
+			},
+			load: func(paths provisionPaths, env map[string]string) error {
+				_, err := loadOrCreateLKEOpenBaoTLSMaterial(paths, env)
+				return err
+			},
+			want: "OpenBao TLS state is incomplete",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			envRoot := t.TempDir()
+			tc.setup(envRoot)
+			err := tc.load(provisionPaths{EnvRoot: envRoot}, env)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestLKEInternalTLSMaterialRejectsInvalidAlgorithm(t *testing.T) {
+	env := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p-256"}
+	for name, generate := range map[string]func() error{
+		"mqtt": func() error {
+			_, err := newLKEMQTTMaterial(env)
+			return err
+		},
+		"certissuer": func() error {
+			_, err := newLKECertIssuerMaterial(env)
+			return err
+		},
+		"openbao": func() error {
+			_, err := newLKEOpenBaoTLSMaterial(env)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := generate()
+			if err == nil || !strings.Contains(err.Error(), "must be ed25519 or p256") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLKEPEMAlgorithmValidationFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.pem")
+	if _, err := lkePEMPrivateKeyAlgorithm(missing); err == nil {
+		t.Fatal("missing private key was accepted")
+	}
+	if _, err := lkePEMCertificatePublicKeyAlgorithm(missing); err == nil {
+		t.Fatal("missing certificate was accepted")
+	}
+
+	invalidKey := filepath.Join(dir, "invalid.key")
+	writeTestFile(t, invalidKey, "not PEM")
+	if _, err := lkePEMPrivateKeyAlgorithm(invalidKey); err == nil || !strings.Contains(err.Error(), "invalid PEM private key") {
+		t.Fatalf("invalid private key error = %v", err)
+	}
+	unsupportedKey := filepath.Join(dir, "unsupported.key")
+	writeTestFile(t, unsupportedKey, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not-a-private-key")})))
+	if _, err := lkePEMPrivateKeyAlgorithm(unsupportedKey); err == nil || !strings.Contains(err.Error(), "unsupported PEM private key") {
+		t.Fatalf("unsupported private key error = %v", err)
+	}
+
+	invalidCertificate := filepath.Join(dir, "invalid.crt")
+	writeTestFile(t, invalidCertificate, "not PEM")
+	if _, err := lkePEMCertificatePublicKeyAlgorithm(invalidCertificate); err == nil || !strings.Contains(err.Error(), "invalid PEM certificate") {
+		t.Fatalf("invalid certificate error = %v", err)
+	}
+	unparseableCertificate := filepath.Join(dir, "unparseable.crt")
+	writeTestFile(t, unparseableCertificate, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not-a-certificate")})))
+	if _, err := lkePEMCertificatePublicKeyAlgorithm(unparseableCertificate); err == nil || !strings.Contains(err.Error(), "parse PEM certificate") {
+		t.Fatalf("unparseable certificate error = %v", err)
+	}
+	if _, _, err := newLKECertificatePrivateKey("rsa"); err == nil || !strings.Contains(err.Error(), "unsupported internal TLS certificate key algorithm") {
+		t.Fatalf("unsupported generator algorithm error = %v", err)
+	}
+}
+
 func TestLKEOpenBaoTLSMaterialRotatesLegacyP256State(t *testing.T) {
 	envRoot := t.TempDir()
 	stateDir := filepath.Join(envRoot, "state", "openbao")
