@@ -200,7 +200,7 @@ func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
 
 	missingReceiptWorkspace := writeDeploymentFixture(t, "staging", "lke")
 	err = runDeploymentWithOperations([]string{
-		"provision", "--workspace", missingReceiptWorkspace, "--environment", "staging", "--confirm", "video-cloud-staging", "--env-file", environmentFile,
+		"provision", "--workspace", missingReceiptWorkspace, "--environment", "staging", "--confirm", "video-cloud-staging", "--env-file", environmentFile, "--shared-env-file", sharedFile,
 	}, deploymentOperations{credentials: func(deploymentConfig, string) error { return nil }})
 	if err == nil || !strings.Contains(err.Error(), "validated storage receipt is required") {
 		t.Fatalf("missing receipt error = %v", err)
