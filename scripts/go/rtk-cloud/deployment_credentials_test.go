@@ -316,6 +316,8 @@ func TestDeploymentCredentialCheckerRejectsInsecureEnvFileBeforeNetwork(t *testi
 }
 
 func TestDeploymentCredentialDefaultsHonorEnvironmentOverrides(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE", "  /tmp/operator.env  ")
 	t.Setenv("RTK_CLOUD_LINODE_API_ROOT", "https://linode.example.test/v4")
 	t.Setenv("RTK_CLOUD_GHCR_TOKEN_ROOT", "https://registry.example.test/token")
@@ -324,6 +326,9 @@ func TestDeploymentCredentialDefaultsHonorEnvironmentOverrides(t *testing.T) {
 
 	if got := defaultDeploymentCredentialEnvFile(); got != "/tmp/operator.env" {
 		t.Fatalf("credential env file = %q", got)
+	}
+	if got := defaultDeploymentSharedCredentialFile(); got != filepath.Join(home, ".config", "rtk-cloud", "shared.env") {
+		t.Fatalf("shared credential env file = %q", got)
 	}
 	checker := defaultDeploymentCredentialChecker()
 	if checker.client == nil || checker.out == nil ||

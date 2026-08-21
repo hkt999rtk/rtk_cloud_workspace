@@ -104,7 +104,7 @@ func TestReportAndProvisioningBoundaryHelpers(t *testing.T) {
 		"bind-devices": "bind", "validate-bind": "validate",
 	})
 
-	key, csr, err := generateAppCertificateCSR("coverage.example")
+	key, csr, err := generateAppCertificateCSRWithAlgorithm("coverage.example", "ed25519")
 	if err != nil || !strings.Contains(key, "PRIVATE KEY") || !strings.Contains(csr, "CERTIFICATE REQUEST") {
 		t.Fatalf("CSR generation failed: %v", err)
 	}

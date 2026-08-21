@@ -63,7 +63,11 @@ func defaultDeploymentSharedCredentialFile() string {
 	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE")); path != "" {
 		return path
 	}
-	return defaultDeploymentCredentialEnvFile()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".config", "rtk-cloud", "shared.env")
 }
 
 func defaultDeploymentCredentialChecker() deploymentCredentialChecker {

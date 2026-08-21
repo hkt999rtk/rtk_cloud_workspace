@@ -84,6 +84,7 @@ func architectureKeySet() map[string]bool {
 		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
 		"MQTT_HARD_ANTI_AFFINITY", "POSTGRES_LIMIT_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
 		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED",
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM", "CERTIFICATE_APP_CSR_KEY_ALGORITHMS", "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS",
 		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
 	)
 	for _, key := range capacitySourceKeys() {
@@ -717,6 +718,14 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if raw := values["MQTT_HARD_ANTI_AFFINITY"]; raw != "true" && raw != "false" {
 		return deploymentConfig{}, errors.New("MQTT_HARD_ANTI_AFFINITY must be true or false")
 	}
+	if _, err := deploymentCertificateAlgorithm("CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM", values["CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM"]); err != nil {
+		return deploymentConfig{}, err
+	}
+	for _, key := range []string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS", "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS"} {
+		if _, err := deploymentCertificateAlgorithms(key, values[key]); err != nil {
+			return deploymentConfig{}, err
+		}
+	}
 	turnMin, _ := strconv.Atoi(values["TURN_MIN_PORT"])
 	turnMax, _ := strconv.Atoi(values["TURN_MAX_PORT"])
 	if turnMin > turnMax {
@@ -744,6 +753,35 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity, Storage: storage}, nil
+}
+
+func deploymentCertificateAlgorithm(key, raw string) (string, error) {
+	algorithm := strings.TrimSpace(strings.ToLower(raw))
+	if algorithm != "ed25519" && algorithm != "p256" {
+		return "", fmt.Errorf("%s must be ed25519 or p256", key)
+	}
+	return algorithm, nil
+}
+
+func deploymentCertificateAlgorithms(key, raw string) ([]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, fmt.Errorf("%s must contain at least one certificate key algorithm", key)
+	}
+	parts := strings.Split(raw, ",")
+	algorithms := make([]string, 0, len(parts))
+	seen := map[string]bool{}
+	for _, part := range parts {
+		algorithm, err := deploymentCertificateAlgorithm(key, part)
+		if err != nil {
+			return nil, err
+		}
+		if seen[algorithm] {
+			return nil, fmt.Errorf("%s must not contain duplicate algorithm %s", key, algorithm)
+		}
+		seen[algorithm] = true
+		algorithms = append(algorithms, algorithm)
+	}
+	return algorithms, nil
 }
 
 func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, adapterResolved map[string]string) (deploymentStoragePlan, error) {

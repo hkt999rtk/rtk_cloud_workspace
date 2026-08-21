@@ -200,7 +200,7 @@ func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
 
 	missingReceiptWorkspace := writeDeploymentFixture(t, "staging", "lke")
 	err = runDeploymentWithOperations([]string{
-		"provision", "--workspace", missingReceiptWorkspace, "--environment", "staging", "--confirm", "video-cloud-staging", "--env-file", environmentFile,
+		"provision", "--workspace", missingReceiptWorkspace, "--environment", "staging", "--confirm", "video-cloud-staging", "--env-file", environmentFile, "--shared-env-file", sharedFile,
 	}, deploymentOperations{credentials: func(deploymentConfig, string) error { return nil }})
 	if err == nil || !strings.Contains(err.Error(), "validated storage receipt is required") {
 		t.Fatalf("missing receipt error = %v", err)
@@ -699,7 +699,14 @@ func TestMaterializeDeploymentRuntimeSeparatesSharedAndAdapterConfig(t *testing.
 		t.Fatalf("resolved generic config leaked compatibility keys:\n%s", resolved)
 	}
 	compat := readTestFile(t, filepath.Join(cfg.RuntimeRoot, "env", "stack.env"))
-	for _, want := range []string{"CLOUD_PROVIDER=lke", "CAPACITY_TARGET_CONNECTIONS=1000", "MQTT_EFFECTIVE_REPLICAS=2"} {
+	for _, want := range []string{
+		"CLOUD_PROVIDER=lke",
+		"CAPACITY_TARGET_CONNECTIONS=1000",
+		"MQTT_EFFECTIVE_REPLICAS=2",
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519",
+		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256",
+		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256",
+	} {
 		if !strings.Contains(compat, want) {
 			t.Fatalf("missing %s", want)
 		}
@@ -718,6 +725,38 @@ func TestMaterializeDeploymentRuntimeSeparatesSharedAndAdapterConfig(t *testing.
 		if !strings.Contains(adapterConfig, want) {
 			t.Fatalf("adapter config missing %s", want)
 		}
+	}
+}
+
+func TestResolveDeploymentConfigValidatesCertificateAlgorithms(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides string
+		wantError string
+	}{
+		{name: "p256 policy", overrides: "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=p256\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=p256,ed25519\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=p256\n"},
+		{name: "alias rejected", overrides: "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=p-256\n", wantError: "must be ed25519 or p256"},
+		{name: "duplicate rejected", overrides: "CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,ed25519\n", wantError: "must not contain duplicate"},
+		{name: "empty rejected", overrides: "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=\n", wantError: "must contain at least one"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "staging", "lke")
+			writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "overrides", "architecture.env"), tc.overrides)
+			cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("resolveDeploymentConfig() error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Values["CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM"] != "p256" || cfg.Values["CERTIFICATE_APP_CSR_KEY_ALGORITHMS"] != "p256,ed25519" || cfg.Values["CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS"] != "p256" {
+				t.Fatalf("unexpected certificate policy: %#v", cfg.Values)
+			}
+		})
 	}
 }
 
@@ -816,7 +855,7 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 		}
 		fmt.Fprintf(&workloads, "%s_MIN_REPLICAS=%d\n%s_NODE_CLASS=%s\n%s_REQUEST_CPU=100m\n%s_REQUEST_MEMORY=128Mi\n", spec.Prefix, replicas, spec.Prefix, nodeClass, spec.Prefix, spec.Prefix)
 	}
-	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
+	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nCERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
 	files := map[string]string{
 		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\n",
 		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\nCAPACITY_ACTIVE_DEVICES=1000\nCAPACITY_ACTIVE_DEVICES_PER_API_POD=40000\nCAPACITY_SYSTEM_RESERVED_CPU_MILLI=1000\nCAPACITY_SYSTEM_RESERVED_MEMORY_MIB=1536\n",
