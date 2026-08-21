@@ -107,6 +107,30 @@ chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
 
 Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
 
+### Certificate algorithm policy
+
+Kubernetes environments resolve three provider-neutral certificate settings from
+the architecture layer. An environment may pin them in
+`overrides/architecture.env` when its policy must remain explicit:
+
+```env
+CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519
+CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256
+CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256
+```
+
+The internal TLS setting controls new certissuer service, OpenBao TLS, and MQTT
+server keys. Changing it rotates those environment-owned TLS trust sets during
+the next provision. The app and device settings are ordered CSR preferences;
+they affect only newly generated credentials and do not revoke existing client
+certificates. Supported canonical values are `ed25519` and `p256`; aliases,
+empty lists, and duplicate list entries fail deployment preflight.
+
+OpenBao's staging device/app issuer CAs may use RSA while issuing certificates
+for Ed25519 or P-256 subject keys. These settings do not control public ACME
+certificates, JWT/EdDSA token signing, OTA signing, SSH keys, or PKCS#11 signer
+selection.
+
 每個 environment 也必須追蹤 `storage.env`，宣告 runtime media policy、bucket 與 environment-owned prefix；範例與 lifecycle 見 [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md)。
 
 DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 依序從 process environment、`~/.config/rtk-cloud/environments/<environment>.env`、`~/.config/rtk-cloud/shared.env` 讀取，且不會 fallback `~/.env`；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。

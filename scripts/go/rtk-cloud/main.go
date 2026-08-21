@@ -2138,6 +2138,11 @@ func runGenerateLoadDevices(args []string) error {
 	if err != nil {
 		return err
 	}
+	stackValues, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
+	deviceKeyAlgorithms, err := deploymentCertificateAlgorithms("CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS", stackValues["CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS"])
+	if err != nil {
+		return fmt.Errorf("load staging certificate policy: %w", err)
+	}
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z")
 	}
@@ -2257,6 +2262,7 @@ func runGenerateLoadDevices(args []string) error {
 				RunID:          *runID,
 				Timeout:        time.Duration(*timeoutSeconds) * time.Second,
 				ResultsPath:    enrollResultsPath,
+				KeyAlgorithms:  deviceKeyAlgorithms,
 			}})
 			index++
 		}
@@ -2370,6 +2376,7 @@ export VIDEO_CLOUD_LOAD_DEVICE_CERT_ROOT='%s'
 
 type accountManagerContext struct {
 	EnvRoot          string
+	StackValues      map[string]string
 	BaseURL          string
 	AdminEmail       string
 	AdminPassword    string
@@ -6261,12 +6268,12 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	if strings.TrimSpace(subject) == "" {
 		return nil, nil, accountPlatformSession{}, fmt.Errorf("app certificate subject is required for %s", email)
 	}
-	keyAlgorithm := strings.ToLower(strings.TrimSpace(os.Getenv("RTK_CLOUD_APP_CERT_KEY_ALGORITHM")))
-	if keyAlgorithm == "" {
-		keyAlgorithm = "ed25519"
+	keyAlgorithms, err := appCertificateKeyAlgorithms(ctx)
+	if err != nil {
+		return nil, nil, accountPlatformSession{}, err
 	}
 	if bootstrapWithCSR {
-		return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, "", keyAlgorithm)
+		return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, "", keyAlgorithms)
 	}
 	initial, err := accountLoginUserFull(ctx, tenantSlug, email, password, "")
 	if err != nil {
@@ -6299,24 +6306,19 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	if initial.User.ID == "" {
 		return nil, nil, accountPlatformSession{}, fmt.Errorf("login response did not include a user id for app certificate bootstrap: %s", email)
 	}
-	return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, initial.User.ID, keyAlgorithm)
+	return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, initial.User.ID, keyAlgorithms)
 }
 
-func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject, userID, keyAlgorithm string) (map[string]any, map[string]any, accountPlatformSession, error) {
-	privateKeyPEM, csrPEM, err := generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
-	if err != nil {
-		return nil, nil, accountPlatformSession{}, err
+func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject, userID string, keyAlgorithms []string) (map[string]any, map[string]any, accountPlatformSession, error) {
+	if len(keyAlgorithms) == 0 {
+		return nil, nil, accountPlatformSession{}, errors.New("app certificate key algorithm policy is empty")
 	}
-	issued, err := accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
+	var privateKeyPEM, csrPEM, keyAlgorithm string
+	var issued accountUserLoginResponse
+	var err error
 	retryBudget := envInt("CLOUD_CREATE_USERS_APP_CERT_RETRIES", 12)
-	for attempt := 1; shouldRetrySameAppCertificateSubject(err, subject) && attempt <= retryBudget; attempt++ {
-		logCreateUsers("retrying app certificate after transient error: email=%s attempt=%d", email, attempt)
-		appCertificateRetrySleep(time.Duration(2*attempt) * time.Second)
-		issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
-	}
-	if shouldFallbackAppCertificateAlgorithm(err, keyAlgorithm) {
-		keyAlgorithm = "p256"
-		logCreateUsers("retrying app certificate with fallback key algorithm: email=%s algorithm=%s", email, keyAlgorithm)
+	for algorithmIndex, algorithm := range keyAlgorithms {
+		keyAlgorithm = algorithm
 		privateKeyPEM, csrPEM, err = generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
 		if err != nil {
 			return nil, nil, accountPlatformSession{}, err
@@ -6327,6 +6329,10 @@ func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email
 			appCertificateRetrySleep(time.Duration(2*attempt) * time.Second)
 			issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
 		}
+		if err == nil || algorithmIndex == len(keyAlgorithms)-1 || !shouldFallbackAppCertificateAlgorithm(err, keyAlgorithm) {
+			break
+		}
+		logCreateUsers("retrying app certificate with fallback key algorithm: email=%s algorithm=%s", email, keyAlgorithms[algorithmIndex+1])
 	}
 	if shouldRetryLegacyAppCertificateSubject(err, subject, userID) {
 		for _, legacySubject := range legacyAppCertificateSubjects(subject, userID) {
@@ -6376,11 +6382,27 @@ func shouldRetryLegacyAppCertificateSubject(err error, subject, userID string) b
 }
 
 func shouldFallbackAppCertificateAlgorithm(err error, algorithm string) bool {
-	if err == nil || strings.ToLower(strings.TrimSpace(algorithm)) != "ed25519" {
+	if err == nil || strings.TrimSpace(algorithm) == "" {
 		return false
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "HTTP 500") && strings.Contains(msg, "internal_error")
+}
+
+func appCertificateKeyAlgorithms(ctx accountManagerContext) ([]string, error) {
+	if legacy := strings.TrimSpace(os.Getenv("RTK_CLOUD_APP_CERT_KEY_ALGORITHM")); legacy != "" {
+		algorithm, err := deploymentCertificateAlgorithm("RTK_CLOUD_APP_CERT_KEY_ALGORITHM", legacy)
+		if err != nil {
+			return nil, err
+		}
+		logCreateUsers("warning: RTK_CLOUD_APP_CERT_KEY_ALGORITHM is deprecated; configure CERTIFICATE_APP_CSR_KEY_ALGORITHMS in the deployment environment")
+		return []string{algorithm}, nil
+	}
+	values := ctx.StackValues
+	if values == nil && ctx.EnvRoot != "" {
+		values, _ = readEnvFile(filepath.Join(ctx.EnvRoot, "env", "stack.env"))
+	}
+	return deploymentCertificateAlgorithms("CERTIFICATE_APP_CSR_KEY_ALGORITHMS", values["CERTIFICATE_APP_CSR_KEY_ALGORITHMS"])
 }
 
 func legacyAppCertificateSubjects(subject, userID string) []string {
@@ -6599,10 +6621,6 @@ func truncateForLog(value string, maxLen int) string {
 	return value[:maxLen-3] + "..."
 }
 
-func generateAppCertificateCSR(subject string) (string, string, error) {
-	return generateAppCertificateCSRWithAlgorithm(subject, "ed25519")
-}
-
 func generateAppCertificateCSRWithAlgorithm(subject, algorithm string) (string, string, error) {
 	key, keyPEM, err := newCertificatePrivateKey(algorithm)
 	if err != nil {
@@ -6620,7 +6638,7 @@ func generateAppCertificateCSRWithAlgorithm(subject, algorithm string) (string, 
 
 func newCertificatePrivateKey(algorithm string) (crypto.Signer, string, error) {
 	switch strings.ToLower(strings.TrimSpace(algorithm)) {
-	case "", "ed25519":
+	case "ed25519":
 		_, key, err := ed25519.GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, "", err
@@ -6630,7 +6648,7 @@ func newCertificatePrivateKey(algorithm string) (crypto.Signer, string, error) {
 			return nil, "", err
 		}
 		return key, string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), nil
-	case "p256", "p-256", "ecdsa-p256":
+	case "p256":
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		if err != nil {
 			return nil, "", err
@@ -6880,6 +6898,10 @@ func runActivateLoadOwner(args []string) error {
 		return fmt.Errorf("owner browser activation failed: %s", truncateForLog(detail, 500))
 	}
 	appCertificateSubject := "app-brand-cloud-user:" + brandCloudUserID
+	appKeyAlgorithms, err := appCertificateKeyAlgorithms(ctx)
+	if err != nil {
+		return err
+	}
 	appCredentials, appCertificate, ownerSession, err := accountIssueUserAppCertificate(
 		ctx,
 		tenantSlug,
@@ -6887,7 +6909,7 @@ func runActivateLoadOwner(args []string) error {
 		password,
 		appCertificateSubject,
 		brandCloudUserID,
-		"ed25519",
+		appKeyAlgorithms,
 	)
 	if err != nil {
 		return err
@@ -7051,6 +7073,7 @@ func accountManagerContextFromFlags(workspaceFlag, envRootFlag string) (accountM
 	explicitAdminPassword := strings.TrimSpace(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"))
 	ctx := accountManagerContext{
 		EnvRoot:          envRoot,
+		StackValues:      stackEnv,
 		BaseURL:          baseURL,
 		AdminEmail:       firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL")),
 		AdminPassword:    firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD")),
@@ -7677,6 +7700,7 @@ type loadDeviceInput struct {
 	RunID          string
 	Timeout        time.Duration
 	ResultsPath    string
+	KeyAlgorithms  []string
 }
 
 type factoryEnrollOutcome struct {
@@ -7705,7 +7729,10 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	chainPath := filepath.Join(deviceDir, "device.chain.pem")
 	profile := "factory-enrolled-device-mtls-client"
 	warning := "Factory-enrolled staging load-test credential. Keep private key material out of source control."
-	keyAlgorithm := "ed25519"
+	if len(in.KeyAlgorithms) == 0 {
+		return generatedDevice{}, false, errors.New("device certificate key algorithm policy is empty")
+	}
+	keyAlgorithm := in.KeyAlgorithms[0]
 	if device, serial, requestID, ok := reusableLocalLoadDevice(in, deviceID, display, deviceDir, keyPath, csrPath, certPath, chainPath, filepath.Join(bundleDir, deviceID+".pem")); ok {
 		logLoad("reusing local device artifact: index=%03d device=%s type=%s service_options=%s", in.Index, deviceID, in.Type.Name, strings.Join(in.Type.ServiceOptions, ","))
 		if !in.GenerateOnly {
@@ -7746,7 +7773,7 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 		}
 		retryDelay := envDurationDefault("CLOUD_LOAD_DEVICES_FACTORY_ENROLL_RETRY_DELAY", time.Second)
 	enrollAlgorithms:
-		for i, algorithm := range []string{"ed25519", "p256"} {
+		for i, algorithm := range in.KeyAlgorithms {
 			keyAlgorithm = algorithm
 			if i > 0 {
 				logLoad("retrying factory enrollment with fallback key algorithm: index=%03d device=%s algorithm=%s", in.Index, deviceID, keyAlgorithm)

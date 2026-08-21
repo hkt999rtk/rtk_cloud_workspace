@@ -171,6 +171,7 @@ func TestWriteLoadDeviceReusesCompleteLocalFactoryArtifact(t *testing.T) {
 	defer server.Close()
 
 	in := loadDeviceInput{
+		KeyAlgorithms:  []string{"ed25519", "p256"},
 		Index:          1,
 		Ordinal:        1,
 		Type:           loadDeviceTypes[0],
@@ -231,7 +232,8 @@ func TestWriteLoadDeviceRetriesTransientFactoryFailure(t *testing.T) {
 	defer server.Close()
 
 	in := loadDeviceInput{
-		Index: 1, Ordinal: 1, Type: loadDeviceTypes[0], Prefix: "retry-device", OutDir: outDir,
+		KeyAlgorithms: []string{"ed25519", "p256"},
+		Index:         1, Ordinal: 1, Type: loadDeviceTypes[0], Prefix: "retry-device", OutDir: outDir,
 		FactoryURL: server.URL, FactoryAuthKey: "test-key", FactoryID: "factory", LineID: "line",
 		StationID: "station", FixtureID: "fixture", OperatorID: "operator", BatchID: "batch",
 		SerialPrefix: "LOAD", RunID: "run-retry", Timeout: time.Second,
@@ -251,6 +253,7 @@ func TestWriteLoadDeviceRetriesTransientFactoryFailure(t *testing.T) {
 
 func TestGenerateLoadDevicesForceReusesCompleteLocalFactoryArtifact(t *testing.T) {
 	envRoot := t.TempDir()
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\n")
 	outDir := filepath.Join(t.TempDir(), "devices")
 	_, caCert, err := writeGeneratedCA(filepath.Join(t.TempDir(), "ca"), 1)
 	if err != nil {

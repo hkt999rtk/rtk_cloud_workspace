@@ -1690,11 +1690,11 @@ func TestRunProvisionLKEPublicHTTPSRestoresCachedCertificateBeforeACME(t *testin
 	}
 	env := loadedEnv.Values
 	hosts := lkePublicHTTPSHosts(lkePublicHTTPSRoutes(env))
-	caCert, caKey, _, _, err := newLKECertificateAuthority("test-public-cache-ca")
+	caCert, caKey, _, _, err := newLKECertificateAuthority("test-public-cache-ca", "ed25519")
 	if err != nil {
 		t.Fatal(err)
 	}
-	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, hosts[0], hosts, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, hosts[0], hosts, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, "ed25519")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2140,7 +2140,7 @@ func TestLKEOpenBaoBootstrapRolesAllowEd25519AndP256CSRs(t *testing.T) {
 }
 
 func TestLKEGeneratedCertificatesPreferEd25519(t *testing.T) {
-	caCert, caKey, caCertPEM, caKeyPEM, err := newLKECertificateAuthority("test-ca")
+	caCert, caKey, caCertPEM, caKeyPEM, err := newLKECertificateAuthority("test-ca", "ed25519")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2160,7 +2160,7 @@ func TestLKEGeneratedCertificatesPreferEd25519(t *testing.T) {
 		t.Fatalf("expected Ed25519 CA certificate public key, got %T", parsedCA.PublicKey)
 	}
 
-	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, "svc", []string{"svc"}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth})
+	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, "svc", []string{"svc"}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, "ed25519")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2181,6 +2181,84 @@ func TestLKEGeneratedCertificatesPreferEd25519(t *testing.T) {
 	}
 }
 
+func TestLKEGeneratedCertificatesSupportConfiguredP256(t *testing.T) {
+	caCert, caKey, caCertPEM, caKeyPEM, err := newLKECertificateAuthority("test-p256-ca", "p256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caKeyPath := filepath.Join(t.TempDir(), "ca.key")
+	writeTestFile(t, caKeyPath, caKeyPEM)
+	if algorithm, err := lkePEMPrivateKeyAlgorithm(caKeyPath); err != nil || algorithm != "p256" {
+		t.Fatalf("CA key algorithm = %q, err=%v", algorithm, err)
+	}
+	caBlock, _ := pem.Decode([]byte(caCertPEM))
+	parsedCA, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parsedCA.PublicKey.(*ecdsa.PublicKey); !ok {
+		t.Fatalf("expected P-256 CA public key, got %T", parsedCA.PublicKey)
+	}
+	certPEM, keyPEM, err := newLKESignedCertificate(caCert, caKey, "svc", []string{"svc"}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, "p256")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(t.TempDir(), "server.key")
+	writeTestFile(t, keyPath, keyPEM)
+	if algorithm, err := lkePEMPrivateKeyAlgorithm(keyPath); err != nil || algorithm != "p256" {
+		t.Fatalf("server key algorithm = %q, err=%v", algorithm, err)
+	}
+	certBlock, _ := pem.Decode([]byte(certPEM))
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 || cert.KeyUsage&x509.KeyUsageKeyEncipherment != 0 {
+		t.Fatalf("unexpected key usage: %v", cert.KeyUsage)
+	}
+}
+
+func TestLKEInternalTLSMaterialReusesMatchingAlgorithmState(t *testing.T) {
+	envRoot := t.TempDir()
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                       "video-cloud-staging",
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519",
+	}
+	firstOpenBao, err := loadOrCreateLKEOpenBaoTLSMaterial(provisionPaths{EnvRoot: envRoot}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstCertIssuer, err := loadOrCreateLKECertIssuerMaterial(provisionPaths{EnvRoot: envRoot}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstMQTT, err := loadOrCreateLKEMQTTMaterial(provisionPaths{EnvRoot: envRoot}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondOpenBao, err := loadOrCreateLKEOpenBaoTLSMaterial(provisionPaths{EnvRoot: envRoot}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCertIssuer, err := loadOrCreateLKECertIssuerMaterial(provisionPaths{EnvRoot: envRoot}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondMQTT, err := loadOrCreateLKEMQTTMaterial(provisionPaths{EnvRoot: envRoot}, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstOpenBao.CACert != secondOpenBao.CACert || firstOpenBao.ServerCert != secondOpenBao.ServerCert || strings.TrimSpace(firstOpenBao.ServerKey) != strings.TrimSpace(secondOpenBao.ServerKey) {
+		t.Fatal("matching OpenBao TLS policy unexpectedly rotated certificate material")
+	}
+	if firstCertIssuer.ServerCert != secondCertIssuer.ServerCert || firstCertIssuer.ServiceCA != secondCertIssuer.ServiceCA || firstCertIssuer.ClientCert != secondCertIssuer.ClientCert || firstCertIssuer.FactoryCert != secondCertIssuer.FactoryCert || strings.TrimSpace(firstCertIssuer.ServerKey) != strings.TrimSpace(secondCertIssuer.ServerKey) || strings.TrimSpace(firstCertIssuer.ClientKey) != strings.TrimSpace(secondCertIssuer.ClientKey) || strings.TrimSpace(firstCertIssuer.FactoryKey) != strings.TrimSpace(secondCertIssuer.FactoryKey) {
+		t.Fatal("matching certissuer TLS policy unexpectedly rotated certificate material")
+	}
+	if firstMQTT.ServerCert != secondMQTT.ServerCert || strings.TrimSpace(firstMQTT.ServerKey) != strings.TrimSpace(secondMQTT.ServerKey) {
+		t.Fatal("matching MQTT TLS policy unexpectedly rotated certificate material")
+	}
+}
+
 func TestLKEOpenBaoTLSMaterialRotatesLegacyP256State(t *testing.T) {
 	envRoot := t.TempDir()
 	stateDir := filepath.Join(envRoot, "state", "openbao")
@@ -2192,7 +2270,7 @@ func TestLKEOpenBaoTLSMaterialRotatesLegacyP256State(t *testing.T) {
 	writeP256PrivateKey(t, filepath.Join(stateDir, "tls.key"))
 	writeTestFile(t, filepath.Join(stateDir, "root-token"), "keep-root-token")
 
-	material, err := loadOrCreateLKEOpenBaoTLSMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	material, err := loadOrCreateLKEOpenBaoTLSMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2217,7 +2295,7 @@ func TestLKECertIssuerMaterialRotatesLegacyP256State(t *testing.T) {
 		writeP256PrivateKey(t, filepath.Join(stateDir, name))
 	}
 
-	material, err := loadOrCreateLKECertIssuerMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	material, err := loadOrCreateLKECertIssuerMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3546,6 +3624,9 @@ func TestWriteLKECompatibilityArtifactsPreservesRuntimeCoverageConfig(t *testing
 	env := map[string]string{
 		"CLOUD_ENV_NAME":                         "runtime-coverage",
 		"CLOUD_STACK_NAME":                       "coverage-123-1",
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519",
+		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":     "ed25519,p256",
+		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":  "ed25519,p256",
 		"CLOUD_RUNTIME_COVERAGE_STACK":           "coverage-123-1",
 		"CLOUD_REGION":                           "us-sea",
 		"CLOUD_DNS_ROOT_DOMAIN":                  "coverage-123-1.invalid",
@@ -3569,6 +3650,9 @@ func TestWriteLKECompatibilityArtifactsPreservesRuntimeCoverageConfig(t *testing
 	for _, want := range []string{
 		"CLOUD_ENV_NAME=runtime-coverage",
 		"CLOUD_STACK_NAME=coverage-123-1",
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519",
+		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256",
+		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256",
 		"CLOUD_RUNTIME_COVERAGE_STACK=coverage-123-1",
 		"VIDEO_CLOUD_API_BASE_URL=https://video.coverage-123-1.invalid:18443",
 		"VIDEO_CLOUD_BLOB_ENDPOINT=https://objects.example.test",

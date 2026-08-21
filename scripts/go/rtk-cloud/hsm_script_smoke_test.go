@@ -14,6 +14,8 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesSQLite(t *testing.
 	workspace := t.TempDir()
 	envRoot := filepath.Join(root, "env")
 	mkdirAll(t, filepath.Join(envRoot, "services", "account-manager"))
+	mkdirAll(t, filepath.Join(envRoot, "env"))
+	writeFile(t, filepath.Join(envRoot, "env", "stack.env"), "CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\n")
 	writeFile(t, filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env"), "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL=admin@example.test\nACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD=password123\n")
 
 	var sawLogin bool
@@ -117,6 +119,8 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesSQLite(t *testing.
 
 func TestGenerateLoadDevicesGenerateOnlyWritesSQLite(t *testing.T) {
 	root := t.TempDir()
+	mkdirAll(t, filepath.Join(root, "env"))
+	writeFile(t, filepath.Join(root, "env", "stack.env"), "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\n")
 	workspace := t.TempDir()
 	outDir := filepath.Join(root, "devices")
 	if err := runGenerateLoadDevices([]string{
