@@ -1352,6 +1352,7 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowPostgresClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
+	manifests = append(manifests, lkeAllowCloudAdminFactoryEnrollNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminBillingNetworkPolicyManifest(env))
@@ -1560,6 +1561,36 @@ spec:
         - protocol: TCP
           port: 9443
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"))
+}
+
+func lkeAllowCloudAdminFactoryEnrollNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cloud-admin-factoryenroll
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: factoryenroll
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloud-admin
+      ports:
+        - protocol: TCP
+          port: 18443
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "admin"))
 }
 
 func lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env map[string]string) string {
@@ -6680,6 +6711,8 @@ spec:
                   key: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
             - name: FACTORY_ENROLL_ADDR
               value: ":18443"
+            - name: VIDEO_CLOUD_ENV
+              value: "staging"
             - name: FACTORY_ENROLL_CERT_ISSUER_URL
               value: %q
             - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_CERT
@@ -6849,6 +6882,7 @@ stringData:
   ACCOUNT_MANAGER_USER_CACHE_ADDR: %q
   ACCOUNT_MANAGER_USER_CACHE_PREFIX: "account_manager:user"
   ACCOUNT_MANAGER_ENV: %q
+  DEVELOPER_PKI_TEST_TOOLS_ENABLED: %q
   ACCOUNT_MANAGER_LOG_LEVEL: %q
   AUTH_TOKEN_DELIVERY: %q
   AUTH_TOKEN_BASE_URL: %q
@@ -6876,7 +6910,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authDelivery, authBaseURL, smtpHost, firstNonEmpty(lkeEnvValue(env, "SMTP_PORT"), "587"), lkeEnvValue(env, "SMTP_USERNAME"), lkeEnvValue(env, "SMTP_PASSWORD"), lkeEnvValue(env, "SMTP_FROM"), firstNonEmpty(lkeEnvValue(env, "SMTP_FROM_NAME"), "Realtek Connect"), firstNonEmpty(lkeEnvValue(env, "SMTP_ENCRYPTION"), "starttls"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -7729,13 +7763,19 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "cloud-admin" {
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
+            - name: CLOUD_ADMIN_ENV
+              value: "staging"
+            - name: DEVELOPER_PKI_TEST_TOOLS_ENABLED
+              value: %q
+            - name: FACTORY_ENROLL_BASE_URL
+              value: %q
             - name: BILLING_SERVICE_BASE_URL
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_BASE_URL
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeAccountManagerInternalURL(env), lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+`, lkeAccountManagerInternalURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
