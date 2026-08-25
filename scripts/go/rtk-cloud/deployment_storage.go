@@ -206,7 +206,7 @@ func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfi
 			return err
 		}
 		store := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: endpoint, accessKey: access, secretKey: secret}
-		if err := c.validateStorageReadWriteCanary(store, target.Prefix); err != nil {
+		if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
 			return fmt.Errorf("new media key validation failed: %w", err)
 		}
 		if err := ensureCredentialProfile(environmentFile); err != nil {
@@ -237,7 +237,7 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 		return err
 	}
 	store := provisionObjectStore{bucket: target.Bucket, region: target.Region, endpoint: endpoint, accessKey: access, secretKey: secret}
-	if err := c.validateStorageReadWriteCanary(store, target.Prefix); err != nil {
+	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
 		return fmt.Errorf("new artifact key validation failed: %w", err)
 	}
 	sharedFile := defaultDeploymentSharedCredentialFile()
@@ -605,6 +605,23 @@ func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provis
 	}
 	cleaned = true
 	return nil
+}
+
+func (c deploymentCredentialChecker) validateNewStorageKey(store provisionObjectStore, prefix string) error {
+	const attempts = 6
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err = c.validateStorageReadWriteCanary(store, prefix)
+		if err == nil {
+			return nil
+		}
+		var httpErr *provisionObjectStorageHTTPError
+		if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusForbidden || attempt == attempts {
+			return err
+		}
+		time.Sleep(5 * time.Second)
+	}
+	return err
 }
 
 func (c deploymentCredentialChecker) linodeAuthorizedRequest(token, method, path string, body []byte) ([]byte, error) {

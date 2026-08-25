@@ -134,6 +134,14 @@ cases:
       title: summarizes Brand Clouds by operational status
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/certificateBundle.test.mjs#browser%20PKI%20helper%20creates%20P-256%20PKCS%238%20and%20sends%20only%20a%20CSR-shaped%20value
+      module: cloud-admin-web
+      language: javascript
+      source: src/certificateBundle.test.mjs
+      title: browser PKI helper creates P-256 PKCS#8 and sends only a CSR-shaped value
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-PKI-001
     - canonical_key: js://cloud-admin-web/src/chipset-sdk.test.mjs#developer%20catalog%20helpers%20filter%20releases%20and%20summarize%20cards
       module: cloud-admin-web
       language: javascript

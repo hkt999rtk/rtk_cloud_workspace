@@ -1807,6 +1807,53 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 	}
 }
 
+func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
+	t.Setenv("DEVELOPER_PKI_TEST_TOOLS_ENABLED", "true")
+	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/cloud-admin:test")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	policies := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, nil), "\n---\n")
+	for _, want := range []string{
+		"name: allow-cloud-admin-factoryenroll",
+		"namespace: video-cloud-staging-video-cloud",
+		"kubernetes.io/metadata.name: video-cloud-staging-admin",
+		"app.kubernetes.io/name: cloud-admin",
+		"port: 18443",
+	} {
+		if !strings.Contains(policies, want) {
+			t.Fatalf("certificate bundle network policy missing %q:\n%s", want, policies)
+		}
+	}
+
+	account := lkeAccountManagerSecretManifest(env)
+	if !strings.Contains(account, `DEVELOPER_PKI_TEST_TOOLS_ENABLED: "true"`) {
+		t.Fatalf("account-manager test issuance flag missing:\n%s", account)
+	}
+
+	factory := lkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{})
+	if !strings.Contains(factory, "name: VIDEO_CLOUD_ENV\n              value: \"staging\"") {
+		t.Fatalf("factory enrollment staging environment missing:\n%s", factory)
+	}
+
+	var admin lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "cloud-admin" {
+			admin = workload
+			break
+		}
+	}
+	manifest := lkeDeploymentManifest(env, admin, nil)
+	for _, want := range []string{
+		"name: CLOUD_ADMIN_ENV\n              value: \"staging\"",
+		"name: DEVELOPER_PKI_TEST_TOOLS_ENABLED\n              value: \"true\"",
+		"name: FACTORY_ENROLL_BASE_URL\n              value: \"http://factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("cloud-admin certificate bundle configuration missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
 func TestLKERedisAndExporterManifestsUsePrivatePlatformServices(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
 
