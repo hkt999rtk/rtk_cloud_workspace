@@ -72,6 +72,9 @@ func TestRunnerSimulatesActorsAndClosesWebRTCSessions(t *testing.T) {
 				}},
 			})
 		case "/api/request_webrtc/close":
+			if got := r.Header.Get("Authorization"); got != "Bearer device-token" {
+				t.Fatalf("unexpected close Authorization header %q", got)
+			}
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode close: %v", err)
@@ -132,6 +135,9 @@ func TestRunnerSimulatesActorsAndClosesWebRTCSessions(t *testing.T) {
 	}
 	if !closedSessions["session-1"] {
 		t.Fatal("expected session-1 to be closed")
+	}
+	if closeOp := operationByName(result.Operations, "request_webrtc_close"); !strings.Contains(closeOp.Evidence, "authorization=matching_device_token") {
+		t.Fatalf("close evidence does not prove matching device-token authorization: %#v", closeOp)
 	}
 	if result.Metadata["contracts_commit"] != "contracts-test" {
 		t.Fatalf("contracts commit = %q", result.Metadata["contracts_commit"])
@@ -1033,6 +1039,13 @@ func TestRunnerWebRTCFunctionalCoverageAddsDuplicateAndUnknownClose(t *testing.T
 			}
 			sessionID, _ := body["session_id"].(string)
 			closeCalls[sessionID]++
+			wantAuthorization := "Bearer device-token"
+			if sessionID == "session-unknown" || closeCalls[sessionID] > 1 {
+				wantAuthorization = "Bearer account-token"
+			}
+			if got := r.Header.Get("Authorization"); got != wantAuthorization {
+				t.Fatalf("close %q Authorization = %q, want %q", sessionID, got, wantAuthorization)
+			}
 			if sessionID == "session-unknown" {
 				http.Error(w, `{"status":"fail","reason":"session not found"}`, http.StatusNotFound)
 				return
@@ -1054,6 +1067,7 @@ func TestRunnerWebRTCFunctionalCoverageAddsDuplicateAndUnknownClose(t *testing.T
 		Actors:              "viewer",
 		ViewerRouteSet:      ViewerRouteSetFunctional,
 		AccountToken:        "account-token",
+		DeviceToken:         "device-token",
 		RunID:               "run-webrtc-functional",
 		InstanceID:          "instance-webrtc-functional",
 		DevicePrefix:        "device",
@@ -1073,6 +1087,9 @@ func TestRunnerWebRTCFunctionalCoverageAddsDuplicateAndUnknownClose(t *testing.T
 		opsByName[op.Name]++
 		if strings.Contains(op.Evidence, "account-token") {
 			t.Fatalf("operation evidence leaked token: %#v", op)
+		}
+		if strings.HasPrefix(op.Name, "request_webrtc_close_") && !strings.Contains(op.Evidence, "authorization=app_token") {
+			t.Fatalf("functional close evidence does not prove app-token authorization: %#v", op)
 		}
 	}
 	if result.WebRTC.Create.Successes != 3 || result.WebRTC.Close.Successes != 3 || result.WebRTC.OpenSessions != 0 {

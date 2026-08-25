@@ -4709,22 +4709,28 @@ func (r *Runner) closeWebRTCSession(ctx context.Context, cfg Config, deviceID, v
 	if sessionID != "" {
 		body["session_id"] = sessionID
 	}
-	return r.post(ctx, cfg, "viewer", "request_webrtc_close", deviceID, viewerID, "/api/request_webrtc/close", body, cfg.AccountBearerFor(deviceID))
+	op := r.post(ctx, cfg, ActorViewer, "request_webrtc_close", deviceID, viewerID, "/api/request_webrtc/close", body, cfg.DeviceBearerFor(deviceID))
+	op.Evidence = appendEvidence(op.Evidence, "authorization=matching_device_token")
+	return op
 }
 
 func (r *Runner) expectedWebRTCClose(ctx context.Context, cfg Config, name, deviceID, viewerID string, response map[string]any) Operation {
-	op := r.closeWebRTCSession(ctx, cfg, deviceID, viewerID, response)
-	op.Name = name
-	if op.Success {
-		return op
+	sessionID, _ := response["session_id"].(string)
+	body := map[string]any{"devid": deviceID}
+	if sessionID != "" {
+		body["session_id"] = sessionID
 	}
-	switch op.StatusCode {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusGone:
-		op.Success = true
-		op.Evidence = fmt.Sprintf("expected_%s status=%d class=%s", name, op.StatusCode, op.ErrorClass)
-		op.ErrorClass = ""
-		op.ErrorDetail = ""
+	op := r.post(ctx, cfg, ActorViewer, name, deviceID, viewerID, "/api/request_webrtc/close", body, cfg.AccountBearerFor(deviceID))
+	if !op.Success {
+		switch op.StatusCode {
+		case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusGone:
+			op.Success = true
+			op.Evidence = fmt.Sprintf("expected_%s status=%d class=%s", name, op.StatusCode, op.ErrorClass)
+			op.ErrorClass = ""
+			op.ErrorDetail = ""
+		}
 	}
+	op.Evidence = appendEvidence(op.Evidence, "authorization=app_token")
 	return op
 }
 

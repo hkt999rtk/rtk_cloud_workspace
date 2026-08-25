@@ -123,6 +123,7 @@ type videoRelayDeviceResult struct {
 	ICEConnectedStatus    string `json:"ice_connected_status"`
 	RTPReceiveStatus      string `json:"rtp_receive_status"`
 	CloseStatus           string `json:"close_status"`
+	CloseAuthorization    string `json:"close_authorization,omitempty"`
 	SessionIDPresent      bool   `json:"session_id_present,omitempty"`
 	ICEServerCount        int    `json:"ice_server_count,omitempty"`
 	ICEConnectedLatencyMS int64  `json:"ice_connected_latency_ms,omitempty"`
@@ -690,6 +691,7 @@ func videoRelayDeviceEvidencePass(role string, device videoRelayDeviceResult) bo
 	}
 	return device.WebSocketOwnerStatus == "PASS" && device.WebRTCCreateStatus == "PASS" && device.WebRTCAnswerStatus == "PASS" &&
 		device.ICEConnectedStatus == "PASS" && device.RTPReceiveStatus == "PASS" && device.CloseStatus == "PASS" &&
+		device.CloseAuthorization == "matching_device_token" &&
 		device.RTPPacketsReceived > 0 && device.RTPBytesReceived > 0
 }
 
@@ -1009,6 +1011,7 @@ func summarizeVideoRelayLoadResults(path string, selected []videoRelaySelectedDe
 			}
 		case "webrtc_media_close":
 			row.CloseStatus = status
+			row.CloseAuthorization = parseEvidenceString(op.Evidence, "authorization")
 		}
 		if !op.Success && row.Error == "" {
 			row.Error = sanitizeVideoRelayText(firstNonEmpty(op.ErrorClass+": "+op.ErrorDetail, op.ErrorDetail))
@@ -1377,9 +1380,9 @@ func renderVideoRelayReport(result videoRelayResult) string {
 	}
 	fmt.Fprintln(&b, "Devices:")
 	for _, device := range result.Devices {
-		fmt.Fprintf(&b, "- %s websocket=%s create=%s answer=%s ice=%s close=%s media=%s codec=%s nal_types=%s ICE servers=%d ICE connected=%dms RTP packets=%d RTP bytes=%d",
+		fmt.Fprintf(&b, "- %s websocket=%s create=%s answer=%s ice=%s close=%s close_auth=%s media=%s codec=%s nal_types=%s ICE servers=%d ICE connected=%dms RTP packets=%d RTP bytes=%d",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
-			device.ICEConnectedStatus, device.CloseStatus, firstNonEmpty(device.MediaModel, "h264"), device.RTPCodec, device.RTPNALTypes, device.ICEServerCount,
+			device.ICEConnectedStatus, device.CloseStatus, firstNonEmpty(device.CloseAuthorization, "unknown"), firstNonEmpty(device.MediaModel, "h264"), device.RTPCodec, device.RTPNALTypes, device.ICEServerCount,
 			device.ICEConnectedLatencyMS, device.RTPPacketsReceived, device.RTPBytesReceived)
 		if device.VideoCodec != "" || device.AudioCodec != "" {
 			fmt.Fprintf(&b, " Video bitstream match=%t video packets=%d video bytes=%d Audio payload match=%t audio codec=%s audio packets=%d audio bytes=%d audio frames=%d",
@@ -1453,9 +1456,9 @@ func renderVideoRelayConsole(result videoRelayResult) string {
 		firstNonEmpty(result.WebRTC.RelayEvidenceStatus, "not_checked"),
 		firstNonEmpty(result.WebRTC.SelectedCandidateTypes, "unknown"))
 	for _, device := range result.Devices {
-		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s media=%s codec=%s nal_types=%s packets=%d bytes=%d video_match=%t audio_match=%t audio_packets=%d audio_bytes=%d\n",
+		fmt.Fprintf(&b, "  %s websocket=%s create=%s answer=%s ice=%s rtp=%s close=%s close_auth=%s media=%s codec=%s nal_types=%s packets=%d bytes=%d video_match=%t audio_match=%t audio_packets=%d audio_bytes=%d\n",
 			device.DeviceID, device.WebSocketOwnerStatus, device.WebRTCCreateStatus, device.WebRTCAnswerStatus,
-			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, firstNonEmpty(device.MediaModel, "h264"), device.RTPCodec, device.RTPNALTypes, device.RTPPacketsReceived, device.RTPBytesReceived,
+			device.ICEConnectedStatus, device.RTPReceiveStatus, device.CloseStatus, firstNonEmpty(device.CloseAuthorization, "unknown"), firstNonEmpty(device.MediaModel, "h264"), device.RTPCodec, device.RTPNALTypes, device.RTPPacketsReceived, device.RTPBytesReceived,
 			device.VideoBitstreamMatch, device.AudioPayloadMatch, device.AudioPacketsReceived, device.AudioBytesReceived)
 		if result.TraceDetail != "none" {
 			fmt.Fprintf(&b, "    signaling=%s\n", videoRelayTraceChainSummary(result.SignalingTrace, device.DeviceID))
