@@ -318,6 +318,12 @@ func TestVideoRelayDeviceOnlyEvidenceRequiresWebSocketOwner(t *testing.T) {
 		ICEConnectedStatus: "PASS", RTPReceiveStatus: "PASS", CloseStatus: "PASS",
 		RTPPacketsReceived: 1, RTPBytesReceived: 1,
 	}
+	if videoRelayDeviceEvidencePass("both", device) {
+		t.Fatal("complete relay evidence passed without matching device-token close evidence")
+	}
+	if err := json.Unmarshal([]byte(`{"close_authorization":"matching_device_token"}`), &device); err != nil {
+		t.Fatal(err)
+	}
 	if !videoRelayDeviceEvidencePass("both", device) {
 		t.Fatal("complete relay evidence unexpectedly failed")
 	}
@@ -430,7 +436,7 @@ func TestVideoRelaySummaryUsesOperationEvidenceICEServerCount(t *testing.T) {
 		{"name":"webrtc_media_answer","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"}"},
 		{"name":"webrtc_media_ice_connected","device_id":"cam-1","success":true,"latency_ms":25,"evidence":"ice_connected_ms=25"},
 		{"name":"webrtc_media_receive","device_id":"cam-1","success":true,"evidence":"media_model=h264_opus_av video_codec=h264 video_receiver_packets=10 video_receiver_bytes=20 video_receiver_bitstream_match=true video_nal_types=idr,sps audio_codec=opus audio_receiver_packets=5 audio_receiver_bytes=15 audio_receiver_frames=5 audio_payload_match=true"},
-		{"name":"webrtc_media_close","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"}"}
+		{"name":"webrtc_media_close","device_id":"cam-1","success":true,"evidence":"{\"status\":\"ok\"} authorization=matching_device_token"}
 	]}`)
 	path := filepath.Join(t.TempDir(), "load-results.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
@@ -445,6 +451,13 @@ func TestVideoRelaySummaryUsesOperationEvidenceICEServerCount(t *testing.T) {
 	}
 	if devices[0].MediaModel != "h264_opus_av" || !devices[0].VideoBitstreamMatch || !devices[0].AudioPayloadMatch || devices[0].AudioPacketsReceived != 5 {
 		t.Fatalf("media summary = %+v, want parsed AV audio/video evidence", devices[0])
+	}
+	encoded, err := json.Marshal(devices[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"close_authorization":"matching_device_token"`) {
+		t.Fatalf("summary missing matching device-token close evidence: %s", encoded)
 	}
 }
 
