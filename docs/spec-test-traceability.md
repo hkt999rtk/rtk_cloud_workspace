@@ -167,14 +167,14 @@
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-MQTT-TENANT-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-MQTT-TENANT-001` | `independent` | `93777693d184` | `canonical` | `active` | `INT-VC-AUTH-MQTT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-ROUTE-SCOPE-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-ROUTE-SCOPE-001` | `independent` | `33b034c5daa4` | `canonical` | `active` | `INT-VC-AUTH-BOUNDARY-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-MTLS-TRUST-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-MTLS-TRUST-001` | `independent` | `3fa476b082d0` | `canonical` | `active` | `INT-VC-AUTH-MTLS-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-APP-BOOTSTRAP-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-APP-BOOTSTRAP-001` | `workflow` | `bdd9356f9b38` | `canonical` | `active` | `E2E-AUTH-APPBOOT-001` | `test-e2e` |
+| `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-APP-BOOTSTRAP-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-APP-BOOTSTRAP-001` | `workflow` | `307845610b7e` | `canonical` | `active` | `E2E-AUTH-APPBOOT-001` | `test-e2e` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-CERT-IDENTITY-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-CERT-IDENTITY-001` | `independent` | `c869ae239034` | `canonical` | `active` | `INT-VC-AUTH-IDENTITY-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-DEVICE-BOOTSTRAP-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-DEVICE-BOOTSTRAP-001` | `workflow` | `200810fb1ee8` | `canonical` | `active` | `E2E-AUTH-DEVRECOVERY-001` | `test-e2e` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-ENTITLEMENT-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-ENTITLEMENT-001` | `independent` | `d6cb7ae964c0` | `canonical` | `active` | `INT-VC-AUTH-ENTITLEMENT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-FACTORY-CONTEXT-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-FACTORY-CONTEXT-001` | `independent` | `7e089f24ab42` | `canonical` | `active` | `INT-VC-AUTH-FACTORYCTX-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-REVOCATION-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-REVOCATION-001` | `workflow` | `ba4d2701a863` | `canonical` | `active` | `E2E-AUTH-DEVREVOCATION-001` | `test-e2e` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-RECOVERY-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-RECOVERY-001` | `workflow` | `c6726052896e` | `canonical` | `active` | `E2E-AUTH-DEVRECOVERY-001` | `test-e2e` |
-| `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-FACTORY-ENROLL-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-FACTORY-ENROLL-001` | `workflow` | `a970530f755f` | `canonical` | `active` | `E2E-AUTH-FACTORY-BOOTSTRAP-001` | `test-e2e` |
+| `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-FACTORY-ENROLL-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-FACTORY-ENROLL-001` | `workflow` | `2b729685c85f` | `canonical` | `active` | `E2E-AUTH-FACTORY-BOOTSTRAP-001` | `test-e2e` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-LEGACY-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-LEGACY-001` | `independent` | `3ab297a38520` | `canonical` | `active` | `INT-VC-AUTH-LEGACY-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-ACCOUNT-CROSSREF-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-ACCOUNT-CROSSREF-001` | `workflow` | `cce903b8635c` | `canonical` | `active` | `E2E-AUTH-ACCOUNT-ONBOARDING-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-BOUNDARY-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-BOUNDARY-001` | `independent` | `0a49a3cbbc86` | `canonical` | `active` | `INT-AM-AUTHZ-BOUNDARY-001` | `test-services` |
@@ -350,12 +350,12 @@
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-POLICY-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-POLICY-001` | `` | `96265ed14302` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-KEY-CUSTODY-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-KEY-CUSTODY-001` | `` | `f59e1d864aa3` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-AUTH-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-AUTH-001` | `` | `b8dadeb47860` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
-| `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-REQUEST-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-REQUEST-001` | `` | `00d4240220f8` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
-| `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-PERSISTENCE-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-PERSISTENCE-001` | `independent` | `019f3d7a0eaf` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
+| `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-REQUEST-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-REQUEST-001` | `` | `6594f0569a80` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
+| `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-PERSISTENCE-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-PERSISTENCE-001` | `independent` | `32aefc97eedc` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-READINESS-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-READINESS-001` | `` | `53356fe0cb3c` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-ISSUER-MTLS-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-ISSUER-MTLS-001` | `independent` | `170b52d9ca20` | `service` | `active` | `E2E-FACTORY-ENROLL-001` | `test-e2e` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-AUDIT-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-AUDIT-001` | `independent` | `1a9562ffd0c2` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
-| `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-CONFIG-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-CONFIG-001` | `` | `4b1b6454aedc` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
+| `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-CONFIG-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-CONFIG-001` | `` | `49221b9f32a5` | `service` | `active` | `INT-VC-FACTORY-SERVICE-001` | `test-services` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-DEPLOYMENT-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-DEPLOYMENT-001` | `` | `c835e307f36b` | `service` | `active` | `E2E-FACTORY-ENROLL-001` | `test-e2e` |
 | `repos/rtk_video_cloud/docs/factory-enrollment-server.md#REQ-VC-FACTORY-SMOKE-001` | `FEAT-VC-FACTORY-001` | `REQ-VC-FACTORY-SMOKE-001` | `independent` | `6a55568314e4` | `service` | `active` | `E2E-FACTORY-ENROLL-001` | `test-e2e` |
 | `repos/rtk_video_cloud/docs/device-shadow-spec.md#REQ-VC-SHADOW-BOUNDARY-001` | `FEAT-VC-SHADOW-001` | `REQ-VC-SHADOW-BOUNDARY-001` | `` | `29c8b9b7dffd` | `service` | `active` | `INT-VC-SHADOW-SERVICE-001` | `test-services` |
@@ -403,6 +403,8 @@
 | `SPEC-CONTRACT-LOGGING-OPERATIONS#query_ingested_log` | ` ` | `FEAT-CONTRACT-SERVICE-LOGGING-001` | `REQ-CONTRACT-LOGGING-DELIVERY-001` | `16f27d193cd7` |
 | `SPEC-CONTRACT-OPENAPI#getRoot` | `GET ` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-002` | `a192e398f206` |
 | `SPEC-CONTRACT-OPENAPI#activateCameraLegacy` | `POST /activate_camera` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `b25a84857dc3` |
+| `SPEC-CONTRACT-OPENAPI#createDeveloperAppTestBundle` | `POST /api/developer/pki/test-bundles/app` | `` | — | `6ffab0c90898` |
+| `SPEC-CONTRACT-OPENAPI#createDeveloperDeviceTestBundle` | `POST /api/developer/pki/test-bundles/device` | `` | — | `304497903757` |
 | `SPEC-CONTRACT-OPENAPI#renewDeviceCertificate` | `POST /api/device/renew_certificate` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `54828939e284` |
 | `SPEC-CONTRACT-OPENAPI#activateDevice` | `POST /api/devices/{devid}/activate` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001`, `REQ-CONTRACT-PROV-CLAIM-BOUNDARY-001`, `REQ-CONTRACT-PROV-SIGNOFF-001`, `REQ-CONTRACT-PROV-ACTIVATION-001`, `REQ-LIVE-STG-ONBOARD-001` | `1ac8042bfab0` |
 | `SPEC-CONTRACT-OPENAPI#sendDeviceCommand` | `POST /api/devices/{devid}/commands` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001`, `REQ-CONTRACT-PROV-SIGNOFF-001`, `REQ-CONTRACT-PROV-RUNTIME-001`, `REQ-CONTRACT-PROV-UNPROVISION-001`, `REQ-LIVE-STG-ONBOARD-001` | `4eae8e4f92db` |
@@ -614,6 +616,7 @@
 | `SPEC-AM-OPENAPI#requestBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `d18d566da28c` |
 | `SPEC-AM-OPENAPI#cancelBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `e2ed76abc6d8` |
 | `SPEC-AM-OPENAPI#getBrandCloudOwnerTransfer` | `GET /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `78c871b49ee7` |
+| `SPEC-AM-OPENAPI#issueDeveloperPKITestAppCertificate` | `POST /v1/developer/brand-clouds/{brandCloudId}/pki/test-app-certificates` | `` | — | `2a785b963737` |
 | `SPEC-AM-OPENAPI#listDeveloperChipsets` | `GET /v1/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `a1573dd57b4b` |
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
@@ -778,6 +781,8 @@
 | `SPEC-CA-OPENAPI#postApiDeveloperBrandCloudsByBrandCloudIDOwnerTransferByTransferIDCancel` | `POST /api/developer/brand-clouds/{brandCloudID}/owner-transfer/{transferID}/cancel` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `559b5fbc50b6` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsets` | `GET /api/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `c1be29c8622c` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsetsByChipsetId` | `GET /api/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `f67498038c78` |
+| `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleApp` | `POST /api/developer/pki/test-bundles/app` | `` | — | `77e0231a6b62` |
+| `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleDevice` | `POST /api/developer/pki/test-bundles/device` | `` | — | `e43724c1b122` |
 | `SPEC-CA-OPENAPI#getApiDevices` | `GET /api/devices` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `68483d60a9ad` |
 | `SPEC-CA-OPENAPI#getApiDevicesById` | `GET /api/devices/{id}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `5efdc1043df0` |
 | `SPEC-CA-OPENAPI#postApiDevicesByIdDeactivate` | `POST /api/devices/{id}/deactivate` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `d0996152c58a` |
@@ -1217,6 +1222,8 @@
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L264` | `draft` | `planned` | `d119c9ed0c84` | not human roles and must not be displayed as ACL labels. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L277` | `draft` | `planned` | `56db3ec9a934` | Backend handlers and frontend components must enforce these rules consistently. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L279` | `draft` | `planned` | `7444f7d571cd` | visibility constraint on a specific field, it must align with the table below. |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Purpose@L46` | `draft` | `planned` | `c00c1a49a040` | Each SDK package must implement this contract or explicitly document which |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L55` | `draft` | `planned` | `ed9d3ad28b0a` | The SDK (or a manufacturing-line tool that calls SDK primitives) must: |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L65` | `draft` | `planned` | `b1acacc9ed18` | The key generation helper should be: |
@@ -1303,6 +1310,7 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `issueDeveloperPKITestAppCertificate` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_admin/docs/ROLES.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L264` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability contract@L183` | `false` | normative clause 789186a3cdd5 requires a stable FEAT-*/REQ-* source mapping: The active membership must project these machine-readable capabilities. Display |
@@ -1313,6 +1321,8 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L228` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `false` | normative clause 5ab164b3f034 requires a stable FEAT-*/REQ-* source mapping: persona, but route guards and enabled UI actions must use explicit |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Tier 2 — Brand Operator Roles@L126` | `false` | normative clause 0915d659e349 requires a stable FEAT-*/REQ-* source mapping: Tier 2 daily authentication should use Account Manager-backed SSO. Account |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivityDetail` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingInvoice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
@@ -1322,6 +1332,8 @@
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingSummary` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingUsage` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiDeveloperPKITestBundleApp` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiDeveloperPKITestBundleDevice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `putApiBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Acceptance Checklist@L344` | `false` | normative clause 288cf003d209 requires a stable FEAT-*/REQ-* source mapping: An SDK package implementing PKI device auth must verify: |
@@ -1408,6 +1420,8 @@
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `activateBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `closeBillingPeriod` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `createBillingPricingVersion` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `createDeveloperAppTestBundle` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `createDeveloperDeviceTestBundle` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `downloadBillingInvoicePdf` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `exportBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
