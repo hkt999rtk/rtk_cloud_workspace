@@ -57,6 +57,7 @@ CLOUD_REGION=us-sea
 CLOUD_STACK_NAME=video-cloud-staging
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.realtekconnect.com
+CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256
 `)
 	helper := filepath.Join(workspace, "repos", "rtk_account_manager", "scripts", "email_signup_imap.py")
 	writeTestFile(t, helper, `#!/usr/bin/env python3

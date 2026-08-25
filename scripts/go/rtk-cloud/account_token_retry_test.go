@@ -61,7 +61,7 @@ func TestAccountEnsureUserAppCertificateUsesExtendedTransientRetryBudget(t *test
 	}))
 	defer server.Close()
 
-	ctx := accountManagerContext{BaseURL: server.URL}
+	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
 	_, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, nil, nil)
 	if err != nil {
 		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
@@ -101,7 +101,7 @@ func TestAccountEnsureUserAppCertificateBootstrapsWithCSRInFirstLogin(t *testing
 	}))
 	defer server.Close()
 
-	ctx := accountManagerContext{BaseURL: server.URL}
+	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
 	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", true, nil, nil)
 	if err != nil {
 		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
@@ -237,7 +237,7 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	artifactDir := filepath.Join(envRoot, "artifacts", "users")
@@ -359,7 +359,7 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	artifactDir := filepath.Join(envRoot, "artifacts", "users")
@@ -492,7 +492,7 @@ func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -597,7 +597,7 @@ func TestStartProvisionRefreshesBrandCloudUserTokenOnUnauthorized(t *testing.T) 
 	}))
 	defer server.Close()
 
-	ctx := accountManagerContext{BaseURL: server.URL}
+	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
 	user := &brandCloudUserSession{
 		Email:    "rtk+001@users.local",
 		Password: "pass",
@@ -866,7 +866,7 @@ func TestBrandCloudUserAccessTokenReusesArtifactTokenWithoutLogin(t *testing.T) 
 	}))
 	defer server.Close()
 
-	ctx := accountManagerContext{BaseURL: server.URL}
+	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
 	user := &brandCloudUserSession{
 		Email:    "rtk+001@users.local",
 		Password: "pass",
@@ -967,7 +967,7 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	}))
 	defer server.Close()
 
-	ctx := accountManagerContext{BaseURL: server.URL}
+	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
 	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, nil, func() error {
 		recovered = true
 		return nil
@@ -1043,8 +1043,8 @@ func TestShouldFallbackAppCertificateAlgorithm(t *testing.T) {
 	if !shouldFallbackAppCertificateAlgorithm(err, "ed25519") {
 		t.Fatal("expected Ed25519 internal error to fall back to P-256")
 	}
-	if shouldFallbackAppCertificateAlgorithm(err, "p256") {
-		t.Fatal("did not expect P-256 to fall back again")
+	if !shouldFallbackAppCertificateAlgorithm(err, "p256") {
+		t.Fatal("expected a configured P-256 fallback to advance after the same compatibility error")
 	}
 	if shouldFallbackAppCertificateAlgorithm(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"), "ed25519") {
 		t.Fatal("did not expect CSR validation error to trigger algorithm fallback")
@@ -1114,7 +1114,7 @@ func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *te
 		"private_key_pem": "-----BEGIN PRIVATE KEY-----\nstale\n-----END PRIVATE KEY-----",
 		"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nstale\n-----END CERTIFICATE REQUEST-----",
 	}
-	ctx := accountManagerContext{BaseURL: server.URL}
+	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
 	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, staleCredentials, func() error {
 		recovered = true
 		return nil

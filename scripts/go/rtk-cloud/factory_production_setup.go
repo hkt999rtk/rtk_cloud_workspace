@@ -101,11 +101,12 @@ func prepareFactoryProductionCredential(workspace, envRoot, brandname, runID str
 
 func factoryProductionAccountContext(workspace, envRoot string) (accountManagerContext, error) {
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("ACCOUNT_MANAGER_BASE_URL")), "/")
+	stackEnv, _ := readEnvFile(filepath.Join(envRoot, "env", "stack.env"))
 	platformEnv := filepath.Join(envRoot, "services", "account-manager", "account-manager-platform-admin.env")
 	adminEmail := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL"))
 	adminPassword := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"), envFileValue(platformEnv, "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"))
 	if baseURL != "" && adminEmail != "" && adminPassword != "" {
-		return accountManagerContext{EnvRoot: envRoot, BaseURL: baseURL, AdminEmail: adminEmail, AdminPassword: adminPassword, PlatformAdminEnv: platformEnv}, nil
+		return accountManagerContext{EnvRoot: envRoot, StackValues: stackEnv, BaseURL: baseURL, AdminEmail: adminEmail, AdminPassword: adminPassword, PlatformAdminEnv: platformEnv}, nil
 	}
 	return accountManagerContextFromFlags(workspace, envRoot)
 }
