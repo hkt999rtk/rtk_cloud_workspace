@@ -3674,11 +3674,45 @@ func newLKEMQTTMaterial(env map[string]string) (lkeMQTTMaterial, error) {
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
-	serverCert, serverKey, err := newLKESignedCertificate(caCert, caKey, "mqtt", []string{"mqtt"}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, algorithm)
+	serverCert, serverKey, err := newLKESignedCertificate(caCert, caKey, "mqtt", lkeMQTTDNSNames(env), nil, []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, algorithm)
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
 	return lkeMQTTMaterial{ServerCert: serverCert, ServerKey: serverKey}, nil
+}
+
+func lkeMQTTDNSNames(env map[string]string) []string {
+	names := []string{"mqtt"}
+	publicHost := strings.TrimSpace(firstNonEmpty(
+		os.Getenv("LKE_MQTT_PUBLIC_DOMAIN"),
+		env["LKE_MQTT_PUBLIC_DOMAIN"],
+		env["VIDEO_CLOUD_DOMAIN"],
+	))
+	if publicHost != "" && publicHost != "mqtt" {
+		names = append(names, publicHost)
+	}
+	return names
+}
+
+func lkeCertificateCoversDNSNames(path string, required []string) (bool, error) {
+	certPEM, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil || block.Type != "CERTIFICATE" {
+		return false, fmt.Errorf("decode certificate at %s", path)
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false, fmt.Errorf("parse certificate at %s: %w", path, err)
+	}
+	for _, name := range required {
+		if err := cert.VerifyHostname(name); err != nil {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func loadOrCreateLKEMQTTMaterial(paths provisionPaths, env map[string]string) (lkeMQTTMaterial, error) {
@@ -3701,7 +3735,11 @@ func loadOrCreateLKEMQTTMaterial(paths provisionPaths, env map[string]string) (l
 		if err != nil {
 			return lkeMQTTMaterial{}, err
 		}
-		if keyAlgorithm == desiredAlgorithm && certAlgorithm == desiredAlgorithm {
+		coversDNSNames, err := lkeCertificateCoversDNSNames(certPath, lkeMQTTDNSNames(env))
+		if err != nil {
+			return lkeMQTTMaterial{}, err
+		}
+		if keyAlgorithm == desiredAlgorithm && certAlgorithm == desiredAlgorithm && coversDNSNames {
 			certPEM, err := os.ReadFile(certPath)
 			if err != nil {
 				return lkeMQTTMaterial{}, err
@@ -6787,6 +6825,20 @@ func lkeVideoCloudImage(env map[string]string) string {
 	return ""
 }
 
+func lkeVideoCloudAppVersion(env map[string]string, image string) string {
+	if version := strings.TrimSpace(firstNonEmpty(os.Getenv("VIDEO_CLOUD_APP_VERSION"), env["VIDEO_CLOUD_APP_VERSION"])); version != "" {
+		return version
+	}
+	if digestAt := strings.LastIndex(image, "@"); digestAt >= 0 && digestAt+1 < len(image) {
+		return image[digestAt+1:]
+	}
+	lastSlash := strings.LastIndex(image, "/")
+	if tagAt := strings.LastIndex(image, ":"); tagAt > lastSlash && tagAt+1 < len(image) {
+		return image[tagAt+1:]
+	}
+	return "unknown"
+}
+
 func lkeCloudLoggerImage(env map[string]string) string {
 	for _, workload := range lkeWorkloads(env) {
 		if workload.Key == "cloud-logger" {
@@ -7550,7 +7602,9 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               - key: clip-private-key.pem
                 path: clip-private-key.pem
 `
-		extraEnv = fmt.Sprintf(`            - name: POSTGRES_PASSWORD
+		extraEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_APP_VERSION
+              value: %q
+            - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: video-cloud-runtime
@@ -7704,6 +7758,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
             - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE
               value: %q
 `,
+			lkeVideoCloudAppVersion(env, workload.Image),
 			lkeVideoCloudAPIBaseURL(env),
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),

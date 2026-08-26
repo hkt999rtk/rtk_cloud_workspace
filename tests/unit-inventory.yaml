@@ -430,6 +430,13 @@ cases:
       title: falls back unknown platform paths inside Platform View
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20Brand%20Cloud%20membership%20invitation%20acceptance%20outside%20regular%20console%20navigation
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: maps Brand Cloud membership invitation acceptance outside regular console navigation
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20customer%20shell%20paths%20to%20customer%20routes
       module: cloud-admin-web
       language: javascript
