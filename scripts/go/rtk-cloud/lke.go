@@ -2751,7 +2751,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "delete", "deployment/mqtt", "--ignore-not-found=true"); err != nil {
 			return err
 		}
-		if err := kubectlApply(lkeMQTTStatefulSetManifest(env)); err != nil {
+		if err := kubectlApply(lkeMQTTStatefulSetManifest(env, mqttMaterial)); err != nil {
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "statefulset/mqtt", "--timeout", firstNonEmpty(os.Getenv("LKE_MQTT_ROLLOUT_TIMEOUT"), "5m")); err != nil {
@@ -3641,6 +3641,7 @@ type lkeCertIssuerMaterial struct {
 }
 
 type lkeMQTTMaterial struct {
+	CACert     string
 	ServerCert string
 	ServerKey  string
 }
@@ -3670,7 +3671,7 @@ func newLKEMQTTMaterial(env map[string]string) (lkeMQTTMaterial, error) {
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
-	caCert, caKey, _, _, err := newLKECertificateAuthority("rtk-lke-mqtt-ca", algorithm)
+	caCert, caKey, caCertPEM, _, err := newLKECertificateAuthority("rtk-lke-mqtt-ca", algorithm)
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
@@ -3678,7 +3679,7 @@ func newLKEMQTTMaterial(env map[string]string) (lkeMQTTMaterial, error) {
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
-	return lkeMQTTMaterial{ServerCert: serverCert, ServerKey: serverKey}, nil
+	return lkeMQTTMaterial{CACert: caCertPEM, ServerCert: serverCert, ServerKey: serverKey}, nil
 }
 
 func lkeMQTTDNSNames(env map[string]string) []string {
@@ -3715,40 +3716,79 @@ func lkeCertificateCoversDNSNames(path string, required []string) (bool, error) 
 	return true, nil
 }
 
+func lkeCertificateSignedByCA(certPEM, caPEM []byte) (bool, error) {
+	certBlock, _ := pem.Decode(certPEM)
+	if certBlock == nil || certBlock.Type != "CERTIFICATE" {
+		return false, errors.New("decode MQTT server certificate")
+	}
+	cert, err := x509.ParseCertificate(certBlock.Bytes)
+	if err != nil {
+		return false, fmt.Errorf("parse MQTT server certificate: %w", err)
+	}
+	caBlock, _ := pem.Decode(caPEM)
+	if caBlock == nil || caBlock.Type != "CERTIFICATE" {
+		return false, errors.New("decode MQTT CA certificate")
+	}
+	ca, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		return false, fmt.Errorf("parse MQTT CA certificate: %w", err)
+	}
+	if !ca.IsCA || cert.CheckSignatureFrom(ca) != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
 func loadOrCreateLKEMQTTMaterial(paths provisionPaths, env map[string]string) (lkeMQTTMaterial, error) {
 	stateDir := filepath.Join(paths.EnvRoot, "state", "mqtt-tls")
+	caPath := filepath.Join(stateDir, "ca.crt")
 	certPath := filepath.Join(stateDir, "server.crt")
 	keyPath := filepath.Join(stateDir, "server.key")
 	desiredAlgorithm, err := lkeInternalTLSKeyAlgorithm(env)
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
-	if fileExists(certPath) || fileExists(keyPath) {
+	if fileExists(caPath) || fileExists(certPath) || fileExists(keyPath) {
 		if !fileExists(certPath) || !fileExists(keyPath) {
 			return lkeMQTTMaterial{}, fmt.Errorf("MQTT TLS state is incomplete under %s", stateDir)
 		}
-		keyAlgorithm, err := lkePEMPrivateKeyAlgorithm(keyPath)
-		if err != nil {
-			return lkeMQTTMaterial{}, err
-		}
-		certAlgorithm, err := lkePEMCertificatePublicKeyAlgorithm(certPath)
-		if err != nil {
-			return lkeMQTTMaterial{}, err
-		}
-		coversDNSNames, err := lkeCertificateCoversDNSNames(certPath, lkeMQTTDNSNames(env))
-		if err != nil {
-			return lkeMQTTMaterial{}, err
-		}
-		if keyAlgorithm == desiredAlgorithm && certAlgorithm == desiredAlgorithm && coversDNSNames {
-			certPEM, err := os.ReadFile(certPath)
+		// Legacy state did not persist the issuer CA. Rotate it once so the
+		// public listener can serve a complete chain and clients can trust the
+		// same CA through mqtt-runtime/ca.crt.
+		if fileExists(caPath) {
+			keyAlgorithm, err := lkePEMPrivateKeyAlgorithm(keyPath)
 			if err != nil {
 				return lkeMQTTMaterial{}, err
 			}
-			keyPEM, err := readSensitiveFile(keyPath, "MQTT TLS private key")
+			certAlgorithm, err := lkePEMCertificatePublicKeyAlgorithm(certPath)
 			if err != nil {
 				return lkeMQTTMaterial{}, err
 			}
-			return lkeMQTTMaterial{ServerCert: string(certPEM), ServerKey: keyPEM}, nil
+			coversDNSNames, err := lkeCertificateCoversDNSNames(certPath, lkeMQTTDNSNames(env))
+			if err != nil {
+				return lkeMQTTMaterial{}, err
+			}
+			if keyAlgorithm == desiredAlgorithm && certAlgorithm == desiredAlgorithm && coversDNSNames {
+				caPEM, err := os.ReadFile(caPath)
+				if err != nil {
+					return lkeMQTTMaterial{}, err
+				}
+				certPEM, err := os.ReadFile(certPath)
+				if err != nil {
+					return lkeMQTTMaterial{}, err
+				}
+				signedByCA, err := lkeCertificateSignedByCA(certPEM, caPEM)
+				if err != nil {
+					return lkeMQTTMaterial{}, err
+				}
+				if signedByCA {
+					keyPEM, err := readSensitiveFile(keyPath, "MQTT TLS private key")
+					if err != nil {
+						return lkeMQTTMaterial{}, err
+					}
+					return lkeMQTTMaterial{CACert: string(caPEM), ServerCert: string(certPEM), ServerKey: keyPEM}, nil
+				}
+			}
 		}
 	}
 	material, err := newLKEMQTTMaterial(env)
@@ -3770,6 +3810,9 @@ func replaceLKEMQTTMaterial(stateDir string, material lkeMQTTMaterial) error {
 		return err
 	}
 	defer os.RemoveAll(stagedDir)
+	if err := os.WriteFile(filepath.Join(stagedDir, "ca.crt"), []byte(material.CACert), 0o600); err != nil {
+		return err
+	}
 	if err := os.WriteFile(filepath.Join(stagedDir, "server.crt"), []byte(material.ServerCert), 0o600); err != nil {
 		return err
 	}
@@ -4913,6 +4956,7 @@ func lkeClipPrivateKeyPEM() string {
 }
 
 func lkeMQTTRuntimeSecretManifest(env map[string]string, material lkeMQTTMaterial) string {
+	serverChain := strings.TrimSpace(material.ServerCert) + "\n" + strings.TrimSpace(material.CACert) + "\n"
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -4929,10 +4973,11 @@ stringData:
   tls.key: %q
   cert.pem: %q
   key.pem: %q
+  ca.crt: %q
   cacert.pem: %q
   EMQX_HTTP_AUTHENTICATION: %q
   EMQX_DASHBOARD_PASSWORD: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], material.ServerCert, material.ServerKey, material.ServerCert, material.ServerKey, material.ServerCert, lkeEMQXHTTPAuthentication(env), lkeRuntimeSecretValue("emqx-dashboard-password"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], serverChain, material.ServerKey, serverChain, material.ServerKey, material.CACert, material.CACert, lkeEMQXHTTPAuthentication(env), lkeRuntimeSecretValue("emqx-dashboard-password"))
 }
 
 func lkeEMQXHTTPAuthentication(env map[string]string) string {
@@ -5021,10 +5066,14 @@ func lkeMQTTDeploymentManifest(env map[string]string) string {
 	return lkeMQTTStatefulSetManifest(env)
 }
 
-func lkeMQTTStatefulSetManifest(env map[string]string) string {
+func lkeMQTTStatefulSetManifest(env map[string]string, materials ...lkeMQTTMaterial) string {
 	placement := lkeMQTTPlacementManifest(env)
 	authEnabled := strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env))
 	authEnv := lkeEMQXListenerAuthEnvManifest(env)
+	tlsChecksum := lkeConfigChecksum("")
+	if len(materials) > 0 {
+		tlsChecksum = lkeConfigChecksum(materials[0].CACert, materials[0].ServerCert)
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -5048,6 +5097,7 @@ spec:
     metadata:
       annotations:
         rtk.realtek.com/mqtt-config-checksum: %q
+        rtk.realtek.com/mqtt-tls-checksum: %q
       labels:
         app.kubernetes.io/name: mqtt
         app.kubernetes.io/part-of: rtk-cloud
@@ -5096,6 +5146,8 @@ spec:
               value: /opt/emqx/etc/certs/tls.crt
             - name: EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE
               value: /opt/emqx/etc/certs/tls.key
+            - name: EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE
+              value: /opt/emqx/etc/certs/ca.crt
             - name: EMQX_FORCE_SHUTDOWN__MAX_MAILBOX_SIZE
               value: "%s"
             - name: EMQX_FORCE_SHUTDOWN__MAX_HEAP_SIZE
@@ -5129,7 +5181,7 @@ spec:
         - name: mqtt-config
           configMap:
             name: mqtt-config
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env)), env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env)), tlsChecksum, env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
