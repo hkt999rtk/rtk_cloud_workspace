@@ -2709,7 +2709,11 @@ func runCreateUsers(args []string) error {
 		}
 		appSubject := "app-brand-cloud-user:" + createResult.BrandCloudUserID
 		safeLog("bootstrapping app certificate: email=%s", email)
-		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, true, existingAppCredentials[email], func() error {
+		// Always inspect the current server-side certificate before generating a
+		// CSR. Account Manager reuses a valid certificate when a caller supplies
+		// another CSR, so the direct-CSR fast path can pair that certificate with
+		// a newly generated, unrelated private key on repeat staging runs.
+		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, false, existingAppCredentials[email], func() error {
 			return safeRevokeAppCertificate(createResult.BrandCloudUserID)
 		})
 		if err != nil {
