@@ -23,3 +23,7 @@
 	path = repos/rtk_billing
 	url = git@github-work.com:hkt999rtk/rtk_billing.git
 	branch = main
+[submodule "repos/rtk_ameba_webrtc"]
+	path = repos/rtk_ameba_webrtc
+	url = git@github-work.com:hkt999rtk/rtk_ameba_webrtc.git
+	branch = codex/amebapro2-libdatachannel

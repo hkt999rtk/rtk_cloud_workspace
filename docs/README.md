@@ -126,5 +126,6 @@ points unless linked from one of the active guides above.
 | Video Cloud | [repos/rtk_video_cloud/docs](../repos/rtk_video_cloud/docs/architecture.md) |
 | Account Manager | [repos/rtk_account_manager/docs](../repos/rtk_account_manager/docs/SPEC.md) |
 | Billing | [repos/rtk_billing](../repos/rtk_billing/README.md) |
+| Ameba WebRTC SDK | [repos/rtk_ameba_webrtc](../repos/rtk_ameba_webrtc/README.md) |
 | Frontend | [repos/rtk_cloud_frontend](../repos/rtk_cloud_frontend/README.md) |
 | Cloud Admin | [repos/rtk_cloud_admin](../repos/rtk_cloud_admin/README.md) |
