@@ -299,6 +299,7 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	createAttempts := 0
 	brandLoginAttempts := 0
+	revokeAttempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/auth/login":
@@ -324,6 +325,7 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 				"brand_cloud_user": map[string]string{"id": "brand-user-1"},
 			})
 		case "/v1/admin/brand-clouds/brand-1/users/brand-user-1/app-certificate/revoke":
+			revokeAttempts++
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "revoked"})
 		case "/v1/brand-clouds/rtk-test/auth/login":
 			brandLoginAttempts++
@@ -331,7 +333,22 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode brand login request: %v", err)
 			}
+			if brandLoginAttempts == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"user":   map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
+					"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
+					"app_certificate": map[string]string{
+						"status":             "issued",
+						"fingerprint_sha256": "stale-fingerprint",
+						"certificate_pem":    "stale-cert",
+					},
+				})
+				return
+			}
 			if req["app_csr_pem"] == "" {
+				if revokeAttempts != 1 {
+					t.Fatalf("revokeAttempts=%d, want 1 before certificate recheck", revokeAttempts)
+				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
 					"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
@@ -394,8 +411,8 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1", "--rotate-password"}); err != nil {
 		t.Fatalf("runCreateUsers() error = %v", err)
 	}
-	if createAttempts != 1 || brandLoginAttempts != 1 {
-		t.Fatalf("createAttempts=%d brandLoginAttempts=%d", createAttempts, brandLoginAttempts)
+	if createAttempts != 1 || brandLoginAttempts != 3 || revokeAttempts != 1 {
+		t.Fatalf("createAttempts=%d brandLoginAttempts=%d revokeAttempts=%d", createAttempts, brandLoginAttempts, revokeAttempts)
 	}
 	store, err := openTestDataStore(envRoot, "RTK")
 	if err != nil {
