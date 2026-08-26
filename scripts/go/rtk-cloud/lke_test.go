@@ -556,6 +556,35 @@ func TestLKEVideoCloudAPIAndClipVerifierShareBaseURL(t *testing.T) {
 	}
 }
 
+func TestLKEVideoCloudDeploymentUsesImageVersion(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	image := "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-3dfe5f669012"
+	manifest := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "video-cloud",
+		Name:      "video-cloud-api",
+		Namespace: lkeNamespaceName(env, "video-cloud"),
+		Image:     image,
+		Port:      8080,
+		Host:      env["VIDEO_CLOUD_DOMAIN"],
+	}, nil)
+	want := "name: VIDEO_CLOUD_APP_VERSION\n              value: \"sha-3dfe5f669012\""
+	if !strings.Contains(manifest, want) {
+		t.Fatalf("video-cloud manifest missing image-derived app version %q:\n%s", want, manifest)
+	}
+}
+
+func TestLKEVideoCloudAppVersionSupportsDigestAndOverride(t *testing.T) {
+	if got := lkeVideoCloudAppVersion(nil, "registry.example.test/video@sha256:abcdef"); got != "sha256:abcdef" {
+		t.Fatalf("digest version = %q", got)
+	}
+	if got := lkeVideoCloudAppVersion(map[string]string{"VIDEO_CLOUD_APP_VERSION": "release-42"}, "registry.example.test/video:latest"); got != "release-42" {
+		t.Fatalf("override version = %q", got)
+	}
+}
+
 func TestRunProvisionLKEMergesEnvironmentProfileObjectStorageCredentials(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
@@ -2304,6 +2333,58 @@ func TestLKEInternalTLSMaterialReusesMatchingAlgorithmState(t *testing.T) {
 	}
 	if firstMQTT.ServerCert != secondMQTT.ServerCert || strings.TrimSpace(firstMQTT.ServerKey) != strings.TrimSpace(secondMQTT.ServerKey) {
 		t.Fatal("matching MQTT TLS policy unexpectedly rotated certificate material")
+	}
+}
+
+func TestLKEMQTTMaterialIncludesPublicHostname(t *testing.T) {
+	env := map[string]string{
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256",
+		"VIDEO_CLOUD_DOMAIN":                     "video-cloud-staging.realtekconnect.com",
+	}
+	material, err := newLKEMQTTMaterial(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(material.ServerCert))
+	if block == nil {
+		t.Fatal("MQTT server certificate PEM is invalid")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hostname := range []string{"mqtt", "video-cloud-staging.realtekconnect.com"} {
+		if err := cert.VerifyHostname(hostname); err != nil {
+			t.Fatalf("certificate does not cover %q: %v", hostname, err)
+		}
+	}
+}
+
+func TestLKEMQTTMaterialRotatesWhenPublicHostnameChanges(t *testing.T) {
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	baseEnv := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"}
+	first, err := loadOrCreateLKEMQTTMaterial(paths, baseEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicEnv := map[string]string{
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256",
+		"VIDEO_CLOUD_DOMAIN":                     "video-cloud-staging.realtekconnect.com",
+	}
+	rotated, err := loadOrCreateLKEMQTTMaterial(paths, publicEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ServerCert == rotated.ServerCert || first.ServerKey == rotated.ServerKey {
+		t.Fatal("MQTT SAN change did not rotate persisted material")
+	}
+	certPath := filepath.Join(paths.EnvRoot, "state", "mqtt-tls", "server.crt")
+	covered, err := lkeCertificateCoversDNSNames(certPath, lkeMQTTDNSNames(publicEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !covered {
+		t.Fatal("rotated MQTT certificate does not cover required DNS names")
 	}
 }
 
