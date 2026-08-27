@@ -20,6 +20,8 @@ import (
 var accountManagerEmailSecretKeys = []string{
 	"AUTH_TOKEN_DELIVERY",
 	"AUTH_TOKEN_BASE_URL",
+	"EMAIL_VERIFICATION_TTL",
+	"PASSWORD_RESET_TTL",
 	"SMTP_HOST",
 	"SMTP_PORT",
 	"SMTP_USERNAME",
@@ -325,6 +327,8 @@ func mergeAccountManagerEmailSecret(secret map[string]any, env map[string]string
 		"SMTP_FROM_NAME":             "Realtek Connect",
 		"SMTP_ENCRYPTION":            "starttls",
 		"SENDMAIL_HTTP_TIMEOUT":      "15s",
+		"EMAIL_VERIFICATION_TTL":     "30m",
+		"PASSWORD_RESET_TTL":         "30m",
 		"EMAIL_OUTBOX_POLL_INTERVAL": "5s",
 		"EMAIL_OUTBOX_BATCH_SIZE":    "20",
 		"EMAIL_OUTBOX_MAX_ATTEMPTS":  "8",
