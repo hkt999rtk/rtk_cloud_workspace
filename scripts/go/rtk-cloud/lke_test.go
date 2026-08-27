@@ -1114,6 +1114,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"EMQX_LISTENERS__TCP__DEFAULT__BIND",
 		"EMQX_LISTENERS__SSL__DEFAULT__BIND",
 		"EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE",
+		"EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE",
 		"mountPath: /opt/emqx/etc/certs",
 		"containerPort: 8883",
 		"kind: Service\nmetadata:\n  name: mqtt",
@@ -2331,7 +2332,7 @@ func TestLKEInternalTLSMaterialReusesMatchingAlgorithmState(t *testing.T) {
 	if firstCertIssuer.ServerCert != secondCertIssuer.ServerCert || firstCertIssuer.ServiceCA != secondCertIssuer.ServiceCA || firstCertIssuer.ClientCert != secondCertIssuer.ClientCert || firstCertIssuer.FactoryCert != secondCertIssuer.FactoryCert || strings.TrimSpace(firstCertIssuer.ServerKey) != strings.TrimSpace(secondCertIssuer.ServerKey) || strings.TrimSpace(firstCertIssuer.ClientKey) != strings.TrimSpace(secondCertIssuer.ClientKey) || strings.TrimSpace(firstCertIssuer.FactoryKey) != strings.TrimSpace(secondCertIssuer.FactoryKey) {
 		t.Fatal("matching certissuer TLS policy unexpectedly rotated certificate material")
 	}
-	if firstMQTT.ServerCert != secondMQTT.ServerCert || strings.TrimSpace(firstMQTT.ServerKey) != strings.TrimSpace(secondMQTT.ServerKey) {
+	if firstMQTT.CACert != secondMQTT.CACert || firstMQTT.ServerCert != secondMQTT.ServerCert || strings.TrimSpace(firstMQTT.ServerKey) != strings.TrimSpace(secondMQTT.ServerKey) {
 		t.Fatal("matching MQTT TLS policy unexpectedly rotated certificate material")
 	}
 }
@@ -2357,6 +2358,86 @@ func TestLKEMQTTMaterialIncludesPublicHostname(t *testing.T) {
 		if err := cert.VerifyHostname(hostname); err != nil {
 			t.Fatalf("certificate does not cover %q: %v", hostname, err)
 		}
+	}
+	caBlock, _ := pem.Decode([]byte(material.CACert))
+	if caBlock == nil {
+		t.Fatal("MQTT CA certificate PEM is invalid")
+	}
+	ca, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ca.IsCA {
+		t.Fatal("MQTT issuer certificate is not a CA")
+	}
+	if err := cert.CheckSignatureFrom(ca); err != nil {
+		t.Fatalf("MQTT server certificate is not signed by the persisted CA: %v", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(material.CACert)) {
+		t.Fatal("MQTT CA could not be added to a trust pool")
+	}
+	if _, err := cert.Verify(x509.VerifyOptions{DNSName: "video-cloud-staging.realtekconnect.com", Roots: roots}); err != nil {
+		t.Fatalf("MQTT server certificate chain cannot be verified: %v", err)
+	}
+}
+
+func TestLKEMQTTRuntimeSecretPublishesCAAndServerChain(t *testing.T) {
+	manifest := lkeMQTTRuntimeSecretManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, lkeMQTTMaterial{
+		CACert:     "ca\n",
+		ServerCert: "leaf\n",
+		ServerKey:  "key\n",
+	})
+	for _, want := range []string{
+		`tls.crt: "leaf\nca\n"`,
+		`cert.pem: "leaf\nca\n"`,
+		`ca.crt: "ca\n"`,
+		`cacert.pem: "ca\n"`,
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("MQTT runtime secret missing %q:\n%s", want, manifest)
+		}
+	}
+	if strings.Contains(manifest, `cacert.pem: "leaf\n"`) {
+		t.Fatal("MQTT runtime secret incorrectly publishes the leaf as its CA")
+	}
+}
+
+func TestLKEMQTTMaterialMigratesLegacyStateWithoutCA(t *testing.T) {
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	env := map[string]string{
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256",
+		"VIDEO_CLOUD_DOMAIN":                     "video-cloud-staging.realtekconnect.com",
+	}
+	legacy, err := newLKEMQTTMaterial(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(paths.EnvRoot, "state", "mqtt-tls")
+	writeTestFile(t, filepath.Join(stateDir, "server.crt"), legacy.ServerCert)
+	writeTestFile(t, filepath.Join(stateDir, "server.key"), legacy.ServerKey)
+
+	migrated, err := loadOrCreateLKEMQTTMaterial(paths, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.CACert == "" || migrated.ServerCert == legacy.ServerCert {
+		t.Fatal("legacy MQTT state without a CA was not rotated")
+	}
+	if got := readTestFile(t, filepath.Join(stateDir, "ca.crt")); got != migrated.CACert {
+		t.Fatal("rotated MQTT CA was not persisted")
+	}
+}
+
+func TestLKEMQTTStatefulSetChecksumTracksTLSMaterial(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	first := lkeMQTTStatefulSetManifest(env, lkeMQTTMaterial{CACert: "ca-one", ServerCert: "leaf-one"})
+	second := lkeMQTTStatefulSetManifest(env, lkeMQTTMaterial{CACert: "ca-two", ServerCert: "leaf-two"})
+	if first == second {
+		t.Fatal("MQTT TLS material change did not update the StatefulSet pod template")
+	}
+	if !strings.Contains(first, "rtk.realtek.com/mqtt-tls-checksum:") {
+		t.Fatal("MQTT StatefulSet does not carry a TLS checksum annotation")
 	}
 }
 
