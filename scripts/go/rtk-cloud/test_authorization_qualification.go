@@ -514,7 +514,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		},
 	},
 	{
-		TestID: "INT-VC-OTA-OPERATOR-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestSKUOTAOperatorAndDeviceAuthenticationBoundaries",
+		TestID: "INT-VC-OTA-OPERATOR-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestProductOTAOperatorAndDeviceAuthenticationBoundaries",
 		Assertions: map[string]map[string]string{
 			"REQ-CONTRACT-AUTHZ-OTA-OPERATOR-001": {
 				"operator_credential_required": "PASS",
@@ -530,7 +530,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		},
 	},
 	{
-		TestID: "INT-VC-OTA-ARTIFACT-001", Repository: "rtk_video_cloud", Package: "./internal/skuota", GoTest: "TestArtifactTokenIsDeploymentScopedAndExpires",
+		TestID: "INT-VC-OTA-ARTIFACT-001", Repository: "rtk_video_cloud", Package: "./internal/productota", GoTest: "TestArtifactTokenIsDeploymentScopedAndExpires",
 		Assertions: map[string]map[string]string{
 			"REQ-CONTRACT-AUTHZ-OTA-ARTIFACT-001": {
 				"foreign_device_rejected":   "PASS",
@@ -540,7 +540,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		},
 	},
 	{
-		TestID: "INT-VC-OTA-TENANT-001", Repository: "rtk_video_cloud", Package: "./internal/skuota", GoTest: "TestTenantIsolationAndEventIdempotency",
+		TestID: "INT-VC-OTA-TENANT-001", Repository: "rtk_video_cloud", Package: "./internal/productota", GoTest: "TestTenantIsolationAndEventIdempotency",
 		Assertions: map[string]map[string]string{
 			"REQ-CONTRACT-AUTHZ-OTA-TENANT-001": {
 				"foreign_brand_release_denied": "PASS",

@@ -67,7 +67,7 @@ pointer change in this workspace repository.
 
 Start with the read-only preflight, then render and review the resolved plan.
 Do not rely on topology numbers copied from a previous report; node counts,
-replicas, storage, provider SKUs, and projected services are authoritative only
+replicas, storage, provider Products, and projected services are authoritative only
 in the current environment plan.
 
 ```sh

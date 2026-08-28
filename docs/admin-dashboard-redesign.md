@@ -96,7 +96,7 @@ uses fixed groups in this order:
 ```
 品牌雲       → 品牌雲首頁（總覽／成員與權限／設定）
 設備營運     → 設備、群組與標籤、設備註冊、批次工作
-產品與更新   → SKU 與服務、ChipSet & SDK、韌體更新
+產品與更新   → Product 與服務、ChipSet & SDK、韌體更新
 監控與分析   → 影像播放狀況、報表
 帳號管理     → 帳務與自動加值
 ```
