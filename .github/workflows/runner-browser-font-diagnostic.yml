@@ -41,11 +41,12 @@ jobs:
           npm ci
           npx playwright install chromium
           npm run e2e:generate-fixture
-          node scripts/e2e-server.mjs > "$RUNNER_TEMP/cloud-admin-e2e-server.log" 2>&1 &
+          npm run build
+          E2E_APP_PORT=18083 node scripts/e2e-server.mjs > "$RUNNER_TEMP/cloud-admin-e2e-server.log" 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:18082/healthz >/dev/null; then
+            if curl --fail --silent http://127.0.0.1:18083/healthz >/dev/null; then
               break
             fi
             sleep 1
@@ -57,10 +58,10 @@ jobs:
           page.on('response', response => {
             if (response.url().includes('noto-sans')) console.log(`FONT_RESPONSE ${response.status()} ${response.url()}`);
           });
-          await page.request.post('http://127.0.0.1:18082/api/auth/platform/login', {
+          await page.request.post('http://127.0.0.1:18083/api/auth/platform/login', {
             data: { email: 'platform.admin@example.com', password: 'e2e-platform-password' },
           });
-          await page.goto('http://127.0.0.1:18082/admin/chipset-providers', { waitUntil: 'networkidle' });
+          await page.goto('http://127.0.0.1:18083/admin/chipset-providers', { waitUntil: 'networkidle' });
           await page.evaluate(() => document.fonts.ready);
           console.log('FONT_FACES', await page.evaluate(() => [...document.fonts].map(font => ({ family: font.family, status: font.status }))));
           const cdp = await page.context().newCDPSession(page);
