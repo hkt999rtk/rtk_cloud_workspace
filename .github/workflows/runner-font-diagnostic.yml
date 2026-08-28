@@ -1,6 +1,8 @@
 name: Runner font diagnostic
 
 on:
+  push:
+    branches: [codex/self-hosted-linux-x64-runner]
   workflow_dispatch:
 
 permissions:
