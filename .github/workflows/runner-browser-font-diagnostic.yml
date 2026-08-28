@@ -30,6 +30,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
       - name: Generate Linux snapshot candidates
         working-directory: repos/rtk_cloud_admin/web
         shell: bash
