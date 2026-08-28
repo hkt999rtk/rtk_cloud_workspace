@@ -148,7 +148,7 @@ go run ./scripts/go/rtk-cloud -- deployment preflight \
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-檢查 generic plan 中的 environment、logical location、minimum/effective replicas、每類 node 的 aggregate requests 與 effective count，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/SKU。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
+檢查 generic plan 中的 environment、logical location、minimum/effective replicas、每類 node 的 aggregate requests 與 effective count，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/Product。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \
@@ -184,7 +184,7 @@ LKE mutation 需要 operator 提供 `LINODE_TOKEN`。Token、kubeconfig、certif
 - `CLOUD_STACK_NAME` 與 DNS 名稱不會碰撞其他 environment。
 - 只覆寫與此 environment 確實不同的值。
 - Architecture override 沒有 `LKE_*`、`EKS_*`、`GKE_*`。
-- dev、staging、prod 的 adapter override 不包含正常 region、SKU 或 quota。
+- dev、staging、prod 的 adapter override 不包含正常 region、Product 或 quota。
 - Provider account limit 只存在 ignored adapter runtime，不進版控。
 - DNS adapter 已選擇，且 environment 沒有 provider zone ID 或 DNS credentials。
 - `deployment plan` 成功且 resolved plan 不含 secret。

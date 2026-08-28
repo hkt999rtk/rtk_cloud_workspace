@@ -6,11 +6,11 @@ RTK Cloud uses one reusable architecture description, many environment instances
 
 The Kubernetes architecture owns workloads, namespaces, logical node classes, resource intent, capacity rules, placement, edge requirements, and TURN requirements. It uses `rtk.io/node-class` and standard Kubernetes topology labels. It must not contain cloud resource IDs or provider-specific labels.
 
-An environment declares a logical deployment location such as `us-west`. Each logical node class declares minimum vCPU and memory requirements. It never names a provider region or machine SKU. Persistent storage remains workload/storage intent and is not inferred from node sizing.
+An environment declares a logical deployment location such as `us-west`. Each logical node class declares minimum vCPU and memory requirements. It never names a provider region or machine Product. Persistent storage remains workload/storage intent and is not inferred from node sizing.
 
 An adapter maps that intent to a provider. The LKE adapter owns Linode regions and instance types, LKE clusters and pools, Block/Object Storage, external HAProxy and coturn VMs, quota, and kubeconfig acquisition. EKS and GKE are reserved contracts and fail before mutation until implemented. DNS is a separate adapter family described in [`dns-adapter-architecture.md`](dns-adapter-architecture.md); it is not owned by LKE, EKS, or GKE.
 
-Adapter resolution is deterministic. LKE maps the logical location to an LKE region, filters its instance catalog by minimum vCPU and memory, then selects the candidate with the least memory surplus, least vCPU surplus, and finally lexicographically smallest type name. The generic plan contains only logical intent; provider region and SKU are adapter-private resolved evidence.
+Adapter resolution is deterministic. LKE maps the logical location to an LKE region, filters its instance catalog by minimum vCPU and memory, then selects the candidate with the least memory surplus, least vCPU surplus, and finally lexicographically smallest type name. The generic plan contains only logical intent; provider region and Product are adapter-private resolved evidence.
 
 ## Resolution and lifecycle
 

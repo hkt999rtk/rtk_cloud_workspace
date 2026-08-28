@@ -135,7 +135,7 @@ provision。
    go run ./scripts/go/rtk-cloud -- deployment plan --environment staging
    ```
 
-4. 審查 plan 內的 stack、provider region、resolved SKU、node class、replicas、storage、DNS、
+4. 審查 plan 內的 stack、provider region、resolved Product、node class、replicas、storage、DNS、
    image 與 projected active services。Topology 數字只以本次 resolved plan 為準。
 5. 明確核准後才 mutation：
 

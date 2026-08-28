@@ -50,6 +50,13 @@ The generated cross-reference is
 command classifies added, modified, deprecated, and removed requirements.
 Removal without a prior deprecated lifecycle record fails.
 
+An intentional requirement-ID rename is recorded on the replacement
+requirement with `renamed_from_revision`, set to the full SHA-256 revision of
+the prior requirement. The impact gate accepts it only as a one-to-one rename
+within the same feature; missing, stale, or ambiguous revision links remain an
+illegal removal. This preserves lifecycle auditability without retaining the
+retired identifier as a live requirement or compatibility alias.
+
 ## Catalog contract
 
 [`tests/catalog.yaml`](../tests/catalog.yaml) schema v4 stores Test IDs,

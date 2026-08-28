@@ -842,7 +842,7 @@ func testOTAAssignment(size int, digest string) otaAssignment {
 		ReleaseID:     "release-1",
 		TargetVersion: "2.0.0",
 		Manifest: otaManifest{
-			ReleaseID: "release-1", SKUID: "sku-1", Version: "2.0.0", BuildNumber: "2", ArtifactSize: int64(size), ArtifactSHA256: digest,
+			ReleaseID: "release-1", ProductID: "product-1", Version: "2.0.0", BuildNumber: "2", ArtifactSize: int64(size), ArtifactSHA256: digest,
 			HardwareRevisions: []string{"rev-a"}, AntiRollback: 2, SigningAlgorithm: "ed25519", SigningKeyID: "key-1", Signature: strings.Repeat("0", 128),
 		},
 	}

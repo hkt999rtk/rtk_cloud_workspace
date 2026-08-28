@@ -164,7 +164,7 @@ func (opts otaOptions) runtimeConfig() otaRuntimeConfig {
 
 type otaManifest struct {
 	ReleaseID         string    `json:"release_id"`
-	SKUID             string    `json:"sku_id"`
+	ProductID         string    `json:"product_id"`
 	Version           string    `json:"version"`
 	BuildNumber       string    `json:"build_number"`
 	ArtifactSize      int64     `json:"artifact_size"`
@@ -685,7 +685,7 @@ func (r *otaDeviceRunner) artifactAuthorization(ctx context.Context, manager *to
 
 func sameOTAManifest(left, right otaManifest) bool {
 	return left.ReleaseID == right.ReleaseID &&
-		left.SKUID == right.SKUID &&
+		left.ProductID == right.ProductID &&
 		left.Version == right.Version &&
 		left.BuildNumber == right.BuildNumber &&
 		left.ArtifactSize == right.ArtifactSize &&

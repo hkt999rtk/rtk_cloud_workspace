@@ -486,11 +486,11 @@ cases:
       title: maps Brand Cloud membership invitation acceptance outside regular console navigation
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20SKU%20collaborator%20invitation%20acceptance%20outside%20regular%20console%20navigation
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20Product%20collaborator%20invitation%20acceptance%20outside%20regular%20console%20navigation
       module: cloud-admin-web
       language: javascript
       source: src/routes.test.mjs
-      title: maps SKU collaborator invitation acceptance outside regular console navigation
+      title: maps Product collaborator invitation acceptance outside regular console navigation
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20customer%20shell%20paths%20to%20customer%20routes
@@ -715,11 +715,11 @@ cases:
       owner: rtk_cloud_client
       status: active
       test_id: UNIT-CLIENT-PKI-001
-    - canonical_key: js://cloud-client-javascript/test/package.test.ts#implements%20canonical%20SKU%20OTA%20operator%20and%20device%20helpers
+    - canonical_key: js://cloud-client-javascript/test/package.test.ts#implements%20canonical%20Product%20OTA%20operator%20and%20device%20helpers
       module: cloud-client-javascript
       language: javascript
       source: test/package.test.ts
-      title: implements canonical SKU OTA operator and device helpers
+      title: implements canonical Product OTA operator and device helpers
       owner: rtk_cloud_client
       status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#implements%20canonical%20device%20shadow%20and%20runtime%20log%20HTTP%20helpers
