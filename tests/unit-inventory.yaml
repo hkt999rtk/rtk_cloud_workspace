@@ -520,7 +520,9 @@ cases:
       source: src/routes.test.mjs
       title: platform nav follows the Platform Dashboard landing order
       owner: rtk_cloud_admin
-      status: active
+      status: retired
+      retired_at: "2026-08-28"
+      reason: Replaced by the unified shell group-order coverage.
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#platform%20nav%20follows%20the%20unified%20shell%20group%20order
       module: cloud-admin-web
       language: javascript
@@ -576,7 +578,9 @@ cases:
       source: src/routes.test.mjs
       title: uses fleet health overview title for the customer landing page
       owner: rtk_cloud_admin
-      status: active
+      status: retired
+      retired_at: "2026-08-28"
+      reason: Replaced by the shared Brand Cloud route-title coverage.
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20the%20shared%20Brand%20Cloud%20title%20for%20integrated%20routes
       module: cloud-admin-web
       language: javascript
