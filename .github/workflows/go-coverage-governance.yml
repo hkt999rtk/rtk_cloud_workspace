@@ -12,7 +12,7 @@ permissions:
 jobs:
   policy:
     name: Catalog, policy, and inventory
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -33,7 +33,7 @@ jobs:
 
   unit:
     name: Go unit coverage (${{ matrix.module }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -97,7 +97,7 @@ jobs:
 
   node:
     name: JavaScript unit coverage and inventory (${{ matrix.module }})
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -148,7 +148,7 @@ jobs:
 
   account-manager-postgres:
     name: Account Manager PostgreSQL coverage
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
       postgres:
@@ -194,7 +194,7 @@ jobs:
 
   billing-postgres:
     name: Billing PostgreSQL and virtual-payment coverage
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
       postgres:
@@ -242,7 +242,7 @@ jobs:
 
   video-cloud-postgres-emqx:
     name: Video Cloud PostgreSQL and EMQX coverage
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
       postgres:
@@ -319,7 +319,7 @@ jobs:
     name: Coverage aggregate and redaction
     if: always()
     needs: [policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

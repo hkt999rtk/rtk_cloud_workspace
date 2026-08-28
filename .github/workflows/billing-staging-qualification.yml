@@ -28,7 +28,7 @@ jobs:
   qualify:
     name: Deployed Billing payment and portal qualification
     if: github.event_name == 'workflow_dispatch' || vars.BILLING_STAGING_QUALIFICATION_ENABLED == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 45
     environment: staging
     env:
