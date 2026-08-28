@@ -38,7 +38,7 @@ sdk_e2e: &sdk_e2e
 
 cases:
   - { <<: *ui_local, id: UI-CA-AUTH-003, title: Failed login renders its error once, source: repos/rtk_cloud_admin/web/e2e/auth-errors.spec.mjs, selector: "[UI-CA-AUTH-003]", verifies: [REQ-CA-BFF-LOGIN-001] }
-  - { <<: *ui_smoke, id: UI-CA-AUTH-001, title: Password reset consumes the URL token without exposing it in the form, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-001]", verifies: [REQ-AM-ONE-TIME-TOKEN-001] }
+  - { <<: *ui_smoke, id: UI-CA-AUTH-001, title: Password reset consumes the URL token without exposing it in the form, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-002, title: Shared checkbox control matches the console style across desktop and mobile, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-002]", verifies: [REQ-CA-BFF-UI-001] }
   - id: UNIT-AM-AUTH-001
     title: OIDC failures do not expose provider tokens
