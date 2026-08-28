@@ -158,7 +158,7 @@ jobs:
           POSTGRES_USER: am_${{ github.run_id }}_${{ github.run_attempt }}
           POSTGRES_PASSWORD: integration_password
         ports:
-          - 5432:5432
+          - 5432/tcp
         options: >-
           --health-cmd "pg_isready"
           --health-interval 5s
@@ -180,7 +180,7 @@ jobs:
       - name: Run integration-aware coverage
         working-directory: scripts/go
         env:
-          TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+          TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
         run: go run ./rtk-cloud -- test-coverage --profile pr --module account-manager --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
       - name: Upload Account Manager evidence
         if: always()
@@ -204,7 +204,7 @@ jobs:
           POSTGRES_USER: billing_${{ github.run_id }}_${{ github.run_attempt }}
           POSTGRES_PASSWORD: integration_password
         ports:
-          - 5432:5432
+          - 5432/tcp
         options: >-
           --health-cmd "pg_isready"
           --health-interval 5s
@@ -226,7 +226,7 @@ jobs:
       - name: Run Billing integration-aware coverage and payment E2E
         working-directory: scripts/go
         env:
-          TEST_DATABASE_URL: postgres://billing_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/billing_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+          TEST_DATABASE_URL: postgres://billing_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/billing_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
         run: go run ./rtk-cloud -- test-payment --profile fake-e2e --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-billing-pr"
       - name: Upload Billing evidence
         if: always()
@@ -252,7 +252,7 @@ jobs:
           POSTGRES_USER: vc_${{ github.run_id }}_${{ github.run_attempt }}
           POSTGRES_PASSWORD: integration_password
         ports:
-          - 5432:5432
+          - 5432/tcp
         options: >-
           --health-cmd "pg_isready"
           --health-interval 5s
@@ -291,7 +291,7 @@ jobs:
       - name: Run integration-aware coverage
         working-directory: scripts/go
         env:
-          VIDEO_CLOUD_TEST_DSN: postgres://vc_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:5432/vc_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+          VIDEO_CLOUD_TEST_DSN: postgres://vc_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/vc_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
           VIDEO_CLOUD_MQTT_TEST_ADDR: 127.0.0.1:1883
         run: go run ./rtk-cloud -- test-coverage --profile pr --module video-cloud --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr"
       - name: Collect EMQX diagnostics
