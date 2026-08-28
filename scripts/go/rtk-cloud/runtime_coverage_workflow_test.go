@@ -52,8 +52,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"group: staging-mutating-tests",
 		"RUNTIME_COVERAGE_NIGHTLY_ENABLED",
 		"RUNTIME_COVERAGE_SHARED_CLUSTER: \"1\"",
-		"runs-on: ubuntu-24.04",
-		"RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04",
+		"runs-on: [self-hosted, Linux, X64]",
+		"RUNTIME_COVERAGE_RUNNER_LABEL: self-hosted-Linux-X64",
 		"RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live",
 		"lfs: true",
 		"LKE_POSTGRES_STORAGE_MODE: emptydir",
@@ -457,7 +457,7 @@ func TestRuntimeCoveragePreflightWrongConfirmationIsBlocked(t *testing.T) {
 		"RUNTIME_COVERAGE_MODE=run",
 		"RUNTIME_COVERAGE_CONFIRM=wrong-stack",
 		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
-		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=self-hosted-Linux-X64",
 		"RUNTIME_COVERAGE_RUNNER_OS=Linux",
 		"RUNTIME_COVERAGE_RUNNER_ARCH=X64",
 		"GITHUB_ACTIONS=true",
@@ -496,7 +496,7 @@ func TestRuntimeCoveragePreflightWrongRunnerArchitectureIsBlocked(t *testing.T) 
 		"RUNTIME_COVERAGE_RUN_ID=unit-preflight",
 		"RUNTIME_COVERAGE_MODE=preflight",
 		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
-		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=self-hosted-Linux-X64",
 		"RUNTIME_COVERAGE_RUNNER_OS=Linux",
 		"RUNTIME_COVERAGE_RUNNER_ARCH=X64",
 		"GITHUB_ACTIONS=true",
@@ -524,7 +524,7 @@ func TestRuntimeCoveragePreflightWrongRunnerArchitectureIsBlocked(t *testing.T) 
 		t.Fatal(err)
 	}
 	if parsed.Status != "BLOCKED" ||
-		parsed.Runner.Label != "ubuntu-24.04" ||
+		parsed.Runner.Label != "self-hosted-Linux-X64" ||
 		parsed.Runner.OS != "Linux" ||
 		parsed.Runner.Architecture != "ARM64" ||
 		!strings.Contains(strings.Join(parsed.Failures, "\n"), "runner architecture must be X64") {
@@ -544,7 +544,7 @@ func TestRuntimeCoveragePreflightRequiresSharedStagingStorageSource(t *testing.T
 		"RUNTIME_COVERAGE_RUN_ID=unit-preflight",
 		"RUNTIME_COVERAGE_MODE=preflight",
 		"CLOUD_STAGING_LKE_CLUSTER_LABEL=video-cloud-staging-lke",
-		"RUNTIME_COVERAGE_RUNNER_LABEL=ubuntu-24.04",
+		"RUNTIME_COVERAGE_RUNNER_LABEL=self-hosted-Linux-X64",
 		"RUNTIME_COVERAGE_PREFLIGHT_REPORT="+report,
 		"RUNTIME_COVERAGE_STORAGE_SOURCE_NAMESPACE=unexpected",
 	)

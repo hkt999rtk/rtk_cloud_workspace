@@ -73,7 +73,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-RUNTIME-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-RUNTIME-001` | `` | `02d1da12df73` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-AUTHORITY-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-AUTHORITY-001` | `` | `97cb59cc0c3f` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-STORE-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-STORE-001` | `` | `c2a753afbe40` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `d789eeff98f0` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `d789eeff98f0` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-002` | `test-services`, `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `c582b2590df9` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `3486cc975678` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `c82c1a79b3cf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
@@ -144,7 +144,7 @@
 | `repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md#REQ-CA-DASHBOARD-CHIPSET-001` | `FEAT-CA-PLATFORM-DASHBOARD-001` | `REQ-CA-DASHBOARD-CHIPSET-001` | `` | `61d52ad173cc` | `approved` | `active` | `UI-CA-CHIPSET-005` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md#REQ-CA-DASHBOARD-QUALIFICATION-001` | `FEAT-CA-PLATFORM-DASHBOARD-001` | `REQ-CA-DASHBOARD-QUALIFICATION-001` | `` | `040d1d6b24d0` | `approved` | `active` | `UI-CA-DASH-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md#REQ-CA-DASHBOARD-DECISIONS-001` | `FEAT-CA-PLATFORM-DASHBOARD-001` | `REQ-CA-DASHBOARD-DECISIONS-001` | `` | `a37071ba4d4c` | `approved` | `planned` | — | — |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `independent` | `c1d96ac86b52` | `service` | `active` | `UI-CA-FLEETPAGE-001` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `independent` | `c1d96ac86b52` | `service` | `active` | `UI-CA-FLEETPAGE-001`, `UI-CA-FLEETPAGE-003` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `independent` | `1d4686634daa` | `service` | `active` | `UI-CA-FLEETPAGE-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-001` | `` | `e2c75cb93aaf` | `service` | `active` | `UI-CA-PROV-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002` | `` | `99372a6457c6` | `service` | `active` | `UI-CA-PROV-002` | `test-ui` |
