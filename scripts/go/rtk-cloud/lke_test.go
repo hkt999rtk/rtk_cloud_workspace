@@ -4392,6 +4392,36 @@ func TestAccountManagerEmailWorkerManifestUsesCanonicalSMTPSecret(t *testing.T) 
 	}
 }
 
+func TestAccountManagerSecretConfiguresChipsetProviderRuntime(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"CLOUD_ADMIN_DOMAIN": "admin.video-cloud-staging.realtekconnect.com",
+	}
+	secret := lkeAccountManagerSecretManifest(env)
+	for _, want := range []string{
+		`CHIPSET_PROVIDER_ALLOWED_HOSTS: "admin.video-cloud-staging.realtekconnect.com"`,
+		`CHIPSET_PROVIDER_REFRESH_INTERVAL: "1h"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret missing %q:\n%s", want, secret)
+		}
+	}
+
+	overridden := maps.Clone(env)
+	overridden["CHIPSET_PROVIDER_ALLOWED_HOSTS"] = "packages.example.test"
+	overridden["CHIPSET_PROVIDER_REFRESH_INTERVAL"] = "30m"
+	secret = lkeAccountManagerSecretManifest(overridden)
+	for _, want := range []string{
+		`CHIPSET_PROVIDER_ALLOWED_HOSTS: "packages.example.test"`,
+		`CHIPSET_PROVIDER_REFRESH_INTERVAL: "30m"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("overridden secret missing %q:\n%s", want, secret)
+		}
+	}
+}
+
 func TestAccountManagerEmailWorkerManifestUsesSendMailHTTPSecret(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
 	env := map[string]string{
