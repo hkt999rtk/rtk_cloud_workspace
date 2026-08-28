@@ -274,6 +274,60 @@ func TestOTADeviceRunnerReportsEventFailure(t *testing.T) {
 	}
 }
 
+func TestOTADeviceRunnerClassifiesStageFailures(t *testing.T) {
+	tests := []struct {
+		name             string
+		wantCategory     string
+		checkDecision    string
+		artifactStatus   int
+		failEventStatus  string
+		cancelAfterEvent string
+		configure        func(*otaDeviceRunner)
+	}{
+		{name: "assignment", wantCategory: "assignment_failed", checkDecision: "paused"},
+		{name: "artifact download", wantCategory: "artifact_download_failed", artifactStatus: http.StatusBadRequest},
+		{name: "downloaded event", wantCategory: "downloaded_event_failed", failEventStatus: "downloaded"},
+		{name: "install delay", wantCategory: "install_delay_failed", cancelAfterEvent: "downloaded", configure: func(r *otaDeviceRunner) { r.config.Install = time.Second }},
+		{name: "installing event", wantCategory: "installing_event_failed", failEventStatus: "installing"},
+		{name: "reboot delay", wantCategory: "reboot_delay_failed", cancelAfterEvent: "installing", configure: func(r *otaDeviceRunner) { r.config.Reboot = time.Second }},
+		{name: "rebooting event", wantCategory: "rebooting_event_failed", failEventStatus: "rebooting"},
+		{name: "verifying event", wantCategory: "verifying_event_failed", failEventStatus: "verifying"},
+		{name: "verify delay", wantCategory: "verify_delay_failed", cancelAfterEvent: "verifying", configure: func(r *otaDeviceRunner) { r.config.Verify = time.Second }},
+		{name: "succeeded event", wantCategory: "succeeded_event_failed", failEventStatus: "succeeded"},
+		{name: "injected terminal event", wantCategory: "injected_terminal_event_failed", failEventStatus: "failed", configure: func(r *otaDeviceRunner) { r.config.DownloadFailurePercent = 100 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			runner, server := newControlledOTARunner(t, cancel, tc.checkDecision, tc.artifactStatus, tc.failEventStatus, tc.cancelAfterEvent)
+			defer server.Close()
+			runner.reconnectHook = func(context.Context, *sustainedDeviceSession) error { return nil }
+			if tc.configure != nil {
+				tc.configure(&runner)
+			}
+			result := runner.runDevice(ctx, testOTASession())
+			if result.ErrorCategory != tc.wantCategory || result.TerminalMatched {
+				t.Fatalf("result = %+v, want category %q", result, tc.wantCategory)
+			}
+		})
+	}
+}
+
+func TestOTADeviceRunnerClassifiesCanceledDownloadSlot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runner, server := newControlledOTARunner(t, cancel, "", 0, "", "downloading")
+	defer server.Close()
+	for range cap(runner.downloadSem) {
+		runner.downloadSem <- struct{}{}
+	}
+	result := runner.runDevice(ctx, testOTASession())
+	if result.ErrorCategory != "download_slot_failed" || result.TerminalMatched {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestOTADownloadGetsFreshArtifactAuthorizationOnRetry(t *testing.T) {
 	payload := []byte("firmware")
 	digest := sha256.Sum256(payload)
@@ -424,6 +478,49 @@ func TestOTAConcurrencyAndTimeoutHelpers(t *testing.T) {
 	if err := sleepOTAStage(ctx, time.Second, 20, 1, "run", "device", "install"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("sleep canceled error = %v", err)
 	}
+	if got := minInt(2, 1); got != 1 {
+		t.Fatalf("minInt = %d", got)
+	}
+	foundClampedJitter := false
+	for seed := 0; seed < 100 && !foundClampedJitter; seed++ {
+		foundClampedJitter = jitteredOTADuration(time.Second, 1000, seed, "run", "device", "stage") == 0
+	}
+	if !foundClampedJitter {
+		t.Fatal("expected an oversized negative jitter factor to clamp to zero")
+	}
+}
+
+func TestCloseOTADeviceMQTTClosesReaderAndConnection(t *testing.T) {
+	conn := &trackingReadWriteCloser{}
+	reader := &sustainedDeviceReader{done: make(chan struct{})}
+	session := &sustainedDeviceSession{Conn: conn, Reader: reader}
+	closeOTADeviceMQTT(session)
+	if session.Conn != nil || session.Reader != nil || !conn.closed {
+		t.Fatalf("session was not closed: %+v conn=%+v", session, conn)
+	}
+	select {
+	case <-reader.done:
+	default:
+		t.Fatal("reader was not closed")
+	}
+	closeOTADeviceMQTT(nil)
+}
+
+func TestOTAReconnectRejectsMissingManagerTokenAndBroker(t *testing.T) {
+	runner := testOTARunner("https://api.example.test")
+	if err := runner.reconnectMQTT(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "token manager") {
+		t.Fatalf("missing manager error = %v", err)
+	}
+	badTokenSession := testOTASession()
+	badTokenSession.DeviceTokenManager = &tokenManager{apiBaseURL: "http://127.0.0.1:1", deviceID: "device-1", now: time.Now, timeout: time.Millisecond}
+	if err := runner.reconnectMQTT(context.Background(), &badTokenSession); err == nil || !strings.Contains(err.Error(), "renew device token") {
+		t.Fatalf("token renewal error = %v", err)
+	}
+	brokerSession := testOTASession()
+	brokerSession.MQTTTarget = mqttEndpointTarget{Host: "127.0.0.1", Port: 1}
+	if err := runner.reconnectMQTT(context.Background(), &brokerSession); err == nil {
+		t.Fatal("expected broker connection failure")
+	}
 }
 
 func TestOTAEventRetryReusesExactPayload(t *testing.T) {
@@ -474,6 +571,46 @@ func TestOTAHTTPHelpersRejectNonRetryableAndMalformedResponses(t *testing.T) {
 	var decoded map[string]any
 	if err := runner.doDeviceJSON(context.Background(), testOTATokenManager(), http.MethodGet, "/malformed", nil, &decoded, "malformed", &result); err == nil || !strings.Contains(err.Error(), "decode malformed") {
 		t.Fatalf("decode error = %v", err)
+	}
+}
+
+func TestOTAHTTPHelpersExhaustTransportAndTokenRetries(t *testing.T) {
+	t.Run("transport", func(t *testing.T) {
+		runner := testOTARunner("https://api.example.test")
+		runner.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, errors.New("simulated network failure")
+		})}
+		result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
+		err := runner.doDeviceJSON(context.Background(), testOTATokenManager(), http.MethodGet, "/unavailable", nil, nil, "transport", &result)
+		if err == nil || !strings.Contains(err.Error(), "simulated network failure") || result.HTTPRetries != 2 {
+			t.Fatalf("error=%v result=%+v", err, result)
+		}
+	})
+
+	t.Run("token", func(t *testing.T) {
+		runner := testOTARunner("https://api.example.test")
+		manager := &tokenManager{apiBaseURL: "http://127.0.0.1:1", deviceID: "device-1", now: time.Now, timeout: time.Millisecond}
+		result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
+		err := runner.doDeviceJSON(context.Background(), manager, http.MethodGet, "/unavailable", nil, nil, "token", &result)
+		if err == nil || result.HTTPRetries != 2 {
+			t.Fatalf("error=%v result=%+v", err, result)
+		}
+	})
+}
+
+func TestOTADownloadExhaustsTransportRetries(t *testing.T) {
+	payload := []byte("controlled firmware")
+	digest := sha256.Sum256(payload)
+	assignment := testOTAAssignment(len(payload), hex.EncodeToString(digest[:]))
+	runner, server := newControlledOTARunner(t, func() {}, "", 0, "", "")
+	defer server.Close()
+	runner.artifactClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("simulated artifact network failure")
+	})}
+	result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
+	_, _, err := runner.downloadArtifact(context.Background(), testOTATokenManager(), assignment, &result)
+	if err == nil || !strings.Contains(err.Error(), "simulated artifact network failure") || result.HTTPRetries != 2 {
+		t.Fatalf("error=%v result=%+v", err, result)
 	}
 }
 
@@ -627,6 +764,49 @@ func newTestOTADeviceRunner(t *testing.T, manifestPayload, servedPayload []byte,
 	return runner, server, events
 }
 
+func newControlledOTARunner(t *testing.T, cancel context.CancelFunc, checkDecision string, artifactStatus int, failEventStatus, cancelAfterEvent string) (otaDeviceRunner, *httptest.Server) {
+	t.Helper()
+	payload := []byte("controlled firmware")
+	digest := sha256.Sum256(payload)
+	assignment := testOTAAssignment(len(payload), hex.EncodeToString(digest[:]))
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.URL.Path == "/v1/device/ota/check":
+			if checkDecision != "" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"decision": checkDecision})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"decision": "assigned", "assignment": assignment})
+		case strings.HasSuffix(req.URL.Path, "/artifact-token"):
+			_ = json.NewEncoder(w).Encode(otaArtifactAuthorization{DeploymentID: assignment.DeploymentID, ReleaseID: assignment.ReleaseID, URL: server.URL + "/artifact", Manifest: assignment.Manifest})
+		case req.URL.Path == "/artifact":
+			if artifactStatus != 0 {
+				http.Error(w, "artifact rejected", artifactStatus)
+				return
+			}
+			_, _ = w.Write(payload)
+		case strings.HasSuffix(req.URL.Path, "/events"):
+			var event otaEventRequest
+			if err := json.NewDecoder(req.Body).Decode(&event); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if event.Status == failEventStatus {
+				http.Error(w, "event rejected", http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			if event.Status == cancelAfterEvent {
+				time.AfterFunc(time.Millisecond, cancel)
+			}
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	return testOTARunner(server.URL), server
+}
+
 func testOTARunner(baseURL string) otaDeviceRunner {
 	config := testOTARuntimeConfig()
 	return otaDeviceRunner{
@@ -679,4 +859,27 @@ func testOTASession() sustainedDeviceSession {
 		DeviceTokenManager: testOTATokenManager(),
 		MQTTTarget:         mqttEndpointTarget{Host: "127.0.0.1", Port: 8883},
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+type trackingReadWriteCloser struct {
+	closed bool
+}
+
+func (*trackingReadWriteCloser) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (*trackingReadWriteCloser) Write(p []byte) (int, error) {
+	return len(p), nil
+}
+
+func (c *trackingReadWriteCloser) Close() error {
+	c.closed = true
+	return nil
 }
