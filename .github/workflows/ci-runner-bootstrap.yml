@@ -1,0 +1,61 @@
+name: CI Runner Bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    name: Provision shared Linux X64 runner
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - name: Install shared CI prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            ca-certificates \
+            cmake \
+            curl \
+            docker.io \
+            git \
+            jq \
+            ninja-build \
+            nodejs \
+            npm \
+            openssh-client \
+            pkg-config \
+            python3 \
+            python3-pip \
+            rsync \
+            shellcheck \
+            unzip \
+            zip
+          if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
+            sudo apt-get install -y docker-compose-v2
+          else
+            sudo apt-get install -y docker-compose
+          fi
+          sudo systemctl enable --now docker
+
+      - name: Verify shared CI prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          git --version
+          cmake --version
+          docker --version
+          docker compose version || docker-compose --version
+          gcc --version
+          g++ --version
+          make --version
+          node --version
+          npm --version
+          python3 --version
+          jq --version
+          systemctl is-active --quiet docker
