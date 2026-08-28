@@ -41,6 +41,36 @@ jobs:
           npm ci
           npx playwright install chromium
           npm run e2e:generate-fixture
+          node scripts/e2e-server.mjs > "$RUNNER_TEMP/cloud-admin-e2e-server.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18082/healthz >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test';
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage();
+          page.on('response', response => {
+            if (response.url().includes('noto-sans')) console.log(`FONT_RESPONSE ${response.status()} ${response.url()}`);
+          });
+          await page.goto('http://127.0.0.1:18082/admin/chipset-providers');
+          await page.evaluate(() => document.fonts.ready);
+          console.log('FONT_FACES', await page.evaluate(() => [...document.fonts].map(font => ({ family: font.family, status: font.status }))));
+          const cdp = await page.context().newCDPSession(page);
+          await cdp.send('DOM.enable');
+          await cdp.send('CSS.enable');
+          const { root } = await cdp.send('DOM.getDocument');
+          const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: 'h1' });
+          console.log('PLATFORM_FONTS', JSON.stringify(await cdp.send('CSS.getPlatformFontsForNode', { nodeId }), null, 2));
+          await browser.close();
+          NODE
+          kill "$server_pid" 2>/dev/null || true
+          wait "$server_pid" 2>/dev/null || true
+          trap - EXIT
           npx playwright test e2e/chipset-sdk.visual.spec.mjs \
             --project=chromium --project=mobile --workers=1 --update-snapshots
       - name: Upload Linux snapshot candidates
