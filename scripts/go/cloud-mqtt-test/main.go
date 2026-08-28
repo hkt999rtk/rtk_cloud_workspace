@@ -841,7 +841,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		mqttProbeResult = "PASS"
 		if opts.LoadModel == "ota-device-simulator" {
 			simulator := runOTADeviceSimulator(selectedAssignments, certRecords, brandname, opts.RunID,
-				endpoints["video_cloud_public_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), mqttTargets, seed, opts)
+				endpoints["video_cloud_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), mqttTargets, seed, opts)
 			for _, item := range selectedAssignments {
 				capCounts[item.DeviceType]["devices"]++
 			}
