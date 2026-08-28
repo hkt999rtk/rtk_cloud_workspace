@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -90,11 +91,15 @@ func runAccountManagerEmailDeploy(args []string) error {
 }
 
 func validateAccountManagerEmailDeployEnv(env map[string]string) error {
-	required := []string{"LKE_ACCOUNT_MANAGER_IMAGE", "AUTH_TOKEN_BASE_URL"}
-	for _, key := range required {
-		if strings.TrimSpace(lkeEnvValue(env, key)) == "" {
-			return fmt.Errorf("%s is required for Account Manager email deploy", key)
-		}
+	if strings.TrimSpace(lkeEnvValue(env, "LKE_ACCOUNT_MANAGER_IMAGE")) == "" {
+		return errors.New("LKE_ACCOUNT_MANAGER_IMAGE is required for Account Manager email deploy")
+	}
+	return validateAccountManagerEmailDeliveryEnv(env)
+}
+
+func validateAccountManagerEmailDeliveryEnv(env map[string]string) error {
+	if strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_BASE_URL")) == "" {
+		return errors.New("AUTH_TOKEN_BASE_URL is required for Account Manager email delivery")
 	}
 	delivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"])))
 	baseURL, err := url.Parse(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])))
@@ -124,6 +129,21 @@ func validateAccountManagerEmailDeployEnv(env map[string]string) error {
 	port, err := strconv.Atoi(strings.TrimSpace(lkeEnvValue(env, "SMTP_PORT")))
 	if err != nil || port < 1 || port > 65535 {
 		return errors.New("SMTP_PORT must be a valid TCP port")
+	}
+	return nil
+}
+
+func validateStagingEmailDeliveryBeforeReset(envRoot string) error {
+	stackEnv := filepath.Join(envRoot, "env", "stack.env")
+	env := make(map[string]string, len(accountManagerEmailSecretKeys))
+	for _, key := range accountManagerEmailSecretKeys {
+		env[key] = envroot.FileVar(stackEnv, key)
+	}
+	if delivery := strings.ToLower(strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"))); delivery != "sendmail_http" {
+		return errors.New("staging reset blocked before deleting workloads: AUTH_TOKEN_DELIVERY must be sendmail_http")
+	}
+	if err := validateAccountManagerEmailDeliveryEnv(env); err != nil {
+		return fmt.Errorf("staging reset blocked before deleting workloads: configure Account Manager email delivery: %w", err)
 	}
 	return nil
 }

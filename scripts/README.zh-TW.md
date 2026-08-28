@@ -799,10 +799,45 @@ Linode K8s staging E2E compatibility orchestrator。它仍可把 K8s reset、K8s
 POSIX wrapper，實際流程在 Go command `rtk-cloud run-staging-e2e`：它會依序
 執行 reset、provision、acceptance phase。因此完整 staging acceptance 可直接執行：
 
+Account Manager 的驗證信與密碼重設信是透過 Realtek Connect Send Mail
+**HTTP API** 寄送，不是 SMTP。完整 E2E 會先 reset workloads；執行前必須把
+以下設定放在 operator process environment（secret 不可寫入 Git、PR 或 log）：
+
+```sh
+export AUTH_TOKEN_DELIVERY=sendmail_http
+export AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
+export SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
+export SENDMAIL_HTTP_TIMEOUT=15s
+export SENDMAIL_HTTP_BEARER_TOKEN='<從 operator secret store 載入>'
+```
+
+`AUTH_TOKEN_DELIVERY` 缺失、設為 `log`，或 Send Mail HTTP URL/token 無效時，
+reset 會在刪除任何 workload 前 fail fast。這些值必須存在於啟動部署 command
+的同一個 shell；staging reset/provision 會重建 runtime secret，不能只依賴
+cluster 內原有的 Secret。請勿改用 `SMTP_*` alias 來設定 HTTP transport。
+
 ```sh
 scripts/run-staging-e2e.sh --plan
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ```
+
+若既有環境已被錯誤部署成 `AUTH_TOKEN_DELIVERY=log`，可用 targeted repair，
+只更新 Account Manager runtime secret、API、migration job 與 email worker；不會
+reset PostgreSQL、DNS 或其他 shared workloads：
+
+```sh
+go run ./scripts/go/rtk-cloud -- account-manager-email-deploy \
+  --workspace "$PWD" \
+  --env-root cloud_env/staging/runtime \
+  --kubeconfig cloud_env/staging/runtime/state/kubeconfig.yaml \
+  --confirm video-cloud-staging
+
+RUN_LIVE_EMAIL_E2E=1 python3 scripts/staging_email_signup_e2e.py \
+  --confirm video-cloud-staging --skip-deploy
+```
+
+驗證時除了確認 `account-manager` 與 `account-manager-email-worker` rollout ready，
+也要跑 live email E2E；只有 API 回 202 不代表外部信件已實際送達。
 
 LKE staging capacity 以 `cloud_env/staging/runtime/env/stack.env` 為 source of
 truth。`rtk-cloud provision --plan` 會先印出 capacity plan；

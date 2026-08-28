@@ -3732,6 +3732,9 @@ func runRemoveK8s(args []string) error {
 		fmt.Fprintf(os.Stderr, "[cloud-remove-k8s] non-destructive reset for %s; set CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1 to delete namespaces\n", stack)
 		return nil
 	}
+	if err := validateStagingEmailDeliveryBeforeReset(envRoot); err != nil {
+		return err
+	}
 	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
 	if err != nil {
 		return err
@@ -4690,6 +4693,11 @@ func runStagingE2ETest(args []string) error {
 	}
 	if *confirm != stackName {
 		return fmt.Errorf("--confirm %s does not match CLOUD_STACK_NAME=%s", *confirm, stackName)
+	}
+	if selection.Reset {
+		if err := validateStagingEmailDeliveryBeforeReset(envRoot); err != nil {
+			return err
+		}
 	}
 	if *outDir == "" {
 		*outDir = filepath.Join(envRoot, "artifacts", "staging-e2e", time.Now().UTC().Format("20060102T150405Z"))
