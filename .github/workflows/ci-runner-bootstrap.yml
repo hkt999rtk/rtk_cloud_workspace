@@ -2,6 +2,11 @@ name: CI Runner Bootstrap
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - codex/self-hosted-linux-x64-runner
+    paths:
+      - .github/workflows/ci-runner-bootstrap.yml
 
 permissions:
   contents: read
