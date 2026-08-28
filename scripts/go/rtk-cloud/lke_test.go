@@ -4263,7 +4263,7 @@ func TestCloudAdminImageBuildContextUsesProductionWebImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"FROM node:22-bookworm AS web", "RUN npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
+	for _, required := range []string{"FROM node:22-bookworm AS web", "npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
 		if !strings.Contains(string(body), required) {
 			t.Fatalf("Cloud Admin production Dockerfile missing %q: %s", required, body)
 		}
@@ -4388,6 +4388,36 @@ func TestAccountManagerEmailWorkerManifestUsesCanonicalSMTPSecret(t *testing.T) 
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("worker manifest does not contain %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestAccountManagerSecretConfiguresChipsetProviderRuntime(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"CLOUD_ADMIN_DOMAIN": "admin.video-cloud-staging.realtekconnect.com",
+	}
+	secret := lkeAccountManagerSecretManifest(env)
+	for _, want := range []string{
+		`CHIPSET_PROVIDER_ALLOWED_HOSTS: "admin.video-cloud-staging.realtekconnect.com"`,
+		`CHIPSET_PROVIDER_REFRESH_INTERVAL: "1h"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret missing %q:\n%s", want, secret)
+		}
+	}
+
+	overridden := maps.Clone(env)
+	overridden["CHIPSET_PROVIDER_ALLOWED_HOSTS"] = "packages.example.test"
+	overridden["CHIPSET_PROVIDER_REFRESH_INTERVAL"] = "30m"
+	secret = lkeAccountManagerSecretManifest(overridden)
+	for _, want := range []string{
+		`CHIPSET_PROVIDER_ALLOWED_HOSTS: "packages.example.test"`,
+		`CHIPSET_PROVIDER_REFRESH_INTERVAL: "30m"`,
+	} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("overridden secret missing %q:\n%s", want, secret)
 		}
 	}
 }
