@@ -1733,12 +1733,7 @@ func installPlaywright(webRoot, goos string) error {
 	for attempt := 1; attempt <= attempts; attempt++ {
 		err = runCmd(webRoot, "npx", playwrightInstallArguments(goos)...)
 		if err == nil {
-			if goos != "linux" {
-				return nil
-			}
-			if err = runCmd(webRoot, "sudo", "apt-get", "-o", "DPkg::Lock::Timeout=300", "install", "-y", "fonts-noto-cjk"); err == nil {
-				return runCmd(webRoot, "fc-cache", "-f")
-			}
+			return nil
 		}
 		if attempt < attempts {
 			fmt.Fprintf(os.Stderr, "UI browser dependency install attempt %d/%d failed; retrying in 15s: %v\n", attempt, attempts, err)
