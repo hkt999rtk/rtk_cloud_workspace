@@ -23,7 +23,7 @@ observability outages do not take down product traffic.
 | Request-scoped upstream API | Admin BFF calls to Account Manager, Video Cloud, Cloud Logger query API | Do not block startup with upstream preflight checks. | Bound each call with timeouts. Return explicit `502`, `503`, or `504`, or a typed `degraded`/`unavailable` response for dashboard widgets. |
 | Durable asynchronous dependency | Cross-service broker publishing/consuming, log forwarder ingest uploads | Start if required local durable state and configuration are valid. | Retry transient failures, persist progress only after acknowledgement, expose backlog/degraded state, and dead-letter exhausted work when applicable. |
 | Observability dependency | Central logger backend, Loki/query backend, metrics scrape targets | Never require this for application request handling. | Keep application logs on stdout/stderr. Forwarders should spool, retry, and report degraded status. Product APIs should continue unless the request is specifically for logs/metrics. |
-| Optional feature dependency | OpenAI-backed search, CloudWatch statistics source, external email provider when not selected | Validate only when the feature is enabled or selected. | Disable the feature or return a feature-specific degraded response when safe. If selected for a critical flow, fail that flow explicitly. |
+| Optional feature dependency | OpenAI-backed search or CloudWatch statistics source when not selected | Validate only when the feature is enabled or selected. | Disable the feature or return a feature-specific degraded response when safe. If selected for a critical flow, fail that flow explicitly. |
 
 ## Required Rules
 

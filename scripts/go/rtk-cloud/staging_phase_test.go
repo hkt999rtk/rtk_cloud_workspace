@@ -274,7 +274,6 @@ func makeStagingResetTestEnv(t *testing.T) (string, string) {
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_PROVIDER=lke
 CLOUD_STACK_NAME=video-cloud-staging
-AUTH_TOKEN_DELIVERY=sendmail_http
 AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
 SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
 SENDMAIL_HTTP_BEARER_TOKEN=test-token

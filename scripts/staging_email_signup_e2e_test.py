@@ -19,7 +19,6 @@ class StagingEmailSignupE2ETest(unittest.TestCase):
         result = runner.canonical_sendmail_env({
             "SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
         }, "https://admin.example.test")
-        self.assertEqual(result["AUTH_TOKEN_DELIVERY"], "sendmail_http")
         self.assertEqual(
             result["SENDMAIL_HTTP_BASE_URL"],
             "https://sm.realtekconnect.com",

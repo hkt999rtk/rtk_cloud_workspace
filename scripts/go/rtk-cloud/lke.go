@@ -2059,11 +2059,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if err := kubectlApply(lkeAccountManagerOutboxWorkerManifest(env)); err != nil {
 			return err
 		}
-		if lkeEmailDeliveryEnabled(env) {
-			if err := kubectlApply(lkeAccountManagerEmailWorkerManifest(env)); err != nil {
-				return err
-			}
-		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "deployment/account-manager-email-worker", "--ignore-not-found=true"); err != nil {
+		if err := kubectlApply(lkeAccountManagerEmailWorkerManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -2086,7 +2082,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			}
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "account-manager") && lkeEmailDeliveryEnabled(env) {
+	if lkeWorkloadSelected(env, opts, "account-manager") {
 		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-email-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return err
 		}
@@ -2123,6 +2119,11 @@ func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error
 	if len(missing) > 0 {
 		sort.Strings(missing)
 		return fmt.Errorf("LKE deploy requires container image environment variables; generate them with lke-resolve-images: %s", strings.Join(missing, ", "))
+	}
+	if lkeWorkloadSelected(env, opts, "account-manager") {
+		if err := validateAccountManagerEmailDeployEnv(env); err != nil {
+			return err
+		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
 		if err := validateRuntimeCoverageVideoCloudAPIBaseURL(env); err != nil {
@@ -6946,13 +6947,6 @@ func lkeObjectStorageCredential(env map[string]string, name string) string {
 
 func lkeAccountManagerSecretManifest(env map[string]string) string {
 	accountEnv := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging")
-	authDelivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(
-		os.Getenv("AUTH_TOKEN_DELIVERY"),
-		env["AUTH_TOKEN_DELIVERY"],
-	)))
-	if authDelivery == "" {
-		authDelivery = "log"
-	}
 	authBaseURL := firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])
 	if authBaseURL == "" && strings.TrimSpace(env["FRONTEND_DOMAIN"]) != "" {
 		authBaseURL = "https://" + strings.TrimSpace(env["FRONTEND_DOMAIN"])
@@ -6983,9 +6977,6 @@ stringData:
   ACCOUNT_MANAGER_ENV: %q
   DEVELOPER_PKI_TEST_TOOLS_ENABLED: %q
   ACCOUNT_MANAGER_LOG_LEVEL: %q
-  CHIPSET_PROVIDER_ALLOWED_HOSTS: %q
-  CHIPSET_PROVIDER_REFRESH_INTERVAL: %q
-  AUTH_TOKEN_DELIVERY: %q
   AUTH_TOKEN_BASE_URL: %q
   SENDMAIL_HTTP_BASE_URL: %q
   SENDMAIL_HTTP_BEARER_TOKEN: %q
@@ -7004,7 +6995,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_REFRESH_INTERVAL"), "1h"), authDelivery, authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -7279,15 +7270,9 @@ func lkeEmailOutboxEncryptionKey(env map[string]string) string {
 	return base64.StdEncoding.EncodeToString(seed[:])
 }
 
-func lkeEmailDeliveryEnabled(env map[string]string) bool {
-	delivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"])))
-	return delivery == "sendmail_http"
-}
-
 func lkeAccountManagerEmailWorkerManifest(env map[string]string) string {
 	checksum := lkeConfigChecksum(
 		lkeAccountManagerDatabaseURL(env),
-		lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"),
 		lkeEnvValue(env, "AUTH_TOKEN_BASE_URL"),
 		lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"),
 		lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"),
@@ -7561,7 +7546,6 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkePlatformAdminEmail(env),
 			lkeRuntimeSecretValue("platform-admin"),
 			lkeCertIssuerBaseURL(env),
-			lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"),
 			lkeEnvValue(env, "AUTH_TOKEN_BASE_URL"),
 			lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"),
 			lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"),

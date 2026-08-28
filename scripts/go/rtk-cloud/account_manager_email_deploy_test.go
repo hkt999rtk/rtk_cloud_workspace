@@ -17,7 +17,6 @@ CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 LKE_ACCOUNT_MANAGER_IMAGE=example.test/account-manager:sha-abc
-AUTH_TOKEN_DELIVERY=sendmail_http
 AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
 SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
 SENDMAIL_HTTP_BEARER_TOKEN=opaque-token
@@ -178,13 +177,12 @@ func TestKubectlResourceJSONReturnsCommandFailure(t *testing.T) {
 	}
 }
 
-func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
+func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
 	for _, key := range append([]string{"LKE_ACCOUNT_MANAGER_IMAGE"}, accountManagerEmailSecretKeys...) {
 		t.Setenv(key, "")
 	}
 	env := map[string]string{
 		"LKE_ACCOUNT_MANAGER_IMAGE":  "example.test/account-manager:sha-abc",
-		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
 		"AUTH_TOKEN_BASE_URL":        "https://admin.staging.example.test",
 		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
 		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
@@ -192,6 +190,19 @@ func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
 	}
 	if err := validateAccountManagerEmailDeployEnv(env); err != nil {
 		t.Fatalf("valid env rejected: %v", err)
+	}
+	for name, value := range map[string]string{
+		"insecure account URL":   "http://admin.staging.example.test",
+		"credential account URL": "https://user:pass@admin.staging.example.test",
+		"account URL with path":  "https://admin.staging.example.test/signup",
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := cloneStringMap(env)
+			bad["AUTH_TOKEN_BASE_URL"] = value
+			if err := validateAccountManagerEmailDeployEnv(bad); err == nil {
+				t.Fatal("unsafe AUTH_TOKEN_BASE_URL accepted")
+			}
+		})
 	}
 	for name, value := range map[string]string{
 		"insecure":   "http://sm.realtekconnect.com",
@@ -211,6 +222,9 @@ func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
 		})
 	}
 	for name, mutate := range map[string]func(map[string]string){
+		"missing image": func(candidate map[string]string) {
+			candidate["LKE_ACCOUNT_MANAGER_IMAGE"] = ""
+		},
 		"missing token": func(candidate map[string]string) {
 			candidate["SENDMAIL_HTTP_BEARER_TOKEN"] = ""
 		},
@@ -219,6 +233,22 @@ func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
 		},
 		"non-positive timeout": func(candidate map[string]string) {
 			candidate["SENDMAIL_HTTP_TIMEOUT"] = "0s"
+		},
+		"invalid encryption key": func(candidate map[string]string) {
+			candidate["EMAIL_OUTBOX_ENCRYPTION_KEY"] = "not-base64"
+		},
+		"invalid poll interval": func(candidate map[string]string) {
+			candidate["EMAIL_OUTBOX_POLL_INTERVAL"] = "never"
+		},
+		"invalid batch size": func(candidate map[string]string) {
+			candidate["EMAIL_OUTBOX_BATCH_SIZE"] = "0"
+		},
+		"invalid max attempts": func(candidate map[string]string) {
+			candidate["EMAIL_OUTBOX_MAX_ATTEMPTS"] = "many"
+		},
+		"reversed retry range": func(candidate map[string]string) {
+			candidate["EMAIL_OUTBOX_RETRY_BASE"] = "2m"
+			candidate["EMAIL_OUTBOX_RETRY_MAX"] = "1m"
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -250,11 +280,9 @@ func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
 		},
 	}
 	env := map[string]string{
-		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
 		"AUTH_TOKEN_BASE_URL":        "https://admin.staging.example.test",
 		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
 		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
-		"SENDMAIL_HTTP_TIMEOUT":      "15s",
 	}
 	checksum, err := mergeAccountManagerEmailSecret(secret, env)
 	if err != nil {
@@ -268,8 +296,7 @@ func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
 		t.Fatal("unrelated runtime secret was changed")
 	}
 	for _, key := range []string{
-		"AUTH_TOKEN_DELIVERY", "AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL",
-		"SENDMAIL_HTTP_BEARER_TOKEN", "SENDMAIL_HTTP_TIMEOUT",
+		"AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_BEARER_TOKEN",
 		"EMAIL_OUTBOX_ENCRYPTION_KEY",
 	} {
 		if strings.TrimSpace(data[key].(string)) == "" {
@@ -286,7 +313,6 @@ func TestMergeAccountManagerSendMailHTTPSecret(t *testing.T) {
 		"DATABASE_URL": base64.StdEncoding.EncodeToString([]byte("preserve")),
 	}}
 	env := map[string]string{
-		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
 		"AUTH_TOKEN_BASE_URL":        "https://admin.example.test",
 		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
 		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
@@ -297,7 +323,6 @@ func TestMergeAccountManagerSendMailHTTPSecret(t *testing.T) {
 	}
 	data := secret["data"].(map[string]any)
 	for key, want := range map[string]string{
-		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
 		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
 		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
 		"SENDMAIL_HTTP_TIMEOUT":      "15s",

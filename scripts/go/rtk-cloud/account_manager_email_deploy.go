@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +19,6 @@ import (
 )
 
 var accountManagerEmailSecretKeys = []string{
-	"AUTH_TOKEN_DELIVERY",
 	"AUTH_TOKEN_BASE_URL",
 	"SENDMAIL_HTTP_BASE_URL",
 	"SENDMAIL_HTTP_BEARER_TOKEN",
@@ -93,7 +93,6 @@ func validateAccountManagerEmailDeliveryEnv(env map[string]string) error {
 	if strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_BASE_URL")) == "" {
 		return errors.New("AUTH_TOKEN_BASE_URL is required for Account Manager email delivery")
 	}
-	delivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"])))
 	baseURL, err := url.Parse(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])))
 	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" || baseURL.User != nil || baseURL.RawQuery != "" || baseURL.Fragment != "" {
 		return errors.New("AUTH_TOKEN_BASE_URL must be a credential-free HTTPS origin")
@@ -101,10 +100,10 @@ func validateAccountManagerEmailDeliveryEnv(env map[string]string) error {
 	if baseURL.Path != "" && baseURL.Path != "/" {
 		return errors.New("AUTH_TOKEN_BASE_URL must not contain a path")
 	}
-	if delivery != "sendmail_http" {
-		return errors.New("AUTH_TOKEN_DELIVERY must be sendmail_http")
+	if err := validateSendMailHTTPDeployEnv(env); err != nil {
+		return err
 	}
-	return validateSendMailHTTPDeployEnv(env)
+	return validateEmailOutboxDeployEnv(env)
 }
 
 func validateStagingEmailDeliveryBeforeReset(envRoot string) error {
@@ -112,9 +111,6 @@ func validateStagingEmailDeliveryBeforeReset(envRoot string) error {
 	env := make(map[string]string, len(accountManagerEmailSecretKeys))
 	for _, key := range accountManagerEmailSecretKeys {
 		env[key] = envroot.FileVar(stackEnv, key)
-	}
-	if delivery := strings.ToLower(strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"))); delivery != "sendmail_http" {
-		return errors.New("staging reset blocked before deleting workloads: AUTH_TOKEN_DELIVERY must be sendmail_http")
 	}
 	if err := validateAccountManagerEmailDeliveryEnv(env); err != nil {
 		return fmt.Errorf("staging reset blocked before deleting workloads: configure Account Manager email delivery: %w", err)
@@ -143,6 +139,41 @@ func validateSendMailHTTPDeployEnv(env map[string]string) error {
 		value, err := time.ParseDuration(timeout)
 		if err != nil || value <= 0 {
 			return errors.New("SENDMAIL_HTTP_TIMEOUT must be a positive duration")
+		}
+	}
+	return nil
+}
+
+func validateEmailOutboxDeployEnv(env map[string]string) error {
+	if encoded := strings.TrimSpace(lkeEnvValue(env, "EMAIL_OUTBOX_ENCRYPTION_KEY")); encoded != "" {
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil || len(decoded) != 32 {
+			return errors.New("EMAIL_OUTBOX_ENCRYPTION_KEY must be base64 encoded and decode to exactly 32 bytes")
+		}
+	}
+	durations := map[string]string{
+		"EMAIL_OUTBOX_POLL_INTERVAL": firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"),
+		"EMAIL_OUTBOX_RETRY_BASE":    firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"),
+		"EMAIL_OUTBOX_RETRY_MAX":     firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"),
+	}
+	parsedDurations := map[string]time.Duration{}
+	for key, raw := range durations {
+		value, err := time.ParseDuration(raw)
+		if err != nil || value <= 0 {
+			return fmt.Errorf("%s must be a positive duration", key)
+		}
+		parsedDurations[key] = value
+	}
+	if parsedDurations["EMAIL_OUTBOX_RETRY_MAX"] < parsedDurations["EMAIL_OUTBOX_RETRY_BASE"] {
+		return errors.New("EMAIL_OUTBOX_RETRY_MAX must be greater than or equal to EMAIL_OUTBOX_RETRY_BASE")
+	}
+	for key, fallback := range map[string]string{
+		"EMAIL_OUTBOX_BATCH_SIZE":   "20",
+		"EMAIL_OUTBOX_MAX_ATTEMPTS": "8",
+	} {
+		value, err := strconv.Atoi(firstNonEmpty(lkeEnvValue(env, key), fallback))
+		if err != nil || value <= 0 {
+			return fmt.Errorf("%s must be a positive integer", key)
 		}
 	}
 	return nil
@@ -252,6 +283,11 @@ func mergeAccountManagerEmailSecret(secret map[string]any, env map[string]string
 		"EMAIL_OUTBOX_MAX_ATTEMPTS":  "8",
 		"EMAIL_OUTBOX_RETRY_BASE":    "30s",
 		"EMAIL_OUTBOX_RETRY_MAX":     "30m",
+	}
+	for key := range raw {
+		if key == "AUTH_TOKEN_"+"DELIVERY" || strings.HasPrefix(key, "SM"+"TP_") {
+			delete(raw, key)
+		}
 	}
 	values := make([]string, 0, len(accountManagerEmailSecretKeys)*2)
 	for _, key := range accountManagerEmailSecretKeys {

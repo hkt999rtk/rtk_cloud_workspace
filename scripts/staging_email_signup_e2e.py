@@ -118,7 +118,6 @@ def canonical_sendmail_env(settings: dict[str, str], admin_url: str) -> dict[str
             "SENDMAIL_HTTP_BASE_URL must be https://sm.realtekconnect.com"
         )
     return {
-        "AUTH_TOKEN_DELIVERY": "sendmail_http",
         "AUTH_TOKEN_BASE_URL": admin_url,
         "SENDMAIL_HTTP_BASE_URL": raw_base_url.rstrip("/"),
         "SENDMAIL_HTTP_BEARER_TOKEN": required(
