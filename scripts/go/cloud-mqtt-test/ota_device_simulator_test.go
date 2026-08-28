@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,21 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRegisterOTAFlags(t *testing.T) {
+	opts := defaultOTAOptions()
+	registerOTAFlags(&opts)
+	for _, name := range []string{
+		"ota-campaign-id", "ota-target-version", "ota-current-version", "ota-hardware-revision", "ota-anti-rollback-counter",
+		"ota-poll-interval", "ota-upgrade-timeout", "ota-http-concurrency", "ota-download-concurrency", "ota-install-delay",
+		"ota-reboot-delay", "ota-verify-delay", "ota-stage-jitter-percent", "ota-download-failure-percent", "ota-verify-failure-percent",
+		"ota-install-failure-percent", "ota-reboot-failure-percent", "ota-timeout-percent",
+	} {
+		if flag.Lookup(name) == nil {
+			t.Fatalf("flag %q was not registered", name)
+		}
+	}
+}
 
 func TestOTAOptionsValidate(t *testing.T) {
 	opts := defaultOTAOptions()
@@ -41,6 +57,33 @@ func TestOTAOptionsValidate(t *testing.T) {
 	opts.DownloadConcurrency = opts.HTTPConcurrency + 1
 	if err := opts.validate(); err == nil || !strings.Contains(err.Error(), "download-concurrency") {
 		t.Fatalf("validate concurrency error = %v", err)
+	}
+	valid := defaultOTAOptions()
+	valid.CampaignID, valid.TargetVersion, valid.CurrentVersion, valid.HardwareRevision = "c", "2", "1", "r"
+	tests := []struct {
+		name   string
+		mutate func(*otaOptions)
+		want   string
+	}{
+		{"negative anti rollback", func(o *otaOptions) { o.AntiRollbackCounter = -1 }, "anti-rollback"},
+		{"invalid poll", func(o *otaOptions) { o.PollInterval = "invalid" }, "poll-interval"},
+		{"zero timeout", func(o *otaOptions) { o.UpgradeTimeout = "0s" }, "upgrade-timeout"},
+		{"negative install", func(o *otaOptions) { o.InstallDelay = "-1s" }, "install-delay"},
+		{"invalid reboot", func(o *otaOptions) { o.RebootDelay = "invalid" }, "reboot-delay"},
+		{"negative verify", func(o *otaOptions) { o.VerifyDelay = "-1s" }, "verify-delay"},
+		{"zero http concurrency", func(o *otaOptions) { o.HTTPConcurrency = 0 }, "http-concurrency"},
+		{"zero download concurrency", func(o *otaOptions) { o.DownloadConcurrency = 0 }, "download-concurrency"},
+		{"negative percentage", func(o *otaOptions) { o.StageJitterPercent = -1 }, "jitter-percent"},
+		{"oversized percentage", func(o *otaOptions) { o.TimeoutPercent = 101 }, "timeout-percent"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := valid
+			tc.mutate(&got)
+			if err := got.validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validate error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -88,8 +131,12 @@ func TestValidateOTAAssignment(t *testing.T) {
 		name   string
 		mutate func(*otaAssignment)
 	}{
+		{"missing identity", func(a *otaAssignment) { a.DeploymentID = "" }},
 		{"campaign", func(a *otaAssignment) { a.CampaignID = "wrong" }},
 		{"target", func(a *otaAssignment) { a.TargetVersion = "wrong" }},
+		{"manifest identity", func(a *otaAssignment) { a.Manifest.ReleaseID = "wrong" }},
+		{"artifact size", func(a *otaAssignment) { a.Manifest.ArtifactSize = 0 }},
+		{"artifact digest", func(a *otaAssignment) { a.Manifest.ArtifactSHA256 = "invalid" }},
 		{"hardware", func(a *otaAssignment) { a.Manifest.HardwareRevisions = []string{"rev-b"} }},
 		{"anti rollback", func(a *otaAssignment) { a.Manifest.AntiRollback = 0 }},
 		{"signature", func(a *otaAssignment) { a.Manifest.Signature = "" }},
@@ -104,6 +151,11 @@ func TestValidateOTAAssignment(t *testing.T) {
 				t.Fatal("expected validation failure")
 			}
 		})
+	}
+	wildcard := valid
+	wildcard.Manifest.HardwareRevisions = []string{"*"}
+	if err := validateOTAAssignment(config, wildcard); err != nil {
+		t.Fatalf("wildcard hardware assignment: %v", err)
 	}
 }
 
@@ -139,6 +191,32 @@ func TestOTADeviceRunnerClassifiesInjectedDownloadFailureAsExpected(t *testing.T
 	}
 }
 
+func TestOTADeviceRunnerClassifiesInjectedTerminalFailures(t *testing.T) {
+	tests := []struct {
+		name     string
+		terminal string
+		set      func(*otaRuntimeConfig)
+	}{
+		{"verify", "failed", func(c *otaRuntimeConfig) { c.VerifyFailurePercent = 100 }},
+		{"install", "failed", func(c *otaRuntimeConfig) { c.InstallFailurePercent = 100 }},
+		{"reboot", "failed", func(c *otaRuntimeConfig) { c.RebootFailurePercent = 100 }},
+		{"timeout", "timed_out", func(c *otaRuntimeConfig) { c.TimeoutPercent = 100 }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := []byte("firmware")
+			runner, server, _ := newTestOTADeviceRunner(t, payload, payload, nil)
+			defer server.Close()
+			tc.set(&runner.config)
+			runner.reconnectHook = func(context.Context, *sustainedDeviceSession) error { return nil }
+			result := runner.runDevice(context.Background(), testOTASession())
+			if !result.TerminalMatched || result.ExpectedTerminal != tc.terminal || result.ActualTerminal != tc.terminal || result.InjectedFailure != tc.name {
+				t.Fatalf("result = %+v", result)
+			}
+		})
+	}
+}
+
 func TestOTADeviceRunnerRejectsNaturalHashMismatch(t *testing.T) {
 	expected := []byte("expected")
 	downloaded := []byte("tampered")
@@ -157,6 +235,41 @@ func TestOTADeviceRunnerTreatsMQTTReconnectFailureAsUnexpected(t *testing.T) {
 	runner.reconnectHook = func(context.Context, *sustainedDeviceSession) error { return errors.New("broker unavailable") }
 	result := runner.runDevice(context.Background(), testOTASession())
 	if result.TerminalMatched || result.ActualTerminal != "failed" || result.ErrorCategory != "mqtt_reconnect_failed" || result.MQTTReconnectSucceeded {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestOTADeviceRunnerRejectsAssignmentMismatch(t *testing.T) {
+	payload := []byte("firmware")
+	digest := sha256.Sum256(payload)
+	assignment := testOTAAssignment(len(payload), hex.EncodeToString(digest[:]))
+	assignment.CampaignID = "wrong-campaign"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"decision": "assigned", "assignment": assignment})
+	}))
+	defer server.Close()
+	runner := testOTARunner(server.URL)
+	result := runner.runDevice(context.Background(), testOTASession())
+	if result.ErrorCategory != "assignment_mismatch" || result.TerminalMatched {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestOTADeviceRunnerReportsEventFailure(t *testing.T) {
+	payload := []byte("firmware")
+	digest := sha256.Sum256(payload)
+	assignment := testOTAAssignment(len(payload), hex.EncodeToString(digest[:]))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path == "/v1/device/ota/check" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"decision": "assigned", "assignment": assignment})
+			return
+		}
+		http.Error(w, "event rejected", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	runner := testOTARunner(server.URL)
+	result := runner.runDevice(context.Background(), testOTASession())
+	if result.ErrorCategory != "downloading_event_failed" || result.TerminalMatched {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -235,6 +348,84 @@ func TestOTAWaitForAssignmentHonorsDeadline(t *testing.T) {
 	}
 }
 
+func TestOTAWaitForAssignmentRejectsMalformedDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response map[string]any
+		want     string
+	}{
+		{"assigned without payload", map[string]any{"decision": "assigned"}, "without assignment"},
+		{"unsupported", map[string]any{"decision": "paused"}, "unsupported"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(tc.response) }))
+			defer server.Close()
+			runner := testOTARunner(server.URL)
+			result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
+			_, err := runner.waitForAssignment(context.Background(), testOTASession(), &result)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestOTAArtifactAuthorizationRejectsInvalidResponses(t *testing.T) {
+	assignment := testOTAAssignment(8, strings.Repeat("0", 64))
+	for _, tc := range []struct {
+		name   string
+		mutate func(*otaArtifactAuthorization)
+		want   string
+	}{
+		{"identity", func(a *otaArtifactAuthorization) { a.DeploymentID = "wrong" }, "identity"},
+		{"manifest", func(a *otaArtifactAuthorization) { a.Manifest.Version = "wrong" }, "manifest differs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := otaArtifactAuthorization{DeploymentID: assignment.DeploymentID, ReleaseID: assignment.ReleaseID, URL: "https://artifact.example.test", Manifest: assignment.Manifest}
+			tc.mutate(&response)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _ = json.NewEncoder(w).Encode(response) }))
+			defer server.Close()
+			runner := testOTARunner(server.URL)
+			result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
+			_, err := runner.artifactAuthorization(context.Background(), testOTATokenManager(), assignment, &result)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestOTAConcurrencyAndTimeoutHelpers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	full := make(chan struct{}, 1)
+	full <- struct{}{}
+	if err := acquireOTA(ctx, full); !errors.Is(err, context.Canceled) {
+		t.Fatalf("acquire canceled error = %v", err)
+	}
+	releaseOTA(full)
+	if len(full) != 0 {
+		t.Fatal("release did not free semaphore")
+	}
+	invalidateOTAToken(nil)
+	manager := testOTATokenManager()
+	invalidateOTAToken(manager)
+	if manager.bundle.AccessToken != "" {
+		t.Fatal("token was not invalidated")
+	}
+	deadlineCtx, deadlineCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer deadlineCancel()
+	if got := minOTATimeout(deadlineCtx, time.Second); got <= 0 || got >= time.Second {
+		t.Fatalf("deadline timeout = %s", got)
+	}
+	if got := minOTATimeout(context.Background(), time.Second); got != time.Second {
+		t.Fatalf("fallback timeout = %s", got)
+	}
+	if err := sleepOTAStage(ctx, time.Second, 20, 1, "run", "device", "install"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("sleep canceled error = %v", err)
+	}
+}
+
 func TestOTAEventRetryReusesExactPayload(t *testing.T) {
 	var mu sync.Mutex
 	var bodies [][]byte
@@ -260,6 +451,29 @@ func TestOTAEventRetryReusesExactPayload(t *testing.T) {
 	}
 	if len(bodies) != 2 || !reflect.DeepEqual(bodies[0], bodies[1]) {
 		t.Fatalf("retry bodies differ: %q vs %q", bodies[0], bodies[1])
+	}
+}
+
+func TestOTAHTTPHelpersRejectNonRetryableAndMalformedResponses(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/bad-request":
+			http.Error(w, "invalid request", http.StatusBadRequest)
+		case "/malformed":
+			_, _ = w.Write([]byte("not-json"))
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer server.Close()
+	runner := testOTARunner(server.URL)
+	result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
+	if err := runner.doDeviceJSON(context.Background(), testOTATokenManager(), http.MethodPost, "/bad-request", map[string]string{"value": "x"}, nil, "bad", &result); err == nil || !strings.Contains(err.Error(), "HTTP 400") {
+		t.Fatalf("non-retryable error = %v", err)
+	}
+	var decoded map[string]any
+	if err := runner.doDeviceJSON(context.Background(), testOTATokenManager(), http.MethodGet, "/malformed", nil, &decoded, "malformed", &result); err == nil || !strings.Contains(err.Error(), "decode malformed") {
+		t.Fatalf("decode error = %v", err)
 	}
 }
 
@@ -290,6 +504,16 @@ func TestWriteOTADeviceResultsSortsAndProtectsEvidence(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	if len(lines) != 2 || !strings.Contains(lines[0], `"device_id":"device-a"`) || !strings.Contains(lines[1], `"device_id":"device-b"`) {
 		t.Fatalf("rows not sorted: %s", data)
+	}
+}
+
+func TestWriteOTADeviceResultsRejectsFileAsOutputDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(path, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeOTADeviceResults(path, nil); err == nil {
+		t.Fatal("expected output directory error")
 	}
 }
 
@@ -329,6 +553,27 @@ func TestRunOTADeviceSimulatorWithNoAssignments(t *testing.T) {
 	client := newOTAHTTPClient(0)
 	if client.Timeout != 30*time.Minute {
 		t.Fatalf("default OTA HTTP timeout = %s", client.Timeout)
+	}
+}
+
+func TestRunOTADeviceSimulatorFailsClosedWhenMQTTBarrierIsIncomplete(t *testing.T) {
+	opts := loadOptions{Concurrency: 1, RampUp: "0s", OTA: defaultOTAOptions()}
+	opts.OTA.CampaignID, opts.OTA.TargetVersion, opts.OTA.CurrentVersion, opts.OTA.HardwareRevision = "campaign-1", "2.0.0", "1.0.0", "rev-a"
+	assignments := []assignment{{Brandname: "RTK", DeviceID: "device-without-certificate", DeviceType: "camera"}}
+	result := runOTADeviceSimulator(assignments, nil, "RTK", "barrier-run", "https://api.example.test", "https://token.example.test", nil, 7, opts)
+	if result.Status != "FAIL" || len(result.Devices) != 1 || result.Devices[0].ErrorCategory != "initial_mqtt_not_ready" || result.Summary.MQTTReady != 0 {
+		t.Fatalf("barrier simulation = %+v", result)
+	}
+}
+
+func TestLoadOptionsValidateOTAModel(t *testing.T) {
+	opts := loadOptions{LoadModel: "ota-device-simulator", OTA: defaultOTAOptions()}
+	if err := opts.validateLoadModel(); err == nil || !strings.Contains(err.Error(), "campaign-id") {
+		t.Fatalf("missing OTA config error = %v", err)
+	}
+	opts.OTA.CampaignID, opts.OTA.TargetVersion, opts.OTA.CurrentVersion, opts.OTA.HardwareRevision = "campaign-1", "2.0.0", "1.0.0", "rev-a"
+	if err := opts.validateLoadModel(); err != nil {
+		t.Fatalf("valid OTA load model: %v", err)
 	}
 }
 
