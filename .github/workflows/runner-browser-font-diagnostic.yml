@@ -1,0 +1,53 @@
+name: Runner browser font diagnostic
+
+on:
+  push:
+    branches: [codex/self-hosted-linux-x64-runner]
+
+permissions:
+  contents: read
+
+jobs:
+  chromium-fonts:
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: false
+      - name: Initialize Cloud Admin submodule
+        shell: bash
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
+          chmod 0600 ~/.ssh/id_ed25519_github_work
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git submodule update --init --depth=1 repos/rtk_cloud_admin
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Inspect Chromium platform fonts
+        working-directory: repos/rtk_cloud_admin/web
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install chromium
+          node --input-type=module <<'NODE'
+          import { chromium } from '@playwright/test';
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage();
+          await page.setContent(`<p id="sample" style='font: 32px "Noto Sans CJK TC", sans-serif'>平台總覽 ABC</p>`);
+          await page.evaluate(() => document.fonts.ready);
+          const cdp = await page.context().newCDPSession(page);
+          await cdp.send('DOM.enable');
+          await cdp.send('CSS.enable');
+          const { root } = await cdp.send('DOM.getDocument');
+          const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#sample' });
+          console.log(JSON.stringify(await cdp.send('CSS.getPlatformFontsForNode', { nodeId }), null, 2));
+          await browser.close();
+          NODE
