@@ -804,15 +804,14 @@ Account Manager 的驗證信與密碼重設信只透過 Realtek Connect Send Mai
 以下設定放在 operator process environment（secret 不可寫入 Git、PR 或 log）：
 
 ```sh
-export AUTH_TOKEN_DELIVERY=sendmail_http
 export AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
 export SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
 export SENDMAIL_HTTP_TIMEOUT=15s
 export SENDMAIL_HTTP_BEARER_TOKEN='<從 operator secret store 載入>'
 ```
 
-`AUTH_TOKEN_DELIVERY` 缺失、設為 `log`，或 Send Mail HTTP URL/token 無效時，
-reset 會在刪除任何 workload 前 fail fast。這些值必須存在於啟動部署 command
+Send Mail HTTP URL/token 缺失或無效時，reset 會在刪除任何 workload 前
+fail fast。這些值必須存在於啟動部署 command
 的同一個 shell；staging reset/provision 會重建 runtime secret，不能只依賴
 cluster 內原有的 Secret。
 
@@ -821,7 +820,7 @@ scripts/run-staging-e2e.sh --plan
 scripts/run-staging-e2e.sh --confirm video-cloud-staging
 ```
 
-若既有環境已被錯誤部署成 `AUTH_TOKEN_DELIVERY=log`，可用 targeted repair，
+若既有環境缺少 Send Mail HTTP 設定，可用 targeted repair，
 只更新 Account Manager runtime secret、API、migration job 與 email worker；不會
 reset PostgreSQL、DNS 或其他 shared workloads：
 

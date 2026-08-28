@@ -147,7 +147,6 @@ export LINODE_MEDIA_OBJ_ACCESS_KEY_ID=media-access
 export LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=media-secret
 export LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID=artifact-access
 export LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY=artifact-secret
-export AUTH_TOKEN_DELIVERY=sendmail_http
 export AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
 export SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
 export SENDMAIL_HTTP_BEARER_TOKEN=test-token
