@@ -55,7 +55,6 @@ SENDMAIL_HTTP_TIMEOUT=15s
 		}
 	}
 	for _, forbidden := range []string{
-		"account-manager-smtp-egress-check",
 		"video-cloud-api",
 		"cloud-admin",
 		"openbao",
@@ -179,65 +178,6 @@ func TestKubectlResourceJSONReturnsCommandFailure(t *testing.T) {
 	}
 }
 
-func TestValidateAccountManagerEmailDeployEnv(t *testing.T) {
-	for _, key := range append([]string{"LKE_ACCOUNT_MANAGER_IMAGE"}, accountManagerEmailSecretKeys...) {
-		t.Setenv(key, "")
-	}
-	env := map[string]string{
-		"LKE_ACCOUNT_MANAGER_IMAGE": "example.test/account-manager:sha-abc",
-		"AUTH_TOKEN_DELIVERY":       "smtp",
-		"AUTH_TOKEN_BASE_URL":       "https://admin.staging.example.test",
-		"SMTP_HOST":                 "smtp.example.test",
-		"SMTP_PORT":                 "587",
-		"SMTP_USERNAME":             "no-reply@example.test",
-		"SMTP_PASSWORD":             "secret",
-		"SMTP_FROM":                 "no-reply@example.test",
-	}
-	if err := validateAccountManagerEmailDeployEnv(env); err != nil {
-		t.Fatalf("valid env rejected: %v", err)
-	}
-	for name, value := range map[string]string{
-		"insecure":    "http://admin.staging.example.test",
-		"credentials": "https://user:pass@admin.staging.example.test",
-		"path":        "https://admin.staging.example.test/signup",
-	} {
-		t.Run(name, func(t *testing.T) {
-			bad := map[string]string{}
-			for key, item := range env {
-				bad[key] = item
-			}
-			bad["AUTH_TOKEN_BASE_URL"] = value
-			if err := validateAccountManagerEmailDeployEnv(bad); err == nil {
-				t.Fatal("unsafe AUTH_TOKEN_BASE_URL accepted")
-			}
-		})
-	}
-	env["SMTP_PORT"] = "not-a-port"
-	if err := validateAccountManagerEmailDeployEnv(env); err == nil {
-		t.Fatal("invalid SMTP_PORT accepted")
-	}
-	for name, mutate := range map[string]func(map[string]string){
-		"missing image": func(candidate map[string]string) {
-			candidate["LKE_ACCOUNT_MANAGER_IMAGE"] = ""
-		},
-		"missing SMTP credential": func(candidate map[string]string) {
-			candidate["SMTP_PASSWORD"] = ""
-		},
-		"unsupported delivery": func(candidate map[string]string) {
-			candidate["AUTH_TOKEN_DELIVERY"] = "log"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			candidate := cloneStringMap(env)
-			candidate["SMTP_PORT"] = "587"
-			mutate(candidate)
-			if err := validateAccountManagerEmailDeployEnv(candidate); err == nil {
-				t.Fatal("invalid delivery configuration accepted")
-			}
-		})
-	}
-}
-
 func TestValidateAccountManagerSendMailHTTPDeployEnv(t *testing.T) {
 	for _, key := range append([]string{"LKE_ACCOUNT_MANAGER_IMAGE"}, accountManagerEmailSecretKeys...) {
 		t.Setenv(key, "")
@@ -310,14 +250,11 @@ func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
 		},
 	}
 	env := map[string]string{
-		"AUTH_TOKEN_DELIVERY": "smtp",
-		"AUTH_TOKEN_BASE_URL": "https://admin.staging.example.test",
-		"SMTP_HOST":           "smtp.example.test",
-		"SMTP_PORT":           "587",
-		"SMTP_USERNAME":       "no-reply@example.test",
-		"SMTP_PASSWORD":       "secret",
-		"SMTP_FROM":           "no-reply@example.test",
-		"SMTP_ENCRYPTION":     "starttls",
+		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
+		"AUTH_TOKEN_BASE_URL":        "https://admin.staging.example.test",
+		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
+		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
+		"SENDMAIL_HTTP_TIMEOUT":      "15s",
 	}
 	checksum, err := mergeAccountManagerEmailSecret(secret, env)
 	if err != nil {
@@ -331,8 +268,8 @@ func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
 		t.Fatal("unrelated runtime secret was changed")
 	}
 	for _, key := range []string{
-		"AUTH_TOKEN_DELIVERY", "AUTH_TOKEN_BASE_URL", "SMTP_HOST",
-		"SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM",
+		"AUTH_TOKEN_DELIVERY", "AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL",
+		"SENDMAIL_HTTP_BEARER_TOKEN", "SENDMAIL_HTTP_TIMEOUT",
 		"EMAIL_OUTBOX_ENCRYPTION_KEY",
 	} {
 		if strings.TrimSpace(data[key].(string)) == "" {
@@ -493,37 +430,6 @@ func TestAccountManagerEmailWorkerManifestUsesProvidedChecksum(t *testing.T) {
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, manifest)
-		}
-	}
-}
-
-func TestAccountManagerSMTPEgressCheckManifestContainsNoCredentials(t *testing.T) {
-	t.Setenv("LKE_SMTP_EGRESS_CHECK_IMAGE", "")
-	t.Setenv("SMTP_HOST", "")
-	t.Setenv("SMTP_PORT", "")
-	env := map[string]string{
-		"CLOUD_STACK_NAME": "video-cloud-staging",
-		"SMTP_HOST":        "smtp.example.test",
-		"SMTP_PORT":        "587",
-		"SMTP_USERNAME":    "no-reply@example.test",
-		"SMTP_PASSWORD":    "smtp-secret-value",
-	}
-	manifest := accountManagerSMTPEgressCheckPodManifest(env, "smtp-check")
-	for _, want := range []string{
-		"name: smtp-check",
-		"namespace: video-cloud-staging-account-manager",
-		"image: busybox:1.36",
-		"terminationGracePeriodSeconds: 0",
-		`value: "smtp.example.test"`,
-		`value: "587"`,
-	} {
-		if !strings.Contains(manifest, want) {
-			t.Fatalf("manifest missing %q:\n%s", want, manifest)
-		}
-	}
-	for _, forbidden := range []string{"no-reply@example.test", "smtp-secret-value"} {
-		if strings.Contains(manifest, forbidden) {
-			t.Fatalf("manifest leaked %q", forbidden)
 		}
 	}
 }

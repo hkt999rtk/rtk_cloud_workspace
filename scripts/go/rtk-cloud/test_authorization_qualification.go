@@ -498,7 +498,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 	{
 		TestID: "INT-AM-SIGNUP-EMAIL-001", Repository: "rtk_account_manager",
 		Targets: []authorizationQualificationTarget{
-			{Package: "./internal/api", GoTest: "TestIntegrationSignupQueuesEncryptedEmailWithoutCallingSMTP"},
+			{Package: "./internal/api", GoTest: "TestIntegrationSignupQueuesEncryptedEmailForWorkerDelivery"},
 			{Package: "./internal/store", GoTest: "TestEmailOutboxTokenAndQueueAreTransactional"},
 			{Package: "./internal/api", GoTest: "TestIntegrationEmailVerificationAndPasswordRecovery"},
 		},
@@ -506,7 +506,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 			"REQ-AM-EMAIL-DELIVERY-001": {
 				"token_and_outbox_atomic":        "PASS",
 				"outbox_payload_encrypted":       "PASS",
-				"direct_smtp_not_called":         "PASS",
+				"durable_worker_delivery":        "PASS",
 				"delivery_failure_safe":          "PASS",
 				"enumeration_safe_response":      "PASS",
 				"one_time_token_replay_rejected": "PASS",

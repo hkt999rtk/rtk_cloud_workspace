@@ -80,7 +80,7 @@ Acceptance criteria:
   account manager
 - document environment variables, database migration sequence, health/smoke
   checks, upgrade, rollback, backup, and restore
-- define how auth token delivery, SMTP/log adapters, quota notifications, and
+- define how auth token delivery, Send Mail HTTP/log adapters, quota notifications, and
   platform-admin operations are configured for private deployments
 - avoid storing secrets in docs; reference secret categories and operator-owned
   storage only
@@ -105,7 +105,7 @@ Acceptance criteria:
   provisioning/readiness evidence
 - output a redacted artifact safe to attach to a GitHub issue or deployment
   sign-off
-- support explicit skip markers for disabled optional features such as SMTP or
+- support explicit skip markers for disabled optional features such as email delivery or
   cross-service channel
 - include tests or dry-run validation where practical
 
