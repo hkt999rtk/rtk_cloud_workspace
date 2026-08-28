@@ -4271,7 +4271,7 @@ func TestCloudAdminImageBuildContextUsesProductionWebImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"FROM node:22-bookworm AS web", "RUN npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
+	for _, required := range []string{"FROM node:22-bookworm AS web", "RUN cd web && npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
 		if !strings.Contains(string(body), required) {
 			t.Fatalf("Cloud Admin production Dockerfile missing %q: %s", required, body)
 		}
