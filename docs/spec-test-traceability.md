@@ -22,7 +22,7 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-FLEET-DATA-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-FLEET-DATA-001` | `independent` | `572cfef31185` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ONE-TIME-TOKEN-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ONE-TIME-TOKEN-001` | `independent` | `a1ec645793bb` | `service` | `active` | `INT-AM-IDENTITY-TOKEN-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `independent` | `2852d1659641` | `service` | `active` | `INT-AM-IDENTITY-LIFECYCLE-001` | `test-services` |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `0ae4543da68f` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `3e862dc22660` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-APP-AUTHORIZATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `workflow` | `f4ac80279fa5` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-PRICING-VERSION-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `independent` | `fa34115eb7b9` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UNIT-AM-INVOICE-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-ARITHMETIC-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-ARITHMETIC-001` | `independent` | `d0ddc3a1db7d` | `canonical` | `active` | `UNIT-AM-INVOICE-001` | `test-coverage` |
@@ -30,7 +30,7 @@
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-DOCUMENT-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `independent` | `93b7a7884d0f` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UI-CA-BILLING-STG-002` | `test-coverage`, `test-payment`, `test-ui` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-PROFILE-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `independent` | `77f0af957ea4` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-SUMMARY-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `independent` | `dba952197aaa` | `canonical` | `active` | — | — |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `aaf2ebfb136e` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `0ffb7813767a` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-CACHE-RESILIENCE-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-CACHE-RESILIENCE-001` | `independent` | `be8af79a0c44` | `service` | `active` | `INT-AM-OPERATIONS-CACHE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-OIDC-SECRET-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-OIDC-SECRET-001` | `independent` | `81c2810a30ee` | `service` | `active` | `INT-AM-OPERATIONS-OIDC-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `f83374280ed4` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
@@ -55,7 +55,7 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-READINESS-PROJECTION-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-READINESS-PROJECTION-001` | `independent` | `48488b449f13` | `service` | `active` | `INT-AM-PROV-READINESS-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-UNIFIED-READINESS-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-UNIFIED-READINESS-001` | `independent` | `22a974d2d946` | `service` | `planned` | — | — |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-READINESS-STATES-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-READINESS-STATES-001` | `independent` | `03fb5efc8fe4` | `service` | `active` | `INT-AM-PROV-READINESS-001` | `test-services` |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-EMAIL-DELIVERY-001` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001` | `independent` | `c1c83ce3e028` | `service` | `active` | `INT-AM-SIGNUP-EMAIL-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-EMAIL-DELIVERY-001` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001` | `independent` | `170cb2c7a2c9` | `service` | `active` | `INT-AM-SIGNUP-EMAIL-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-E2E-CA-SIGNUP-EMAIL-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `workflow` | `9640268f55d8` | `service` | `active` | `E2E-CA-SIGNUP-EMAIL-001` | `test-live` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-E2E-LOAD-ACCOUNT-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-LOAD-ACCOUNT-001` | `` | `4926a2c1dba9` | `service` | `active` | `E2E-LOAD-ACCOUNT-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md#REQ-BILL-OWNERSHIP-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-OWNERSHIP-001` | `independent` | `eb1cb0e70a6f` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
@@ -1243,7 +1243,7 @@
 
 | Spec | Section and line | Authority | Status | Candidate revision | Statement |
 | --- | --- | --- | --- | --- | --- |
-| `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1483` | `service` | `required` | `6b4c4c3f2914` | a prior `valid` status response must still be rejected atomically. |
+| `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1480` | `service` | `required` | `6b4c4c3f2914` | a prior `valid` status response must still be rejected atomically. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `RTK Cloud Admin — Role Definitions@L18` | `draft` | `planned` | `0ce425e55647` | rtk_video_cloud backend developers (telemetry, firmware, and stream APIs must |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `draft` | `planned` | `5ab164b3f034` | persona, but route guards and enabled UI actions must use explicit |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Platform Admin@L112` | `draft` | `planned` | `8740c5426d64` | this customer's devices?" cannot answer it from the console today and must |
@@ -1341,7 +1341,7 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1483` | `true` | normative clause 6b4c4c3f2914 requires a stable FEAT-*/REQ-* source mapping: a prior `valid` status response must still be rejected atomically. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1480` | `true` | normative clause 6b4c4c3f2914 requires a stable FEAT-*/REQ-* source mapping: a prior `valid` status response must still be rejected atomically. |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `acceptSKUCollaboratorInvitation` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `inviteSKUCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `issueDeveloperPKITestAppCertificate` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |

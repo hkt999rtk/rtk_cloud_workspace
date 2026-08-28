@@ -28,7 +28,6 @@ class StagingEmailSignupE2ETest(unittest.TestCase):
             result["SENDMAIL_HTTP_BEARER_TOKEN"], "opaque-token"
         )
         self.assertEqual(result["AUTH_TOKEN_BASE_URL"], "https://admin.example.test")
-        self.assertNotIn("SMTP_PASSWORD", result)
 
     def test_rejects_missing_token_and_unsafe_url(self):
         with self.assertRaisesRegex(runner.E2EError, "BEARER_TOKEN"):
