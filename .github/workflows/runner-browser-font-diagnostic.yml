@@ -1,4 +1,4 @@
-name: Runner browser font diagnostic
+name: Runner Linux UI snapshot candidate
 
 on:
   push:
@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  chromium-fonts:
+  snapshots:
     runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v6
@@ -30,24 +30,19 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - name: Inspect Chromium platform fonts
+      - name: Generate Linux snapshot candidates
         working-directory: repos/rtk_cloud_admin/web
         shell: bash
         run: |
           set -euo pipefail
           npm ci
           npx playwright install chromium
-          node --input-type=module <<'NODE'
-          import { chromium } from '@playwright/test';
-          const browser = await chromium.launch({ headless: true });
-          const page = await browser.newPage();
-          await page.setContent(`<p id="sample" style='font: 32px "Noto Sans CJK TC", sans-serif'>平台總覽 ABC</p>`);
-          await page.evaluate(() => document.fonts.ready);
-          const cdp = await page.context().newCDPSession(page);
-          await cdp.send('DOM.enable');
-          await cdp.send('CSS.enable');
-          const { root } = await cdp.send('DOM.getDocument');
-          const { nodeId } = await cdp.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#sample' });
-          console.log(JSON.stringify(await cdp.send('CSS.getPlatformFontsForNode', { nodeId }), null, 2));
-          await browser.close();
-          NODE
+          npm run e2e:generate-fixture
+          npx playwright test e2e/chipset-sdk.visual.spec.mjs \
+            --project=chromium --project=mobile --workers=1 --update-snapshots
+      - name: Upload Linux snapshot candidates
+        uses: actions/upload-artifact@v6
+        with:
+          name: cloud-admin-linux-snapshot-candidates-${{ github.run_id }}
+          path: repos/rtk_cloud_admin/web/e2e/chipset-sdk.visual.spec.mjs-snapshots/*-linux.png
+          if-no-files-found: error
