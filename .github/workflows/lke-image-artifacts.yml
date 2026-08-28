@@ -76,6 +76,7 @@ jobs:
           git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
           git config --global --add url."git@github.com:".insteadOf "https://github.com/"
           git submodule sync --recursive
+          git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
 
       - name: Set up Go

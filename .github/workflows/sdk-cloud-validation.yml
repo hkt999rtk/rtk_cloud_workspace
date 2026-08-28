@@ -142,6 +142,7 @@ jobs:
           git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
           git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
+          git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
       - name: Select Swift 6 toolchain
         run: |
@@ -277,6 +278,7 @@ jobs:
           git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
           git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
+          git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
@@ -388,6 +390,7 @@ jobs:
           git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
           git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
+          git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
@@ -484,6 +487,7 @@ jobs:
           git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
           git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
+          git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
       - uses: actions/setup-go@v6
         with:
