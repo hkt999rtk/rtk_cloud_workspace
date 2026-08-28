@@ -1830,6 +1830,23 @@ func TestRenderReportShowsMQTTE2ETraceChain(t *testing.T) {
 	}
 }
 
+func TestRenderReportShowsFirmwareOTASummary(t *testing.T) {
+	report := renderReport(map[string]any{
+		"status": "PASS", "overall": "pass", "generated_at": "2026-06-04T00:00:00Z",
+		"env": map[string]string{"root": "/tmp/env"}, "brandname": "RTK", "profile": "baseline-10k", "duration_seconds": 120, "seed": 1,
+		"ota": otaSummary{
+			CampaignID: "campaign-1", TargetVersion: "2.0.0", DevicesSelected: 10_000, MQTTReady: 10_000, AssignmentsReceived: 10_000,
+			TerminalMatched: 10_000, TerminalExpected: 10_000, ArtifactBytes: 1_000_000, ArtifactHashVerified: 10_000,
+			MQTTRebootDisconnects: 10_000, MQTTReconnectSuccesses: 10_000, DeviceResultsFile: "ota-devices.jsonl",
+		},
+	})
+	for _, want := range []string{"## Firmware OTA Device Simulation", "campaign-1", "2.0.0", "10000 / 10000 / 10000", "ota-devices.jsonl"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
 func TestRenderConsoleShowsRuntimeMQTTTraceData(t *testing.T) {
 	base := map[string]any{
 		"status":           "PASS",

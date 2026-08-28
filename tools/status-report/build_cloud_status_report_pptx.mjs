@@ -1607,7 +1607,7 @@ async function slideGcpCostView(p, payload) {
     note: "Fair comparison adds the services GCP does not replace natively: EMQX plus device registry/jobs/shadow/cert workflow remain self-hosted or quote-based.",
   }, 675, 218, 555, C.paleTeal);
 
-  addText(slide, "Sources: https://cloud.google.com/kubernetes-engine/pricing | https://docs.cloud.google.com/billing/docs/reference/rest/v1/services.skus/list | https://cloud.google.com/sql/pricing | https://cloud.google.com/run/pricing | https://cloud.google.com/products/observability/pricing", { x: 80, y: 632, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Sources: https://cloud.google.com/kubernetes-engine/pricing | https://docs.cloud.google.com/billing/docs/reference/rest/v1/services.products/list | https://cloud.google.com/sql/pricing | https://cloud.google.com/run/pricing | https://cloud.google.com/products/observability/pricing", { x: 80, y: 632, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
   addText(slide, "Also used: https://cloud.google.com/pubsub/pricing | https://cloud.google.com/memorystore/pricing | https://cloud.google.com/storage/pricing. Excludes tax, committed-use discounts, support, marketplace/private offers, and video/WebRTC/TURN.", { x: 80, y: 646, w: 1120, h: 10 }, { size: 5.4, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }

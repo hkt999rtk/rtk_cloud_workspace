@@ -138,11 +138,51 @@ func compareSpecInventories(base, head string, before, after specInventory) spec
 			afterIndex[requirement.ID] = indexedRequirement{FeatureID: feature.ID, Item: requirement}
 		}
 	}
+	type renamedRequirement struct {
+		PreviousID       string
+		PreviousRevision string
+	}
+	renamedAfter, renamedBefore := map[string]renamedRequirement{}, map[string]bool{}
+	renameClaims := map[string]int{}
+	for id, current := range afterIndex {
+		if current.Item.RenamedFromRevision == "" {
+			continue
+		}
+		if _, exists := beforeIndex[id]; exists {
+			continue
+		}
+		renameClaims[current.FeatureID+"\x00"+current.Item.RenamedFromRevision]++
+	}
+	for id, current := range afterIndex {
+		if current.Item.RenamedFromRevision == "" {
+			continue
+		}
+		if _, exists := beforeIndex[id]; exists {
+			continue
+		}
+		if renameClaims[current.FeatureID+"\x00"+current.Item.RenamedFromRevision] != 1 {
+			continue
+		}
+		matches := make([]string, 0, 1)
+		for previousID, previous := range beforeIndex {
+			if previous.FeatureID == current.FeatureID &&
+				previous.Item.Revision == current.Item.RenamedFromRevision {
+				matches = append(matches, previousID)
+			}
+		}
+		if len(matches) == 1 {
+			renamedAfter[id] = renamedRequirement{PreviousID: matches[0], PreviousRevision: current.Item.RenamedFromRevision}
+			renamedBefore[matches[0]] = true
+		}
+	}
 	report := specImpactReport{SchemaVersion: "rtk-cloud-spec-impact/v3", Base: base, Head: head}
 	for id, current := range afterIndex {
 		previous, exists := beforeIndex[id]
 		kind := ""
 		switch {
+		case !exists && renamedAfter[id].PreviousID != "":
+			kind = "RENAMED"
+			previous.Item.Revision = renamedAfter[id].PreviousRevision
 		case !exists:
 			kind = "ADDED"
 		case current.Item.Status == "deprecated" && previous.Item.Status != "deprecated":
@@ -158,6 +198,9 @@ func compareSpecInventories(base, head string, before, after specInventory) spec
 		}
 	}
 	for id, previous := range beforeIndex {
+		if renamedBefore[id] {
+			continue
+		}
 		if _, exists := afterIndex[id]; !exists {
 			report.Changes = append(report.Changes, specImpactChange{
 				Kind: "REMOVED", FeatureID: previous.FeatureID, RequirementID: id, BaseRevision: previous.Item.Revision,

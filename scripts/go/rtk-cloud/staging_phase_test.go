@@ -42,6 +42,37 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 	}
 }
 
+func TestRunStagingE2EResetRejectsMissingEmailDeliveryBeforeMutation(t *testing.T) {
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	for _, key := range accountManagerEmailSecretKeys {
+		t.Setenv(key, "")
+	}
+	logPath := filepath.Join(t.TempDir(), "commands.log")
+	outDir := filepath.Join(t.TempDir(), "out")
+	t.Setenv("CLOUD_PROVIDER", "lke")
+	t.Setenv("CLOUD_STAGING_E2E_REMOVE_K8S_SCRIPT", fakeStagingPhaseCommand(t, logPath, "reset"))
+
+	err := runStagingE2ETest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--run",
+		"--confirm", "video-cloud-staging",
+		"--out-dir", outDir,
+		"--steps", "reset",
+	})
+	if err == nil || !strings.Contains(err.Error(), "staging reset blocked before deleting workloads") {
+		t.Fatalf("missing email delivery error = %v", err)
+	}
+	if _, statErr := os.Stat(outDir); !os.IsNotExist(statErr) {
+		t.Fatalf("reset created output before email preflight: %v", statErr)
+	}
+	if _, statErr := os.Stat(logPath); !os.IsNotExist(statErr) {
+		t.Fatalf("reset command ran before email preflight: %v", statErr)
+	}
+}
+
 func TestRunRemoveK8sPreservesStorageByDefault(t *testing.T) {
 	workspace, envRoot := makeStagingResetTestEnv(t)
 	kubectlLog := fakeKubectlForStagingReset(t)
@@ -241,7 +272,13 @@ func makeStagingResetTestEnv(t *testing.T) (string, string) {
 	t.Helper()
 	workspace := t.TempDir()
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
-	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_PROVIDER=lke
+CLOUD_STACK_NAME=video-cloud-staging
+AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
+SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
+SENDMAIL_HTTP_BEARER_TOKEN=test-token
+SENDMAIL_HTTP_TIMEOUT=15s
+`)
 	return workspace, envRoot
 }
 

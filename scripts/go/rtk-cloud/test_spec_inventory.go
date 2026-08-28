@@ -52,19 +52,20 @@ type specFeatureMetadata struct {
 }
 
 type specRequirementMetadata struct {
-	AcceptanceLayer string   `yaml:"acceptance_layer"`
-	OperationModel  string   `yaml:"operation_model" json:"operation_model,omitempty"`
-	Gate            string   `yaml:"gate"`
-	Environments    []string `yaml:"environments"`
-	Targets         []string `yaml:"targets"`
-	Evidence        []string `yaml:"evidence"`
-	FreshnessHours  int      `yaml:"freshness_hours"`
-	Required        *bool    `yaml:"required"`
-	Status          string   `yaml:"status"`
-	DeprecatedBy    string   `yaml:"replacement,omitempty"`
-	DeprecatedOwner string   `yaml:"deprecation_owner,omitempty"`
-	DeprecatedWhy   string   `yaml:"deprecation_reason,omitempty"`
-	ApprovedAt      string   `yaml:"approved_at,omitempty"`
+	AcceptanceLayer     string   `yaml:"acceptance_layer"`
+	OperationModel      string   `yaml:"operation_model" json:"operation_model,omitempty"`
+	Gate                string   `yaml:"gate"`
+	Environments        []string `yaml:"environments"`
+	Targets             []string `yaml:"targets"`
+	Evidence            []string `yaml:"evidence"`
+	FreshnessHours      int      `yaml:"freshness_hours"`
+	Required            *bool    `yaml:"required"`
+	Status              string   `yaml:"status"`
+	RenamedFromRevision string   `yaml:"renamed_from_revision,omitempty" json:"renamed_from_revision,omitempty"`
+	DeprecatedBy        string   `yaml:"replacement,omitempty"`
+	DeprecatedOwner     string   `yaml:"deprecation_owner,omitempty"`
+	DeprecatedWhy       string   `yaml:"deprecation_reason,omitempty"`
+	ApprovedAt          string   `yaml:"approved_at,omitempty"`
 }
 
 type specRequirementSource struct {
@@ -609,6 +610,10 @@ func parseMarkdownSpec(source specSourceRegistryItem, raw []byte) ([]testCatalog
 					strings.TrimSpace(requirementMetadata.ApprovedAt) == "") {
 				return nil, findings, fmt.Errorf("%s:%d deprecated requirement %s requires deprecation_owner, deprecation_reason, and approved_at", source.Path, i+1, match[2])
 			}
+			if requirementMetadata.RenamedFromRevision != "" &&
+				!regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(requirementMetadata.RenamedFromRevision) {
+				return nil, findings, fmt.Errorf("%s:%d requirement %s renamed_from_revision must be a SHA-256 digest", source.Path, i+1, match[2])
+			}
 			if requirementMetadata.OperationModel != "" &&
 				requirementMetadata.OperationModel != "independent" &&
 				requirementMetadata.OperationModel != "workflow" {
@@ -630,7 +635,8 @@ func parseMarkdownSpec(source specSourceRegistryItem, raw []byte) ([]testCatalog
 				OperationModel: requirementMetadata.OperationModel,
 				Gate:           requirementMetadata.Gate, Environments: requirementMetadata.Environments, Targets: requirementMetadata.Targets,
 				Evidence: requirementMetadata.Evidence, FreshnessHours: requirementMetadata.FreshnessHours,
-				Required: requirementMetadata.Required, Status: status, Revision: revision,
+				Required: requirementMetadata.Required, Status: status,
+				RenamedFromRevision: requirementMetadata.RenamedFromRevision, Revision: revision,
 				SpecSource: specRequirementSource{
 					DocumentID: source.ID, Path: source.Path, Section: match[2], Authority: source.Authority, Revision: revision,
 				},

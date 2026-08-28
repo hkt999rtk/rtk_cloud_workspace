@@ -51,6 +51,9 @@ func TestEmitCentralLoggerEventPostsMQTTSummaryWithoutLeakingToken(t *testing.T)
 		if fields["run_id"] != "run-logger" || fields["brandname"] != "RTK" || fields["overall"] != "pass" {
 			t.Fatalf("unexpected fields: %#v", fields)
 		}
+		if fields["ota"].(map[string]any)["campaign_id"] != "campaign-1" {
+			t.Fatalf("missing OTA summary: %#v", fields)
+		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte(`{"results":[{"event_id":"ok","status":"accepted"}]}`))
 	}))
@@ -73,6 +76,7 @@ func TestEmitCentralLoggerEventPostsMQTTSummaryWithoutLeakingToken(t *testing.T)
 		"report_file":        filepath.Join(envRoot, "artifacts", "TEST_REPORT.md"),
 		"metrics":            map[string]any{"commands_attempted": 6, "commands_passed": 6, "devices_selected": 6},
 		"mqtt":               map[string]any{"probe_result": "PASS"},
+		"ota":                map[string]any{"campaign_id": "campaign-1", "target_version": "2.0.0"},
 		"capability_metrics": []map[string]any{},
 	})
 	if err != nil {
