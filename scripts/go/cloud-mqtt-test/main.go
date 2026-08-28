@@ -352,6 +352,7 @@ func main() {
 	var deviceTrafficProfile, stageUsageWindowsRaw string
 	var duration, seed, shardIndex, shardCount, concurrency, commandConcurrency, maxConnectedDevices, deviceTokenRequestRetries int
 	var runtimeLogs, sdkInvalidCredentialProbe bool
+	ota := defaultOTAOptions()
 	flag.StringVar(&root, "root", "", "workspace root")
 	flag.StringVar(&envRoot, "env-root", "", "environment root")
 	flag.StringVar(&brandname, "brandname", "", "brand name")
@@ -377,7 +378,7 @@ func main() {
 	flag.StringVar(&shadowCommandTimeout, "shadow-command-timeout", "", "per-phase sustained shadow command timeout")
 	flag.StringVar(&deviceTokenRequestTimeout, "device-token-request-timeout", "10s", "per-attempt device /request_token timeout")
 	flag.IntVar(&deviceTokenRequestRetries, "device-token-request-retries", 0, "device /request_token retries after the first attempt")
-	flag.StringVar(&loadModel, "load-model", "", "load model: actor-separated-probe or home-100k-sustained")
+	flag.StringVar(&loadModel, "load-model", "", "load model: actor-separated-probe, home-100k-sustained, sdk-device-simulator, or ota-device-simulator")
 	flag.StringVar(&stageNamesRaw, "stage-names", "", "comma-separated staged sustained load stage names")
 	flag.StringVar(&stageTargetsRaw, "stage-connected-devices", "", "comma-separated staged sustained per-shard connected device targets")
 	flag.StringVar(&stageDurationsRaw, "stage-durations-seconds", "", "comma-separated staged sustained stage durations in seconds")
@@ -387,6 +388,7 @@ func main() {
 	flag.BoolVar(&runtimeLogs, "runtime-logs", true, "publish MQTT runtime logs for exact event correlation")
 	flag.IntVar(&concurrency, "concurrency", 25, "load-test MQTT probe concurrency")
 	flag.IntVar(&maxConnectedDevices, "max-connected-devices", 0, "load-test max connected devices in this shard")
+	registerOTAFlags(&ota)
 	flag.Parse()
 
 	maxUsers := 0
@@ -423,6 +425,7 @@ func main() {
 		ReadyFile:                   readyFile,
 		SDKReconnectSignalFile:      sdkReconnectSignalFile,
 		SDKInvalidCredentialProbe:   sdkInvalidCredentialProbe,
+		OTA:                         ota,
 	}
 	if err := run(root, envRoot, brandname, outDir, profile, duration, maxUsers, seed, mqttProbe, traceDetail, testDataDB, opts); err != nil {
 		fatal(err)
@@ -435,31 +438,32 @@ func fatal(err error) {
 }
 
 type loadOptions struct {
-	ShardIndex                  int    `json:"shard_index"`
-	ShardCount                  int    `json:"shard_count"`
-	RunID                       string `json:"run_id,omitempty"`
-	ReadyFile                   string `json:"ready_file,omitempty"`
-	SDKReconnectSignalFile      string `json:"sdk_reconnect_signal_file,omitempty"`
-	SDKInvalidCredentialProbe   bool   `json:"sdk_invalid_credential_probe,omitempty"`
-	RampUp                      string `json:"ramp_up"`
-	TelemetryInterval           string `json:"telemetry_interval"`
-	StateInterval               string `json:"state_interval"`
-	CommandRatePerDevicePerDay  string `json:"command_rate_per_device_per_day"`
-	CommandConcurrency          int    `json:"command_concurrency,omitempty"`
-	ShadowCommandTimeout        string `json:"shadow_command_timeout,omitempty"`
-	DeviceTokenRequestTimeout   string `json:"device_token_request_timeout,omitempty"`
-	DeviceTokenRequestRetries   int    `json:"device_token_request_retries,omitempty"`
-	LoadModel                   string `json:"load_model"`
-	StageNames                  string `json:"stage_names,omitempty"`
-	StageConnectedDevices       string `json:"stage_connected_devices,omitempty"`
-	StageDurationsSeconds       string `json:"stage_durations_seconds,omitempty"`
-	StageMinCommands            string `json:"stage_min_commands,omitempty"`
-	DeviceTrafficProfile        string `json:"device_traffic_profile,omitempty"`
-	StageUsageWindows           string `json:"stage_usage_windows,omitempty"`
-	StageUsageWindow            string `json:"stage_usage_window,omitempty"`
-	RuntimeLogs                 bool   `json:"runtime_logs"`
-	Concurrency                 int    `json:"concurrency"`
-	MaxConnectedDevicesPerShard int    `json:"max_connected_devices_per_shard"`
+	ShardIndex                  int        `json:"shard_index"`
+	ShardCount                  int        `json:"shard_count"`
+	RunID                       string     `json:"run_id,omitempty"`
+	ReadyFile                   string     `json:"ready_file,omitempty"`
+	SDKReconnectSignalFile      string     `json:"sdk_reconnect_signal_file,omitempty"`
+	SDKInvalidCredentialProbe   bool       `json:"sdk_invalid_credential_probe,omitempty"`
+	RampUp                      string     `json:"ramp_up"`
+	TelemetryInterval           string     `json:"telemetry_interval"`
+	StateInterval               string     `json:"state_interval"`
+	CommandRatePerDevicePerDay  string     `json:"command_rate_per_device_per_day"`
+	CommandConcurrency          int        `json:"command_concurrency,omitempty"`
+	ShadowCommandTimeout        string     `json:"shadow_command_timeout,omitempty"`
+	DeviceTokenRequestTimeout   string     `json:"device_token_request_timeout,omitempty"`
+	DeviceTokenRequestRetries   int        `json:"device_token_request_retries,omitempty"`
+	LoadModel                   string     `json:"load_model"`
+	StageNames                  string     `json:"stage_names,omitempty"`
+	StageConnectedDevices       string     `json:"stage_connected_devices,omitempty"`
+	StageDurationsSeconds       string     `json:"stage_durations_seconds,omitempty"`
+	StageMinCommands            string     `json:"stage_min_commands,omitempty"`
+	DeviceTrafficProfile        string     `json:"device_traffic_profile,omitempty"`
+	StageUsageWindows           string     `json:"stage_usage_windows,omitempty"`
+	StageUsageWindow            string     `json:"stage_usage_window,omitempty"`
+	RuntimeLogs                 bool       `json:"runtime_logs"`
+	Concurrency                 int        `json:"concurrency"`
+	MaxConnectedDevicesPerShard int        `json:"max_connected_devices_per_shard"`
+	OTA                         otaOptions `json:"ota,omitempty"`
 }
 
 type mqttEndpointTarget struct {
@@ -469,9 +473,14 @@ type mqttEndpointTarget struct {
 
 func (opts loadOptions) validateLoadModel() error {
 	switch strings.TrimSpace(opts.LoadModel) {
-	case "", "actor-separated-probe", "home-100k-sustained", "sdk-device-simulator":
+	case "", "actor-separated-probe", "home-100k-sustained", "sdk-device-simulator", "ota-device-simulator":
 	default:
-		return errors.New("--load-model must be actor-separated-probe, home-100k-sustained, or sdk-device-simulator")
+		return errors.New("--load-model must be actor-separated-probe, home-100k-sustained, sdk-device-simulator, or ota-device-simulator")
+	}
+	if strings.TrimSpace(opts.LoadModel) == "ota-device-simulator" {
+		if err := opts.OTA.validate(); err != nil {
+			return err
+		}
 	}
 	switch strings.TrimSpace(opts.DeviceTrafficProfile) {
 	case "", "home-diverse-v1":
@@ -502,14 +511,14 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	if opts.ShardCount <= 0 || opts.ShardIndex < 0 || opts.ShardIndex >= opts.ShardCount {
 		return errors.New("--shard-count must be positive and --shard-index must be within range")
 	}
+	if profile == "baseline-10k" {
+		opts = baseline10KDefaults(opts)
+	}
 	if opts.Concurrency <= 0 {
 		opts.Concurrency = 25
 	}
 	if err := opts.validateLoadModel(); err != nil {
 		return err
-	}
-	if profile == "baseline-10k" {
-		opts = baseline10KDefaults(opts)
 	}
 	if strings.TrimSpace(opts.LoadModel) == "" {
 		opts.LoadModel = "actor-separated-probe"
@@ -784,7 +793,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	}
 	appBootstrap := appBootstrapStatus{Status: "BLOCKED", Reason: "no selected assignment"}
 	appMaterial := appBootstrapMaterial{Status: appBootstrap}
-	if len(selectedAssignments) > 0 && opts.LoadModel != "sdk-device-simulator" {
+	if len(selectedAssignments) > 0 && opts.LoadModel != "sdk-device-simulator" && opts.LoadModel != "ota-device-simulator" {
 		appMaterial = prepareAppCertificateBootstrapForAssignments(endpoints["account_manager_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), users.TenantSlug, usersByEmail, selectedAssignments, 0)
 		appBootstrap = appMaterial.Status
 		if appBootstrap.Status == "FAIL" {
@@ -795,8 +804,12 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 			base["overall"] = "blocked"
 			base["blockers"] = append(blockers, "app certificate bootstrap: "+appBootstrap.Reason)
 		}
-	} else if opts.LoadModel == "sdk-device-simulator" {
-		appBootstrap = appBootstrapStatus{Status: "SKIP", Reason: "app actor is owned by the external SDK validation app"}
+	} else if opts.LoadModel == "sdk-device-simulator" || opts.LoadModel == "ota-device-simulator" {
+		reason := "app actor is owned by the external SDK validation app"
+		if opts.LoadModel == "ota-device-simulator" {
+			reason = "OTA simulator uses authenticated device APIs only"
+		}
+		appBootstrap = appBootstrapStatus{Status: "SKIP", Reason: reason}
 		appMaterial.Status = appBootstrap
 	}
 
@@ -822,11 +835,35 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		base["overall"] = "blocked"
 		base["blockers"] = []string{"missing MQTT endpoint"}
 		mqttProbeResult = "BLOCKED: missing MQTT endpoint"
-	} else if appMaterial.Status.Status != "PASS" && opts.LoadModel != "home-100k-sustained" && opts.LoadModel != "sdk-device-simulator" {
+	} else if appMaterial.Status.Status != "PASS" && opts.LoadModel != "home-100k-sustained" && opts.LoadModel != "sdk-device-simulator" && opts.LoadModel != "ota-device-simulator" {
 		mqttProbeResult = appMaterial.Status.Status + ": app MQTT actor unavailable"
 	} else {
 		mqttProbeResult = "PASS"
-		if opts.LoadModel == "sdk-device-simulator" {
+		if opts.LoadModel == "ota-device-simulator" {
+			simulator := runOTADeviceSimulator(selectedAssignments, certRecords, brandname, opts.RunID,
+				endpoints["video_cloud_base_url"].(string), endpoints["video_cloud_token_base_url"].(string), mqttTargets, seed, opts)
+			for _, item := range selectedAssignments {
+				capCounts[item.DeviceType]["devices"]++
+			}
+			totalCommands = len(selectedAssignments)
+			totalPassed = simulator.Summary.TerminalMatched
+			if totalCommands > 0 {
+				successRate = float64(totalPassed) / float64(totalCommands) * 100
+			}
+			ioTotals = simulator.Totals
+			resultModel = "ota_device_simulator"
+			resultNotes = append(resultNotes, simulator.Notes...)
+			base["ota"] = simulator.Summary
+			if err := writeOTADeviceResults(outDir, simulator.Devices); err != nil {
+				simulator.Status = "FAIL"
+				resultNotes = append(resultNotes, "write OTA device evidence: "+redactedError(err))
+			}
+			if simulator.Status != "PASS" {
+				mqttProbeResult = "FAIL"
+				base["status"] = "FAIL"
+				base["overall"] = "fail"
+			}
+		} else if opts.LoadModel == "sdk-device-simulator" {
 			simulator := runSDKDeviceSimulator(selectedAssignments, certRecords, brandname, opts.RunID, endpoints["video_cloud_token_base_url"].(string), mqttTargets, duration, opts)
 			for _, item := range selectedAssignments {
 				capCounts[item.DeviceType]["devices"]++
@@ -901,7 +938,7 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		}
 	}
 
-	if opts.LoadModel != "home-100k-sustained" && opts.LoadModel != "sdk-device-simulator" {
+	if opts.LoadModel != "home-100k-sustained" && opts.LoadModel != "sdk-device-simulator" && opts.LoadModel != "ota-device-simulator" {
 		for _, row := range perDevice {
 			totalCommands += row.Commands
 			if row.MQTTStatus == "PASS" {
@@ -1013,13 +1050,14 @@ func (r sustainedLoadResult) SuccessRate() float64 {
 }
 
 type sustainedDeviceSession struct {
-	Assignment      assignment
-	Record          certRecord
-	Conn            io.ReadWriteCloser
-	MQTTTarget      mqttEndpointTarget
-	Reader          *sustainedDeviceReader
-	AppTokenManager *tokenManager
-	AppLoginManager *accountLoginTokenManager
+	Assignment         assignment
+	Record             certRecord
+	Conn               io.ReadWriteCloser
+	MQTTTarget         mqttEndpointTarget
+	Reader             *sustainedDeviceReader
+	AppTokenManager    *tokenManager
+	AppLoginManager    *accountLoginTokenManager
+	DeviceTokenManager *tokenManager
 }
 
 type sustainedMQTTPublish struct {
@@ -2290,7 +2328,7 @@ func connectSustainedDevicesPacedUntilWithOptions(assignments []assignment, cert
 					mu.Unlock()
 				}
 				target := mqttTargets[item.Index%len(mqttTargets)]
-				conn, err := connectSustainedDevice(record, firstNonEmpty(item.Assignment.Brandname, record.Brandname, brandname), runID, apiBaseURL, target, deadline, tokenOpts, recordPhase)
+				conn, tokenManager, err := connectSustainedDeviceWithTokenManager(record, firstNonEmpty(item.Assignment.Brandname, record.Brandname, brandname), runID, apiBaseURL, target, deadline, tokenOpts, recordPhase)
 				if err != nil {
 					mu.Lock()
 					totals.ConnectFailures++
@@ -2329,7 +2367,7 @@ func connectSustainedDevicesPacedUntilWithOptions(assignments []assignment, cert
 				totals.ConnectSuccesses++
 				totals.SubscribeSuccesses++
 				mu.Unlock()
-				results <- sustainedDeviceSession{Assignment: item.Assignment, Record: record, Conn: lockedConn, MQTTTarget: target, Reader: startSustainedDeviceReader(lockedConn)}
+				results <- sustainedDeviceSession{Assignment: item.Assignment, Record: record, Conn: lockedConn, MQTTTarget: target, Reader: startSustainedDeviceReader(lockedConn), DeviceTokenManager: tokenManager}
 			}
 		}()
 	}
@@ -2413,15 +2451,22 @@ func sleepUntilDeadline(delay time.Duration, deadline time.Time) {
 }
 
 func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL string, target mqttEndpointTarget, deadline time.Time, tokenOpts tokenRequestOptions, recordPhase func(func(*mqttIOTotals))) (io.ReadWriteCloser, error) {
+	conn, _, err := connectSustainedDeviceWithTokenManager(record, brandname, runID, apiBaseURL, target, deadline, tokenOpts, recordPhase)
+	return conn, err
+}
+
+func connectSustainedDeviceWithTokenManager(record certRecord, brandname, runID, apiBaseURL string, target mqttEndpointTarget, deadline time.Time, tokenOpts tokenRequestOptions, recordPhase func(func(*mqttIOTotals))) (io.ReadWriteCloser, *tokenManager, error) {
 	cert, err := loadLeafFirstX509KeyPairForRecord(record)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	deviceToken, err := requestDeviceTokenWithRetry(apiBaseURL, cert, record.DeviceID, deadline, tokenOpts, recordPhase)
 	if err != nil {
-		return nil, fmt.Errorf("device request_token: %w", err)
+		return nil, nil, fmt.Errorf("device request_token: %w", err)
 	}
-	return connectMQTTActor(mqttActorProbe{
+	manager := newDeviceTokenManager(apiBaseURL, cert, record.DeviceID)
+	manager.bundle = tokenBundle{AccessToken: deviceToken, issuedAt: time.Now()}
+	conn, err := connectMQTTActor(mqttActorProbe{
 		DeviceID:    record.DeviceID,
 		DeviceType:  record.DeviceType,
 		Brandname:   brandname,
@@ -2444,6 +2489,10 @@ func connectSustainedDevice(record certRecord, brandname, runID, apiBaseURL stri
 		OnConnackSuccess: func() { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackSuccesses++ }) },
 		OnConnackFailure: func(error) { recordPhase(func(totals *mqttIOTotals) { totals.DeviceMQTTConnackFailures++ }) },
 	}, "device", deviceToken)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conn, manager, nil
 }
 
 func sustainedEvents(sessions []sustainedDeviceSession, opts loadOptions, seed int, window time.Duration) []sustainedEvent {
@@ -6158,6 +6207,9 @@ func emitCentralLoggerEvent(envRoot string, result map[string]any) error {
 		"results_file":     result["results_file"],
 		"report_file":      result["report_file"],
 	}
+	if ota, ok := result["ota"]; ok {
+		fields["ota"] = ota
+	}
 	request := map[string]any{
 		"events": []map[string]any{{
 			"event_id":     eventID,
@@ -6326,6 +6378,21 @@ func renderReport(result map[string]any) string {
 			fmt.Sprintf("- Client identity mode: `%s`", asString(mqtt["client_identity_mode"])),
 			fmt.Sprintf("- Telemetry receiver: `%s`", asString(mqtt["telemetry_receiver"])),
 			fmt.Sprintf("- Command receiver: `%s`", asString(mqtt["command_receiver"])),
+			"",
+		)
+	}
+	if ota, ok := result["ota"].(otaSummary); ok {
+		lines = append(lines,
+			"## Firmware OTA Device Simulation",
+			"",
+			fmt.Sprintf("- Campaign: `%s`", ota.CampaignID),
+			fmt.Sprintf("- Target version: `%s`", ota.TargetVersion),
+			fmt.Sprintf("- Devices selected / MQTT ready / assigned: %d / %d / %d", ota.DevicesSelected, ota.MQTTReady, ota.AssignmentsReceived),
+			fmt.Sprintf("- Expected terminal matches: %d / %d", ota.TerminalMatched, ota.TerminalExpected),
+			fmt.Sprintf("- Artifact bytes / verified devices: %d / %d", ota.ArtifactBytes, ota.ArtifactHashVerified),
+			fmt.Sprintf("- MQTT reboot disconnects / reconnects: %d / %d", ota.MQTTRebootDisconnects, ota.MQTTReconnectSuccesses),
+			fmt.Sprintf("- Unexpected failures: %d", ota.UnexpectedFailures),
+			fmt.Sprintf("- Per-device evidence: `%s`", ota.DeviceResultsFile),
 			"",
 		)
 	}

@@ -47,6 +47,32 @@ func TestRunSDKProfileBuildsCompleteSelectionAndEvidenceWithoutLiveProbe(t *test
 	}
 }
 
+func TestRunOTAProfileWritesFailureEvidenceWhenMQTTReadyBarrierFails(t *testing.T) {
+	disableProcessExit(t)
+	envRoot := t.TempDir()
+	writeRunFixture(t, envRoot)
+	outDir := filepath.Join(t.TempDir(), "out")
+	ota := defaultOTAOptions()
+	ota.CampaignID, ota.TargetVersion, ota.CurrentVersion, ota.HardwareRevision = "campaign-1", "2.0.0", "1.0.0", "rev-a"
+	err := run(envRoot, envRoot, "RTK", outDir, "smoke", 1, 0, 7, true, "full", "", loadOptions{
+		RunID: "run-ota-barrier", ShardCount: 1, Concurrency: 2, LoadModel: "ota-device-simulator", OTA: ota,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := readRunResult(t, outDir)
+	if result["status"] != "FAIL" || result["overall"] != "fail" {
+		t.Fatalf("result = %#v", result)
+	}
+	otaResult := result["ota"].(map[string]any)
+	if otaResult["devices_selected"] != float64(3) || otaResult["mqtt_ready"] != float64(0) || otaResult["unexpected_failures"] != float64(3) {
+		t.Fatalf("OTA result = %#v", otaResult)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "ota-devices.jsonl")); err != nil {
+		t.Fatalf("OTA device evidence: %v", err)
+	}
+}
+
 func disableProcessExit(t *testing.T) {
 	t.Helper()
 	previous := exitProcess
