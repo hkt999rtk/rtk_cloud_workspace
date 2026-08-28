@@ -57,7 +57,10 @@ jobs:
           page.on('response', response => {
             if (response.url().includes('noto-sans')) console.log(`FONT_RESPONSE ${response.status()} ${response.url()}`);
           });
-          await page.goto('http://127.0.0.1:18082/admin/chipset-providers');
+          await page.request.post('http://127.0.0.1:18082/api/auth/platform/login', {
+            data: { email: 'platform.admin@example.com', password: 'e2e-platform-password' },
+          });
+          await page.goto('http://127.0.0.1:18082/admin/chipset-providers', { waitUntil: 'networkidle' });
           await page.evaluate(() => document.fonts.ready);
           console.log('FONT_FACES', await page.evaluate(() => [...document.fonts].map(font => ({ family: font.family, status: font.status }))));
           const cdp = await page.context().newCDPSession(page);
