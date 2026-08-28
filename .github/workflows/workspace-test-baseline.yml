@@ -28,7 +28,6 @@ jobs:
           --health-retries 12
     env:
       FEATURE_EVIDENCE_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}-feature
-      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:${{ job.services.postgres.ports[5432] }}/postgres?sslmode=disable
     steps:
       - name: Check out workspace
         uses: actions/checkout@v6
@@ -36,6 +35,11 @@ jobs:
           fetch-depth: 0
           lfs: true
           submodules: false
+
+      - name: Configure job-local PostgreSQL endpoint
+        run: |
+          printf 'TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
+            '${{ job.services.postgres.ports[5432] }}' >> "$GITHUB_ENV"
 
       - name: Initialize workspace submodules
         shell: bash
