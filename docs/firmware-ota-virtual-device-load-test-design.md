@@ -73,7 +73,7 @@ The implementation remains in `scripts/go/cloud-mqtt-test` and reuses:
 The selected inventory continues to require a bound device with the `mqtt`
 service option because an online MQTT session is part of this test's acceptance
 criteria. Video Cloud remains authoritative for resolving each device's brand
-and canonical SKU; the simulator never sends a brand or SKU in a device OTA
+and canonical Product; the simulator never sends a brand or Product in a device OTA
 request.
 
 ## Architecture

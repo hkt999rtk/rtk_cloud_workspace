@@ -69,19 +69,20 @@ type testCatalogSurface struct {
 }
 
 type testCatalogRequirement struct {
-	ID              string                `yaml:"id" json:"id"`
-	Title           string                `yaml:"title" json:"title"`
-	AcceptanceLayer string                `yaml:"acceptance_layer" json:"acceptance_layer"`
-	OperationModel  string                `yaml:"operation_model,omitempty" json:"operation_model,omitempty"`
-	Gate            string                `yaml:"gate" json:"gate"`
-	Environments    []string              `yaml:"environments" json:"environments"`
-	Targets         []string              `yaml:"targets,omitempty" json:"targets,omitempty"`
-	Evidence        []string              `yaml:"evidence,omitempty" json:"evidence,omitempty"`
-	FreshnessHours  int                   `yaml:"freshness_hours,omitempty" json:"freshness_hours,omitempty"`
-	Required        *bool                 `yaml:"required,omitempty" json:"required,omitempty"`
-	Status          string                `yaml:"status" json:"status"`
-	Revision        string                `yaml:"-" json:"revision"`
-	SpecSource      specRequirementSource `yaml:"-" json:"spec_source"`
+	ID                  string                `yaml:"id" json:"id"`
+	Title               string                `yaml:"title" json:"title"`
+	AcceptanceLayer     string                `yaml:"acceptance_layer" json:"acceptance_layer"`
+	OperationModel      string                `yaml:"operation_model,omitempty" json:"operation_model,omitempty"`
+	Gate                string                `yaml:"gate" json:"gate"`
+	Environments        []string              `yaml:"environments" json:"environments"`
+	Targets             []string              `yaml:"targets,omitempty" json:"targets,omitempty"`
+	Evidence            []string              `yaml:"evidence,omitempty" json:"evidence,omitempty"`
+	FreshnessHours      int                   `yaml:"freshness_hours,omitempty" json:"freshness_hours,omitempty"`
+	Required            *bool                 `yaml:"required,omitempty" json:"required,omitempty"`
+	Status              string                `yaml:"status" json:"status"`
+	RenamedFromRevision string                `yaml:"renamed_from_revision,omitempty" json:"renamed_from_revision,omitempty"`
+	Revision            string                `yaml:"-" json:"revision"`
+	SpecSource          specRequirementSource `yaml:"-" json:"spec_source"`
 }
 
 var catalogLayers = map[string]string{"service": "SVC-", "unit": "UNIT-", "integration": "INT-", "e2e": "E2E-", "ui": "UI-", "live": "LIVE-", "load": "LOAD-"}

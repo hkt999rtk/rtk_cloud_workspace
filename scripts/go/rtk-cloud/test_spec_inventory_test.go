@@ -496,6 +496,42 @@ func TestSpecImpactMarksRevisionChangesAndIllegalRemoval(t *testing.T) {
 	}
 }
 
+func TestSpecImpactRecognizesRequirementRenameByRevision(t *testing.T) {
+	previous := testCatalogRequirement{ID: "REQ-TEST-LEGACY-001", Revision: "old-revision", Status: "active"}
+	current := testCatalogRequirement{
+		ID: "REQ-TEST-CURRENT-001", Revision: "new-revision", Status: "active",
+		RenamedFromRevision: previous.Revision,
+	}
+	before := specInventory{Features: []testCatalogFeature{{ID: "FEAT-TEST-001", Requirements: []testCatalogRequirement{previous}}}}
+	after := specInventory{Features: []testCatalogFeature{{ID: "FEAT-TEST-001", Requirements: []testCatalogRequirement{current}}}}
+	report := compareSpecInventories("base", "head", before, after)
+	if len(report.Changes) != 1 || report.Changes[0].Kind != "RENAMED" ||
+		report.Changes[0].RequirementID != current.ID || report.Changes[0].BaseRevision != previous.Revision {
+		t.Fatalf("renamed requirement impact=%+v", report.Changes)
+	}
+}
+
+func TestSpecImpactRejectsAmbiguousRequirementRename(t *testing.T) {
+	previous := testCatalogRequirement{ID: "REQ-TEST-LEGACY-001", Revision: "old-revision", Status: "active"}
+	replacement := func(id string) testCatalogRequirement {
+		return testCatalogRequirement{
+			ID: id, Revision: "new-revision", Status: "active", RenamedFromRevision: previous.Revision,
+		}
+	}
+	before := specInventory{Features: []testCatalogFeature{{ID: "FEAT-TEST-001", Requirements: []testCatalogRequirement{previous}}}}
+	after := specInventory{Features: []testCatalogFeature{{ID: "FEAT-TEST-001", Requirements: []testCatalogRequirement{
+		replacement("REQ-TEST-CURRENT-001"), replacement("REQ-TEST-CURRENT-002"),
+	}}}}
+	report := compareSpecInventories("base", "head", before, after)
+	counts := map[string]int{}
+	for _, change := range report.Changes {
+		counts[change.Kind]++
+	}
+	if counts["RENAMED"] != 0 || counts["ADDED"] != 2 || counts["REMOVED"] != 1 {
+		t.Fatalf("ambiguous rename impact=%+v", report.Changes)
+	}
+}
+
 func TestSpecInventoryCommandsWriteReportsAndEnforceMode(t *testing.T) {
 	output := t.TempDir()
 	if err := runTestSpecInventory([]string{"check", "--mode", "observe", "--output-dir", output}); err != nil {
