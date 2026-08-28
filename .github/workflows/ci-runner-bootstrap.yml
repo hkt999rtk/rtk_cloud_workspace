@@ -21,8 +21,8 @@ jobs:
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get -o DPkg::Lock::Timeout=300 update
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y \
             build-essential \
             ca-certificates \
             cmake \
@@ -43,9 +43,9 @@ jobs:
             unzip \
             zip
           if apt-cache show docker-compose-v2 >/dev/null 2>&1; then
-            sudo apt-get install -y docker-compose-v2
+            sudo apt-get -o DPkg::Lock::Timeout=300 install -y docker-compose-v2
           else
-            sudo apt-get install -y docker-compose
+            sudo apt-get -o DPkg::Lock::Timeout=300 install -y docker-compose
           fi
           sudo systemctl enable --now docker
 
