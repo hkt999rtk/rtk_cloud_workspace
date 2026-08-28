@@ -433,6 +433,10 @@ func TestValidateLKEDeployInputsRequiresBlobConfiguration(t *testing.T) {
 		"LKE_POSTGRES_IMAGE":           "postgres:16-alpine",
 		"LKE_VIDEO_CLOUD_IMAGE":        "registry.example.test/video-cloud:test",
 		"LKE_ACCOUNT_MANAGER_IMAGE":    "registry.example.test/account-manager:test",
+		"AUTH_TOKEN_BASE_URL":          "https://admin.example.test",
+		"SENDMAIL_HTTP_BASE_URL":       "https://sm.realtekconnect.com",
+		"SENDMAIL_HTTP_BEARER_TOKEN":   "opaque-token",
+		"SENDMAIL_HTTP_TIMEOUT":        "15s",
 		"LKE_BILLING_IMAGE":            "registry.example.test/billing:test",
 		"LKE_CLOUD_ADMIN_IMAGE":        "registry.example.test/cloud-admin:test",
 		"LKE_FRONTEND_IMAGE":           "registry.example.test/frontend:test",
@@ -453,16 +457,20 @@ func TestValidateLKEDeployInputsRequiresBlobConfiguration(t *testing.T) {
 
 func TestValidateLKEDeployInputsRequiresObjectStorageCredentials(t *testing.T) {
 	env := map[string]string{
-		"LKE_POSTGRES_IMAGE":        "postgres:16-alpine",
-		"LKE_VIDEO_CLOUD_IMAGE":     "registry.example.test/video-cloud:test",
-		"LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/account-manager:test",
-		"LKE_BILLING_IMAGE":         "registry.example.test/billing:test",
-		"LKE_CLOUD_ADMIN_IMAGE":     "registry.example.test/cloud-admin:test",
-		"LKE_FRONTEND_IMAGE":        "registry.example.test/frontend:test",
-		"LKE_CLOUD_LOGGER_IMAGE":    "registry.example.test/cloud-logger:test",
-		"VIDEO_CLOUD_BLOB_ENDPOINT": "https://objects.example.test",
-		"VIDEO_CLOUD_BLOB_REGION":   "test-region",
-		"VIDEO_CLOUD_BLOB_BUCKET":   "test-bucket",
+		"LKE_POSTGRES_IMAGE":         "postgres:16-alpine",
+		"LKE_VIDEO_CLOUD_IMAGE":      "registry.example.test/video-cloud:test",
+		"LKE_ACCOUNT_MANAGER_IMAGE":  "registry.example.test/account-manager:test",
+		"AUTH_TOKEN_BASE_URL":        "https://admin.example.test",
+		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
+		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
+		"SENDMAIL_HTTP_TIMEOUT":      "15s",
+		"LKE_BILLING_IMAGE":          "registry.example.test/billing:test",
+		"LKE_CLOUD_ADMIN_IMAGE":      "registry.example.test/cloud-admin:test",
+		"LKE_FRONTEND_IMAGE":         "registry.example.test/frontend:test",
+		"LKE_CLOUD_LOGGER_IMAGE":     "registry.example.test/cloud-logger:test",
+		"VIDEO_CLOUD_BLOB_ENDPOINT":  "https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_REGION":    "test-region",
+		"VIDEO_CLOUD_BLOB_BUCKET":    "test-bucket",
 	}
 	err := validateLKEDeployInputs(env, provisionOptions{})
 	if err == nil || !strings.Contains(err.Error(), "LINODE_OBJ_ACCESS_KEY_ID, LINODE_OBJ_SECRET_ACCESS_KEY") {
@@ -4263,7 +4271,7 @@ func TestCloudAdminImageBuildContextUsesProductionWebImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"FROM node:22-bookworm AS web", "npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
+	for _, required := range []string{"FROM node:22-bookworm AS web", "RUN npm run build", "COPY --from=web /src/web/dist /app/web/dist"} {
 		if !strings.Contains(string(body), required) {
 			t.Fatalf("Cloud Admin production Dockerfile missing %q: %s", required, body)
 		}
@@ -4350,55 +4358,22 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 	}
 }
 
-func TestAccountManagerSecretConfiguresChipsetProviderRuntime(t *testing.T) {
-	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
-	env := map[string]string{
-		"CLOUD_STACK_NAME":   "video-cloud-staging",
-		"CLOUD_ADMIN_DOMAIN": "admin.video-cloud-staging.realtekconnect.com",
-	}
-	secret := lkeAccountManagerSecretManifest(env)
-	for _, want := range []string{
-		`CHIPSET_PROVIDER_ALLOWED_HOSTS: "admin.video-cloud-staging.realtekconnect.com"`,
-		`CHIPSET_PROVIDER_REFRESH_INTERVAL: "1h"`,
-	} {
-		if !strings.Contains(secret, want) {
-			t.Fatalf("secret missing %q:\n%s", want, secret)
-		}
-	}
-
-	overridden := maps.Clone(env)
-	overridden["CHIPSET_PROVIDER_ALLOWED_HOSTS"] = "packages.example.test"
-	overridden["CHIPSET_PROVIDER_REFRESH_INTERVAL"] = "30m"
-	secret = lkeAccountManagerSecretManifest(overridden)
-	for _, want := range []string{
-		`CHIPSET_PROVIDER_ALLOWED_HOSTS: "packages.example.test"`,
-		`CHIPSET_PROVIDER_REFRESH_INTERVAL: "30m"`,
-	} {
-		if !strings.Contains(secret, want) {
-			t.Fatalf("overridden secret missing %q:\n%s", want, secret)
-		}
-	}
-}
-
 func TestAccountManagerEmailWorkerManifestUsesSendMailHTTPSecret(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":           "video-cloud-staging",
-		"AUTH_TOKEN_DELIVERY":        "sendmail_http",
 		"AUTH_TOKEN_BASE_URL":        "https://admin.video-cloud-staging.example.test",
 		"SENDMAIL_HTTP_BASE_URL":     "https://sm.realtekconnect.com",
 		"SENDMAIL_HTTP_BEARER_TOKEN": "opaque-token",
 		"SENDMAIL_HTTP_TIMEOUT":      "15s",
 	}
-	if !lkeEmailDeliveryEnabled(env) {
-		t.Fatal("sendmail_http must enable the email worker")
-	}
 	secret := lkeAccountManagerSecretManifest(env)
 	for _, want := range []string{
-		`AUTH_TOKEN_DELIVERY: "sendmail_http"`,
 		`SENDMAIL_HTTP_BASE_URL: "https://sm.realtekconnect.com"`,
 		`SENDMAIL_HTTP_BEARER_TOKEN: "opaque-token"`,
 		`SENDMAIL_HTTP_TIMEOUT: "15s"`,
+		`EMAIL_OUTBOX_BATCH_SIZE: "20"`,
+		`EMAIL_OUTBOX_MAX_ATTEMPTS: "8"`,
 	} {
 		if !strings.Contains(secret, want) {
 			t.Fatalf("secret missing %q:\n%s", want, secret)

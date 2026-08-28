@@ -188,7 +188,7 @@ selected verbose level.
 
 Logs must not contain authorization headers, bearer tokens, refresh tokens,
 cookies, passwords, database DSNs with credentials, OIDC client secrets, TURN
-shared secrets, Linode credentials, Object Storage credentials, email provider
+shared secrets, Linode credentials, Object Storage credentials, email delivery
 credentials, private keys, or certificate private material.
 
 When a sensitive value is needed for correlation, log a stable hash or redacted
