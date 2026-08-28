@@ -10,6 +10,7 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ORG-AUTHORITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ORG-AUTHORITY-001` | `independent` | `d63b94f0af53` | `service` | `active` | `INT-AM-IDENTITY-ORG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-END-USER-ISOLATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-END-USER-ISOLATION-001` | `workflow` | `7b4d2da0ea3b` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-DEVICE-IDENTITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-DEVICE-IDENTITY-001` | `independent` | `f3956f54946c` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-SKU-COLLAB-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-SKU-COLLAB-001` | `independent` | `2aa8fcc8ddf8` | `service` | `active` | — | — |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-FACTORY-CONTEXT-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-FACTORY-CONTEXT-001` | `independent` | `bf8d28831adf` | `service` | `active` | `INT-AM-IDENTITY-FACTORY-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ORG-DATA-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ORG-DATA-001` | `independent` | `13357467a85b` | `service` | `active` | `INT-AM-IDENTITY-ORG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-USER-CREDENTIAL-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-USER-CREDENTIAL-001` | `independent` | `05a685c17321` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
@@ -21,7 +22,7 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-FLEET-DATA-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-FLEET-DATA-001` | `independent` | `572cfef31185` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ONE-TIME-TOKEN-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ONE-TIME-TOKEN-001` | `independent` | `a1ec645793bb` | `service` | `active` | `INT-AM-IDENTITY-TOKEN-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `independent` | `2852d1659641` | `service` | `active` | `INT-AM-IDENTITY-LIFECYCLE-001` | `test-services` |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `6688689f630e` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `0ae4543da68f` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-APP-AUTHORIZATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `workflow` | `f4ac80279fa5` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-PRICING-VERSION-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `independent` | `fa34115eb7b9` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UNIT-AM-INVOICE-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-ARITHMETIC-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-ARITHMETIC-001` | `independent` | `d0ddc3a1db7d` | `canonical` | `active` | `UNIT-AM-INVOICE-001` | `test-coverage` |
@@ -29,7 +30,7 @@
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-DOCUMENT-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `independent` | `93b7a7884d0f` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UI-CA-BILLING-STG-002` | `test-coverage`, `test-payment`, `test-ui` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-PROFILE-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `independent` | `77f0af957ea4` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-SUMMARY-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `independent` | `dba952197aaa` | `canonical` | `active` | — | — |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `3b87547f2d25` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `aaf2ebfb136e` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-CACHE-RESILIENCE-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-CACHE-RESILIENCE-001` | `independent` | `be8af79a0c44` | `service` | `active` | `INT-AM-OPERATIONS-CACHE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-OIDC-SECRET-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-OIDC-SECRET-001` | `independent` | `81c2810a30ee` | `service` | `active` | `INT-AM-OPERATIONS-OIDC-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `f83374280ed4` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
@@ -154,9 +155,9 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-001` | `` | `e098796ab03f` | `service` | `active` | `UI-CA-CHIPSET-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-002` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-002` | `` | `1e555a3c9d49` | `service` | `active` | `UI-CA-CHIPSET-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-003` | `` | `f71c06b8cce2` | `service` | `active` | `UI-CA-CHIPSET-003` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-004` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `workflow` | `e514db7e2de4` | `service` | `active` | `UI-CA-CHIPSET-004` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-004` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `workflow` | `e514db7e2de4` | `service` | `active` | `UI-CA-CHIPSET-004`, `UI-CA-CHIPSET-STG-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-005` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-005` | `` | `e040a4c11b3b` | `service` | `active` | `UI-CA-CHIPSET-005` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-006` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-006` | `` | `2e2834af6a9b` | `service` | `active` | `UI-CA-CHIPSET-006` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-006` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-006` | `` | `2e2834af6a9b` | `service` | `active` | `UI-CA-CHIPSET-006`, `UI-CA-CHIPSET-STG-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-OTA-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `workflow` | `d493a7522aee` | `service` | `active` | `UI-CA-OTA-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-STAGING-001` | `FEAT-CA-STAGING-001` | `REQ-UI-CA-STAGING-001` | `` | `188e10024fd2` | `service` | `active` | `UI-CA-STAGING-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-STAGING-002` | `FEAT-CA-STAGING-001` | `REQ-UI-CA-STAGING-002` | `` | `75f5b12e8814` | `service` | `active` | `UI-CA-STAGING-002` | `test-ui` |
@@ -190,6 +191,7 @@
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-OTA-ARTIFACT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-OTA-ARTIFACT-001` | `independent` | `a00010d29cee` | `canonical` | `active` | `INT-VC-OTA-ARTIFACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-OTA-TENANT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-OTA-TENANT-001` | `independent` | `1ece010312bd` | `canonical` | `active` | `INT-VC-OTA-TENANT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-COMPAT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-COMPAT-001` | `independent` | `4f9786997218` | `canonical` | `active` | `INT-AM-AUTHZ-MATRIX-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-SKU-COLLAB-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-SKU-COLLAB-001` | `independent` | `3ce43630d782` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-SURFACES-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-SURFACES-001` | `independent` | `2c3cff3a7e58` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-LIFECYCLE-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-LIFECYCLE-001` | `independent` | `ee9fc88ca751` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-OWNER-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-OWNER-001` | `independent` | `93a2c4fd29a8` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
@@ -601,7 +603,7 @@
 | `SPEC-AM-OPENAPI#resetPassword` | `POST /v1/auth/reset-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `13478edc73cd` |
 | `SPEC-AM-OPENAPI#requestEmailSignIn` | `POST /v1/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001`, `REQ-E2E-CA-SIGNUP-EMAIL-001` | `19018612327d` |
 | `SPEC-AM-OPENAPI#signupUser` | `POST /v1/auth/signup` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6165d2ec578b` |
-| `SPEC-AM-OPENAPI#verifyEmail` | `POST /v1/auth/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `fcdc10760cbf` |
+| `SPEC-AM-OPENAPI#verifyEmail` | `POST /v1/auth/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6cf4aae57e32` |
 | `SPEC-AM-OPENAPI#activateBrandCloudUser` | `POST /v1/brand-clouds/{tenantSlug}/auth/activate` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `481c87e91a74` |
 | `SPEC-AM-OPENAPI#loginBrandCloudUser` | `POST /v1/brand-clouds/{tenantSlug}/auth/login` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `4c9d80e738da` |
 | `SPEC-AM-OPENAPI#activateBrandCloudEmailSignIn` | `POST /v1/brand-clouds/{tenantSlug}/auth/login/activate` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `9c7ba1ac243c` |
@@ -627,8 +629,16 @@
 | `SPEC-AM-OPENAPI#cancelBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `e2ed76abc6d8` |
 | `SPEC-AM-OPENAPI#getBrandCloudOwnerTransfer` | `GET /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `78c871b49ee7` |
 | `SPEC-AM-OPENAPI#issueDeveloperPKITestAppCertificate` | `POST /v1/developer/brand-clouds/{brandCloudId}/pki/test-app-certificates` | `` | — | `2a785b963737` |
+| `SPEC-AM-OPENAPI#inviteSKUCollaborator` | `POST /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/collaborator-invitations` | `` | — | `6b5206e1cb62` |
+| `SPEC-AM-OPENAPI#listSKUCollaboratorInvitations` | `GET /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/collaborator-invitations` | `` | — | `ae34d4f88963` |
+| `SPEC-AM-OPENAPI#mutateSKUCollaboratorInvitation` | `POST /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/collaborator-invitations/{invitationId}/{action}` | `` | — | `5e918d312b24` |
+| `SPEC-AM-OPENAPI#listSKUCollaborators` | `GET /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/collaborators` | `` | — | `53c7e651f50d` |
+| `SPEC-AM-OPENAPI#removeSKUCollaborator` | `DELETE /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/collaborators/{userId}` | `` | — | `6b428a07d3e1` |
+| `SPEC-AM-OPENAPI#updateSKUCollaborator` | `PATCH /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/collaborators/{userId}` | `` | — | `2524f0a74cd2` |
+| `SPEC-AM-OPENAPI#transferSKUOwnership` | `POST /v1/developer/brand-clouds/{brandCloudId}/skus/{skuId}/owner-transfer` | `` | — | `b6df5ba7e6f9` |
 | `SPEC-AM-OPENAPI#listDeveloperChipsets` | `GET /v1/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `a1573dd57b4b` |
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
+| `SPEC-AM-OPENAPI#acceptSKUCollaboratorInvitation` | `POST /v1/developer/sku-collaborator-invitations/accept` | `` | — | `98077be11a97` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
 | `SPEC-AM-OPENAPI#deleteCurrentUser` | `DELETE /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0bba6c394d35` |
 | `SPEC-AM-OPENAPI#getCurrentUser` | `GET /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0ce87dc89fa3` |
@@ -747,7 +757,7 @@
 | `SPEC-CA-OPENAPI#postApiAuthCustomerLogin` | `POST /api/auth/customer/login` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `5d53a769664d` |
 | `SPEC-CA-OPENAPI#postApiAuthCustomerResendVerification` | `POST /api/auth/customer/resend-verification` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `bb2ac54a33fd` |
 | `SPEC-CA-OPENAPI#postApiAuthCustomerSignup` | `POST /api/auth/customer/signup` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `18d50662312c` |
-| `SPEC-CA-OPENAPI#postApiAuthCustomerVerifyEmail` | `POST /api/auth/customer/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `09bb4be1dc97` |
+| `SPEC-CA-OPENAPI#postApiAuthCustomerVerifyEmail` | `POST /api/auth/customer/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `a5ed14686ce6` |
 | `SPEC-CA-OPENAPI#postApiAuthForgotPassword` | `POST /api/auth/forgot-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `fae97e6656a2` |
 | `SPEC-CA-OPENAPI#postApiAuthLoginActivate` | `POST /api/auth/login/activate` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `1ab3055f91b2` |
 | `SPEC-CA-OPENAPI#postApiAuthLogout` | `POST /api/auth/logout` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6ef87ea3b0d4` |
@@ -796,6 +806,7 @@
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsetsByChipsetId` | `GET /api/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `f67498038c78` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleApp` | `POST /api/developer/pki/test-bundles/app` | `` | — | `77e0231a6b62` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleDevice` | `POST /api/developer/pki/test-bundles/device` | `` | — | `e43724c1b122` |
+| `SPEC-CA-OPENAPI#postApiDeveloperSKUCollaboratorInvitationsAccept` | `POST /api/developer/sku-collaborator-invitations/accept` | `` | — | `a9723349bd77` |
 | `SPEC-CA-OPENAPI#getApiDevices` | `GET /api/devices` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `68483d60a9ad` |
 | `SPEC-CA-OPENAPI#getApiDevicesById` | `GET /api/devices/{id}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `5efdc1043df0` |
 | `SPEC-CA-OPENAPI#postApiDevicesByIdDeactivate` | `POST /api/devices/{id}/deactivate` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `d0996152c58a` |
@@ -844,6 +855,11 @@
 | `SPEC-CA-OPENAPI#postApiSkusByIdReleases` | `POST /api/skus/{id}/releases` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `ef88cb9b910e` |
 | `SPEC-CA-OPENAPI#getApiSkusByIdReleasesByReleaseId` | `GET /api/skus/{id}/releases/{releaseId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `888dcde817e2` |
 | `SPEC-CA-OPENAPI#postApiSkusByIdReleasesByReleaseIdByAction` | `POST /api/skus/{id}/releases/{releaseId}/{action}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `1d8fa33973af` |
+| `SPEC-CA-OPENAPI#postApiSKUCollaboratorInvitation` | `POST /api/skus/{skuID}/collaborator-invitations` | `` | — | `1f50322c98ec` |
+| `SPEC-CA-OPENAPI#getApiSKUCollaborators` | `GET /api/skus/{skuID}/collaborators` | `` | — | `7990a0af9c5f` |
+| `SPEC-CA-OPENAPI#deleteApiSKUCollaborator` | `DELETE /api/skus/{skuID}/collaborators/{userID}` | `` | — | `3dedb9977abd` |
+| `SPEC-CA-OPENAPI#patchApiSKUCollaborator` | `PATCH /api/skus/{skuID}/collaborators/{userID}` | `` | — | `314522fde724` |
+| `SPEC-CA-OPENAPI#postApiSKUOwnerTransfer` | `POST /api/skus/{skuID}/owner-transfer` | `` | — | `507232504a84` |
 | `SPEC-CA-OPENAPI#getApiSummary` | `GET /api/summary` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `9a68b4b8ff35` |
 | `SPEC-CA-OPENAPI#getApiTags` | `GET /api/tags` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `ab555403d763` |
 | `SPEC-CA-OPENAPI#getApiUpdatePlans` | `GET /api/update-plans` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `d5cd838e0d7e` |
@@ -1227,15 +1243,16 @@
 
 | Spec | Section and line | Authority | Status | Candidate revision | Statement |
 | --- | --- | --- | --- | --- | --- |
+| `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1483` | `service` | `required` | `6b4c4c3f2914` | a prior `valid` status response must still be rejected atomically. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `RTK Cloud Admin — Role Definitions@L18` | `draft` | `planned` | `0ce425e55647` | rtk_video_cloud backend developers (telemetry, firmware, and stream APIs must |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `draft` | `planned` | `5ab164b3f034` | persona, but route guards and enabled UI actions must use explicit |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Platform Admin@L112` | `draft` | `planned` | `8740c5426d64` | this customer's devices?" cannot answer it from the console today and must |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Tier 2 — Brand Operator Roles@L126` | `draft` | `planned` | `0915d659e349` | Tier 2 daily authentication should use Account Manager-backed SSO. Account |
-| `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability contract@L183` | `draft` | `planned` | `789186a3cdd5` | The active membership must project these machine-readable capabilities. Display |
-| `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L228` | `draft` | `planned` | `1fc83d1b1961` | write action must use the same backend guard; frontend button hiding is only a |
-| `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L264` | `draft` | `planned` | `d119c9ed0c84` | not human roles and must not be displayed as ACL labels. |
-| `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L277` | `draft` | `planned` | `56db3ec9a934` | Backend handlers and frontend components must enforce these rules consistently. |
-| `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L279` | `draft` | `planned` | `7444f7d571cd` | visibility constraint on a specific field, it must align with the table below. |
+| `repos/rtk_cloud_admin/docs/ROLES.md` | `SKU project collaboration@L199` | `draft` | `planned` | `aa9c8927be39` | The active membership must project these machine-readable capabilities. Display |
+| `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L244` | `draft` | `planned` | `1fc83d1b1961` | write action must use the same backend guard; frontend button hiding is only a |
+| `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L280` | `draft` | `planned` | `d119c9ed0c84` | not human roles and must not be displayed as ACL labels. |
+| `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L293` | `draft` | `planned` | `56db3ec9a934` | Backend handlers and frontend components must enforce these rules consistently. |
+| `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L295` | `draft` | `planned` | `7444f7d571cd` | visibility constraint on a specific field, it must align with the table below. |
 | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
 | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Purpose@L46` | `draft` | `planned` | `c00c1a49a040` | Each SDK package must implement this contract or explicitly document which |
@@ -1324,19 +1341,29 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1483` | `true` | normative clause 6b4c4c3f2914 requires a stable FEAT-*/REQ-* source mapping: a prior `valid` status response must still be rejected atomically. |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `acceptSKUCollaboratorInvitation` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `inviteSKUCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `issueDeveloperPKITestAppCertificate` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `listSKUCollaboratorInvitations` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `listSKUCollaborators` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `mutateSKUCollaboratorInvitation` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `removeSKUCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `transferSKUOwnership` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `updateSKUCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_admin/docs/ROLES.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L264` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability contract@L183` | `false` | normative clause 789186a3cdd5 requires a stable FEAT-*/REQ-* source mapping: The active membership must project these machine-readable capabilities. Display |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L277` | `false` | normative clause 56db3ec9a934 requires a stable FEAT-*/REQ-* source mapping: Backend handlers and frontend components must enforce these rules consistently. |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L279` | `false` | normative clause 7444f7d571cd requires a stable FEAT-*/REQ-* source mapping: visibility constraint on a specific field, it must align with the table below. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L280` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L293` | `false` | normative clause 56db3ec9a934 requires a stable FEAT-*/REQ-* source mapping: Backend handlers and frontend components must enforce these rules consistently. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L295` | `false` | normative clause 7444f7d571cd requires a stable FEAT-*/REQ-* source mapping: visibility constraint on a specific field, it must align with the table below. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Platform Admin@L112` | `false` | normative clause 8740c5426d64 requires a stable FEAT-*/REQ-* source mapping: this customer's devices?" cannot answer it from the console today and must |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `RTK Cloud Admin — Role Definitions@L18` | `false` | normative clause 0ce425e55647 requires a stable FEAT-*/REQ-* source mapping: rtk_video_cloud backend developers (telemetry, firmware, and stream APIs must |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L228` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L244` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `SKU project collaboration@L199` | `false` | normative clause aa9c8927be39 requires a stable FEAT-*/REQ-* source mapping: The active membership must project these machine-readable capabilities. Display |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `false` | normative clause 5ab164b3f034 requires a stable FEAT-*/REQ-* source mapping: persona, but route guards and enabled UI actions must use explicit |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Tier 2 — Brand Operator Roles@L126` | `false` | normative clause 0915d659e349 requires a stable FEAT-*/REQ-* source mapping: Tier 2 daily authentication should use Account Manager-backed SSO. Account |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `deleteApiSKUCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivityDetail` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingInvoice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
@@ -1346,8 +1373,13 @@
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingStatement` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingSummary` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingUsage` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiSKUCollaborators` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `patchApiSKUCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiDeveloperPKITestBundleApp` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiDeveloperPKITestBundleDevice` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiDeveloperSKUCollaboratorInvitationsAccept` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiSKUCollaboratorInvitation` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
+| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `postApiSKUOwnerTransfer` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `putApiBillingProfile` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Acceptance Checklist@L344` | `false` | normative clause 288cf003d209 requires a stable FEAT-*/REQ-* source mapping: An SDK package implementing PKI device auth must verify: |

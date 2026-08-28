@@ -36,6 +36,13 @@ cases:
       title: password login prefers the destination view
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#sensitive%20query%20parameters%20are%20removed%20without%20changing%20the%20rest%20of%20the%20address
+      module: cloud-admin-web
+      language: javascript
+      source: src/auth-routing.test.mjs
+      title: sensitive query parameters are removed without changing the rest of the address
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#session%20destination%20respects%20session%20kind%20and%20next%20path
       module: cloud-admin-web
       language: javascript
@@ -435,6 +442,13 @@ cases:
       language: javascript
       source: src/routes.test.mjs
       title: maps Brand Cloud membership invitation acceptance outside regular console navigation
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20SKU%20collaborator%20invitation%20acceptance%20outside%20regular%20console%20navigation
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: maps SKU collaborator invitation acceptance outside regular console navigation
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20customer%20shell%20paths%20to%20customer%20routes
