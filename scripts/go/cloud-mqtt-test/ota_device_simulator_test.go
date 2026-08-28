@@ -293,6 +293,45 @@ func TestWriteOTADeviceResultsSortsAndProtectsEvidence(t *testing.T) {
 	}
 }
 
+func TestSummarizeOTAAggregatesDeviceEvidence(t *testing.T) {
+	config := testOTARuntimeConfig()
+	peaks := &otaRuntimePeaks{goroutines: 12, heap: 4096}
+	devices := []otaDeviceResult{
+		{
+			CampaignID: config.CampaignID, DeploymentID: "deployment-1", ExpectedTerminal: "succeeded", ActualTerminal: "succeeded", TerminalMatched: true,
+			ArtifactBytes: 128, ArtifactHashVerified: true, ArtifactSizeVerified: true, MQTTRebootDisconnected: true, MQTTReconnectSucceeded: true,
+			HTTPStatusCounts: map[string]int{"ota_check:200": 2}, HTTPLatencyMS: map[string][]float64{"ota_check": {10, 20, 30}},
+		},
+		{
+			ExpectedTerminal: "failed", ActualTerminal: "failed", TerminalMatched: false, ArtifactBytes: 64,
+			HTTPStatusCounts: map[string]int{"ota_check:200": 1}, HTTPLatencyMS: map[string][]float64{"ota_check": {40}},
+		},
+	}
+	summary := summarizeOTA(config, devices, 2, time.Now().Add(-time.Second), peaks)
+	if summary.DevicesSelected != 2 || summary.MQTTReady != 2 || summary.AssignmentsReceived != 1 || summary.TerminalMatched != 1 || summary.UnexpectedFailures != 1 {
+		t.Fatalf("summary counts = %+v", summary)
+	}
+	if summary.ArtifactBytes != 192 || summary.ArtifactHashVerified != 1 || summary.MQTTRebootDisconnects != 1 || summary.MQTTReconnectSuccesses != 1 {
+		t.Fatalf("summary evidence = %+v", summary)
+	}
+	if summary.HTTPStatusCounts["ota_check:200"] != 3 || summary.HTTPLatencyMS["ota_check"]["p50"] == 0 || summary.PeakGoroutines != 12 || summary.PeakHeapAllocBytes != 4096 || summary.ArtifactThroughputBPS <= 0 {
+		t.Fatalf("summary runtime metrics = %+v", summary)
+	}
+}
+
+func TestRunOTADeviceSimulatorWithNoAssignments(t *testing.T) {
+	opts := loadOptions{Concurrency: 1, RampUp: "0s", OTA: defaultOTAOptions()}
+	opts.OTA.CampaignID, opts.OTA.TargetVersion, opts.OTA.CurrentVersion, opts.OTA.HardwareRevision = "campaign-1", "2.0.0", "1.0.0", "rev-a"
+	result := runOTADeviceSimulator(nil, nil, "RTK", "empty-run", "https://api.example.test", "https://token.example.test", nil, 7, opts)
+	if result.Status != "PASS" || result.Summary.DevicesSelected != 0 || result.Summary.CampaignID != "campaign-1" {
+		t.Fatalf("empty simulation = %+v", result)
+	}
+	client := newOTAHTTPClient(0)
+	if client.Timeout != 30*time.Minute {
+		t.Fatalf("default OTA HTTP timeout = %s", client.Timeout)
+	}
+}
+
 func newTestOTADeviceRunner(t *testing.T, manifestPayload, servedPayload []byte, decisions *[]string) (otaDeviceRunner, *httptest.Server, *[]otaEventRequest) {
 	t.Helper()
 	digest := sha256.Sum256(manifestPayload)
