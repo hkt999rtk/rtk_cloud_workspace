@@ -107,6 +107,15 @@ jobs:
             --full --desktop --mobile --install \
             --run-id "$FEATURE_EVIDENCE_RUN_ID"
 
+      - name: Expose Playwright Chromium to Go browser checks
+        working-directory: repos/rtk_cloud_admin/web
+        shell: bash
+        run: |
+          set -euo pipefail
+          chrome_path=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")
+          test -x "$chrome_path"
+          printf 'CHROME_PATH=%s\n' "$chrome_path" >> "$GITHUB_ENV"
+
       - name: Run Home load-runner contract tests
         working-directory: loadtests/home-100k
         env:
