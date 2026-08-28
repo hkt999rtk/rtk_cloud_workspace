@@ -1,6 +1,8 @@
 # Admin Dashboard Redesign Spec
 
-Status: draft.
+Status: historical cross-repository baseline. The current Customer View
+information architecture is maintained in
+[`repos/rtk_cloud_admin/docs/webui-customer-view-design.md`](../repos/rtk_cloud_admin/docs/webui-customer-view-design.md).
 
 Author: Kevin Huang
 
@@ -62,7 +64,7 @@ Provisioning     →  operations log
 Platform Admin   →  customer count + service health
 ```
 
-### Proposed Navigation (2 top-level views)
+### Historical Proposed Navigation (2 top-level views)
 
 **Customer View** — default landing for org operators:
 
@@ -85,6 +87,26 @@ Audit Log        →  new section (uses existing audit_events table)
 The two views should have clearly differentiated entry points. A nav switcher
 or separate route prefix (`/admin/ops`) is acceptable. Do not intermix customer
 and platform content on the same page.
+
+### Current Customer View Navigation (2026-08-28)
+
+The implemented Customer View supersedes both navigation sketches above. It
+uses fixed groups in this order:
+
+```
+品牌雲       → 品牌雲首頁（總覽／成員與權限／設定）
+設備營運     → 設備、群組與標籤、設備註冊、批次工作
+產品與更新   → SKU 與服務、ChipSet & SDK、韌體更新
+監控與分析   → 影像播放狀況、報表
+帳號管理     → 帳務與自動加值
+```
+
+`/console/{cloudId}/overview`, `/access`, and `/settings` are separate deep
+links inside one Brand Cloud shell. `團隊與權限` is not a standalone sidebar
+item. Capability-aware navigation visibility is separate from route access,
+and each data source can fail without hiding unrelated fleet or team content.
+See the canonical Customer View design linked at the top of this document for
+the full route, capability, data-loading, and responsive behavior contract.
 
 ---
 

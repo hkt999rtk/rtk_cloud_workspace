@@ -149,6 +149,13 @@ cases:
       owner: rtk_cloud_admin
       status: active
       test_id: UNIT-CA-PKI-001
+    - canonical_key: js://cloud-admin-web/src/chipset-package.test.mjs#bundled%20AmebaPro2%20resources%20contain%20only%20verified%20live%20links
+      module: cloud-admin-web
+      language: javascript
+      source: src/chipset-package.test.mjs
+      title: bundled AmebaPro2 resources contain only verified live links
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/chipset-sdk.test.mjs#developer%20catalog%20helpers%20filter%20releases%20and%20summarize%20cards
       module: cloud-admin-web
       language: javascript
@@ -226,6 +233,27 @@ cases:
       title: evidence reporter writes stable evidence and preserves a prior passing case
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20campaign%20actions%20follow%20campaign%20state%20and%20permission
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware campaign actions follow campaign state and permission
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20campaign%20progress%20counts%20terminal%20device%20outcomes
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware campaign progress counts terminal device outcomes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20status%20helpers%20use%20upgrade-specific%20Traditional%20Chinese%20labels
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware status helpers use upgrade-specific Traditional Chinese labels
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmwareCampaignDetailRows%20maps%20rollouts%20into%20read-only%20detail%20rows
       module: cloud-admin-web
       language: javascript
@@ -259,6 +287,13 @@ cases:
       language: javascript
       source: src/firmware.test.mjs
       title: firmwareVersionFilterValue preserves unknown firmware filter
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#only%20progressing%20firmware%20campaigns%20need%20polling
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: only progressing firmware campaigns need polling
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/http.test.mjs#postJSON%20propagates%20network%20failures
@@ -395,6 +430,13 @@ cases:
       title: workload helpers map k8s status to stable labels and tones
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#Brand%20Cloud%20navigation%20and%20route%20access%20are%20evaluated%20independently
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: Brand Cloud navigation and route access are evaluated independently
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#billing%20subpaths%20remain%20addressable%20inside%20the%20tenant%20billing%20section
       module: cloud-admin-web
       language: javascript
@@ -478,6 +520,15 @@ cases:
       source: src/routes.test.mjs
       title: platform nav follows the Platform Dashboard landing order
       owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-08-28"
+      reason: Replaced by the unified shell group-order coverage.
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#platform%20nav%20follows%20the%20unified%20shell%20group%20order
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: platform nav follows the unified shell group order
+      owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#provides%20titles%20for%20all%20public%20shell%20routes
       module: cloud-admin-web
@@ -507,11 +558,34 @@ cases:
       title: route classification selects the separated view navigation
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#route%20kind%20selects%20one%20capability-filtered%20navigation%20hierarchy
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: route kind selects one capability-filtered navigation hierarchy
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20Chinese%20platform%20route%20titles%20in%20the%20unified%20shell
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: uses Chinese platform route titles in the unified shell
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20fleet%20health%20overview%20title%20for%20the%20customer%20landing%20page
       module: cloud-admin-web
       language: javascript
       source: src/routes.test.mjs
       title: uses fleet health overview title for the customer landing page
+      owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-08-28"
+      reason: Replaced by the shared Brand Cloud route-title coverage.
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20the%20shared%20Brand%20Cloud%20title%20for%20integrated%20routes
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: uses the shared Brand Cloud title for integrated routes
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/source-state.test.mjs#sourceAvailable%20only%20treats%20available%20source%20status%20as%20available
