@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,13 +20,6 @@ import (
 var accountManagerEmailSecretKeys = []string{
 	"AUTH_TOKEN_DELIVERY",
 	"AUTH_TOKEN_BASE_URL",
-	"SMTP_HOST",
-	"SMTP_PORT",
-	"SMTP_USERNAME",
-	"SMTP_PASSWORD",
-	"SMTP_FROM",
-	"SMTP_FROM_NAME",
-	"SMTP_ENCRYPTION",
 	"SENDMAIL_HTTP_BASE_URL",
 	"SENDMAIL_HTTP_BEARER_TOKEN",
 	"SENDMAIL_HTTP_TIMEOUT",
@@ -90,11 +83,15 @@ func runAccountManagerEmailDeploy(args []string) error {
 }
 
 func validateAccountManagerEmailDeployEnv(env map[string]string) error {
-	required := []string{"LKE_ACCOUNT_MANAGER_IMAGE", "AUTH_TOKEN_BASE_URL"}
-	for _, key := range required {
-		if strings.TrimSpace(lkeEnvValue(env, key)) == "" {
-			return fmt.Errorf("%s is required for Account Manager email deploy", key)
-		}
+	if strings.TrimSpace(lkeEnvValue(env, "LKE_ACCOUNT_MANAGER_IMAGE")) == "" {
+		return errors.New("LKE_ACCOUNT_MANAGER_IMAGE is required for Account Manager email deploy")
+	}
+	return validateAccountManagerEmailDeliveryEnv(env)
+}
+
+func validateAccountManagerEmailDeliveryEnv(env map[string]string) error {
+	if strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_BASE_URL")) == "" {
+		return errors.New("AUTH_TOKEN_BASE_URL is required for Account Manager email delivery")
 	}
 	delivery := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_DELIVERY"), env["AUTH_TOKEN_DELIVERY"])))
 	baseURL, err := url.Parse(strings.TrimSpace(firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])))
@@ -104,26 +101,23 @@ func validateAccountManagerEmailDeployEnv(env map[string]string) error {
 	if baseURL.Path != "" && baseURL.Path != "/" {
 		return errors.New("AUTH_TOKEN_BASE_URL must not contain a path")
 	}
-	switch delivery {
-	case "smtp":
-		for _, key := range []string{"SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"} {
-			if strings.TrimSpace(lkeEnvValue(env, key)) == "" {
-				return fmt.Errorf("%s is required for SMTP delivery", key)
-			}
-		}
-	case "sendmail_http":
-		if err := validateSendMailHTTPDeployEnv(env); err != nil {
-			return err
-		}
-	default:
-		return errors.New("AUTH_TOKEN_DELIVERY must be smtp or sendmail_http")
+	if delivery != "sendmail_http" {
+		return errors.New("AUTH_TOKEN_DELIVERY must be sendmail_http")
 	}
-	if delivery != "smtp" {
-		return nil
+	return validateSendMailHTTPDeployEnv(env)
+}
+
+func validateStagingEmailDeliveryBeforeReset(envRoot string) error {
+	stackEnv := filepath.Join(envRoot, "env", "stack.env")
+	env := make(map[string]string, len(accountManagerEmailSecretKeys))
+	for _, key := range accountManagerEmailSecretKeys {
+		env[key] = envroot.FileVar(stackEnv, key)
 	}
-	port, err := strconv.Atoi(strings.TrimSpace(lkeEnvValue(env, "SMTP_PORT")))
-	if err != nil || port < 1 || port > 65535 {
-		return errors.New("SMTP_PORT must be a valid TCP port")
+	if delivery := strings.ToLower(strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_DELIVERY"))); delivery != "sendmail_http" {
+		return errors.New("staging reset blocked before deleting workloads: AUTH_TOKEN_DELIVERY must be sendmail_http")
+	}
+	if err := validateAccountManagerEmailDeliveryEnv(env); err != nil {
+		return fmt.Errorf("staging reset blocked before deleting workloads: configure Account Manager email delivery: %w", err)
 	}
 	return nil
 }
@@ -165,12 +159,6 @@ func deployExistingAccountManagerEmail(env map[string]string) error {
 			return fmt.Errorf("existing Account Manager prerequisite %s is unavailable: %w", resource, err)
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(lkeEnvValue(env, "AUTH_TOKEN_DELIVERY")), "smtp") {
-		if err := checkAccountManagerSMTPSubmissionEgress(env); err != nil {
-			return err
-		}
-	}
-
 	secret, err := kubectlResourceJSON(namespace, "secret", "account-manager-runtime")
 	if err != nil {
 		return err
@@ -211,70 +199,6 @@ func deployExistingAccountManagerEmail(env map[string]string) error {
 		}
 	}
 	return nil
-}
-
-func checkAccountManagerSMTPSubmissionEgress(env map[string]string) error {
-	namespace := lkeNamespaceName(env, "account-manager")
-	name := "account-manager-smtp-egress-check"
-	_ = runKubectl("-n", namespace, "delete", "pod/"+name, "--ignore-not-found=true", "--wait=true")
-	if err := kubectlApply(accountManagerSMTPEgressCheckPodManifest(env, name)); err != nil {
-		return err
-	}
-	defer func() {
-		_ = runKubectl("-n", namespace, "delete", "pod/"+name, "--ignore-not-found=true", "--wait=true")
-	}()
-	if err := runKubectl("-n", namespace, "wait", "--for=condition=Ready", "pod/"+name, "--timeout", firstNonEmpty(os.Getenv("LKE_SMTP_EGRESS_CHECK_READY_TIMEOUT"), "90s")); err != nil {
-		return errors.New("SMTP egress preflight pod did not become ready")
-	}
-	out, err := kubectlCombinedOutput(nil,
-		"-n", namespace,
-		"exec", "pod/"+name, "--",
-		"sh", "-c", `nc -z -w 10 "$SMTP_HOST" "$SMTP_PORT"`,
-	)
-	if err != nil {
-		return fmt.Errorf(
-			"LKE outbound SMTP submission is blocked on configured port %s; verify Akamai SMTP restrictions before retrying",
-			strings.TrimSpace(lkeEnvValue(env, "SMTP_PORT")),
-		)
-	}
-	if len(bytes.TrimSpace(out)) != 0 {
-		return errors.New("SMTP egress preflight returned unexpected output")
-	}
-	return nil
-}
-
-func accountManagerSMTPEgressCheckPodManifest(env map[string]string, name string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Pod
-metadata:
-  name: %s
-  namespace: %s
-  labels:
-    app.kubernetes.io/name: account-manager-smtp-egress-check
-    app.kubernetes.io/part-of: rtk-cloud
-    rtk.realtek.com/provider: lke
-    rtk.realtek.com/stack: %s
-spec:
-  restartPolicy: Never
-  terminationGracePeriodSeconds: 0
-  containers:
-    - name: check
-      image: %s
-      imagePullPolicy: IfNotPresent
-      command: ["sh", "-c", "sleep 3600"]
-      env:
-        - name: SMTP_HOST
-          value: %q
-        - name: SMTP_PORT
-          value: %q
-      resources:
-        requests:
-          cpu: 5m
-          memory: 8Mi
-        limits:
-          cpu: 25m
-          memory: 32Mi
-`, name, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_SMTP_EGRESS_CHECK_IMAGE"), "busybox:1.36"), lkeEnvValue(env, "SMTP_HOST"), lkeEnvValue(env, "SMTP_PORT"))
 }
 
 func kubectlResourceJSON(namespace, kind, name string) (map[string]any, error) {
@@ -322,8 +246,6 @@ func mergeAccountManagerEmailSecret(secret map[string]any, env map[string]string
 		}
 	}
 	defaults := map[string]string{
-		"SMTP_FROM_NAME":             "Realtek Connect",
-		"SMTP_ENCRYPTION":            "starttls",
 		"SENDMAIL_HTTP_TIMEOUT":      "15s",
 		"EMAIL_OUTBOX_POLL_INTERVAL": "5s",
 		"EMAIL_OUTBOX_BATCH_SIZE":    "20",

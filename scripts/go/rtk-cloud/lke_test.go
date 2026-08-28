@@ -4350,48 +4350,6 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 	}
 }
 
-func TestAccountManagerEmailWorkerManifestUsesCanonicalSMTPSecret(t *testing.T) {
-	t.Setenv("AUTH_TOKEN_DELIVERY", "smtp")
-	t.Setenv("SMTP_HOST", "mail.example.test")
-	t.Setenv("SMTP_PORT", "587")
-	t.Setenv("SMTP_USERNAME", "no-reply@example.test")
-	t.Setenv("SMTP_PASSWORD", "smtp-password")
-	t.Setenv("SMTP_FROM", "no-reply@example.test")
-	t.Setenv("EMAIL_OUTBOX_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
-	env := map[string]string{
-		"CLOUD_STACK_NAME": "video-cloud-production",
-	}
-	secret := lkeAccountManagerSecretManifest(env)
-	for _, want := range []string{
-		`AUTH_TOKEN_DELIVERY: "smtp"`,
-		`SMTP_HOST: "mail.example.test"`,
-		`SMTP_PORT: "587"`,
-		`SMTP_USERNAME: "no-reply@example.test"`,
-		`SMTP_FROM: "no-reply@example.test"`,
-		`SMTP_ENCRYPTION: "starttls"`,
-		`EMAIL_OUTBOX_BATCH_SIZE: "20"`,
-		`EMAIL_OUTBOX_MAX_ATTEMPTS: "8"`,
-	} {
-		if !strings.Contains(secret, want) {
-			t.Fatalf("secret does not contain %q:\n%s", want, secret)
-		}
-	}
-	manifest := lkeAccountManagerEmailWorkerManifest(env)
-	for _, want := range []string{
-		"name: account-manager-email-worker",
-		"replicas: 1",
-		`command: ["/app/rtk-account-manager-email-worker"]`,
-		"name: account-manager-runtime",
-		"cpu: 25m",
-		"memory: 64Mi",
-	} {
-		if !strings.Contains(manifest, want) {
-			t.Fatalf("worker manifest does not contain %q:\n%s", want, manifest)
-		}
-	}
-}
-
 func TestAccountManagerSecretConfiguresChipsetProviderRuntime(t *testing.T) {
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
 	env := map[string]string{
