@@ -257,6 +257,32 @@ with NewebPay changes only the provider adapter and provider-specific evidence;
 the Billing monetary model, policy, ledger, Cloud Admin BFF, Test IDs,
 and report schema remain provider-neutral.
 
+## NewebPay-Compatible Wire Surface
+
+The simulator also exposes a NewebPay-compatible, non-production surface so
+the real adapter can be tested without changing domain behavior:
+
+- `POST /MPG/mpg_gateway` validates MerchantID, decrypts TradeInfo, verifies
+  TradeSha, and renders a clearly marked hosted test page;
+- `POST /API/QueryTradeInfo` validates CheckValue and returns a CheckCode-bound
+  durable result;
+- `POST /API/CreditCard/Cancel` validates encrypted PostData and applies the
+  documented authorization-cancel state transition;
+- `POST /API/CreditCard/Close` supports capture, refund, cancel-capture, and
+  cancel-refund state transitions against durable simulated amounts;
+- completed hosted tests send an encrypted form NotifyURL callback to Billing's
+  regular `/v1/payment-webhooks/newebpay` endpoint;
+- `/admin/newebpay` is a test-operations console whose JSON calls require a
+  separate bearer token and expose no credential or encrypted payload.
+
+Transaction scenarios are scoped to a persisted merchant order. The simulator
+supports success, decline, requires-action, temporary-error, and unknown
+outcomes plus callback replay. Endpoint override configuration is accepted only
+outside production. This surface qualifies public MPG/query/webhook behavior;
+it does not claim that fixed periodic payments authorize threshold-triggered
+merchant-initiated top-ups. Period and Token remain disabled until the merchant
+contract and unattended-charge capability are explicitly approved.
+
 The deployed qualification is plan-only by default. `test-payment --profile
 staging-live` requires both the exact staging stack confirmation and a second
 confirmation matching the dedicated test organization. Explicit organization

@@ -2532,13 +2532,17 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := kubectlApply(lkeAllowPostgresClientsNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
-		if _, err := lkeImportExistingRuntimeSecret(env, "billing", "billing-runtime", map[string]string{
+		if _, err := lkeImportExistingRuntimeSecretWithOptional(env, "billing", "billing-runtime", map[string]string{
 			"BILLING_SERVICE_TOKEN":             "billing-service-token",
 			"BILLING_INTERNAL_TOKEN":            "billing-internal-token",
 			"BILLING_DEBIT_TOKEN":               "billing-debit-token",
 			"PAYMENT_SIMULATOR_SHARED_SECRET":   "payment-simulator-shared",
 			"PAYMENT_SIMULATOR_CALLBACK_SECRET": "payment-simulator-callback",
 			"PAYMENT_REFERENCE_ENCRYPTION_KEY":  "payment-reference-encryption-key",
+		}, map[string]string{
+			"NEWEBPAY_HASH_KEY":             "newebpay-hash-key",
+			"NEWEBPAY_HASH_IV":              "newebpay-hash-iv",
+			"PAYMENT_SIMULATOR_ADMIN_TOKEN": "payment-simulator-admin-token",
 		}, false); err != nil {
 			return err
 		}
@@ -2586,6 +2590,10 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 }
 
 func lkeImportExistingRuntimeSecret(env map[string]string, namespaceKey, secretName string, mappings map[string]string, required bool) (bool, error) {
+	return lkeImportExistingRuntimeSecretWithOptional(env, namespaceKey, secretName, mappings, nil, required)
+}
+
+func lkeImportExistingRuntimeSecretWithOptional(env map[string]string, namespaceKey, secretName string, requiredMappings, optionalMappings map[string]string, required bool) (bool, error) {
 	namespace := lkeNamespaceName(env, namespaceKey)
 	raw, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", secretName, "--ignore-not-found=true", "-o", "json")
 	if err != nil {
@@ -2597,23 +2605,30 @@ func lkeImportExistingRuntimeSecret(env map[string]string, namespaceKey, secretN
 		}
 		return false, nil
 	}
-	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw, mappings); err != nil {
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw, requiredMappings, optionalMappings); err != nil {
 		return false, fmt.Errorf("import existing K8s secret %s/%s: %w", namespace, secretName, err)
 	}
 	return true, nil
 }
 
 func lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw []byte, mappings map[string]string) error {
+	return lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw, mappings, nil)
+}
+
+func lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw []byte, requiredMappings, optionalMappings map[string]string) error {
 	var secret struct {
 		Data map[string]string `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &secret); err != nil {
 		return err
 	}
-	for key, cacheKey := range mappings {
+	seed := func(key, cacheKey string, required bool) error {
 		encoded := strings.TrimSpace(secret.Data[key])
 		if encoded == "" {
-			return fmt.Errorf("secret key %s is missing", key)
+			if required {
+				return fmt.Errorf("secret key %s is missing", key)
+			}
+			return nil
 		}
 		value, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
@@ -2623,6 +2638,17 @@ func lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw []byte, mappings map[string]
 			return fmt.Errorf("secret key %s is empty", key)
 		}
 		lkeRuntimeSecretCache[cacheKey] = string(value)
+		return nil
+	}
+	for key, cacheKey := range requiredMappings {
+		if err := seed(key, cacheKey, true); err != nil {
+			return err
+		}
+	}
+	for key, cacheKey := range optionalMappings {
+		if err := seed(key, cacheKey, false); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -7002,6 +7028,39 @@ func lkePaymentSimulatorRunID(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_RUN_ID"), env["PAYMENT_SIMULATOR_RUN_ID"], env["CLOUD_STACK_NAME"])
 }
 
+func lkeNewebPayMerchantID(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("NEWEBPAY_MERCHANT_ID"), env["NEWEBPAY_MERCHANT_ID"], "RTKSIMULATOR")
+}
+
+func lkeNewebPayHashKey(env map[string]string) string {
+	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("NEWEBPAY_HASH_KEY"), env["NEWEBPAY_HASH_KEY"], lkeRuntimeSecretCache["newebpay-hash-key"])); value != "" {
+		return value
+	}
+	digest := sha256.Sum256([]byte(lkeRuntimeSecretValue("newebpay-hash-key-seed")))
+	return hex.EncodeToString(digest[:])[:32]
+}
+
+func lkeNewebPayHashIV(env map[string]string) string {
+	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("NEWEBPAY_HASH_IV"), env["NEWEBPAY_HASH_IV"], lkeRuntimeSecretCache["newebpay-hash-iv"])); value != "" {
+		return value
+	}
+	digest := sha256.Sum256([]byte(lkeRuntimeSecretValue("newebpay-hash-iv-seed")))
+	return hex.EncodeToString(digest[:])[:16]
+}
+
+func lkePaymentSimulatorAdminToken(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_ADMIN_TOKEN"), env["PAYMENT_SIMULATOR_ADMIN_TOKEN"], lkeRuntimeSecretCache["payment-simulator-admin-token"], lkeRuntimeSecretValue("payment-simulator-admin-token"))
+}
+
+func lkeNewebPayNotifyURL(env map[string]string) string {
+	return lkeBillingInternalURL(env) + "/v1/payment-webhooks/newebpay"
+}
+
+func lkeNewebPayReturnURL(env map[string]string) string {
+	domain := firstNonEmpty(env["CLOUD_ADMIN_DOMAIN"], "admin."+env["VIDEO_CLOUD_DOMAIN"])
+	return "https://" + domain + "/console/billing/activity"
+}
+
 func lkeBillingServiceToken() string {
 	return lkeRuntimeSecretValue("billing-service-token")
 }
@@ -7045,10 +7104,20 @@ stringData:
   PAYMENT_SIMULATOR_SHARED_SECRET: %q
   PAYMENT_SIMULATOR_CALLBACK_SECRET: %q
   PAYMENT_SIMULATOR_SCENARIO: %q
+  NEWEBPAY_ENABLED: "true"
+  NEWEBPAY_ENVIRONMENT: "sandbox"
+  NEWEBPAY_MERCHANT_ID: %q
+  NEWEBPAY_HASH_KEY: %q
+  NEWEBPAY_HASH_IV: %q
+  NEWEBPAY_SIMULATOR_BASE_URL: %q
+  NEWEBPAY_NOTIFY_URL: %q
+  NEWEBPAY_RETURN_URL: %q
+  PAYMENT_SIMULATOR_NEWEBPAY_NOTIFY_URL: %q
+  PAYMENT_SIMULATOR_ADMIN_TOKEN: %q
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkePaymentSimulatorInternalURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -7215,7 +7284,7 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentSimulatorPublicDomain(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback")), lkeImagePullSecretName(env), lkeBillingImage(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentSimulatorPublicDomain(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env)), lkeImagePullSecretName(env), lkeBillingImage(env))
 }
 
 func lkeBillingPaymentWorkerManifest(env map[string]string) string {
@@ -7255,7 +7324,7 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared")), lkeImagePullSecretName(env), lkeBillingImage(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env)), lkeImagePullSecretName(env), lkeBillingImage(env))
 }
 
 func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
@@ -7576,7 +7645,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env)))
+		`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime

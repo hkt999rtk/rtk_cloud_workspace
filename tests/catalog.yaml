@@ -196,6 +196,19 @@ cases:
     evidence: [json, junit, markdown, logs]
     verifies: [REQ-AM-PAYMENT-METHOD-001, REQ-AM-PAYMENT-PROVIDER-001, REQ-AM-PAYMENT-AUTHZ-001, REQ-AM-PAYMENT-AUDIT-001]
     status: active
+  - id: E2E-AM-NEWEBPAY-001
+    title: Hosted NewebPay callback and query credit exactly once
+    layer: e2e
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/api/newebpay_integration_test.go
+    selector: ./internal/api#TestIntegrationNewebPayHostedWebhookQueryCreditsExactlyOnce
+    method: PostgreSQL-backed Billing API E2E persists a hosted one-time intent, decrypts the generated provider action only inside the test, accepts a signed callback, reconciles through the real NewebPay query adapter, and proves one provider reference and exactly one TWD ledger credit after replay.
+    runner: test-payment
+    environments: [local, ci]
+    tags: [payment, newebpay, hosted-charge, webhook, query, idempotency]
+    evidence: [json, junit, markdown, logs]
+    verifies: [REQ-AM-PAYMENT-INTENT-001, REQ-AM-PAYMENT-WEBHOOK-001, REQ-AM-PAYMENT-PROVIDER-001, REQ-AM-BALANCE-LEDGER-001]
+    status: active
   - id: E2E-AM-SIMULATOR-001
     title: Virtual hosted setup activates a safe payment method without persisting its raw token
     layer: e2e
@@ -223,17 +236,17 @@ cases:
     verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-INTENT-001, REQ-AM-BALANCE-LEDGER-001, REQ-AM-PAYMENT-PROVIDER-001]
     status: active
   - id: LIVE-STG-SIMULATOR-001
-    title: Deployed payment simulator completes responsive hosted setup
+    title: Deployed payment simulator completes responsive setup and NewebPay hosted charge
     layer: live
     owner: rtk_billing
     source: scripts/go/rtk-cloud/test_payment_live.go
     selector: staging-live
-    method: A dedicated staging organization performs simulator hosted setup, captures desktop and mobile hosted-page evidence, activates the synthetic method, and then revokes it during mandatory cleanup.
+    method: A dedicated staging organization performs simulator hosted setup, then submits the encrypted NewebPay MPG action to the same isolated simulator, completes a TWD 500 charge, accepts the signed callback, reconciles through QueryTradeInfo, proves exactly one ledger credit, captures desktop and mobile evidence for both hosted pages, and revokes the synthetic method during mandatory cleanup.
     runner: test-payment
     environments: [staging]
     evidence: [json, markdown, logs, screenshot]
-    tags: [payment, simulator, staging, hosted-setup, responsive]
-    verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-METHOD-001]
+    tags: [payment, simulator, newebpay, staging, hosted-setup, hosted-charge, webhook, query, responsive]
+    verifies: [REQ-AM-PAYMENT-SIMULATOR-001, REQ-AM-PAYMENT-METHOD-001, REQ-AM-PAYMENT-INTENT-001, REQ-AM-BALANCE-LEDGER-001]
     status: active
   - id: LIVE-STG-AUTOTOPUP-001
     title: Deployed debit threshold crossing produces exactly one automatic charge and credit
@@ -1163,6 +1176,7 @@ cases:
   - { <<: *ui_smoke, id: UI-CA-BILLING-003, title: Invoice list opens immutable settlement detail and PDF evidence, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-003]", tags: [smoke, billing, invoice], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-004, title: Normalized billing activity opens a customer-safe timeline, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-004]", tags: [smoke, billing, activity], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-005, title: Billing profile update preserves immutable invoice snapshot semantics, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-005]", tags: [smoke, billing, invoice, profile], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-006, title: Hosted NewebPay top-up posts only encrypted provider fields, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-006]", tags: [smoke, billing, payment, newebpay, hosted-charge], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_staging, id: UI-CA-BILLING-STG-001, title: Real staging billing overview remains tenant scoped and provider safe, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-001]", tags: [smoke, staging, billing, payment], verifies: [REQ-CA-BILLING-001, REQ-BILL-DATA-BOUNDARY-001] }
   - { <<: *ui_staging, id: UI-CA-BILLING-STG-002, title: Real staging invoice detail serves immutable PDF evidence, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-002]", tags: [smoke, staging, billing, invoice], verifies: [REQ-CA-BILLING-001, REQ-AM-INVOICE-DOCUMENT-001] }
   - { <<: *ui_staging, id: UI-CA-BILLING-STG-003, title: Real staging billing activity and profile remain customer safe, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-003]", tags: [smoke, staging, billing, activity, profile], verifies: [REQ-CA-BILLING-001, REQ-AM-BILLING-ACTIVITY-001] }

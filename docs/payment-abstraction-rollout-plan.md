@@ -5,12 +5,13 @@ security boundary, protocol, and qualification evidence are defined in
 [`payment-simulator.md`](payment-simulator.md). Simulator qualification now
 precedes any NewebPay sandbox work.
 
-Status: implemented foundation with guarded provider rollout.
+Status: phase-one hosted payment and simulator qualification implemented;
+production provider rollout remains guarded.
 
 Owner: `rtk_cloud_workspace` coordinates; repository ownership remains with the
 service listed for each deliverable.
 
-Last reviewed: 2026-08-15.
+Last reviewed: 2026-08-29.
 
 ## Goal
 
@@ -45,8 +46,9 @@ support operations remain separate dependencies.
 Billing and Cloud Admin OpenAPI contracts now contain the guarded payment
 routes. Executable unit, PostgreSQL integration, NewebPay contract, and
 desktop/mobile UI cases are active in the central Test Catalog. Fake-provider
-hosted setup is active; NewebPay-hosted and live staging execution remain
-deferred until their external prerequisites exist.
+and NewebPay-compatible simulator hosted flows are active, including the
+staging-live qualification runner. Execution against a real NewebPay sandbox
+merchant remains deferred until its external prerequisites exist.
 
 ## Existing Baseline
 
@@ -60,7 +62,7 @@ deferred until their external prerequisites exist.
 | Invoice generation | Billing | Implemented period close, invoice snapshots, PDF digest, and settlement link. |
 | Authenticated debit instruction boundary | Billing | Implemented with a dedicated credential distinct from tenant/internal credentials. |
 | Commercial balance ledger | Billing | Implemented with PostgreSQL idempotency and immutable entries. |
-| Payment abstraction/provider adapter | Billing | Fake/simulator qualified; NewebPay query/webhook safe subset implemented and charge disabled. |
+| Payment abstraction/provider adapter | Billing | Fake/simulator qualified; NewebPay hosted/query/webhook/cancel/close safe subset implemented; unattended charge disabled. |
 | Automatic top-up and consent | Billing | Simulator policy/orchestration implemented; production external charging disabled. |
 | Refund/chargeback reconciliation | Billing | Simulator refund and compensating-ledger behavior implemented; production policy approval remains. |
 
@@ -249,6 +251,11 @@ duplicate charge or credit.
 
 Owner: Billing payment adapter owner.
 
+Status: phase-one hosted MPG checkout, query, verified callback, cancel, and
+close/refund are implemented and qualified against the isolated wire simulator.
+Real sandbox qualification and unattended merchant-initiated charging remain
+gated by merchant capability approval and credentials.
+
 The query, cryptography, response normalization, and verified-webhook subset is
 implemented from official public documentation. Hosted setup and unattended
 charge support have this prerequisite: written capability approval and sandbox
@@ -327,9 +334,10 @@ Automatic top-up remains opt-in and disabled by default.
 
 ## Test Inventory
 
-Executable permanent IDs are active in the catalog. Fake-provider hosted setup
-and automatic top-up E2E cases are locally executable; NewebPay-hosted and live
-execution that need a qualified provider sandbox remain deferred.
+Executable permanent IDs are active in the catalog. Fake-provider and
+NewebPay-compatible simulator hosted flows are locally executable, and the
+staging-live runner covers the deployed simulator. Only execution against a
+real NewebPay sandbox merchant remains deferred.
 
 | ID | Layer | Purpose | Dependency | Evidence |
 | --- | --- | --- | --- | --- |
@@ -339,11 +347,13 @@ execution that need a qualified provider sandbox remain deferred.
 | `INT-AM-PAYMENT-001` | Integration | Concurrent debit, trigger, callback, and credit transaction safety. | PostgreSQL 16 | JSON, JUnit, DB evidence |
 | `INT-AM-BILLING-DEBIT-001` | Integration | Dedicated service authentication and idempotent invoice/adjustment debit ingestion. | PostgreSQL 16 | JSON, JUnit |
 | `INT-AM-NEWEBPAY-001` | Integration | Provider crypto/field/error contract. | Official redacted fixtures | JSON, JUnit, logs |
+| `E2E-AM-NEWEBPAY-001` | E2E | Hosted intent, signed callback, authoritative query, and exactly-once credit. | PostgreSQL + NewebPay wire simulator | JSON, JUnit, Markdown, DB evidence |
 | `E2E-AM-PAYMENT-001` | E2E | Hosted setup and consent without card storage. | Fake provider (active); sandbox pending | JSON, JUnit, provider correlation |
 | `E2E-AM-AUTOTOPUP-001` | E2E | Crossing to one transaction and one credit. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, ledger/provider evidence |
 | `E2E-AM-AUTOTOPUP-002` | E2E | Timeout/duplicate/out-of-order/reconciliation safety. | PostgreSQL + fake provider (active); sandbox pending | JSON, JUnit, Markdown, logs |
 | `UI-CA-BILLING-001` | UI | Owner config/status on desktop and mobile. | Billing + Account Manager authorization + Cloud Admin | JSON, JUnit, screenshots |
-| `LIVE-STG-PAYMENT-001` | Live | Dedicated staging sandbox full flow and cleanup. | LKE + NewebPay sandbox | JSON, Markdown, JUnit, logs |
+| `UI-CA-BILLING-006` | UI | Hosted top-up submits only encrypted provider fields. | Cloud Admin + Billing fixture | JSON, JUnit, screenshots |
+| `LIVE-STG-SIMULATOR-001` | Live | Deployed hosted setup and NewebPay-compatible TWD 500 charge. | LKE + isolated wire simulator | JSON, Markdown, logs, screenshots |
 
 Additional generated unit inventory covers every Go/JavaScript test function.
 Security/regression IDs remain stable after activation.

@@ -143,6 +143,9 @@ func TestTargetedBillingDeployImportsExistingRuntimeSecretsWithoutRotation(t *te
 		"PAYMENT_SIMULATOR_SHARED_SECRET":   "existing-simulator-secret",
 		"PAYMENT_SIMULATOR_CALLBACK_SECRET": "existing-callback-secret",
 		"PAYMENT_REFERENCE_ENCRYPTION_KEY":  "existing-reference-key",
+		"NEWEBPAY_HASH_KEY":                 "existing-newebpay-hash-key-1234",
+		"NEWEBPAY_HASH_IV":                  "existing-hash-iv",
+		"PAYMENT_SIMULATOR_ADMIN_TOKEN":     "existing-simulator-admin-token-12",
 	}
 	data := map[string]string{}
 	for key, value := range values {
@@ -160,6 +163,9 @@ func TestTargetedBillingDeployImportsExistingRuntimeSecretsWithoutRotation(t *te
 		"PAYMENT_SIMULATOR_SHARED_SECRET":   "payment-simulator-shared",
 		"PAYMENT_SIMULATOR_CALLBACK_SECRET": "payment-simulator-callback",
 		"PAYMENT_REFERENCE_ENCRYPTION_KEY":  "payment-reference-encryption-key",
+		"NEWEBPAY_HASH_KEY":                 "newebpay-hash-key",
+		"NEWEBPAY_HASH_IV":                  "newebpay-hash-iv",
+		"PAYMENT_SIMULATOR_ADMIN_TOKEN":     "payment-simulator-admin-token",
 	}
 	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON(raw, mappings); err != nil {
 		t.Fatal(err)
@@ -184,6 +190,32 @@ func TestTargetedBillingDeployRejectsMalformedExistingRuntimeSecret(t *testing.T
 	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSON([]byte(`{"data":{"BILLING_SERVICE_TOKEN":"not-base64"}}`), map[string]string{"BILLING_SERVICE_TOKEN": "billing-service-token"}); err == nil || !strings.Contains(err.Error(), "decode") {
 		t.Fatalf("malformed existing credential error = %v", err)
 	}
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(
+		[]byte(`{"data":{"BILLING_SERVICE_TOKEN":"dmFsaWQ=","NEWEBPAY_HASH_KEY":"not-base64"}}`),
+		map[string]string{"BILLING_SERVICE_TOKEN": "billing-service-token"},
+		map[string]string{"NEWEBPAY_HASH_KEY": "newebpay-hash-key"},
+	); err == nil || !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("malformed optional credential error = %v", err)
+	}
+}
+
+func TestTargetedBillingDeployAcceptsLegacySecretWithoutNewebPayKeys(t *testing.T) {
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	raw := []byte(`{"data":{"BILLING_SERVICE_TOKEN":"ZXhpc3Rpbmctc2VydmljZS10b2tlbg=="}}`)
+	if err := lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw,
+		map[string]string{"BILLING_SERVICE_TOKEN": "billing-service-token"},
+		map[string]string{"NEWEBPAY_HASH_KEY": "newebpay-hash-key", "NEWEBPAY_HASH_IV": "newebpay-hash-iv"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if lkeRuntimeSecretCache["billing-service-token"] != "existing-service-token" {
+		t.Fatal("legacy Billing credential was not preserved")
+	}
+	if lkeRuntimeSecretCache["newebpay-hash-key"] != "" || lkeRuntimeSecretCache["newebpay-hash-iv"] != "" {
+		t.Fatal("missing optional NewebPay credentials must not be fabricated during import")
+	}
 }
 
 func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
@@ -192,6 +224,7 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 		"CLOUD_STACK_NAME":       "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN":     "video-cloud-staging.realtekconnect.com",
 		"ACCOUNT_MANAGER_DOMAIN": "account-manager.video-cloud-staging.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN":     "admin.video-cloud-staging.realtekconnect.com",
 		"LKE_BILLING_IMAGE":      "registry.example.test/billing:test",
 	}
 	secret := lkeBillingSecretManifest(env)
@@ -205,6 +238,16 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 		`PAYMENT_SIMULATOR_BASE_URL: "http://payment-simulator.video-cloud-staging-billing.svc.cluster.local:80"`,
 		`PAYMENT_SIMULATOR_PUBLIC_BASE_URL: "https://payment-simulator.video-cloud-staging.realtekconnect.com"`,
 		`PAYMENT_SIMULATOR_CALLBACK_URL: "http://billing.video-cloud-staging-billing.svc.cluster.local:80/v1/internal/payment-simulator/setup-callback"`,
+		`NEWEBPAY_ENABLED: "true"`,
+		`NEWEBPAY_ENVIRONMENT: "sandbox"`,
+		`NEWEBPAY_MERCHANT_ID: "RTKSIMULATOR"`,
+		`NEWEBPAY_SIMULATOR_BASE_URL: "http://payment-simulator.video-cloud-staging-billing.svc.cluster.local:80"`,
+		`NEWEBPAY_NOTIFY_URL: "http://billing.video-cloud-staging-billing.svc.cluster.local:80/v1/payment-webhooks/newebpay"`,
+		`NEWEBPAY_RETURN_URL: "https://admin.video-cloud-staging.realtekconnect.com/console/billing/activity"`,
+		`PAYMENT_SIMULATOR_NEWEBPAY_NOTIFY_URL: "http://billing.video-cloud-staging-billing.svc.cluster.local:80/v1/payment-webhooks/newebpay"`,
+		"NEWEBPAY_HASH_KEY:",
+		"NEWEBPAY_HASH_IV:",
+		"PAYMENT_SIMULATOR_ADMIN_TOKEN:",
 		`PAYMENT_WORKER_ENABLED: "true"`,
 		"PAYMENT_REFERENCE_ENCRYPTION_KEY:",
 	} {
@@ -214,6 +257,9 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 	}
 	if lkeBillingServiceToken() == lkeBillingInternalToken() || lkeBillingServiceToken() == lkeBillingDebitToken() || lkeBillingInternalToken() == lkeBillingDebitToken() {
 		t.Fatal("Billing tenant, internal, and debit credentials must be distinct")
+	}
+	if len(lkeNewebPayHashKey(env)) != 32 || len(lkeNewebPayHashIV(env)) != 16 || len(lkePaymentSimulatorAdminToken(env)) < 32 {
+		t.Fatal("NewebPay simulator credentials have invalid lengths")
 	}
 	for name, manifest := range map[string]string{
 		"simulator": lkePaymentSimulatorDeploymentManifest(env),
@@ -248,6 +294,38 @@ func TestPaymentSimulatorUsesApprovedPublicTLSRoute(t *testing.T) {
 	if !found {
 		t.Fatalf("approved payment simulator route missing: %+v", routes)
 	}
+}
+
+func TestNewebPayCredentialChangeRollsBillingSimulatorAndWorker(t *testing.T) {
+	base := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+		"CLOUD_ADMIN_DOMAIN": "admin.video-cloud-staging.realtekconnect.com",
+		"LKE_BILLING_IMAGE":  "registry.example.test/billing:test",
+		"NEWEBPAY_HASH_KEY":  "11111111111111111111111111111111",
+		"NEWEBPAY_HASH_IV":   "1111111111111111",
+	}
+	changed := mapsClone(base)
+	changed["NEWEBPAY_HASH_KEY"] = "22222222222222222222222222222222"
+
+	workload := lkeWorkload{Key: "billing", Name: "billing", Image: base["LKE_BILLING_IMAGE"]}
+	for name, manifests := range map[string][2]string{
+		"billing":   {lkeDeploymentManifest(base, workload, nil), lkeDeploymentManifest(changed, workload, nil)},
+		"simulator": {lkePaymentSimulatorDeploymentManifest(base), lkePaymentSimulatorDeploymentManifest(changed)},
+		"worker":    {lkeBillingPaymentWorkerManifest(base), lkeBillingPaymentWorkerManifest(changed)},
+	} {
+		if manifests[0] == manifests[1] {
+			t.Fatalf("%s deployment checksum did not change with NewebPay credential", name)
+		}
+	}
+}
+
+func mapsClone(source map[string]string) map[string]string {
+	clone := make(map[string]string, len(source))
+	for key, value := range source {
+		clone[key] = value
+	}
+	return clone
 }
 
 func TestBillingUsesApprovedPublicTLSRoute(t *testing.T) {
