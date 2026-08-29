@@ -122,7 +122,7 @@ permissions:
 jobs:
   contract-and-source:
     name: Contract, harness, and sample source validation
-    runs-on: macos-15
+    runs-on: m1-local
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -144,9 +144,9 @@ jobs:
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
-      - name: Select Swift 6 toolchain
+      - name: Verify Swift 6 toolchain
         run: |
-          sudo xcode-select --switch /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
           swift --version | grep -q 'Swift version 6'
       - uses: actions/setup-go@v6
         with:
@@ -234,7 +234,7 @@ jobs:
     name: iOS Simulator deployed-cloud validation
     needs: contract-and-source
     if: ${{ inputs.run_live && (inputs.platform == 'all' || inputs.platform == 'ios') }}
-    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    runs-on: m1-local
     timeout-minutes: 30
     concurrency:
       group: sdk-cloud-validation-mobile-host
@@ -345,7 +345,7 @@ jobs:
       ${{ always() && needs.contract-and-source.result == 'success' &&
           (needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped') &&
           inputs.run_live && (inputs.platform == 'all' || inputs.platform == 'android') }}
-    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    runs-on: m1-local
     timeout-minutes: 35
     concurrency:
       group: sdk-cloud-validation-mobile-host
@@ -462,7 +462,7 @@ jobs:
           needs.contract-and-source.result == 'success' &&
           (needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped') &&
           (needs.android-live.result == 'success' || needs.android-live.result == 'skipped') }}
-    runs-on: [self-hosted, macOS, ARM64, rtk_cloud_client, jarvis-macos]
+    runs-on: m1-local
     timeout-minutes: 90
     env:
       LINODE_TOKEN: ${{ secrets.linode_token }}

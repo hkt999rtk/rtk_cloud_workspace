@@ -163,6 +163,9 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(string(feature), "group: staging-mutating-tests") {
 		t.Fatal("feature qualification does not share the staging mutation lock")
 	}
+	if !strings.Contains(string(feature), "runs-on: m1-local") {
+		t.Fatal("feature qualification must run on m1.local")
+	}
 	dockerfiles, err := filepath.Glob(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.*"))
 	if err != nil {
 		t.Fatal(err)
