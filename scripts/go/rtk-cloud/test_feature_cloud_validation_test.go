@@ -423,7 +423,7 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 		"secrets.LINODE_TOKEN", "secrets.CI_RUNNER_GITHUB_WORK_KEY",
 		"Initialize private submodules", "git submodule update --init --recursive --depth=1",
 		"permitted_classes: [], permitted_symbols: [], aliases: true",
-		"runs-on: macos-15", "Select Swift 6 toolchain", "/Applications/Xcode_16.4.app/Contents/Developer", "Swift version 6",
+		"runs-on: m1-local", "Verify Swift 6 toolchain", "xcodebuild -version", "Swift version 6",
 		"needs: [contract-and-source, ios-live]",
 		"(needs.ios-live.result == 'success' || needs.ios-live.result == 'skipped')",
 		"Destroy any leftover 1K load generators", "if: always()",
@@ -438,6 +438,9 @@ func TestSDKCloudWorkflowNormalizesBothNativePlatforms(t *testing.T) {
 	}
 	if strings.Count(workflow, "group: sdk-cloud-validation-mobile-host") != 2 {
 		t.Fatal("iOS and Android live jobs must share the mobile-host concurrency guard")
+	}
+	if strings.Count(workflow, "runs-on: m1-local") != 4 {
+		t.Fatal("every SDK cloud validation job must run on m1.local")
 	}
 	if strings.Count(workflow, "CLOUD_VALIDATION_IOS_ARTIFACT:") != 1 || strings.Count(workflow, "CLOUD_VALIDATION_IOS_ARTIFACT_SHA256:") != 1 {
 		t.Fatal("iOS live job must explicitly override any host-level platform artifact path and checksum")
