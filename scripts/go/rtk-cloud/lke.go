@@ -2025,6 +2025,15 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
+		manifest, err := lkeFrontendSDKDownloadsSecretManifest(env)
+		if err != nil {
+			return err
+		}
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
 	if err := lkeApplyCloudLogger(env, opts); err != nil {
 		return err
 	}
@@ -2034,15 +2043,6 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	}
 	if err := dependencyApply(paths, env, opts); err != nil {
 		return err
-	}
-	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
-		manifest, err := lkeFrontendSDKDownloadsSecretManifest(env)
-		if err != nil {
-			return err
-		}
-		if err := kubectlApply(manifest); err != nil {
-			return err
-		}
 	}
 	var certIssuerMaterial *lkeCertIssuerMaterial
 	if lkeWorkloadSelected(env, opts, "account-manager") {
