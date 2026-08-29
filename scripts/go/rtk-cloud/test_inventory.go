@@ -478,7 +478,11 @@ func parseNodeTestEvents(path, moduleDir string, module coverageModule) ([]nodeU
 		if event.Event != "pass" && event.Event != "fail" {
 			return nil, fmt.Errorf("unsupported Node TestStream event %q", event.Event)
 		}
-		if event.TestType != "test" {
+		// Node 20 omits details.type for test completion events. Newer Node
+		// versions report "test", while suite completions remain explicitly
+		// typed and must not become inventory entries.
+		if event.TestType != "" && event.TestType != "test" {
+			delete(started, eventKey)
 			continue
 		}
 		startedAt := started[eventKey]

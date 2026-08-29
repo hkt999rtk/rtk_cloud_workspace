@@ -24,13 +24,15 @@ func TestParseNodeTestEventsTracksStatusesAndSourceRewrite(t *testing.T) {
 	}
 	events := strings.Join([]string{
 		`{"schema_version":1,"event":"start","name":"passes","file":"` + runtimeFile + `","line":1,"timestamp":"2026-07-24T00:00:00Z"}`,
-		`{"schema_version":1,"event":"pass","name":"passes","file":"` + runtimeFile + `","line":1,"test_type":"test","duration_ms":12.9,"timestamp":"2026-07-24T00:00:01Z"}`,
+		`{"schema_version":1,"event":"pass","name":"passes","file":"` + runtimeFile + `","line":1,"duration_ms":12.9,"timestamp":"2026-07-24T00:00:01Z"}`,
 		`{"schema_version":1,"event":"start","name":"skips","file":"` + runtimeFile + `","line":2,"timestamp":"2026-07-24T00:00:01Z"}`,
 		`{"schema_version":1,"event":"pass","name":"skips","file":"` + runtimeFile + `","line":2,"test_type":"test","skip":true,"timestamp":"2026-07-24T00:00:02Z"}`,
 		`{"schema_version":1,"event":"start","name":"todo","file":"` + runtimeFile + `","line":3,"timestamp":"2026-07-24T00:00:02Z"}`,
 		`{"schema_version":1,"event":"pass","name":"todo","file":"` + runtimeFile + `","line":3,"test_type":"test","todo":"later","timestamp":"2026-07-24T00:00:03Z"}`,
 		`{"schema_version":1,"event":"start","name":"fails","file":"` + runtimeFile + `","line":4,"timestamp":"2026-07-24T00:00:03Z"}`,
 		`{"schema_version":1,"event":"fail","name":"fails","file":"` + runtimeFile + `","line":4,"test_type":"test","error":{"message":"boom"},"timestamp":"2026-07-24T00:00:04Z"}`,
+		`{"schema_version":1,"event":"start","name":"suite","file":"` + runtimeFile + `","line":5,"timestamp":"2026-07-24T00:00:04Z"}`,
+		`{"schema_version":1,"event":"pass","name":"suite","file":"` + runtimeFile + `","line":5,"test_type":"suite","timestamp":"2026-07-24T00:00:05Z"}`,
 	}, "\n") + "\n"
 	eventPath := filepath.Join(t.TempDir(), "events.jsonl")
 	if err := os.WriteFile(eventPath, []byte(events), 0o644); err != nil {
