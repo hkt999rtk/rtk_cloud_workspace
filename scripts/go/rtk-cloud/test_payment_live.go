@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -39,9 +40,9 @@ type paymentLiveConfig struct {
 }
 
 type paymentLiveState struct {
-	MethodID, AutoIntentID, ManualIntentID, DebitLedgerEntryID, InvoiceID string
-	PolicyVersion                                                         int64
-	HostedSetupPassed, AutoTopUpPassed, ManualTopUpPassed, InvoicePassed  bool
+	MethodID, AutoIntentID, ManualIntentID, HostedIntentID, DebitLedgerEntryID, InvoiceID      string
+	PolicyVersion                                                                              int64
+	HostedSetupPassed, NewebPayHostedPassed, AutoTopUpPassed, ManualTopUpPassed, InvoicePassed bool
 }
 
 var paymentLiveScreenshot = func(workdir, target, targetURL, output string) error {
@@ -121,7 +122,7 @@ func runTestPaymentLive(args []string) error {
 	}
 	cfg := paymentLiveConfig{RunID: *runID, AccountManagerBaseURL: strings.TrimRight(strings.TrimSpace(*accountManagerBaseURL), "/"), BillingBaseURL: strings.TrimRight(strings.TrimSpace(*billingBaseURL), "/"), CloudAdminBaseURL: strings.TrimRight(strings.TrimSpace(*cloudAdminBaseURL), "/"), OrgID: strings.TrimSpace(*orgID), AccountTokenFile: strings.TrimSpace(*accountTokenFile), BillingTokenFile: strings.TrimSpace(*billingTokenFile), InternalTokenFile: strings.TrimSpace(*internalTokenFile), DebitTokenFile: strings.TrimSpace(*debitTokenFile), CustomerSessionFile: strings.TrimSpace(*customerSessionFile), Confirm: strings.TrimSpace(*confirm), ConfirmTestOrg: strings.TrimSpace(*confirmTestOrg), EnvRoot: strings.TrimSpace(*envRoot), Run: *run, Plan: *plan, BootstrapTestOrg: *bootstrapTestOrg, Timeout: *timeout}
 	if cfg.Plan {
-		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> debit threshold crossing -> idempotent replay -> one automatic charge/credit -> separate manual TWD 300 top-up -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
+		fmt.Printf("Payment staging-live plan (%s): preflight -> dedicated organization -> hosted setup -> desktop/mobile screenshots -> activate method -> enable approved defaults -> debit threshold crossing -> idempotent replay -> one automatic charge/credit -> separate manual TWD 300 top-up -> NewebPay hosted TWD 500 checkout/callback/query/credit -> disable policy -> revoke method -> redaction/cleanup reports\n", cfg.RunID)
 		return nil
 	}
 	if err := validatePaymentLiveConfig(cfg); err != nil {
@@ -754,7 +755,109 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 		return fmt.Errorf("manual top-up created %d new TWD 300 credits; want exactly one", newCredits)
 	}
 	state.ManualTopUpPassed = true
+
+	hostedBefore := paymentLiveLedgerIDs(manualLedger)
+	var hosted map[string]any
+	if err := paymentLiveBillingJSON(ctx, client, http.MethodPost, base+"/topups/checkout", token, "payment_intent.create", map[string]string{"Idempotency-Key": "newebpay-hosted-" + cfg.RunID, "X-Request-Id": "newebpay-hosted-" + cfg.RunID}, map[string]any{"amount_minor": 500, "currency": "TWD", "provider": "newebpay"}, &hosted); err != nil {
+		return fmt.Errorf("create NewebPay hosted top-up: %w", err)
+	}
+	state.HostedIntentID, _ = nestedMap(hosted["payment_intent"])["id"].(string)
+	action := nestedMap(hosted["payment_action"])
+	actionMethod, _ := action["method"].(string)
+	actionURL, _ := action["url"].(string)
+	actionParsed, actionErr := url.Parse(actionURL)
+	if actionErr != nil || state.HostedIntentID == "" || actionMethod != http.MethodPost || actionParsed.Scheme != "https" || actionParsed.User != nil || actionParsed.RawQuery != "" || actionParsed.Fragment != "" || !strings.HasPrefix(strings.ToLower(actionParsed.Hostname()), "payment-simulator.") || !strings.HasSuffix(strings.ToLower(actionParsed.Hostname()), ".realtekconnect.com") {
+		return errors.New("NewebPay checkout returned an unsafe hosted action")
+	}
+	form := url.Values{}
+	for name, raw := range nestedMap(action["fields"]) {
+		value, ok := raw.(string)
+		if !ok || name == "" || len(name) > 64 || len(value) > 1<<20 {
+			return errors.New("NewebPay checkout returned invalid hosted fields")
+		}
+		form.Set(name, value)
+	}
+	for _, required := range []string{"MerchantID", "TradeInfo", "TradeSha", "Version"} {
+		if form.Get(required) == "" {
+			return fmt.Errorf("NewebPay checkout omitted %s", required)
+		}
+	}
+	redirectBody, err := paymentLivePostForm(ctx, client, actionURL, form)
+	if err != nil {
+		return fmt.Errorf("submit NewebPay MPG action: %w", err)
+	}
+	newebPayHostedURL, err := paymentLiveHostedRedirectURL(redirectBody, actionParsed)
+	if err != nil {
+		return err
+	}
+	for _, target := range []string{"desktop", "mobile"} {
+		path := filepath.Join(outDir, "evidence", "LIVE-STG-SIMULATOR-001@newebpay-"+target+".png")
+		if err := paymentLiveScreenshot(webDir, target, newebPayHostedURL, path); err != nil {
+			return fmt.Errorf("NewebPay %s screenshot: %w", target, err)
+		}
+	}
+	if _, err := paymentLivePostForm(ctx, client, newebPayHostedURL, url.Values{"scenario": {"success"}}); err != nil {
+		return fmt.Errorf("complete NewebPay hosted top-up: %w", err)
+	}
+	if err := waitPaymentLiveIntentOperation(ctx, client, base, token, state.HostedIntentID, cfg.Timeout, "query"); err != nil {
+		return fmt.Errorf("NewebPay hosted reconciliation: %w", err)
+	}
+	hostedLedger, err := readPaymentLiveLedger(ctx, client, base, token)
+	if err != nil {
+		return fmt.Errorf("NewebPay hosted ledger: %w", err)
+	}
+	newHostedCredits := 0
+	for _, item := range paymentLiveAnySlice(hostedLedger["ledger_entries"]) {
+		entry := nestedMap(item)
+		id, _ := entry["id"].(string)
+		if !hostedBefore[id] && entry["direction"] == "credit" && entry["reason"] == "payment_top_up_credit" && int64Value(entry["amount_minor"]) == 500 {
+			newHostedCredits++
+		}
+	}
+	if newHostedCredits != 1 {
+		return fmt.Errorf("NewebPay hosted top-up created %d new TWD 500 credits; want exactly one", newHostedCredits)
+	}
+	state.NewebPayHostedPassed = true
 	return nil
+}
+
+func paymentLivePostForm(ctx context.Context, client *http.Client, endpoint string, form url.Values) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
+	if readErr != nil || len(body) > 64*1024 {
+		return nil, errors.New("hosted response is unreadable or too large")
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	return body, nil
+}
+
+func paymentLiveHostedRedirectURL(body []byte, action *url.URL) (string, error) {
+	lower := strings.ToLower(string(body))
+	marker := "url="
+	start := strings.Index(lower, marker)
+	if start < 0 {
+		return "", errors.New("NewebPay simulator returned no hosted redirect")
+	}
+	raw := string(body[start+len(marker):])
+	if end := strings.IndexAny(raw, "\"'>"); end >= 0 {
+		raw = raw[:end]
+	}
+	parsed, err := url.Parse(strings.TrimSpace(html.UnescapeString(raw)))
+	if err != nil || parsed.Scheme != action.Scheme || !strings.EqualFold(parsed.Host, action.Host) || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || !strings.HasPrefix(parsed.Path, "/newebpay/pay/") {
+		return "", errors.New("NewebPay simulator returned an unsafe hosted redirect")
+	}
+	return parsed.String(), nil
 }
 
 func verifyPaymentLiveCredentialIsolation(ctx context.Context, client *http.Client, cfg paymentLiveConfig, tenantToken, internalToken, debitToken string) error {
@@ -865,6 +968,14 @@ func verifyPaymentLiveLedgerDelta(ledger map[string]any, before map[string]bool,
 }
 
 func waitPaymentLiveIntent(ctx context.Context, client *http.Client, base, token, intentID string, timeout time.Duration, requireSingleCharge bool) error {
+	expectedOperation := ""
+	if requireSingleCharge {
+		expectedOperation = "charge"
+	}
+	return waitPaymentLiveIntentOperation(ctx, client, base, token, intentID, timeout, expectedOperation)
+}
+
+func waitPaymentLiveIntentOperation(ctx context.Context, client *http.Client, base, token, intentID string, timeout time.Duration, expectedOperation string) error {
 	return pollPaymentLive(ctx, timeout, func() (bool, error) {
 		var detail map[string]any
 		if err := paymentLiveBillingJSON(ctx, client, http.MethodGet, base+"/payment-intents/"+url.PathEscape(intentID), token, "payment_intent.read", nil, nil, &detail); err != nil {
@@ -877,15 +988,15 @@ func waitPaymentLiveIntent(ctx context.Context, client *http.Client, base, token
 		if status != "succeeded" {
 			return false, nil
 		}
-		if requireSingleCharge {
-			charges := 0
+		if expectedOperation != "" {
+			attempts := 0
 			for _, item := range paymentLiveAnySlice(detail["attempts"]) {
-				if nestedMap(item)["operation"] == "charge" {
-					charges++
+				if nestedMap(item)["operation"] == expectedOperation {
+					attempts++
 				}
 			}
-			if charges != 1 {
-				return false, fmt.Errorf("succeeded intent has %d charge attempts; want exactly one", charges)
+			if attempts != 1 {
+				return false, fmt.Errorf("succeeded intent has %d %s attempts; want exactly one", attempts, expectedOperation)
 			}
 		}
 		return true, nil
@@ -898,7 +1009,7 @@ func paymentLiveCases(started, completed time.Time, state paymentLiveState, runE
 		id, purpose, method, pass string
 		completed                 bool
 	}{
-		{"LIVE-STG-SIMULATOR-001", "Qualify deployed simulator hosted setup and responsive customer-safe UI.", "Dedicated staging organization activates one simulator method and captures desktop/mobile hosted-page evidence.", "Hosted setup and responsive evidence passed.", state.HostedSetupPassed},
+		{"LIVE-STG-SIMULATOR-001", "Qualify deployed simulator hosted setup, NewebPay hosted charge, and responsive customer-safe UI.", "Dedicated staging organization activates one simulator method, completes one encrypted NewebPay hosted checkout through callback/query reconciliation, proves exactly one TWD 500 credit, and captures desktop/mobile evidence for both hosted pages.", "Hosted setup, NewebPay charge reconciliation, and responsive evidence passed.", state.HostedSetupPassed && state.NewebPayHostedPassed},
 		{"LIVE-STG-AUTOTOPUP-001", "Prove a deployed debit threshold crossing produces exactly one automatic charge and credit.", "Dedicated debit credential posts and replays one usage-adjustment debit; Billing must create one intent, one charge attempt, and one ledger credit.", "Debit-triggered automatic top-up and idempotent replay passed.", state.AutoTopUpPassed},
 		{"LIVE-STG-MANUAL-TOPUP-001", "Keep manual top-up qualification distinct from automatic top-up.", "Tenant service identity creates one explicit TWD 300 top-up and verifies a distinct intent, one charge attempt, and one ledger credit.", "Separate manual top-up passed.", state.ManualTopUpPassed},
 		{"LIVE-STG-BILLING-DOCUMENT-001", "Create immutable deployed invoice and PDF evidence for the real Cloud Admin smoke.", "Internal Billing identity activates qualification pricing, ingests digest-anchored usage, closes one dedicated organization period after payment cleanup, and records the resulting invoice ID.", "Staging invoice and document seed passed.", state.InvoicePassed},
@@ -1119,8 +1230,8 @@ func int64Value(value any) int64 {
 func writePaymentLiveReports(outDir string, report paymentEvidenceReport, cleanupErr error) error {
 	missingResponsiveEvidence := false
 	if report.Status == "PASS" {
-		for _, target := range []string{"desktop", "mobile"} {
-			path := filepath.Join(outDir, "evidence", "LIVE-STG-SIMULATOR-001@"+target+".png")
+		for _, name := range []string{"LIVE-STG-SIMULATOR-001@desktop.png", "LIVE-STG-SIMULATOR-001@mobile.png", "LIVE-STG-SIMULATOR-001@newebpay-desktop.png", "LIVE-STG-SIMULATOR-001@newebpay-mobile.png"} {
+			path := filepath.Join(outDir, "evidence", name)
 			if info, err := os.Stat(path); err != nil || info.Size() == 0 {
 				missingResponsiveEvidence = true
 			}
@@ -1176,7 +1287,7 @@ func writePaymentLiveReports(outDir string, report paymentEvidenceReport, cleanu
 	if err := writeJSON(filepath.Join(outDir, "redaction-report.json"), map[string]any{"schema_version": 1, "run_id": report.RunID, "status": redactionStatus, "generated_at": time.Now().UTC().Format(time.RFC3339), "findings": issues}); err != nil {
 		return err
 	}
-	evidenceNames := []string{"results.json", "TEST_REPORT.md", "execution.log", "cleanup-report.json", "redaction-report.json", "evidence/LIVE-STG-SIMULATOR-001@desktop.png", "evidence/LIVE-STG-SIMULATOR-001@mobile.png"}
+	evidenceNames := []string{"results.json", "TEST_REPORT.md", "execution.log", "cleanup-report.json", "redaction-report.json", "evidence/LIVE-STG-SIMULATOR-001@desktop.png", "evidence/LIVE-STG-SIMULATOR-001@mobile.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-desktop.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-mobile.png"}
 	evidence := make([]paymentEvidenceFile, 0, len(evidenceNames))
 	for _, name := range evidenceNames {
 		path := filepath.Join(outDir, filepath.FromSlash(name))

@@ -744,6 +744,9 @@ func TestPaymentLiveReportRequiresAndHashesResponsiveEvidence(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(evidenceDir, "LIVE-STG-SIMULATOR-001@"+target+".png"), []byte("safe synthetic png "+target), 0o644); err != nil {
 			t.Fatal(err)
 		}
+		if err := os.WriteFile(filepath.Join(evidenceDir, "LIVE-STG-SIMULATOR-001@newebpay-"+target+".png"), []byte("safe NewebPay synthetic png "+target), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	report := paymentEvidenceReport{RunID: "report-test", Profile: "staging-live", Environment: "staging", Status: "PASS", Cases: []paymentEvidenceCase{{TestID: "LIVE-STG-SIMULATOR-001", Status: "PASS"}}}
 	if err := writePaymentLiveReports(outDir, report, nil); err != nil {
@@ -764,7 +767,7 @@ func TestPaymentLiveReportRequiresAndHashesResponsiveEvidence(t *testing.T) {
 		}
 		paths[evidence.Path] = true
 	}
-	for _, required := range []string{"execution.log", "evidence/LIVE-STG-SIMULATOR-001@desktop.png", "evidence/LIVE-STG-SIMULATOR-001@mobile.png"} {
+	for _, required := range []string{"execution.log", "evidence/LIVE-STG-SIMULATOR-001@desktop.png", "evidence/LIVE-STG-SIMULATOR-001@mobile.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-desktop.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-mobile.png"} {
 		if !paths[required] {
 			t.Fatalf("manifest missing %s: %+v", required, manifest.Evidence)
 		}
@@ -783,6 +786,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	methodActive := false
 	debitPosted := false
 	manualPosted := false
+	hostedPosted := false
 	policyVersion := int64(1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -804,7 +808,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		}
 		switch {
 		case r.URL.Path == "/v1/orgs/org-test/billing/account":
-			_, _ = w.Write([]byte(`{"account":{"available_balance_minor":0},"payment_providers":[{"name":"simulator","environment":"simulated","capabilities":{"hosted_setup":true,"merchant_initiated_charge":true}}],"auto_topup":null}`))
+			_, _ = w.Write([]byte(`{"account":{"available_balance_minor":0},"payment_providers":[{"name":"simulator","environment":"simulated","capabilities":{"hosted_setup":true,"merchant_initiated_charge":true}},{"name":"newebpay","environment":"simulated","capabilities":{"hosted_charge":true,"status_query":true,"webhook":true}}],"auto_topup":null}`))
 		case r.URL.Path == "/v1/orgs/org-test/billing/ledger":
 			entries := `[]`
 			if debitPosted {
@@ -812,6 +816,9 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			}
 			if manualPosted {
 				entries = `[{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+			}
+			if hostedPosted {
+				entries = `[{"id":"credit-hosted","direction":"credit","reason":"payment_top_up_credit","amount_minor":500,"balance_after_minor":1099},{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
 			}
 			_, _ = w.Write([]byte(`{"ledger_entries":` + entries + `}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods" && r.Method == http.MethodGet:
@@ -851,6 +858,17 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			_, _ = w.Write([]byte(`{"payment_intent":{"id":"intent-manual"}}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-manual":
 			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"charge","status":"succeeded"}]}`))
+		case r.URL.Path == "/v1/orgs/org-test/topups/checkout":
+			_, _ = w.Write([]byte(`{"payment_intent":{"id":"intent-hosted","state":"processing"},"payment_action":{"method":"POST","url":"https://payment-simulator.staging.realtekconnect.com/MPG/mpg_gateway","fields":{"MerchantID":"RTKSIMULATOR","TradeInfo":"encrypted","TradeSha":"digest","Version":"2.3"}}}`))
+		case r.URL.Path == "/MPG/mpg_gateway":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><meta http-equiv="refresh" content="0;url=https://payment-simulator.staging.realtekconnect.com/newebpay/pay/token-1">`))
+		case r.URL.Path == "/newebpay/pay/token-1" && r.Method == http.MethodPost:
+			hostedPosted = true
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<!doctype html><p>TEST payment success</p>`))
+		case r.URL.Path == "/v1/orgs/org-test/payment-intents/intent-hosted":
+			_, _ = w.Write([]byte(`{"payment_intent":{"state":"succeeded"},"attempts":[{"operation":"query","status":"succeeded"}]}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods/method-1" && r.Method == http.MethodDelete:
 			methodActive = false
 			_, _ = w.Write([]byte(`{"payment_method":{"status":"revoked"}}`))
@@ -889,7 +907,10 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	if err := executePaymentLive(context.Background(), client, t.TempDir(), outDir, cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.MethodID != "method-1" || state.AutoIntentID != "intent-auto" || state.ManualIntentID != "intent-manual" || state.PolicyVersion != 2 || !state.HostedSetupPassed || !state.AutoTopUpPassed || !state.ManualTopUpPassed {
+	if !hostedPosted {
+		t.Fatal("hosted NewebPay checkout was not completed")
+	}
+	if state.MethodID != "method-1" || state.AutoIntentID != "intent-auto" || state.ManualIntentID != "intent-manual" || state.HostedIntentID != "intent-hosted" || state.PolicyVersion != 2 || !state.HostedSetupPassed || !state.NewebPayHostedPassed || !state.AutoTopUpPassed || !state.ManualTopUpPassed {
 		t.Fatalf("unexpected qualification state: %+v", state)
 	}
 	if err := cleanupPaymentLive(context.Background(), client, cfg, strings.Repeat("b", 32), state); err != nil {
@@ -897,6 +918,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	}
 	debitPosted = false
 	manualPosted = false
+	hostedPosted = false
 
 	tokenFile := filepath.Join(t.TempDir(), "billing-token")
 	if err := os.WriteFile(tokenFile, []byte(strings.Repeat("b", 32)), 0o600); err != nil {
