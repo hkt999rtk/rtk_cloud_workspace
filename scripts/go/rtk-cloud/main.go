@@ -1552,7 +1552,7 @@ func runTestUI(args []string) error {
 		if err := runCmd(webRoot, "npm", "ci"); err != nil {
 			return err
 		}
-		if err := runCmd(webRoot, "npx", playwrightInstallArguments(runtime.GOOS)...); err != nil {
+		if err := installPlaywright(webRoot, runtime.GOOS); err != nil {
 			return err
 		}
 	}
@@ -1720,6 +1720,30 @@ func playwrightInstallArguments(goos string) []string {
 		return []string{"playwright", "install", "--with-deps", "chromium"}
 	}
 	return []string{"playwright", "install", "chromium"}
+}
+
+var playwrightInstallCommand = runCmd
+var playwrightInstallSleep = time.Sleep
+
+func installPlaywright(webRoot, goos string) error {
+	attempts := 1
+	if goos == "linux" {
+		// Multiple repository-scoped runners can share one host. Their apt-based
+		// setup steps may briefly contend for the global dpkg/apt locks.
+		attempts = 5
+	}
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		err = playwrightInstallCommand(webRoot, "npx", playwrightInstallArguments(goos)...)
+		if err == nil {
+			return nil
+		}
+		if attempt < attempts {
+			fmt.Fprintf(os.Stderr, "UI browser dependency install attempt %d/%d failed; retrying in 15s: %v\n", attempt, attempts, err)
+			playwrightInstallSleep(15 * time.Second)
+		}
+	}
+	return fmt.Errorf("UI browser dependency install failed after %d attempt(s): %w", attempts, err)
 }
 
 func resolveUIEvidenceOutputRoot(workspace, runID, raw string) (string, error) {

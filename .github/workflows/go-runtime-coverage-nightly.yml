@@ -29,7 +29,7 @@ jobs:
   runtime-coverage:
     name: Isolated deployed Go coverage
     if: github.event_name == 'workflow_dispatch' || vars.RUNTIME_COVERAGE_NIGHTLY_ENABLED == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 240
     env:
       RUNTIME_COVERAGE_MODE: ${{ github.event_name == 'schedule' && 'run' || inputs.mode }}
@@ -42,7 +42,7 @@ jobs:
       RUNTIME_COVERAGE_PREFLIGHT_REPORT: ${{ github.workspace }}/.artifacts/runtime-coverage/runtime-${{ github.run_id }}-${{ github.run_attempt }}/preflight-report.json
       RUNTIME_COVERAGE_SHARED_CLUSTER: "1"
       RUNTIME_COVERAGE_FEATURE_WORKFLOW: workflow-local-live
-      RUNTIME_COVERAGE_RUNNER_LABEL: ubuntu-24.04
+      RUNTIME_COVERAGE_RUNNER_LABEL: self-hosted-Linux-X64
       RUNTIME_COVERAGE_RUNNER_OS: Linux
       RUNTIME_COVERAGE_RUNNER_ARCH: X64
       FEATURE_QUALIFICATION_MODE: ${{ vars.FEATURE_QUALIFICATION_MODE || 'observe' }}

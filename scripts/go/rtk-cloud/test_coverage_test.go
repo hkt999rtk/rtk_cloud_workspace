@@ -442,7 +442,16 @@ func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
 	defer os.RemoveAll(runDir)
 
 	if err := runTestCoverage([]string{"--run-id", runID, "--module", "home-load-runner"}); err != nil {
-		t.Fatal(err)
+		logPath := filepath.Join(runDir, "coverage", "logs", "home-load-runner.log")
+		logTail, readErr := os.ReadFile(logPath)
+		if readErr != nil {
+			t.Fatalf("%v (coverage log unavailable: %v)", err, readErr)
+		}
+		const maxLogBytes = 16 * 1024
+		if len(logTail) > maxLogBytes {
+			logTail = logTail[len(logTail)-maxLogBytes:]
+		}
+		t.Fatalf("%v\nhome-load-runner coverage log tail:\n%s", err, logTail)
 	}
 	raw, err := os.ReadFile(filepath.Join(runDir, "coverage", "results.json"))
 	if err != nil {
