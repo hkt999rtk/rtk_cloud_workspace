@@ -1722,6 +1722,9 @@ func playwrightInstallArguments(goos string) []string {
 	return []string{"playwright", "install", "chromium"}
 }
 
+var playwrightInstallCommand = runCmd
+var playwrightInstallSleep = time.Sleep
+
 func installPlaywright(webRoot, goos string) error {
 	attempts := 1
 	if goos == "linux" {
@@ -1731,13 +1734,13 @@ func installPlaywright(webRoot, goos string) error {
 	}
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
-		err = runCmd(webRoot, "npx", playwrightInstallArguments(goos)...)
+		err = playwrightInstallCommand(webRoot, "npx", playwrightInstallArguments(goos)...)
 		if err == nil {
 			return nil
 		}
 		if attempt < attempts {
 			fmt.Fprintf(os.Stderr, "UI browser dependency install attempt %d/%d failed; retrying in 15s: %v\n", attempt, attempts, err)
-			time.Sleep(15 * time.Second)
+			playwrightInstallSleep(15 * time.Second)
 		}
 	}
 	return fmt.Errorf("UI browser dependency install failed after %d attempt(s): %w", attempts, err)
