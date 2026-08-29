@@ -2025,6 +2025,15 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
+		manifest, err := lkeFrontendSDKDownloadsSecretManifest(env)
+		if err != nil {
+			return err
+		}
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
 	if err := lkeApplyCloudLogger(env, opts); err != nil {
 		return err
 	}
@@ -7137,6 +7146,46 @@ stringData:
 `, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken())
 }
 
+func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
+	return strings.EqualFold(firstNonEmpty(os.Getenv("SDK_DOWNLOADS_ENABLED"), env["SDK_DOWNLOADS_ENABLED"]), "true")
+}
+
+func lkeFrontendSDKDownloadsSecretManifest(env map[string]string) (string, error) {
+	values := map[string]string{
+		"SDK_ARTIFACT_BUCKET":            firstNonEmpty(os.Getenv("SDK_ARTIFACT_BUCKET"), env["SDK_ARTIFACT_BUCKET"]),
+		"SDK_ARTIFACT_ENDPOINT":          firstNonEmpty(os.Getenv("SDK_ARTIFACT_ENDPOINT"), env["SDK_ARTIFACT_ENDPOINT"]),
+		"SDK_ARTIFACT_REGION":            firstNonEmpty(os.Getenv("SDK_ARTIFACT_REGION"), env["SDK_ARTIFACT_REGION"], "us-sea"),
+		"SDK_ARTIFACT_ACCESS_KEY_ID":     firstNonEmpty(os.Getenv("SDK_ARTIFACT_ACCESS_KEY_ID"), env["SDK_ARTIFACT_ACCESS_KEY_ID"]),
+		"SDK_ARTIFACT_SECRET_ACCESS_KEY": firstNonEmpty(os.Getenv("SDK_ARTIFACT_SECRET_ACCESS_KEY"), env["SDK_ARTIFACT_SECRET_ACCESS_KEY"]),
+		"SDK_LATEST_OBJECT_KEY":          firstNonEmpty(os.Getenv("SDK_LATEST_OBJECT_KEY"), env["SDK_LATEST_OBJECT_KEY"], "sdk/latest.json"),
+	}
+	for _, name := range []string{"SDK_ARTIFACT_BUCKET", "SDK_ARTIFACT_ENDPOINT", "SDK_ARTIFACT_ACCESS_KEY_ID", "SDK_ARTIFACT_SECRET_ACCESS_KEY"} {
+		if strings.TrimSpace(values[name]) == "" {
+			return "", fmt.Errorf("%s is required when SDK_DOWNLOADS_ENABLED=true", name)
+		}
+	}
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: frontend-sdk-downloads
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: frontend
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  SDK_DOWNLOADS_ENABLED: "true"
+  SDK_ARTIFACT_BUCKET: %q
+  SDK_ARTIFACT_ENDPOINT: %q
+  SDK_ARTIFACT_REGION: %q
+  SDK_ARTIFACT_ACCESS_KEY_ID: %q
+  SDK_ARTIFACT_SECRET_ACCESS_KEY: %q
+  SDK_LATEST_OBJECT_KEY: %q
+`, lkeNamespaceName(env, "frontend"), env["CLOUD_STACK_NAME"], values["SDK_ARTIFACT_BUCKET"], values["SDK_ARTIFACT_ENDPOINT"], values["SDK_ARTIFACT_REGION"], values["SDK_ARTIFACT_ACCESS_KEY_ID"], values["SDK_ARTIFACT_SECRET_ACCESS_KEY"], values["SDK_LATEST_OBJECT_KEY"]), nil
+}
+
 func lkeBillingDatabaseEnsureJobManifest(env map[string]string) string {
 	return fmt.Sprintf(`apiVersion: batch/v1
 kind: Job
@@ -7912,6 +7961,12 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
+`
+	}
+	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
+		envFrom = `          envFrom:
+            - secretRef:
+                name: frontend-sdk-downloads
 `
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1

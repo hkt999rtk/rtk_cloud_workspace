@@ -36,6 +36,14 @@ GODADDY_KEY=<GoDaddy API key>
 GODADDY_SECRET=<GoDaddy API secret>
 LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID=<Seattle artifact key>
 LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY=<Seattle artifact secret>
+# Portal SDK downloads use a separate read-only key scoped to the sdk/ prefix.
+SDK_DOWNLOADS_ENABLED=true
+SDK_ARTIFACT_BUCKET=rtk-cloud-client-artifacts
+SDK_ARTIFACT_ENDPOINT=https://us-sea-1.linodeobjects.com
+SDK_ARTIFACT_REGION=us-sea
+SDK_ARTIFACT_ACCESS_KEY_ID=<Portal sdk-prefix read-only key>
+SDK_ARTIFACT_SECRET_ACCESS_KEY=<Portal sdk-prefix read-only secret>
+SDK_LATEST_OBJECT_KEY=sdk/latest.json
 ```
 
 `~/.config/rtk-cloud/environments/staging.env`:

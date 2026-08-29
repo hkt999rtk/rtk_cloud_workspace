@@ -6468,6 +6468,90 @@ esac
 	return logPath
 }
 
+func TestLKEFrontendSDKDownloadsSecretAndDeployment(t *testing.T) {
+	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
+	t.Setenv("SDK_ARTIFACT_BUCKET", "sdk-bucket")
+	t.Setenv("SDK_ARTIFACT_ENDPOINT", "https://objects.example.test")
+	t.Setenv("SDK_ARTIFACT_ACCESS_KEY_ID", "read-only-key")
+	t.Setenv("SDK_ARTIFACT_SECRET_ACCESS_KEY", "read-only-secret")
+	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	secret, err := lkeFrontendSDKDownloadsSecretManifest(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"name: frontend-sdk-downloads", "SDK_DOWNLOADS_ENABLED", "sdk-bucket", "sdk/latest.json"} {
+		if !strings.Contains(secret, want) {
+			t.Fatalf("secret missing %q", want)
+		}
+	}
+	var frontend lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "frontend" {
+			frontend = workload
+		}
+	}
+	deployment := lkeDeploymentManifest(env, frontend, nil)
+	if !strings.Contains(deployment, "secretRef:\n                name: frontend-sdk-downloads") {
+		t.Fatalf("frontend deployment does not load SDK secret:\n%s", deployment)
+	}
+}
+
+func TestLKEFrontendSDKDownloadsRequireReadOnlyCredentials(t *testing.T) {
+	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
+	if _, err := lkeFrontendSDKDownloadsSecretManifest(map[string]string{"CLOUD_STACK_NAME": "sdk-test"}); err == nil {
+		t.Fatal("expected missing SDK Object Storage credentials to fail")
+	}
+}
+
+func TestLKEDeployWorkloadsAppliesFrontendSDKSecretBeforeRuntimeDependencies(t *testing.T) {
+	logPath := fakeKubectl(t)
+	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
+	t.Setenv("SDK_ARTIFACT_BUCKET", "sdk-bucket")
+	t.Setenv("SDK_ARTIFACT_ENDPOINT", "https://objects.example.test")
+	t.Setenv("SDK_ARTIFACT_ACCESS_KEY_ID", "read-only-key")
+	t.Setenv("SDK_ARTIFACT_SECRET_ACCESS_KEY", "read-only-secret")
+	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"frontend"}})
+	if err == nil || !strings.Contains(err.Error(), "required existing K8s secret") {
+		t.Fatalf("deploy error = %v, want later runtime dependency error", err)
+	}
+	logBody, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logBody), "name: frontend-sdk-downloads") {
+		t.Fatalf("SDK download secret was not applied before dependency failure:\n%s", logBody)
+	}
+}
+
+func TestLKEDeployWorkloadsRejectsMissingFrontendSDKCredentials(t *testing.T) {
+	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
+	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"frontend"}})
+	if err == nil || !strings.Contains(err.Error(), "SDK_ARTIFACT_BUCKET is required") {
+		t.Fatalf("deploy error = %v, want missing SDK credential error", err)
+	}
+}
+
+func TestLKEDeployWorkloadsReturnsFrontendSDKSecretApplyError(t *testing.T) {
+	dir := t.TempDir()
+	kubectl := filepath.Join(dir, "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/usr/bin/env bash\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
+	t.Setenv("SDK_ARTIFACT_BUCKET", "sdk-bucket")
+	t.Setenv("SDK_ARTIFACT_ENDPOINT", "https://objects.example.test")
+	t.Setenv("SDK_ARTIFACT_ACCESS_KEY_ID", "read-only-key")
+	t.Setenv("SDK_ARTIFACT_SECRET_ACCESS_KEY", "read-only-secret")
+	env := map[string]string{"CLOUD_STACK_NAME": "sdk-test", "LKE_FRONTEND_IMAGE": "frontend:test"}
+	if err := lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"frontend"}}); err == nil {
+		t.Fatal("expected SDK secret apply failure")
+	}
+}
+
 func fakeDocker(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
