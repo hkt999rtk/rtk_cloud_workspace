@@ -9,7 +9,6 @@ on:
       - 'go.work.sum'
       - 'loadtests/home-100k/**'
       - 'repos/rtk_cloud_contracts_doc'
-      - 'scripts/go/**'
       - 'scripts/ci/init-submodules.sh'
   push:
     branches: [main]

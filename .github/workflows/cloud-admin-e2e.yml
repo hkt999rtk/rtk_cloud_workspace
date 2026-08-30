@@ -3,8 +3,8 @@ name: Cloud Admin E2E
 on:
   pull_request:
     paths:
-      - 'scripts/go/rtk-cloud/**'
-      - 'loadtests/home-100k/**'
+      - 'scripts/go/rtk-cloud/test_catalog*.go'
+      - 'scripts/go/rtk-cloud/test_ui*.go'
       - 'repos/rtk_cloud_admin/**'
       - 'repos/rtk_cloud_contracts_doc'
       - '.github/workflows/cloud-admin-e2e.yml'

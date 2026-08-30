@@ -4,7 +4,8 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
-      - "scripts/go/**"
+      - "scripts/go/rtk-cloud/test_feature*.go"
+      - "scripts/go/rtk-cloud/test_spec*.go"
       - "loadtests/home-100k/**"
       - "e2e_test/video_cloud/load/**"
       - "repos/rtk_video_cloud"

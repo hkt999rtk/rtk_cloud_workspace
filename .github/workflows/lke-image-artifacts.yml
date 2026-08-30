@@ -4,7 +4,13 @@ on:
   pull_request:
     paths:
       - ".github/workflows/lke-image-artifacts.yml"
-      - "scripts/go/**"
+      - "scripts/go/go.mod"
+      - "scripts/go/go.sum"
+      - "scripts/go/rtk-cloud/deployment_*lke*.go"
+      - "scripts/go/rtk-cloud/lke*.go"
+      - "scripts/go/rtk-cloud/main.go"
+      - "scripts/go/rtk-cloud/payment_simulator_lke_test.go"
+      - "scripts/go/rtk-cloud/provider_lke.go"
       - "docs/lke-migration-inventory.md"
       - "scripts/README.zh-TW.md"
   workflow_dispatch:
