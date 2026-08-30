@@ -247,6 +247,27 @@ cases:
       title: firmware campaign progress counts terminal device outcomes
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20dashboard%20exposes%20reversible%20start%20and%20stop%20controls
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware dashboard exposes reversible start and stop controls
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20dashboard%20orders%20campaigns%20by%20newest%20start%20time
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware dashboard orders campaigns by newest start time
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20dashboard%20reports%20waiting%20devices%20against%20the%20campaign%20total
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware dashboard reports waiting devices against the campaign total
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20status%20helpers%20use%20upgrade-specific%20English%20labels
       module: cloud-admin-web
       language: javascript
