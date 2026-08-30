@@ -2038,6 +2038,44 @@ func TestHome100KSingleDeviceSmokeUsesResolvedBrandPlan(t *testing.T) {
 	}
 }
 
+func TestHomeTestDataDBPathMatchesFixtureWriterAndSmoke(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var assignments []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "brand_file=") {
+			assignments = append(assignments, line)
+		}
+	}
+	if len(assignments) != 2 {
+		t.Fatalf("expected slug assignment and empty-name fallback, got %d", len(assignments))
+	}
+	for _, tc := range []struct{ name, slug string }{
+		{"RTK", "rtk"},
+		{"Identity Owner 20260830 201500", "identity-owner-20260830-201500"},
+		{"  Brand___A -- B/../C  ", "brand-a-b-c"},
+		{"品牌 RTK\tCloud\n01", "rtk-cloud-01"},
+		{"identity-owner-20260830-201500", "identity-owner-20260830-201500"},
+		{"", "brand"},
+		{" \t///品牌!!!", "brand"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			want := filepath.Join("fixture", "artifacts", "test-data", tc.slug+"-test-data.sqlite")
+			if got := homeTestDataDBPath("fixture", tc.name); got != want {
+				t.Fatalf("fixture path = %q, want %q", got, want)
+			}
+			cmd := exec.Command("bash", "-c", strings.Join(assignments, "\n")+"\nprintf '%s' \"$brand_file\"")
+			cmd.Env = append(os.Environ(), "smoke_brandname="+tc.name)
+			got, err := cmd.CombinedOutput()
+			if err != nil || string(got) != tc.slug {
+				t.Fatalf("smoke slug = %q, err=%v, want %q", got, err, tc.slug)
+			}
+		})
+	}
+}
+
 func TestHome100KLiveEntrypointsRefreshCurrentClientCA(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "home-100k.sh"))
 	if err != nil {

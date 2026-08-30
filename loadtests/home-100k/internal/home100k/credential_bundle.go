@@ -38,9 +38,13 @@ type shardCredentialBundleManifest struct {
 }
 
 func homeTestDataDBPath(envRoot, brandname string) string {
-	brandLower := strings.ToLower(strings.TrimSpace(brandname))
+	// Match rtk-cloud's brandSlug: fixture writers use ASCII slug filenames,
+	// while SQL queries retain the original Brand Cloud display name.
+	brandLower := strings.Join(strings.FieldsFunc(strings.ToLower(brandname), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+	}), "-")
 	if brandLower == "" {
-		brandLower = "rtk"
+		brandLower = "brand"
 	}
 	return filepath.Join(envRoot, "artifacts", "test-data", brandLower+"-test-data.sqlite")
 }
