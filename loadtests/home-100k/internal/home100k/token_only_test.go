@@ -10,16 +10,17 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
 func TestExecuteTokenOnlyWritesLatencyReport(t *testing.T) {
-	var requests int
+	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/request_token" {
 			t.Fatalf("path = %s, want /request_token", r.URL.Path)
 		}
-		requests++
+		requests.Add(1)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"token_type":"Bearer","access_token":"abc.def","scope":"device"}`))
 	}))
@@ -37,8 +38,8 @@ func TestExecuteTokenOnlyWritesLatencyReport(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("Execute(token-only) code = %d stderr=%s", code, stderr.String())
 	}
-	if requests != 6 {
-		t.Fatalf("requests = %d, want 6", requests)
+	if got := requests.Load(); got != 6 {
+		t.Fatalf("requests = %d, want 6", got)
 	}
 	var report TokenOnlyReport
 	if err := readJSONFile(filepath.Join(outDir, "token-only-results.json"), &report); err != nil {
