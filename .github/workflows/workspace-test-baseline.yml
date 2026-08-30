@@ -123,6 +123,12 @@ jobs:
           set -euo pipefail
           chrome_path=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")
           test -x "$chrome_path"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            chrome_wrapper="$RUNNER_TEMP/chromium-no-sandbox"
+            printf '#!/usr/bin/env bash\nexec %q --no-sandbox "$@"\n' "$chrome_path" > "$chrome_wrapper"
+            chmod 0700 "$chrome_wrapper"
+            chrome_path="$chrome_wrapper"
+          fi
           printf 'CHROME_PATH=%s\n' "$chrome_path" >> "$GITHUB_ENV"
 
       - name: Run Home load-runner contract tests
