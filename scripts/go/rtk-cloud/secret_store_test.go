@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,5 +288,526 @@ esac
 	value, err := store.readRuntime("postgres")
 	if err != nil || value != "live-postgres" {
 		t.Fatalf("postgres cutover source mismatch, err=%v", err)
+	}
+}
+
+func TestSecretStoreCommandsAndProvisionIntegration(t *testing.T) {
+	configRoot := filepath.Join(t.TempDir(), "rtk_cloud")
+	workspace := t.TempDir()
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	store, err := newSecretStore(configRoot, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets([]string{"init", "--environment", "staging", "--config-root", configRoot, "--workspace", workspace}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets([]string{"init", "--environment", "qa", "--config-root", configRoot}); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("fixture\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for key, value := range map[string]string{"LINODE_TOKEN": "linode-fixture", "GODADDY_KEY": "godaddy-fixture"} {
+		if err := store.write(filepath.Join("operator", "env", key), []byte(value+"\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runSecrets([]string{"inventory", "--environment", "staging", "--config-root", configRoot, "--workspace", workspace}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets([]string{"plan", "--environment", "staging", "--config-root", configRoot, "--workspace", workspace}); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"unknown", "--environment", "staging", "--config-root", configRoot, "--workspace", workspace},
+		{"migrate", "--environment", "staging", "--config-root", configRoot, "--workspace", workspace},
+		{"init", "--config-root", configRoot, "--workspace", workspace},
+		{"init", "--environment", "../prod", "--config-root", configRoot, "--workspace", workspace},
+	} {
+		if err := runSecrets(args); err == nil {
+			t.Fatalf("runSecrets(%v) unexpectedly succeeded", args)
+		}
+	}
+
+	previousActiveRoot := activeSecretEnvironmentRoot
+	previousStateDir := lkeRuntimeSecretStateDir
+	defer func() {
+		activeSecretEnvironmentRoot = previousActiveRoot
+		lkeRuntimeSecretStateDir = previousStateDir
+	}()
+	t.Setenv("LINODE_TOKEN", "previous")
+	configured, restore, err := configureProvisionSecretStore("staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("LINODE_TOKEN"); got != "linode-fixture" {
+		t.Fatalf("LINODE_TOKEN = %q", got)
+	}
+	if got := sensitiveEnvironmentPath(provisionPaths{EnvRoot: "legacy"}, "kube", "kubeconfig.yaml"); got != configured.KubeconfigPath() {
+		t.Fatalf("canonical kubeconfig path = %q", got)
+	}
+	for category, suffix := range map[string]string{
+		"certissuer":   filepath.Join("pki", "certissuer", "ca.key"),
+		"mqtt-tls":     filepath.Join("pki", "mqtt", "tls.key"),
+		"public-https": filepath.Join("pki", "public-https", "tls.key"),
+		"openbao":      filepath.Join("openbao", "unseal.json"),
+	} {
+		if got := sensitiveEnvironmentPath(provisionPaths{}, category, filepath.Base(suffix)); got != filepath.Join(configured.Root, suffix) {
+			t.Fatalf("%s path = %q", category, got)
+		}
+	}
+	restore()
+	if got := os.Getenv("LINODE_TOKEN"); got != "previous" {
+		t.Fatalf("restored LINODE_TOKEN = %q", got)
+	}
+
+	activeSecretEnvironmentRoot = ""
+	if got := sensitiveEnvironmentPath(provisionPaths{EnvRoot: "legacy"}, "kube", "kubeconfig.yaml"); got != filepath.Join("legacy", "state", "kubeconfig.yaml") {
+		t.Fatalf("legacy kubeconfig path = %q", got)
+	}
+	if got := sensitiveEnvironmentPath(provisionPaths{EnvRoot: "legacy"}, "openbao", "data"); got != filepath.Join("legacy", "state", "openbao", "data") {
+		t.Fatalf("legacy OpenBao path = %q", got)
+	}
+	if _, err := store.runtimePath("../bad"); err == nil {
+		t.Fatal("invalid runtime ID was accepted")
+	}
+	if _, err := store.operatorPath("bad-key"); err == nil {
+		t.Fatal("invalid operator key was accepted")
+	}
+	if _, err := store.operatorPath("VALID_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.safePath(filepath.Join(string(filepath.Separator), "tmp", "secret")); err == nil {
+		t.Fatal("absolute secret path was accepted")
+	}
+	if err := store.write("runtime/postgres", []byte("replacement"), false); err == nil {
+		t.Fatal("non-replacing write overwrote a secret")
+	}
+	if err := runSecrets([]string{"migrate", "--environment", "staging", "--config-root", configRoot, "--workspace", workspace, "--confirm", "video-cloud-staging"}); err == nil || !strings.Contains(err.Error(), "refuses to overwrite") {
+		t.Fatalf("confirmed migration error = %v", err)
+	}
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("unsupported sensitive path category did not panic")
+			}
+		}()
+		activeSecretEnvironmentRoot = store.Root
+		_ = sensitiveEnvironmentPath(provisionPaths{}, "unsupported", "secret")
+	}()
+}
+
+func TestSecretStoreMigrationHelpers(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	fixtureRoot := t.TempDir()
+	envFile := filepath.Join(fixtureRoot, "operator.env")
+	if err := os.WriteFile(envFile, []byte(strings.Join([]string{
+		"# comment", "export FIRST_TOKEN='first'", `SECOND_TOKEN="second"`, "invalid-key=ignored", "MISSING_EQUALS", "",
+	}, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := importEnvFileToStore(store, envFile); err != nil {
+		t.Fatal(err)
+	}
+	values, err := store.readOperator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["FIRST_TOKEN"] != "first" || values["SECOND_TOKEN"] != "second" {
+		t.Fatalf("imported operator values = %#v", values)
+	}
+	if err := importEnvFileToStore(store, filepath.Join(fixtureRoot, "missing.env")); err != nil {
+		t.Fatal(err)
+	}
+
+	single := filepath.Join(fixtureRoot, "kubeconfig.yaml")
+	if err := os.WriteFile(single, []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copySensitivePath(store, single, "kube/kubeconfig.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(fixtureRoot, "pki")
+	if err := os.MkdirAll(filepath.Join(directory, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "nested", "ca.key"), []byte("private-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copySensitivePath(store, directory, "pki/certissuer"); err != nil {
+		t.Fatal(err)
+	}
+
+	devices := filepath.Join(fixtureRoot, "devices")
+	if err := os.MkdirAll(devices, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devices, "credential.json"), []byte("credential"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(devices, "runtime.log"), []byte("quarantine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTestDeviceMaterial(store, devices); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.read("test/devices/test_device/credential.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.read("test/archive/quarantine/devices/test_device/runtime.log"); err != nil {
+		t.Fatal(err)
+	}
+
+	workspace := filepath.Join(fixtureRoot, "workspace")
+	legacy := filepath.Join(fixtureRoot, "legacy")
+	for _, path := range []string{
+		filepath.Join(workspace, ".artifacts", "runs", "credentials.sqlite"),
+		filepath.Join(workspace, ".artifacts", "runs", "public.txt"),
+		filepath.Join(legacy, "artifacts", "credential-bundles", "devices.json"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("artifact"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := copySensitiveArtifacts(store, workspace, legacy, "test/archive"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.read("test/archive/workspace-artifacts/runs/credentials.sqlite"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.read("test/archive/environment-artifacts/credential-bundles/devices.json"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Root, "test", "archive", "workspace-artifacts", "runs", "public.txt")); !os.IsNotExist(err) {
+		t.Fatalf("non-sensitive artifact was copied: %v", err)
+	}
+	for path, want := range map[string]bool{"bundle.sqlite": true, "bundle.sqlite.gz": true, "bundle.db": true, "notes.txt": false} {
+		if got := isSensitiveArtifactPath(path); got != want {
+			t.Fatalf("isSensitiveArtifactPath(%q) = %v", path, got)
+		}
+	}
+
+	symlink := filepath.Join(fixtureRoot, "secret-link")
+	if err := os.Symlink(single, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := copySensitivePath(store, symlink, "test/archive/link"); err == nil {
+		t.Fatal("sensitive symlink was accepted")
+	}
+	if err := copySensitivePath(store, filepath.Join(fixtureRoot, "missing"), "test/archive/missing"); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyTestDeviceMaterial(store, filepath.Join(fixtureRoot, "missing-devices")); err != nil {
+		t.Fatal(err)
+	}
+	symlinkTree := filepath.Join(fixtureRoot, "symlink-tree")
+	if err := os.MkdirAll(symlinkTree, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(single, filepath.Join(symlinkTree, "linked-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copySensitivePath(store, symlinkTree, "test/archive/symlink-tree"); err == nil {
+		t.Fatal("nested sensitive symlink was accepted")
+	}
+	if err := copyTestDeviceMaterial(store, symlinkTree); err == nil {
+		t.Fatal("nested test-device symlink was accepted")
+	}
+	symlinkWorkspace := filepath.Join(fixtureRoot, "symlink-workspace")
+	symlinkArtifactRoot := filepath.Join(symlinkWorkspace, ".artifacts")
+	if err := os.MkdirAll(symlinkArtifactRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(single, filepath.Join(symlinkArtifactRoot, "credentials.db")); err != nil {
+		t.Fatal(err)
+	}
+	if err := copySensitiveArtifacts(store, symlinkWorkspace, filepath.Join(fixtureRoot, "missing-legacy"), "test/archive"); err == nil {
+		t.Fatal("sensitive artifact symlink was accepted")
+	}
+}
+
+func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\ncase \"$*\" in\n")
+	secretData := map[string]map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		for _, binding := range entry.K8SBinding {
+			if secretData[binding.Secret] == nil {
+				secretData[binding.Secret] = map[string]string{}
+			}
+			secretData[binding.Secret][binding.Key] = "Y2Fub25pY2Fs"
+		}
+	}
+	for secret, data := range secretData {
+		payload, err := json.Marshal(map[string]any{"data": data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&script, "  *%s*) printf '%%s\\n' '%s' ;;\n", secret, payload)
+	}
+	script.WriteString("  *) exit 1 ;;\nesac\n")
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte(script.String()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("runtime/postgres", []byte("different\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "postgres") {
+		t.Fatalf("K8s mirror mismatch error = %v", err)
+	}
+}
+
+func TestSecretStoreVerificationAndErrorBranches(t *testing.T) {
+	workspace := t.TempDir()
+	store := makeIsolatedTestSecretStore(t, "staging")
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out bytes.Buffer
+	if err := verifySecretStore(&out, store, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "verified staging") {
+		t.Fatalf("verification output = %q", out.String())
+	}
+	if err := runSecrets([]string{"verify", "--environment", "staging", "--config-root", store.ConfigRoot, "--workspace", workspace}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets(nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets([]string{"init", "--bad-flag"}); err == nil {
+		t.Fatal("invalid secrets flag was accepted")
+	}
+	missingStore, err := newSecretStore(filepath.Join(t.TempDir(), "missing"), "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStorePermissionsOnly(missingStore); err == nil {
+		t.Fatal("uninitialized store passed permission verification")
+	}
+	if err := printSecretInventory(io.Discard, missingStore); err == nil {
+		t.Fatal("missing inventory was accepted")
+	}
+
+	legacySecretDir := filepath.Join(workspace, "cloud_env", "staging", "runtime", "state", "secrets")
+	if err := os.MkdirAll(legacySecretDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStore(io.Discard, store, workspace); err == nil || !strings.Contains(err.Error(), "legacy sensitive path") {
+		t.Fatalf("legacy verification error = %v", err)
+	}
+
+	badEntry := filepath.Join(store.Root, "operator", "env", "bad-key")
+	if err := os.WriteFile(badEntry, []byte("bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.readOperator(); err == nil {
+		t.Fatal("invalid operator entry was accepted")
+	}
+	if err := os.Remove(badEntry); err != nil {
+		t.Fatal(err)
+	}
+
+	badDirectory := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(badDirectory, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectory(badDirectory); err == nil {
+		t.Fatal("regular file was accepted as a private directory")
+	}
+	if err := os.Chmod(store.Root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStorePermissionsOnly(store); err == nil {
+		t.Fatal("insecure environment root was accepted")
+	}
+	if err := ensurePrivateDirectory(store.Root); err != nil {
+		t.Fatal(err)
+	}
+	invalidOperatorDirectory := filepath.Join(store.Root, "operator", "env", "INVALID_DIRECTORY")
+	if err := os.Mkdir(invalidOperatorDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.readOperator(); err == nil {
+		t.Fatal("operator directory entry was accepted")
+	}
+	if err := os.Remove(invalidOperatorDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(store.Root, "runtime"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStoreContents(store); err == nil || !strings.Contains(err.Error(), "0700") {
+		t.Fatalf("insecure directory error = %v", err)
+	}
+	if _, err := store.read("runtime/missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing secret read error = %v", err)
+	}
+	if _, err := store.readRuntime("bad/id"); err == nil {
+		t.Fatal("invalid runtime ID was accepted")
+	}
+	emptyStore, err := newSecretStore(filepath.Join(t.TempDir(), "empty"), "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectory(emptyStore.Root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := emptyStore.readOperator(); err == nil {
+		t.Fatal("missing operator directory was accepted")
+	}
+	if err := store.write("../escaped", []byte("secret"), true); err == nil {
+		t.Fatal("escaping write path was accepted")
+	}
+	if _, err := store.read("../escaped"); err == nil {
+		t.Fatal("escaping read path was accepted")
+	}
+	insecureOperator := filepath.Join(store.Root, "operator", "env", "INSECURE_TOKEN")
+	if err := os.WriteFile(insecureOperator, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.readOperator(); err == nil || !strings.Contains(err.Error(), "0600") {
+		t.Fatalf("insecure operator error = %v", err)
+	}
+	fileConfigRoot := filepath.Join(t.TempDir(), "config-file")
+	if err := os.WriteFile(fileConfigRoot, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fileRootStore, err := newSecretStore(fileConfigRoot, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fileRootStore.ensureLayout(); err == nil {
+		t.Fatal("file config root was accepted")
+	}
+	brokenLayoutStore, err := newSecretStore(filepath.Join(t.TempDir(), "config"), "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectory(brokenLayoutStore.ConfigRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensurePrivateDirectory(brokenLayoutStore.Root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brokenLayoutStore.Root, "operator"), []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := brokenLayoutStore.ensureLayout(); err == nil {
+		t.Fatal("broken layout path was accepted")
+	}
+}
+
+func TestSecretStoreK8SBindingFailureModes(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := verifySecretStoreK8SBindings(store); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s\\n' 'not-json'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "invalid metadata") {
+		t.Fatalf("invalid K8s metadata error = %v", err)
+	}
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "binding is missing") {
+		t.Fatalf("missing K8s binding error = %v", err)
+	}
+	if err := os.Remove(filepath.Join(store.RuntimeDir(), "postgres")); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "read canonical secret postgres") {
+		t.Fatalf("missing canonical secret error = %v", err)
+	}
+}
+
+func TestSecretMigrationRejectsInvalidLiveK8SMetadata(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	legacyRoot := t.TempDir()
+	kubeconfig := filepath.Join(legacyRoot, "state", "kubeconfig.yaml")
+	if err := os.MkdirAll(filepath.Dir(kubeconfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kubeconfig, []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s\\n' 'not-json'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := importLiveK8SRuntimeSecrets(store, legacyRoot); err == nil || !strings.Contains(err.Error(), "decode K8s secret metadata") {
+		t.Fatalf("invalid live K8s metadata error = %v", err)
+	}
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s\\n' '{\"data\":{\"POSTGRES_PASSWORD\":\"%%%\"}}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := importLiveK8SRuntimeSecrets(store, legacyRoot); err == nil || !strings.Contains(err.Error(), "decode live K8s value") {
+		t.Fatalf("invalid live K8s value error = %v", err)
+	}
+}
+
+func TestKubernetesProvisionProductionSecretStoreResetFailsClosed(t *testing.T) {
+	t.Setenv("RTK_CLOUD_TEST_MODE", "0")
+	configRoot := filepath.Join(t.TempDir(), "rtk_cloud")
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	store, err := newSecretStore(configRoot, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx := provisionContext{
+		Paths: provisionPaths{EnvRoot: t.TempDir()},
+		Env:   map[string]string{"CLOUD_ENV_NAME": "staging"},
+		Opts:  provisionOptions{mode: provisionMode{reset: true}},
+	}
+	err = runKubernetesProvision(lkeCloudProvider{}, ctx)
+	if err == nil || !strings.Contains(err.Error(), "reset is not implemented") {
+		t.Fatalf("production reset error = %v", err)
+	}
+	if activeCanonicalSecretStore || activeSecretEnvironmentRoot != "" {
+		t.Fatal("canonical SecretStore state was not restored")
 	}
 }
