@@ -22,7 +22,7 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-FLEET-DATA-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-FLEET-DATA-001` | `independent` | `572cfef31185` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ONE-TIME-TOKEN-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ONE-TIME-TOKEN-001` | `independent` | `a1ec645793bb` | `service` | `active` | `INT-AM-IDENTITY-TOKEN-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `independent` | `2852d1659641` | `service` | `active` | `INT-AM-IDENTITY-LIFECYCLE-001` | `test-services` |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `3e862dc22660` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `3294a359fe41` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-APP-AUTHORIZATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `workflow` | `f4ac80279fa5` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-PRICING-VERSION-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `independent` | `fa34115eb7b9` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UNIT-AM-INVOICE-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-ARITHMETIC-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-ARITHMETIC-001` | `independent` | `d0ddc3a1db7d` | `canonical` | `active` | `UNIT-AM-INVOICE-001` | `test-coverage` |
@@ -30,7 +30,7 @@
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-INVOICE-DOCUMENT-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `independent` | `93b7a7884d0f` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UI-CA-BILLING-STG-002` | `test-coverage`, `test-payment`, `test-ui` |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-PROFILE-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `independent` | `77f0af957ea4` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md#REQ-AM-BILLING-SUMMARY-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `independent` | `08dd9f15cce9` | `canonical` | `active` | — | — |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `0ffb7813767a` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-RUNTIME-CONFIG-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-RUNTIME-CONFIG-001` | `independent` | `df34d8a81b31` | `service` | `active` | `INT-AM-OPERATIONS-CONFIG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-CACHE-RESILIENCE-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-CACHE-RESILIENCE-001` | `independent` | `be8af79a0c44` | `service` | `active` | `INT-AM-OPERATIONS-CACHE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-OIDC-SECRET-001` | `FEAT-AM-OPERATIONS-001` | `REQ-AM-OIDC-SECRET-001` | `independent` | `81c2810a30ee` | `service` | `active` | `INT-AM-OPERATIONS-OIDC-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-OWNERSHIP-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-OWNERSHIP-001` | `independent` | `f83374280ed4` | `canonical` | `active` | `INT-AM-PAYMENT-001` | `test-coverage` |
@@ -45,7 +45,7 @@
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-AUTHZ-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-AUTHZ-001` | `independent` | `2db6b6fb9546` | `canonical` | `active` | `E2E-AM-PAYMENT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md#REQ-AM-PAYMENT-AUDIT-001` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-AUDIT-001` | `independent` | `6d1ba024b6f0` | `canonical` | `active` | `E2E-AM-AUTOTOPUP-002`, `E2E-AM-PAYMENT-001`, `INT-AM-PAYMENT-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-CLAIM-RESOLUTION-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-CLAIM-RESOLUTION-001` | `independent` | `7c42e3f5c696` | `service` | `active` | `INT-AM-PROV-CLAIM-001` | `test-services` |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-SERVICE-ENTITLEMENT-BOUNDARY-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-SERVICE-ENTITLEMENT-BOUNDARY-001` | `independent` | `fbb72534d5c7` | `service` | `active` | `INT-AM-PROV-CLAIM-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-SERVICE-ENTITLEMENT-BOUNDARY-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-SERVICE-ENTITLEMENT-BOUNDARY-001` | `independent` | `ef4d67553a1a` | `service` | `active` | `INT-AM-PROV-CLAIM-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-DEVICE-OWNERSHIP-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-DEVICE-OWNERSHIP-001` | `independent` | `8f46f6cea84c` | `service` | `active` | `INT-AM-PROV-CLAIM-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-USER-UNPROVISION-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-USER-UNPROVISION-001` | `workflow` | `fe3b22552ebb` | `service` | `active` | `INT-AM-PROV-UNPROVISION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-ADMIN-UNPROVISION-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-ADMIN-UNPROVISION-001` | `independent` | `395b59e8072e` | `service` | `active` | `INT-AM-PROV-OVERRIDE-001` | `test-services` |
@@ -55,7 +55,7 @@
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-READINESS-PROJECTION-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-READINESS-PROJECTION-001` | `independent` | `48488b449f13` | `service` | `active` | `INT-AM-PROV-READINESS-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-UNIFIED-READINESS-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-UNIFIED-READINESS-001` | `independent` | `22a974d2d946` | `service` | `planned` | — | — |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-READINESS-STATES-001` | `FEAT-AM-PROVISIONING-001` | `REQ-AM-READINESS-STATES-001` | `independent` | `03fb5efc8fe4` | `service` | `active` | `INT-AM-PROV-READINESS-001` | `test-services` |
-| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-EMAIL-DELIVERY-001` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001` | `independent` | `170cb2c7a2c9` | `service` | `active` | `INT-AM-SIGNUP-EMAIL-001` | `test-services` |
+| `repos/rtk_account_manager/docs/SPEC.md#REQ-AM-EMAIL-DELIVERY-001` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001` | `independent` | `6a94d68ce91a` | `service` | `active` | `INT-AM-SIGNUP-EMAIL-001` | `test-services` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-E2E-CA-SIGNUP-EMAIL-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `workflow` | `9640268f55d8` | `service` | `active` | `E2E-CA-SIGNUP-EMAIL-001` | `test-live` |
 | `repos/rtk_account_manager/docs/SPEC.md#REQ-E2E-LOAD-ACCOUNT-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-LOAD-ACCOUNT-001` | `` | `4926a2c1dba9` | `service` | `active` | `E2E-LOAD-ACCOUNT-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md#REQ-BILL-OWNERSHIP-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-OWNERSHIP-001` | `independent` | `eb1cb0e70a6f` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
@@ -75,7 +75,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-AUTHORITY-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-AUTHORITY-001` | `` | `97cb59cc0c3f` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-STORE-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-STORE-001` | `` | `c2a753afbe40` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `4c9bd1e578e4` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003` | `test-services`, `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `a0a844142d47` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `330ef0ad4503` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `3486cc975678` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `c82c1a79b3cf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
@@ -147,11 +147,11 @@
 | `repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md#REQ-CA-DASHBOARD-DECISIONS-001` | `FEAT-CA-PLATFORM-DASHBOARD-001` | `REQ-CA-DASHBOARD-DECISIONS-001` | `` | `a37071ba4d4c` | `approved` | `planned` | — | — |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `independent` | `c1d96ac86b52` | `service` | `active` | `UI-CA-FLEETPAGE-001`, `UI-CA-FLEETPAGE-003`, `UI-CA-FLEETPAGE-005` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `independent` | `1d4686634daa` | `service` | `active` | `UI-CA-FLEETPAGE-002` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-001` | `` | `e2c75cb93aaf` | `service` | `active` | `UI-CA-PROV-001` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002` | `` | `99372a6457c6` | `service` | `active` | `UI-CA-PROV-002` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-003` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-003` | `` | `50a1a07176df` | `service` | `active` | `UI-CA-PROV-003` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-004` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-004` | `` | `f0e0bfe150b3` | `service` | `active` | `UI-CA-PROV-004` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-005` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-005` | `` | `5f392d4be5c0` | `service` | `active` | `UI-CA-PROV-005` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-001` | `` | `17da432b8d33` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002` | `` | `20f70e7fd04c` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-003` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-003` | `` | `d0b7f0d40e76` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-004` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-004` | `` | `0a976200cb48` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-005` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-005` | `` | `970a1c2ec0aa` | `service` | `retired` | — | — |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-001` | `` | `e098796ab03f` | `service` | `active` | `UI-CA-CHIPSET-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-002` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-002` | `` | `1e555a3c9d49` | `service` | `active` | `UI-CA-CHIPSET-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-003` | `` | `f71c06b8cce2` | `service` | `active` | `UI-CA-CHIPSET-003` | `test-ui` |
@@ -190,7 +190,7 @@
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-OTA-DEVICE-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-OTA-DEVICE-001` | `independent` | `1d662e0af977` | `canonical` | `active` | `INT-VC-OTA-OPERATOR-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-OTA-ARTIFACT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-OTA-ARTIFACT-001` | `independent` | `cf195ce7a941` | `canonical` | `active` | `INT-VC-OTA-ARTIFACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-OTA-TENANT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-OTA-TENANT-001` | `independent` | `c8e861f58d36` | `canonical` | `active` | `INT-VC-OTA-TENANT-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-COMPAT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-COMPAT-001` | `independent` | `4f9786997218` | `canonical` | `active` | `INT-AM-AUTHZ-MATRIX-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-AUTHZ-COMPAT-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-AUTHZ-COMPAT-001` | `independent` | `5dc51ad6eb48` | `canonical` | `active` | `INT-AM-AUTHZ-MATRIX-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md#REQ-CONTRACT-PRODUCT-COLLAB-001` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-PRODUCT-COLLAB-001` | `independent` | `74ab6e44e11d` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-SURFACES-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-SURFACES-001` | `independent` | `2c3cff3a7e58` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-LIFECYCLE-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-LIFECYCLE-001` | `independent` | `ee9fc88ca751` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
@@ -199,7 +199,7 @@
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-ROUTING-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-ROUTING-001` | `independent` | `e9880a89987b` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-WEBSOCKET-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-WEBSOCKET-001` | `independent` | `77229bcb5218` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-WEBRTC-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-WEBRTC-001` | `independent` | `df90b81b6a1f` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-MQTT-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-MQTT-001` | `independent` | `8e2bf04b7f44` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-MQTT-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-MQTT-001` | `independent` | `45acab588c64` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-CAPABILITY-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-CAPABILITY-001` | `independent` | `51e6439b82da` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-UNSUPPORTED-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-UNSUPPORTED-001` | `independent` | `a376a31bf21f` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md#REQ-CONTRACT-TRANSPORT-COMMAND-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-COMMAND-001` | `independent` | `c000ce461d0e` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
@@ -215,7 +215,7 @@
 | `repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md#REQ-CONTRACT-FRONTEND-ACCESSIBILITY-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-ACCESSIBILITY-001` | `` | `acca18bd128c` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md#REQ-CONTRACT-FRONTEND-TOKEN-DERIVATION-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-TOKEN-DERIVATION-001` | `` | `35f0a89d51b7` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md#REQ-CONTRACT-FRONTEND-FLEET-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-FLEET-001` | `` | `ae8ae173fd2b` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md#REQ-CONTRACT-FRONTEND-FLEET-LANGUAGE-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-FLEET-LANGUAGE-001` | `` | `35fb16588ec1` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md#REQ-CONTRACT-FRONTEND-FLEET-LANGUAGE-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-FLEET-LANGUAGE-001` | `` | `d53e7716ee26` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/SNAPSHOT_AND_MEDIA.md#REQ-CONTRACT-MEDIA-ROUTES-001` | `FEAT-CONTRACT-MEDIA-001` | `REQ-CONTRACT-MEDIA-ROUTES-001` | `independent` | `925b6dd307eb` | `canonical` | `active` | `INT-VC-MEDIA-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/SNAPSHOT_AND_MEDIA.md#REQ-CONTRACT-MEDIA-DIRECT-UPLOAD-001` | `FEAT-CONTRACT-MEDIA-001` | `REQ-CONTRACT-MEDIA-DIRECT-UPLOAD-001` | `workflow` | `2bd6306dbd3a` | `canonical` | `active` | `INT-VC-MEDIA-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/SNAPSHOT_AND_MEDIA.md#REQ-CONTRACT-MEDIA-TOKEN-001` | `FEAT-CONTRACT-MEDIA-001` | `REQ-CONTRACT-MEDIA-TOKEN-001` | `independent` | `551c795cbbd4` | `canonical` | `active` | `INT-VC-MEDIA-CONTRACT-001` | `test-services` |
@@ -245,7 +245,7 @@
 | `repos/rtk_cloud_contracts_doc/STREAMING.md#REQ-CONTRACT-STREAMING-LIFECYCLE-001` | `FEAT-CONTRACT-STREAMING-001` | `REQ-CONTRACT-STREAMING-LIFECYCLE-001` | `workflow` | `0909a32846a6` | `canonical` | `active` | `INT-VC-STREAMING-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/STREAMING.md#REQ-CONTRACT-STREAMING-ERROR-001` | `FEAT-CONTRACT-STREAMING-001` | `REQ-CONTRACT-STREAMING-ERROR-001` | `independent` | `7c53dc0cc578` | `canonical` | `active` | `INT-VC-STREAMING-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/STREAMING.md#REQ-CONTRACT-STREAMING-CLIENT-001` | `FEAT-CONTRACT-STREAMING-001` | `REQ-CONTRACT-STREAMING-CLIENT-001` | `independent` | `65d9e970db0c` | `canonical` | `active` | `INT-SDK-STREAMING-CONTRACT-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md#REQ-SHADOW-COMPATIBILITY-001` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-COMPATIBILITY-001` | `independent` | `ed81003e86a3` | `canonical` | `active` | `INT-VC-SHADOW-CONTRACT-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md#REQ-SHADOW-COMPATIBILITY-001` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-COMPATIBILITY-001` | `independent` | `5683000f0e09` | `canonical` | `active` | `INT-VC-SHADOW-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md#REQ-SHADOW-IDENTITY-001` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-IDENTITY-001` | `independent` | `f9ad341c551e` | `canonical` | `active` | `INT-VC-SHADOW-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md#REQ-SHADOW-HTTP-API-001` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-HTTP-API-001` | `independent` | `9f30d51cbb77` | `canonical` | `active` | `INT-VC-SHADOW-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md#REQ-SHADOW-MQTT-API-001` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-MQTT-API-001` | `independent` | `a844f223000e` | `canonical` | `active` | `INT-VC-SHADOW-CONTRACT-001` | `test-services` |
@@ -267,10 +267,10 @@
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-SIGNOFF-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-SIGNOFF-001` | `workflow` | `90e68522638c` | `canonical` | `active` | `LIVE-STG-ONBOARD-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-CHANNEL-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-CHANNEL-001` | `independent` | `bf7600816cd9` | `canonical` | `active` | `INT-VC-PROV-CHANNEL-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-IDENTITY-MAP-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-IDENTITY-MAP-001` | `independent` | `63fa674275e9` | `canonical` | `active` | `INT-VC-PROV-CHANNEL-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-E2E-FACTORY-ENROLL-001` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-FACTORY-ENROLL-001` | `workflow` | `7060b027b78f` | `canonical` | `active` | `E2E-FACTORY-ENROLL-001` | `test-e2e` |
-| `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-SERVICE-OPTIONS-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-SERVICE-OPTIONS-001` | `independent` | `f5fb37cff673` | `canonical` | `active` | `INT-VC-PROV-SERVICE-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-E2E-FACTORY-ENROLL-001` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-FACTORY-ENROLL-001` | `workflow` | `81d8e67fb30b` | `canonical` | `active` | `E2E-FACTORY-ENROLL-001` | `test-e2e` |
+| `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-SERVICE-OPTIONS-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-SERVICE-OPTIONS-001` | `independent` | `ec6dda33f2c4` | `canonical` | `active` | `INT-VC-PROV-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-E2E-PROV-ACCOUNT-001` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `workflow` | `3013eae057d5` | `canonical` | `active` | `E2E-PROV-ACCOUNT-001` | `test-e2e` |
-| `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-ACTIVATION-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-ACTIVATION-001` | `workflow` | `48fb2455796c` | `canonical` | `active` | `INT-VC-PROV-ACTIVATION-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-ACTIVATION-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-ACTIVATION-001` | `workflow` | `69d3325d6590` | `canonical` | `active` | `INT-VC-PROV-ACTIVATION-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-PROJECTION-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-PROJECTION-001` | `independent` | `4022605fbcdc` | `canonical` | `active` | `INT-AM-PROV-PROJECTION-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-RUNTIME-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-RUNTIME-001` | `workflow` | `033faff1b091` | `canonical` | `active` | `LIVE-STG-ONBOARD-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/PROVISION.md#REQ-CONTRACT-PROV-UNPROVISION-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-UNPROVISION-001` | `workflow` | `949a066f0a4f` | `canonical` | `active` | `LIVE-STG-ONBOARD-001` | `test-live` |
@@ -590,7 +590,7 @@
 | `SPEC-AM-OPENAPI#logoutAppEndUser` | `POST /v1/app/end-users/auth/logout` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `2fef9c2ae1d8` |
 | `SPEC-AM-OPENAPI#refreshAppEndUserToken` | `POST /v1/app/end-users/auth/refresh` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `5e0b88b0653f` |
 | `SPEC-AM-OPENAPI#getAppEndUserMe` | `GET /v1/app/end-users/me` | `FEAT-AM-IDENTITY-001` | `REQ-AM-END-USER-ISOLATION-001` | `2652e4780348` |
-| `SPEC-AM-OPENAPI#requestPasswordReset` | `POST /v1/auth/forgot-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `1a338b3441e9` |
+| `SPEC-AM-OPENAPI#requestPasswordReset` | `POST /v1/auth/forgot-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `ce5b62fffc36` |
 | `SPEC-AM-OPENAPI#loginUser` | `POST /v1/auth/login` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `91515a93de21` |
 | `SPEC-AM-OPENAPI#activateEmailSignIn` | `POST /v1/auth/login/activate` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001`, `REQ-E2E-CA-SIGNUP-EMAIL-001` | `cbf094922fa3` |
 | `SPEC-AM-OPENAPI#logoutUser` | `POST /v1/auth/logout` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `bc050f470832` |
@@ -599,9 +599,9 @@
 | `SPEC-AM-OPENAPI#startOIDCLogin` | `GET /v1/auth/oidc/{providerId}/login` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `2106085957ff` |
 | `SPEC-AM-OPENAPI#refreshToken` | `POST /v1/auth/refresh` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `0dc050f3f2d9` |
 | `SPEC-AM-OPENAPI#registerUser` | `POST /v1/auth/register` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `37bde0323e53` |
-| `SPEC-AM-OPENAPI#resendEmailVerification` | `POST /v1/auth/resend-verification` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `5b40416131ea` |
+| `SPEC-AM-OPENAPI#resendEmailVerification` | `POST /v1/auth/resend-verification` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `e95d0492ca58` |
 | `SPEC-AM-OPENAPI#resetPassword` | `POST /v1/auth/reset-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `13478edc73cd` |
-| `SPEC-AM-OPENAPI#requestEmailSignIn` | `POST /v1/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001`, `REQ-E2E-CA-SIGNUP-EMAIL-001` | `19018612327d` |
+| `SPEC-AM-OPENAPI#requestEmailSignIn` | `POST /v1/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001`, `REQ-E2E-CA-SIGNUP-EMAIL-001` | `65d248331b40` |
 | `SPEC-AM-OPENAPI#signupUser` | `POST /v1/auth/signup` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6165d2ec578b` |
 | `SPEC-AM-OPENAPI#verifyEmail` | `POST /v1/auth/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6cf4aae57e32` |
 | `SPEC-AM-OPENAPI#activateBrandCloudUser` | `POST /v1/brand-clouds/{tenantSlug}/auth/activate` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `481c87e91a74` |
@@ -609,7 +609,7 @@
 | `SPEC-AM-OPENAPI#activateBrandCloudEmailSignIn` | `POST /v1/brand-clouds/{tenantSlug}/auth/login/activate` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `9c7ba1ac243c` |
 | `SPEC-AM-OPENAPI#logoutBrandCloudUser` | `POST /v1/brand-clouds/{tenantSlug}/auth/logout` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `a9650a727b9a` |
 | `SPEC-AM-OPENAPI#refreshBrandCloudToken` | `POST /v1/brand-clouds/{tenantSlug}/auth/refresh` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `b0cddffd0b83` |
-| `SPEC-AM-OPENAPI#requestBrandCloudEmailSignIn` | `POST /v1/brand-clouds/{tenantSlug}/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `be8f25201565` |
+| `SPEC-AM-OPENAPI#requestBrandCloudEmailSignIn` | `POST /v1/brand-clouds/{tenantSlug}/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `9e73832e8cba` |
 | `SPEC-AM-OPENAPI#getBrandCloudMe` | `GET /v1/brand-clouds/{tenantSlug}/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `63961e1f0517` |
 | `SPEC-AM-OPENAPI#acceptDeveloperBrandCloudMemberInvitation` | `POST /v1/developer/brand-cloud-member-invitations/accept` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-MEMBER-INVITE-001` | `060ff461bf06` |
 | `SPEC-AM-OPENAPI#acceptBrandCloudOwnerTransfer` | `POST /v1/developer/brand-cloud-owner-transfers/accept` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `c10ca789907c` |
@@ -851,9 +851,6 @@
 | `SPEC-CA-OPENAPI#deleteApiProductCollaborator` | `DELETE /api/products/{productID}/collaborators/{userID}` | `` | — | `e50d138a6fa6` |
 | `SPEC-CA-OPENAPI#patchApiProductCollaborator` | `PATCH /api/products/{productID}/collaborators/{userID}` | `` | — | `428502dfbe8b` |
 | `SPEC-CA-OPENAPI#postApiProductOwnerTransfer` | `POST /api/products/{productID}/owner-transfer` | `` | — | `15fbd3cf3841` |
-| `SPEC-CA-OPENAPI#postApiProvisioningJobs` | `POST /api/provisioning/jobs` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `057a0f5a28f6` |
-| `SPEC-CA-OPENAPI#postApiProvisioningSources` | `POST /api/provisioning/sources` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `08af7c9e0b17` |
-| `SPEC-CA-OPENAPI#postApiProvisioningValidate` | `POST /api/provisioning/validate` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `6cf7c72effbe` |
 | `SPEC-CA-OPENAPI#getApiReports` | `GET /api/reports` | `FEAT-CA-OPS-001` | `REQ-UI-CA-REPORT-004` | `e69be259f21c` |
 | `SPEC-CA-OPENAPI#postApiReports` | `POST /api/reports` | `FEAT-CA-OPS-001` | `REQ-UI-CA-REPORT-004` | `cbf63900f42c` |
 | `SPEC-CA-OPENAPI#getApiReportsById` | `GET /api/reports/{id}` | `FEAT-CA-OPS-001` | `REQ-UI-CA-REPORT-004` | `b06f330b0b94` |
@@ -1245,7 +1242,7 @@
 
 | Spec | Section and line | Authority | Status | Candidate revision | Statement |
 | --- | --- | --- | --- | --- | --- |
-| `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1480` | `service` | `required` | `6b4c4c3f2914` | a prior `valid` status response must still be rejected atomically. |
+| `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1473` | `service` | `required` | `6b4c4c3f2914` | a prior `valid` status response must still be rejected atomically. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `RTK Cloud Admin — Role Definitions@L18` | `draft` | `planned` | `0ce425e55647` | rtk_video_cloud backend developers (telemetry, firmware, and stream APIs must |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `draft` | `planned` | `5ab164b3f034` | persona, but route guards and enabled UI actions must use explicit |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Platform Admin@L112` | `draft` | `planned` | `8740c5426d64` | this customer's devices?" cannot answer it from the console today and must |
@@ -1255,8 +1252,8 @@
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L280` | `draft` | `planned` | `d119c9ed0c84` | not human roles and must not be displayed as ACL labels. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L293` | `draft` | `planned` | `56db3ec9a934` | Backend handlers and frontend components must enforce these rules consistently. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L295` | `draft` | `planned` | `7444f7d571cd` | visibility constraint on a specific field, it must align with the table below. |
-| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
-| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L478` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L480` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Purpose@L46` | `draft` | `planned` | `c00c1a49a040` | Each SDK package must implement this contract or explicitly document which |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L55` | `draft` | `planned` | `ed9d3ad28b0a` | The SDK (or a manufacturing-line tool that calls SDK primitives) must: |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L65` | `draft` | `planned` | `b1acacc9ed18` | The key generation helper should be: |
@@ -1343,7 +1340,7 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1480` | `true` | normative clause 6b4c4c3f2914 requires a stable FEAT-*/REQ-* source mapping: a prior `valid` status response must still be rejected atomically. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_account_manager/docs/SPEC.md` | `Developer Signup and Brand Cloud Ownership@L1473` | `true` | normative clause 6b4c4c3f2914 requires a stable FEAT-*/REQ-* source mapping: a prior `valid` status response must still be rejected atomically. |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `acceptProductCollaboratorInvitation` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `inviteProductCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_account_manager/openapi.yaml` | `issueDeveloperPKITestAppCertificate` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
@@ -1363,8 +1360,8 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L244` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `false` | normative clause 5ab164b3f034 requires a stable FEAT-*/REQ-* source mapping: persona, but route guards and enabled UI actions must use explicit |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Tier 2 — Brand Operator Roles@L126` | `false` | normative clause 0915d659e349 requires a stable FEAT-*/REQ-* source mapping: Tier 2 daily authentication should use Account Manager-backed SSO. Account |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L478` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L480` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `deleteApiProductCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivityDetail` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |

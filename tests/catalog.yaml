@@ -667,7 +667,7 @@ cases:
     layer: integration
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/api/integration_test.go
-    selector: "./internal/api#TestIntegrationSignupQueuesEncryptedEmailForWorkerDelivery,./internal/store#TestEmailOutboxTokenAndQueueAreTransactional,./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery"
+    selector: "./internal/api#TestIntegrationSignupQueuesEncryptedEmailForSendMailHTTP,./internal/store#TestEmailOutboxTokenAndQueueAreTransactional,./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery"
     method: PostgreSQL-backed signup and outbox tests atomically persist a scoped hashed token with encrypted email payload for Send Mail HTTP and preserve enumeration-safe delivery failure and replay behavior.
     runner: test-services
     environments: [ci]
@@ -1213,11 +1213,6 @@ cases:
   - { <<: *ui_local, id: UI-CA-OPS-001, title: Platform admins can open operations and service logs, source: repos/rtk_cloud_admin/web/e2e/operations.spec.mjs, selector: "[UI-CA-OPS-001]", verifies: [REQ-UI-CA-OPS-001] }
   - { <<: *ui_smoke, id: UI-CA-OTA-001, title: OTA scope preview is server calculated and immutable, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-OTA-001]", verifies: [REQ-UI-CA-OTA-001] }
   - { <<: *ui_smoke, id: UI-CA-OTA-002, title: Firmware page shows upgrade progress and device results, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-OTA-002]", verifies: [REQ-UI-CA-OTA-001] }
-  - { <<: *ui_local, id: UI-CA-PROV-001, title: Invalid-device validation is immutable and cannot execute, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-provisioning.spec.mjs, selector: "[UI-CA-PROV-001]", verifies: [REQ-UI-CA-PROV-001] }
-  - { <<: *ui_local, id: UI-CA-PROV-002, title: Provisioning upload replay is idempotent and conflicts are rejected, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-provisioning.spec.mjs, selector: "[UI-CA-PROV-002]", verifies: [REQ-UI-CA-PROV-002] }
-  - { <<: *ui_local, id: UI-CA-PROV-003, title: Observers cannot start provisioning from browser or API, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-provisioning.spec.mjs, selector: "[UI-CA-PROV-003]", verifies: [REQ-UI-CA-PROV-003] }
-  - { <<: *ui_smoke, id: UI-CA-PROV-004, title: Provisioning CSV upload starts browser validation, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-PROV-004]", verifies: [REQ-UI-CA-PROV-004] }
-  - { <<: *ui_local, id: UI-CA-PROV-005, title: Provisioning upload validates before creating an execution job, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-PROV-005]", verifies: [REQ-UI-CA-PROV-005] }
   - { <<: *ui_local, id: UI-CA-REPORT-001, title: Report failure remains customer-safe when upstream is unavailable, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-report-states.spec.mjs, selector: "[UI-CA-REPORT-001]", verifies: [REQ-UI-CA-REPORT-001] }
   - { <<: *ui_local, id: UI-CA-REPORT-002, title: Expired report results return an explicit expired state, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-report-states.spec.mjs, selector: "[UI-CA-REPORT-002]", verifies: [REQ-UI-CA-REPORT-002] }
   - { <<: *ui_smoke, id: UI-CA-REPORT-003, title: Report builder submits complete metadata from the browser, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-workflows.spec.mjs, selector: "[UI-CA-REPORT-003]", verifies: [REQ-UI-CA-REPORT-003] }
