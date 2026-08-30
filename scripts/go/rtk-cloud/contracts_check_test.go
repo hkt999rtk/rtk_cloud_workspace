@@ -1,10 +1,119 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestCheckContractsPolicyCanonicalLinks(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*testing.T, string, map[string]string)
+		want   string
+	}{
+		{name: "aligned canonical links"},
+		{name: "missing link", change: func(t *testing.T, root string, commits map[string]string) {
+			delete(commits, expectedContractsPaths[1])
+		}, want: "contracts link unavailable"},
+		{name: "copied directory", change: func(t *testing.T, root string, _ map[string]string) {
+			mkdirAll(t, filepath.Join(root, expectedContractsPaths[1]))
+		}, want: "registered submodule or canonical symlink"},
+		{name: "dangling link", change: func(t *testing.T, root string, _ map[string]string) {
+			makeContractsTestLink(t, root, "../../missing")
+		}, want: "contracts link cannot be resolved"},
+		{name: "different checkout same commit", change: func(t *testing.T, root string, _ map[string]string) {
+			mkdirAll(t, filepath.Join(root, "repos/copy"))
+			makeContractsTestLink(t, root, "../../copy")
+		}, want: "does not resolve to the canonical"},
+		{name: "registration cannot hide redirected link", change: func(t *testing.T, root string, _ map[string]string) {
+			mkdirAll(t, filepath.Join(root, "repos/copy"))
+			makeContractsTestLink(t, root, "../../copy")
+			writeFile(t, filepath.Join(root, "repos/rtk_account_manager/.gitmodules"), "[submodule \"contracts\"]\npath = docs/rtk_cloud_contracts_doc\nurl = "+contractsRepoURL+"\n")
+		}, want: "does not resolve to the canonical"},
+		{name: "missing canonical checkout", change: func(t *testing.T, root string, _ map[string]string) {
+			// Keep one consumer resolvable so the canonical-path error is exercised.
+			mkdirAll(t, filepath.Join(root, "repos/copy"))
+			makeContractsTestLink(t, root, "../../copy")
+			if err := os.Remove(filepath.Join(root, expectedContractsPaths[0])); err != nil {
+				t.Fatal(err)
+			}
+		}, want: "canonical contracts checkout unavailable"},
+		{name: "missing root registration", change: func(t *testing.T, root string, _ map[string]string) {
+			writeFile(t, filepath.Join(root, ".gitmodules"), "")
+			makeContractsTestLink(t, root, "../../rtk_cloud_contracts_doc")
+		}, want: "contracts submodule path missing: repos/rtk_cloud_contracts_doc"},
+		{name: "missing root commit", change: func(t *testing.T, root string, commits map[string]string) {
+			delete(commits, expectedContractsPaths[0])
+			makeContractsTestLink(t, root, "../../rtk_cloud_contracts_doc")
+		}, want: "root contracts commit missing"},
+		{name: "consumer commit drift", change: func(t *testing.T, root string, commits map[string]string) {
+			commits[expectedContractsPaths[1]] = "other"
+			makeContractsTestLink(t, root, "../../rtk_cloud_contracts_doc")
+		}, want: "is pinned to other"},
+		{name: "unreadable gitmodules", change: func(t *testing.T, root string, _ map[string]string) {
+			mkdirAll(t, filepath.Join(root, "repos/rtk_cloud_admin/.gitmodules"))
+		}, want: "could not read .gitmodules"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			mkdirAll(t, filepath.Join(root, expectedContractsPaths[0]))
+			writeFile(t, filepath.Join(root, ".gitmodules"), "[submodule \"contracts\"]\npath = "+expectedContractsPaths[0]+"\nurl = "+contractsRepoURL+"\n")
+			commits := map[string]string{expectedContractsPaths[0]: "same"}
+			for _, path := range expectedContractsPaths[1:] {
+				mkdirAll(t, filepath.Dir(filepath.Join(root, path)))
+				commits[path] = "same"
+				if path != expectedContractsPaths[1] {
+					if err := os.Symlink("../../rtk_cloud_contracts_doc", filepath.Join(root, path)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if tc.change != nil {
+				tc.change(t, root, commits)
+			} else {
+				makeContractsTestLink(t, root, "../../rtk_cloud_contracts_doc")
+			}
+			check := newCheck()
+			stdout, stderr, _ := captureOutput(func() error {
+				checkContractsPolicy(check, root, commits)
+				return nil
+			})
+			if tc.want == "" {
+				if check.failures != 0 {
+					t.Fatalf("canonical links rejected: %s%s", stdout, stderr)
+				}
+			} else if check.failures == 0 || !strings.Contains(stdout+stderr, tc.want) {
+				t.Fatalf("expected failure %q, got %s%s", tc.want, stdout, stderr)
+			}
+		})
+	}
+}
+
+func makeContractsTestLink(t *testing.T, root, target string) {
+	t.Helper()
+	if err := os.Symlink(target, filepath.Join(root, expectedContractsPaths[1])); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCanonicalContractsURLs(t *testing.T) {
+	for _, url := range []string{contractsRepoURL, contractsRepoLegacySSHURL, contractsRepoHTTPSURL} {
+		if !isCanonicalContractsURL(url) {
+			t.Errorf("canonical URL rejected: %s", url)
+		}
+	}
+	for _, url := range []string{
+		"https://github.com/other/rtk_cloud_contracts_doc.git",
+		"https://example.com/hkt999rtk/rtk_cloud_contracts_doc.git",
+		"https://x-access-token:secret@github.com/hkt999rtk/rtk_cloud_contracts_doc.git",
+	} {
+		if isCanonicalContractsURL(url) {
+			t.Error("noncanonical URL accepted")
+		}
+	}
+}
 
 func TestCheckContractsPolicyAcceptsStandardPathsURLsAndAlignedCommits(t *testing.T) {
 	root := t.TempDir()
@@ -68,7 +177,13 @@ func TestCheckContractsPolicyRejectsLegacyPathsURLsAndDrift(t *testing.T) {
 	}
 
 	check := newCheck()
-	checkContractsPolicy(check, root, commits)
+	stdout, stderr, _ := captureOutput(func() error {
+		checkContractsPolicy(check, root, commits)
+		return nil
+	})
+	if strings.Contains(stdout+stderr, "secret") {
+		t.Fatal("policy report exposed credentials from a rejected URL")
+	}
 
 	if check.failures == 0 {
 		t.Fatal("checkContractsPolicy accepted legacy contracts policy")
