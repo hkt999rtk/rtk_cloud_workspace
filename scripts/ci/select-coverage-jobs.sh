@@ -111,6 +111,7 @@ fi
 
 go_json=$(jq -cn '$ARGS.positional' --args "${go_modules[@]}")
 node_json=$(jq -cn '$ARGS.positional' --args "${node_modules[@]}")
+coverage_modules=$(jq -cn --argjson go "$go_json" --argjson node "$node_json" '$go + $node')
 run_unit=$([ "${#go_modules[@]}" -gt 0 ] && echo true || echo false)
 run_node=$([ "${#node_modules[@]}" -gt 0 ] && echo true || echo false)
 run_coverage=false
@@ -122,6 +123,7 @@ fi
   echo "policy=$policy"
   echo "go_modules=$go_json"
   echo "node_modules=$node_json"
+  echo "coverage_modules=$coverage_modules"
   echo "run_unit=$run_unit"
   echo "run_node=$run_node"
   echo "run_coverage=$run_coverage"

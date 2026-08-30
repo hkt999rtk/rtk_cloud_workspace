@@ -17,6 +17,7 @@ jobs:
       policy: ${{ steps.select.outputs.policy }}
       go_modules: ${{ steps.select.outputs.go_modules }}
       node_modules: ${{ steps.select.outputs.node_modules }}
+      coverage_modules: ${{ steps.select.outputs.coverage_modules }}
       run_unit: ${{ steps.select.outputs.run_unit }}
       run_node: ${{ steps.select.outputs.run_node }}
       run_coverage: ${{ steps.select.outputs.run_coverage }}
@@ -362,7 +363,9 @@ jobs:
           path: .artifacts/coverage-input
       - name: Aggregate Go and JavaScript coverage
         working-directory: scripts/go
-        run: go run ./rtk-cloud -- test-coverage-aggregate --input-dir ../../.artifacts/coverage-input --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        env:
+          COVERAGE_MODULES: ${{ needs.changes.outputs.coverage_modules }}
+        run: go run ./rtk-cloud -- test-coverage-aggregate --input-dir ../../.artifacts/coverage-input --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --modules-json "$COVERAGE_MODULES"
       - name: Upload aggregate report
         if: always()
         uses: actions/upload-artifact@v6
