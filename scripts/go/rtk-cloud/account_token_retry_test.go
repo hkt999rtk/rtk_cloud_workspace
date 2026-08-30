@@ -206,6 +206,60 @@ func TestAccountCreateUserReusesValidPlatformSession(t *testing.T) {
 	}
 }
 
+func TestAccountCreateUserPreservesHigherExistingOwnerRole(t *testing.T) {
+	accessToken := testJWT(time.Now().Add(time.Hour))
+	postRoles := []string{}
+	getAttempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/admin/brand-clouds/brand-1/users" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("authorization") != "Bearer "+accessToken {
+			t.Fatalf("authorization header = %q", r.Header.Get("authorization"))
+		}
+		switch r.Method {
+		case http.MethodGet:
+			getAttempts++
+			if got := r.URL.Query().Get("q"); got != "owner@example.test" {
+				t.Fatalf("lookup q = %q", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"users": []map[string]any{{"email": "owner@example.test", "role": "owner"}},
+			})
+		case http.MethodPost:
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			role := stringValue(request["role"])
+			postRoles = append(postRoles, role)
+			if role == "admin" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"action": "assigned",
+				"user":   map[string]string{"id": "user-1"},
+			})
+		default:
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	ctx := accountManagerContext{BaseURL: server.URL}
+	session := accountPlatformSession{AccessToken: accessToken, RefreshToken: testJWT(time.Now().Add(time.Hour))}
+	result, err := accountCreateUser(ctx, &session, func(string, ...any) {}, "brand-1", "owner@example.test", "Owner", "pass", "admin", true)
+	if err != nil {
+		t.Fatalf("accountCreateUser() error = %v", err)
+	}
+	if result.Role != "owner" || result.UserID != "user-1" || getAttempts != 1 || !reflect.DeepEqual(postRoles, []string{"admin", "owner"}) {
+		t.Fatalf("result=%+v getAttempts=%d postRoles=%v", result, getAttempts, postRoles)
+	}
+}
+
 func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	createAttempts := 0
 	brandLoginAttempts := 0
