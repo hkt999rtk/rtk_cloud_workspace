@@ -714,6 +714,13 @@ func TestRunOTADeviceSimulatorWithNoAssignments(t *testing.T) {
 	if client.Timeout != 30*time.Minute {
 		t.Fatalf("default OTA HTTP timeout = %s", client.Timeout)
 	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("OTA HTTP transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.TLSClientConfig != nil && transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("OTA artifact HTTP client must verify the server certificate")
+	}
 }
 
 func TestRunOTADeviceSimulatorFailsClosedWhenMQTTBarrierIsIncomplete(t *testing.T) {

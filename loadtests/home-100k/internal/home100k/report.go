@@ -20,6 +20,7 @@ type ReportInput struct {
 	ServerCorrelation     ServerCorrelation
 	RuntimeLogCorrelation RuntimeLogCorrelation
 	VideoEvidence         VideoEvidence
+	OTAEvidence           OTAEvidence
 	StartCoordination     StartCoordination
 	SyncTelemetry         SyncTelemetry
 	Notes                 []string
@@ -30,10 +31,15 @@ func RenderReport(input ReportInput) string {
 	evidence.Complete = input.ServerEvidenceFound
 	health := LoadGeneratorHealth{Saturated: !input.LoadGeneratorHealthy}
 	outcome := evaluateRunOutcome(input.Plan, evidence, input.StageResults, health, input.ServerCorrelation, input.RuntimeLogCorrelation, input.VideoEvidence)
+	outcome = applyOTAOutcome(outcome, input.Plan, input.OTAEvidence)
 	reasons := outcome.Reasons
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# 100K Home IoT Device Shadow Load Test Report\n\n")
+	title := "100K Home IoT Device Shadow Load Test Report"
+	if input.Plan.OTAEnabled() {
+		title = "Firmware OTA Virtual Device Load Test Report"
+	}
+	fmt.Fprintf(&b, "# %s\n\n", title)
 	fmt.Fprintf(&b, "- Run ID: %s\n", firstNonEmpty(input.RunID, "<run_id>"))
 	fmt.Fprintf(&b, "- Status: %s\n", outcome.Status)
 	fmt.Fprintf(&b, "- Result: %s\n", firstNonEmpty(outcome.Result, "UNKNOWN"))
@@ -74,6 +80,33 @@ func RenderReport(input ReportInput) string {
 	fmt.Fprintf(&b, "- Device token request retries: %d\n", input.Plan.Conditions.DeviceTokenRequestRetries)
 	fmt.Fprintln(&b, "- Runner read requirement: sustained MQTT reads through Go netpoll-backed connections and bounded per-device reader goroutines; command-time one-shot reads are not valid for capacity conclusions.")
 	fmt.Fprintln(&b)
+	if input.Plan.OTAEnabled() {
+		ota := input.OTAEvidence
+		fmt.Fprintln(&b, "## Firmware OTA Simulation")
+		fmt.Fprintf(&b, "- Campaign ID: `%s`\n", firstNonEmpty(ota.CampaignID, input.Plan.OTAProfile.CampaignID))
+		fmt.Fprintf(&b, "- Target version: `%s`\n", firstNonEmpty(ota.TargetVersion, input.Plan.OTAProfile.TargetVersion))
+		fmt.Fprintf(&b, "- Evidence complete: %t\n", ota.Complete)
+		fmt.Fprintf(&b, "- Selected / MQTT ready / assigned: %d / %d / %d\n", ota.DevicesSelected, ota.MQTTReady, ota.AssignmentsReceived)
+		fmt.Fprintf(&b, "- Terminal matched / expected: %d / %d\n", ota.TerminalMatched, ota.TerminalExpected)
+		fmt.Fprintf(&b, "- Unique / duplicate device results: %d / %d\n", ota.UniqueDeviceResults, ota.DuplicateDeviceResults)
+		fmt.Fprintf(&b, "- Artifact bytes / hashes verified: %d / %d\n", ota.ArtifactBytes, ota.ArtifactHashVerified)
+		fmt.Fprintf(&b, "- MQTT reboot disconnects / reconnect successes: %d / %d\n", ota.MQTTRebootDisconnects, ota.MQTTReconnectSuccesses)
+		fmt.Fprintf(&b, "- Unexpected failures: %d\n", ota.UnexpectedFailures)
+		if len(ota.ByActualTerminal) > 0 {
+			fmt.Fprintln(&b, "- Actual terminal states:")
+			for _, state := range sortedStringIntKeys(ota.ByActualTerminal) {
+				fmt.Fprintf(&b, "  - %s: %d\n", state, ota.ByActualTerminal[state])
+			}
+		}
+		if len(ota.FailureReasons) > 0 {
+			fmt.Fprintln(&b, "- Failure reasons:")
+			for _, reason := range ota.FailureReasons {
+				fmt.Fprintf(&b, "  - %s\n", reason)
+			}
+		}
+		fmt.Fprintln(&b, "- Per-device evidence: `shards/<vm-label>/ota-devices.jsonl`")
+		fmt.Fprintln(&b)
+	}
 
 	thresholds := gateThresholdsFromConditions(input.Plan.Conditions)
 	fmt.Fprintln(&b, "## Gate Standards")

@@ -82,6 +82,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	envRoot := fs.String("env-root", "", "staging/LKE env-root")
 	brandname := fs.String("brandname", "", "brand name")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -114,6 +115,7 @@ func parseRunnerDaemonFlags(name string, args []string, stderr io.Writer) (PlanO
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	opts.DeviceTokenRequestTimeout = strings.TrimSpace(*deviceTokenRequestTimeout)
 	opts.DeviceTokenRequestRetries = *deviceTokenRequestRetries
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, runnerDaemonFlagValues{
 		shardRunFlagValues: shardRunFlagValues{
 			runID:                     *runID,

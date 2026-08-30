@@ -2,6 +2,7 @@ package home100k
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1362,5 +1363,149 @@ func TestCorrelateRuntimeLogsSkipsEventsWithoutRuntimeExpectations(t *testing.T)
 	}
 	if correlation.ClientCommandEvents != 1 || correlation.MissingStreamCount != 0 || correlation.MissingSequenceCount != 0 {
 		t.Fatalf("unexpected correlation: %+v", correlation)
+	}
+}
+
+func TestLoadCollectedShardResultsAggregatesUniqueOTAEvidence(t *testing.T) {
+	root := t.TempDir()
+	for idx, deviceID := range []string{"device-1", "device-2"} {
+		dir := filepath.Join(root, fmt.Sprintf("lg%02d", idx+1))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSONFile(filepath.Join(dir, "results.json"), map[string]any{
+			"stage_results": []StageResult{{Name: "target", ShardConnectedDevices: 1}},
+			"ota":           OTAEvidence{CampaignID: "campaign-1", TargetVersion: "2.0.0", DevicesSelected: 1, MQTTReady: 1, AssignmentsReceived: 1, TerminalExpected: 1, TerminalMatched: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		row := fmt.Sprintf(`{"device_id":%q,"campaign_id":"campaign-1","target_version":"2.0.0","expected_terminal":"succeeded","actual_terminal":"succeeded","terminal_matched":true,"artifact_size_verified":true,"artifact_hash_verified":true,"mqtt_reboot_disconnected":true,"mqtt_reconnect_succeeded":true}`+"\n", deviceID)
+		if err := os.WriteFile(filepath.Join(dir, "ota-devices.jsonl"), []byte(row), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collected, err := loadCollectedShardResults(root, []Stage{{Name: "target"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !collected.OTA.Complete || collected.OTA.UniqueDeviceResults != 2 || collected.OTA.DevicesSelected != 2 || collected.OTA.TerminalMatched != 2 {
+		t.Fatalf("OTA aggregate = %#v", collected.OTA)
+	}
+}
+
+func TestLoadCollectedShardResultsRejectsDuplicateOTADeviceEvidence(t *testing.T) {
+	root := t.TempDir()
+	for idx := 0; idx < 2; idx++ {
+		dir := filepath.Join(root, fmt.Sprintf("lg%02d", idx+1))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSONFile(filepath.Join(dir, "results.json"), map[string]any{
+			"stage_results": []StageResult{{Name: "target", ShardConnectedDevices: 1}},
+			"ota":           OTAEvidence{CampaignID: "campaign-1", TargetVersion: "2.0.0", DevicesSelected: 1, MQTTReady: 1, AssignmentsReceived: 1, TerminalExpected: 1, TerminalMatched: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "ota-devices.jsonl"), []byte(`{"device_id":"duplicate","campaign_id":"campaign-1","target_version":"2.0.0","expected_terminal":"succeeded","actual_terminal":"succeeded","terminal_matched":true}`+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collected, err := loadCollectedShardResults(root, []Stage{{Name: "target"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if collected.OTA.Complete || collected.OTA.DuplicateDeviceResults != 1 {
+		t.Fatalf("OTA duplicate gate = %#v", collected.OTA)
+	}
+}
+
+func TestOTAEvidenceMapAggregationKeepsTotalsAndPeakLatencies(t *testing.T) {
+	if got := addOTAPeakLatency(nil, nil); got != nil {
+		t.Fatalf("empty latency map = %#v, want nil", got)
+	}
+	latencies := addOTAPeakLatency(nil, map[string]map[string]float64{
+		"assignment": {"p50": 10, "p95": 20},
+	})
+	latencies = addOTAPeakLatency(latencies, map[string]map[string]float64{
+		"assignment": {"p50": 8, "p95": 25},
+		"download":   {"p95": 40},
+	})
+	if latencies["assignment"]["p50"] != 10 || latencies["assignment"]["p95"] != 25 || latencies["download"]["p95"] != 40 {
+		t.Fatalf("peak latencies = %#v", latencies)
+	}
+
+	if got := addIntMap(nil, nil); got != nil {
+		t.Fatalf("empty integer map = %#v, want nil", got)
+	}
+	totals := addIntMap(nil, map[string]int{"succeeded": 2})
+	totals = addIntMap(totals, map[string]int{"succeeded": 3, "failed": 1})
+	if totals["succeeded"] != 5 || totals["failed"] != 1 {
+		t.Fatalf("integer totals = %#v", totals)
+	}
+}
+
+func TestValidateOTADeviceEvidenceReportsMalformedAndMismatchedRows(t *testing.T) {
+	root := t.TempDir()
+	evidencePath := filepath.Join(root, "ota-devices.jsonl")
+	rows := strings.Join([]string{
+		`not-json`,
+		`{"device_id":""}`,
+		`{"device_id":"device-1","campaign_id":"wrong","target_version":"wrong","expected_terminal":"succeeded","actual_terminal":"failed","terminal_matched":false}`,
+		`{"device_id":"device-1","campaign_id":"campaign-1","target_version":"2.0.0","terminal_matched":true}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(evidencePath, []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ota := validateOTADeviceEvidence(OTAEvidence{
+		CampaignID:          "campaign-1",
+		TargetVersion:       "2.0.0",
+		DevicesSelected:     1,
+		MQTTReady:           1,
+		AssignmentsReceived: 1,
+		TerminalExpected:    1,
+		TerminalMatched:     1,
+	}, []string{evidencePath, filepath.Join(root, "missing.jsonl")})
+	if ota.Complete || ota.UniqueDeviceResults != 1 || ota.DuplicateDeviceResults != 1 {
+		t.Fatalf("invalid OTA evidence gate = %#v", ota)
+	}
+	joined := strings.Join(ota.FailureReasons, "\n")
+	for _, want := range []string{
+		"evidence is invalid",
+		"empty device id",
+		"evidence mismatched",
+		"missing artifact or reboot evidence",
+		"duplicate device ids",
+		"evidence is missing",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("failure reasons %q do not contain %q", joined, want)
+		}
+	}
+}
+
+func TestApplyOTAOutcomeRequiresExactTargetEvidence(t *testing.T) {
+	plan := Plan{Conditions: TestConditions{Devices: 10}, OTAProfile: OTAProfile{Name: FirmwareOTAScenarioProfile}}
+	base := RunOutcome{Status: "COMPLETE", Result: "SUCCESS"}
+	incomplete := applyOTAOutcome(base, plan, OTAEvidence{DevicesSelected: 10, UniqueDeviceResults: 9})
+	if incomplete.Status != "INCOMPLETE" || incomplete.Result != "INCOMPLETE" {
+		t.Fatalf("incomplete OTA outcome = %#v", incomplete)
+	}
+	failed := applyOTAOutcome(base, plan, OTAEvidence{DevicesSelected: 10, UniqueDeviceResults: 10, UnexpectedFailures: 1})
+	if failed.Status != "COMPLETE" || failed.Result != "FAIL" {
+		t.Fatalf("failed OTA outcome = %#v", failed)
+	}
+	passed := applyOTAOutcome(base, plan, OTAEvidence{Complete: true, DevicesSelected: 10, UniqueDeviceResults: 10})
+	if passed.Status != "COMPLETE" || passed.Result != "SUCCESS" {
+		t.Fatalf("passed OTA outcome = %#v", passed)
+	}
+}
+
+func TestFirmwareOTAOutcomeUsesDeviceLifecycleEvidenceInsteadOfShadowCorrelation(t *testing.T) {
+	plan := Plan{Conditions: TestConditions{Devices: 10}, OTAProfile: OTAProfile{Name: FirmwareOTAScenarioProfile}}
+	serverCorrelation, runtimeCorrelation := qualificationCorrelations(plan, ServerCorrelation{}, RuntimeLogCorrelation{})
+	base := evaluateRunOutcome(plan, ServerEvidence{}, nil, LoadGeneratorHealth{}, serverCorrelation, runtimeCorrelation)
+	got := applyOTAOutcome(base, plan, OTAEvidence{Complete: true, DevicesSelected: 10, UniqueDeviceResults: 10})
+	if got.Status != "COMPLETE" || got.Result != "SUCCESS" || len(got.Reasons) != 0 {
+		t.Fatalf("OTA outcome = %#v, want COMPLETE/SUCCESS without shadow correlation", got)
 	}
 }

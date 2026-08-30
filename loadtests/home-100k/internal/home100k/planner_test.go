@@ -167,6 +167,67 @@ func TestMQTTShadowCanaryPlanUsesLightActors(t *testing.T) {
 	}
 }
 
+func TestFirmwareOTAPlanCarriesTargetParameterizedProfile(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: FirmwareOTAScenarioProfile,
+		DeviceCount:     37,
+		OTAProfile: OTAProfile{
+			CampaignID:       "campaign-1",
+			TargetVersion:    "2.0.0",
+			CurrentVersion:   "1.0.0",
+			HardwareRevision: "rev-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if plan.Conditions.Devices != 37 {
+		t.Fatalf("devices = %d, want target-parameterized 37", plan.Conditions.Devices)
+	}
+	if !plan.OTAEnabled() || plan.OTAProfile.Name != FirmwareOTAScenarioProfile {
+		t.Fatalf("OTA profile = %#v", plan.OTAProfile)
+	}
+	if plan.OTAProfile.CampaignID != "campaign-1" || plan.OTAProfile.TargetVersion != "2.0.0" ||
+		plan.OTAProfile.CurrentVersion != "1.0.0" || plan.OTAProfile.HardwareRevision != "rev-a" {
+		t.Fatalf("OTA identity fields = %#v", plan.OTAProfile)
+	}
+	if plan.OTAProfile.PollInterval != "5s" || plan.OTAProfile.UpgradeTimeout != "30m" ||
+		plan.OTAProfile.HTTPConcurrency != 250 || plan.OTAProfile.DownloadConcurrency != 64 {
+		t.Fatalf("OTA defaults = %#v", plan.OTAProfile)
+	}
+	if plan.PresenceMix["online_steady"] != 37 || len(plan.PresenceMix) != 1 {
+		t.Fatalf("OTA presence mix = %#v, want all devices online", plan.PresenceMix)
+	}
+}
+
+func TestFirmwareOTAPlanRequiresCampaignContract(t *testing.T) {
+	_, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		ScenarioProfile: FirmwareOTAScenarioProfile,
+	})
+	if err == nil || !strings.Contains(err.Error(), "OTA campaign id") {
+		t.Fatalf("NewPlan() error = %v, want missing OTA campaign contract", err)
+	}
+}
+
+func TestFirmwareOTAPlanAllowsZeroSimulationDelays(t *testing.T) {
+	_, err := NewPlan(PlanOptions{
+		EnvRoot: "runtime", Brandname: "RTK", Region: "us-sea", ScenarioProfile: FirmwareOTAScenarioProfile,
+		OTAProfile: OTAProfile{
+			CampaignID: "campaign-1", TargetVersion: "2.0.0", CurrentVersion: "1.0.0", HardwareRevision: "rev-a",
+			InstallDelay: "0s", RebootDelay: "0s", VerifyDelay: "0s",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewPlan() rejected zero simulation delay: %v", err)
+	}
+}
+
 func TestClipStorageCanaryPlanUsesTwoCamerasAndFourClips(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:         "cloud_env/staging/runtime",

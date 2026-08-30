@@ -4861,6 +4861,81 @@ printf '\n' >> "`+childLog+`"
 	}
 }
 
+func TestRunMQTTTestPassesOTAFlagsToChildScript(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeKubectl(t)
+	t.Setenv("RTK_CLOUD_LKE_PORT_FORWARD_WAIT", "0s")
+	childLog := filepath.Join(t.TempDir(), "child.log")
+	childScript := filepath.Join(t.TempDir(), "cloud-mqtt-test")
+	writeTestFile(t, childScript, `#!/usr/bin/env bash
+set -euo pipefail
+printf 'ARGS' >> "`+childLog+`"
+for arg in "$@"; do
+  printf ' %s' "$arg" >> "`+childLog+`"
+done
+printf '\n' >> "`+childLog+`"
+`)
+	if err := os.Chmod(childScript, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_TEST_SCRIPT", childScript)
+
+	err := runMQTTTest([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--brandname", "RTK",
+		"--profile", "baseline-10k",
+		"--load-model", "ota-device-simulator",
+		"--ota-campaign-id", "campaign-1",
+		"--ota-target-version", "2.0.0",
+		"--ota-current-version", "1.0.0",
+		"--ota-hardware-revision", "rev-a",
+		"--ota-anti-rollback-counter", "2",
+		"--ota-poll-interval", "3s",
+		"--ota-upgrade-timeout", "45m",
+		"--ota-http-concurrency", "300",
+		"--ota-download-concurrency", "80",
+		"--ota-install-delay", "4s",
+		"--ota-reboot-delay", "5s",
+		"--ota-verify-delay", "6s",
+		"--ota-stage-jitter-percent", "15",
+		"--ota-download-failure-percent", "1",
+		"--ota-verify-failure-percent", "2",
+		"--ota-install-failure-percent", "3",
+		"--ota-reboot-failure-percent", "4",
+		"--ota-timeout-percent", "5",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := readTestFile(t, childLog)
+	for _, want := range []string{
+		"--ota-campaign-id campaign-1",
+		"--ota-target-version 2.0.0",
+		"--ota-current-version 1.0.0",
+		"--ota-hardware-revision rev-a",
+		"--ota-anti-rollback-counter 2",
+		"--ota-poll-interval 3s",
+		"--ota-upgrade-timeout 45m",
+		"--ota-http-concurrency 300",
+		"--ota-download-concurrency 80",
+		"--ota-install-delay 4s",
+		"--ota-reboot-delay 5s",
+		"--ota-verify-delay 6s",
+		"--ota-stage-jitter-percent 15",
+		"--ota-download-failure-percent 1",
+		"--ota-verify-failure-percent 2",
+		"--ota-install-failure-percent 3",
+		"--ota-reboot-failure-percent 4",
+		"--ota-timeout-percent 5",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("child args missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestRunMQTTTestPassesTargetWindowSustainedFlagsToChildScript(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeKubectl(t)
