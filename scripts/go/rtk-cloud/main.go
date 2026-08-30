@@ -1385,8 +1385,6 @@ func selectChangedServiceRepos(changedFiles []string) []string {
 		case changed == ".gitmodules",
 			changed == "go.work",
 			changed == "go.work.sum",
-			changed == "tests/catalog.yaml",
-			strings.HasPrefix(changed, ".github/workflows/"),
 			strings.HasPrefix(changed, "scripts/go/rtk-cloud/"),
 			changed == "repos/rtk_cloud_contracts_doc":
 			selectAll = true

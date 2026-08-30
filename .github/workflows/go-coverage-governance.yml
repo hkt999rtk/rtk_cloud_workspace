@@ -10,8 +10,33 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Select affected coverage jobs
+    runs-on: ubuntu-latest
+    outputs:
+      policy: ${{ steps.select.outputs.policy }}
+      go_modules: ${{ steps.select.outputs.go_modules }}
+      node_modules: ${{ steps.select.outputs.node_modules }}
+      run_unit: ${{ steps.select.outputs.run_unit }}
+      run_node: ${{ steps.select.outputs.run_node }}
+      run_coverage: ${{ steps.select.outputs.run_coverage }}
+      account_manager_postgres: ${{ steps.select.outputs.account_manager_postgres }}
+      billing_postgres: ${{ steps.select.outputs.billing_postgres }}
+      video_cloud_postgres_emqx: ${{ steps.select.outputs.video_cloud_postgres_emqx }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Select affected modules
+        id: select
+        shell: bash
+        run: scripts/ci/select-coverage-jobs.sh "${{ github.event.pull_request.base.sha }}" HEAD "${{ github.event_name }}"
+
   policy:
     name: Catalog, policy, and inventory
+    needs: changes
+    if: needs.changes.outputs.policy == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
@@ -33,23 +58,14 @@ jobs:
 
   unit:
     name: Go unit coverage (${{ matrix.module }})
+    needs: changes
+    if: needs.changes.outputs.run_unit == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        module:
-          - workspace-tooling
-          - workspace-e2e
-          - home-load-runner
-          - account-manager
-          - billing-service
-          - cloud-admin-backend
-          - cloud-client-golang
-          - cloud-frontend
-          - cloud-logger
-          - video-cloud
-          - godaddy-dns-toolkit
+        module: ${{ fromJSON(needs.changes.outputs.go_modules) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -97,14 +113,14 @@ jobs:
 
   node:
     name: JavaScript unit coverage and inventory (${{ matrix.module }})
+    needs: changes
+    if: needs.changes.outputs.run_node == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        module:
-          - cloud-admin-web
-          - cloud-client-javascript
+        module: ${{ fromJSON(needs.changes.outputs.node_modules) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -148,6 +164,8 @@ jobs:
 
   account-manager-postgres:
     name: Account Manager PostgreSQL coverage
+    needs: changes
+    if: needs.changes.outputs.account_manager_postgres == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
@@ -194,6 +212,8 @@ jobs:
 
   billing-postgres:
     name: Billing PostgreSQL and virtual-payment coverage
+    needs: changes
+    if: needs.changes.outputs.billing_postgres == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
@@ -242,6 +262,8 @@ jobs:
 
   video-cloud-postgres-emqx:
     name: Video Cloud PostgreSQL and EMQX coverage
+    needs: changes
+    if: needs.changes.outputs.video_cloud_postgres_emqx == 'true'
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
@@ -317,8 +339,8 @@ jobs:
 
   aggregate:
     name: Coverage aggregate and redaction
-    if: always()
-    needs: [policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
+    if: always() && needs.changes.outputs.run_coverage == 'true'
+    needs: [changes, policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:

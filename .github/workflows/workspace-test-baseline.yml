@@ -2,6 +2,15 @@ name: Workspace Test Baseline
 
 on:
   pull_request:
+    paths:
+      - '.github/workflows/workspace-test-baseline.yml'
+      - 'e2e_test/**'
+      - 'go.work'
+      - 'go.work.sum'
+      - 'loadtests/home-100k/**'
+      - 'repos/rtk_cloud_contracts_doc'
+      - 'scripts/go/**'
+      - 'scripts/ci/init-submodules.sh'
   push:
     branches: [main]
   workflow_dispatch:

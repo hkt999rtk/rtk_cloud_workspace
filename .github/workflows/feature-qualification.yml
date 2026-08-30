@@ -4,7 +4,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
     paths:
-      - "tests/catalog.yaml"
       - "scripts/go/**"
       - "loadtests/home-100k/**"
       - "e2e_test/video_cloud/load/**"
@@ -58,7 +57,7 @@ permissions:
 jobs:
   select:
     name: Select load-sensitive features
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     outputs:
       required: ${{ steps.selection.outputs.required }}
       features: ${{ steps.selection.outputs.features }}
@@ -338,7 +337,7 @@ jobs:
     name: Feature qualification result
     if: always()
     needs: [select, qualify]
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     steps:
       - name: Enforce selected qualification result
         shell: bash
