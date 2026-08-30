@@ -74,7 +74,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-RUNTIME-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-RUNTIME-001` | `` | `f098f425b8ba` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-AUTHORITY-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-AUTHORITY-001` | `` | `97cb59cc0c3f` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-STORE-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-STORE-001` | `` | `c2a753afbe40` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `7edf7785f118` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003` | `test-services`, `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `7edf7785f118` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003`, `UI-CA-AUTH-LOGIN-001`, `UI-CA-AUTH-LOGIN-002`, `UI-CA-AUTH-LOGIN-003` | `test-services`, `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `8fc6d450f519` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `e06e4f5e4f81` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `cb27b7267be5` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
@@ -87,7 +87,7 @@
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-IDENTITY-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `workflow` | `8dbc7fe859d3` | `canonical` | `active` | `INT-AM-BRANDIDENT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-MEMBER-INVITE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-MEMBER-INVITE-001` | `workflow` | `5eb1a22b206d` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-PRIVACY-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PRIVACY-001` | `independent` | `6dfb6cc8f80f` | `canonical` | `active` | `INT-AM-BRANDIDENT-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-ADMIN-AUTH-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-ADMIN-AUTH-001` | `independent` | `5343074dd222` | `canonical` | `active` | `INT-AM-BRANDADMIN-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-ADMIN-AUTH-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-ADMIN-AUTH-001` | `independent` | `7fa3ed81d66f` | `canonical` | `active` | `INT-AM-BRANDADMIN-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-USER-PROVISION-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-USER-PROVISION-001` | `workflow` | `cb7ffca6cc67` | `canonical` | `active` | `INT-AM-BRANDUSER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-AUDIT-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-AUDIT-001` | `workflow` | `11aec69c99ed` | `canonical` | `active` | `INT-AM-BRANDUSER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-BFF-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-BFF-001` | `independent` | `0c67086f9b2b` | `canonical` | `active` | `INT-CA-BRANDBFF-001` | `test-services` |
@@ -466,6 +466,7 @@
 | `SPEC-CONTRACT-OPENAPI#updateDeviceShadow` | `POST /things/{thingName}/shadow` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-COMPATIBILITY-001`, `REQ-SHADOW-IDENTITY-001`, `REQ-SHADOW-HTTP-API-001`, `REQ-SHADOW-MUTATION-001`, `REQ-SHADOW-RESPONSE-001`, `REQ-SHADOW-VALIDATION-001`, `REQ-SHADOW-DELETE-001`, `REQ-SHADOW-NOTIFICATION-001`, `REQ-SHADOW-CONFORMANCE-HTTP-001`, `REQ-SHADOW-CONFORMANCE-DURABILITY-001`, `REQ-E2E-HOME-SHADOW-003` | `7acdeec2f8f0` |
 | `SPEC-CONTRACT-OPENAPI#totalClips` | `POST /total_clips` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `4af3782a7fb7` |
 | `SPEC-CONTRACT-OPENAPI#uploadClip` | `POST /upload_clip` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `c4fd8cb0e4a9` |
+| `SPEC-CONTRACT-OPENAPI#listBrandCloudAccountUsers` | `GET /v1/admin/brand-clouds/{brandCloudId}/users` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-USER-PROVISION-001` | `ed17aecd1c82` |
 | `SPEC-CONTRACT-OPENAPI#provisionBrandCloudAccountUser` | `POST /v1/admin/brand-clouds/{brandCloudId}/users` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-USER-PROVISION-001` | `119ed847f35b` |
 | `SPEC-CONTRACT-OPENAPI#createChipsetProvider` | `POST /v1/admin/chipset-providers` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `5114dee599f3` |
 | `SPEC-CONTRACT-OPENAPI#listChipsetProviders` | `GET /v1/admin/chipset-providers` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `2b39275c2fcf` |
