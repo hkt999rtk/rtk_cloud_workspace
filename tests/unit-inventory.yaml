@@ -247,11 +247,11 @@ cases:
       title: firmware campaign progress counts terminal device outcomes
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20status%20helpers%20use%20upgrade-specific%20Traditional%20Chinese%20labels
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20status%20helpers%20use%20upgrade-specific%20English%20labels
       module: cloud-admin-web
       language: javascript
       source: src/firmware.test.mjs
-      title: firmware status helpers use upgrade-specific Traditional Chinese labels
+      title: firmware status helpers use upgrade-specific English labels
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmwareCampaignDetailRows%20maps%20rollouts%20into%20read-only%20detail%20rows
@@ -372,6 +372,27 @@ cases:
       language: javascript
       source: src/http.test.mjs
       title: verification errors distinguish token and service states without raw payloads
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#i18n%20supports%20interpolation%2C%20plurals%2C%20and%20en-US%20formatting
+      module: cloud-admin-web
+      language: javascript
+      source: src/i18n.test.mjs
+      title: i18n supports interpolation, plurals, and en-US formatting
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#production%20Web%20UI%20contains%20no%20CJK%20copy%20outside%20legacy%20data%20aliases
+      module: cloud-admin-web
+      language: javascript
+      source: src/i18n.test.mjs
+      title: production Web UI contains no CJK copy outside legacy data aliases
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#service%20console%20initializes%20with%20English%20as%20its%20only%20supported%20locale
+      module: cloud-admin-web
+      language: javascript
+      source: src/i18n.test.mjs
+      title: service console initializes with English as its only supported locale
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/platform-view.test.mjs#auditCoverageCopy%20documents%20current%20write-side%20limits
@@ -565,11 +586,11 @@ cases:
       title: route kind selects one capability-filtered navigation hierarchy
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20Chinese%20platform%20route%20titles%20in%20the%20unified%20shell
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20English%20platform%20route%20titles%20in%20the%20unified%20shell
       module: cloud-admin-web
       language: javascript
       source: src/routes.test.mjs
-      title: uses Chinese platform route titles in the unified shell
+      title: uses English platform route titles in the unified shell
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20fleet%20health%20overview%20title%20for%20the%20customer%20landing%20page
