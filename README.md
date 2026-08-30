@@ -63,6 +63,84 @@ remote but does not move pinned commits. To change the validated cross-repo
 snapshot, update the relevant submodule commit intentionally and commit the
 pointer change in this workspace repository.
 
+## Local Test Prerequisites
+
+The quick workspace baseline requires the Go toolchain declared by
+`scripts/go/go.mod`. Service and UI tests may additionally require Node.js 22,
+`npm`, `jq`, Chromium, or service-specific dependencies.
+
+Docker is not required for every unit test. It is required for local tests that
+start dependencies such as the Account Manager PostgreSQL service or the Video
+Cloud EMQX broker. On Windows with Docker Desktop, enable the current distro in
+**Settings > Resources > WSL Integration**; do not install a second Docker
+daemon inside that WSL distro. Verify the integration from WSL before running
+Docker-backed tests:
+
+```sh
+docker version
+docker compose version
+docker run --rm hello-world
+```
+
+Run the workspace baseline from the repository root:
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-matrix)
+```
+
+See the [testing operator guide](docs/testing-operations.zh-TW.md) for service,
+deterministic E2E, UI, and deployed acceptance test commands.
+
+## Load Testing
+
+The canonical load-test entry point is
+`loadtests/home-100k/scripts/home-100k.sh`. Always select an explicit scenario
+and run `plan`, `preflight`, and `workflow-dry-run` before a live workflow. The
+script's default command is `workflow-live`, which can create paid Linode VMs,
+so do not invoke the script without a command.
+
+The following example reviews the MQTT 1K scenario without creating VMs:
+
+```sh
+export HOME100K_DESCRIPTION_FILE=loadtests/home-100k/scenarios/mqtt-1k.description.env
+export HOME100K_BRANDNAME=RTK1K
+export HOME100K_RUN_ID="mqtt1k-$(date -u +%Y%m%dT%H%M%SZ)"
+
+./loadtests/home-100k/scripts/home-100k.sh plan
+./loadtests/home-100k/scripts/home-100k.sh preflight
+./loadtests/home-100k/scripts/home-100k.sh workflow-dry-run
+```
+
+Only after the plan, fixture inventory, certificates, staging runtime, capacity,
+and expected cost have been reviewed, start the live lifecycle explicitly:
+
+```sh
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
+
+Artifacts and the final report are written to
+`loadtests/home-100k/reports/<run-id>/`. If a live run is interrupted, preserve
+the same `HOME100K_RUN_ID` and resume it with:
+
+```sh
+./loadtests/home-100k/scripts/home-100k.sh workflow-resume-live
+```
+
+Review resources left by that run before cleanup. Destruction requires both
+live flags and must only target the selected run ID:
+
+```sh
+./loadtests/home-100k/scripts/home-100k.sh list-vms
+./loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
+```
+
+Available profiles include MQTT, video/TURN, and clip-storage canary, 1K, 10K,
+50K, or 100K scenarios under `loadtests/home-100k/scenarios/`. Do not obtain a
+larger test by changing only `HOME100K_DEVICES`; select the matching scenario
+and review its capacity plan. Detailed prerequisites, success gates, monitoring,
+resume behavior, and cleanup rules are in the
+[Home 100K load-test guide](loadtests/home-100k/README.md).
+
 ## Environment Operations
 
 Start with the read-only preflight, then render and review the resolved plan.
@@ -84,6 +162,56 @@ destructive-operation warnings are in the
 [deployment operator guide](docs/deployment-operations.zh-TW.md). Test data,
 qualification, load profiles, monitoring, report gates, resume, and cleanup are
 in the [testing operator guide](docs/testing-operations.zh-TW.md).
+
+## Remove a Deployed Environment
+
+> [!DANGER]
+> `deployment remove` is destructive. It deletes resources owned by the selected
+> stack, including Kubernetes workloads and storage, the LKE cluster, persistent
+> volumes, VMs, firewalls, VPCs, owned DNS records, and an environment-owned
+> empty Object Storage bucket. A deleted environment or its data may not be
+> recoverable. Never run this command to test access or inspect a deployment.
+
+Before removal:
+
+1. Confirm that `cloud_env/<environment>/runtime` belongs to the exact cluster
+   and stack being removed.
+2. Back up required runtime state, databases, Object Storage data, test reports,
+   and sanitized evidence outside the environment runtime.
+3. Confirm the environment SecretStore still provides the Linode and DNS
+   credentials required for cleanup.
+4. Stop acceptance and load tests. List and remove load-generator VMs separately
+   with their original `HOME100K_RUN_ID`.
+5. Review `CLOUD_STACK_NAME` and use that exact value for `--confirm`:
+
+   ```sh
+   rg '^CLOUD_STACK_NAME=' cloud_env/staging/environment.env
+   ```
+
+Clean up load-generator VMs before removing the environment, when applicable:
+
+```sh
+export HOME100K_RUN_ID=<original-run-id>
+./loadtests/home-100k/scripts/home-100k.sh list-vms
+./loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
+```
+
+After reviewing the target and backups, remove the environment explicitly. For
+example, the staging stack uses:
+
+```sh
+go run ./scripts/go/rtk-cloud -- deployment remove \
+  --environment staging \
+  --confirm video-cloud-staging
+```
+
+The cleanup is ownership-scoped and must not be used to remove CI runners,
+release buckets, another environment, or unrelated provider resources. A
+non-empty Object Storage bucket or any provider cleanup failure means removal is
+incomplete. Check the command result and then verify in the provider console
+that no resources owned by the selected stack remain. Do not manually delete
+the LKE cluster first; doing so can prevent the normal Kubernetes storage and
+ownership-aware cleanup sequence.
 
 ## Workspace Rules
 
