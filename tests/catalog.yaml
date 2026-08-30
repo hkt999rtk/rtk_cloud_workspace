@@ -771,7 +771,7 @@ cases:
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
-    verifies: [REQ-CA-BRAND-IDENTITY-001, REQ-CA-BRAND-USER-PROVISION-001, REQ-UI-CA-CLOUD-004]
+    verifies: [REQ-CA-BRAND-IDENTITY-001, REQ-CA-BRAND-USER-PROVISION-001]
     status: active
   - id: INT-CA-BRANDBFF-001
     title: Cloud Admin Brand routes require and forward Account Manager authority

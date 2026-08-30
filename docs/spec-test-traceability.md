@@ -95,7 +95,7 @@
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-001` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-001` | `independent` | `361a7a2e6950` | `canonical` | `active` | `UI-CA-CLOUD-001` | `test-ui` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-002` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-002` | `independent` | `7257915bf274` | `canonical` | `active` | `UI-CA-CLOUD-002` | `test-ui` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-003` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-003` | `independent` | `a7c801d75c43` | `canonical` | `active` | `UI-CA-CLOUD-003` | `test-ui` |
-| `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-004` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `workflow` | `bf5f2df40122` | `canonical` | `active` | `INT-AM-BRANDOWNER-001`, `UI-CA-CLOUD-004` | `test-services`, `test-ui` |
+| `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-004` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `workflow` | `bf5f2df40122` | `canonical` | `active` | `UI-CA-CLOUD-004` | `test-ui` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-005` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `workflow` | `955baca41872` | `canonical` | `active` | `UI-CA-CLOUD-005` | `test-ui` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-CLOUD-006` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-006` | `independent` | `e0f043fb6c11` | `canonical` | `active` | `UI-CA-CLOUD-006` | `test-ui` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-UI-CA-OPS-001` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-OPS-001` | `independent` | `9c851d07ef2e` | `canonical` | `active` | `UI-CA-OPS-001` | `test-ui` |

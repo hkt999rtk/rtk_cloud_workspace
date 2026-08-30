@@ -591,6 +591,17 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 	},
 	{
 		TestID: "INT-AM-BRANDOWNER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesAndActivatesBrandOwnerByEmail",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-IDENTITY-001": {
+				"global_owner_identity_created":     "PASS",
+				"owner_membership_discovered_by_me": "PASS",
+			},
+			"REQ-CA-BRAND-USER-PROVISION-001": {
+				"email_activation_required":   "PASS",
+				"activation_token_single_use": "PASS",
+				"owner_membership_created":    "PASS",
+			},
+		},
 		Workflows: map[string]map[string]string{
 			"WF-CA-BRAND-001": {
 				"create_brand_cloud":          "PASS",
