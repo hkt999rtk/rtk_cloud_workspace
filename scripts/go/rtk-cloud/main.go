@@ -75,6 +75,7 @@ var commands = map[string]commandSpec{
 	"mqtt-test":                        {run: runMQTTTest},
 	"mqtt-trace-report":                {run: runMQTTTraceReport},
 	"platform-admin-token":             {run: runPlatformAdminToken},
+	"pre-pr":                           {run: runPrePR},
 	"provisioning-lifecycle-evidence":  {run: runProvisioningLifecycleEvidence},
 	"video-cloud-admin-token":          {run: runVideoCloudAdminToken},
 	"cloud-logger-token":               {run: runCloudLoggerToken},
