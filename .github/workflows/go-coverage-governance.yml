@@ -37,7 +37,7 @@ jobs:
     name: Catalog, policy, and inventory
     needs: changes
     if: needs.changes.outputs.policy == 'true'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -60,7 +60,7 @@ jobs:
     name: Go unit coverage (${{ matrix.module }})
     needs: changes
     if: needs.changes.outputs.run_unit == 'true'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -115,7 +115,7 @@ jobs:
     name: JavaScript unit coverage and inventory (${{ matrix.module }})
     needs: changes
     if: needs.changes.outputs.run_node == 'true'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -166,7 +166,7 @@ jobs:
     name: Account Manager PostgreSQL coverage
     needs: changes
     if: needs.changes.outputs.account_manager_postgres == 'true'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     services:
       postgres:
@@ -214,7 +214,7 @@ jobs:
     name: Billing PostgreSQL and virtual-payment coverage
     needs: changes
     if: needs.changes.outputs.billing_postgres == 'true'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     services:
       postgres:
@@ -264,7 +264,7 @@ jobs:
     name: Video Cloud PostgreSQL and EMQX coverage
     needs: changes
     if: needs.changes.outputs.video_cloud_postgres_emqx == 'true'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     services:
       postgres:
@@ -341,7 +341,7 @@ jobs:
     name: Coverage aggregate and redaction
     if: always() && needs.changes.outputs.run_coverage == 'true'
     needs: [changes, policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

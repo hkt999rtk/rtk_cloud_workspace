@@ -22,7 +22,7 @@ permissions:
 jobs:
   playwright:
     name: Playwright ${{ matrix.ui }} E2E
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
