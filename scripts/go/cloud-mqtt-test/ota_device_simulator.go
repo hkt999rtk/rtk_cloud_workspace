@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -32,7 +33,8 @@ type otaOptions struct {
 	CurrentVersion         string  `json:"current_version,omitempty"`
 	HardwareRevision       string  `json:"hardware_revision,omitempty"`
 	AntiRollbackCounter    int     `json:"anti_rollback_counter"`
-	PollInterval           string  `json:"poll_interval"`
+	PollMinInterval        string  `json:"poll_min_interval"`
+	PollMaxInterval        string  `json:"poll_max_interval"`
 	UpgradeTimeout         string  `json:"upgrade_timeout"`
 	HTTPConcurrency        int     `json:"http_concurrency"`
 	DownloadConcurrency    int     `json:"download_concurrency"`
@@ -49,7 +51,8 @@ type otaOptions struct {
 
 func defaultOTAOptions() otaOptions {
 	return otaOptions{
-		PollInterval:        "5s",
+		PollMinInterval:     "10s",
+		PollMaxInterval:     "60s",
 		UpgradeTimeout:      "30m",
 		HTTPConcurrency:     250,
 		DownloadConcurrency: 64,
@@ -66,7 +69,8 @@ func registerOTAFlags(opts *otaOptions) {
 	flag.StringVar(&opts.CurrentVersion, "ota-current-version", opts.CurrentVersion, "required initial device firmware version")
 	flag.StringVar(&opts.HardwareRevision, "ota-hardware-revision", opts.HardwareRevision, "required device hardware revision")
 	flag.IntVar(&opts.AntiRollbackCounter, "ota-anti-rollback-counter", opts.AntiRollbackCounter, "device anti-rollback counter")
-	flag.StringVar(&opts.PollInterval, "ota-poll-interval", opts.PollInterval, "OTA assignment poll interval")
+	flag.StringVar(&opts.PollMinInterval, "ota-poll-min-interval", opts.PollMinInterval, "minimum OTA assignment poll interval")
+	flag.StringVar(&opts.PollMaxInterval, "ota-poll-max-interval", opts.PollMaxInterval, "maximum OTA assignment poll interval")
 	flag.StringVar(&opts.UpgradeTimeout, "ota-upgrade-timeout", opts.UpgradeTimeout, "per-device OTA deadline after MQTT ready")
 	flag.IntVar(&opts.HTTPConcurrency, "ota-http-concurrency", opts.HTTPConcurrency, "maximum concurrent OTA HTTP requests")
 	flag.IntVar(&opts.DownloadConcurrency, "ota-download-concurrency", opts.DownloadConcurrency, "maximum concurrent artifact streams")
@@ -104,7 +108,8 @@ func (opts otaOptions) validate() error {
 		value     string
 		allowZero bool
 	}{
-		{"--ota-poll-interval", opts.PollInterval, false},
+		{"--ota-poll-min-interval", opts.PollMinInterval, false},
+		{"--ota-poll-max-interval", opts.PollMaxInterval, false},
 		{"--ota-upgrade-timeout", opts.UpgradeTimeout, false},
 		{"--ota-install-delay", opts.InstallDelay, true},
 		{"--ota-reboot-delay", opts.RebootDelay, true},
@@ -114,6 +119,11 @@ func (opts otaOptions) validate() error {
 		if err != nil || d < 0 || (!item.allowZero && d == 0) {
 			return fmt.Errorf("%s must be a valid %sduration", item.name, map[bool]string{true: "non-negative ", false: "positive "}[item.allowZero])
 		}
+	}
+	pollMin, _ := time.ParseDuration(strings.TrimSpace(opts.PollMinInterval))
+	pollMax, _ := time.ParseDuration(strings.TrimSpace(opts.PollMaxInterval))
+	if pollMax <= pollMin {
+		return errors.New("--ota-poll-max-interval must be greater than --ota-poll-min-interval")
 	}
 	if opts.HTTPConcurrency <= 0 {
 		return errors.New("--ota-http-concurrency must be positive")
@@ -146,20 +156,22 @@ func (opts otaOptions) validate() error {
 
 type otaRuntimeConfig struct {
 	otaOptions
-	PollEvery time.Duration
-	Timeout   time.Duration
-	Install   time.Duration
-	Reboot    time.Duration
-	Verify    time.Duration
+	PollMin time.Duration
+	PollMax time.Duration
+	Timeout time.Duration
+	Install time.Duration
+	Reboot  time.Duration
+	Verify  time.Duration
 }
 
 func (opts otaOptions) runtimeConfig() otaRuntimeConfig {
-	poll, _ := time.ParseDuration(opts.PollInterval)
+	pollMin, _ := time.ParseDuration(opts.PollMinInterval)
+	pollMax, _ := time.ParseDuration(opts.PollMaxInterval)
 	timeout, _ := time.ParseDuration(opts.UpgradeTimeout)
 	install, _ := time.ParseDuration(opts.InstallDelay)
 	reboot, _ := time.ParseDuration(opts.RebootDelay)
 	verify, _ := time.ParseDuration(opts.VerifyDelay)
-	return otaRuntimeConfig{otaOptions: opts, PollEvery: poll, Timeout: timeout, Install: install, Reboot: reboot, Verify: verify}
+	return otaRuntimeConfig{otaOptions: opts, PollMin: pollMin, PollMax: pollMax, Timeout: timeout, Install: install, Reboot: reboot, Verify: verify}
 }
 
 type otaManifest struct {
@@ -587,7 +599,17 @@ func (r *otaDeviceRunner) reconnectDeviceMQTT(ctx context.Context, session *sust
 }
 
 func (r *otaDeviceRunner) waitForAssignment(ctx context.Context, session sustainedDeviceSession, result *otaDeviceResult) (otaAssignment, error) {
+	var notBefore time.Time
 	for {
+		wait := normallyDistributedOTAPollDuration(r.config.PollMin, r.config.PollMax, r.seed, r.runID, result.DeviceID, result.CheckAttempts+1)
+		if !notBefore.IsZero() {
+			if until := time.Until(notBefore); until > wait {
+				wait = until
+			}
+		}
+		if err := sleepContext(ctx, wait); err != nil {
+			return otaAssignment{}, fmt.Errorf("OTA assignment deadline after decision=%s reason=%s: %w", result.LastCheckDecision, result.LastCheckReason, err)
+		}
 		var response otaCheckResponse
 		body := map[string]any{
 			"current_version":       r.config.CurrentVersion,
@@ -611,15 +633,7 @@ func (r *otaDeviceRunner) waitForAssignment(ctx context.Context, session sustain
 		if response.Decision != "deferred" && response.Decision != "no_update" {
 			return otaAssignment{}, fmt.Errorf("unsupported OTA check decision %q", response.Decision)
 		}
-		wait := jitteredOTADuration(r.config.PollEvery, r.config.StageJitterPercent, r.seed, r.runID, result.DeviceID, "poll-"+strconv.Itoa(result.CheckAttempts))
-		if !response.NotBefore.IsZero() {
-			if until := time.Until(response.NotBefore); until > wait {
-				wait = until
-			}
-		}
-		if err := sleepContext(ctx, wait); err != nil {
-			return otaAssignment{}, fmt.Errorf("OTA assignment deadline after decision=%s reason=%s: %w", response.Decision, response.ReasonCode, err)
-		}
+		notBefore = response.NotBefore
 	}
 }
 
@@ -972,6 +986,25 @@ func jitteredOTADuration(base time.Duration, percent float64, seed int, runID, d
 		factor = 0
 	}
 	return time.Duration(float64(base) * factor)
+}
+
+func normallyDistributedOTAPollDuration(minimum, maximum time.Duration, seed int, runID, deviceID string, attempt int) time.Duration {
+	if maximum <= minimum {
+		return minimum
+	}
+	mean := float64(minimum+maximum) / 2
+	standardDeviation := float64(maximum-minimum) / 6
+	for sample := 0; sample < 8; sample++ {
+		digest := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%s\x00%d\x00%d", seed, runID, deviceID, attempt, sample)))
+		u1 := (float64(binary.BigEndian.Uint64(digest[:8])) + 1) / (float64(^uint64(0)) + 2)
+		u2 := (float64(binary.BigEndian.Uint64(digest[8:16])) + 1) / (float64(^uint64(0)) + 2)
+		z := math.Sqrt(-2*math.Log(u1)) * math.Cos(2*math.Pi*u2)
+		value := mean + z*standardDeviation
+		if value >= float64(minimum) && value <= float64(maximum) {
+			return time.Duration(value)
+		}
+	}
+	return time.Duration(mean)
 }
 
 func sleepOTAStage(ctx context.Context, base time.Duration, percent float64, seed int, runID, deviceID, stage string) error {

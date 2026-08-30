@@ -25,7 +25,7 @@ func TestRegisterOTAFlags(t *testing.T) {
 	registerOTAFlags(&opts)
 	for _, name := range []string{
 		"ota-campaign-id", "ota-target-version", "ota-current-version", "ota-hardware-revision", "ota-anti-rollback-counter",
-		"ota-poll-interval", "ota-upgrade-timeout", "ota-http-concurrency", "ota-download-concurrency", "ota-install-delay",
+		"ota-poll-min-interval", "ota-poll-max-interval", "ota-upgrade-timeout", "ota-http-concurrency", "ota-download-concurrency", "ota-install-delay",
 		"ota-reboot-delay", "ota-verify-delay", "ota-stage-jitter-percent", "ota-download-failure-percent", "ota-verify-failure-percent",
 		"ota-install-failure-percent", "ota-reboot-failure-percent", "ota-timeout-percent",
 	} {
@@ -66,7 +66,9 @@ func TestOTAOptionsValidate(t *testing.T) {
 		want   string
 	}{
 		{"negative anti rollback", func(o *otaOptions) { o.AntiRollbackCounter = -1 }, "anti-rollback"},
-		{"invalid poll", func(o *otaOptions) { o.PollInterval = "invalid" }, "poll-interval"},
+		{"invalid poll minimum", func(o *otaOptions) { o.PollMinInterval = "invalid" }, "poll-min-interval"},
+		{"invalid poll maximum", func(o *otaOptions) { o.PollMaxInterval = "invalid" }, "poll-max-interval"},
+		{"reversed poll range", func(o *otaOptions) { o.PollMinInterval, o.PollMaxInterval = "60s", "10s" }, "greater than"},
 		{"zero timeout", func(o *otaOptions) { o.UpgradeTimeout = "0s" }, "upgrade-timeout"},
 		{"negative install", func(o *otaOptions) { o.InstallDelay = "-1s" }, "install-delay"},
 		{"invalid reboot", func(o *otaOptions) { o.RebootDelay = "invalid" }, "reboot-delay"},
@@ -375,7 +377,7 @@ func TestOTAWaitForAssignmentPollsDeferredAndNoUpdate(t *testing.T) {
 	decisions := []string{"deferred", "no_update", "assigned"}
 	runner, server, _ := newTestOTADeviceRunner(t, payload, payload, &decisions)
 	defer server.Close()
-	runner.config.PollEvery = time.Millisecond
+	runner.config.PollMin, runner.config.PollMax = time.Millisecond, 2*time.Millisecond
 	result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
 	assignment, err := runner.waitForAssignment(context.Background(), testOTASession(), &result)
 	if err != nil {
@@ -392,7 +394,7 @@ func TestOTAWaitForAssignmentHonorsDeadline(t *testing.T) {
 	}))
 	defer server.Close()
 	runner := testOTARunner(server.URL)
-	runner.config.PollEvery = 50 * time.Millisecond
+	runner.config.PollMin, runner.config.PollMax = 50*time.Millisecond, 60*time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 	result := newOTADeviceResult("device-1", "camera", runner.config, "", "succeeded")
@@ -421,6 +423,27 @@ func TestOTAWaitForAssignmentRejectsMalformedDecisions(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestNormallyDistributedOTAPollDurationIsBoundedDeterministicAndCentered(t *testing.T) {
+	const samples = 10_000
+	minimum, maximum := 10*time.Second, 60*time.Second
+	var total time.Duration
+	for index := 0; index < samples; index++ {
+		deviceID := "device-" + strconv.Itoa(index)
+		got := normallyDistributedOTAPollDuration(minimum, maximum, 7, "run", deviceID, 1)
+		if got < minimum || got > maximum {
+			t.Fatalf("poll duration %s is outside [%s, %s]", got, minimum, maximum)
+		}
+		if repeat := normallyDistributedOTAPollDuration(minimum, maximum, 7, "run", deviceID, 1); repeat != got {
+			t.Fatalf("poll duration is not deterministic: first=%s repeat=%s", got, repeat)
+		}
+		total += got
+	}
+	mean := total / samples
+	if mean < 34*time.Second || mean > 36*time.Second {
+		t.Fatalf("poll duration mean = %s, want approximately 35s", mean)
 	}
 }
 
@@ -832,6 +855,7 @@ func testOTARuntimeConfig() otaRuntimeConfig {
 	opts.StageJitterPercent = 0
 	config := opts.runtimeConfig()
 	config.Install, config.Reboot, config.Verify = 0, 0, 0
+	config.PollMin, config.PollMax = time.Nanosecond, 2*time.Nanosecond
 	return config
 }
 
