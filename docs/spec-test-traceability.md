@@ -75,7 +75,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-AUTHORITY-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-AUTHORITY-001` | `` | `97cb59cc0c3f` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-STORE-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-STORE-001` | `` | `c2a753afbe40` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `4c9bd1e578e4` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003` | `test-services`, `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `a0a844142d47` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `330ef0ad4503` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `3486cc975678` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `c82c1a79b3cf` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
@@ -147,11 +147,11 @@
 | `repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md#REQ-CA-DASHBOARD-DECISIONS-001` | `FEAT-CA-PLATFORM-DASHBOARD-001` | `REQ-CA-DASHBOARD-DECISIONS-001` | `` | `a37071ba4d4c` | `approved` | `planned` | — | — |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `independent` | `c1d96ac86b52` | `service` | `active` | `UI-CA-FLEETPAGE-001`, `UI-CA-FLEETPAGE-003`, `UI-CA-FLEETPAGE-005` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-FLEETPAGE-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `independent` | `1d4686634daa` | `service` | `active` | `UI-CA-FLEETPAGE-002` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-001` | `` | `e2c75cb93aaf` | `service` | `active` | `UI-CA-PROV-001` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002` | `` | `99372a6457c6` | `service` | `active` | `UI-CA-PROV-002` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-003` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-003` | `` | `50a1a07176df` | `service` | `active` | `UI-CA-PROV-003` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-004` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-004` | `` | `f0e0bfe150b3` | `service` | `active` | `UI-CA-PROV-004` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-005` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-005` | `` | `5f392d4be5c0` | `service` | `active` | `UI-CA-PROV-005` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-001` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-001` | `` | `17da432b8d33` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-002` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002` | `` | `20f70e7fd04c` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-003` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-003` | `` | `d0b7f0d40e76` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-004` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-004` | `` | `0a976200cb48` | `service` | `retired` | — | — |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-PROV-005` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-005` | `` | `970a1c2ec0aa` | `service` | `retired` | — | — |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-001` | `` | `e098796ab03f` | `service` | `active` | `UI-CA-CHIPSET-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-002` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-002` | `` | `1e555a3c9d49` | `service` | `active` | `UI-CA-CHIPSET-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-003` | `` | `f71c06b8cce2` | `service` | `active` | `UI-CA-CHIPSET-003` | `test-ui` |
@@ -851,9 +851,6 @@
 | `SPEC-CA-OPENAPI#deleteApiProductCollaborator` | `DELETE /api/products/{productID}/collaborators/{userID}` | `` | — | `e50d138a6fa6` |
 | `SPEC-CA-OPENAPI#patchApiProductCollaborator` | `PATCH /api/products/{productID}/collaborators/{userID}` | `` | — | `428502dfbe8b` |
 | `SPEC-CA-OPENAPI#postApiProductOwnerTransfer` | `POST /api/products/{productID}/owner-transfer` | `` | — | `15fbd3cf3841` |
-| `SPEC-CA-OPENAPI#postApiProvisioningJobs` | `POST /api/provisioning/jobs` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `057a0f5a28f6` |
-| `SPEC-CA-OPENAPI#postApiProvisioningSources` | `POST /api/provisioning/sources` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `08af7c9e0b17` |
-| `SPEC-CA-OPENAPI#postApiProvisioningValidate` | `POST /api/provisioning/validate` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `6cf7c72effbe` |
 | `SPEC-CA-OPENAPI#getApiReports` | `GET /api/reports` | `FEAT-CA-OPS-001` | `REQ-UI-CA-REPORT-004` | `e69be259f21c` |
 | `SPEC-CA-OPENAPI#postApiReports` | `POST /api/reports` | `FEAT-CA-OPS-001` | `REQ-UI-CA-REPORT-004` | `cbf63900f42c` |
 | `SPEC-CA-OPENAPI#getApiReportsById` | `GET /api/reports/{id}` | `FEAT-CA-OPS-001` | `REQ-UI-CA-REPORT-004` | `b06f330b0b94` |
@@ -1255,8 +1252,8 @@
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L280` | `draft` | `planned` | `d119c9ed0c84` | not human roles and must not be displayed as ACL labels. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L293` | `draft` | `planned` | `56db3ec9a934` | Backend handlers and frontend components must enforce these rules consistently. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L295` | `draft` | `planned` | `7444f7d571cd` | visibility constraint on a specific field, it must align with the table below. |
-| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
-| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L478` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L480` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Purpose@L46` | `draft` | `planned` | `c00c1a49a040` | Each SDK package must implement this contract or explicitly document which |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L55` | `draft` | `planned` | `ed9d3ad28b0a` | The SDK (or a manufacturing-line tool that calls SDK primitives) must: |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L65` | `draft` | `planned` | `b1acacc9ed18` | The key generation helper should be: |
@@ -1363,8 +1360,8 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L244` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `false` | normative clause 5ab164b3f034 requires a stable FEAT-*/REQ-* source mapping: persona, but route guards and enabled UI actions must use explicit |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Tier 2 — Brand Operator Roles@L126` | `false` | normative clause 0915d659e349 requires a stable FEAT-*/REQ-* source mapping: Tier 2 daily authentication should use Account Manager-backed SSO. Account |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L472` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L474` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L478` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L480` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `deleteApiProductCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivity` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiBillingActivityDetail` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
