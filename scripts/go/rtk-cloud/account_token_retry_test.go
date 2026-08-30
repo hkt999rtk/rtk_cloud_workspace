@@ -27,7 +27,7 @@ func TestAccountEnsureUserAppCertificateUsesExtendedTransientRetryBudget(t *test
 
 	loginAttempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+		if r.URL.Path != "/v1/auth/login" {
 			http.NotFound(w, r)
 			return
 		}
@@ -62,7 +62,7 @@ func TestAccountEnsureUserAppCertificateUsesExtendedTransientRetryBudget(t *test
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
-	_, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, nil, nil)
+	_, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-user:user-1", false, nil, nil)
 	if err != nil {
 		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestAccountEnsureUserAppCertificateBootstrapsWithCSRInFirstLogin(t *testing
 	t.Setenv("RTK_CLOUD_APP_CERT_KEY_ALGORITHM", "p256")
 	loginAttempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+		if r.URL.Path != "/v1/auth/login" {
 			http.NotFound(w, r)
 			return
 		}
@@ -102,7 +102,7 @@ func TestAccountEnsureUserAppCertificateBootstrapsWithCSRInFirstLogin(t *testing
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", true, nil, nil)
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-user:user-1", true, nil, nil)
 	if err != nil {
 		t.Fatalf("accountEnsureUserAppCertificate() error = %v", err)
 	}
@@ -147,7 +147,7 @@ func TestAccountCreateUserRefreshesPlatformTokenBeforeExpiry(t *testing.T) {
 				t.Fatalf("authorization header = %q", r.Header.Get("authorization"))
 			}
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(map[string]any{"action": "created", "brand_cloud_user": map[string]string{"id": "brand-user-1"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"action": "created", "user": map[string]string{"id": "brand-user-1"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -160,7 +160,7 @@ func TestAccountCreateUserRefreshesPlatformTokenBeforeExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("accountCreateUser() error = %v", err)
 	}
-	if action.Action != "created" || action.BrandCloudUserID != "brand-user-1" || session.AccessToken == oldAccessToken || session.RefreshToken == "" || loginCount != 0 || refreshCount != 1 || createAttempts != 1 {
+	if action.Action != "created" || action.UserID != "brand-user-1" || session.AccessToken == oldAccessToken || session.RefreshToken == "" || loginCount != 0 || refreshCount != 1 || createAttempts != 1 {
 		t.Fatalf("action=%+v session=%+v loginCount=%d refreshCount=%d createAttempts=%d", action, session, loginCount, refreshCount, createAttempts)
 	}
 }
@@ -185,8 +185,8 @@ func TestAccountCreateUserReusesValidPlatformSession(t *testing.T) {
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"action":           "created",
-				"brand_cloud_user": map[string]string{"id": "brand-user"},
+				"action": "created",
+				"user":   map[string]string{"id": "brand-user"},
 			})
 		default:
 			http.NotFound(w, r)
@@ -223,9 +223,6 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 		case "/v1/admin/brand-clouds/brand-1/users":
 			createAttempts++
 			http.Error(w, "create user should not be called for reusable artifact", http.StatusInternalServerError)
-		case "/v1/brand-clouds/rtk-test/auth/login":
-			brandLoginAttempts++
-			http.Error(w, "brand-cloud login should not be called for reusable artifact", http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
 		}
@@ -245,13 +242,15 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 	existingUser := map[string]any{
+		"id":           "user-1",
+		"user_id":      "user-1",
 		"email":        "rtk+001@users.local",
 		"display_name": "RTK User 001",
 		"role":         "member",
 		"password":     "existing-password",
 		"action":       "assigned",
 		"app_credentials": map[string]any{
-			"subject":         "app-brand-cloud-user:brand-user-1",
+			"subject":         "app-user:user-1",
 			"key_algorithm":   "ed25519",
 			"private_key_pem": "-----BEGIN PRIVATE KEY-----\nlocal-key\n-----END PRIVATE KEY-----",
 			"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nlocal-csr\n-----END CERTIFICATE REQUEST-----",
@@ -296,59 +295,29 @@ func TestCreateUsersReusesCompleteLocalArtifact(t *testing.T) {
 	}
 }
 
+func TestCreateUsersRejectsBulkOwnerProvisioning(t *testing.T) {
+	err := runCreateUsers([]string{"--env-root", t.TempDir(), "--brandname", "RTK", "--role", "owner"})
+	if err == nil || !strings.Contains(err.Error(), "load-owner-activation") {
+		t.Fatalf("runCreateUsers() error = %v, want formal owner activation guidance", err)
+	}
+}
+
 func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	createAttempts := 0
 	brandLoginAttempts := 0
-	revokeAttempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/auth/login":
-			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
-		case "/v1/admin/brand-clouds":
-			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{
-				"id":          "brand-1",
-				"name":        "RTK",
-				"tenant_slug": "rtk-test",
-				"metadata":    map[string]string{"brandname": "RTK"},
-			}}})
-		case "/v1/admin/brand-clouds/brand-1/users":
-			createAttempts++
-			var req map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode create user request: %v", err)
-			}
-			if req["rotate_password"] != true {
-				t.Fatalf("rotate_password = %v, want true", req["rotate_password"])
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"action":           "assigned",
-				"brand_cloud_user": map[string]string{"id": "brand-user-1"},
-			})
-		case "/v1/admin/brand-clouds/brand-1/users/brand-user-1/app-certificate/revoke":
-			revokeAttempts++
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "revoked"})
-		case "/v1/brand-clouds/rtk-test/auth/login":
-			brandLoginAttempts++
 			var req map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode brand login request: %v", err)
+				t.Fatalf("decode login request: %v", err)
 			}
-			if brandLoginAttempts == 1 {
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"user":   map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
-					"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
-					"app_certificate": map[string]string{
-						"status":             "issued",
-						"fingerprint_sha256": "stale-fingerprint",
-						"certificate_pem":    "stale-cert",
-					},
-				})
+			if req["email"] != "rtk+001@users.local" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
 				return
 			}
+			brandLoginAttempts++
 			if req["app_csr_pem"] == "" {
-				if revokeAttempts != 1 {
-					t.Fatalf("revokeAttempts=%d, want 1 before certificate recheck", revokeAttempts)
-				}
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
 					"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
@@ -365,6 +334,23 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 					"certificate_pem":    "rotated-cert",
 				},
 			})
+		case "/v1/admin/brand-clouds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{
+				"id":          "brand-1",
+				"name":        "RTK",
+				"tenant_slug": "rtk-test",
+				"metadata":    map[string]string{"brandname": "RTK"},
+			}}})
+		case "/v1/admin/brand-clouds/brand-1/users":
+			createAttempts++
+			var req map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode create user request: %v", err)
+			}
+			if req["rotate_password"] != true {
+				t.Fatalf("rotate_password = %v, want true", req["rotate_password"])
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"action": "assigned", "user": map[string]string{"id": "user-1"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -389,6 +375,8 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 		"tenant_slug":    "rtk-test",
 		"role":           "member",
 		"users": []map[string]any{{
+			"id":       "user-1",
+			"user_id":  "user-1",
 			"email":    "rtk+001@users.local",
 			"password": "existing-password",
 			"app_credentials": map[string]any{
@@ -411,8 +399,8 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1", "--rotate-password"}); err != nil {
 		t.Fatalf("runCreateUsers() error = %v", err)
 	}
-	if createAttempts != 1 || brandLoginAttempts != 3 || revokeAttempts != 1 {
-		t.Fatalf("createAttempts=%d brandLoginAttempts=%d revokeAttempts=%d", createAttempts, brandLoginAttempts, revokeAttempts)
+	if createAttempts != 1 || brandLoginAttempts != 2 {
+		t.Fatalf("createAttempts=%d globalLoginAttempts=%d", createAttempts, brandLoginAttempts)
 	}
 	store, err := openTestDataStore(envRoot, "RTK")
 	if err != nil {
@@ -444,7 +432,23 @@ func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/auth/login":
-			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
+			var req map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode login request: %v", err)
+			}
+			if req["email"] == "admin@example.test" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
+				return
+			}
+			email := req["email"]
+			userNumber := createUsersTestUserNumber(email)
+			cert := map[string]string{"status": "csr_required"}
+			if strings.TrimSpace(req["app_csr_pem"]) != "" {
+				cert = map[string]string{"status": "issued", "certificate_pem": "new-cert", "fingerprint_sha256": "fingerprint-" + userNumber}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user": map[string]string{"id": "user-" + userNumber, "email": email}, "tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}, "app_certificate": cert,
+			})
 		case r.URL.Path == "/v1/admin/brand-clouds":
 			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{
 				"id":          "brand-1",
@@ -475,28 +479,8 @@ func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
 			userNumber := createUsersTestUserNumber(email)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"action":           "created",
-				"brand_cloud_user": map[string]string{"id": "brand-user-" + userNumber},
-			})
-		case r.URL.Path == "/v1/brand-clouds/rtk-test/auth/login":
-			var req map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("decode brand login request: %v", err)
-			}
-			email := req["email"]
-			userNumber := createUsersTestUserNumber(email)
-			cert := map[string]string{"status": "csr_required"}
-			if strings.TrimSpace(req["app_csr_pem"]) != "" {
-				cert = map[string]string{
-					"status":             "issued",
-					"certificate_pem":    "new-cert",
-					"fingerprint_sha256": "fingerprint-" + userNumber,
-				}
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"user":            map[string]string{"id": "user-" + userNumber, "email": email},
-				"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))},
-				"app_certificate": cert,
+				"action": "created",
+				"user":   map[string]string{"id": "user-" + userNumber},
 			})
 		default:
 			http.NotFound(w, r)
@@ -595,7 +579,7 @@ func TestStartProvisionRefreshesBrandCloudUserTokenOnUnauthorized(t *testing.T) 
 	newAccessToken := testJWT(time.Now().Add(2 * time.Hour))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-test/auth/refresh":
+		case "/v1/auth/refresh":
 			refreshCount++
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": newAccessToken, "refresh_token": testJWT(time.Now().Add(24 * time.Hour))}})
 		case "/v1/orgs/brand-1/devices/device-1/provision":
@@ -762,7 +746,7 @@ func TestPrepareBindProvisionUserSessionsLogsProgressAndRunsConcurrently(t *test
 	active := 0
 	maxActive := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+		if r.URL.Path != "/v1/auth/login" {
 			http.NotFound(w, r)
 			return
 		}
@@ -871,10 +855,10 @@ func TestBrandCloudUserAccessTokenReusesArtifactTokenWithoutLogin(t *testing.T) 
 	accessToken := testJWT(time.Now().Add(time.Hour))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-test/auth/login":
+		case "/v1/auth/login":
 			loginCount++
 			http.Error(w, "login should not be used while artifact token is valid", http.StatusInternalServerError)
-		case "/v1/brand-clouds/rtk-test/auth/refresh":
+		case "/v1/auth/refresh":
 			refreshCount++
 			http.Error(w, "refresh should not be used while artifact token is valid", http.StatusInternalServerError)
 		default:
@@ -908,10 +892,10 @@ func TestBrandCloudUserAccessTokenRefreshesArtifactTokenBeforeExpiry(t *testing.
 	newAccessToken := testJWT(time.Now().Add(time.Hour))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-test/auth/login":
+		case "/v1/auth/login":
 			loginCount++
 			http.Error(w, "login should not be used when refresh token is valid", http.StatusInternalServerError)
-		case "/v1/brand-clouds/rtk-test/auth/refresh":
+		case "/v1/auth/refresh":
 			refreshCount++
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": newAccessToken, "refresh_token": testJWT(time.Now().Add(24 * time.Hour))}})
 		default:
@@ -942,7 +926,7 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	loginAttempts := 0
 	recovered := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+		if r.URL.Path != "/v1/auth/login" {
 			http.NotFound(w, r)
 			return
 		}
@@ -985,7 +969,7 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	defer server.Close()
 
 	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, nil, func() error {
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-user:user-1", false, nil, func() error {
 		recovered = true
 		return nil
 	})
@@ -997,61 +981,15 @@ func TestAccountEnsureUserAppCertificateRecoversMissingLocalCredentials(t *testi
 	}
 }
 
-func TestShouldRetryLegacyAppCertificateSubject(t *testing.T) {
-	cases := []struct {
-		name    string
-		err     error
-		subject string
-		userID  string
-		want    bool
-	}{
-		{
-			name:    "csr invalid brand subject",
-			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"),
-			subject: "app-brand-cloud-user:brand-user-1",
-			userID:  "brand-user-1",
-			want:    true,
-		},
-		{
-			name:    "internal error uses algorithm fallback instead of legacy subject",
-			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"),
-			subject: "app-brand-cloud-user:brand-user-1",
-			userID:  "brand-user-1",
-			want:    false,
-		},
-		{
-			name:    "platform subject",
-			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"),
-			subject: "app-user:user-1",
-			userID:  "user-1",
-			want:    false,
-		},
-		{
-			name:    "missing user id uses brand cloud subject id on csr invalid",
-			err:     errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"),
-			subject: "app-brand-cloud-user:brand-user-1",
-			userID:  "",
-			want:    true,
-		},
-	}
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldRetryLegacyAppCertificateSubject(tt.err, tt.subject, tt.userID); got != tt.want {
-				t.Fatalf("shouldRetryLegacyAppCertificateSubject() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestShouldRetrySameAppCertificateSubject(t *testing.T) {
-	if !shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"), "app-brand-cloud-user:brand-user-1") {
-		t.Fatal("expected transient internal error to retry same brand-cloud subject")
+	if !shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"), "app-user:user-1") {
+		t.Fatal("expected transient internal error to retry the same global user subject")
 	}
-	if shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"), "app-brand-cloud-user:brand-user-1") {
+	if shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 400: code=app_certificate_csr_invalid message=App certificate CSR is invalid"), "app-user:user-1") {
 		t.Fatal("did not expect CSR validation error to retry same subject")
 	}
-	if shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"), "app-user:user-1") {
-		t.Fatal("did not expect platform subject to retry same subject")
+	if shouldRetrySameAppCertificateSubject(errors.New("login failed during app certificate bootstrap: email=rtk+001@users.local HTTP 500: code=internal_error message=Internal server error"), "app-brand-cloud-user:legacy-1") {
+		t.Fatal("did not expect legacy subject to retry")
 	}
 }
 
@@ -1068,24 +1006,11 @@ func TestShouldFallbackAppCertificateAlgorithm(t *testing.T) {
 	}
 }
 
-func TestLegacyAppCertificateSubjects(t *testing.T) {
-	got := legacyAppCertificateSubjects("app-brand-cloud-user:brand-user-1", "user-1")
-	want := []string{"app-user:brand-user-1", "app-user:user-1"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacyAppCertificateSubjects() = %#v, want %#v", got, want)
-	}
-	got = legacyAppCertificateSubjects("app-brand-cloud-user:brand-user-1", "brand-user-1")
-	want = []string{"app-user:brand-user-1"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacyAppCertificateSubjects() = %#v, want %#v", got, want)
-	}
-}
-
 func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *testing.T) {
 	loginAttempts := 0
 	recovered := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+		if r.URL.Path != "/v1/auth/login" {
 			http.NotFound(w, r)
 			return
 		}
@@ -1132,7 +1057,7 @@ func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *te
 		"csr_pem":         "-----BEGIN CERTIFICATE REQUEST-----\nstale\n-----END CERTIFICATE REQUEST-----",
 	}
 	ctx := accountManagerContext{BaseURL: server.URL, StackValues: map[string]string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS": "ed25519,p256"}}
-	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-brand-cloud-user:brand-user-1", false, staleCredentials, func() error {
+	credentials, certificate, _, err := accountEnsureUserAppCertificate(ctx, "rtk-test", "rtk+001@users.local", "pass", "app-user:user-1", false, staleCredentials, func() error {
 		recovered = true
 		return nil
 	})
@@ -1141,36 +1066,6 @@ func TestAccountEnsureUserAppCertificateRecoversMismatchedLocalCredentials(t *te
 	}
 	if !hasLocalAppCredentials(credentials) || stringValue(certificate["fingerprint_sha256"]) != "new-fingerprint" || loginAttempts != 3 {
 		t.Fatalf("credentials=%v certificate=%v loginAttempts=%d", credentials, certificate, loginAttempts)
-	}
-}
-
-func TestAccountRevokeBrandCloudUserAppCertificateUsesPost(t *testing.T) {
-	revokeAttempts := 0
-	accessToken := testJWT(time.Now().Add(time.Hour))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/admin/brand-clouds/brand-1/users/brand-user-1/app-certificate/revoke":
-			revokeAttempts++
-			if r.Method != http.MethodPost {
-				t.Fatalf("method = %s, want POST", r.Method)
-			}
-			if r.Header.Get("authorization") != "Bearer "+accessToken {
-				t.Fatalf("authorization header = %q", r.Header.Get("authorization"))
-			}
-			_ = json.NewEncoder(w).Encode(map[string]int{"revoked": 1})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer server.Close()
-
-	ctx := accountManagerContext{BaseURL: server.URL}
-	session := accountPlatformSession{AccessToken: accessToken, RefreshToken: testJWT(time.Now().Add(time.Hour))}
-	if err := accountRevokeBrandCloudUserAppCertificate(ctx, &session, func(string, ...any) {}, "brand-1", "brand-user-1"); err != nil {
-		t.Fatalf("accountRevokeBrandCloudUserAppCertificate() error = %v", err)
-	}
-	if revokeAttempts != 1 {
-		t.Fatalf("revokeAttempts = %d, want 1", revokeAttempts)
 	}
 }
 

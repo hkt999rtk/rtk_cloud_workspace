@@ -25,7 +25,20 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 		w.Header().Set("content-type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
-			fmt.Fprint(w, `{"tokens":{"access_token":"platform-access","refresh_token":"platform-refresh"}}`)
+			var loginPayload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&loginPayload); err != nil {
+				t.Errorf("decode login payload: %v", err)
+			}
+			if loginPayload["email"] != ownerEmail {
+				fmt.Fprint(w, `{"tokens":{"access_token":"platform-access","refresh_token":"platform-refresh"}}`)
+				return
+			}
+			ownerLoginPayload = loginPayload
+			fmt.Fprintf(w, `{
+				"user":{"id":"owner-id","email":%q},
+				"tokens":{"access_token":"owner-access","refresh_token":"owner-refresh"},
+				"app_certificate":{"status":"issued","subject":"app-user:owner-id","certificate_pem":"certificate","fingerprint_sha256":"abc123"}
+			}`, ownerEmail)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
 			fmt.Fprintf(w, `{"brand_clouds":[{"id":"brand-id","name":%q,"tenant_slug":%q}]}`, brandName, tenantSlug)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-id/users":
@@ -33,16 +46,7 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 				t.Errorf("decode owner payload: %v", err)
 			}
 			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"action":"pending_activation","brand_cloud_user":{"id":"owner-id"}}`)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/brand-clouds/"+tenantSlug+"/auth/login":
-			if err := json.NewDecoder(r.Body).Decode(&ownerLoginPayload); err != nil {
-				t.Errorf("decode owner login payload: %v", err)
-			}
-			fmt.Fprintf(w, `{
-				"user":{"id":"owner-id","email":%q},
-				"tokens":{"access_token":"owner-access","refresh_token":"owner-refresh"},
-				"app_certificate":{"status":"issued","subject":"app-brand-cloud-user:owner-id","certificate_pem":"certificate","fingerprint_sha256":"abc123"}
-			}`, ownerEmail)
+			fmt.Fprint(w, `{"action":"pending_activation","user":{"id":"owner-id"}}`)
 		default:
 			http.Error(w, "unexpected request", http.StatusNotFound)
 		}
@@ -68,7 +72,7 @@ if sys.argv[1] == "snapshot":
 else:
     print(json.dumps({
         "uid": 42,
-        "url": "https://admin.video-cloud-staging.realtekconnect.com/brand-cloud/activate?tenant=load-canary-b01&token=opaque"
+        "url": "https://admin.video-cloud-staging.realtekconnect.com/signup/verify?token=opaque"
     }))
 `)
 	webDir := filepath.Join(workspace, "repos", "rtk_cloud_admin", "web")
@@ -128,7 +132,7 @@ IMAP_EMAIL_FOLDER=INBOX
 	if err != nil {
 		t.Fatal(err)
 	}
-	if csr.Subject.CommonName != "app-brand-cloud-user:owner-id" {
+	if csr.Subject.CommonName != "app-user:owner-id" {
 		t.Fatalf("owner CSR subject = %q", csr.Subject.CommonName)
 	}
 	if _, err := os.Stat(evidencePath); err != nil {
@@ -139,14 +143,14 @@ IMAP_EMAIL_FOLDER=INBOX
 		t.Fatal(err)
 	}
 	defer store.Close()
-	var storedEmail, password, role string
+	var storedUserID, storedEmail, password, role string
 	if err := store.DB.QueryRow(
-		`SELECT email, password, role FROM users WHERE brandname = ?`, brandName,
-	).Scan(&storedEmail, &password, &role); err != nil {
+		`SELECT user_id, email, password, role FROM users WHERE brandname = ?`, brandName,
+	).Scan(&storedUserID, &storedEmail, &password, &role); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.EqualFold(storedEmail, ownerEmail) || password == "" || role != "owner" {
-		t.Fatalf("stored owner email=%q password_set=%v role=%q", storedEmail, password != "", role)
+	if storedUserID != "owner-id" || !strings.EqualFold(storedEmail, ownerEmail) || password == "" || role != "owner" {
+		t.Fatalf("stored owner user_id=%q email=%q password_set=%v role=%q", storedUserID, storedEmail, password != "", role)
 	}
 }
 
@@ -287,7 +291,7 @@ func TestReuseVerifiedLoadOwnerRequiresMatchingEvidenceCredentialAndLogin(t *tes
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/brand-clouds/"+tenantSlug+"/auth/login" {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/auth/login" {
 			http.Error(w, "unexpected request", http.StatusNotFound)
 			return
 		}

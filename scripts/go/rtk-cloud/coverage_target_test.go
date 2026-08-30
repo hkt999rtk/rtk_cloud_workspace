@@ -335,7 +335,7 @@ func TestRefreshUserTokensLogsInUsersAndPersistsSessions(t *testing.T) {
 		]
 	}`)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk/auth/login" {
+		if r.URL.Path != "/v1/auth/login" {
 			http.NotFound(w, r)
 			return
 		}
@@ -447,7 +447,7 @@ func TestRunBindDevicesQualifiesEveryAssignmentThroughClaimResolve(t *testing.T)
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "platform-token", "refresh_token": "platform-refresh"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
 			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{"id": "brand-001", "name": "RTK", "tenant_slug": "rtk"}}})
-		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/brand-clouds/rtk/auth/login"):
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/auth/login"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token", "refresh_token": "user-refresh"}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
 			requestsMu.Lock()

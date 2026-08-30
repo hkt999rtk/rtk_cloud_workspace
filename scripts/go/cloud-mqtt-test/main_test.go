@@ -568,8 +568,8 @@ func TestUserArtifactPreservesAppCredentials(t *testing.T) {
 func TestRunAppCertificateBootstrapUsesArtifactKeyForIssuedCertificate(t *testing.T) {
 	certPEM, keyPEM, csrPEM := testAppMaterial(t, "app-user:user-1")
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-1234/auth/login" {
-			t.Fatalf("login path = %q, want brand-cloud login route", r.URL.Path)
+		if r.URL.Path != "/v1/auth/login" {
+			t.Fatalf("login path = %q, want global login route", r.URL.Path)
 		}
 		var body map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -882,8 +882,8 @@ func TestRunAppCertificateBootstrapUsesLoginTokenWithoutArtifactKey(t *testing.T
 func TestRunAppCertificateBootstrapCSRRequiredStillGeneratesCSR(t *testing.T) {
 	loginCalls := 0
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/brand-clouds/rtk-1234/auth/login" {
-			t.Fatalf("login path = %q, want brand-cloud login route", r.URL.Path)
+		if r.URL.Path != "/v1/auth/login" {
+			t.Fatalf("login path = %q, want global login route", r.URL.Path)
 		}
 		loginCalls++
 		var body map[string]string
@@ -1073,7 +1073,7 @@ func TestAccountLoginTokenManagerRefreshesExpiredAccessToken(t *testing.T) {
 	loginCalls := 0
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-1234/auth/refresh":
+		case "/v1/auth/refresh":
 			refreshCalls++
 			var body map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1085,7 +1085,7 @@ func TestAccountLoginTokenManagerRefreshesExpiredAccessToken(t *testing.T) {
 			writeJSON(t, w, map[string]any{
 				"tokens": map[string]string{"access_token": newToken, "refresh_token": "new-refresh"},
 			})
-		case "/v1/brand-clouds/rtk-1234/auth/login":
+		case "/v1/auth/login":
 			loginCalls++
 			t.Fatal("expired access token with refresh token should refresh before login")
 		default:
@@ -1124,10 +1124,10 @@ func TestAccountLoginTokenManagerFallsBackToLoginWhenRefreshFails(t *testing.T) 
 	loginCalls := 0
 	account := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-1234/auth/refresh":
+		case "/v1/auth/refresh":
 			refreshCalls++
 			http.Error(w, "expired refresh token", http.StatusUnauthorized)
-		case "/v1/brand-clouds/rtk-1234/auth/login":
+		case "/v1/auth/login":
 			loginCalls++
 			writeJSON(t, w, map[string]any{
 				"user":   map[string]string{"id": "user-1"},
@@ -2320,7 +2320,7 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	if _, err := db.Exec(`create table devices(device_id text primary key, device_type text not null, cert_pem text, key_pem text, chain_pem text, bundle_pem text, metadata_json text, factory_enroll_request_json text, factory_enroll_response_redacted_json text)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`create table users(email text primary key, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null)`); err != nil {
+	if _, err := db.Exec(`create table users(user_id text, email text primary key, password text, tokens_json text, app_credentials_json text, app_certificate_json text, body_json text not null)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`create table device_bindings(device_id text primary key, assignment_index integer not null, assigned_email text not null, device_type text not null, service_options_json text not null, body_json text not null)`); err != nil {
@@ -2330,7 +2330,7 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	if _, err := db.Exec(`insert into devices(device_id, device_type, cert_pem, key_pem, chain_pem) values(?, ?, ?, ?, ?)`, "device-1", "light", certPEM, keyPEM, chainPEM); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`insert into users(email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, '{}', '{}', ?)`, "user-1@example.test", "pw", `{"access_token":"cached-access","refresh_token":"cached-refresh"}`, `{"email":"user-1@example.test","password":"pw"}`); err != nil {
+	if _, err := db.Exec(`insert into users(user_id, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, '{}', '{}', ?)`, "global-user-1", "user-1@example.test", "pw", `{"access_token":"cached-access","refresh_token":"cached-refresh"}`, `{"user_id":"global-user-1","email":"user-1@example.test","password":"pw"}`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`insert into device_bindings(device_id, assignment_index, assigned_email, device_type, service_options_json, body_json) values(?, 0, ?, ?, ?, ?)`, "device-1", "user-1@example.test", "light", `["mqtt"]`, `{"assigned_email":"user-1@example.test","device_id":"device-1","device_type":"light","service_options":["mqtt"]}`); err != nil {
@@ -2357,6 +2357,9 @@ func TestLoadHome100KCredentialBundleReadsGzippedSQLiteDevices(t *testing.T) {
 	}
 	if len(bundle.Users.Users) != 1 || bundle.Users.Users[0].Email != "user-1@example.test" {
 		t.Fatalf("bundle users = %#v", bundle.Users.Users)
+	}
+	if bundle.Users.Users[0].UserID != "global-user-1" {
+		t.Fatalf("bundle global user id = %q, want global-user-1", bundle.Users.Users[0].UserID)
 	}
 	if bundle.Users.TenantSlug != "tenant-1" || bundle.Bind.TenantSlug != "tenant-1" {
 		t.Fatalf("bundle tenant metadata users=%q bind=%q, want tenant-1", bundle.Users.TenantSlug, bundle.Bind.TenantSlug)

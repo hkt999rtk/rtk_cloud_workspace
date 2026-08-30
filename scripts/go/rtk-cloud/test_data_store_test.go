@@ -20,8 +20,8 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 	defer store.Close()
 
 	users := []map[string]any{
-		{"email": "rtk+001@users.local", "password": "pw1", "tokens": map[string]any{"access_token": "old"}},
-		{"email": "rtk+002@users.local", "password": "pw2"},
+		{"id": "global-user-1", "user_id": "global-user-1", "email": "rtk+001@users.local", "password": "pw1", "tokens": map[string]any{"access_token": "old"}},
+		{"id": "global-user-2", "user_id": "global-user-2", "email": "rtk+002@users.local", "password": "pw2"},
 	}
 	if err := store.ReplaceUsers("RTK", "org-rtk", "rtk", "member", users); err != nil {
 		t.Fatalf("ReplaceUsers() error = %v", err)
@@ -35,6 +35,9 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 	}
 	if byEmail["rtk+001@users.local"].Password != "pw1" || len(list) != 2 {
 		t.Fatalf("users = %+v list=%+v", byEmail, list)
+	}
+	if byEmail["rtk+001@users.local"].UserID != "global-user-1" {
+		t.Fatalf("global user id = %q, want global-user-1", byEmail["rtk+001@users.local"].UserID)
 	}
 
 	devices := []generatedDevice{{

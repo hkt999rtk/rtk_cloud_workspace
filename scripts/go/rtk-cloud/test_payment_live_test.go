@@ -25,7 +25,7 @@ func TestPaymentLiveBillingRequestUsesServiceIdentityAndExactPermission(t *testi
 		if got := request.Header.Get("X-Billing-Permissions"); got != "billing_account.read" {
 			t.Errorf("permission = %q", got)
 		}
-		if request.Header.Get("X-Billing-Actor-Type") != "brand_cloud_user" || request.Header.Get("X-Billing-Actor-ID") == "" {
+		if request.Header.Get("X-Billing-Actor-Type") != "user" || request.Header.Get("X-Billing-Actor-ID") == "" {
 			t.Error("missing trusted brand-cloud actor identity")
 		}
 		if request.Header.Get("X-Request-ID") == "" {

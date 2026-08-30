@@ -1035,6 +1035,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"ACCOUNT_MANAGER_USER_CACHE_ENABLED: \"true\"",
 		"ACCOUNT_MANAGER_USER_CACHE_ADDR: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"ACCOUNT_MANAGER_USER_CACHE_PREFIX: \"account_manager:user\"",
+		"ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"true\"",
 		"command: [\"/app/rtk-account-manager-migrate\"]",
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
