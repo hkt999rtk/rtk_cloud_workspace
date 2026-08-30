@@ -11,11 +11,11 @@ Runtime intent is tracked in `cloud_env/<environment>/storage.env`. Shared relea
 
 ## Credential profiles
 
-Shared credentials live in `~/.config/rtk-cloud/shared.env`. Environment-owned media credentials live in `~/.config/rtk-cloud/environments/<environment>.env`. Both must be regular files with mode `0600`. Resolution order, highest first, is process environment, environment profile, then shared profile.
+All credentials live as individual `0600` files below `~/.config/rtk_cloud/<environment>/operator/env/`. Each environment is self-contained and has no shared credential fallback.
 
 The shared profile normally contains `LINODE_TOKEN`, `GHCR_PULL_USERNAME`, `GHCR_PULL_TOKEN`, DNS credentials, and `LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID` / `LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY`. The environment profile contains `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` / `LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`.
 
-The CLI never reads `~/.env`. Missing shared or environment profiles fail closed. Scoped media credentials are mapped to `LINODE_OBJ_*` only while deployment child operations run; storage policy, bucket-region checks, endpoint inventory, and the read/write canary remain mandatory.
+Missing environment credentials fail closed. Scoped media credentials are mapped to `LINODE_OBJ_*` only while deployment child operations run; storage policy, bucket-region checks, endpoint inventory, and the read/write canary remain mandatory.
 
 ## Lifecycle
 

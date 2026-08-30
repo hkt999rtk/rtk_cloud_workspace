@@ -112,6 +112,36 @@ func validateStagingEmailDeliveryBeforeReset(envRoot string) error {
 	for _, key := range accountManagerEmailSecretKeys {
 		env[key] = envroot.FileVar(stackEnv, key)
 	}
+	// A reset runs before deployment materializes a fresh stack.env. Read the
+	// tracked, non-secret service settings directly so the first cutover does
+	// not depend on a legacy runtime copy. Secret values are loaded below only
+	// from the canonical SecretStore.
+	environmentConfig, configErr := readOptionalStrictEnv(filepath.Join(filepath.Dir(envRoot), "environment.env"))
+	if configErr != nil {
+		return fmt.Errorf("read tracked environment settings: %w", configErr)
+	}
+	for key, value := range environmentConfig {
+		if deploymentEnvironmentServiceKeys[key] {
+			env[key] = value
+		}
+	}
+	environment := firstNonEmpty(envroot.FileVar(stackEnv, "CLOUD_ENV_NAME"), "staging")
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return err
+	}
+	operator, err := store.readOperator()
+	if err != nil {
+		return fmt.Errorf("read canonical operator credentials: %w", err)
+	}
+	env["SENDMAIL_HTTP_BEARER_TOKEN"] = operator["SENDMAIL_HTTP_BEARER_TOKEN"]
+	value, err := store.readRuntime("email-outbox-encryption")
+	if err != nil {
+		return fmt.Errorf("read canonical email outbox secret: %w", err)
+	}
+	env["EMAIL_OUTBOX_ENCRYPTION_KEY"] = value
+	restore := installAllCredentialEnvironment(env)
+	defer restore()
 	if err := validateAccountManagerEmailDeliveryEnv(env); err != nil {
 		return fmt.Errorf("staging reset blocked before deleting workloads: configure Account Manager email delivery: %w", err)
 	}

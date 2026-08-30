@@ -84,6 +84,7 @@ var commands = map[string]commandSpec{
 	"refresh-runtime-client-ca":        {run: runRefreshRuntimeClientCA},
 	"remove-k8s":                       {run: runRemoveK8s},
 	"run-staging-e2e":                  {run: runStagingE2E},
+	"secrets":                          {run: runSecrets},
 	"secrets-check":                    {run: runSecretsCheck},
 	"environment-acceptance":           {run: runEnvironmentAcceptance},
 	"staging-acceptance":               {run: runStagingAcceptance},
@@ -188,7 +189,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "test-feature-coverage" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "test-feature-coverage" {
 		return args, nil
 	}
 	var environment, workspace string
@@ -254,6 +255,7 @@ func normalizeLegacyPathArgs(args []string) []string {
 		"--artifacts-dir": true,
 		"--output-dir":    true,
 		"--config":        true,
+		"--config-root":   true,
 	}
 	out := append([]string(nil), args...)
 	cwd, err := os.Getwd()
@@ -836,12 +838,15 @@ func linodeGetList[T any](token, path string) ([]T, error) {
 }
 
 func resolveLinodeToken(envRoot string) string {
-	if token := os.Getenv("LINODE_TOKEN"); token != "" {
-		return token
+	if rtkCloudTestMode() {
+		if token := strings.TrimSpace(os.Getenv("LINODE_TOKEN")); token != "" {
+			return token
+		}
 	}
-	_ = envRoot
-	if token := envFileValue(defaultDeploymentSharedCredentialFile(), "LINODE_TOKEN"); token != "" {
-		return token
+	environment := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
+	values, check := deploymentCredentialValues(defaultDeploymentEnvironmentCredentialFile(environment))
+	if check.Passed {
+		return values["LINODE_TOKEN"]
 	}
 	return ""
 }
@@ -1035,16 +1040,32 @@ func runSecretsCheck(args []string) error {
 	check := newCheck()
 	fmt.Fprintln(os.Stdout, "== ignore rules ==")
 	for _, path := range []string{
-		".secrets",
+		".secrets/placeholder",
 		".secrets.backup",
 		".secrets/staging/linode/admin/env/admin.env",
-		"cloud_env/staging/runtime/state/kubeconfig.yaml",
-		"cloud_env/staging/runtime/services/account-manager/account-manager-platform-admin.env",
+		"cloud_env/staging/runtime/state/secrets/postgres",
+		"cloud_env/staging/runtime/artifacts/test-data/rtk-test-data.sqlite",
 	} {
 		if err := exec.Command("git", "-C", workspace, "check-ignore", "-q", path).Run(); err == nil {
 			check.pass(path + " is ignored")
 		} else {
 			check.fail(path + " is not ignored")
+		}
+	}
+
+	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(os.Stdout, "== prohibited legacy copies ==")
+	for _, path := range []string{
+		filepath.Join(workspace, "cloud_env", "staging", "runtime", "state", "kubeconfig.yaml"),
+		filepath.Join(workspace, "cloud_env", "staging", "runtime", "state", "secrets"),
+		filepath.Join(workspace, "cloud_env", "staging", "runtime", "state", "openbao"),
+	} {
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			check.pass(path + " is absent")
+		} else if err != nil {
+			check.fail(path + " cannot be inspected")
+		} else {
+			check.fail(path + " is a prohibited legacy secret copy")
 		}
 	}
 
@@ -4718,6 +4739,11 @@ func runStagingE2ETest(args []string) error {
 	if *confirm != stackName {
 		return fmt.Errorf("--confirm %s does not match CLOUD_STACK_NAME=%s", *confirm, stackName)
 	}
+	if useLKEProvision && selection.Provision {
+		if err := materializeStagingE2EDeploymentConfig(workspace, envRoot); err != nil {
+			return err
+		}
+	}
 	if selection.Reset {
 		if err := validateStagingEmailDeliveryBeforeReset(envRoot); err != nil {
 			return err
@@ -4745,6 +4771,13 @@ func runStagingE2ETest(args []string) error {
 		step, err := runE2EStepWithOptions("reset_k8s", filepath.Join(logsDir, "reset_k8s.log"), e2eStepOptions{Quiet: *quiet, Env: []string{"CLOUD_STAGING_E2E_K8S_DESTRUCTIVE_RESET=1"}}, resetArgs...)
 		steps = append(steps, step)
 		if err != nil {
+			return err
+		}
+	}
+	if useLKEProvision && selection.Provision {
+		// remove-k8s may normalize the runtime environment. Re-materialize the
+		// tracked deployment config before invoking the lower-level provisioner.
+		if err := materializeStagingE2EDeploymentConfig(workspace, envRoot); err != nil {
 			return err
 		}
 	}
@@ -6777,6 +6810,9 @@ func runActivateLoadOwner(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if hasFlag(args, "--operator-env-file") && !rtkCloudTestMode() {
+		return errors.New("--operator-env-file is retired; store IMAP settings in the environment SecretStore operator/env directory")
+	}
 	for name, value := range map[string]string{
 		"--brandname": *brandname, "--email": *email, "--display-name": *displayName, "--run-id": *runID,
 	} {
@@ -6815,20 +6851,37 @@ func runActivateLoadOwner(args []string) error {
 			})
 		}
 	}
-	operator, err := readEnvFile(*operatorEnvFile)
+	var operator map[string]string
+	if rtkCloudTestMode() && strings.TrimSpace(*operatorEnvFile) != "" {
+		operator, err = readEnvFile(*operatorEnvFile)
+	} else {
+		environment := firstNonEmpty(ctx.StackValues["CLOUD_ENV_NAME"], "staging")
+		store, storeErr := newSecretStore("", environment)
+		if storeErr != nil {
+			return storeErr
+		}
+		operator, err = store.readOperator()
+	}
 	if err != nil {
-		return fmt.Errorf("read operator env: %w", err)
+		return fmt.Errorf("read canonical operator settings: %w", err)
 	}
 	childEnv := os.Environ()
 	for _, key := range []string{"IMAP_SERVER", "IMAP_EMAIL_ADDR", "IMAP_EMAIL_PASSWORD", "IMAP_EMAIL_PORT", "IMAP_EMAIL_SECURITY", "IMAP_EMAIL_FOLDER"} {
-		value := firstNonEmpty(os.Getenv(key), operator[key])
+		value := operator[key]
+		if rtkCloudTestMode() {
+			value = firstNonEmpty(os.Getenv(key), value)
+		}
 		if value == "" {
 			return fmt.Errorf("missing operator IMAP setting: %s", key)
 		}
 		childEnv = append(childEnv, key+"="+value)
 	}
-	connectHost := firstNonEmpty(os.Getenv("IMAP_CONNECT_HOST"), operator["IMAP_CONNECT_HOST"])
-	imapServer := firstNonEmpty(os.Getenv("IMAP_SERVER"), operator["IMAP_SERVER"])
+	connectHost := operator["IMAP_CONNECT_HOST"]
+	imapServer := operator["IMAP_SERVER"]
+	if rtkCloudTestMode() {
+		connectHost = firstNonEmpty(os.Getenv("IMAP_CONNECT_HOST"), connectHost)
+		imapServer = firstNonEmpty(os.Getenv("IMAP_SERVER"), imapServer)
+	}
 	if connectHost == "" {
 		if _, lookupErr := net.LookupHost(imapServer); lookupErr != nil {
 			if _, fallbackErr := net.LookupHost("sm.realtekconnect.com"); fallbackErr != nil {

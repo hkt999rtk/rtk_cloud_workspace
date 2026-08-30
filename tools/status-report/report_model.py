@@ -359,7 +359,7 @@ def collect_linode_billing() -> dict[str, object]:
         return {
             "status": "unavailable",
             "timestamp": SNAPSHOT_TIME_UTC,
-            "summary": "Linode account API token not found. Add LINODE_TOKEN, LINODE_CLI_TOKEN, LINODE_API_TOKEN, LINODE_API_KEY, or LINODE_PAT to ~/.env for billing evidence.",
+            "summary": "Linode account API token not found. Add LINODE_TOKEN to ~/.config/rtk_cloud/<environment>/operator/env/ for billing evidence.",
             "currentBalance": "n/a",
             "uninvoiced": "n/a",
             "estimatedMonthlyRunRate": "n/a",

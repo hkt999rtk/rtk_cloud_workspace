@@ -492,7 +492,7 @@ func (opts loadOptions) validateLoadModel() error {
 
 func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, seed int, mqttProbe bool, traceDetail, testDataDB string, opts loadOptions) error {
 	if strings.TrimSpace(os.Getenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE")) == "" {
-		candidate := filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem")
+		candidate := filepath.Join(envRoot, "state", "pki", "device-client-ca-bundle.pem")
 		if readable(candidate) {
 			_ = os.Setenv("HOME100K_DEVICE_CLIENT_CA_BUNDLE", candidate)
 		}
@@ -527,14 +527,6 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	artifactsDir := filepath.Join(envRoot, "artifacts")
 	testDevicesDir := filepath.Join(envRoot, "devices", "test_device")
 	stackEnv := filepath.Join(envRoot, "env", "stack.env")
-	accountEnv := firstExisting(
-		filepath.Join(envRoot, "services", "account-manager", "account-manager.env"),
-		filepath.Join(envRoot, "services", "account-manager", "account-manager-public-staging.env"),
-	)
-	videoEnv := firstExisting(
-		filepath.Join(envRoot, "services", "video-cloud", "video-cloud.env"),
-		filepath.Join(envRoot, "services", "video-cloud", "video-cloud-staging.env"),
-	)
 	videoState := videoStatePath(envRoot, stackEnv)
 
 	blockers := []string{}
@@ -545,8 +537,6 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 	bundleShardData := credentialBundle.HasShardTestData()
 	required := map[string]string{
 		"stack_env":       stackEnv,
-		"account_manager": accountEnv,
-		"video_env":       videoEnv,
 		"video_state":     videoState,
 		"device_manifest": filepath.Join(testDevicesDir, "manifests", "devices.json"),
 		"device_ids":      filepath.Join(testDevicesDir, "manifests", "device_ids.txt"),
@@ -580,16 +570,13 @@ func run(root, envRoot, brandname, outDir, profile string, duration, maxUsers, s
 		"device_bind_artifact": valueOr(bindPath, "missing"),
 		"device_manifest":      required["device_manifest"],
 		"env_key_counts": map[string]int{
-			"stack":           len(envKeys(stackEnv)),
-			"account_manager": len(envKeys(accountEnv)),
-			"video_cloud":     len(envKeys(videoEnv)),
+			"stack": len(envKeys(stackEnv)),
 		},
 	}
 	stackValues := envValues(stackEnv)
-	accountValues := envValues(accountEnv)
 	loadValues := envValues(filepath.Join(testDevicesDir, "loadtest.env"))
 	videoEndpoints := resolveVideoCloudEndpoints(envRoot, stackValues)
-	accountBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), "https://"+firstNonEmpty(stackValues["ACCOUNT_MANAGER_DOMAIN"], accountValues["ACCOUNT_MANAGER_DOMAIN"], "unknown")), "/")
+	accountBaseURL := strings.TrimRight(firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_BASE_URL"), "https://"+firstNonEmpty(stackValues["ACCOUNT_MANAGER_DOMAIN"], "unknown")), "/")
 	endpoints := map[string]any{
 		"account_manager_base_url":       accountBaseURL,
 		"video_cloud_base_url":           videoEndpoints.PublicBaseURL,

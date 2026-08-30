@@ -10,6 +10,7 @@ import (
 )
 
 func TestLKECurrentCoturnRuntimeSecretsUseLiveK8SValuesAndSyncState(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "")
 	stateDir := t.TempDir()
 	installCoturnSecretKubectlStub(t, "current-turn", "current-registry", false)
 	withCoturnSecretState(t, stateDir)
@@ -45,6 +46,7 @@ func TestLKECurrentCoturnRuntimeSecretsUseLiveK8SValuesAndSyncState(t *testing.T
 }
 
 func TestLKECurrentCoturnRuntimeSecretsRejectMissingLiveValueWithoutStaleFallback(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "")
 	stateDir := t.TempDir()
 	installCoturnSecretKubectlStub(t, "current-turn", "", true)
 	withCoturnSecretState(t, stateDir)
@@ -70,6 +72,7 @@ func TestLKECurrentCoturnRuntimeSecretsRejectMissingLiveValueWithoutStaleFallbac
 }
 
 func TestLKECurrentCoturnRuntimeSecretsUseExplicitOperatorOverrides(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "")
 	t.Setenv("LKE_TURN_SHARED", "operator-turn")
 	t.Setenv("LKE_TURN_REGISTRY_NODE_AUTH", "operator-registry")
 
@@ -86,6 +89,7 @@ func TestLKECurrentCoturnRuntimeSecretsUseExplicitOperatorOverrides(t *testing.T
 }
 
 func TestLKECurrentCoturnRuntimeSecretsRejectNonStagingLiveSync(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "")
 	_, _, err := lkeCurrentCoturnRuntimeSecrets(
 		provisionPaths{},
 		map[string]string{"CLOUD_STACK_NAME": "coverage-run"},

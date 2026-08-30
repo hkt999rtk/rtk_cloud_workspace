@@ -30,19 +30,31 @@ type OpenAIClient struct {
 }
 
 func NewOpenAIClient() *OpenAIClient {
-	loadEnvFile(filepath.Join(homeDir(), ".env"))
 	enableEmbeddings := os.Getenv("RTK_RAG_ENABLE_EMBEDDINGS") != "0"
 	enableAnswers := os.Getenv("RTK_RAG_ENABLE_ANSWERS") != "0"
 	baseURL := strings.TrimRight(envDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"), "/")
 	return &OpenAIClient{
 		BaseURL:        baseURL,
-		APIKey:         os.Getenv("OPENAI_API_KEY"),
+		APIKey:         canonicalOperatorSecret("OPENAI_API_KEY"),
 		EmbeddingModel: envDefault("OPENAI_RAG_EMBEDDING_MODEL", "text-embedding-3-small"),
 		AnswerModel:    envDefault("OPENAI_RAG_ANSWER_MODEL", "gpt-4.1-mini"),
 		HTTPClient:     &http.Client{Timeout: 45 * time.Second},
 		EnableEmbed:    enableEmbeddings,
 		EnableAnswer:   enableAnswers,
 	}
+}
+
+func canonicalOperatorSecret(name string) string {
+	root := strings.TrimSpace(os.Getenv("RTK_CLOUD_CONFIG_ROOT"))
+	if root == "" {
+		root = filepath.Join(homeDir(), ".config", "rtk_cloud")
+	}
+	environment := envDefault("RTK_CLOUD_ENVIRONMENT", "staging")
+	raw, err := os.ReadFile(filepath.Join(root, environment, "operator", "env", name))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func (c *OpenAIClient) EmbeddingsEnabled() bool {
@@ -132,23 +144,4 @@ func extractResponseText(data map[string]any) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n"))
-}
-
-func loadEnvFile(path string) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || !strings.Contains(line, "=") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		key := strings.TrimSpace(parts[0])
-		value := strings.Trim(strings.TrimSpace(parts[1]), `"'`)
-		if key != "" && os.Getenv(key) == "" {
-			_ = os.Setenv(key, value)
-		}
-	}
 }

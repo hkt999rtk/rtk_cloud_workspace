@@ -90,7 +90,7 @@ func refreshRuntimeDeviceClientCABundle(workspace, envRoot string) (string, erro
 	if err := writeLKEDeviceClientCABundle(provisionPaths{EnvRoot: envRoot}, rootCA, deviceCA, appCA); err != nil {
 		return "", err
 	}
-	return filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem"), nil
+	return filepath.Join(envRoot, "state", "pki", "device-client-ca-bundle.pem"), nil
 }
 
 func validateRuntimeClientCAStack(stack string, stackEnv map[string]string) error {

@@ -189,6 +189,7 @@ jobs:
       VIDEO_CLOUD_LOAD_ADMIN_TOKEN: ${{ secrets.video_cloud_admin_token }}
       VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY: ${{ secrets.clip_user_private_key_path }}
       VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY: ${{ secrets.clip_server_public_key_path }}
+      RTK_CLOUD_CONFIG_ROOT: ${{ runner.temp }}/rtk_cloud
     steps:
       - uses: actions/checkout@v6
         with:
@@ -280,9 +281,18 @@ jobs:
             --out "$FEATURE_ENV_ROOT/artifacts/lke-images/lke-image-manifest.json"
 
       - name: Deploy candidate once to shared staging
+        env:
+          GHCR_PULL_USERNAME: ${{ github.actor }}
+          GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
         shell: bash
         run: |
           set -euo pipefail
+          test -n "$RTK_CLOUD_SECRET_BUNDLE"
+          bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
+          chmod 0600 "$bundle"
+          scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle"
           go run ./scripts/go/rtk-cloud -- staging-provision \
             --workspace "$GITHUB_WORKSPACE" \
             --env-root "$FEATURE_ENV_ROOT" \
@@ -348,6 +358,14 @@ jobs:
             echo "Feature selection failed." >&2
             exit 1
           fi
+
+      - name: Remove job-only SecretStore
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RTK_CLOUD_CONFIG_ROOT/" in "$RUNNER_TEMP/"*) rm -rf "$RTK_CLOUD_CONFIG_ROOT" ;; *) exit 1 ;; esac
+          rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           if [ "${{ needs.select.outputs.required }}" != "true" ]; then
             echo "PASS: no load-sensitive feature changed."
             exit 0

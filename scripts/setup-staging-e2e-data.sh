@@ -14,7 +14,7 @@ USER_EMAIL_DOMAIN="users.local"
 LOAD_RUN_ID=""
 LOAD_TARGET=""
 EMAIL_ACTIVATE_OWNERS=0
-OPERATOR_ENV_FILE="${HOME}/.config/rtk-cloud/shared.env"
+OPERATOR_ENV_FILE=""
 DEVICE_COUNT="100"
 DEVICE_MIX="camera=40,light=25,air_conditioner=20,smart_meter=15"
 DEVICE_PREFIX="load-device"
@@ -84,7 +84,7 @@ Options:
   --load-run-id ID                Run ID used in all resolved Brand/account names.
   --load-target TARGET            1K, 50K, 100K, or CANARY.
   --email-activate-owners         Require one Send Mail + local IMAP owner activation per Brand.
-  --operator-env-file FILE        Operator credential profile. Default: ~/.config/rtk-cloud/shared.env.
+  --operator-env-file FILE        Test-only operator fixture; normal runs use SecretStore operator/env.
   --device-count N                Devices to create and bind. Default: 100.
   --device-mix MIX                Device mix for generate-load-devices.
   --device-prefix PREFIX          Device prefix. Default: load-device.
@@ -375,8 +375,10 @@ fi
 if [[ -n "$LOAD_TARGET" ]]; then
 	run_args+=(--load-target "$LOAD_TARGET")
 fi
-if [[ "$EMAIL_ACTIVATE_OWNERS" -eq 1 ]]; then
+if [[ "$EMAIL_ACTIVATE_OWNERS" -eq 1 && -n "$OPERATOR_ENV_FILE" ]]; then
 	run_args+=(--email-activate-owners --operator-env-file "$OPERATOR_ENV_FILE")
+elif [[ "$EMAIL_ACTIVATE_OWNERS" -eq 1 ]]; then
+	run_args+=(--email-activate-owners)
 fi
 if [[ -n "$BRAND_PLAN" ]]; then
 	run_args+=(--brand-plan "$BRAND_PLAN")

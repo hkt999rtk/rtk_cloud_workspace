@@ -8,7 +8,7 @@ Workspace-local RAG service for querying `rtk_cloud_workspace` and its submodule
 - Uses SQLite for document metadata, chunk storage, and FTS5 retrieval when available.
 - Falls back to SQLite `LIKE` retrieval when the local SQLite build does not include FTS5.
 - Uses the OpenAI API for embeddings and answer generation when `OPENAI_API_KEY` is available.
-- Loads `OPENAI_API_KEY` from `~/.env` automatically without writing secrets into the repository.
+- Loads `OPENAI_API_KEY` from `~/.config/rtk_cloud/<environment>/operator/env/OPENAI_API_KEY`.
 - Falls back to local hybrid search and extractive answers when the OpenAI API is unavailable.
 - Stores path, line range, repo name, submodule path, commit, dirty state, source layer, and document classification with every chunk.
 

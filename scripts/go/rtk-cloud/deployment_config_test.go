@@ -632,6 +632,31 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 	}
 }
 
+func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "AUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
+	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Values["AUTH_TOKEN_BASE_URL"]; got != "https://admin.dev.example.test" {
+		t.Fatalf("AUTH_TOKEN_BASE_URL = %q", got)
+	}
+	if _, ok := cfg.Values["SENDMAIL_HTTP_BEARER_TOKEN"]; ok {
+		t.Fatal("secret bearer token was accepted as tracked environment configuration")
+	}
+}
+
+func TestMaterializeStagingE2EDeploymentConfigRequiresStorageReceiptBeforeReset(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	appendFile(t, filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env"), "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	err := materializeStagingE2EDeploymentConfig(workspace, envRoot)
+	if err == nil || !strings.Contains(err.Error(), "validated Object Storage receipt is missing") {
+		t.Fatalf("missing receipt error = %v", err)
+	}
+}
+
 func TestResolveDeploymentConfigRejectsUnknownLocationAndUnsatisfiedShape(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
 	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CLOUD_STACK_NAME=video-cloud-dev\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=moon\n")

@@ -274,11 +274,11 @@ create_feature_endpoints() {
   tls_tmp="$(mktemp -d)"
   tls_crt="$tls_tmp/tls.crt"
   tls_key="$tls_tmp/tls.key"
-  server_ca="$RUNTIME_ENV_ROOT/state/secrets/runtime-coverage-server-ca.crt"
+  server_ca="$RUNTIME_ENV_ROOT/state/pki/runtime-coverage-server-ca.crt"
   server_ca_key="$tls_tmp/server-ca.key"
   server_csr="$tls_tmp/server.csr"
   server_ext="$tls_tmp/server.ext"
-  ca_bundle="${RUNTIME_ENV_ROOT:?RUNTIME_ENV_ROOT is required}/state/secrets/device-client-ca-bundle.pem"
+  ca_bundle="${RUNTIME_ENV_ROOT:?RUNTIME_ENV_ROOT is required}/state/pki/device-client-ca-bundle.pem"
   [[ -s "$ca_bundle" ]] || {
     echo "run-scoped device client CA bundle is missing: $ca_bundle" >&2
     rm -rf "$tls_tmp"

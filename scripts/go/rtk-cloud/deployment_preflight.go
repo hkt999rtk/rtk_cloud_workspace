@@ -84,6 +84,16 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 		reporter.fail("deployment-adapter", fmt.Errorf("adapter %s does not support live mutation", cfg.Adapter))
 		return reporter.result()
 	}
+	if !rtkCloudTestMode() {
+		store, err := newSecretStore("", cfg.Environment)
+		if err != nil {
+			reporter.fail("secret-store", err)
+		} else if err := verifySecretStoreContents(store); err != nil {
+			reporter.fail("secret-store", err)
+		} else {
+			reporter.pass("secret-store", "required canonical secret IDs are configured")
+		}
+	}
 
 	if operation == "acceptance" {
 		validateAcceptanceRuntime(cfg, reporter)
@@ -96,7 +106,7 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	}
 
 	if resolveLinodeToken(cfg.RuntimeRoot) == "" {
-		reporter.fail("credential:linode", errors.New("LINODE_TOKEN is not configured in process env, runtime operator.env, or ~/.env"))
+		reporter.fail("credential:linode", errors.New("LINODE_TOKEN is not configured in ~/.config/rtk_cloud/<environment>/operator/env"))
 	} else {
 		reporter.pass("credential:linode", "configured (value redacted)")
 	}
@@ -104,14 +114,12 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	for key, value := range cfg.Values {
 		credentialEnv[key] = value
 	}
-	if operator, err := readEnvFile(filepath.Join(cfg.RuntimeRoot, "env", "operator.env")); err == nil {
+	if operator, check := deploymentCredentialValues(defaultDeploymentEnvironmentCredentialFile(cfg.Environment)); check.Passed {
 		for key, value := range operator {
-			if credentialEnv[key] == "" {
-				credentialEnv[key] = value
-			}
+			credentialEnv[key] = value
 		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		reporter.fail("credential:ghcr", errors.New("runtime operator.env could not be read"))
+	} else {
+		reporter.fail("credential:ghcr", errors.New("canonical environment credential directory could not be read"))
 	}
 	username, token := lkeGHCRPullCredentials(credentialEnv)
 	if username == "" || token == "" {
@@ -172,16 +180,27 @@ func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflig
 		filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"),
 		filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml"),
 		filepath.Join(cfg.RuntimeRoot, "env", "stack.env"),
-		filepath.Join(cfg.RuntimeRoot, "state", "openbao", "unseal-key"),
-		filepath.Join(cfg.RuntimeRoot, "state", "openbao", "root-token"),
-		filepath.Join(cfg.RuntimeRoot, "state", "secrets", "postgres"),
 	}
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		reporter.fail("secret-store", err)
+		return
+	}
+	required = append(required,
+		filepath.Join(store.Root, "openbao", "unseal-key"),
+		filepath.Join(store.Root, "openbao", "root-token"),
+		filepath.Join(store.Root, "runtime", "postgres"),
+	)
 	for _, path := range required {
 		if info, err := os.Stat(path); err != nil || info.Size() == 0 {
 			reporter.fail("runtime-state", fmt.Errorf("required matching runtime file is missing or empty: %s", path))
 			continue
 		}
-		reporter.pass("runtime-state", strings.TrimPrefix(path, cfg.RuntimeRoot+string(os.PathSeparator))+" is available")
+		display := strings.TrimPrefix(path, cfg.RuntimeRoot+string(os.PathSeparator))
+		if strings.HasPrefix(path, store.Root+string(os.PathSeparator)) {
+			display = "SecretStore/" + strings.TrimPrefix(path, store.Root+string(os.PathSeparator))
+		}
+		reporter.pass("runtime-state", display+" is available")
 	}
 	stackPath := filepath.Join(cfg.RuntimeRoot, "env", "stack.env")
 	if got := envFileValue(stackPath, "CLOUD_STACK_NAME"); got != "" && got != cfg.Values["CLOUD_STACK_NAME"] {

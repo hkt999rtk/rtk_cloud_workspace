@@ -51,8 +51,7 @@ GCP/Azure/AWS 的 provider id 分別預留為 `k8s`、`gke`、`aks`、`eks`；�
 fail-fast adapter，會在任何 cloud API、DNS 或 state mutation 前停止。
 現階段唯一應被 live 驗證的 Kubernetes provider 仍是 `lke`。
 
-Private GHCR image pull 使用 operator-local credentials。Local deployment
-會依序讀取 process environment、environment profile 與 shared profile；不讀取 `~/.env`：
+Private GHCR image pull 使用 environment SecretStore 中的 operator credentials：
 
 ```env
 GHCR_PULL_USERNAME=你的 GitHub username
@@ -72,10 +71,9 @@ LINODE_OBJ_BUCKET=artifact bucket name
 scripts/check-deployment-credentials.sh --environment staging
 ```
 
-預設分層讀取 `~/.config/rtk-cloud/shared.env` 與
-`~/.config/rtk-cloud/environments/<environment>.env`（也可傳 `--env-file PATH`），
-並要求檔案權限不得開放給 group/others。所有 cloud credential loader 都不讀取 `~/.env`；任一 profile
-缺少時直接 fail closed。檢查內容會依 environment 自動包含 Linode profile/LKE read、
+預設只讀取 `~/.config/rtk_cloud/<environment>/operator/env/` 的逐項 `0600` 檔案；
+不接受 shared profile、`--env-file` 或 process environment 覆寫，缺少時直接 fail closed。
+檢查內容會依 environment 自動包含 Linode profile/LKE read、
 五個 service GHCR repository pull、GoDaddy domain read，以及啟用 clip direct
 upload 時的 Object Storage inventory、limited-key scope、signed list 與
 write/read/delete canary。任何一項失敗都回傳 non-zero；
@@ -163,7 +161,7 @@ public hostname、Ingress 或 TLS SAN。Platform 管理員要從 Cloud Admin 的
 Platform View 分頁透過 same-origin iframe 觀看 Grafana，Cloud Admin BFF 會
 以 platform-admin session 保護 `/api/admin/grafana/*` proxy 路徑。
 
-可用 `--env-root PATH` 指向另一份 environment directory。舊的 `--secrets-root PATH` 仍保留為相容 alias，但新的操作與文件都應使用 `--env-root`。
+可用 `--env-root PATH` 指向另一份非敏感 environment runtime directory。`--secrets-root` 已移除；敏感資料根目錄用 `RTK_CLOUD_CONFIG_ROOT` 或 secrets 子命令的 `--config-root` 指定。
 
 K8s staging 驗收入口是 `scripts/run-staging-e2e.sh` 與
 `scripts/setup-staging-e2e-data.sh`；一般 environment 操作使用
@@ -631,7 +629,7 @@ NodeBalancer。`--dns` / `staging-provision` 都走同一條 HAProxy edge 路徑
 
 必要輸入：
 
-- `DNS_ADAPTER=godaddy` 時，`GODADDY_KEY` / `GODADDY_SECRET` 依序從 process environment、`~/.config/rtk-cloud/environments/<environment>.env`、`~/.config/rtk-cloud/shared.env` 讀取；`DNS_ADAPTER=route53` 時使用 AWS SDK default credential chain。
+- `DNS_ADAPTER=godaddy` 時，`GODADDY_KEY` / `GODADDY_SECRET` 只從 `~/.config/rtk_cloud/<environment>/operator/env/` 讀取。
 - `CLOUD_DNS_ROOT_DOMAIN`，staging 預設是 `realtekconnect.com`。
 - `certbot` CLI，或用 `RTK_CLOUD_CERTBOT` 指到指定 binary。
 - `helm` 與 `kubectl` 可操作目標 LKE cluster。
@@ -828,7 +826,7 @@ reset PostgreSQL、DNS 或其他 shared workloads：
 go run ./scripts/go/rtk-cloud -- account-manager-email-deploy \
   --workspace "$PWD" \
   --env-root cloud_env/staging/runtime \
-  --kubeconfig cloud_env/staging/runtime/state/kubeconfig.yaml \
+  --kubeconfig "$HOME/.config/rtk_cloud/staging/kube/kubeconfig.yaml" \
   --confirm video-cloud-staging
 
 RUN_LIVE_EMAIL_E2E=1 python3 scripts/staging_email_signup_e2e.py \

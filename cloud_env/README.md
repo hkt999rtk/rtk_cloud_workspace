@@ -133,7 +133,7 @@ selection.
 
 每個 environment 也必須追蹤 `storage.env`，宣告 runtime media policy、bucket 與 environment-owned prefix；範例與 lifecycle 見 [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md)。
 
-DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 依序從 process environment、`~/.config/rtk-cloud/environments/<environment>.env`、`~/.config/rtk-cloud/shared.env` 讀取，且不會 fallback `~/.env`；Route53 使用 AWS SDK default credential chain並依 `CLOUD_DNS_ROOT_DOMAIN` 自動尋找唯一 public hosted zone。詳細設定與切換流程見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
+DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 只從 `~/.config/rtk_cloud/<environment>/operator/env/` 讀取；Route53 所需 credentials 也必須存入同一 environment store。詳細設定見 [`docs/secret-store.md`](../docs/secret-store.md) 與 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
 
 ## 驗證與 provision
 

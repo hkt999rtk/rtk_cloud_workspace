@@ -280,7 +280,7 @@ func TestFeatureRootsSeparateDeploymentAndLoadRuntime(t *testing.T) {
 	if got, want := featureKubeconfigPath(deploymentRoot), filepath.Join(deploymentRoot, "state", "kubeconfig.yaml"); got != want {
 		t.Fatalf("featureKubeconfigPath() = %q, want %q", got, want)
 	}
-	if got, want := featureDeviceCABundlePath(deploymentRoot), filepath.Join(deploymentRoot, "state", "secrets", "device-client-ca-bundle.pem"); got != want {
+	if got, want := featureDeviceCABundlePath(deploymentRoot), filepath.Join(deploymentRoot, "state", "pki", "device-client-ca-bundle.pem"); got != want {
 		t.Fatalf("featureDeviceCABundlePath() = %q, want %q", got, want)
 	}
 }

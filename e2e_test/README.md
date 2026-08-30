@@ -90,7 +90,7 @@ RUN_LIVE_EMAIL_E2E=1 \
 ```
 
 The command passes `SENDMAIL_HTTP_BEARER_TOKEN` only to the scoped LKE
-Account Manager rollout and maps IMAP credentials from `~/.env` only to the
+Account Manager rollout and maps IMAP credentials from the staging SecretStore only to the
 local browser/helper process. It writes redacted evidence to
 `.artifacts/e2e_test/email-signup/<run-id>/`. Use `--skip-deploy` only after
 the same Send Mail configuration has already rolled out successfully.

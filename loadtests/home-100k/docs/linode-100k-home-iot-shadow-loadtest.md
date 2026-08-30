@@ -79,7 +79,7 @@ loadtests/home-100k/scripts/cleanup-home-100k-vms.sh
 
 Secrets and non-secret test descriptions are intentionally separate:
 
-- `~/.env` supplies only `LINODE_TOKEN`.
+- The selected environment SecretStore supplies `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
   non-secret test description: env-root, brand, region, remote paths, SSH key
   path, status interval, ramp-up time, and target load size.
@@ -123,7 +123,7 @@ Defaults:
 | Environment variable | Default |
 | --- | --- |
 | `HOME100K_DESCRIPTION_FILE` | `loadtests/home-100k/scenarios/default.description.env` |
-| `HOME100K_SECRET_ENV_FILE` | `~/.env`, only `LINODE_TOKEN` is read |
+| `HOME100K_LINODE_TOKEN_FILE` | Optional override; defaults to `<config-root>/<environment>/operator/env/LINODE_TOKEN` |
 | `HOME100K_ENV_ROOT` | `cloud_env/staging/runtime` |
 | `HOME100K_BRANDNAME` | `RTK` |
 | `HOME100K_REGION` | `us-sea` |

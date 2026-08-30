@@ -62,6 +62,7 @@ var errLKEMissingCluster = errors.New("no matching LKE cluster found")
 var errLKEImageNotFound = errors.New("LKE image not found")
 var lkeRuntimeSecretCache = map[string]string{}
 var lkeRuntimeSecretStateDir string
+var activeCanonicalSecretStore bool
 var inspectLKEImage = func(image string) error {
 	return runExternal("docker", "buildx", "imagetools", "inspect", image)
 }
@@ -571,12 +572,7 @@ func lkeApplyImagePullSecret(env map[string]string, namespace string) error {
 func lkeGHCRPullCredentials(env map[string]string) (string, string) {
 	username := firstNonEmpty(os.Getenv("GHCR_PULL_USERNAME"), env["GHCR_PULL_USERNAME"])
 	token := firstNonEmpty(os.Getenv("GHCR_PULL_TOKEN"), env["GHCR_PULL_TOKEN"])
-	if username != "" && token != "" {
-		return username, token
-	}
-	shared, _ := readEnvFile(defaultDeploymentSharedCredentialFile())
-	return firstNonEmpty(username, shared["GHCR_PULL_USERNAME"]),
-		firstNonEmpty(token, shared["GHCR_PULL_TOKEN"])
+	return username, token
 }
 
 type lkePublicHTTPSRoute struct {
@@ -1034,7 +1030,7 @@ type lkePublicHTTPSCertificateCacheMetadata struct {
 }
 
 func lkePublicHTTPSCertificateCacheDir(paths provisionPaths, env map[string]string) string {
-	return filepath.Join(paths.EnvRoot, "state", "public-https", lkePublicHTTPSTLSSecretName(env))
+	return sensitiveEnvironmentPath(paths, "public-https", lkePublicHTTPSTLSSecretName(env))
 }
 
 func lkeLoadPublicHTTPSCertificateCache(paths provisionPaths, env map[string]string, hosts []string) (string, string, bool, error) {
@@ -1208,7 +1204,7 @@ func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA 
 	if strings.TrimSpace(rootCA) == "" || strings.TrimSpace(deviceCA) == "" || strings.TrimSpace(appCA) == "" {
 		return errors.New("root, device, and app CA certificates are required for the device client CA bundle")
 	}
-	dir := filepath.Join(paths.EnvRoot, "state", "secrets")
+	dir := filepath.Join(paths.EnvRoot, "state", "pki")
 	path := filepath.Join(dir, "device-client-ca-bundle.pem")
 	if err := writeSensitiveFile(path, lkeClientCABundle(rootCA, deviceCA, appCA)); err != nil {
 		return fmt.Errorf("write device client CA bundle: %w", err)
@@ -2603,6 +2599,9 @@ func lkeImportExistingRuntimeSecret(env map[string]string, namespaceKey, secretN
 }
 
 func lkeImportExistingRuntimeSecretWithOptional(env map[string]string, namespaceKey, secretName string, requiredMappings, optionalMappings map[string]string, required bool) (bool, error) {
+	if activeCanonicalSecretStore {
+		return false, nil
+	}
 	namespace := lkeNamespaceName(env, namespaceKey)
 	raw, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", secretName, "--ignore-not-found=true", "-o", "json")
 	if err != nil {
@@ -3776,7 +3775,7 @@ func lkeCertificateSignedByCA(certPEM, caPEM []byte) (bool, error) {
 }
 
 func loadOrCreateLKEMQTTMaterial(paths provisionPaths, env map[string]string) (lkeMQTTMaterial, error) {
-	stateDir := filepath.Join(paths.EnvRoot, "state", "mqtt-tls")
+	stateDir := sensitiveEnvironmentPath(paths, "mqtt-tls")
 	caPath := filepath.Join(stateDir, "ca.crt")
 	certPath := filepath.Join(stateDir, "server.crt")
 	keyPath := filepath.Join(stateDir, "server.key")
@@ -3909,7 +3908,7 @@ func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, err
 }
 
 func loadOrCreateLKECertIssuerMaterial(paths provisionPaths, env map[string]string) (lkeCertIssuerMaterial, error) {
-	stateDir := filepath.Join(paths.EnvRoot, "state", "certissuer")
+	stateDir := sensitiveEnvironmentPath(paths, "certissuer")
 	files := []string{"server.crt", "server.key", "service-ca.crt", "client.crt", "client.key", "factory.crt", "factory.key"}
 	desiredAlgorithm, err := lkeInternalTLSKeyAlgorithm(env)
 	if err != nil {
@@ -4078,7 +4077,7 @@ func newLKEOpenBaoTLSMaterial(env map[string]string) (lkeOpenBaoTLSMaterial, err
 }
 
 func loadOrCreateLKEOpenBaoTLSMaterial(paths provisionPaths, env map[string]string) (lkeOpenBaoTLSMaterial, error) {
-	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), filepath.Join(paths.EnvRoot, "state", "openbao"))
+	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), sensitiveEnvironmentPath(paths, "openbao"))
 	caPath := filepath.Join(stateDir, "tls-ca.crt")
 	certPath := filepath.Join(stateDir, "tls.crt")
 	keyPath := filepath.Join(stateDir, "tls.key")
@@ -4426,7 +4425,7 @@ func lkeValidateOpenBaoOperatorStateBeforeTLSChange(paths provisionPaths, env ma
 	if status.Sealed {
 		return errors.New("refuse OpenBao TLS change while the existing instance is sealed; recover it with matching operator state first")
 	}
-	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), filepath.Join(paths.EnvRoot, "state", "openbao"))
+	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), sensitiveEnvironmentPath(paths, "openbao"))
 	rootToken, err := readSensitiveFile(filepath.Join(stateDir, "root-token"), "OpenBao root token")
 	if err != nil {
 		return fmt.Errorf("refuse OpenBao TLS change: %w", err)
@@ -4581,7 +4580,7 @@ func lkeBootstrapOpenBao(paths provisionPaths, env map[string]string) (lkeOpenBa
 	if err != nil {
 		return lkeOpenBaoBootstrapResult{}, err
 	}
-	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), filepath.Join(paths.EnvRoot, "state", "openbao"))
+	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), sensitiveEnvironmentPath(paths, "openbao"))
 	if !status.Initialized {
 		if err := os.MkdirAll(stateDir, 0o700); err != nil {
 			return lkeOpenBaoBootstrapResult{}, err
@@ -5864,7 +5863,7 @@ spec:
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
 	if service.Name == "video-cloud-logingester" {
-		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOGINGESTER_MQTT_CLEAN_SESSION"), "false")
+		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOGINGESTER_MQTT_CLEAN_SESSION"), "true")
 	}
 	return "true"
 }
@@ -6961,11 +6960,21 @@ func lkeCertIssuerBaseURL(env map[string]string) string {
 }
 
 func lkeFactoryEnrollAuthKey(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("FACTORY_ENROLL_AUTH_KEY"), lkeRuntimeSecretValue("factory-enroll-auth"))
+	if !activeCanonicalSecretStore {
+		if value := strings.TrimSpace(firstNonEmpty(os.Getenv("FACTORY_ENROLL_AUTH_KEY"), env["FACTORY_ENROLL_AUTH_KEY"])); value != "" {
+			return value
+		}
+	}
+	return lkeRuntimeSecretValue("factory-enroll-auth")
 }
 
 func lkeFactoryProductionJWTSecret(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("FACTORY_PRODUCTION_JWT_SECRET"), env["FACTORY_PRODUCTION_JWT_SECRET"], lkeRuntimeSecretValue("factory-production-jwt"))
+	if !activeCanonicalSecretStore {
+		if value := strings.TrimSpace(firstNonEmpty(os.Getenv("FACTORY_PRODUCTION_JWT_SECRET"), env["FACTORY_PRODUCTION_JWT_SECRET"])); value != "" {
+			return value
+		}
+	}
+	return lkeRuntimeSecretValue("factory-production-jwt")
 }
 
 func lkeFactoryProductionJWTAudience(env map[string]string) string {
@@ -6973,6 +6982,11 @@ func lkeFactoryProductionJWTAudience(env map[string]string) string {
 }
 
 func lkeInternalAuthToken() string {
+	if !activeCanonicalSecretStore {
+		if value := strings.TrimSpace(os.Getenv("LKE_INTERNAL_AUTH")); value != "" {
+			return value
+		}
+	}
 	return lkeRuntimeSecretValue("internal-auth")
 }
 
@@ -7042,23 +7056,27 @@ func lkeNewebPayMerchantID(env map[string]string) string {
 }
 
 func lkeNewebPayHashKey(env map[string]string) string {
-	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("NEWEBPAY_HASH_KEY"), env["NEWEBPAY_HASH_KEY"], lkeRuntimeSecretCache["newebpay-hash-key"])); value != "" {
-		return value
+	if !activeCanonicalSecretStore {
+		if value := strings.TrimSpace(firstNonEmpty(os.Getenv("NEWEBPAY_HASH_KEY"), env["NEWEBPAY_HASH_KEY"], lkeRuntimeSecretCache["newebpay-hash-key"])); value != "" {
+			return value
+		}
 	}
 	digest := sha256.Sum256([]byte(lkeRuntimeSecretValue("newebpay-hash-key-seed")))
 	return hex.EncodeToString(digest[:])[:32]
 }
 
 func lkeNewebPayHashIV(env map[string]string) string {
-	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("NEWEBPAY_HASH_IV"), env["NEWEBPAY_HASH_IV"], lkeRuntimeSecretCache["newebpay-hash-iv"])); value != "" {
-		return value
+	if !activeCanonicalSecretStore {
+		if value := strings.TrimSpace(firstNonEmpty(os.Getenv("NEWEBPAY_HASH_IV"), env["NEWEBPAY_HASH_IV"], lkeRuntimeSecretCache["newebpay-hash-iv"])); value != "" {
+			return value
+		}
 	}
 	digest := sha256.Sum256([]byte(lkeRuntimeSecretValue("newebpay-hash-iv-seed")))
 	return hex.EncodeToString(digest[:])[:16]
 }
 
 func lkePaymentSimulatorAdminToken(env map[string]string) string {
-	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_ADMIN_TOKEN"), env["PAYMENT_SIMULATOR_ADMIN_TOKEN"], lkeRuntimeSecretCache["payment-simulator-admin-token"], lkeRuntimeSecretValue("payment-simulator-admin-token"))
+	return lkeRuntimeSecretValue("payment-simulator-admin-token")
 }
 
 func lkeNewebPayNotifyURL(env map[string]string) string {
@@ -7241,6 +7259,9 @@ func lkeBillingInternalURL(env map[string]string) string {
 }
 
 func lkePaymentReferenceEncryptionKey(env map[string]string) string {
+	if activeCanonicalSecretStore {
+		return lkeRuntimeSecretValue("payment-reference-encryption")
+	}
 	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("PAYMENT_REFERENCE_ENCRYPTION_KEY"), env["PAYMENT_REFERENCE_ENCRYPTION_KEY"])); value != "" {
 		return value
 	}
@@ -7381,6 +7402,9 @@ func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
 }
 
 func lkeEmailOutboxEncryptionKey(env map[string]string) string {
+	if activeCanonicalSecretStore {
+		return lkeRuntimeSecretValue("email-outbox-encryption")
+	}
 	if value := strings.TrimSpace(firstNonEmpty(os.Getenv("EMAIL_OUTBOX_ENCRYPTION_KEY"), env["EMAIL_OUTBOX_ENCRYPTION_KEY"])); value != "" {
 		return value
 	}
@@ -7563,6 +7587,9 @@ func lkeAccountManagerDatabaseURL(env map[string]string) string {
 }
 
 func writeLKEPlatformAdminEnv(paths provisionPaths, env map[string]string) error {
+	if activeCanonicalSecretStore {
+		return nil
+	}
 	path := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager-platform-admin.env")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -7572,6 +7599,9 @@ func writeLKEPlatformAdminEnv(paths provisionPaths, env map[string]string) error
 }
 
 func writeLKEAccountManagerRuntimeEnv(paths provisionPaths, env map[string]string) error {
+	if activeCanonicalSecretStore {
+		return nil
+	}
 	path := filepath.Join(paths.EnvRoot, "services", "account-manager", "account-manager.env")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -7581,6 +7611,9 @@ func writeLKEAccountManagerRuntimeEnv(paths provisionPaths, env map[string]strin
 }
 
 func writeLKEVideoCloudRuntimeEnv(paths provisionPaths, env map[string]string) error {
+	if activeCanonicalSecretStore {
+		return nil
+	}
 	path := filepath.Join(paths.EnvRoot, "services", "video-cloud", "video-cloud.env")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -7594,11 +7627,13 @@ func lkePlatformAdminEmail(env map[string]string) string {
 }
 
 func lkeRuntimeSecretValue(name string) string {
-	if value := os.Getenv("LKE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))); value != "" {
+	if activeCanonicalSecretStore {
+		path := filepath.Join(lkeRuntimeSecretStateDir, lkeSecretFileName(name))
+		value, err := readSensitiveFile(path, "LKE runtime secret "+name)
+		if err != nil {
+			return ""
+		}
 		return value
-	}
-	if seed := os.Getenv("LKE_RUNTIME_SECRET_SEED"); seed != "" {
-		return seed + "-" + name
 	}
 	if value := lkeRuntimeSecretCache[name]; value != "" {
 		return value
@@ -7609,11 +7644,15 @@ func lkeRuntimeSecretValue(name string) string {
 			lkeRuntimeSecretCache[name] = value
 			return value
 		}
-		value := randomSecret()
-		if err := writeSensitiveFile(path, value); err == nil {
-			lkeRuntimeSecretCache[name] = value
-			return value
-		}
+	}
+	// Tests and disposable development fixtures may still request deterministic
+	// material. Normal deployments always set activeCanonicalSecretStore and
+	// therefore fail closed above rather than generating or overriding secrets.
+	if seed := os.Getenv("LKE_RUNTIME_SECRET_SEED"); seed != "" {
+		return seed + "-" + name
+	}
+	if value := os.Getenv("LKE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))); value != "" {
+		return value
 	}
 	value := randomSecret()
 	lkeRuntimeSecretCache[name] = value
@@ -7694,7 +7733,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-		`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
+`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime
@@ -8298,7 +8337,7 @@ func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreat
 		expiredKubeconfig = true
 		fmt.Fprintf(os.Stderr, "[lke] kubeconfig is unavailable or expired, refreshing: %s\n", kubeconfig)
 	}
-	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "kubeconfig.yaml")
+	stateKubeconfig := sensitiveEnvironmentPath(paths, "kube", "kubeconfig.yaml")
 	if _, statErr := os.Stat(stateKubeconfig); statErr == nil {
 		if k8sKubeconfigReady(stateKubeconfig) {
 			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", stateKubeconfig)
@@ -8844,7 +8883,7 @@ func recoverStaleLKECluster(token string, paths provisionPaths, env map[string]s
 	if err != nil {
 		return lkeCluster{}, err
 	}
-	stateKubeconfig := filepath.Join(paths.EnvRoot, "state", "kubeconfig.yaml")
+	stateKubeconfig := sensitiveEnvironmentPath(paths, "kube", "kubeconfig.yaml")
 	if err := os.MkdirAll(filepath.Dir(stateKubeconfig), 0o755); err != nil {
 		return lkeCluster{}, err
 	}
