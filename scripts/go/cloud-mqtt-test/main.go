@@ -3906,9 +3906,10 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.Error = "device command runtime log publish failed: " + redactedError(err)
 		return result
 	}
+	reportedToken := boundedShadowClientToken("reported", commandID)
 	ackPayload, err := json.Marshal(map[string]any{
 		"state":       map[string]any{"reported": reportedState},
-		"clientToken": "reported-" + commandID,
+		"clientToken": reportedToken,
 	})
 	if err != nil {
 		result.Error = redactedError(err)
@@ -3926,7 +3927,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	ackDoc, err := waitForMQTTPublish(appObserver, shadowDocumentsTopic, probe.Timeout, func(doc map[string]any) bool {
-		return doc["clientToken"] == "reported-"+commandID && shadowDocumentsDeltaCleared(doc)
+		return doc["clientToken"] == reportedToken && shadowDocumentsDeltaCleared(doc)
 	})
 	if err != nil {
 		result.Error = "app observer did not receive shadow reported documents: " + redactedError(err)
