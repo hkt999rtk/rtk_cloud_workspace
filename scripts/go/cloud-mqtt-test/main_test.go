@@ -1224,6 +1224,38 @@ func TestActorSeparatedCommandRequiresDeviceReceiveAndAppAck(t *testing.T) {
 	}
 }
 
+func TestActorSeparatedReportedTokenHonorsProtocolLimit(t *testing.T) {
+	broker := newFakeMQTTBroker(t)
+	defer broker.Close()
+	deviceID := "identity-cutover-final-20260830T193700Z-0001"
+	result := runActorSeparatedProbe(mqttActorProbe{
+		DeviceID:    deviceID,
+		DeviceType:  "camera",
+		Brandname:   "RTK",
+		DeviceToken: testMQTTToken("device"),
+		AppToken:    testMQTTToken("app"),
+		Dial:        broker.Dial,
+		Timeout:     time.Second,
+		Now:         fixedProbeTime,
+		RunID:       "1788120345",
+	})
+	if result.MQTTStatus != "PASS" {
+		t.Fatalf("result = %#v, want PASS", result)
+	}
+	payloads := broker.PublishPayloads("device", "$vc/devices/"+deviceID+"/shadow/update")
+	if len(payloads) != 1 {
+		t.Fatalf("reported payloads = %d, want 1", len(payloads))
+	}
+	var reported map[string]any
+	if err := json.Unmarshal(payloads[0], &reported); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := reported["clientToken"].(string)
+	if len(token) == 0 || len(token) > 64 {
+		t.Fatalf("reported client token length = %d, want 1..64: %q", len(token), token)
+	}
+}
+
 func TestShadowStateWithLoadTestMarkerForcesFreshDeltaAndReportedClear(t *testing.T) {
 	base := map[string]any{"power": true}
 
