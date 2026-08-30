@@ -44,7 +44,15 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 
 func TestRunStagingE2EResetRejectsMissingEmailDeliveryBeforeMutation(t *testing.T) {
 	workspace := t.TempDir()
+	_ = makeIsolatedTestSecretStore(t, "staging")
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "environment.env"), `CLOUD_STACK_NAME=video-cloud-staging
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+DEPLOYMENT_LOCATION=asia-southeast
+AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
+SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
+SENDMAIL_HTTP_TIMEOUT=15s
+`)
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	for _, key := range accountManagerEmailSecretKeys {
 		t.Setenv(key, "")
@@ -271,13 +279,32 @@ func clearLKEImageEnvForTest(t *testing.T) {
 func makeStagingResetTestEnv(t *testing.T) (string, string) {
 	t.Helper()
 	workspace := t.TempDir()
+	configRoot := filepath.Join(t.TempDir(), "rtk_cloud")
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	store, err := newSecretStore(configRoot, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/SENDMAIL_HTTP_BEARER_TOKEN", []byte("test-token\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("runtime/email-outbox-encryption", []byte("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=\n"), true); err != nil {
+		t.Fatal(err)
+	}
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
-	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_PROVIDER=lke
-CLOUD_STACK_NAME=video-cloud-staging
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "environment.env"), `CLOUD_STACK_NAME=video-cloud-staging
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+DEPLOYMENT_LOCATION=asia-southeast
 AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
 SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
-SENDMAIL_HTTP_BEARER_TOKEN=test-token
 SENDMAIL_HTTP_TIMEOUT=15s
+`)
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_PROVIDER=lke
+CLOUD_STACK_NAME=video-cloud-staging
+CLOUD_ENV_NAME=staging
 `)
 	return workspace, envRoot
 }

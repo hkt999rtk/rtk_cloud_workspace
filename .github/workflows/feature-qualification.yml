@@ -90,6 +90,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: scripts/go/go.sum
 
       - id: selection
@@ -215,6 +216,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: |
             scripts/go/go.sum
             loadtests/home-100k/go.sum
@@ -280,9 +282,20 @@ jobs:
             --out "$FEATURE_ENV_ROOT/artifacts/lke-images/lke-image-manifest.json"
 
       - name: Deploy candidate once to shared staging
+        env:
+          GHCR_PULL_USERNAME: ${{ github.actor }}
+          GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
         shell: bash
         run: |
           set -euo pipefail
+          export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          echo "RTK_CLOUD_CONFIG_ROOT=$RTK_CLOUD_CONFIG_ROOT" >> "$GITHUB_ENV"
+          test -n "$RTK_CLOUD_SECRET_BUNDLE"
+          bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
+          chmod 0600 "$bundle"
+          scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle"
           go run ./scripts/go/rtk-cloud -- staging-provision \
             --workspace "$GITHUB_WORKSPACE" \
             --env-root "$FEATURE_ENV_ROOT" \
@@ -333,6 +346,15 @@ jobs:
             HOME100K_PRESERVE_VMS=0 \
               loadtests/home-100k/scripts/home-100k.sh destroy-vms --live --confirm-live
           done < <(find "$root" -name vms.json -type f -print)
+
+      - name: Remove job-only SecretStore
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          case "$RTK_CLOUD_CONFIG_ROOT/" in "$RUNNER_TEMP/"*) rm -rf "$RTK_CLOUD_CONFIG_ROOT" ;; *) exit 1 ;; esac
+          rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
   result:
     name: Feature qualification result

@@ -50,11 +50,11 @@ func (e *provisionObjectStorageHTTPError) Error() string {
 
 func provisionObjectStoreFromEnv(operator map[string]string) (provisionObjectStore, error) {
 	store := provisionObjectStore{
-		bucket:    firstNonEmpty(os.Getenv("LINODE_OBJ_BUCKET"), operator["LINODE_OBJ_BUCKET"]),
-		endpoint:  strings.TrimRight(firstNonEmpty(os.Getenv("LINODE_OBJ_ENDPOINT"), operator["LINODE_OBJ_ENDPOINT"]), "/"),
-		accessKey: firstNonEmpty(os.Getenv("LINODE_OBJ_ACCESS_KEY_ID"), os.Getenv("AWS_ACCESS_KEY_ID"), operator["LINODE_OBJ_ACCESS_KEY_ID"], operator["AWS_ACCESS_KEY_ID"]),
-		secretKey: firstNonEmpty(os.Getenv("LINODE_OBJ_SECRET_ACCESS_KEY"), os.Getenv("AWS_SECRET_ACCESS_KEY"), operator["LINODE_OBJ_SECRET_ACCESS_KEY"], operator["AWS_SECRET_ACCESS_KEY"]),
-		region:    firstNonEmpty(os.Getenv("LINODE_OBJ_REGION"), operator["LINODE_OBJ_REGION"]),
+		bucket:    operator["LINODE_OBJ_BUCKET"],
+		endpoint:  strings.TrimRight(operator["LINODE_OBJ_ENDPOINT"], "/"),
+		accessKey: firstNonEmpty(operator["LINODE_OBJ_ACCESS_KEY_ID"], operator["AWS_ACCESS_KEY_ID"]),
+		secretKey: firstNonEmpty(operator["LINODE_OBJ_SECRET_ACCESS_KEY"], operator["AWS_SECRET_ACCESS_KEY"]),
+		region:    operator["LINODE_OBJ_REGION"],
 	}
 	if store.bucket == "" {
 		return store, errors.New("LINODE_OBJ_BUCKET is required")

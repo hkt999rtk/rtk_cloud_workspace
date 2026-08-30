@@ -813,11 +813,11 @@ esac
 		t.Fatal(err)
 	}
 	runtimeEnvRoot := filepath.Join(root, "runtime-env")
-	if err := os.MkdirAll(filepath.Join(runtimeEnvRoot, "state", "secrets"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(runtimeEnvRoot, "state", "pki"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(runtimeEnvRoot, "state", "secrets", "device-client-ca-bundle.pem"),
+		filepath.Join(runtimeEnvRoot, "state", "pki", "device-client-ca-bundle.pem"),
 		[]byte("test client CA bundle\n"),
 		0o600,
 	); err != nil {
@@ -850,7 +850,7 @@ esac
 		"HOME100K_GENERATOR_HOSTS_OVERRIDE_IP=127.0.0.1",
 		"HOME100K_CLOUD_LOGGER_ENDPOINT=http://127.0.0.1:18090",
 		"RUNTIME_COVERAGE_HOSTNAMES=account.coverage-endpoints.invalid,video.coverage-endpoints.invalid,device.video.coverage-endpoints.invalid",
-		"RUNTIME_COVERAGE_SERVER_CA=" + filepath.Join(runtimeEnvRoot, "state", "secrets", "runtime-coverage-server-ca.crt"),
+		"RUNTIME_COVERAGE_SERVER_CA=" + filepath.Join(runtimeEnvRoot, "state", "pki", "runtime-coverage-server-ca.crt"),
 		"VIDEO_CLOUD_LOAD_STORAGE_NAMESPACE=coverage-endpoints-video-cloud",
 	} {
 		if !strings.Contains(envText, expected+"\n") {

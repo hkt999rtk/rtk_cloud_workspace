@@ -45,7 +45,7 @@ first RTP, H.264 RTP packet evidence, and external TURN/coturn evidence.
    connectivity using the same fixture and CA bundle.
 
 The CA bundle is resolved from `HOME100K_DEVICE_CLIENT_CA_BUNDLE` or
-`<env-root>/state/secrets/device-client-ca-bundle.pem`. A failed gate stops the
+`<env-root>/state/pki/device-client-ca-bundle.pem`. A failed gate stops the
 workflow with a stable classification such as `FIXTURE_MISMATCH`,
 `CERTIFICATE_CA_MISSING`, or `TOKEN_BOOTSTRAP_FAILED` and no load-generator VM
 is provisioned.
@@ -731,7 +731,7 @@ loadtests/home-100k/scripts/cleanup-home-100k-vms.sh
 
 Secrets and non-secret test descriptions are intentionally separate:
 
-- `~/.env` supplies only `LINODE_TOKEN`.
+- The selected environment SecretStore supplies `LINODE_TOKEN`.
 - `loadtests/home-100k/scenarios/default.description.env` supplies the
   non-secret test description: environment, brand, region, remote paths, SSH key
   path, status interval, ramp-up time, and target load size.
@@ -755,7 +755,7 @@ The script keeps non-secret defaults in one place:
 | Environment variable | Default |
 | --- | --- |
 | `HOME100K_DESCRIPTION_FILE` | `loadtests/home-100k/scenarios/default.description.env` |
-| `HOME100K_SECRET_ENV_FILE` | `~/.env`, only `LINODE_TOKEN` is read |
+| `HOME100K_LINODE_TOKEN_FILE` | Optional override; defaults to `<config-root>/<environment>/operator/env/LINODE_TOKEN` |
 | `HOME100K_ENVIRONMENT` | `staging`; resolves `cloud_env/staging/runtime` |
 | `HOME100K_ENV_ROOT` | internal/custom runtime override only |
 | `HOME100K_BRANDNAME` | `RTK` |
@@ -855,7 +855,7 @@ planned load-generator VMs, and projected total active services. Set
 The selected adapter's quota setting makes this a hard fail-fast gate when the
 projected total exceeds the known account limit.
 
-Stage duration belongs in the non-secret description file, not in `~/.env`.
+Stage duration belongs in the non-secret description file, not in SecretStore.
 The default profile uses `HOME100K_STAGE_WARM_UP=30s`,
 `HOME100K_STAGE_STEADY=90s`, and `HOME100K_STAGE_COOL_DOWN=30s`, so the planned
 load window is 150 seconds per stage and 10 minutes across the 25%, 50%, 75%,

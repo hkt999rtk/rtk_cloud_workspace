@@ -25,16 +25,13 @@ import (
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
-func TestLKEGHCRPullCredentialsUsesSharedProfile(t *testing.T) {
-	home := t.TempDir()
-	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GHCR_PULL_USERNAME=profile-user\nGHCR_PULL_TOKEN=profile-token\n")
-	t.Setenv("HOME", home)
+func TestLKEGHCRPullCredentialsUsesCanonicalInjectedValues(t *testing.T) {
 	t.Setenv("GHCR_PULL_USERNAME", "")
 	t.Setenv("GHCR_PULL_TOKEN", "")
 
-	username, token := lkeGHCRPullCredentials(nil)
+	username, token := lkeGHCRPullCredentials(map[string]string{"GHCR_PULL_USERNAME": "profile-user", "GHCR_PULL_TOKEN": "profile-token"})
 	if username != "profile-user" || token != "profile-token" {
-		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want shared profile values", username, token)
+		t.Fatalf("lkeGHCRPullCredentials() = (%q, %q), want canonical values", username, token)
 	}
 }
 
@@ -83,7 +80,7 @@ func TestRunProvisionLKEApplyUsesKubectl(t *testing.T) {
 func TestWriteLKEDeviceClientCABundle(t *testing.T) {
 	envRoot := t.TempDir()
 	paths := provisionPaths{EnvRoot: envRoot}
-	dir := filepath.Join(envRoot, "state", "secrets")
+	dir := filepath.Join(envRoot, "state", "pki")
 	path := filepath.Join(dir, "device-client-ca-bundle.pem")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -598,7 +595,14 @@ func TestRunProvisionLKEMergesEnvironmentProfileObjectStorageCredentials(t *test
 	fakeKubectl(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env"), "LINODE_MEDIA_OBJ_ACCESS_KEY_ID=test-access\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=test-secret\n")
+	operatorDir := filepath.Join(home, ".config", "rtk_cloud", "staging", "operator", "env")
+	for name, value := range map[string]string{"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "test-access", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "test-secret"} {
+		path := filepath.Join(operatorDir, name)
+		writeTestFile(t, path, value)
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
@@ -629,7 +633,14 @@ VIDEO_CLOUD_BLOB_BUCKET=runtime-bucket
 `)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env"), "LINODE_MEDIA_OBJ_ACCESS_KEY_ID=test-access-key\nLINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=test-secret-key\n")
+	operatorDir := filepath.Join(home, ".config", "rtk_cloud", "staging", "operator", "env")
+	for name, value := range map[string]string{"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "test-access-key", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "test-secret-key"} {
+		path := filepath.Join(operatorDir, name)
+		writeTestFile(t, path, value)
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Setenv("LKE_POSTGRES_IMAGE", "postgres:16-alpine")
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:test")
 	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
@@ -2927,7 +2938,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"4\"",
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"2\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
-		"name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"false\"",
+		"name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"true\"",
 		"name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY\n              value: \"1\"",
 		"name: VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT\n              value: \"1\"",
 	} {
@@ -3306,6 +3317,23 @@ func TestLKEVideoCloudAuxiliaryDeploymentManifestHasNoTabOnlyLine(t *testing.T) 
 	cleanerManifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-cleaner", Binary: "cleaner"})
 	if strings.Contains(cleanerManifest, "VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL") || strings.Contains(cleanerManifest, "VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL") {
 		t.Fatalf("mqttusage intervals must not be rendered for unrelated workers:\n%s", cleanerManifest)
+	}
+}
+
+func TestLKEBillingDeploymentManifestHasNoTabIndentedLine(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	workload := lkeWorkload{
+		Key:       "billing",
+		Name:      "billing",
+		Image:     "ghcr.io/hkt999rtk/rtk_billing/billing:sha-test",
+		Namespace: "video-cloud-staging-billing",
+		Port:      8080,
+	}
+
+	manifest := lkeDeploymentManifest(env, workload, nil)
+
+	if strings.Contains(manifest, "\n\t") {
+		t.Fatalf("billing deployment manifest must not contain tab-indented YAML lines:\n%s", manifest)
 	}
 }
 
@@ -5525,6 +5553,7 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 		_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 	})
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("RTK_CLOUD_TEST_ALLOW_PROCESS_CREDENTIALS", "1")
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	t.Setenv("LKE_BILLING_IMAGE", "registry.example.test/rtk/billing:test")

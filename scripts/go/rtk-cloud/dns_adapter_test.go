@@ -55,12 +55,24 @@ func TestGoDaddyDNSAdapterCleanupPreservesOtherTXTValues(t *testing.T) {
 	}
 }
 
-func TestGoDaddyDNSAdapterCredentialsUseSharedProfile(t *testing.T) {
+func TestGoDaddyDNSAdapterCredentialsUseEnvironmentStore(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("GODADDY_KEY", "")
 	t.Setenv("GODADDY_SECRET", "")
-	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GODADDY_KEY=profile-key\nGODADDY_SECRET=profile-secret\n")
+	store, err := newSecretStore("", "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/GODADDY_KEY", []byte("profile-key\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/GODADDY_SECRET", []byte("profile-secret\n"), true); err != nil {
+		t.Fatal(err)
+	}
 
 	adapter := &goDaddyDNSAdapter{}
 	ctx := dnsAdapterContext{
@@ -88,19 +100,31 @@ func TestGoDaddyDNSAdapterCredentialsNeverReadHomeEnv(t *testing.T) {
 	}
 }
 
-func TestGoDaddyDNSAdapterCredentialPrecedence(t *testing.T) {
+func TestGoDaddyDNSAdapterIgnoresProcessAndLegacyOperatorFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("GODADDY_KEY", "process-key")
 	t.Setenv("GODADDY_SECRET", "process-secret")
-	writeTestFile(t, filepath.Join(home, ".config", "rtk-cloud", "shared.env"), "GODADDY_KEY=profile-key\nGODADDY_SECRET=profile-secret\n")
+	store, err := newSecretStore("", "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/GODADDY_KEY", []byte("profile-key\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/GODADDY_SECRET", []byte("profile-secret\n"), true); err != nil {
+		t.Fatal(err)
+	}
 	operatorEnv := filepath.Join(t.TempDir(), "operator.env")
 	writeTestFile(t, operatorEnv, "GODADDY_KEY=operator-key\nGODADDY_SECRET=operator-secret\n")
 
 	adapter := &goDaddyDNSAdapter{}
 	key, secret := adapter.credentials(dnsAdapterContext{OperatorEnv: operatorEnv})
-	if key != "process-key" || secret != "process-secret" {
-		t.Fatalf("process environment must take precedence over operator files")
+	if key != "profile-key" || secret != "profile-secret" {
+		t.Fatalf("canonical environment store must be the only source")
 	}
 }
 
@@ -275,8 +299,13 @@ func TestRemoveOwnedDNSRecordsStopsOnDrift(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("RTK_CLOUD_GODADDY_API_ROOT", server.URL)
-	t.Setenv("GODADDY_KEY", "key")
-	t.Setenv("GODADDY_SECRET", "secret")
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("operator/env/GODADDY_KEY", []byte("key\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/GODADDY_SECRET", []byte("secret\n"), true); err != nil {
+		t.Fatal(err)
+	}
 	runtimeRoot := t.TempDir()
 	dir := filepath.Join(runtimeRoot, "dns", "godaddy")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
