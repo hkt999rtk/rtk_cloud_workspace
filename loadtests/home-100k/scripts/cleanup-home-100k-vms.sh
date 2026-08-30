@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-env_file="${HOME100K_SECRET_ENV_FILE:-$HOME/.env}"
+config_root="${RTK_CLOUD_CONFIG_ROOT:-$HOME/.config/rtk_cloud}"
+environment="${HOME100K_ENVIRONMENT:-staging}"
+token_file="${HOME100K_LINODE_TOKEN_FILE:-$config_root/$environment/operator/env/LINODE_TOKEN}"
 prefix="${HOME100K_CLEANUP_PREFIX:-home-100k}"
 run_id="${HOME100K_RUN_ID:-}"
 endpoint="${LINODE_API_ENDPOINT:-https://api.linode.com/v4}"
@@ -17,30 +19,18 @@ load-generator. With --all-runs, matches every VM tagged with the prefix and
 load-generator. Dry-run is the default; pass --yes to delete.
 
 Secrets:
-  Reads only LINODE_TOKEN from HOME100K_SECRET_ENV_FILE, default ~/.env.
+  Reads LINODE_TOKEN from the selected environment SecretStore operator/env directory.
 EOF
 }
 
 load_linode_token_from_env_file() {
-  local line value
-  if [[ -n "${LINODE_TOKEN:-}" || ! -f "$env_file" ]]; then
-    return
+  if [[ -n "${HOME100K_SECRET_ENV_FILE:-}" ]]; then
+    echo "HOME100K_SECRET_ENV_FILE is retired; use the environment SecretStore" >&2
+    return 2
   fi
-  while IFS= read -r line; do
-    case "$line" in
-      LINODE_TOKEN=*|export\ LINODE_TOKEN=*)
-        value="${line#export LINODE_TOKEN=}"
-        value="${value#LINODE_TOKEN=}"
-        value="${value%$'\r'}"
-        value="${value%\"}"
-        value="${value#\"}"
-        value="${value%\'}"
-        value="${value#\'}"
-        export LINODE_TOKEN="$value"
-        return
-        ;;
-    esac
-  done < "$env_file"
+  [[ -f "$token_file" ]] || return
+  export LINODE_TOKEN
+  LINODE_TOKEN="$(tr -d '\r\n' < "$token_file")"
 }
 
 while [[ "$#" -gt 0 ]]; do

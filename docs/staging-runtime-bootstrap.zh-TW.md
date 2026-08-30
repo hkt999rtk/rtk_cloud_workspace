@@ -6,48 +6,43 @@
 ## 先了解 Git 邊界
 
 Git 只保存 environment 的宣告設定；`cloud_env/<environment>/runtime/`
-是本機產生的 runtime，整個目錄都被 `.gitignore` 忽略。它包含 kubeconfig、
-service state、device credentials、certificates 與 SQLite test data，不能
-commit 到 Git。
+只保存非敏感的 generated runtime。kubeconfig、service secret、private key、
+device credential 與 SQLite credential DB 全部由
+`~/.config/rtk_cloud/<environment>/` 管理，不能 commit 到 Git。
 
 因此，單獨執行 `git clone` 不會得到可直接執行 load test 的完整環境。
 
 ## 既有 staging：從另一台 Mac 還原
 
 這是同一個 staging cluster 與既有 device/user identity 的標準流程。先在
-原本已完成 setup 的 workspace 確認 runtime：
+原本已完成 setup 的機器確認 SecretStore 與非敏感 runtime：
 
 ```sh
 cd /path/to/rtk_cloud_workspace
 
+go run ./scripts/go/rtk-cloud -- secrets verify --environment staging
 find cloud_env/staging/runtime \
-  \( -path '*/state/provider-preflight.env' \
-  -o -path '*/state/kubeconfig.yaml' \
-  -o -path '*/env/stack.env' \
-  -o -path '*/devices/test_device/loadtest.env' \
-  -o -path '*/artifacts/test-data/*-test-data.sqlite' \) \
-  -print
+  \( -path '*/state/provider-preflight.env' -o -path '*/env/stack.env' \) -print
 ```
 
-使用加密且受控的檔案傳輸方式，將整個 runtime 複製到新 workspace；不要把
-這些檔案加入 Git：
+使用加密且受控的檔案傳輸方式，將整個 staging SecretStore 複製到新機器；
+目的 environment 必須尚未存在，且不可與 prod 共用或 fallback：
 
 ```sh
 rsync -a --delete \
-  /path/to/old-workspace/cloud_env/staging/runtime/ \
-  /path/to/new-workspace/cloud_env/staging/runtime/
+  /secure/source/rtk_cloud/staging/ \
+  "$HOME/.config/rtk_cloud/staging/"
 
-chmod 600 \
-  /path/to/new-workspace/cloud_env/staging/runtime/state/kubeconfig.yaml \
-  /path/to/new-workspace/cloud_env/staging/runtime/state/provider-preflight.env \
-  /path/to/new-workspace/cloud_env/staging/runtime/artifacts/test-data/*-test-data.sqlite
+find "$HOME/.config/rtk_cloud/staging" -type d -exec chmod 700 {} +
+find "$HOME/.config/rtk_cloud/staging" -type f -exec chmod 600 {} +
+go run ./scripts/go/rtk-cloud -- secrets verify --environment staging
 ```
 
 `rsync --delete` 的來源與目的地必須先確認；不要把 workspace root 或其他
 廣泛目錄當成目的地。
 
 遠端 deploy runner 可使用 workspace 提供的 restore/check 工具。先將
-known-good runtime 以受控方式放到遠端可讀取的位置，再在遠端 workspace 執行：
+known-good 的非敏感 runtime 以受控方式放到遠端可讀取的位置，再在遠端 workspace 執行：
 
 ```sh
 scripts/restore-staging-runtime.sh \
@@ -63,11 +58,9 @@ scripts/restore-staging-runtime.sh \
   --target-runtime "$PWD/cloud_env/staging/runtime"
 ```
 
-工具會檢查 existing-cluster safety state、kubeconfig、OpenBao state、service
-environment、device test data 與權限；它只做本機檔案同步與檢查，不會 destroy、
-rebuild、provision 或修改任何 cloud resource。GitHub Actions 或其他 CI runner
-必須先透過 encrypted artifact、OpenBao 或受控檔案傳輸取得 source runtime，不能
-靠 `git clone` 取得。
+restore 工具只處理非敏感 runtime；SecretStore 必須另外準備並通過
+`secrets verify`。GitHub Actions 應把 GitHub Secrets 寫入 job 專用的暫時
+`RTK_CLOUD_CONFIG_ROOT`，job 結束後刪除，不能靠 `git clone` 取得。
 
 還原後，從新 workspace 執行：
 
@@ -77,10 +70,10 @@ cd /path/to/new-workspace
 export HOME100K_ENV_ROOT="$PWD/cloud_env/staging/runtime"
 
 test -s "$HOME100K_ENV_ROOT/state/provider-preflight.env"
-test -s "$HOME100K_ENV_ROOT/state/kubeconfig.yaml"
 test -s "$HOME100K_ENV_ROOT/env/stack.env"
-test -s "$HOME100K_ENV_ROOT/devices/test_device/loadtest.env"
-test -s "$HOME100K_ENV_ROOT/artifacts/test-data/rtk-test-data.sqlite"
+test -s "$HOME/.config/rtk_cloud/staging/kube/kubeconfig.yaml"
+test -s "$HOME/.config/rtk_cloud/staging/test/devices/test_device/loadtest.env"
+test -s "$HOME/.config/rtk_cloud/staging/test/databases/rtk-test-data.sqlite"
 
 loadtests/home-100k/scripts/home-100k.sh plan
 ```
@@ -176,16 +169,14 @@ cloud_env/staging/runtime
 | Path | 來源 | 性質 |
 | --- | --- | --- |
 | `state/provider-preflight.env` | deployment plan/provision | generated runtime |
-| `state/kubeconfig.yaml` | Kubernetes/provider access | secret |
 | `env/stack.env` | sync/deployment flow | generated runtime |
-| `devices/test_device/loadtest.env` | load-device generation flow | generated test config |
-| `artifacts/test-data/<brand>-test-data.sqlite` | users/devices/bind flow | secret credentials |
 | `adapters/lke/account.env` | Linode account confirmation | operator safety state |
+| `~/.config/rtk_cloud/staging/kube/kubeconfig.yaml` | Kubernetes/provider access | secret |
+| `~/.config/rtk_cloud/staging/test/devices/...` | load-device identity | secret credentials |
+| `~/.config/rtk_cloud/staging/test/databases/...` | users/devices/bind flow | secret credentials |
 
-目前 `main` 的 Home MQTT runner 使用 `devices/test_device/loadtest.env`；
-`generate-load-devices` 會將 `loadtest.env` 寫入 `--out-dir`，預設就是這個
-runtime 目錄。若某個外部 wrapper 額外列出 `env/loadtest.env`，必須依該
-wrapper 的 contract 產生或同步該檔案，但不要以它取代 canonical path。
+Home MQTT runner 的 credential input 必須位於 SecretStore 的
+`test/devices/`；workspace runtime 不得保留第二份副本。
 
 若收到 `required prerequisites are missing`，先檢查 `HOME100K_ENV_ROOT` 是否
 指向 runtime 目錄，而不是 `cloud_env/staging` 或舊的
@@ -196,5 +187,5 @@ normalized `cloud_env/staging/runtime`。
 
 - 不要 commit runtime、kubeconfig、SQLite、private key、certificate 或 service secrets。
 - 不要在 issue、PR、聊天訊息或 log 貼出 SQLite 內容或 kubeconfig 內容。
-- 傳輸 runtime 前後都確認檔案權限為 `0600`。
+- 傳輸 SecretStore 前後都確認目錄為 `0700`、檔案為 `0600`。
 - 若 runtime 遺失，先判斷是否能從原 workspace 還原；只有確定要建立新 staging 時才重新 provision 或重新 enroll。

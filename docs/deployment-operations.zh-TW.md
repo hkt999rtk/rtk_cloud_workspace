@@ -57,10 +57,11 @@ Fresh controller 至少需要 Git、Go、`kubectl`、Helm、`certbot`、`curl`�
 git submodule update --init --recursive
 ```
 
-### Operator-local `~/.env`
+### Environment SecretStore
 
-範例位於 [`examples/operator.env.example`](examples/operator.env.example)。人工將需要的
-key 合併到既有 `~/.env`；不要用 `cp` 覆寫整個檔案，也不要 commit。
+所有敏感資料集中於 `~/.config/rtk_cloud/<environment>/`。每個 operator key 是
+`operator/env/` 下的獨立 `0600` 檔案；一般部署不讀 process environment、shared profile、
+workspace runtime secret 或舊的 home env file。
 
 目前 LKE + GoDaddy staging 的主要項目是：
 
@@ -72,15 +73,9 @@ GODADDY_KEY=<redacted>
 GODADDY_SECRET=<redacted>
 ```
 
-Credential precedence：
-
-1. 目前 process environment。
-2. Environment runtime 的 operator-local env（該功能支援時）。
-3. `~/.env`。
-
-Route53 不使用 GoDaddy keys，改走 AWS SDK default credential chain。Secret 只可存在
-operator secret source 或 ignored runtime，不可寫進 tracked environment config、PR、issue、
-聊天訊息或測試報告。
+使用 `rtk-cloud secrets init|plan|migrate|verify|inventory` 管理。Secret 只可存在
+environment SecretStore、K8s runtime mirror 或 GitHub Actions Secrets，不可寫進 tracked
+environment config、PR、issue、聊天訊息或測試報告。
 
 ### Tracked environment 與 ignored runtime
 

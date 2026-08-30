@@ -349,9 +349,19 @@ jobs:
 
       - name: Deploy isolated stack without public DNS, edge VMs, or cluster changes
         if: env.RUNTIME_COVERAGE_MODE == 'run'
+        env:
+          RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE }}
         shell: bash
         run: |
           set -euo pipefail
+          export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          echo "RTK_CLOUD_CONFIG_ROOT=$RTK_CLOUD_CONFIG_ROOT" >> "$GITHUB_ENV"
+          test -n "$RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE"
+          bundle="$RUNNER_TEMP/rtk-cloud-runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          printf '%s' "$RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE" > "$bundle"
+          chmod 0600 "$bundle"
+          scripts/ci/materialize-rtk-cloud-secret-store.sh runtime-coverage "$bundle"
+          install -m 0600 "$KUBECONFIG" "$RTK_CLOUD_CONFIG_ROOT/runtime-coverage/kube/kubeconfig.yaml"
           go run ./scripts/go/rtk-cloud -- provision \
             --workspace "$GITHUB_WORKSPACE" \
             --env-root "$RUNTIME_ENV_ROOT" \
@@ -697,6 +707,11 @@ jobs:
           if [[ "${KUBECONFIG:-}" == "$RUNNER_TEMP/"* ]]; then
             rm -f "$KUBECONFIG"
           fi
+          RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          if [[ "$RTK_CLOUD_CONFIG_ROOT/" == "$RUNNER_TEMP/"* ]]; then
+            rm -rf "$RTK_CLOUD_CONFIG_ROOT"
+          fi
+          rm -f "$RUNNER_TEMP/rtk-cloud-runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           for credential_path in \
             "${VIDEO_CLOUD_LOAD_CLIP_USER_PRIVATE_KEY:-}" \
             "${VIDEO_CLOUD_LOAD_CLIP_SERVER_PUBLIC_KEY:-}"; do

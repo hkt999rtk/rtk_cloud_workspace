@@ -29,7 +29,7 @@ func TestDeploymentCredentialProfilePrecedenceAndScopedMapping(t *testing.T) {
 	if !check.Passed {
 		t.Fatal(check.Detail)
 	}
-	if values["LINODE_TOKEN"] != "shared" || values["GHCR_PULL_USERNAME"] != "process-user" {
+	if values["LINODE_TOKEN"] != "shared" || values["GHCR_PULL_USERNAME"] != "environment-user" {
 		t.Fatalf("precedence values = %#v", values)
 	}
 	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "media-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "media-secret" {
@@ -52,7 +52,7 @@ func TestDeploymentCredentialProfilesNeverFallbackToHomeEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, check := deploymentCredentialProfileValues("staging", environmentFile, filepath.Join(home, ".config", "rtk-cloud", "shared.env"))
-	if check.Passed || values != nil || !strings.Contains(check.Detail, "shared.env") {
+	if !check.Passed || values["LINODE_TOKEN"] != "" || values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] != "media" {
 		t.Fatalf("values=%v check=%#v", values, check)
 	}
 }
@@ -237,12 +237,15 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	sharedFile := filepath.Join(home, ".config", "rtk-cloud", "shared.env")
-	environmentFile := filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env")
-	for path, contents := range map[string]string{
-		sharedFile:      "LINODE_TOKEN=token\nGHCR_PULL_USERNAME=user\nGHCR_PULL_TOKEN=ghcr\nGODADDY_KEY=key\nGODADDY_SECRET=secret\n",
-		environmentFile: "",
+	environmentFile := filepath.Join(home, ".config", "rtk_cloud", "staging", "operator", "env")
+	if err := os.MkdirAll(environmentFile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, contents := range map[string]string{
+		"LINODE_TOKEN": "token", "GHCR_PULL_USERNAME": "user", "GHCR_PULL_TOKEN": "ghcr",
+		"GODADDY_KEY": "key", "GODADDY_SECRET": "secret",
 	} {
+		path := filepath.Join(environmentFile, name)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -354,7 +357,7 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 			t.Fatalf("%s unexpectedly succeeded", tc.action)
 		}
 	}
-	values, check := deploymentCredentialProfileValues("staging", environmentFile, sharedFile)
+	values, check := deploymentCredentialProfileValues("staging", environmentFile, "")
 	if !check.Passed {
 		t.Fatal(check.Detail)
 	}
@@ -426,7 +429,14 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(cutoverCfg.RuntimeRoot, "state"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, "state", "kubeconfig.yaml"), []byte("apiVersion: v1\n"), 0o600); err != nil {
+	store, err := newSecretStore("", "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(store.KubeconfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.KubeconfigPath(), []byte("apiVersion: v1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeDeploymentStorageReceipt(cutoverCfg.RuntimeRoot, deploymentStorageReceipt{

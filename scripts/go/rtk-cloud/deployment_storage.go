@@ -71,7 +71,7 @@ func runDeploymentStorageLifecycle(action string, cfg deploymentConfig, environm
 		}
 		plan.RuntimeMedia.Endpoint = mediaEndpoint
 		plan.ReleaseArtifacts.Endpoint = artifactEndpoint
-		body, _ := json.MarshalIndent(map[string]any{"environment": cfg.Environment, "compute_region": cfg.AdapterResolved["LKE_REGION"], "storage": plan, "endpoint_status": endpointStatus, "credential_precedence": "process > environment profile > shared profile"}, "", "  ")
+		body, _ := json.MarshalIndent(map[string]any{"environment": cfg.Environment, "compute_region": cfg.AdapterResolved["LKE_REGION"], "storage": plan, "endpoint_status": endpointStatus, "credential_source": "environment SecretStore"}, "", "  ")
 		fmt.Println(string(body))
 		return nil
 	case "storage-bootstrap":
@@ -111,7 +111,11 @@ func (c deploymentCredentialChecker) cutoverRuntimeStorage(cfg deploymentConfig,
 	if err := c.validateClipStorageSmoke(store, cfg.Storage.RuntimeMedia.Prefix); err != nil {
 		return err
 	}
-	kubeconfig := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
+	secretStore, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	kubeconfig := secretStore.KubeconfigPath()
 	if _, err := os.Stat(kubeconfig); err != nil {
 		return errors.New("staging kubeconfig is required to cut over and roll workloads")
 	}
@@ -240,8 +244,8 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
 		return fmt.Errorf("new artifact key validation failed: %w", err)
 	}
-	sharedFile := defaultDeploymentSharedCredentialFile()
-	if err := ensureCredentialProfile(sharedFile); err != nil {
+	environmentFile := defaultDeploymentEnvironmentCredentialFile(cfg.Environment)
+	if err := ensureCredentialProfile(environmentFile); err != nil {
 		return err
 	}
 	replacements := map[string]string{
@@ -253,7 +257,7 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 		"LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID":     access,
 		"LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY": secret,
 	}
-	return updateDeploymentCredentialEnvFile(sharedFile, replacements)
+	return updateDeploymentCredentialEnvFile(environmentFile, replacements)
 }
 
 func ensureCredentialProfile(path string) error {

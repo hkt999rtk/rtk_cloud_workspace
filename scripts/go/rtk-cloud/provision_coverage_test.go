@@ -77,11 +77,14 @@ func TestMergeObjectStorageCredentialDefaultsUsesEnvironmentProfile(t *testing.T
 	}
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	if err := writeEnvMap(filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env"), map[string]string{
-		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID":     "profile-access",
-		"LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "profile-secret",
-	}, 0o600); err != nil {
+	operatorDir := filepath.Join(home, ".config", "rtk_cloud", "staging", "operator", "env")
+	if err := os.MkdirAll(operatorDir, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "profile-access", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "profile-secret"} {
+		if err := os.WriteFile(filepath.Join(operatorDir, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	values := map[string]string{}
 	if err := mergeObjectStorageCredentialDefaults(t.TempDir(), values); err != nil {
@@ -126,12 +129,14 @@ func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	profilePath := filepath.Join(home, ".config", "rtk-cloud", "environments", "staging.env")
-	if err := writeEnvMap(profilePath, map[string]string{
-		"AWS_ACCESS_KEY_ID":     "access",
-		"AWS_SECRET_ACCESS_KEY": "secret",
-	}, 0o600); err != nil {
+	operatorDir := filepath.Join(home, ".config", "rtk_cloud", "staging", "operator", "env")
+	if err := os.MkdirAll(operatorDir, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	for name, value := range map[string]string{"AWS_ACCESS_KEY_ID": "access", "AWS_SECRET_ACCESS_KEY": "secret"} {
+		if err := os.WriteFile(filepath.Join(operatorDir, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	values := map[string]string{}
 	if err := mergeObjectStorageCredentialDefaults(root, values); err != nil {

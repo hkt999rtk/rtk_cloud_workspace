@@ -466,8 +466,11 @@ func lkeInstallExternalCoturnVM(paths provisionPaths, opts provisionOptions, vm 
 }
 
 func lkeCurrentCoturnRuntimeSecrets(paths provisionPaths, env map[string]string) (string, string, error) {
-	if os.Getenv("LKE_TURN_SHARED") != "" || os.Getenv("LKE_TURN_REGISTRY_NODE_AUTH") != "" || os.Getenv("LKE_RUNTIME_SECRET_SEED") != "" {
+	if activeCanonicalSecretStore || os.Getenv("LKE_RUNTIME_SECRET_SEED") != "" {
 		return lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("turn-registry-node-auth"), nil
+	}
+	if turn, registry := os.Getenv("LKE_TURN_SHARED"), os.Getenv("LKE_TURN_REGISTRY_NODE_AUTH"); turn != "" || registry != "" {
+		return turn, registry, nil
 	}
 	stack := firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")
 	if stack != "video-cloud-staging" {
