@@ -158,7 +158,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-004` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `workflow` | `e514db7e2de4` | `service` | `active` | `UI-CA-CHIPSET-004`, `UI-CA-CHIPSET-STG-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-005` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-005` | `` | `e040a4c11b3b` | `service` | `active` | `UI-CA-CHIPSET-005` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-CHIPSET-006` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-006` | `` | `2e2834af6a9b` | `service` | `active` | `UI-CA-CHIPSET-006`, `UI-CA-CHIPSET-007`, `UI-CA-CHIPSET-STG-001` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-OTA-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `workflow` | `d493a7522aee` | `service` | `active` | `UI-CA-OTA-001`, `UI-CA-OTA-002` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-OTA-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `workflow` | `d493a7522aee` | `service` | `active` | `UI-CA-OTA-001`, `UI-CA-OTA-002`, `UI-CA-OTA-003` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-STAGING-001` | `FEAT-CA-STAGING-001` | `REQ-UI-CA-STAGING-001` | `` | `188e10024fd2` | `service` | `active` | `UI-CA-STAGING-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-UI-CA-STAGING-002` | `FEAT-CA-STAGING-001` | `REQ-UI-CA-STAGING-002` | `` | `75f5b12e8814` | `service` | `active` | `UI-CA-STAGING-002` | `test-ui` |
 | `repos/rtk_cloud_contracts_doc/AUTH.md#REQ-CONTRACT-AUTH-CREDENTIAL-BOUNDARY-001` | `FEAT-CONTRACT-AUTH-001` | `REQ-CONTRACT-AUTH-CREDENTIAL-BOUNDARY-001` | `independent` | `dfcc770012cd` | `canonical` | `active` | `INT-VC-AUTH-BOUNDARY-001` | `test-services` |

@@ -305,6 +305,27 @@ cases:
       title: only progressing firmware campaigns need polling
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/firmwareArtifact.test.mjs#calculates%20immutable%20firmware%20binary%20metadata
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmwareArtifact.test.mjs
+      title: calculates immutable firmware binary metadata
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmwareArtifact.test.mjs#formats%20firmware%20sizes%20for%20display
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmwareArtifact.test.mjs
+      title: formats firmware sizes for display
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/firmwareArtifact.test.mjs#rejects%20an%20empty%20firmware%20binary
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmwareArtifact.test.mjs
+      title: rejects an empty firmware binary
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/http.test.mjs#postJSON%20propagates%20network%20failures
       module: cloud-admin-web
       language: javascript
