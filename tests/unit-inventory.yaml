@@ -754,6 +754,41 @@ cases:
       title: streamWorstDeviceRows sorts worst devices by failure priority
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/verification-replay.test.mjs#verification%20replay%20fails%20closed%20for%20inconsistent%20status%20and%20visible%20password%20forms
+      module: cloud-admin-web
+      language: javascript
+      source: src/verification-replay.test.mjs
+      title: verification replay fails closed for inconsistent status and visible password forms
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/verification-replay.test.mjs#verification%20replay%20rejects%20a%20successful%20reuse%20even%20after%20the%20UI%20rejects%20the%20link
+      module: cloud-admin-web
+      language: javascript
+      source: src/verification-replay.test.mjs
+      title: verification replay rejects a successful reuse even after the UI rejects the link
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/verification-replay.test.mjs#verification%20replay%20rejects%20missing%20tokens%20before%20navigation
+      module: cloud-admin-web
+      language: javascript
+      source: src/verification-replay.test.mjs
+      title: verification replay rejects missing tokens before navigation
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/verification-replay.test.mjs#verification%20replay%20rejects%20token%20leakage%20without%20echoing%20the%20token%20in%20its%20errors
+      module: cloud-admin-web
+      language: javascript
+      source: src/verification-replay.test.mjs
+      title: verification replay rejects token leakage without echoing the token in its errors
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/verification-replay.test.mjs#verification%20replay%20requires%20both%20invalid-link%20UI%20and%20server-side%20reuse%20rejection
+      module: cloud-admin-web
+      language: javascript
+      source: src/verification-replay.test.mjs
+      title: verification replay requires both invalid-link UI and server-side reuse rejection
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#AWS%20JavaScript%20service%20SDK%20uses%20RTK%20custom%20routes%20and%20iotdevicegateway%20SigV4
       module: cloud-client-javascript
       language: javascript
