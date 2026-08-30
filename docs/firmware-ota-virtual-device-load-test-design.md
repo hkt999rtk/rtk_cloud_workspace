@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: approved for implementation on 2026-08-28
+Status: implemented and integrated with Home load orchestration
 
 Audience: Video Cloud, firmware, OTA operations, QA, and staging load-test
 owners.
@@ -55,7 +55,8 @@ Non-goals for v1:
   source. V1 requires non-empty signing algorithm, key ID, and signature and
   verifies the artifact size and SHA-256. Public-key verification requires a
   separately approved trust-source design.
-- Replacing the Home 100K orchestration or provisioning workflows.
+- Replacing the Home 100K orchestration or provisioning workflows. The
+  simulator is invoked by those workflows through `firmware-ota-v1`.
 
 ## Existing components reused
 

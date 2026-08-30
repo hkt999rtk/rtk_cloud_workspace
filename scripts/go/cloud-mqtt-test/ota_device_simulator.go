@@ -441,7 +441,6 @@ func newOTAHTTPClient(timeout time.Duration) *http.Client {
 	transport.MaxIdleConns = 512
 	transport.MaxIdleConnsPerHost = 512
 	transport.MaxConnsPerHost = 0
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	if timeout <= 0 {
 		timeout = 30 * time.Minute
 	}

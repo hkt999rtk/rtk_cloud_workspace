@@ -5587,3 +5587,46 @@ func assertShardManifestRange(t *testing.T, path string, role string, start int,
 	}
 	t.Fatalf("manifest %s missing %s shard [%d,%d): %#v", path, role, start, end, assignment.TaskShards)
 }
+
+func TestLiveLoadModelArgsSelectFirmwareOTAContract(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot: "runtime", Brandname: "RTK", Region: "us-sea",
+		ScenarioProfile: FirmwareOTAScenarioProfile, DeviceCount: 10,
+		OTAProfile: OTAProfile{
+			CampaignID: "campaign-1", TargetVersion: "2.0.0", CurrentVersion: "1.0.0", HardwareRevision: "rev-a",
+			AntiRollbackCounter: 2, PollInterval: "3s", UpgradeTimeout: "45m", HTTPConcurrency: 300, DownloadConcurrency: 80,
+			InstallDelay: "4s", RebootDelay: "5s", VerifyDelay: "6s", StageJitterPercent: 15,
+			DownloadFailurePercent: 1, VerifyFailurePercent: 2, InstallFailurePercent: 3, RebootFailurePercent: 4, TimeoutPercent: 5,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(liveLoadModelArgs(plan), " ")
+	for _, want := range []string{
+		"--load-model ota-device-simulator", "--ota-campaign-id campaign-1", "--ota-target-version 2.0.0",
+		"--ota-current-version 1.0.0", "--ota-hardware-revision rev-a", "--ota-anti-rollback-counter 2",
+		"--ota-poll-interval 3s", "--ota-upgrade-timeout 45m", "--ota-http-concurrency 300", "--ota-download-concurrency 80",
+		"--ota-install-delay 4s", "--ota-reboot-delay 5s", "--ota-verify-delay 6s", "--ota-stage-jitter-percent 15",
+		"--ota-download-failure-percent 1", "--ota-verify-failure-percent 2", "--ota-install-failure-percent 3",
+		"--ota-reboot-failure-percent 4", "--ota-timeout-percent 5",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("OTA load args missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestLiveRunnerTimeoutAllowsFirmwareOTADeadline(t *testing.T) {
+	plan := Plan{
+		OTAProfile: OTAProfile{Name: FirmwareOTAScenarioProfile, UpgradeTimeout: "30m"},
+		Stages:     []Stage{{WarmUp: "2m"}},
+	}
+	got, err := liveRunnerCommandTimeoutForPlan(plan, 150, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 37*time.Minute {
+		t.Fatalf("OTA runner timeout = %s, want 37m", got)
+	}
+}

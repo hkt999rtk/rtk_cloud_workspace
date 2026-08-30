@@ -92,6 +92,48 @@ func TestReportRendersRequiredScenariosAndIncompleteEvidence(t *testing.T) {
 	}
 }
 
+func TestReportRendersFirmwareOTAEvidenceAndStrictGate(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot:         "cloud_env/staging/runtime",
+		Brandname:       "RTK",
+		Region:          "us-sea",
+		DeviceCount:     2,
+		ScenarioProfile: FirmwareOTAScenarioProfile,
+		OTAProfile: OTAProfile{
+			CampaignID:       "campaign-42",
+			TargetVersion:    "2.0.0",
+			CurrentVersion:   "1.0.0",
+			HardwareRevision: "rev-a",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := RenderReport(ReportInput{
+		Plan:                 plan,
+		RunID:                "ota-run",
+		LoadGeneratorHealthy: true,
+		OTAEvidence: OTAEvidence{
+			CampaignID: "campaign-42", TargetVersion: "2.0.0",
+			DevicesSelected: 2, MQTTReady: 2, AssignmentsReceived: 2,
+			TerminalExpected: 2, TerminalMatched: 1,
+			UniqueDeviceResults: 2, ArtifactBytes: 4096, ArtifactHashVerified: 1,
+			MQTTRebootDisconnects: 1, MQTTReconnectSuccesses: 1,
+			UnexpectedFailures: 1, ByActualTerminal: map[string]int{"success": 1, "failed": 1},
+			FailureReasons: []string{"device dev-2 terminal mismatch"},
+		},
+	})
+	for _, want := range []string{
+		"Status: COMPLETE", "Result: FAIL", "## Firmware OTA Simulation", "campaign-42", "2.0.0",
+		"Selected / MQTT ready / assigned: 2 / 2 / 2", "Terminal matched / expected: 1 / 2",
+		"device dev-2 terminal mismatch", "ota-devices.jsonl",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}
+
 func TestReportRendersMultiBrandConditions(t *testing.T) {
 	plan, err := NewPlan(PlanOptions{
 		EnvRoot:   "cloud_env/staging/runtime",

@@ -58,6 +58,24 @@ if [[ -n "$brand_plan" && "$brand_plan" != /* ]]; then
   brand_plan="$repo_root/$brand_plan"
 fi
 scenario_profile="${HOME100K_SCENARIO_PROFILE:-}"
+ota_campaign_id="${HOME100K_OTA_CAMPAIGN_ID:-}"
+ota_target_version="${HOME100K_OTA_TARGET_VERSION:-}"
+ota_current_version="${HOME100K_OTA_CURRENT_VERSION:-}"
+ota_hardware_revision="${HOME100K_OTA_HARDWARE_REVISION:-}"
+ota_anti_rollback_counter="${HOME100K_OTA_ANTI_ROLLBACK_COUNTER:-0}"
+ota_poll_interval="${HOME100K_OTA_POLL_INTERVAL:-5s}"
+ota_upgrade_timeout="${HOME100K_OTA_UPGRADE_TIMEOUT:-30m}"
+ota_http_concurrency="${HOME100K_OTA_HTTP_CONCURRENCY:-250}"
+ota_download_concurrency="${HOME100K_OTA_DOWNLOAD_CONCURRENCY:-64}"
+ota_install_delay="${HOME100K_OTA_INSTALL_DELAY:-2s}"
+ota_reboot_delay="${HOME100K_OTA_REBOOT_DELAY:-2s}"
+ota_verify_delay="${HOME100K_OTA_VERIFY_DELAY:-1s}"
+ota_stage_jitter_percent="${HOME100K_OTA_STAGE_JITTER_PERCENT:-20}"
+ota_download_failure_percent="${HOME100K_OTA_DOWNLOAD_FAILURE_PERCENT:-0}"
+ota_verify_failure_percent="${HOME100K_OTA_VERIFY_FAILURE_PERCENT:-0}"
+ota_install_failure_percent="${HOME100K_OTA_INSTALL_FAILURE_PERCENT:-0}"
+ota_reboot_failure_percent="${HOME100K_OTA_REBOOT_FAILURE_PERCENT:-0}"
+ota_timeout_percent="${HOME100K_OTA_TIMEOUT_PERCENT:-0}"
 region="${HOME100K_REGION:-}"
 if [[ -z "$region" ]]; then
   case "$env_root" in
@@ -249,7 +267,22 @@ Defaults can be overridden with:
   HOME100K_ENV_ROOT       internal runtime override; default: cloud_env/<environment>/runtime
   HOME100K_BRANDNAME      default: RTK
   HOME100K_BRAND_PLAN     optional multi-brand load-test plan JSON
-  HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. video-1k-v1, video-50k-turn-v1, video-100k-turn-v1
+  HOME100K_SCENARIO_PROFILE optional scenario profile, e.g. firmware-ota-v1, video-1k-v1, video-50k-turn-v1, video-100k-turn-v1
+
+Firmware OTA profile (required identity values have no defaults):
+  HOME100K_OTA_CAMPAIGN_ID existing active campaign ID
+  HOME100K_OTA_TARGET_VERSION campaign target version
+  HOME100K_OTA_CURRENT_VERSION simulated starting version
+  HOME100K_OTA_HARDWARE_REVISION simulated hardware revision
+  HOME100K_OTA_ANTI_ROLLBACK_COUNTER default: 0
+  HOME100K_OTA_POLL_INTERVAL default: 5s
+  HOME100K_OTA_UPGRADE_TIMEOUT default: 30m
+  HOME100K_OTA_HTTP_CONCURRENCY / HOME100K_OTA_DOWNLOAD_CONCURRENCY defaults: 250 / 64
+  HOME100K_OTA_INSTALL_DELAY / HOME100K_OTA_REBOOT_DELAY / HOME100K_OTA_VERIFY_DELAY defaults: 2s / 2s / 1s
+  HOME100K_OTA_STAGE_JITTER_PERCENT default: 20
+  HOME100K_OTA_DOWNLOAD_FAILURE_PERCENT / HOME100K_OTA_VERIFY_FAILURE_PERCENT default: 0 / 0
+  HOME100K_OTA_INSTALL_FAILURE_PERCENT / HOME100K_OTA_REBOOT_FAILURE_PERCENT default: 0 / 0
+  HOME100K_OTA_TIMEOUT_PERCENT default: 0
   HOME100K_REGION         explicit test-only provider region override; normally resolved from environment
   HOME100K_LINODE_TYPE    optional Linode VM type for load generators, passed to provision-vms
   HOME100K_VM_LABEL_PREFIX default: lg; load-generator VM labels are <prefix>01..<prefix>NN
@@ -2271,6 +2304,28 @@ if [[ -n "$brand_plan" ]]; then
 fi
 if [[ -n "$scenario_profile" ]]; then
   base_args+=("--scenario-profile" "$scenario_profile")
+fi
+if [[ "$scenario_profile" == "firmware-ota-v1" ]]; then
+  base_args+=(
+    "--ota-campaign-id" "$ota_campaign_id"
+    "--ota-target-version" "$ota_target_version"
+    "--ota-current-version" "$ota_current_version"
+    "--ota-hardware-revision" "$ota_hardware_revision"
+    "--ota-anti-rollback-counter" "$ota_anti_rollback_counter"
+    "--ota-poll-interval" "$ota_poll_interval"
+    "--ota-upgrade-timeout" "$ota_upgrade_timeout"
+    "--ota-http-concurrency" "$ota_http_concurrency"
+    "--ota-download-concurrency" "$ota_download_concurrency"
+    "--ota-install-delay" "$ota_install_delay"
+    "--ota-reboot-delay" "$ota_reboot_delay"
+    "--ota-verify-delay" "$ota_verify_delay"
+    "--ota-stage-jitter-percent" "$ota_stage_jitter_percent"
+    "--ota-download-failure-percent" "$ota_download_failure_percent"
+    "--ota-verify-failure-percent" "$ota_verify_failure_percent"
+    "--ota-install-failure-percent" "$ota_install_failure_percent"
+    "--ota-reboot-failure-percent" "$ota_reboot_failure_percent"
+    "--ota-timeout-percent" "$ota_timeout_percent"
+  )
 fi
 if [[ -n "$device_count" ]]; then
   base_args+=("--devices" "$device_count")

@@ -16,6 +16,8 @@ carry the same sections.
 - `app_user_totals`
 - `video_profile` when the selected scenario enables video
 - `video_evidence` when the selected scenario enables video
+- `plan.ota_profile` when the selected scenario is `firmware-ota-v1`
+- `ota` when the selected scenario is `firmware-ota-v1`
 - `shadow_metrics`
 - `server_evidence`
 - `server_correlation`
@@ -38,6 +40,7 @@ The `home-100k run` command writes these files under `--out-dir`:
 - `start-coordination.json`
 - `TEST_REPORT.md`
 - `billing-usage-report.json`
+- `shards/<vm-label>/ota-devices.jsonl` for firmware OTA runs
 
 The workspace `test-feature` orchestrator adds
 `runtime-log-evidence.json`, `evidence-manifest.json`, and `TEST_REPORT.md`
@@ -71,6 +74,16 @@ Shard `results.json` files under `shards/<vm-label>/` must include:
 - `shard_index`
 - `stage_results`
 - `load_generator_health`
+- `ota` for firmware OTA shards
+
+The run-level `ota` object contains the campaign and target version, selected,
+MQTT-ready, assigned, terminal-expected, and terminal-matched counts; unique
+and duplicate per-device result counts; artifact byte and SHA-256 verification
+counts; reboot disconnect and reconnect counts; expected/actual terminal-state
+maps; HTTP status and latency summaries; resource peaks; throughput; and
+failure reasons. Aggregation validates each JSONL device ID globally across
+all shards. Exact target coverage and zero duplicates are required before the
+OTA evidence can be complete.
 
 Live `stage_results` is the compatibility key for target-window metrics. New
 plans emit a single `target` window with `target_connects` and `ramp_up_time`;

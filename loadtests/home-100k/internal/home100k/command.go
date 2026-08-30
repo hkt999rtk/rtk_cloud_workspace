@@ -210,6 +210,7 @@ func executePreflight(args []string, stdout io.Writer, stderr io.Writer) int {
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -226,6 +227,7 @@ func executePreflight(args []string, stdout io.Writer, stderr io.Writer) int {
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	plan, err := NewPlan(opts)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -462,6 +464,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -484,6 +487,7 @@ func parseCommonFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, *ephemeral, nil
 }
 
@@ -521,6 +525,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -546,6 +551,7 @@ func parseRunFlags(name string, args []string, stderr io.Writer) (PlanOptions, b
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenRequestTimeout, deviceTokenRequestRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, *ephemeral, runFlagValues{
 		runID:              *runID,
 		outDir:             *outDir,
@@ -573,6 +579,54 @@ func addSizingFlags(fs *flag.FlagSet) (*int, *int, *int, *int, *int, *int, *stri
 
 func addVMLabelPrefixFlag(fs *flag.FlagSet) *string {
 	return fs.String("vm-label-prefix", DefaultVMLabelPrefix, "load-generator VM label prefix")
+}
+
+type otaProfileFlagValues struct {
+	campaignID, targetVersion, currentVersion, hardwareRevision *string
+	antiRollbackCounter                                         *int
+	pollInterval, upgradeTimeout                                *string
+	httpConcurrency, downloadConcurrency                        *int
+	installDelay, rebootDelay, verifyDelay                      *string
+	stageJitterPercent, downloadFailurePercent                  *float64
+	verifyFailurePercent, installFailurePercent                 *float64
+	rebootFailurePercent, timeoutPercent                        *float64
+}
+
+func addOTAProfileFlags(fs *flag.FlagSet) otaProfileFlagValues {
+	return otaProfileFlagValues{
+		campaignID:             fs.String("ota-campaign-id", "", "required OTA campaign id"),
+		targetVersion:          fs.String("ota-target-version", "", "required OTA target version"),
+		currentVersion:         fs.String("ota-current-version", "", "required OTA current version"),
+		hardwareRevision:       fs.String("ota-hardware-revision", "", "required OTA hardware revision"),
+		antiRollbackCounter:    fs.Int("ota-anti-rollback-counter", 0, "OTA anti-rollback counter"),
+		pollInterval:           fs.String("ota-poll-interval", "", "OTA assignment poll interval"),
+		upgradeTimeout:         fs.String("ota-upgrade-timeout", "", "per-device OTA deadline"),
+		httpConcurrency:        fs.Int("ota-http-concurrency", 0, "maximum concurrent OTA HTTP requests"),
+		downloadConcurrency:    fs.Int("ota-download-concurrency", 0, "maximum concurrent OTA artifact streams"),
+		installDelay:           fs.String("ota-install-delay", "", "simulated OTA install delay"),
+		rebootDelay:            fs.String("ota-reboot-delay", "", "simulated OTA reboot delay"),
+		verifyDelay:            fs.String("ota-verify-delay", "", "simulated OTA verification delay"),
+		stageJitterPercent:     fs.Float64("ota-stage-jitter-percent", 0, "deterministic OTA stage jitter percent"),
+		downloadFailurePercent: fs.Float64("ota-download-failure-percent", 0, "deterministic OTA download failure percent"),
+		verifyFailurePercent:   fs.Float64("ota-verify-failure-percent", 0, "deterministic OTA verification failure percent"),
+		installFailurePercent:  fs.Float64("ota-install-failure-percent", 0, "deterministic OTA install failure percent"),
+		rebootFailurePercent:   fs.Float64("ota-reboot-failure-percent", 0, "deterministic OTA reboot failure percent"),
+		timeoutPercent:         fs.Float64("ota-timeout-percent", 0, "deterministic OTA timeout percent"),
+	}
+}
+
+func applyOTAProfileFlags(opts *PlanOptions, values otaProfileFlagValues) {
+	opts.OTAProfile = OTAProfile{
+		CampaignID: *values.campaignID, TargetVersion: *values.targetVersion,
+		CurrentVersion: *values.currentVersion, HardwareRevision: *values.hardwareRevision,
+		AntiRollbackCounter: *values.antiRollbackCounter, PollInterval: *values.pollInterval,
+		UpgradeTimeout: *values.upgradeTimeout, HTTPConcurrency: *values.httpConcurrency,
+		DownloadConcurrency: *values.downloadConcurrency, InstallDelay: *values.installDelay,
+		RebootDelay: *values.rebootDelay, VerifyDelay: *values.verifyDelay,
+		StageJitterPercent: *values.stageJitterPercent, DownloadFailurePercent: *values.downloadFailurePercent,
+		VerifyFailurePercent: *values.verifyFailurePercent, InstallFailurePercent: *values.installFailurePercent,
+		RebootFailurePercent: *values.rebootFailurePercent, TimeoutPercent: *values.timeoutPercent,
+	}
 }
 
 func applyVMLabelPrefixFlag(opts *PlanOptions, vmLabelPrefix *string) {
@@ -1163,7 +1217,6 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--telemetry-interval", "off",
 		"--state-interval", plan.Stages[0].SteadyState,
 		"--command-rate-per-device-per-day", maxCommandRatePerDeviceDay(stageCommandRates),
-		"--load-model", "home-100k-sustained",
 		"--stage-names", strings.Join(stageNames, ","),
 		"--stage-connected-devices", strings.Join(stageTargets, ","),
 		"--stage-durations-seconds", strings.Join(stageDurations, ","),
@@ -1177,15 +1230,27 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"--runtime-logs=" + strconv.FormatBool(values.runtimeLogs),
 		"--max-connected-devices", strconv.Itoa(maxTarget),
 	}
+	args = append(args, liveLoadModelArgs(plan)...)
 	if strings.TrimSpace(values.workspace) != "" {
 		args = append([]string{args[0], "--workspace", values.workspace}, args[1:]...)
 	}
-	runTimeout, err := liveRunnerCommandTimeout(totalDuration, values.liveRunnerTimeoutGrace)
+	runTimeout, err := liveRunnerCommandTimeoutForPlan(plan, totalDuration, values.liveRunnerTimeoutGrace)
 	if err != nil {
 		return err
 	}
 	runErr := commandRunnerWithTimeout(runTimeout, rtkCloud, args...)
 	stageResults, err := loadLiveMQTTShardResults(filepath.Join(stageOut, "results.json"), plan.Stages, stageTargets)
+	otaEvidence := OTAEvidence{}
+	if plan.OTAEnabled() {
+		var otaErr error
+		otaEvidence, otaErr = loadLiveOTAEvidence(filepath.Join(stageOut, "results.json"))
+		if otaErr == nil {
+			otaErr = copyProtectedFile(filepath.Join(stageOut, "ota-devices.jsonl"), filepath.Join(outDir, "ota-devices.jsonl"))
+		}
+		if otaErr != nil && err == nil {
+			err = otaErr
+		}
+	}
 	if err != nil && len(stageResults) == 0 {
 		stageResults = fallbackFailedLiveStageResults(plan.Stages, stageTargets, liveShardErrorText(runErr, err))
 	}
@@ -1219,6 +1284,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		"error":                 errorText,
 		"vm_assignment":         assignment,
 		"stage_results":         stageResults,
+		"ota":                   otaEvidence,
 		"load_generator_health": LoadGeneratorHealth{},
 	}); err != nil {
 		return err
@@ -1244,6 +1310,54 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		return fmt.Errorf("live target mqtt-test failed: %w", runErr)
 	}
 	return nil
+}
+
+func liveRunnerCommandTimeoutForPlan(plan Plan, totalDurationSeconds int, graceRaw string) (time.Duration, error) {
+	timeout, err := liveRunnerCommandTimeout(totalDurationSeconds, graceRaw)
+	if err != nil || !plan.OTAEnabled() {
+		return timeout, err
+	}
+	upgradeTimeout, err := time.ParseDuration(plan.OTAProfile.UpgradeTimeout)
+	if err != nil {
+		return 0, fmt.Errorf("invalid OTA upgrade timeout %q: %w", plan.OTAProfile.UpgradeTimeout, err)
+	}
+	ramp, err := time.ParseDuration(plan.Stages[0].WarmUp)
+	if err != nil {
+		return 0, fmt.Errorf("invalid OTA ramp-up %q: %w", plan.Stages[0].WarmUp, err)
+	}
+	minimum := upgradeTimeout + ramp + 5*time.Minute
+	if timeout < minimum {
+		timeout = minimum
+	}
+	return timeout, nil
+}
+
+func liveLoadModelArgs(plan Plan) []string {
+	if !plan.OTAEnabled() {
+		return []string{"--load-model", "home-100k-sustained"}
+	}
+	ota := plan.OTAProfile
+	return []string{
+		"--load-model", "ota-device-simulator",
+		"--ota-campaign-id", ota.CampaignID,
+		"--ota-target-version", ota.TargetVersion,
+		"--ota-current-version", ota.CurrentVersion,
+		"--ota-hardware-revision", ota.HardwareRevision,
+		"--ota-anti-rollback-counter", strconv.Itoa(ota.AntiRollbackCounter),
+		"--ota-poll-interval", ota.PollInterval,
+		"--ota-upgrade-timeout", ota.UpgradeTimeout,
+		"--ota-http-concurrency", strconv.Itoa(ota.HTTPConcurrency),
+		"--ota-download-concurrency", strconv.Itoa(ota.DownloadConcurrency),
+		"--ota-install-delay", ota.InstallDelay,
+		"--ota-reboot-delay", ota.RebootDelay,
+		"--ota-verify-delay", ota.VerifyDelay,
+		"--ota-stage-jitter-percent", strconv.FormatFloat(ota.StageJitterPercent, 'f', -1, 64),
+		"--ota-download-failure-percent", strconv.FormatFloat(ota.DownloadFailurePercent, 'f', -1, 64),
+		"--ota-verify-failure-percent", strconv.FormatFloat(ota.VerifyFailurePercent, 'f', -1, 64),
+		"--ota-install-failure-percent", strconv.FormatFloat(ota.InstallFailurePercent, 'f', -1, 64),
+		"--ota-reboot-failure-percent", strconv.FormatFloat(ota.RebootFailurePercent, 'f', -1, 64),
+		"--ota-timeout-percent", strconv.FormatFloat(ota.TimeoutPercent, 'f', -1, 64),
+	}
 }
 
 func mqttDeviceTrafficProfile(plan Plan) string {
@@ -1525,7 +1639,8 @@ func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string
 		return nil, err
 	}
 	if len(root.StageResults) == 0 {
-		if strings.TrimSpace(root.Load.LoadModel) != "" && strings.TrimSpace(root.Load.LoadModel) != "home-100k-sustained" {
+		loadModel := strings.TrimSpace(root.Load.LoadModel)
+		if loadModel != "" && loadModel != "home-100k-sustained" && loadModel != "ota-device-simulator" {
 			return nil, fmt.Errorf("live MQTT result load_model = %q, want home-100k-sustained", root.Load.LoadModel)
 		}
 		if len(stages) == 0 {
@@ -1548,6 +1663,33 @@ func loadLiveMQTTShardResults(path string, stages []Stage, stageTargets []string
 		return results, fmt.Errorf("stage_results len = %d, want %d", len(root.StageResults), len(stages))
 	}
 	return results, nil
+}
+
+func loadLiveOTAEvidence(path string) (OTAEvidence, error) {
+	var root struct {
+		OTA OTAEvidence `json:"ota"`
+	}
+	if err := readJSON(path, &root); err != nil {
+		return OTAEvidence{}, err
+	}
+	if root.OTA.DevicesSelected <= 0 || strings.TrimSpace(root.OTA.CampaignID) == "" {
+		return OTAEvidence{}, errors.New("live OTA result is missing aggregate evidence")
+	}
+	return root.OTA, nil
+}
+
+func copyProtectedFile(source, destination string) error {
+	raw, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(destination, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(destination, 0o600)
 }
 
 func parseStageTarget(values []string, idx int) int {
@@ -1942,6 +2084,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -1966,6 +2109,7 @@ func parseProvisionVMFlags(name string, args []string, stderr io.Writer) (PlanOp
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, provisionVMFlagValues{
 		runID:             *runID,
 		outDir:            *outDir,
@@ -1988,6 +2132,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -2007,6 +2152,7 @@ func parseDestroyVMFlags(name string, args []string, stderr io.Writer) (PlanOpti
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, destroyVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -2024,6 +2170,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -2041,6 +2188,7 @@ func parseListVMFlags(name string, args []string, stderr io.Writer) (PlanOptions
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, listVMFlagValues{
 		runID:          *runID,
 		live:           *live,
@@ -2056,6 +2204,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -2098,6 +2247,7 @@ func parseWorkflowFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyRuntimeConditionFlags(&opts, runnerNofile, sessionModel, readModel, deviceTokenPlanTimeout, deviceTokenPlanRetries)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, workflowFlagValues{
 		runID:                     *runID,
 		outDir:                    *outDir,
@@ -2136,6 +2286,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	brandname := fs.String("brandname", "", "brand name")
 	brandPlan := fs.String("brand-plan", "", "multi-brand load-test plan JSON")
 	scenarioProfile := fs.String("scenario-profile", "", "scenario profile, for example video-1k-v1")
+	otaProfile := addOTAProfileFlags(fs)
 	region := fs.String("region", "", "Linode region for load-generator VMs")
 	vmLabelPrefix := addVMLabelPrefixFlag(fs)
 	stageWarmUp, stageSteady, stageCoolDown := addStageDurationFlags(fs)
@@ -2168,6 +2319,7 @@ func parseShardRunFlags(name string, args []string, stderr io.Writer) (PlanOptio
 	applyStageDurationFlags(&opts, stageWarmUp, stageSteady, stageCoolDown)
 	applySizingFlags(&opts, deviceCount, userCount, devicesPerUser, vmCount, loadGeneratorDevicesPerVM, videoGeneratorVMCount, videoGeneratorLabelPrefix)
 	applyGateThresholdFlags(&opts, functionalThreshold, targetThreshold, eventThreshold, aggregateTolerancePercent, aggregateMinTolerance)
+	applyOTAProfileFlags(&opts, otaProfile)
 	return opts, shardRunFlagValues{
 		runID:                     *runID,
 		outDir:                    *outDir,

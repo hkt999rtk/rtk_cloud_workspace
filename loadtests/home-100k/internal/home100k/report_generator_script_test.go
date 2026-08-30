@@ -9,6 +9,48 @@ import (
 	"testing"
 )
 
+func TestGenerateReportScriptRendersFirmwareOTAEvidence(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := t.TempDir()
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot: "runtime", Brandname: "RTK", Region: "us-sea", DeviceCount: 2,
+		ScenarioProfile: FirmwareOTAScenarioProfile,
+		OTAProfile:      OTAProfile{CampaignID: "campaign-42", TargetVersion: "2.0.0", CurrentVersion: "1.0.0", HardwareRevision: "rev-a"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := RunResult{RunID: "ota-run", Status: "COMPLETE", Result: "SUCCESS", Plan: plan, OTAEvidence: OTAEvidence{
+		Complete: true, CampaignID: "campaign-42", TargetVersion: "2.0.0",
+		DevicesSelected: 2, MQTTReady: 2, AssignmentsReceived: 2, TerminalExpected: 2, TerminalMatched: 2,
+		UniqueDeviceResults: 2, ArtifactBytes: 4096, ArtifactHashVerified: 2,
+		MQTTRebootDisconnects: 2, MQTTReconnectSuccesses: 2, ByActualTerminal: map[string]int{"success": 2},
+	}}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "results.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Clean(filepath.Join(wd, "..", "..", "scripts", "generate-report.sh"))
+	if output, err := exec.Command("bash", script, "--out-dir", outDir).CombinedOutput(); err != nil {
+		t.Fatalf("generate-report.sh error = %v output=%s", err, output)
+	}
+	report, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"## Firmware OTA Simulation", "campaign-42", "2.0.0", "2 / 2 / 2", "ota-devices.jsonl"} {
+		if !strings.Contains(string(report), want) {
+			t.Fatalf("generated report missing %q:\n%s", want, report)
+		}
+	}
+}
+
 func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
