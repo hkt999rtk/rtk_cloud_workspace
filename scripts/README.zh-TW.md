@@ -242,6 +242,26 @@ go run ./scripts/go/rtk-cloud -- sync-all
 (cd scripts/go && go run ./rtk-cloud -- test-matrix)
 ```
 
+### `pre-pr`
+
+在 push PR 前使用和 GitHub Actions 相同的 changed-path selector，只執行受影響的
+workspace policy、Go/JavaScript coverage，以及 Cloud Admin desktop/mobile headless
+E2E。這個指令不會連線或部署 shared staging；需要 PostgreSQL、EMQX 等 CI service
+container 的整合測試會列在執行計畫中，留給 PR CI 執行。
+
+先 commit 本機變更並更新 `origin/main`，再從 workspace root、push 前執行。指令會
+拒絕 dirty working tree，避免 selector 漏掉尚未進入 Git ref 的修改：
+
+```sh
+git fetch origin main
+go run ./scripts/go/rtk-cloud -- pre-pr --base origin/main
+go run ./scripts/go/rtk-cloud -- pre-pr --base origin/main --dry-run
+```
+
+預設會在 UI 被選中時安裝 Node/Playwright dependencies；已安裝完成時可使用
+`--install=false`。若只需快速驗證 coverage，可使用 `--ui=false`；PR CI 仍是最終
+Linux 與 service-container merge gate。
+
 ### `test-services`
 
 執行各 service、SDK、frontend 與 repository tooling 的本地測試。可用
