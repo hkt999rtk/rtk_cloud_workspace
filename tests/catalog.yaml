@@ -667,7 +667,7 @@ cases:
     layer: integration
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/api/integration_test.go
-    selector: "./internal/api#TestIntegrationSignupQueuesEncryptedEmailForWorkerDelivery,./internal/store#TestEmailOutboxTokenAndQueueAreTransactional,./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery"
+    selector: "./internal/api#TestIntegrationSignupQueuesEncryptedEmailForSendMailHTTP,./internal/store#TestEmailOutboxTokenAndQueueAreTransactional,./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery"
     method: PostgreSQL-backed signup and outbox tests atomically persist a scoped hashed token with encrypted email payload for Send Mail HTTP and preserve enumeration-safe delivery failure and replay behavior.
     runner: test-services
     environments: [ci]
