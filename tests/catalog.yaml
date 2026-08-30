@@ -37,6 +37,8 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
+  - { <<: *ui_smoke, id: UI-CA-AUTH-ACTIVATE-001, title: Email activation routes to the resolved account view, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-ACTIVATE-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
+  - { <<: *ui_smoke, id: UI-CA-AUTH-LOGOUT-001, title: Logout remains reachable on desktop and mobile, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGOUT-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-LOGIN-001, title: Shared login branding follows the selected auth mode, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-LOGIN-002, title: Admin destinations use the platform sign-in context, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-002]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_local, id: UI-CA-AUTH-LOGIN-003, title: Invalid destinations keep the shared sign-in context, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-003]", verifies: [REQ-CA-BFF-LOGIN-001] }
