@@ -1419,6 +1419,70 @@ func TestLoadCollectedShardResultsRejectsDuplicateOTADeviceEvidence(t *testing.T
 	}
 }
 
+func TestOTAEvidenceMapAggregationKeepsTotalsAndPeakLatencies(t *testing.T) {
+	if got := addOTAPeakLatency(nil, nil); got != nil {
+		t.Fatalf("empty latency map = %#v, want nil", got)
+	}
+	latencies := addOTAPeakLatency(nil, map[string]map[string]float64{
+		"assignment": {"p50": 10, "p95": 20},
+	})
+	latencies = addOTAPeakLatency(latencies, map[string]map[string]float64{
+		"assignment": {"p50": 8, "p95": 25},
+		"download":   {"p95": 40},
+	})
+	if latencies["assignment"]["p50"] != 10 || latencies["assignment"]["p95"] != 25 || latencies["download"]["p95"] != 40 {
+		t.Fatalf("peak latencies = %#v", latencies)
+	}
+
+	if got := addIntMap(nil, nil); got != nil {
+		t.Fatalf("empty integer map = %#v, want nil", got)
+	}
+	totals := addIntMap(nil, map[string]int{"succeeded": 2})
+	totals = addIntMap(totals, map[string]int{"succeeded": 3, "failed": 1})
+	if totals["succeeded"] != 5 || totals["failed"] != 1 {
+		t.Fatalf("integer totals = %#v", totals)
+	}
+}
+
+func TestValidateOTADeviceEvidenceReportsMalformedAndMismatchedRows(t *testing.T) {
+	root := t.TempDir()
+	evidencePath := filepath.Join(root, "ota-devices.jsonl")
+	rows := strings.Join([]string{
+		`not-json`,
+		`{"device_id":""}`,
+		`{"device_id":"device-1","campaign_id":"wrong","target_version":"wrong","expected_terminal":"succeeded","actual_terminal":"failed","terminal_matched":false}`,
+		`{"device_id":"device-1","campaign_id":"campaign-1","target_version":"2.0.0","terminal_matched":true}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(evidencePath, []byte(rows), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ota := validateOTADeviceEvidence(OTAEvidence{
+		CampaignID:          "campaign-1",
+		TargetVersion:       "2.0.0",
+		DevicesSelected:     1,
+		MQTTReady:           1,
+		AssignmentsReceived: 1,
+		TerminalExpected:    1,
+		TerminalMatched:     1,
+	}, []string{evidencePath, filepath.Join(root, "missing.jsonl")})
+	if ota.Complete || ota.UniqueDeviceResults != 1 || ota.DuplicateDeviceResults != 1 {
+		t.Fatalf("invalid OTA evidence gate = %#v", ota)
+	}
+	joined := strings.Join(ota.FailureReasons, "\n")
+	for _, want := range []string{
+		"evidence is invalid",
+		"empty device id",
+		"evidence mismatched",
+		"missing artifact or reboot evidence",
+		"duplicate device ids",
+		"evidence is missing",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("failure reasons %q do not contain %q", joined, want)
+		}
+	}
+}
+
 func TestApplyOTAOutcomeRequiresExactTargetEvidence(t *testing.T) {
 	plan := Plan{Conditions: TestConditions{Devices: 10}, OTAProfile: OTAProfile{Name: FirmwareOTAScenarioProfile}}
 	base := RunOutcome{Status: "COMPLETE", Result: "SUCCESS"}

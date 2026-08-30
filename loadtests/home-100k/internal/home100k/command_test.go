@@ -53,6 +53,56 @@ func writeTinyEnvRoot(t *testing.T) string {
 	return root
 }
 
+func TestLoadLiveOTAEvidenceAndCopyProtectedFile(t *testing.T) {
+	root := t.TempDir()
+	resultsPath := filepath.Join(root, "results.json")
+	want := OTAEvidence{CampaignID: "campaign-1", TargetVersion: "2.0.0", DevicesSelected: 2}
+	if err := writeJSONFile(resultsPath, map[string]any{"ota": want}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadLiveOTAEvidence(resultsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CampaignID != want.CampaignID || got.DevicesSelected != want.DevicesSelected {
+		t.Fatalf("OTA evidence = %#v, want %#v", got, want)
+	}
+
+	emptyPath := filepath.Join(root, "empty.json")
+	if err := writeJSONFile(emptyPath, map[string]any{"ota": OTAEvidence{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadLiveOTAEvidence(emptyPath); err == nil {
+		t.Fatal("loadLiveOTAEvidence() accepted missing aggregate evidence")
+	}
+	if _, err := loadLiveOTAEvidence(filepath.Join(root, "missing.json")); err == nil {
+		t.Fatal("loadLiveOTAEvidence() accepted a missing result file")
+	}
+
+	source := filepath.Join(root, "ota-devices.jsonl")
+	if err := os.WriteFile(source, []byte("device evidence\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "nested", "ota-devices.jsonl")
+	if err := copyProtectedFile(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "device evidence\n" || info.Mode().Perm() != 0o600 {
+		t.Fatalf("copied evidence content=%q mode=%#o", raw, info.Mode().Perm())
+	}
+	if err := copyProtectedFile(filepath.Join(root, "missing-source"), destination); err == nil {
+		t.Fatal("copyProtectedFile() accepted a missing source")
+	}
+}
+
 func TestPreflightAcceptsBrandPlan(t *testing.T) {
 	envRoot := t.TempDir()
 	planFile := filepath.Join(t.TempDir(), "brand-plan.json")
