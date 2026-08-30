@@ -163,11 +163,15 @@ exists, it reuses the VM and re-runs bootstrap.
 
 ## Current Workspace CI Boundary
 
-The active workspace workflow is
-`.github/workflows/submodule-pointer-check.yml`. It runs on `ubuntu-latest` and
-only validates `.gitmodules` plus recorded submodule gitlink pointers. It does
-not boot `rtk-shared-linux-ci`, wait for repo-scoped self-hosted runners, rerun
-service CI, or archive CI artifacts.
+Pull requests use GitHub-hosted runners and changed-path selection. Only the
+affected workspace, service, catalog, gitlink, and UI jobs run automatically.
+Unrelated coverage modules and integration services are skipped.
+
+Pushes to `main` and explicit full workflow dispatches retain the `ci-0`
+self-hosted runner boundary. Pull-request workflows do not boot
+`rtk-shared-linux-ci`, wait for repo-scoped self-hosted runners, or require a
+locally injected Linode token. Staging-mutating feature qualification remains
+explicit and uses its dedicated runner.
 
 Service repositories may still create artifacts without the shared Linode runner:
 their own GitHub-hosted `ubuntu-latest` jobs can upload bundles, checksums,
