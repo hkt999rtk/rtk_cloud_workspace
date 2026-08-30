@@ -23,7 +23,7 @@ load_linode_token_from_env_file() {
     echo "HOME100K_SECRET_ENV_FILE is retired; use the environment SecretStore" >&2
     return 2
   fi
-  [[ -f "$token_file" ]] || return
+  [[ -f "$token_file" ]] || return 0
   export LINODE_TOKEN
   LINODE_TOKEN="$(tr -d '\r\n' < "$token_file")"
 }
