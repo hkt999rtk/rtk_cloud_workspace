@@ -6950,7 +6950,7 @@ func runActivateLoadOwner(args []string) error {
 	if err != nil {
 		return err
 	}
-	if status != http.StatusCreated {
+	if status != http.StatusCreated && !(status == http.StatusOK && *resume) {
 		return fmt.Errorf("pending owner creation failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
 	}
 	var created map[string]any
@@ -6958,6 +6958,13 @@ func runActivateLoadOwner(args []string) error {
 		return fmt.Errorf("decode pending owner response: %w", err)
 	}
 	globalUser, _ := created["user"].(map[string]any)
+	if status == http.StatusOK {
+		pending, _ := globalUser["signup_pending_verification"].(bool)
+		verified, _ := globalUser["email_verified"].(bool)
+		if !pending || verified || !strings.EqualFold(stringValue(globalUser["email"]), strings.TrimSpace(*email)) {
+			return errors.New("resume requires the matching pending, unverified owner account")
+		}
+	}
 	userID := stringValue(globalUser["id"])
 	if userID == "" {
 		return errors.New("pending owner response is missing user.id")

@@ -21,6 +21,9 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 		displayName = "RTK Load CANARY run-20260726 Brand 01 Owner"
 	)
 	var createdPayload, ownerLoginPayload map[string]any
+	creationStatus := http.StatusCreated
+	creationCalls := 0
+	pendingOwner := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		switch {
@@ -42,11 +45,12 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
 			fmt.Fprintf(w, `{"brand_clouds":[{"id":"brand-id","name":%q,"tenant_slug":%q}]}`, brandName, tenantSlug)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-id/users":
+			creationCalls++
 			if err := json.NewDecoder(r.Body).Decode(&createdPayload); err != nil {
 				t.Errorf("decode owner payload: %v", err)
 			}
-			w.WriteHeader(http.StatusCreated)
-			fmt.Fprint(w, `{"action":"pending_activation","user":{"id":"owner-id"}}`)
+			w.WriteHeader(creationStatus)
+			fmt.Fprintf(w, `{"action":"pending_activation","user":{"id":"owner-id","email":%q,"signup_pending_verification":%t,"email_verified":%t}}`, ownerEmail, pendingOwner, !pendingOwner)
 		default:
 			http.Error(w, "unexpected request", http.StatusNotFound)
 		}
@@ -105,7 +109,7 @@ IMAP_EMAIL_FOLDER=INBOX
 	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
 	t.Setenv("IMAP_CONNECT_HOST", "127.0.0.1")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if err := runActivateLoadOwner([]string{
+	args := []string{
 		"--workspace", workspace,
 		"--env-root", envRoot,
 		"--brandname", brandName,
@@ -114,7 +118,8 @@ IMAP_EMAIL_FOLDER=INBOX
 		"--run-id", "run-20260726",
 		"--operator-env-file", operatorEnv,
 		"--evidence-path", evidencePath,
-	}); err != nil {
+	}
+	if err := runActivateLoadOwner(args); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,6 +156,23 @@ IMAP_EMAIL_FOLDER=INBOX
 	}
 	if storedUserID != "owner-id" || !strings.EqualFold(storedEmail, ownerEmail) || password == "" || role != "owner" {
 		t.Fatalf("stored owner user_id=%q email=%q password_set=%v role=%q", storedUserID, storedEmail, password != "", role)
+	}
+	if err := os.Remove(evidencePath); err != nil {
+		t.Fatal(err)
+	}
+	creationStatus = http.StatusOK
+	if err := runActivateLoadOwner(append(args, "--resume")); err != nil {
+		t.Fatalf("retry matching pending owner: %v", err)
+	}
+	if creationCalls != 2 {
+		t.Fatalf("owner creation calls = %d, want 2", creationCalls)
+	}
+	if err := os.Remove(evidencePath); err != nil {
+		t.Fatal(err)
+	}
+	pendingOwner = false
+	if err := runActivateLoadOwner(append(args, "--resume")); err == nil || !strings.Contains(err.Error(), "matching pending, unverified owner") {
+		t.Fatalf("verified owner retry error = %v", err)
 	}
 }
 
