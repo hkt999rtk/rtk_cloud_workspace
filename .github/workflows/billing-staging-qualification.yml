@@ -39,7 +39,6 @@ jobs:
       CLOUD_STACK_NAME: video-cloud-staging
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
-      RTK_CLOUD_CONFIG_ROOT: ${{ runner.temp }}/rtk_cloud
     steps:
       - uses: actions/checkout@v6
         with:
@@ -170,6 +169,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          echo "RTK_CLOUD_CONFIG_ROOT=$RTK_CLOUD_CONFIG_ROOT" >> "$GITHUB_ENV"
           test -n "$RTK_CLOUD_SECRET_BUNDLE"
           bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
@@ -267,5 +268,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
           case "$RTK_CLOUD_CONFIG_ROOT/" in "$RUNNER_TEMP/"*) rm -rf "$RTK_CLOUD_CONFIG_ROOT" ;; *) exit 1 ;; esac
           rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

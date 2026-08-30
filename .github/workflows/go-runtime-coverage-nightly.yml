@@ -56,7 +56,6 @@ jobs:
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
       GHCR_PULL_USERNAME: ${{ github.actor }}
       GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      RTK_CLOUD_CONFIG_ROOT: ${{ runner.temp }}/rtk_cloud
     steps:
       - uses: actions/checkout@v6
         with:
@@ -355,6 +354,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          echo "RTK_CLOUD_CONFIG_ROOT=$RTK_CLOUD_CONFIG_ROOT" >> "$GITHUB_ENV"
           test -n "$RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE"
           bundle="$RUNNER_TEMP/rtk-cloud-runtime-coverage-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           printf '%s' "$RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE" > "$bundle"
@@ -706,6 +707,7 @@ jobs:
           if [[ "${KUBECONFIG:-}" == "$RUNNER_TEMP/"* ]]; then
             rm -f "$KUBECONFIG"
           fi
+          RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
           if [[ "$RTK_CLOUD_CONFIG_ROOT/" == "$RUNNER_TEMP/"* ]]; then
             rm -rf "$RTK_CLOUD_CONFIG_ROOT"
           fi
