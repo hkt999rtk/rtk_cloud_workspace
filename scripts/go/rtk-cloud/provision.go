@@ -114,14 +114,14 @@ func runProvision(args []string) error {
 
 func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]string) error {
 	environment := firstNonEmpty(envFileValue(filepath.Join(envRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
-	candidates := []string{defaultDeploymentEnvironmentCredentialFile(environment), defaultDeploymentSharedCredentialFile()}
+	candidates := []string{defaultDeploymentEnvironmentCredentialFile(environment)}
 	for _, path := range candidates {
-		operator, err := readEnvFile(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
+		operator, check := deploymentCredentialValues(path)
+		if !check.Passed {
+			if strings.Contains(check.Detail, "does not exist") {
 				continue
 			}
-			return fmt.Errorf("load object-storage operator credentials: %w", err)
+			return fmt.Errorf("load object-storage operator credentials: %s", check.Detail)
 		}
 		for _, key := range []string{
 			"LINODE_OBJ_ACCESS_KEY_ID",
@@ -199,7 +199,16 @@ func parseProvisionArgs(args []string) (provisionOptions, error) {
 				return opts, err
 			}
 			opts.workspace = v
-		case "--env-root", "--secrets-root":
+		case "--env-root":
+			v, err := next()
+			if err != nil {
+				return opts, err
+			}
+			opts.envRoot = v
+		case "--secrets-root":
+			if !rtkCloudTestMode() {
+				return opts, errors.New("--secrets-root is retired; use --environment with RTK_CLOUD_CONFIG_ROOT or --config-root on the secrets command")
+			}
 			v, err := next()
 			if err != nil {
 				return opts, err

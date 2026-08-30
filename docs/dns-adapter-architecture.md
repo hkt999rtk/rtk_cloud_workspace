@@ -69,10 +69,10 @@ deleting operator-owned data.
 
 The workspace adapter directly implements GoDaddy record APIs; active
 deployment code does not call the service submodule's `godaddy-dns` tool.
-Credentials are resolved as `GODADDY_KEY` and `GODADDY_SECRET` in this
-order: process environment, `~/.config/rtk-cloud/environments/<environment>.env`,
-then `~/.config/rtk-cloud/shared.env`. The CLI never falls back to `~/.env`
-or copies credentials into tracked environment config or runtime evidence.
+Credentials are resolved as `GODADDY_KEY` and `GODADDY_SECRET` from
+`~/.config/rtk_cloud/<environment>/operator/env/`. The CLI does not use
+process-environment overrides, shared profiles, or legacy home env files, and
+does not copy credentials into tracked environment config or runtime evidence.
 `GODADDY_ENV` selects production or OTE and remains adapter-private.
 GoDaddy's record TTL constraints are validated only by this adapter.
 

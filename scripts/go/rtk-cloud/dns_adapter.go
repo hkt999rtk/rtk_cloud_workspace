@@ -302,11 +302,17 @@ type goDaddyDNSAdapter struct{ client *http.Client }
 func (*goDaddyDNSAdapter) Name() string { return "godaddy" }
 
 func (a *goDaddyDNSAdapter) credentials(ctx dnsAdapterContext) (string, string) {
+	if rtkCloudTestMode() && os.Getenv("RTK_CLOUD_TEST_ALLOW_PROCESS_CREDENTIALS") == "1" {
+		if key, secret := strings.TrimSpace(os.Getenv("GODADDY_KEY")), strings.TrimSpace(os.Getenv("GODADDY_SECRET")); key != "" || secret != "" {
+			return key, secret
+		}
+	}
 	environment := firstNonEmpty(envFileValue(filepath.Join(ctx.RuntimeRoot, "env", "stack.env"), "CLOUD_ENV_NAME"), "staging")
-	environmentProfile, _ := readEnvFile(defaultDeploymentEnvironmentCredentialFile(environment))
-	sharedProfile, _ := readEnvFile(defaultDeploymentSharedCredentialFile())
-	return firstNonEmpty(os.Getenv("GODADDY_KEY"), environmentProfile["GODADDY_KEY"], sharedProfile["GODADDY_KEY"]),
-		firstNonEmpty(os.Getenv("GODADDY_SECRET"), environmentProfile["GODADDY_SECRET"], sharedProfile["GODADDY_SECRET"])
+	environmentProfile, check := deploymentCredentialValues(defaultDeploymentEnvironmentCredentialFile(environment))
+	if !check.Passed {
+		return "", ""
+	}
+	return environmentProfile["GODADDY_KEY"], environmentProfile["GODADDY_SECRET"]
 }
 
 func (a *goDaddyDNSAdapter) Validate(_ context.Context, ctx dnsAdapterContext) error {

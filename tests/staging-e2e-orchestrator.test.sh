@@ -8,7 +8,13 @@ trap 'if [[ -n "$CREDENTIAL_SERVER_PID" ]]; then kill "$CREDENTIAL_SERVER_PID" 2
 
 WORKSPACE="$TMP/workspace"
 ENV_ROOT="$WORKSPACE/cloud_env/staging/runtime"
+export RTK_CLOUD_TEST_MODE=1
+export RTK_CLOUD_CONFIG_ROOT="$TMP/rtk_cloud"
 mkdir -p "$WORKSPACE/cloud_env/staging/overrides" "$ENV_ROOT/env" "$ENV_ROOT/artifacts/users" "$ENV_ROOT/artifacts/device-bind" "$ENV_ROOT/devices/test_device/manifests"
+mkdir -m 700 -p "$RTK_CLOUD_CONFIG_ROOT/staging/operator/env" "$RTK_CLOUD_CONFIG_ROOT/staging/runtime"
+printf '%s\n' 'test-token' > "$RTK_CLOUD_CONFIG_ROOT/staging/operator/env/SENDMAIL_HTTP_BEARER_TOKEN"
+printf '%s\n' 'MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' > "$RTK_CLOUD_CONFIG_ROOT/staging/runtime/email-outbox-encryption"
+chmod 600 "$RTK_CLOUD_CONFIG_ROOT/staging/operator/env/SENDMAIL_HTTP_BEARER_TOKEN" "$RTK_CLOUD_CONFIG_ROOT/staging/runtime/email-outbox-encryption"
 cp -R "$ROOT/cloud_deploy" "$WORKSPACE/cloud_deploy"
 cp "$ROOT/cloud_env/staging/environment.env" "$WORKSPACE/cloud_env/staging/environment.env"
 cp "$ROOT/cloud_env/staging/deployment.env" "$WORKSPACE/cloud_env/staging/deployment.env"

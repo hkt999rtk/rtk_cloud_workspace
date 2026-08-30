@@ -32,7 +32,7 @@ func TestRefreshRuntimeDeviceClientCABundleUsesLiveCertIssuerSecret(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPath := filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem")
+	wantPath := filepath.Join(envRoot, "state", "pki", "device-client-ca-bundle.pem")
 	if path != wantPath {
 		t.Fatalf("bundle path = %q, want %q", path, wantPath)
 	}
@@ -66,7 +66,7 @@ func TestRunRefreshRuntimeClientCAWritesLiveBundle(t *testing.T) {
 	if err := runRefreshRuntimeClientCA([]string{"--workspace", workspace, "--env-root", envRoot}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem")); err != nil {
+	if _, err := os.Stat(filepath.Join(envRoot, "state", "pki", "device-client-ca-bundle.pem")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -160,7 +160,7 @@ func TestRefreshRuntimeDeviceClientCABundleRejectsMismatchedChainWithoutOverwrit
 	_ = otherRoot
 	app, _, _ := testSigningCA(t, "video-cloud-staging-app-ca", otherRootCert, otherRootKey, 3)
 	workspace, envRoot := testRuntimeCAWorkspace(t)
-	path := filepath.Join(envRoot, "state", "secrets", "device-client-ca-bundle.pem")
+	path := filepath.Join(envRoot, "state", "pki", "device-client-ca-bundle.pem")
 	writeTestFile(t, path, "sentinel\n")
 	installRuntimeCAKubectlStub(t, map[string]string{
 		"root-ca.crt":   base64.StdEncoding.EncodeToString([]byte(root)),

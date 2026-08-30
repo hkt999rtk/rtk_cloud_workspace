@@ -2256,6 +2256,20 @@ func TestHome100KScriptDefaultDescriptionPlansTenMinuteLoadWindow(t *testing.T) 
 	}
 }
 
+func TestHome100KScriptPlanAllowsMissingOptionalLinodeToken(t *testing.T) {
+	outDir := t.TempDir()
+	script := filepath.Join("..", "..", "scripts", "home-100k.sh")
+	cmd := exec.Command("bash", script, "plan")
+	cmd.Env = home100KTestEnv(
+		"RTK_CLOUD_CONFIG_ROOT="+filepath.Join(outDir, "empty-config"),
+		"HOME100K_RUN_ID=test-missing-optional-linode-token",
+		"HOME100K_OUT_DIR="+filepath.Join(outDir, "report"),
+	)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("home-100k.sh plan should allow a missing optional Linode token: %v\n%s", err, raw)
+	}
+}
+
 func TestHome100KScriptPassesLinodeTypeToProvision(t *testing.T) {
 	outDir := t.TempDir()
 	binDir := filepath.Join(outDir, "bin")

@@ -16,30 +16,19 @@ capture_home100k_env_overrides() {
 }
 
 load_linode_token_from_env_file() {
-  local env_file="${HOME100K_SECRET_ENV_FILE:-$HOME/.env}"
-  local line value
-  if [[ -n "${LINODE_TOKEN:-}" || ! -f "$env_file" ]]; then
-    return
+  local config_root="${RTK_CLOUD_CONFIG_ROOT:-$HOME/.config/rtk_cloud}"
+  local environment="${HOME100K_ENVIRONMENT:-staging}"
+  local token_file="${HOME100K_LINODE_TOKEN_FILE:-$config_root/$environment/operator/env/LINODE_TOKEN}"
+  if [[ -n "${HOME100K_SECRET_ENV_FILE:-}" ]]; then
+    echo "HOME100K_SECRET_ENV_FILE is retired; use the environment SecretStore" >&2
+    return 2
   fi
-  while IFS= read -r line; do
-    case "$line" in
-      LINODE_TOKEN=*|export\ LINODE_TOKEN=*)
-        value="${line#export LINODE_TOKEN=}"
-        value="${value#LINODE_TOKEN=}"
-        value="${value%$'\r'}"
-        value="${value%\"}"
-        value="${value#\"}"
-        value="${value%\'}"
-        value="${value#\'}"
-        export LINODE_TOKEN="$value"
-        return
-        ;;
-    esac
-  done < "$env_file"
+  [[ -f "$token_file" ]] || return 0
+  export LINODE_TOKEN
+  LINODE_TOKEN="$(tr -d '\r\n' < "$token_file")"
 }
 
 explicit_home100k_env="$(capture_home100k_env_overrides)"
-preexisting_linode_token="${LINODE_TOKEN:-}"
 if [[ -f "$description_file" ]]; then
   set -a
   # shellcheck source=/dev/null
@@ -49,11 +38,7 @@ fi
 if [[ -n "$explicit_home100k_env" ]]; then
   eval "$explicit_home100k_env"
 fi
-if [[ -n "$preexisting_linode_token" ]]; then
-  export LINODE_TOKEN="$preexisting_linode_token"
-else
-  unset LINODE_TOKEN || true
-fi
+unset LINODE_TOKEN || true
 load_linode_token_from_env_file
 
 environment="${HOME100K_ENVIRONMENT:-staging}"
@@ -259,7 +244,7 @@ Commands:
 
 Defaults can be overridden with:
   HOME100K_DESCRIPTION_FILE default: loadtests/home-100k/scenarios/default.description.env
-  HOME100K_SECRET_ENV_FILE  default: ~/.env; only LINODE_TOKEN is read
+  HOME100K_LINODE_TOKEN_FILE default: <config-root>/<environment>/operator/env/LINODE_TOKEN
   HOME100K_ENVIRONMENT    default: staging; selects cloud_env/<environment>
   HOME100K_ENV_ROOT       internal runtime override; default: cloud_env/<environment>/runtime
   HOME100K_BRANDNAME      default: RTK
@@ -366,7 +351,7 @@ device_ca_bundle_path() {
   local candidate
   for candidate in \
     "${HOME100K_DEVICE_CLIENT_CA_BUNDLE:-}" \
-    "$(local_env_root_path)/state/secrets/device-client-ca-bundle.pem"; do
+    "$(local_env_root_path)/state/pki/device-client-ca-bundle.pem"; do
     if [[ -n "$candidate" && -f "$candidate" ]]; then
       printf '%s\n' "$candidate"
       return 0

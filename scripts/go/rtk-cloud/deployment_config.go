@@ -73,6 +73,19 @@ var deploymentIntegerKeys = map[string]bool{
 
 var deploymentArchitectureKeys = architectureKeySet()
 
+var deploymentEnvironmentKeys = keySet(
+	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
+	"AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
+	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
+	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
+)
+
+var deploymentEnvironmentServiceKeys = keySet(
+	"AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
+	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
+	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
+)
+
 func architectureKeySet() map[string]bool {
 	out := keySet(
 		"DEPLOYMENT_RUNTIME", "NODE_CLASS_LABEL_KEY", "DEFAULT_WORKLOAD_NODE_CLASS", "POD_SPREAD_TOPOLOGY_KEY",
@@ -135,8 +148,8 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	environmentRoot := fs.String("environment-root", "", "explicit environment root for tests/custom environments")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for mutation")
-	envFile := fs.String("env-file", "", "environment credential profile (defaults to ~/.config/rtk-cloud/environments/NAME.env)")
-	sharedEnvFile := fs.String("shared-env-file", "", "shared credential profile (defaults to ~/.config/rtk-cloud/shared.env)")
+	envFile := fs.String("env-file", "", "retired; use the environment SecretStore operator/env directory")
+	sharedEnvFile := fs.String("shared-env-file", "", "retired; shared secret fallback is not supported")
 	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
 	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
@@ -144,6 +157,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
+	}
+	if !rtkCloudTestMode() {
+		if hasFlag(args[1:], "--env-file") || hasFlag(args[1:], "--shared-env-file") {
+			return errors.New("--env-file and --shared-env-file are retired; use ~/.config/rtk_cloud/<environment>/operator/env")
+		}
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
 	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
@@ -496,10 +514,14 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 	if err != nil {
 		return err
 	}
+	store, storeErr := newSecretStore("", cfg.Environment)
+	if storeErr != nil {
+		return storeErr
+	}
 	required := []string{
-		filepath.Join(cfg.RuntimeRoot, "state", "openbao", "unseal-key"),
-		filepath.Join(cfg.RuntimeRoot, "state", "openbao", "root-token"),
-		filepath.Join(cfg.RuntimeRoot, "state", "secrets", "postgres"),
+		filepath.Join(store.Root, "openbao", "unseal-key"),
+		filepath.Join(store.Root, "openbao", "root-token"),
+		filepath.Join(store.Root, "runtime", "postgres"),
 	}
 	missing := make([]string, 0, len(required))
 	for _, path := range required {
@@ -515,9 +537,9 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
-  rtk-cloud deployment credentials-check --environment NAME [--env-file PATH]
-  rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket [--env-file PATH]
-  rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access [--env-file PATH]
+  rtk-cloud deployment credentials-check --environment NAME
+  rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
+  rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment provision --environment NAME --confirm STACK
@@ -563,7 +585,7 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	for key := range envIdentity {
-		if !keySet("CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION")[key] {
+		if !deploymentEnvironmentKeys[key] {
 			return deploymentConfig{}, fmt.Errorf("unknown environment key %s", key)
 		}
 	}
@@ -983,6 +1005,28 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	body, _ := json.MarshalIndent(plan, "", "  ")
 	body = append(body, '\n')
 	return os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment-plan.json"), body, 0o600)
+}
+
+func materializeStagingE2EDeploymentConfig(workspace, envRoot string) error {
+	environmentRoot := filepath.Dir(filepath.Clean(envRoot))
+	cfg, err := resolveDeploymentConfig(workspace, "", environmentRoot)
+	if err != nil {
+		return fmt.Errorf("staging E2E deployment config: %w", err)
+	}
+	if filepath.Clean(cfg.RuntimeRoot) != filepath.Clean(envRoot) {
+		return fmt.Errorf("staging E2E runtime mismatch: resolved %s, requested %s", cfg.RuntimeRoot, envRoot)
+	}
+	if err := materializeDeploymentRuntime(cfg); err != nil {
+		return fmt.Errorf("materialize staging E2E deployment config: %w", err)
+	}
+	stack, err := readStrictEnv(filepath.Join(cfg.RuntimeRoot, "env", "stack.env"))
+	if err != nil {
+		return err
+	}
+	if lkeClipDirectUploadEnabled(stack) && strings.TrimSpace(stack["VIDEO_CLOUD_BLOB_ENDPOINT"]) == "" {
+		return errors.New("staging reset blocked before deleting workloads: validated Object Storage receipt is missing; run deployment credentials-check --environment " + cfg.Environment)
+	}
+	return nil
 }
 
 func deploymentRuntimeEndpoints(v map[string]string) map[string]string {

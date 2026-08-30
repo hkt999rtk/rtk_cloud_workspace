@@ -345,19 +345,26 @@ func TestDeploymentPreflightAcceptanceRequiresMatchingRuntime(t *testing.T) {
 
 func TestDeploymentPreflightAcceptancePassesWithMatchingRuntime(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
+	store := makeIsolatedTestSecretStore(t, "staging")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for path, contents := range map[string]string{
 		"state/provider-preflight.env": "LKE_CLUSTER_ID=123\n",
-		"state/kubeconfig.yaml":        "apiVersion: v1\n",
 		"env/stack.env":                "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
-		"state/openbao/unseal-key":     "test-unseal-key\n",
-		"state/openbao/root-token":     "test-root-token\n",
-		"state/secrets/postgres":       "test-postgres-password\n",
 	} {
 		writeTestFile(t, filepath.Join(cfg.RuntimeRoot, path), contents)
+	}
+	for path, contents := range map[string]string{
+		"kube/kubeconfig.yaml": "apiVersion: v1\n",
+		"openbao/unseal-key":   "test-unseal-key\n",
+		"openbao/root-token":   "test-root-token\n",
+		"runtime/postgres":     "test-postgres-password\n",
+	} {
+		if err := store.write(path, []byte(contents), true); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	var out bytes.Buffer
@@ -629,6 +636,31 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "LKE_REGION=us-sea\n")
 	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "unknown environment key LKE_REGION") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "AUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
+	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Values["AUTH_TOKEN_BASE_URL"]; got != "https://admin.dev.example.test" {
+		t.Fatalf("AUTH_TOKEN_BASE_URL = %q", got)
+	}
+	if _, ok := cfg.Values["SENDMAIL_HTTP_BEARER_TOKEN"]; ok {
+		t.Fatal("secret bearer token was accepted as tracked environment configuration")
+	}
+}
+
+func TestMaterializeStagingE2EDeploymentConfigRequiresStorageReceiptBeforeReset(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	appendFile(t, filepath.Join(workspace, "cloud_deploy", "architectures", "kubernetes", "workloads.env"), "VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true\n")
+	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	err := materializeStagingE2EDeploymentConfig(workspace, envRoot)
+	if err == nil || !strings.Contains(err.Error(), "validated Object Storage receipt is missing") {
+		t.Fatalf("missing receipt error = %v", err)
 	}
 }
 

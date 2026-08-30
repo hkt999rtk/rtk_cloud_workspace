@@ -496,7 +496,7 @@ func featureKubeconfigPath(deploymentEnvRoot string) string {
 }
 
 func featureDeviceCABundlePath(deploymentEnvRoot string) string {
-	return filepath.Join(filepath.Clean(deploymentEnvRoot), "state", "secrets", "device-client-ca-bundle.pem")
+	return filepath.Join(filepath.Clean(deploymentEnvRoot), "state", "pki", "device-client-ca-bundle.pem")
 }
 
 func boundedFeatureStageRunID(runID, feature, profile string) string {

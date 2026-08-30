@@ -327,8 +327,15 @@ func TestDeploymentCredentialDefaultsHonorEnvironmentOverrides(t *testing.T) {
 	if got := defaultDeploymentCredentialEnvFile(); got != "/tmp/operator.env" {
 		t.Fatalf("credential env file = %q", got)
 	}
-	if got := defaultDeploymentSharedCredentialFile(); got != filepath.Join(home, ".config", "rtk-cloud", "shared.env") {
+	if got := defaultDeploymentSharedCredentialFile(); got != "" {
 		t.Fatalf("shared credential env file = %q", got)
+	}
+	if got := defaultDeploymentEnvironmentCredentialFile("staging"); got != "/tmp/operator.env" {
+		t.Fatalf("overridden environment credential path = %q", got)
+	}
+	t.Setenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE", "")
+	if got := defaultDeploymentEnvironmentCredentialFile("staging"); got != filepath.Join(home, ".config", "rtk_cloud", "staging", "operator", "env") {
+		t.Fatalf("environment credential directory = %q", got)
 	}
 	checker := defaultDeploymentCredentialChecker()
 	if checker.client == nil || checker.out == nil ||
@@ -347,7 +354,7 @@ func TestDeploymentCredentialCheckerDefaultsNilDependencies(t *testing.T) {
 	}
 }
 
-func TestDeploymentCredentialValuesRejectsInvalidPathsAndPrefersProcessEnvironment(t *testing.T) {
+func TestDeploymentCredentialValuesRejectsInvalidPathsAndIgnoresProcessEnvironment(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	for _, tc := range []struct {
 		name string
@@ -356,7 +363,7 @@ func TestDeploymentCredentialValuesRejectsInvalidPathsAndPrefersProcessEnvironme
 	}{
 		{name: "empty", want: "path is empty"},
 		{name: "missing", path: filepath.Join(t.TempDir(), "missing.env"), want: "does not exist"},
-		{name: "directory", path: t.TempDir(), want: "not a regular file"},
+		{name: "directory", path: t.TempDir(), want: "credential directory cannot be read"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, check := deploymentCredentialValues(tc.path)
@@ -372,7 +379,7 @@ func TestDeploymentCredentialValuesRejectsInvalidPathsAndPrefersProcessEnvironme
 	}
 	t.Setenv("LINODE_TOKEN", "process-token")
 	values, check := deploymentCredentialValues(envFile)
-	if !check.Passed || values["LINODE_TOKEN"] != "process-token" {
+	if !check.Passed || values["LINODE_TOKEN"] != "file-token" {
 		t.Fatalf("values = %#v, check = %#v", values, check)
 	}
 }

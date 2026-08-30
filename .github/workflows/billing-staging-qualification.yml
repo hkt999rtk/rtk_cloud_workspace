@@ -165,9 +165,17 @@ jobs:
         env:
           GHCR_PULL_USERNAME: ${{ github.actor }}
           GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
         shell: bash
         run: |
           set -euo pipefail
+          export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          echo "RTK_CLOUD_CONFIG_ROOT=$RTK_CLOUD_CONFIG_ROOT" >> "$GITHUB_ENV"
+          test -n "$RTK_CLOUD_SECRET_BUNDLE"
+          bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
+          chmod 0600 "$bundle"
+          scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle" "$KUBECONFIG"
           go run ./scripts/go/rtk-cloud -- provision \
             --workspace "$GITHUB_WORKSPACE" \
             --env-root "$BILLING_STAGING_ENV_ROOT" \
@@ -254,3 +262,12 @@ jobs:
           path: .artifacts/test-runs/${{ env.BILLING_QUALIFICATION_RUN_ID }}/**
           if-no-files-found: warn
           retention-days: 90
+
+      - name: Remove job-only SecretStore
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          case "$RTK_CLOUD_CONFIG_ROOT/" in "$RUNNER_TEMP/"*) rm -rf "$RTK_CLOUD_CONFIG_ROOT" ;; *) exit 1 ;; esac
+          rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

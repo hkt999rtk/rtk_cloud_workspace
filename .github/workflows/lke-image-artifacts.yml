@@ -41,6 +41,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: scripts/go/go.sum
 
       - name: Run LKE image manifest tests
@@ -89,6 +90,7 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: scripts/go/go.sum
 
       - name: Set up Docker Buildx

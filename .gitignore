@@ -12,6 +12,7 @@ keys/
 .secrets.backup/
 cloud_env/*
 !cloud_env/README.md
+!cloud_env/secret-catalog.json
 !cloud_env/*/
 cloud_env/*/*
 !cloud_env/*/environment.env

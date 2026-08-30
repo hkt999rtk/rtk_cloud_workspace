@@ -8,7 +8,35 @@ import (
 )
 
 func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error {
-	lkeRuntimeSecretStateDir = filepath.Join(ctx.Paths.EnvRoot, "state", "secrets")
+	if rtkCloudTestMode() {
+		// Deterministic, disposable test fixtures do not use the user's canonical
+		// secret store.
+		lkeRuntimeSecretStateDir = filepath.Join(ctx.Paths.EnvRoot, "state", "secrets")
+		if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
+			return err
+		}
+		if ctx.Opts.mode.apply || ctx.Opts.mode.dns || ctx.Opts.mode.deploy || ctx.Opts.mode.artifacts || ctx.Opts.mode.e2e {
+			if err := writeLKECompatibilityArtifacts(ctx.Paths, ctx.Env); err != nil {
+				return err
+			}
+		}
+		return runProvisionSteps(ctx, kubernetesProvisionSteps(provider))
+	}
+	environment := ctx.Env["CLOUD_ENV_NAME"]
+	if environment == "" {
+		environment = "staging"
+	}
+	store, restore, err := configureProvisionSecretStore(environment)
+	if err != nil {
+		return err
+	}
+	defer restore()
+	activeCanonicalSecretStore = true
+	defer func() {
+		activeCanonicalSecretStore = false
+		activeSecretEnvironmentRoot = ""
+	}()
+	lkeRuntimeSecretStateDir = store.RuntimeDir()
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}

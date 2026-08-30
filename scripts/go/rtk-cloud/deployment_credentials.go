@@ -38,36 +38,32 @@ type deploymentCredentialChecker struct {
 }
 
 func defaultDeploymentCredentialEnvFile() string {
-	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")); path != "" && rtkCloudTestMode() {
 		return path
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	store, err := newSecretStore("", "staging")
+	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".config", "rtk-cloud", "shared.env")
+	return filepath.Join(store.Root, "operator", "env")
 }
 
 func defaultDeploymentEnvironmentCredentialFile(environment string) string {
-	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_DEPLOYMENT_CREDENTIAL_ENV_FILE")); path != "" && rtkCloudTestMode() {
 		return path
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" || strings.TrimSpace(environment) == "" {
+	store, err := newSecretStore("", environment)
+	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".config", "rtk-cloud", "environments", environment+".env")
+	return filepath.Join(store.Root, "operator", "env")
 }
 
 func defaultDeploymentSharedCredentialFile() string {
-	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("RTK_CLOUD_SHARED_CREDENTIAL_ENV_FILE")); path != "" && rtkCloudTestMode() {
 		return path
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".config", "rtk-cloud", "shared.env")
+	return ""
 }
 
 func defaultDeploymentCredentialChecker() deploymentCredentialChecker {
@@ -157,8 +153,17 @@ func deploymentCredentialValues(envFile string) (map[string]string, deploymentCr
 		}
 		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: "cannot be inspected"}
 	}
+	if info.IsDir() {
+		environmentRoot := filepath.Dir(filepath.Dir(abs))
+		store := secretStore{ConfigRoot: filepath.Dir(environmentRoot), Environment: filepath.Base(environmentRoot), Root: environmentRoot}
+		values, readErr := store.readOperator()
+		if readErr != nil {
+			return nil, deploymentCredentialCheck{Name: "credential env file", Detail: "credential directory cannot be read"}
+		}
+		return values, deploymentCredentialCheck{Name: "credential env file", Passed: true, Detail: abs + " loaded with secure permissions"}
+	}
 	if !info.Mode().IsRegular() {
-		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: abs + " is not a regular file"}
+		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: abs + " is not a regular file or credential directory"}
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: abs + " must not be readable or writable by group/others (run chmod 600)"}
@@ -166,11 +171,6 @@ func deploymentCredentialValues(envFile string) (map[string]string, deploymentCr
 	values, err := readEnvFile(abs)
 	if err != nil {
 		return nil, deploymentCredentialCheck{Name: "credential env file", Detail: "cannot be read"}
-	}
-	for _, key := range deploymentCredentialKeys() {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			values[key] = value
-		}
 	}
 	return values, deploymentCredentialCheck{Name: "credential env file", Passed: true, Detail: abs + " loaded with secure permissions"}
 }
@@ -215,11 +215,6 @@ func deploymentCredentialProfileValues(environment, environmentFile, sharedFile 
 			values[key] = value
 		}
 	}
-	for _, key := range deploymentCredentialKeys() {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			values[key] = value
-		}
-	}
 	// Scoped credentials are canonical. Legacy names exist only in this in-memory
 	// child/runtime view so older deployment code never needs to read profile files.
 	if value := values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"]; value != "" {
@@ -228,7 +223,7 @@ func deploymentCredentialProfileValues(environment, environmentFile, sharedFile 
 	if value := values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"]; value != "" {
 		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = value
 	}
-	detail := strings.Join(paths, ", ") + " loaded with secure permissions (process environment > environment profile > shared profile)"
+	detail := strings.Join(paths, ", ") + " loaded with secure permissions"
 	return values, deploymentCredentialCheck{Name: "credential env file", Passed: true, Detail: detail}
 }
 
@@ -245,7 +240,10 @@ func deploymentCredentialValuesFromFile(path string) (map[string]string, deploym
 		return nil, deploymentCredentialCheck{Detail: "cannot be inspected"}
 	}
 	if !info.Mode().IsRegular() {
-		return nil, deploymentCredentialCheck{Detail: abs + " is not a regular file"}
+		if info.IsDir() {
+			return deploymentCredentialValues(abs)
+		}
+		return nil, deploymentCredentialCheck{Detail: abs + " is not a regular file or credential directory"}
 	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return nil, deploymentCredentialCheck{Detail: abs + " must not be readable or writable by group/others (run chmod 600)"}
@@ -575,6 +573,16 @@ func updateDeploymentCredentialEnvFile(path string, replacements map[string]stri
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
+	}
+	if info, statErr := os.Stat(abs); statErr == nil && info.IsDir() {
+		environmentRoot := filepath.Dir(filepath.Dir(abs))
+		store := secretStore{ConfigRoot: filepath.Dir(environmentRoot), Environment: filepath.Base(environmentRoot), Root: environmentRoot}
+		for key, value := range replacements {
+			if err := store.write(filepath.Join("operator", "env", key), []byte(value+"\n"), true); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {

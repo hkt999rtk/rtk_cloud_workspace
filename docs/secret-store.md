@@ -1,0 +1,66 @@
+# RTK Cloud Secret Store
+
+All local secret material is owned by one environment-specific directory:
+
+```text
+~/.config/rtk_cloud/<environment>/
+```
+
+Directories must use mode `0700`; files must use mode `0600`. Symlinks and
+paths that escape the environment root are rejected. Environments are
+self-contained: staging never falls back to prod, a shared profile, process
+environment credentials, or legacy workspace files.
+
+The repository `cloud_env/<environment>/runtime` tree contains only
+non-secret topology, resolved state, and redacted evidence. Kubernetes Secrets
+are runtime copies written from the local store. GitHub Actions Secrets remain
+an independent CI store; CI writes them to a temporary
+`RTK_CLOUD_CONFIG_ROOT` for the duration of one job.
+
+## Commands
+
+```bash
+go run ./scripts/go/rtk-cloud -- secrets init --environment prod
+go run ./scripts/go/rtk-cloud -- secrets plan --environment staging
+go run ./scripts/go/rtk-cloud -- secrets migrate \
+  --environment staging \
+  --confirm video-cloud-staging
+go run ./scripts/go/rtk-cloud -- secrets verify --environment staging
+go run ./scripts/go/rtk-cloud -- secrets inventory --environment staging
+```
+
+`secrets migrate` is the only command allowed to read legacy profiles and
+workspace secret paths. It stages and verifies the complete destination before
+an atomic cutover, then moves enumerated legacy sources into a private
+`migration-backup/<timestamp>` inside the new environment root. Normal
+deployment commands do not implement a legacy fallback.
+
+Short-lived access and admin tokens are never persisted. Their long-lived
+signing secret is stored under `runtime/`; tokens are minted in memory when
+needed.
+
+## GitHub Actions
+
+CI stores values in GitHub Actions Secrets and materializes them only for one
+job. The secret bundle is a JSON object with `operator`, `runtime`, and optional
+`files` maps. `files` keys are environment-relative paths used for PKI/OpenBao
+or test material. The helper emits no values:
+
+```bash
+export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+trap 'rm -rf "$RTK_CLOUD_CONFIG_ROOT" "$RUNNER_TEMP/rtk-cloud-secrets.json"' EXIT
+scripts/ci/materialize-rtk-cloud-secret-store.sh \
+  staging "$RUNNER_TEMP/rtk-cloud-secrets.json" "$KUBECONFIG"
+```
+
+The helper requires the root to be inside `RUNNER_TEMP`, refuses symlinks,
+traversal and overwrites, applies `0700`/`0600`, then runs the same catalog and
+Kubernetes binding verification as local deployment.
+
+Staging deployment jobs require the environment secret
+`RTK_CLOUD_SECRET_BUNDLE`. The isolated runtime-coverage job requires a
+separate `RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE`; it must not borrow the
+staging bundle. `LINODE_TOKEN`, `GHCR_PULL_USERNAME`, `GHCR_PULL_TOKEN`,
+`GODADDY_KEY`, and `GODADDY_SECRET` may be supplied as job secrets and are
+materialized into `operator/env/` by the CI-only allowlist. All 28 runtime IDs
+must still be present in the appropriate bundle.

@@ -19,43 +19,30 @@ cd rtk_cloud_workspace
 git submodule update --init --recursive
 ```
 
-Create the shared profile and environment media profile. Never commit either file:
+Initialize the self-contained staging SecretStore:
 
 ```sh
-mkdir -p ~/.config/rtk-cloud/environments
-chmod 700 ~/.config/rtk-cloud ~/.config/rtk-cloud/environments
+go run ./scripts/go/rtk-cloud -- secrets init --environment staging
 ```
 
-`~/.config/rtk-cloud/shared.env`:
+Create one `0600` file per key below
+`~/.config/rtk_cloud/staging/operator/env/`. The filename is the exact key
+name and the file contains only its value. Required operator keys include:
 
-```env
-LINODE_TOKEN=<Linode API token>
-GHCR_PULL_USERNAME=<GitHub username>
-GHCR_PULL_TOKEN=<GitHub token with read:packages>
-GODADDY_KEY=<GoDaddy API key>
-GODADDY_SECRET=<GoDaddy API secret>
-LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID=<Seattle artifact key>
-LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY=<Seattle artifact secret>
-# Portal SDK downloads use a separate read-only key scoped to the sdk/ prefix.
-SDK_DOWNLOADS_ENABLED=true
-SDK_ARTIFACT_BUCKET=rtk-cloud-client-artifacts
-SDK_ARTIFACT_ENDPOINT=https://us-sea-1.linodeobjects.com
-SDK_ARTIFACT_REGION=us-sea
-SDK_ARTIFACT_ACCESS_KEY_ID=<Portal sdk-prefix read-only key>
-SDK_ARTIFACT_SECRET_ACCESS_KEY=<Portal sdk-prefix read-only secret>
-SDK_LATEST_OBJECT_KEY=sdk/latest.json
+```text
+LINODE_TOKEN
+GHCR_PULL_USERNAME
+GHCR_PULL_TOKEN
+GODADDY_KEY
+GODADDY_SECRET
+LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID
+LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY
+LINODE_MEDIA_OBJ_ACCESS_KEY_ID
+LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY
 ```
 
-`~/.config/rtk-cloud/environments/staging.env`:
-
-```env
-LINODE_MEDIA_OBJ_ACCESS_KEY_ID=<Singapore media key>
-LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY=<Singapore media secret>
-```
-
-```sh
-chmod 600 ~/.config/rtk-cloud/shared.env ~/.config/rtk-cloud/environments/staging.env
-```
+Run `secrets verify --environment staging` before provisioning. See
+[`secret-store.md`](secret-store.md) for migration and permission rules.
 
 Create the SSH key used by ephemeral load generators if it does not exist:
 
@@ -120,7 +107,7 @@ password or ingest token:
 
 ```sh
 set -euo pipefail
-K=cloud_env/staging/runtime/state/kubeconfig.yaml
+K="$HOME/.config/rtk_cloud/staging/kube/kubeconfig.yaml"
 NS=video-cloud-staging-video-cloud
 ADMIN=staging_billing_setup
 PASS=$(openssl rand -hex 24)
@@ -229,8 +216,8 @@ investigation is complete.
 ## 6. Final Health Check
 
 ```sh
-KUBECONFIG=cloud_env/staging/runtime/state/kubeconfig.yaml kubectl get nodes
-KUBECONFIG=cloud_env/staging/runtime/state/kubeconfig.yaml \
+KUBECONFIG="$HOME/.config/rtk_cloud/staging/kube/kubeconfig.yaml" kubectl get nodes
+KUBECONFIG="$HOME/.config/rtk_cloud/staging/kube/kubeconfig.yaml" \
   kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded
 ```
 
