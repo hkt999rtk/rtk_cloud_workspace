@@ -207,11 +207,8 @@ func TestSelectChangedServiceReposSelectsOnlyChangedGitlinks(t *testing.T) {
 
 func TestSelectChangedServiceReposSharedTestChangesSelectAll(t *testing.T) {
 	for _, changed := range []string{
-		".github/workflows/workspace-test-baseline.yml",
-		".github/workflows/feature-qualification.yml",
 		"go.work",
 		"scripts/go/rtk-cloud/main.go",
-		"tests/catalog.yaml",
 		"repos/rtk_cloud_contracts_doc",
 	} {
 		t.Run(changed, func(t *testing.T) {
@@ -220,6 +217,16 @@ func TestSelectChangedServiceReposSharedTestChangesSelectAll(t *testing.T) {
 				t.Fatalf("selected repos = %v, want all %v", got, managedServiceRepos)
 			}
 		})
+	}
+}
+
+func TestSelectChangedServiceReposIgnoresCatalogAndWorkflowOnlyChanges(t *testing.T) {
+	got := selectChangedServiceRepos([]string{
+		"tests/catalog.yaml",
+		".github/workflows/go-coverage-governance.yml",
+	})
+	if len(got) != 0 {
+		t.Fatalf("selected repos = %v, want none", got)
 	}
 }
 

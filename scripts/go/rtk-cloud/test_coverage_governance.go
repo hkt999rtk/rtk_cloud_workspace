@@ -625,6 +625,7 @@ func runTestCoverageAggregate(args []string) error {
 	flags.SetOutput(os.Stderr)
 	inputDir := flags.String("input-dir", "", "directory containing downloaded per-module coverage artifacts")
 	runID := flags.String("run-id", "", "aggregate artifact run ID")
+	modulesJSON := flags.String("modules-json", "", "JSON array of modules required in this aggregate")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -638,6 +639,33 @@ func runTestCoverageAggregate(args []string) error {
 	cfg, err := loadCoverageConfig(workspace)
 	if err != nil {
 		return err
+	}
+	requiredModules := cfg.Modules
+	if strings.TrimSpace(*modulesJSON) != "" {
+		var names []string
+		if err := json.Unmarshal([]byte(*modulesJSON), &names); err != nil {
+			return fmt.Errorf("parse --modules-json: %w", err)
+		}
+		configured := map[string]coverageModule{}
+		for _, module := range cfg.Modules {
+			configured[module.Name] = module
+		}
+		requiredModules = nil
+		seen := map[string]bool{}
+		for _, name := range names {
+			module, ok := configured[name]
+			if !ok {
+				return fmt.Errorf("--modules-json contains unknown module %q", name)
+			}
+			if seen[name] {
+				return fmt.Errorf("--modules-json contains duplicate module %q", name)
+			}
+			seen[name] = true
+			requiredModules = append(requiredModules, module)
+		}
+		if len(requiredModules) == 0 {
+			return errors.New("--modules-json must contain at least one module")
+		}
 	}
 	type selectedCase struct {
 		result    coverageCaseResult
@@ -687,7 +715,7 @@ func runTestCoverageAggregate(args []string) error {
 	if commit, commitErr := gitOutput(workspace, "rev-parse", "HEAD"); commitErr == nil {
 		report.WorkspaceCommit = strings.TrimSpace(commit)
 	}
-	for _, module := range cfg.Modules {
+	for _, module := range requiredModules {
 		item, ok := selected[module.Name]
 		if !ok {
 			report.Status = "FAIL"
@@ -723,13 +751,22 @@ func runTestCoverageAggregate(args []string) error {
 		}
 		report.Cases = append(report.Cases, item.result)
 	}
-	if manifests, inventoryErr := loadNodeUnitManifests(outDir); inventoryErr != nil {
-		report.Status = "FAIL"
-		report.Assessment = "JavaScript individual inventory is incomplete: " + inventoryErr.Error()
-	} else {
-		if inventoryErr := compareUnitInventoryMustPass(workspace, cfg, manifests); inventoryErr != nil {
+	hasNodeModules := false
+	for _, module := range requiredModules {
+		if module.Kind == "node" {
+			hasNodeModules = true
+			break
+		}
+	}
+	if hasNodeModules {
+		if manifests, inventoryErr := loadNodeUnitManifests(outDir); inventoryErr != nil {
 			report.Status = "FAIL"
-			report.Assessment = "JavaScript individual inventory gate failed: " + inventoryErr.Error()
+			report.Assessment = "JavaScript individual inventory is incomplete: " + inventoryErr.Error()
+		} else {
+			if inventoryErr := compareUnitInventoryMustPass(workspace, cfg, manifests); inventoryErr != nil {
+				report.Status = "FAIL"
+				report.Assessment = "JavaScript individual inventory gate failed: " + inventoryErr.Error()
+			}
 		}
 	}
 	if err := writeCrossLanguageUnitInventory(outDir, report.Cases); err != nil {

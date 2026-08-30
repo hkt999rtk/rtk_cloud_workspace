@@ -254,6 +254,15 @@ cases:
       title: firmware status helpers use upgrade-specific English labels
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20status%20helpers%20use%20upgrade-specific%20Traditional%20Chinese%20labels
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: firmware status helpers use upgrade-specific Traditional Chinese labels
+      owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-08-30"
+      reason: Replaced by the English firmware-status label coverage.
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmwareCampaignDetailRows%20maps%20rollouts%20into%20read-only%20detail%20rows
       module: cloud-admin-web
       language: javascript
@@ -586,6 +595,15 @@ cases:
       title: route kind selects one capability-filtered navigation hierarchy
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20Chinese%20platform%20route%20titles%20in%20the%20unified%20shell
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: uses Chinese platform route titles in the unified shell
+      owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-08-30"
+      reason: Replaced by the English platform route-title coverage.
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#uses%20English%20platform%20route%20titles%20in%20the%20unified%20shell
       module: cloud-admin-web
       language: javascript
