@@ -110,9 +110,10 @@ JSONL writes.
 3. Ramp mTLS token bootstrap and MQTT connections. The ready barrier requires
    the selected device count, token-success count, CONNACK-success count, and
    subscription-success count to be identical.
-4. Poll `POST /v1/device/ota/check` with device bearer authentication and
-   deterministic jitter until the expected assignment arrives or the device
-   deadline expires.
+4. Poll `POST /v1/device/ota/check` with device bearer authentication. Each
+   device check is deterministically sampled from a truncated normal
+   distribution between 10 and 60 seconds (mean 35 seconds) until the expected
+   assignment arrives or the device deadline expires.
 5. Reject an assignment immediately if `campaign_id` or `target_version` does
    not equal the required CLI values. Validate the manifest identity,
    hardware-revision compatibility, anti-rollback counter, artifact size,
@@ -220,7 +221,8 @@ Optional flags and defaults:
 | Flag | Default | Validation/behavior |
 | --- | --- | --- |
 | `--ota-anti-rollback-counter` | `0` | Non-negative integer. |
-| `--ota-poll-interval` | `5s` | Positive duration with per-device jitter. |
+| `--ota-poll-min-interval` | `10s` | Positive lower bound for the per-device normal polling distribution. |
+| `--ota-poll-max-interval` | `60s` | Positive upper bound; must exceed the lower bound. The distribution is centered at the midpoint with the bounds at three standard deviations. |
 | `--ota-upgrade-timeout` | `30m` | Per-device deadline beginning after the MQTT ready barrier. |
 | `--ota-http-concurrency` | `250` | Positive worker bound. |
 | `--ota-download-concurrency` | `64` | Positive and no greater than HTTP concurrency. |

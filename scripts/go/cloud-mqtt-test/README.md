@@ -37,6 +37,12 @@ workspace_root="$PWD"
 The run writes the normal `results.json` and `TEST_REPORT.md` plus a protected
 `ota-devices.jsonl` containing one redacted row per selected device.
 
+The first OTA check and every subsequent check are staggered per device using
+a deterministic truncated normal distribution. The defaults are 10 seconds
+minimum, 60 seconds maximum, and a 35-second mean. Override the bounds with
+`--ota-poll-min-interval` and `--ota-poll-max-interval` when a qualification
+profile requires different pacing.
+
 ## Single-generator 10K qualification
 
 Use a campaign whose target snapshot contains the exact 10,000-device fixture
