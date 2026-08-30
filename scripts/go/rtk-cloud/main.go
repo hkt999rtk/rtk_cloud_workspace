@@ -4639,6 +4639,8 @@ func runStagingE2ETest(args []string) error {
 	skipRemove := fs.Bool("skip-remove", false, "skip remove")
 	brandname := fs.String("brandname", "RTK", "brand name")
 	userCount := fs.Int("user-count", 10, "user count")
+	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped user email prefix")
+	userEmailDomain := fs.String("user-email-domain", "users.local", "test-only user email domain")
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
@@ -4806,6 +4808,12 @@ func runStagingE2ETest(args []string) error {
 	bindValidationDir := filepath.Join(dataSetupDir, "bind-validation")
 	if selection.Data {
 		dataSetupArgs := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname, "--user-count", strconv.Itoa(*userCount), "--device-count", strconv.Itoa(*deviceCount), "--device-mix", *deviceMix, "--device-prefix", *devicePrefix, "--user-concurrency", strconv.Itoa(*userConcurrency), "--device-concurrency", strconv.Itoa(*deviceConcurrency), "--bind-concurrency", strconv.Itoa(*bindConcurrency), "--out-dir", dataSetupDir}
+		if strings.TrimSpace(*userEmailPrefix) != "" {
+			dataSetupArgs = append(dataSetupArgs, "--user-email-prefix", *userEmailPrefix)
+		}
+		if strings.TrimSpace(*userEmailDomain) != "" {
+			dataSetupArgs = append(dataSetupArgs, "--user-email-domain", *userEmailDomain)
+		}
 		if *quiet {
 			dataSetupArgs = append(dataSetupArgs, "--quiet")
 		}
@@ -4938,6 +4946,8 @@ func runStagingE2E(args []string) error {
 	outDir := fs.String("out-dir", "", "override report output directory")
 	brandname := fs.String("brandname", "RTK", "brand cloud name")
 	userCount := fs.Int("user-count", 10, "user count")
+	userEmailPrefix := fs.String("user-email-prefix", "", "optional run-scoped user email prefix")
+	userEmailDomain := fs.String("user-email-domain", "users.local", "test-only user email domain")
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
@@ -4983,7 +4993,7 @@ func runStagingE2E(args []string) error {
 		}
 		return runStagingE2ETest(stagingE2ETestArgs(stagingE2EArgs{
 			workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: false, plan: true,
-			brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
+			brandname: *brandname, userCount: *userCount, userEmailPrefix: *userEmailPrefix, userEmailDomain: *userEmailDomain, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 			userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
 			outDir: *outDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 			steps: *steps,
@@ -5006,7 +5016,7 @@ func runStagingE2E(args []string) error {
 	}
 	err = runStagingE2ETest(stagingE2ETestArgs(stagingE2EArgs{
 		workspace: ctx.workspace, envRoot: ctx.envRoot, stackName: ctx.stackName, run: true, plan: false,
-		brandname: *brandname, userCount: *userCount, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
+		brandname: *brandname, userCount: *userCount, userEmailPrefix: *userEmailPrefix, userEmailDomain: *userEmailDomain, deviceCount: *deviceCount, deviceMix: *deviceMix, devicePrefix: *devicePrefix,
 		userConcurrency: *userConcurrency, deviceConcurrency: *deviceConcurrency, bindConcurrency: *bindConcurrency,
 		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 		steps: *steps,
@@ -5028,6 +5038,8 @@ type stagingE2EArgs struct {
 	plan              bool
 	brandname         string
 	userCount         int
+	userEmailPrefix   string
+	userEmailDomain   string
 	deviceCount       int
 	deviceMix         string
 	devicePrefix      string
@@ -5064,6 +5076,12 @@ func stagingE2ETestArgs(cfg stagingE2EArgs) []string {
 		"--device-concurrency", strconv.Itoa(cfg.deviceConcurrency),
 		"--bind-concurrency", strconv.Itoa(cfg.bindConcurrency),
 	)
+	if strings.TrimSpace(cfg.userEmailPrefix) != "" {
+		out = append(out, "--user-email-prefix", cfg.userEmailPrefix)
+	}
+	if strings.TrimSpace(cfg.userEmailDomain) != "" {
+		out = append(out, "--user-email-domain", cfg.userEmailDomain)
+	}
 	if cfg.outDir != "" {
 		out = append(out, "--out-dir", cfg.outDir)
 	}
@@ -6284,12 +6302,7 @@ func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accoun
 	if status == http.StatusInternalServerError && role != "owner" {
 		existingRole, lookupErr := accountBrandCloudUserRole(ctx, session, sessionMu, logf, brandCloudID, email)
 		if lookupErr == nil && roleRank(existingRole) > roleRank(role) {
-			logf("preserving higher existing membership role: email=%s requested=%s existing=%s", email, role, existingRole)
-			effectiveRole = existingRole
-			body, status, err = request(effectiveRole)
-			if err != nil {
-				return accountCreateUserResult{}, err
-			}
+			return accountCreateUserResult{}, fmt.Errorf("refusing to replace higher existing membership role: email=%s requested=%s existing=%s; use --user-email-prefix for run-scoped load-test accounts", email, role, existingRole)
 		}
 	}
 	if status != 200 && status != 201 {

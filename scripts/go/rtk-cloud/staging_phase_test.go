@@ -28,6 +28,8 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 		"--confirm", "video-cloud-staging",
 		"--out-dir", outDir,
 		"--steps", "reset,provision,data,mqtt,runtime-logs",
+		"--user-email-prefix", "run-123",
+		"--user-email-domain", "users.invalid",
 		"--quiet",
 	}); err != nil {
 		t.Fatal(err)
@@ -39,6 +41,9 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 	}
 	if strings.Contains(log, "reset ARGS=--workspace "+workspace+" --env-root "+envRoot+" --yes --purge-storage") {
 		t.Fatalf("full E2E reset should not purge storage by default, got:\n%s", log)
+	}
+	if !strings.Contains(log, "--user-email-prefix run-123 --user-email-domain users.invalid") {
+		t.Fatalf("data setup should receive run-scoped user identity flags, got:\n%s", log)
 	}
 }
 
@@ -354,6 +359,7 @@ func fakeStagingPhaseDataSetupCommand(t *testing.T, logPath string) string {
 	script := `#!/usr/bin/env bash
 set -euo pipefail
 out_dir=""
+original_args="$*"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out-dir)
@@ -374,7 +380,7 @@ printf '{}\n' > "$out_dir/users.json"
 printf '{}\n' > "$out_dir/bind.json"
 printf '{"overall":"pass"}\n' > "$out_dir/bind-validation/summary.json"
 printf '{"users_file":"%s","device_bind_file":"%s","summary_file":"%s","bind_validation_dir":"%s"}\n' "$out_dir/users.json" "$out_dir/bind.json" "$out_dir/summary.json" "$out_dir/bind-validation" > "$out_dir/summary.json"
-printf 'setup-data ARGS=%s\n' "$*" >> "` + logPath + `"
+printf 'setup-data ARGS=%s\n' "$original_args" >> "` + logPath + `"
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
