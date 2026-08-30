@@ -77,7 +77,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `7edf7785f118` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003`, `UI-CA-AUTH-ACTIVATE-001`, `UI-CA-AUTH-LOGIN-001`, `UI-CA-AUTH-LOGIN-002`, `UI-CA-AUTH-LOGIN-003`, `UI-CA-AUTH-LOGOUT-001` | `test-services`, `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `8fc6d450f519` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `e06e4f5e4f81` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
-| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `cb27b7267be5` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
+| `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `16f39fb21370` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `b700edd6f551` | `service` | `active` | `UI-CA-BILLING-001`, `UI-CA-BILLING-002`, `UI-CA-BILLING-003`, `UI-CA-BILLING-004`, `UI-CA-BILLING-005`, `UI-CA-BILLING-006`, `UI-CA-BILLING-STG-001`, `UI-CA-BILLING-STG-002`, `UI-CA-BILLING-STG-003` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-UI-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `` | `1bbb8497bf3c` | `service` | `active` | `UI-CA-ACCESS-003`, `UI-CA-ACCESS-004`, `UI-CA-ACCESS-005`, `UI-CA-AUTH-002`, `UI-CA-FLEETPAGE-004`, `UI-CA-FLEETPAGE-006`, `UI-CA-FLEETPAGE-007`, `UI-CA-FLEETPAGE-008` | `test-ui` |
@@ -759,7 +759,7 @@
 | `SPEC-CA-OPENAPI#getApiAudit` | `GET /api/audit` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-AUDIT-001` | `440c1ce02c7e` |
 | `SPEC-CA-OPENAPI#postApiAuthCustomerResendVerification` | `POST /api/auth/customer/resend-verification` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `bb2ac54a33fd` |
 | `SPEC-CA-OPENAPI#postApiAuthCustomerSignup` | `POST /api/auth/customer/signup` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `18d50662312c` |
-| `SPEC-CA-OPENAPI#postApiAuthCustomerVerifyEmail` | `POST /api/auth/customer/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `a5ed14686ce6` |
+| `SPEC-CA-OPENAPI#postApiAuthCustomerVerifyEmail` | `POST /api/auth/customer/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0ec99b8387b3` |
 | `SPEC-CA-OPENAPI#postApiAuthForgotPassword` | `POST /api/auth/forgot-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `fae97e6656a2` |
 | `SPEC-CA-OPENAPI#postApiAuthLogin` | `POST /api/auth/login` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `b3964ef54320` |
 | `SPEC-CA-OPENAPI#postApiAuthLoginActivate` | `POST /api/auth/login/activate` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `1ab3055f91b2` |
@@ -1255,8 +1255,8 @@
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Capability Projection Contract@L280` | `draft` | `planned` | `d119c9ed0c84` | not human roles and must not be displayed as ACL labels. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L293` | `draft` | `planned` | `56db3ec9a934` | Backend handlers and frontend components must enforce these rules consistently. |
 | `repos/rtk_cloud_admin/docs/ROLES.md` | `Field-Level Visibility Rules@L295` | `draft` | `planned` | `7444f7d571cd` | visibility constraint on a specific field, it must align with the table below. |
-| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L487` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
-| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L489` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L495` | `service` | `required` | `a6c9dc72bd72` | must not enter an HTTP request, localStorage, audit event, or application log. |
+| `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L497` | `service` | `required` | `c8b32539280c` | The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Purpose@L46` | `draft` | `planned` | `c00c1a49a040` | Each SDK package must implement this contract or explicitly document which |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L55` | `draft` | `planned` | `ed9d3ad28b0a` | The SDK (or a manufacturing-line tool that calls SDK primitives) must: |
 | `repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md` | `Key Generation@L65` | `draft` | `planned` | `b1acacc9ed18` | The key generation helper should be: |
@@ -1369,8 +1369,8 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `RTK Cloud Admin — Role Definitions@L18` | `false` | normative clause 0ce425e55647 requires a stable FEAT-*/REQ-* source mapping: rtk_video_cloud backend developers (telemetry, firmware, and stream APIs must |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Read-only Observer@L243` | `false` | normative clause 1fc83d1b1961 requires a stable FEAT-*/REQ-* source mapping: write action must use the same backend guard; frontend button hiding is only a |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/ROLES.md` | `Three-Tier Architecture@L40` | `false` | normative clause 5ab164b3f034 requires a stable FEAT-*/REQ-* source mapping: persona, but route guards and enabled UI actions must use explicit |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L487` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L489` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L495` | `true` | normative clause a6c9dc72bd72 requires a stable FEAT-*/REQ-* source mapping: must not enter an HTTP request, localStorage, audit event, or application log. |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/SPEC.md` | `Developer PKI Test Bundles@L497` | `true` | normative clause c8b32539280c requires a stable FEAT-*/REQ-* source mapping: The active Brand Cloud must match the request. Only owner/admin sessions with |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `deleteApiAdminBrandCloudUserMembership` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `deleteApiProductCollaborator` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiAdminBrandCloudUsers` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
