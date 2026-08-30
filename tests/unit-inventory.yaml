@@ -36,6 +36,14 @@ cases:
       title: password login prefers the destination view
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#platform%20login%20context%20requires%20a%20safe%20admin%20destination
+      module: cloud-admin-web
+      language: javascript
+      source: src/auth-routing.test.mjs
+      title: platform login context requires a safe admin destination
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-AUTH-002
     - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#sensitive%20query%20parameters%20are%20removed%20without%20changing%20the%20rest%20of%20the%20address
       module: cloud-admin-web
       language: javascript

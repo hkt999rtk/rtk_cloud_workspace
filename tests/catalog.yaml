@@ -37,6 +37,9 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
+  - { <<: *ui_smoke, id: UI-CA-AUTH-LOGIN-001, title: Shared login branding follows the selected auth mode, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
+  - { <<: *ui_smoke, id: UI-CA-AUTH-LOGIN-002, title: Admin destinations use the platform sign-in context, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-002]", verifies: [REQ-CA-BFF-LOGIN-001] }
+  - { <<: *ui_local, id: UI-CA-AUTH-LOGIN-003, title: Invalid destinations keep the shared sign-in context, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-003]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_local, id: UI-CA-AUTH-003, title: Failed login renders its error once, source: repos/rtk_cloud_admin/web/e2e/auth-errors.spec.mjs, selector: "[UI-CA-AUTH-003]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-001, title: Password reset consumes the URL token without exposing it in the form, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-002, title: Shared checkbox control matches the console style across desktop and mobile, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-002]", verifies: [REQ-CA-BFF-UI-001] }
@@ -643,8 +646,8 @@ cases:
     layer: integration
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/usercache/store_test.go
-    selector: "./internal/usercache#TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable,./internal/usercache#TestStoreRegisterRefreshesUserAuthCacheAfterCommit,./internal/usercache#TestStoreBrandAndEndUserMutationsRefreshCache,./internal/usercache#TestStoreIgnoresCacheReadAndWriteErrors"
-    method: Store-decorator integration tests inject Redis read/write failures across platform, Brand and end-user paths and require PostgreSQL reads and committed mutations to remain authoritative.
+    selector: "./internal/usercache#TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable,./internal/usercache#TestStoreRegisterRefreshesUserAuthCacheAfterCommit,./internal/usercache#TestStoreEndUserMutationRefreshesCache,./internal/usercache#TestStoreIgnoresCacheReadAndWriteErrors"
+    method: Store-decorator integration tests inject Redis read/write failures across global-human and end-user paths and require PostgreSQL reads and committed mutations to remain authoritative.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
@@ -757,6 +760,18 @@ cases:
     environments: [ci]
     evidence: [json, junit]
     verifies: [REQ-CA-BRAND-USER-PROVISION-001, REQ-CA-BRAND-AUDIT-001]
+    status: active
+  - id: INT-AM-BRANDOWNER-001
+    title: Brand Cloud owner completes email activation and unified global login
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminCreatesAndActivatesBrandOwnerByEmail
+    method: PostgreSQL-backed API integration test creates a Brand Cloud, invites its global owner by email, rejects pre-activation login, activates the account, signs in through the global endpoint, and discovers the owner membership through /v1/me.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-IDENTITY-001, REQ-CA-BRAND-USER-PROVISION-001]
     status: active
   - id: INT-CA-BRANDBFF-001
     title: Cloud Admin Brand routes require and forward Account Manager authority
@@ -1335,6 +1350,7 @@ cases:
   - { id: SVC-WS-E2E-001, title: Workspace deterministic E2E suite passes coverage gates, layer: service, owner: cloud_platform, source: e2e_test/go.mod, selector: "module", method: Go tests instrument deterministic E2E harness and report code with overall and differential coverage gates., runner: test-coverage, environments: [local, ci], evidence: [json, markdown], status: active }
   - { id: SVC-HOME-LOAD-001, title: Home load-runner contract suite passes coverage gates, layer: service, owner: home_cloud, source: loadtests/home-100k/go.mod, selector: "module", method: Go tests instrument load planning execution evidence and reporting code with overall and differential coverage gates., runner: test-coverage, environments: [local, ci], evidence: [json, markdown], status: active }
   - { id: UNIT-CA-AUTH-001, title: Cloud Admin login continuation rejects open redirects, layer: unit, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/web/src/auth-routing.test.mjs, selector: "login next rejects open redirects and unrelated app paths", method: Node unit test exercises accepted and rejected redirect destinations through the authentication routing helper., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
+  - { id: UNIT-CA-AUTH-002, title: Platform login context requires a safe admin destination, layer: unit, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/web/src/auth-routing.test.mjs, selector: "platform login context requires a safe admin destination", method: Node unit test verifies that platform sign-in context is only selected for validated administration destinations., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
   - { id: UNIT-CA-PKI-001, title: Cloud Admin browser PKI helper keeps private keys local, layer: unit, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/web/src/certificateBundle.test.mjs, selector: "browser PKI helper creates P-256 PKCS#8 and sends only a CSR-shaped value", method: Node unit test creates an exportable P-256 key and verifies the request-shaped CSR contains no private key material., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
   - { id: UNIT-CA-ERROR-001, title: Cloud Admin SSO errors hide internal configuration, layer: unit, owner: rtk_cloud_admin, source: repos/rtk_cloud_admin/web/src/http.test.mjs, selector: "userFacingSSOError hides internal SSO configuration details", method: Node unit test verifies internal SSO error material is normalized to customer-safe copy., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }
   - { id: UNIT-CLIENT-PKI-001, title: JavaScript SDK Node PKI mTLS helper contract is preserved, layer: unit, owner: rtk_cloud_client, source: repos/rtk_cloud_client/packages/javascript/test/package.test.ts, selector: "implements Node PKI mTLS helper surface with temp PEM files", method: Node unit test creates temporary PEM material and verifies the SDK mTLS helper surface., runner: test-coverage, environments: [local, ci], evidence: [json, junit], status: active }

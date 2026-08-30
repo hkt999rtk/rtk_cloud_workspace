@@ -65,6 +65,7 @@ type userArtifact struct {
 
 type userCredential struct {
 	Brandname      string                `json:"brandname,omitempty"`
+	UserID         string                `json:"user_id,omitempty"`
 	BrandCloudID   string                `json:"brand_cloud_id,omitempty"`
 	TenantSlug     string                `json:"tenant_slug,omitempty"`
 	Email          string                `json:"email"`
@@ -3343,9 +3344,14 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 	bundle.Users.BrandCloudID = home100KBundleMetadata(db, "brand_cloud_id")
 	bundle.Users.TenantSlug = home100KBundleMetadata(db, "tenant_slug")
 	hasBrand := sqliteColumnExists(db, "users", "brandname")
-	query := `select email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by email`
+	hasUserID := sqliteColumnExists(db, "users", "user_id")
+	userIDExpression := `''`
+	if hasUserID {
+		userIDExpression = `coalesce(user_id, '')`
+	}
+	query := `select ` + userIDExpression + `, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by email`
 	if hasBrand {
-		query = `select brandname, coalesce(brand_cloud_id, ''), coalesce(tenant_slug, ''), email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by brandname, email`
+		query = `select brandname, ` + userIDExpression + `, coalesce(brand_cloud_id, ''), coalesce(tenant_slug, ''), email, password, tokens_json, app_credentials_json, app_certificate_json, body_json from users order by brandname, email`
 	}
 	rows, err := db.Query(query)
 	if err != nil {
@@ -3356,25 +3362,28 @@ func loadHome100KBundleUsers(db *sql.DB, bundle *home100KCredentialBundle) error
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var email, password, tokensJSON, appCredentialsJSON, appCertificateJSON, bodyJSON string
+		var userID, email, password, tokensJSON, appCredentialsJSON, appCertificateJSON, bodyJSON string
 		rowBrand := brandname
 		rowBrandCloudID := bundle.Users.BrandCloudID
 		rowTenantSlug := bundle.Users.TenantSlug
 		if hasBrand {
-			if err := rows.Scan(&rowBrand, &rowBrandCloudID, &rowTenantSlug, &email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
+			if err := rows.Scan(&rowBrand, &userID, &rowBrandCloudID, &rowTenantSlug, &email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
 				return err
 			}
 		} else {
-			if err := rows.Scan(&email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
+			if err := rows.Scan(&userID, &email, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &bodyJSON); err != nil {
 				return err
 			}
 		}
-		user := userCredential{Brandname: rowBrand, BrandCloudID: rowBrandCloudID, TenantSlug: rowTenantSlug, Email: email, Password: password}
+		user := userCredential{Brandname: rowBrand, UserID: userID, BrandCloudID: rowBrandCloudID, TenantSlug: rowTenantSlug, Email: email, Password: password}
 		if strings.TrimSpace(bodyJSON) != "" {
 			_ = json.Unmarshal([]byte(bodyJSON), &user)
 		}
 		if strings.TrimSpace(user.Email) == "" {
 			user.Email = email
+		}
+		if strings.TrimSpace(user.UserID) == "" {
+			user.UserID = userID
 		}
 		if strings.TrimSpace(user.Password) == "" {
 			user.Password = password
@@ -5553,10 +5562,7 @@ func accountLoginAppCertificateWithTimeout(baseURL, tenantSlug string, user user
 	if timeout <= 0 {
 		return accountLoginAppResponse{}, errors.New("account login timeout exhausted before request")
 	}
-	tenantSlug = strings.TrimSpace(tenantSlug)
-	if tenantSlug == "" {
-		return accountLoginAppResponse{}, errors.New("missing tenant_slug")
-	}
+	_ = tenantSlug // Brand Cloud selection is metadata; human authentication is global.
 	payload := map[string]string{"email": user.Email, "password": user.Password}
 	if strings.TrimSpace(csrPEM) != "" {
 		payload["app_csr_pem"] = csrPEM
@@ -5565,7 +5571,7 @@ func accountLoginAppCertificateWithTimeout(baseURL, tenantSlug string, user user
 	if err != nil {
 		return accountLoginAppResponse{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/brand-clouds/"+url.PathEscape(tenantSlug)+"/auth/login", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/auth/login", bytes.NewReader(raw))
 	if err != nil {
 		return accountLoginAppResponse{}, err
 	}
@@ -5598,10 +5604,7 @@ func accountRefreshTokenBundleWithTimeout(baseURL, tenantSlug, refreshToken stri
 	if timeout <= 0 {
 		return tokenBundle{}, errors.New("account refresh timeout exhausted before request")
 	}
-	tenantSlug = strings.TrimSpace(tenantSlug)
-	if tenantSlug == "" {
-		return tokenBundle{}, errors.New("missing tenant_slug")
-	}
+	_ = tenantSlug // Brand Cloud selection is metadata; token refresh is global.
 	refreshToken = strings.TrimSpace(refreshToken)
 	if refreshToken == "" {
 		return tokenBundle{}, errors.New("missing refresh_token")
@@ -5610,7 +5613,7 @@ func accountRefreshTokenBundleWithTimeout(baseURL, tenantSlug, refreshToken stri
 	if err != nil {
 		return tokenBundle{}, err
 	}
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/brand-clouds/"+url.PathEscape(tenantSlug)+"/auth/refresh", bytes.NewReader(raw))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1/auth/refresh", bytes.NewReader(raw))
 	if err != nil {
 		return tokenBundle{}, err
 	}

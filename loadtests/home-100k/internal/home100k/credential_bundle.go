@@ -150,6 +150,7 @@ func initCredentialBundleSchema(db *sql.DB) error {
 		)`,
 		`create table users (
 			brandname text not null default '',
+			user_id text,
 			brand_cloud_id text,
 			tenant_slug text,
 			email text not null,
@@ -350,7 +351,7 @@ func insertBundleUsersAndBindings(db *sql.DB, envRoot string, rows []deviceManif
 	if err != nil {
 		return err
 	}
-	userStmt, err := tx.Prepare(`insert into users(brandname, brand_cloud_id, tenant_slug, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(brandname, email) do nothing`)
+	userStmt, err := tx.Prepare(`insert into users(brandname, user_id, brand_cloud_id, tenant_slug, email, password, tokens_json, app_credentials_json, app_certificate_json, body_json) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(brandname, email) do nothing`)
 	if err != nil {
 		_ = tx.Rollback()
 		return err
@@ -370,12 +371,17 @@ func insertBundleUsersAndBindings(db *sql.DB, envRoot string, rows []deviceManif
 			_ = tx.Rollback()
 			return err
 		}
-		var password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON string
-		if err := source.QueryRow(`select coalesce(password, ''), coalesce(tokens_json, '{}'), coalesce(app_credentials_json, '{}'), coalesce(app_certificate_json, '{}'), body_json from users where brandname = ? and email = ?`, row.Brandname, row.AssignedEmail).Scan(&password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &userBodyJSON); err != nil {
+		var userID, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON string
+		userIDExpression := `''`
+		if sqliteTableHasColumn(source, "users", "user_id") {
+			userIDExpression = `coalesce(user_id, '')`
+		}
+		query := `select ` + userIDExpression + `, coalesce(password, ''), coalesce(tokens_json, '{}'), coalesce(app_credentials_json, '{}'), coalesce(app_certificate_json, '{}'), body_json from users where brandname = ? and email = ?`
+		if err := source.QueryRow(query, row.Brandname, row.AssignedEmail).Scan(&userID, &password, &tokensJSON, &appCredentialsJSON, &appCertificateJSON, &userBodyJSON); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
-		if _, err := userStmt.Exec(row.Brandname, row.BrandCloudID, row.TenantSlug, row.AssignedEmail, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON); err != nil {
+		if _, err := userStmt.Exec(row.Brandname, userID, row.BrandCloudID, row.TenantSlug, row.AssignedEmail, password, tokensJSON, appCredentialsJSON, appCertificateJSON, userBodyJSON); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
@@ -395,6 +401,24 @@ func insertBundleUsersAndBindings(db *sql.DB, envRoot string, rows []deviceManif
 		}
 	}
 	return tx.Commit()
+}
+
+func sqliteTableHasColumn(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(`pragma table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey) == nil && name == column {
+			return true
+		}
+	}
+	return false
 }
 
 func bundleSourceForBrand(sources map[string]*sql.DB, envRoot string, brandname string) (*sql.DB, error) {

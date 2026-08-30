@@ -33,9 +33,8 @@ type E2EBrandCloud struct {
 	Metadata              map[string]any `json:"metadata"`
 }
 
-type E2EBrandCloudUser struct {
+type E2EGlobalUser struct {
 	ID                        string `json:"id"`
-	BrandCloudID              string `json:"brand_cloud_id"`
 	Email                     string `json:"email"`
 	DisplayName               string `json:"display_name"`
 	EmailVerified             bool   `json:"email_verified"`
@@ -46,11 +45,10 @@ type E2EBrandCloudUser struct {
 }
 
 type E2EBrandCloudMember struct {
-	OrganizationID   string `json:"organization_id"`
-	UserID           string `json:"user_id"`
-	BrandCloudUserID string `json:"brand_cloud_user_id"`
-	Email            string `json:"email"`
-	Role             string `json:"role"`
+	OrganizationID string `json:"organization_id"`
+	UserID         string `json:"user_id"`
+	Email          string `json:"email"`
+	Role           string `json:"role"`
 }
 
 type E2EOperation struct {
@@ -97,7 +95,7 @@ type E2EServiceLog struct {
 
 type E2EFixture struct {
 	BrandClouds []E2EBrandCloud       `json:"brand_clouds"`
-	Users       []E2EBrandCloudUser   `json:"brand_cloud_users"`
+	Users       []E2EGlobalUser       `json:"users"`
 	Members     []E2EBrandCloudMember `json:"members"`
 	Devices     []E2EDevice           `json:"devices"`
 	Operations  []E2EOperation        `json:"operations"`
@@ -132,15 +130,16 @@ func GenerateE2EFixture(scenario, runID, outDir string, now time.Time) (E2EFixtu
 			Metadata: map[string]any{"brandname": brand.Brandname, "run_id": runID, "device_count": brand.Devices, "setup_status": "ready"},
 		}
 		fixture.BrandClouds = append(fixture.BrandClouds, cloud)
-		ownerID := fmt.Sprintf("bcu-%02d-owner", brandIndex+1)
+		ownerID := fmt.Sprintf("user-%02d-owner", brandIndex+1)
 		ownerEmail := fmt.Sprintf("owner%02d@%s.example", brandIndex+1, strings.ToLower(strings.ReplaceAll(brand.Brandname, " ", "-")))
-		fixture.Users = append(fixture.Users, E2EBrandCloudUser{ID: ownerID, BrandCloudID: brandID, Email: ownerEmail, DisplayName: "E2E Owner", EmailVerified: true, CreatedAt: timestamp, UpdatedAt: timestamp})
-		fixture.Members = append(fixture.Members, E2EBrandCloudMember{OrganizationID: brandID, UserID: ownerID, BrandCloudUserID: ownerID, Email: ownerEmail, Role: "owner"})
+		fixture.Users = append(fixture.Users, E2EGlobalUser{ID: ownerID, Email: ownerEmail, DisplayName: "E2E Owner", EmailVerified: true, CreatedAt: timestamp, UpdatedAt: timestamp})
+		fixture.Members = append(fixture.Members, E2EBrandCloudMember{OrganizationID: brandID, UserID: ownerID, Email: ownerEmail, Role: "owner"})
 		for userIndex := 1; userIndex < brand.NormalUsers; userIndex++ {
-			userID := fmt.Sprintf("bcu-%02d-user-%02d", brandIndex+1, userIndex)
+			userID := fmt.Sprintf("user-%02d-%02d", brandIndex+1, userIndex)
 			email := fmt.Sprintf("user%02d-%02d@e2e.example", brandIndex+1, userIndex)
 			pending := brandIndex == 1 && userIndex == 1
-			fixture.Users = append(fixture.Users, E2EBrandCloudUser{ID: userID, BrandCloudID: brandID, Email: email, DisplayName: "E2E User", EmailVerified: !pending, SignupPendingVerification: pending, CreatedAt: timestamp, UpdatedAt: timestamp})
+			fixture.Users = append(fixture.Users, E2EGlobalUser{ID: userID, Email: email, DisplayName: "E2E User", EmailVerified: !pending, SignupPendingVerification: pending, CreatedAt: timestamp, UpdatedAt: timestamp})
+			fixture.Members = append(fixture.Members, E2EBrandCloudMember{OrganizationID: brandID, UserID: userID, Email: email, Role: "member"})
 		}
 	}
 	for index := 0; index < plan.TotalDevices; index++ {

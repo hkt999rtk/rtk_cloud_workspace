@@ -202,6 +202,7 @@ func (s *testDataStore) init() error {
 		`create table if not exists users (
 			brandname text not null,
 			email text not null,
+			user_id text,
 			brand_cloud_id text,
 			tenant_slug text,
 			role text,
@@ -279,10 +280,42 @@ func (s *testDataStore) init() error {
 			return err
 		}
 	}
+	if err := ensureSQLiteColumn(s.DB, "users", "user_id", "text"); err != nil {
+		return err
+	}
 	if _, err := s.DB.Exec(`insert into metadata(key, value) values('schema_version', ?) on conflict(key) do update set value = excluded.value`, testDataSchemaVersion); err != nil {
 		return err
 	}
 	return nil
+}
+
+func ensureSQLiteColumn(db *sql.DB, table, column, declaration string) error {
+	rows, err := db.Query(`pragma table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.Exec(`alter table ` + table + ` add column ` + column + ` ` + declaration)
+	return err
 }
 
 func (s *testDataStore) ReplaceUsers(brandname, brandCloudID, tenantSlug, role string, users []map[string]any) error {
@@ -294,7 +327,7 @@ func (s *testDataStore) ReplaceUsers(brandname, brandCloudID, tenantSlug, role s
 	if _, err := tx.Exec(`delete from users where brandname = ? and coalesce(role, '') = ?`, brandname, role); err != nil {
 		return err
 	}
-	stmt, err := tx.Prepare(`insert into users(brandname, email, brand_cloud_id, tenant_slug, role, password, tokens_json, app_credentials_json, app_certificate_json, body_json, updated_at) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`insert into users(brandname, email, user_id, brand_cloud_id, tenant_slug, role, password, tokens_json, app_credentials_json, app_certificate_json, body_json, updated_at) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return err
 	}
@@ -306,7 +339,8 @@ func (s *testDataStore) ReplaceUsers(brandname, brandCloudID, tenantSlug, role s
 			return fmt.Errorf("user missing email")
 		}
 		body := mustMarshalJSONString(user)
-		if _, err := stmt.Exec(brandname, email, brandCloudID, tenantSlug, firstNonEmpty(stringValue(user["role"]), role), stringValue(user["password"]), mustMarshalJSONString(user["tokens"]), mustMarshalJSONString(user["app_credentials"]), mustMarshalJSONString(user["app_certificate"]), body, now); err != nil {
+		userID := firstNonEmpty(stringValue(user["user_id"]), stringValue(user["id"]))
+		if _, err := stmt.Exec(brandname, email, userID, brandCloudID, tenantSlug, firstNonEmpty(stringValue(user["role"]), role), stringValue(user["password"]), mustMarshalJSONString(user["tokens"]), mustMarshalJSONString(user["app_credentials"]), mustMarshalJSONString(user["app_certificate"]), body, now); err != nil {
 			return err
 		}
 	}
@@ -320,7 +354,7 @@ func (s *testDataStore) ClearUsers(brandname string) error {
 
 func (s *testDataStore) ReadUsersList(brandname string) (map[string]userCredential, []userCredential, error) {
 	rows, err := s.DB.Query(`
-		select email, password, tokens_json
+		select coalesce(user_id, ''), email, password, tokens_json
 		from users
 		where brandname = ? and (
 			role = 'member' or coalesce(role, '') = '' or (
@@ -338,11 +372,11 @@ func (s *testDataStore) ReadUsersList(brandname string) (map[string]userCredenti
 	byEmail := map[string]userCredential{}
 	list := []userCredential{}
 	for rows.Next() {
-		var email, password, tokensJSON string
-		if err := rows.Scan(&email, &password, &tokensJSON); err != nil {
+		var userID, email, password, tokensJSON string
+		if err := rows.Scan(&userID, &email, &password, &tokensJSON); err != nil {
 			return nil, nil, err
 		}
-		user := userCredential{Email: email, Password: password}
+		user := userCredential{UserID: userID, Email: email, Password: password}
 		_ = json.Unmarshal([]byte(tokensJSON), &user.Tokens)
 		byEmail[email] = user
 		list = append(list, user)

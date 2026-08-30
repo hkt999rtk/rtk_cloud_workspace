@@ -320,7 +320,7 @@ func TestLifecycleUserTokenUsesRunScopedSessionBeforePasswordLogin(t *testing.T)
 
 func TestLifecycleUserTokenFallsBackToTenantScopedLogin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if req.URL.Path != "/v1/brand-clouds/rtk-test/auth/login" {
+		if req.URL.Path != "/v1/auth/login" {
 			t.Fatalf("login path = %q", req.URL.Path)
 		}
 		_, _ = io.WriteString(w, `{"tokens":{"access_token":"tenant-access-token","refresh_token":"tenant-refresh-token"}}`)

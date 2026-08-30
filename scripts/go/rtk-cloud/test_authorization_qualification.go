@@ -464,7 +464,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		Targets: []authorizationQualificationTarget{
 			{Package: "./internal/usercache", GoTest: "TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable"},
 			{Package: "./internal/usercache", GoTest: "TestStoreRegisterRefreshesUserAuthCacheAfterCommit"},
-			{Package: "./internal/usercache", GoTest: "TestStoreBrandAndEndUserMutationsRefreshCache"},
+			{Package: "./internal/usercache", GoTest: "TestStoreEndUserMutationRefreshesCache"},
 			{Package: "./internal/usercache", GoTest: "TestStoreIgnoresCacheReadAndWriteErrors"},
 		},
 		Assertions: map[string]map[string]string{
@@ -472,7 +472,6 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 				"postgres_read_survives_cache_outage": "PASS",
 				"committed_write_not_rolled_back":     "PASS",
 				"platform_cache_refreshed":            "PASS",
-				"brand_cache_refreshed":               "PASS",
 				"end_user_cache_refreshed":            "PASS",
 				"cache_write_failure_ignored":         "PASS",
 			},
@@ -591,6 +590,29 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		},
 	},
 	{
+		TestID: "INT-AM-BRANDOWNER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesAndActivatesBrandOwnerByEmail",
+		Assertions: map[string]map[string]string{
+			"REQ-CA-BRAND-IDENTITY-001": {
+				"global_owner_identity_created":     "PASS",
+				"owner_membership_discovered_by_me": "PASS",
+			},
+			"REQ-CA-BRAND-USER-PROVISION-001": {
+				"email_activation_required":   "PASS",
+				"activation_token_single_use": "PASS",
+				"owner_membership_created":    "PASS",
+			},
+		},
+		Workflows: map[string]map[string]string{
+			"WF-CA-BRAND-001": {
+				"create_brand_cloud":          "PASS",
+				"invite_global_brand_owner":   "PASS",
+				"activate_global_brand_owner": "PASS",
+				"login_global_brand_owner":    "PASS",
+				"discover_owner_membership":   "PASS",
+			},
+		},
+	},
+	{
 		TestID: "INT-AM-BRANDUSER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesActiveBrandCloudUser",
 		Assertions: map[string]map[string]string{
 			"REQ-CA-BRAND-USER-PROVISION-001": {
@@ -609,13 +631,6 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 			"WF-CA-AUDIT-001": {
 				"create_audited_brand_cloud": "PASS",
 				"read_brand_cloud_audit":     "PASS",
-			},
-			"WF-CA-BRAND-001": {
-				"create_brand_cloud":  "PASS",
-				"create_brand_owner":  "PASS",
-				"disable_brand_owner": "PASS",
-				"enable_brand_owner":  "PASS",
-				"delete_brand_owner":  "PASS",
 			},
 		},
 	},

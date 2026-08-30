@@ -427,7 +427,7 @@ func TestValidateDeviceBindWaitsForProvisionedState(t *testing.T) {
 	provisioningSeen := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-test/auth/login":
+		case "/v1/auth/login":
 			loginSeen = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token"}})
 		case "/v1/orgs/brand-1/devices/account-device-1/provisioning":
@@ -546,7 +546,7 @@ func TestValidateDeviceBindWaitsForProvisionedStateFromSQLiteUsers(t *testing.T)
 	provisioningSeen := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-test/auth/login":
+		case "/v1/auth/login":
 			loginSeen = true
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token", "refresh_token": "refresh-token"}})
 		case "/v1/orgs/brand-1/devices/account-device-1/provisioning":
@@ -621,7 +621,7 @@ func TestValidateDeviceBindRetriesProvisioningTransportErrors(t *testing.T) {
 	provisioningCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/brand-clouds/rtk-test/auth/login":
+		case "/v1/auth/login":
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token"}})
 		case "/v1/orgs/brand-1/devices/account-device-1/provisioning":
 			provisioningCalls++

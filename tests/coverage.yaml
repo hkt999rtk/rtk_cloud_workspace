@@ -270,6 +270,7 @@ modules:
     minimum_function_percent: 94.0
     critical_cases:
       - { test_id: UNIT-CA-AUTH-001, canonical_key: "js://cloud-admin-web/src/auth-routing.test.mjs#login%20next%20rejects%20open%20redirects%20and%20unrelated%20app%20paths", purpose: Login continuation validation must reject open redirects. }
+      - { test_id: UNIT-CA-AUTH-002, canonical_key: "js://cloud-admin-web/src/auth-routing.test.mjs#platform%20login%20context%20requires%20a%20safe%20admin%20destination", purpose: Platform login context must require a validated administration destination. }
       - { test_id: UNIT-CA-PKI-001, canonical_key: "js://cloud-admin-web/src/certificateBundle.test.mjs#browser%20PKI%20helper%20creates%20P-256%20PKCS%238%20and%20sends%20only%20a%20CSR-shaped%20value", purpose: Browser test issuance must keep the generated private key out of the CSR-shaped request value. }
       - { test_id: UNIT-CA-ERROR-001, canonical_key: "js://cloud-admin-web/src/http.test.mjs#userFacingSSOError%20hides%20internal%20SSO%20configuration%20details", purpose: Browser-facing SSO failures must not expose internal configuration. }
     purpose: Protect Cloud Admin browser-helper logic across lines branches and functions.

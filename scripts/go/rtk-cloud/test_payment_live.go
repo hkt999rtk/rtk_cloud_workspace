@@ -553,7 +553,7 @@ func writePaymentLiveCustomerSession(ctx context.Context, client *http.Client, b
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/auth/customer/login", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/auth/login", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -1131,7 +1131,7 @@ func paymentLiveBillingJSON(ctx context.Context, client *http.Client, method, en
 		headers = map[string]string{}
 	}
 	headers["X-Billing-Permissions"] = permission
-	headers["X-Billing-Actor-Type"] = "brand_cloud_user"
+	headers["X-Billing-Actor-Type"] = "user"
 	headers["X-Billing-Actor-ID"] = "staging-payment-qualification"
 	if headers["X-Request-Id"] == "" {
 		digest := sha256.Sum256([]byte(method + " " + endpoint))

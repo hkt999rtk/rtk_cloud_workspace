@@ -2651,6 +2651,9 @@ func runCreateUsers(args []string) error {
 	if *role != "owner" && *role != "admin" && *role != "member" {
 		return errors.New("--role must be owner, admin, or member")
 	}
+	if *role == "owner" {
+		return errors.New("bulk owner creation is disabled; use load-owner-activation so the owner completes email verification")
+	}
 	if *concurrency <= 0 {
 		return errors.New("--concurrency must be greater than zero")
 	}
@@ -2706,9 +2709,6 @@ func runCreateUsers(args []string) error {
 	safeAccountCreateUser := func(email, displayName, password string) (accountCreateUserResult, error) {
 		return accountCreateUserWithSessionLock(ctx, &session, &sessionMu, safeLog, brandCloudID, email, displayName, password, *role, *rotatePassword)
 	}
-	safeRevokeAppCertificate := func(brandCloudUserID string) error {
-		return accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx, &session, &sessionMu, safeLog, brandCloudID, brandCloudUserID)
-	}
 	var progressMu sync.Mutex
 	progressDone := 0
 	progressCreated := 0
@@ -2732,7 +2732,7 @@ func runCreateUsers(args []string) error {
 		if err != nil {
 			return createUserResult{}, err
 		}
-		safeLog("ensuring brand user: email=%s role=%s", email, *role)
+		safeLog("ensuring global user membership: email=%s role=%s", email, *role)
 		if reusable := reusableLocalUsers[email]; reusable != nil {
 			safeLog("reusing local user artifact: email=%s", email)
 			reusable["action"] = "reused"
@@ -2747,35 +2747,34 @@ func runCreateUsers(args []string) error {
 			result.created = true
 		} else {
 			if !*rotatePassword {
-				return createUserResult{}, fmt.Errorf("brand user already exists and password was not rotated: email=%s; use the previous credentials artifact or rerun with --rotate-password", email)
+				return createUserResult{}, fmt.Errorf("global user already exists and password was not rotated: email=%s; use the previous credentials artifact or rerun with --rotate-password", email)
 			}
 			result.assigned = true
 		}
-		if createResult.BrandCloudUserID == "" {
-			return createUserResult{}, fmt.Errorf("brand user create response missing brand_cloud_user.id for %s", email)
+		if createResult.UserID == "" {
+			return createUserResult{}, fmt.Errorf("global user create response missing user.id for %s", email)
 		}
-		appSubject := "app-brand-cloud-user:" + createResult.BrandCloudUserID
+		appSubject := "app-user:" + createResult.UserID
 		safeLog("bootstrapping app certificate: email=%s", email)
 		// Always inspect the current server-side certificate before generating a
 		// CSR. Account Manager reuses a valid certificate when a caller supplies
 		// another CSR, so the direct-CSR fast path can pair that certificate with
 		// a newly generated, unrelated private key on repeat staging runs.
-		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, false, existingAppCredentials[email], func() error {
-			return safeRevokeAppCertificate(createResult.BrandCloudUserID)
-		})
+		appCredentials, appCertificate, userSession, err := accountEnsureUserAppCertificate(ctx, tenantSlug, email, password, appSubject, false, existingAppCredentials[email], nil)
 		if err != nil {
 			return createUserResult{}, err
 		}
 		result.user = map[string]any{
-			"email":               email,
-			"display_name":        displayName,
-			"role":                *role,
-			"brand_cloud_user_id": createResult.BrandCloudUserID,
-			"password":            password,
-			"action":              createResult.Action,
-			"app_credentials":     appCredentials,
-			"app_certificate":     appCertificate,
-			"tokens":              userSession,
+			"email":           email,
+			"display_name":    displayName,
+			"role":            *role,
+			"id":              createResult.UserID,
+			"user_id":         createResult.UserID,
+			"password":        password,
+			"action":          createResult.Action,
+			"app_credentials": appCredentials,
+			"app_certificate": appCertificate,
+			"tokens":          userSession,
 		}
 		createdDelta := 0
 		if result.created {
@@ -6260,8 +6259,8 @@ func accountFindBrandCloud(ctx accountManagerContext, token, brandname string) (
 }
 
 type accountCreateUserResult struct {
-	Action           string
-	BrandCloudUserID string
+	Action string
+	UserID string
 }
 
 func accountCreateUser(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
@@ -6269,7 +6268,7 @@ func accountCreateUser(ctx accountManagerContext, session *accountPlatformSessio
 }
 
 func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
-	payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": role, "rotate_password": rotate})
+	payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": role, "rotate_password": rotate, "activation_mode": "immediate"})
 	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
 		return curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), platformToken, payload)
 	})
@@ -6287,26 +6286,8 @@ func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accoun
 	if action == "" {
 		action = "assigned"
 	}
-	brandCloudUser, _ := parsed["brand_cloud_user"].(map[string]any)
-	return accountCreateUserResult{Action: action, BrandCloudUserID: stringValue(brandCloudUser["id"])}, nil
-}
-
-func accountRevokeBrandCloudUserAppCertificate(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
-	return accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx, session, nil, logf, brandCloudID, brandCloudUserID)
-}
-
-func accountRevokeBrandCloudUserAppCertificateWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, brandCloudUserID string) error {
-	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user app certificate revoke", func(platformToken string) ([]byte, int, error) {
-		endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users/%s/app-certificate/revoke", ctx.BaseURL, url.PathEscape(brandCloudID), url.PathEscape(brandCloudUserID))
-		return curlJSONStatus(endpoint, platformToken, []byte("{}"))
-	})
-	if err != nil {
-		return err
-	}
-	if status != http.StatusOK {
-		return fmt.Errorf("brand user app certificate revoke failed: brand_cloud_user=%s HTTP %d%s", brandCloudUserID, status, errorBodySuffix(body))
-	}
-	return nil
+	user, _ := parsed["user"].(map[string]any)
+	return accountCreateUserResult{Action: action, UserID: stringValue(user["id"])}, nil
 }
 
 type accountUserLoginResponse struct {
@@ -6380,7 +6361,7 @@ func accountEnsureUserAppCertificate(ctx accountManagerContext, tenantSlug, emai
 	return accountIssueUserAppCertificate(ctx, tenantSlug, email, password, subject, initial.User.ID, keyAlgorithms)
 }
 
-func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject, userID string, keyAlgorithms []string) (map[string]any, map[string]any, accountPlatformSession, error) {
+func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email, password, subject, _ string, keyAlgorithms []string) (map[string]any, map[string]any, accountPlatformSession, error) {
 	if len(keyAlgorithms) == 0 {
 		return nil, nil, accountPlatformSession{}, errors.New("app certificate key algorithm policy is empty")
 	}
@@ -6405,20 +6386,6 @@ func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email
 		}
 		logCreateUsers("retrying app certificate with fallback key algorithm: email=%s algorithm=%s", email, keyAlgorithms[algorithmIndex+1])
 	}
-	if shouldRetryLegacyAppCertificateSubject(err, subject, userID) {
-		for _, legacySubject := range legacyAppCertificateSubjects(subject, userID) {
-			logCreateUsers("retrying app certificate with legacy subject: email=%s", email)
-			subject = legacySubject
-			privateKeyPEM, csrPEM, err = generateAppCertificateCSRWithAlgorithm(subject, keyAlgorithm)
-			if err != nil {
-				return nil, nil, accountPlatformSession{}, err
-			}
-			issued, err = accountLoginUserFull(ctx, tenantSlug, email, password, csrPEM)
-			if err == nil || !strings.Contains(err.Error(), "app_certificate_csr_invalid") {
-				break
-			}
-		}
-	}
 	if err != nil {
 		return nil, nil, accountPlatformSession{}, err
 	}
@@ -6437,19 +6404,11 @@ func accountIssueUserAppCertificate(ctx accountManagerContext, tenantSlug, email
 }
 
 func shouldRetrySameAppCertificateSubject(err error, subject string) bool {
-	if err == nil || !strings.HasPrefix(subject, "app-brand-cloud-user:") {
+	if err == nil || !strings.HasPrefix(subject, "app-user:") {
 		return false
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "HTTP 500") && strings.Contains(msg, "internal_error")
-}
-
-func shouldRetryLegacyAppCertificateSubject(err error, subject, userID string) bool {
-	if err == nil || len(legacyAppCertificateSubjects(subject, userID)) == 0 {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "app_certificate_csr_invalid")
 }
 
 func shouldFallbackAppCertificateAlgorithm(err error, algorithm string) bool {
@@ -6474,22 +6433,6 @@ func appCertificateKeyAlgorithms(ctx accountManagerContext) ([]string, error) {
 		values, _ = readEnvFile(filepath.Join(ctx.EnvRoot, "env", "stack.env"))
 	}
 	return deploymentCertificateAlgorithms("CERTIFICATE_APP_CSR_KEY_ALGORITHMS", values["CERTIFICATE_APP_CSR_KEY_ALGORITHMS"])
-}
-
-func legacyAppCertificateSubjects(subject, userID string) []string {
-	out := []string{}
-	if !strings.HasPrefix(subject, "app-brand-cloud-user:") {
-		return out
-	}
-	brandCloudUserID := strings.TrimSpace(strings.TrimPrefix(subject, "app-brand-cloud-user:"))
-	if brandCloudUserID != "" {
-		out = append(out, "app-user:"+brandCloudUserID)
-	}
-	userID = strings.TrimSpace(userID)
-	if userID != "" && userID != brandCloudUserID {
-		out = append(out, "app-user:"+userID)
-	}
-	return out
 }
 
 func loadExistingUserAppCredentials(envRoot, slug string) map[string]map[string]any {
@@ -6617,13 +6560,13 @@ func appCredentialsMatchCertificate(credentials map[string]any, certificate acco
 	return err == nil
 }
 
-func accountLoginUserFull(ctx accountManagerContext, tenantSlug, email, password, csrPEM string) (accountUserLoginResponse, error) {
+func accountLoginUserFull(ctx accountManagerContext, _ string, email, password, csrPEM string) (accountUserLoginResponse, error) {
 	payload := map[string]string{"email": email, "password": password}
 	if strings.TrimSpace(csrPEM) != "" {
 		payload["app_csr_pem"] = csrPEM
 	}
 	raw, _ := json.Marshal(payload)
-	loginURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/login", ctx.BaseURL, url.PathEscape(tenantSlug))
+	loginURL := ctx.BaseURL + "/v1/auth/login"
 	body, status, err := curlJSONStatus(loginURL, "", raw)
 	if err != nil {
 		return accountUserLoginResponse{}, err
@@ -6904,8 +6847,8 @@ func runActivateLoadOwner(args []string) error {
 	imapEnv := append(childEnv,
 		"EMAIL_E2E_SIGNUP_EMAIL="+strings.TrimSpace(*email),
 		"EMAIL_E2E_EXPECTED_FROM=no-reply@realtekconnect.com",
-		"EMAIL_E2E_EXPECTED_SUBJECT=Activate your Realtek Connect brand account",
-		"EMAIL_E2E_EXPECTED_PATH=/brand-cloud/activate",
+		"EMAIL_E2E_EXPECTED_SUBJECT=Verify your Realtek Connect account",
+		"EMAIL_E2E_EXPECTED_PATH=/signup/verify",
 		"AUTH_TOKEN_BASE_URL="+adminBaseURL,
 	)
 	snapshot, err := runIMAPJSON(helper, imapEnv, "snapshot")
@@ -6947,10 +6890,10 @@ func runActivateLoadOwner(args []string) error {
 	if err := json.Unmarshal(body, &created); err != nil {
 		return fmt.Errorf("decode pending owner response: %w", err)
 	}
-	brandCloudUser, _ := created["brand_cloud_user"].(map[string]any)
-	brandCloudUserID := stringValue(brandCloudUser["id"])
-	if brandCloudUserID == "" {
-		return errors.New("pending owner response is missing brand_cloud_user.id")
+	globalUser, _ := created["user"].(map[string]any)
+	userID := stringValue(globalUser["id"])
+	if userID == "" {
+		return errors.New("pending owner response is missing user.id")
 	}
 	delivered, err := runIMAPJSON(helper, imapEnv, "wait", "--uid-start", strconv.Itoa(uidStart), "--timeout", firstNonEmpty(os.Getenv("LOAD_OWNER_IMAP_TIMEOUT"), "180"))
 	if err != nil {
@@ -6988,7 +6931,7 @@ func runActivateLoadOwner(args []string) error {
 		detail = strings.ReplaceAll(detail, password, "<redacted-password>")
 		return fmt.Errorf("owner browser activation failed: %s", truncateForLog(detail, 500))
 	}
-	appCertificateSubject := "app-brand-cloud-user:" + brandCloudUserID
+	appCertificateSubject := "app-user:" + userID
 	appKeyAlgorithms, err := appCertificateKeyAlgorithms(ctx)
 	if err != nil {
 		return err
@@ -6999,14 +6942,14 @@ func runActivateLoadOwner(args []string) error {
 		strings.ToLower(strings.TrimSpace(*email)),
 		password,
 		appCertificateSubject,
-		brandCloudUserID,
+		userID,
 		appKeyAlgorithms,
 	)
 	if err != nil {
 		return err
 	}
 	user := map[string]any{
-		"id": brandCloudUserID, "email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
+		"id": userID, "user_id": userID, "email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
 		"role": "owner", "password": password, "access_token": ownerSession.AccessToken, "refresh_token": ownerSession.RefreshToken,
 		"app_private_key_pem": stringValue(appCredentials["private_key_pem"]),
 		"app_csr_pem":         stringValue(appCredentials["csr_pem"]),
@@ -10873,6 +10816,7 @@ func logBind(format string, args ...any) {
 }
 
 type userCredential struct {
+	UserID   string                 `json:"user_id"`
 	Email    string                 `json:"email"`
 	Password string                 `json:"password"`
 	Tokens   accountPlatformSession `json:"tokens,omitempty"`
@@ -11034,54 +10978,54 @@ func loginBrandCloudUser(ctx accountManagerContext, tenantSlug, email, password 
 	return session.AccessToken, nil
 }
 
-func loginBrandCloudUserSession(ctx accountManagerContext, tenantSlug, email, password string) (accountPlatformSession, error) {
+func loginBrandCloudUserSession(ctx accountManagerContext, _ string, email, password string) (accountPlatformSession, error) {
 	payload, _ := json.Marshal(map[string]string{"email": email, "password": password})
-	loginURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/login", ctx.BaseURL, url.PathEscape(tenantSlug))
+	loginURL := ctx.BaseURL + "/v1/auth/login"
 	body, status, err := curlJSONStatus(loginURL, "", payload)
 	if err != nil {
 		return accountPlatformSession{}, err
 	}
 	if status != 200 {
-		return accountPlatformSession{}, fmt.Errorf("brand-cloud login failed: email=%s tenant_slug=%s HTTP %d%s", email, tenantSlug, status, accountAPIErrorSuffix(body))
+		return accountPlatformSession{}, fmt.Errorf("global user login failed: email=%s HTTP %d%s", email, status, accountAPIErrorSuffix(body))
 	}
 	session, err := parsePlatformSession(body)
 	if err != nil {
 		return accountPlatformSession{}, err
 	}
 	if session.AccessToken == "" {
-		return accountPlatformSession{}, fmt.Errorf("brand-cloud login response did not include an access token: %s", email)
+		return accountPlatformSession{}, fmt.Errorf("global login response did not include an access token: %s", email)
 	}
 	return session, nil
 }
 
-func accountRefreshBrandCloudUserSession(ctx accountManagerContext, tenantSlug, email, refreshToken string, logf func(string, ...any)) (accountPlatformSession, error) {
+func accountRefreshBrandCloudUserSession(ctx accountManagerContext, _ string, email, refreshToken string, logf func(string, ...any)) (accountPlatformSession, error) {
 	if strings.TrimSpace(refreshToken) == "" {
-		return accountPlatformSession{}, errors.New("brand-cloud user refresh token is empty")
+		return accountPlatformSession{}, errors.New("global user refresh token is empty")
 	}
-	logf("refreshing brand-cloud user token: email=%s url=%s/v1/brand-clouds/%s/auth/refresh", email, ctx.BaseURL, tenantSlug)
+	logf("refreshing global user token: email=%s url=%s/v1/auth/refresh", email, ctx.BaseURL)
 	payload, _ := json.Marshal(map[string]string{"refresh_token": refreshToken})
-	refreshURL := fmt.Sprintf("%s/v1/brand-clouds/%s/auth/refresh", ctx.BaseURL, url.PathEscape(tenantSlug))
+	refreshURL := ctx.BaseURL + "/v1/auth/refresh"
 	body, status, err := curlJSONStatus(refreshURL, "", payload)
 	if err != nil {
 		return accountPlatformSession{}, err
 	}
 	if status != 200 {
-		return accountPlatformSession{}, fmt.Errorf("brand-cloud user token refresh failed: email=%s HTTP %d%s", email, status, accountAPIErrorSuffix(body))
+		return accountPlatformSession{}, fmt.Errorf("global user token refresh failed: email=%s HTTP %d%s", email, status, accountAPIErrorSuffix(body))
 	}
 	session, err := parsePlatformSession(body)
 	if err != nil {
 		return accountPlatformSession{}, err
 	}
 	if session.AccessToken == "" || session.RefreshToken == "" {
-		return accountPlatformSession{}, fmt.Errorf("brand-cloud user refresh response did not include access and refresh tokens: %s", email)
+		return accountPlatformSession{}, fmt.Errorf("global user refresh response did not include access and refresh tokens: %s", email)
 	}
-	logf("brand-cloud user token refresh ok: email=%s", email)
+	logf("global user token refresh ok: email=%s", email)
 	return session, nil
 }
 
 func brandCloudUserAccessToken(ctx accountManagerContext, tenantSlug string, user *brandCloudUserSession, logf func(string, ...any)) (string, error) {
 	if user == nil {
-		return "", errors.New("brand-cloud user session is nil")
+		return "", errors.New("global user session is nil")
 	}
 	user.Mu.Lock()
 	defer user.Mu.Unlock()
@@ -11106,9 +11050,9 @@ func refreshOrLoginBrandCloudUserSession(ctx accountManagerContext, tenantSlug s
 			user.Session = refreshed
 			return nil
 		}
-		logf("brand-cloud user token refresh failed; falling back to login: email=%s error=%v", user.Email, err)
+		logf("global user token refresh failed; falling back to login: email=%s error=%v", user.Email, err)
 	}
-	logf("logging in brand-cloud user: email=%s", user.Email)
+	logf("logging in global user: email=%s", user.Email)
 	loggedIn, err := loginBrandCloudUserSession(ctx, tenantSlug, user.Email, user.Password)
 	if err != nil {
 		return err
@@ -11122,7 +11066,7 @@ func curlJSONStatusWithBrandCloudUserRetryLocked(ctx accountManagerContext, tena
 		logf = func(string, ...any) {}
 	}
 	if user == nil {
-		return nil, 0, errors.New("brand-cloud user session is nil")
+		return nil, 0, errors.New("global user session is nil")
 	}
 	user.Mu.Lock()
 	if err := ensureBrandCloudUserSessionFresh(ctx, tenantSlug, user, logf); err != nil {
@@ -11135,7 +11079,7 @@ func curlJSONStatusWithBrandCloudUserRetryLocked(ctx accountManagerContext, tena
 	if err != nil || status != http.StatusUnauthorized {
 		return body, status, err
 	}
-	logf("%s got HTTP 401; refreshing brand-cloud user token before retry: email=%s", operation, user.Email)
+	logf("%s got HTTP 401; refreshing global user token before retry: email=%s", operation, user.Email)
 	user.Mu.Lock()
 	if err := refreshOrLoginBrandCloudUserSession(ctx, tenantSlug, user, logf); err != nil {
 		user.Mu.Unlock()
