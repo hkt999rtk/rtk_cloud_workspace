@@ -49,7 +49,7 @@ select_all() {
   video_cloud_postgres_emqx=true
 }
 
-if [ "$event_name" != "pull_request" ] || [ -z "$base_ref" ]; then
+if [ "$event_name" = "workflow_dispatch" ] || [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
   select_all
 else
   changed_files=()
