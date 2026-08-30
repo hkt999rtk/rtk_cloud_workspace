@@ -90,6 +90,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: scripts/go/go.sum
 
       - id: selection
@@ -215,6 +216,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: |
             scripts/go/go.sum
             loadtests/home-100k/go.sum
