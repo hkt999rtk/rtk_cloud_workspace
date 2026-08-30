@@ -10,6 +10,12 @@ on:
       - '.github/workflows/cloud-admin-e2e.yml'
   push:
     branches: [main]
+    paths:
+      - 'scripts/go/rtk-cloud/test_catalog*.go'
+      - 'scripts/go/rtk-cloud/test_ui*.go'
+      - 'repos/rtk_cloud_admin/**'
+      - 'repos/rtk_cloud_contracts_doc'
+      - '.github/workflows/cloud-admin-e2e.yml'
   schedule:
     - cron: '17 18 * * *'
   release:
