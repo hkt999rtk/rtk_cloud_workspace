@@ -32,7 +32,9 @@ jobs:
       - name: Select affected modules
         id: select
         shell: bash
-        run: scripts/ci/select-coverage-jobs.sh "${{ github.event.pull_request.base.sha }}" HEAD "${{ github.event_name }}"
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/ci/select-coverage-jobs.sh "$BASE_REF" HEAD "${{ github.event_name }}"
 
   policy:
     name: Catalog, policy, and inventory
