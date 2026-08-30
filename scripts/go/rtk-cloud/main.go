@@ -318,6 +318,24 @@ func runMQTTTest(args []string) error {
 	stageUsageWindows := fs.String("stage-usage-windows", "", "comma-separated staged sustained usage windows")
 	concurrency := fs.Int("concurrency", 25, "load-test MQTT probe concurrency")
 	maxConnectedDevices := fs.Int("max-connected-devices", 0, "load-test max connected devices in this shard")
+	otaCampaignID := fs.String("ota-campaign-id", "", "required OTA campaign id")
+	otaTargetVersion := fs.String("ota-target-version", "", "required OTA target version")
+	otaCurrentVersion := fs.String("ota-current-version", "", "required initial device firmware version")
+	otaHardwareRevision := fs.String("ota-hardware-revision", "", "required device hardware revision")
+	otaAntiRollbackCounter := fs.Int("ota-anti-rollback-counter", 0, "device anti-rollback counter")
+	otaPollInterval := fs.String("ota-poll-interval", "5s", "OTA assignment poll interval")
+	otaUpgradeTimeout := fs.String("ota-upgrade-timeout", "30m", "per-device OTA deadline")
+	otaHTTPConcurrency := fs.Int("ota-http-concurrency", 250, "maximum concurrent OTA HTTP requests")
+	otaDownloadConcurrency := fs.Int("ota-download-concurrency", 64, "maximum concurrent artifact streams")
+	otaInstallDelay := fs.String("ota-install-delay", "2s", "simulated installation delay")
+	otaRebootDelay := fs.String("ota-reboot-delay", "2s", "simulated reboot delay")
+	otaVerifyDelay := fs.String("ota-verify-delay", "1s", "simulated post-reboot verification delay")
+	otaStageJitterPercent := fs.Float64("ota-stage-jitter-percent", 20, "deterministic OTA timing jitter percentage")
+	otaDownloadFailurePercent := fs.Float64("ota-download-failure-percent", 0, "deterministic download failure percentage")
+	otaVerifyFailurePercent := fs.Float64("ota-verify-failure-percent", 0, "deterministic verification failure percentage")
+	otaInstallFailurePercent := fs.Float64("ota-install-failure-percent", 0, "deterministic installation failure percentage")
+	otaRebootFailurePercent := fs.Float64("ota-reboot-failure-percent", 0, "deterministic reboot failure percentage")
+	otaTimeoutPercent := fs.Float64("ota-timeout-percent", 0, "deterministic OTA timeout percentage")
 	mqttProbe := true
 	fs.BoolFunc("mqtt-probe", "run mqtt probe", func(string) error { mqttProbe = true; return nil })
 	fs.BoolFunc("no-mqtt-probe", "skip mqtt probe", func(string) error { mqttProbe = false; return nil })
@@ -434,6 +452,28 @@ func runMQTTTest(args []string) error {
 		"--device-traffic-profile", *deviceTrafficProfile,
 		"--concurrency", strconv.Itoa(*concurrency),
 		"--max-connected-devices", strconv.Itoa(*maxConnectedDevices),
+	}
+	if strings.TrimSpace(*loadModel) == "ota-device-simulator" {
+		childArgs = append(childArgs,
+			"--ota-campaign-id", *otaCampaignID,
+			"--ota-target-version", *otaTargetVersion,
+			"--ota-current-version", *otaCurrentVersion,
+			"--ota-hardware-revision", *otaHardwareRevision,
+			"--ota-anti-rollback-counter", strconv.Itoa(*otaAntiRollbackCounter),
+			"--ota-poll-interval", *otaPollInterval,
+			"--ota-upgrade-timeout", *otaUpgradeTimeout,
+			"--ota-http-concurrency", strconv.Itoa(*otaHTTPConcurrency),
+			"--ota-download-concurrency", strconv.Itoa(*otaDownloadConcurrency),
+			"--ota-install-delay", *otaInstallDelay,
+			"--ota-reboot-delay", *otaRebootDelay,
+			"--ota-verify-delay", *otaVerifyDelay,
+			"--ota-stage-jitter-percent", strconv.FormatFloat(*otaStageJitterPercent, 'f', -1, 64),
+			"--ota-download-failure-percent", strconv.FormatFloat(*otaDownloadFailurePercent, 'f', -1, 64),
+			"--ota-verify-failure-percent", strconv.FormatFloat(*otaVerifyFailurePercent, 'f', -1, 64),
+			"--ota-install-failure-percent", strconv.FormatFloat(*otaInstallFailurePercent, 'f', -1, 64),
+			"--ota-reboot-failure-percent", strconv.FormatFloat(*otaRebootFailurePercent, 'f', -1, 64),
+			"--ota-timeout-percent", strconv.FormatFloat(*otaTimeoutPercent, 'f', -1, 64),
+		)
 	}
 	if strings.TrimSpace(*stageUsageWindows) != "" {
 		childArgs = append(childArgs, "--stage-usage-windows", *stageUsageWindows)

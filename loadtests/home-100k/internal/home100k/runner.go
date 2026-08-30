@@ -1,6 +1,7 @@
 package home100k
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ type RunResult struct {
 	ServerCorrelation     ServerCorrelation     `json:"server_correlation"`
 	RuntimeLogCorrelation RuntimeLogCorrelation `json:"runtime_log_correlation,omitempty"`
 	VideoEvidence         VideoEvidence         `json:"video_evidence,omitempty"`
+	OTAEvidence           OTAEvidence           `json:"ota,omitempty"`
 	StartCoordination     StartCoordination     `json:"start_coordination"`
 	SyncTelemetry         SyncTelemetry         `json:"sync_telemetry"`
 	LoadGeneratorHealth   LoadGeneratorHealth   `json:"load_generator_health"`
@@ -88,6 +90,46 @@ type StageResult struct {
 	UserActionTotals               map[string]int64            `json:"user_action_totals,omitempty"`
 	UsageWindowTotals              map[string]int64            `json:"usage_window_totals,omitempty"`
 	StageDiagnostics               []map[string]any            `json:"stage_diagnostics,omitempty"`
+}
+
+type OTAEvidence struct {
+	Complete               bool                          `json:"complete"`
+	CampaignID             string                        `json:"campaign_id,omitempty"`
+	TargetVersion          string                        `json:"target_version,omitempty"`
+	DevicesSelected        int                           `json:"devices_selected"`
+	MQTTReady              int                           `json:"mqtt_ready"`
+	AssignmentsReceived    int                           `json:"assignments_received"`
+	TerminalExpected       int                           `json:"terminal_expected"`
+	TerminalMatched        int                           `json:"terminal_matched"`
+	UniqueDeviceResults    int                           `json:"unique_device_results"`
+	DuplicateDeviceResults int                           `json:"duplicate_device_results"`
+	ArtifactBytes          int64                         `json:"artifact_bytes,omitempty"`
+	ArtifactHashVerified   int                           `json:"artifact_hash_verified,omitempty"`
+	MQTTRebootDisconnects  int                           `json:"mqtt_reboot_disconnects,omitempty"`
+	MQTTReconnectSuccesses int                           `json:"mqtt_reconnect_successes,omitempty"`
+	UnexpectedFailures     int                           `json:"unexpected_failures"`
+	ByExpectedTerminal     map[string]int                `json:"by_expected_terminal,omitempty"`
+	ByActualTerminal       map[string]int                `json:"by_actual_terminal,omitempty"`
+	HTTPStatusCounts       map[string]int                `json:"http_status_counts,omitempty"`
+	HTTPLatencyMS          map[string]map[string]float64 `json:"http_latency_ms,omitempty"`
+	ArtifactThroughputBPS  float64                       `json:"artifact_throughput_bytes_per_second,omitempty"`
+	PeakGoroutines         int                           `json:"peak_goroutines,omitempty"`
+	PeakHeapAllocBytes     uint64                        `json:"peak_heap_alloc_bytes,omitempty"`
+	FailureReasons         []string                      `json:"failure_reasons,omitempty"`
+}
+
+type otaDeviceEvidenceRow struct {
+	DeviceID               string `json:"device_id"`
+	CampaignID             string `json:"campaign_id"`
+	TargetVersion          string `json:"target_version"`
+	ExpectedTerminal       string `json:"expected_terminal"`
+	ActualTerminal         string `json:"actual_terminal"`
+	InjectedFailure        string `json:"injected_failure"`
+	TerminalMatched        bool   `json:"terminal_matched"`
+	ArtifactSizeVerified   bool   `json:"artifact_size_verified"`
+	ArtifactHashVerified   bool   `json:"artifact_hash_verified"`
+	MQTTRebootDisconnected bool   `json:"mqtt_reboot_disconnected"`
+	MQTTReconnectSucceeded bool   `json:"mqtt_reconnect_succeeded"`
 }
 
 type VideoEvidence struct {
@@ -536,6 +578,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	}
 	stages := collected.StageResults
 	loadHealth := collected.LoadGeneratorHealth
+	otaEvidence := collected.OTA
 	syncTelemetry := loadSyncTelemetry(filepath.Join(outDir, "sync-telemetry.json"))
 	startCoordination := loadStartCoordination(filepath.Join(outDir, "start-coordination.json"))
 	evidence, err := loadServerEvidence(filepath.Join(outDir, "server-evidence.json"), runID)
@@ -554,6 +597,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 	correlation, runtimeLogCorrelation = qualificationCorrelations(plan, correlation, runtimeLogCorrelation)
 	videoEvidence := videoEvidenceWithServerEvidence(preloadedVideoEvidence, evidence)
 	outcome := evaluateRunOutcome(plan, evidence, stages, loadHealth, correlation, runtimeLogCorrelation, videoEvidence)
+	outcome = applyOTAOutcome(outcome, plan, otaEvidence)
 	result := RunResult{
 		RunID:                 runID,
 		Status:                outcome.Status,
@@ -566,6 +610,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		ServerCorrelation:     correlation,
 		RuntimeLogCorrelation: runtimeLogCorrelation,
 		VideoEvidence:         videoEvidence,
+		OTAEvidence:           otaEvidence,
 		StartCoordination:     startCoordination,
 		SyncTelemetry:         syncTelemetry,
 		LoadGeneratorHealth:   loadHealth,
@@ -596,6 +641,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		ServerCorrelation:     correlation,
 		RuntimeLogCorrelation: runtimeLogCorrelation,
 		VideoEvidence:         videoEvidence,
+		OTAEvidence:           otaEvidence,
 		StartCoordination:     startCoordination,
 		SyncTelemetry:         syncTelemetry,
 		Notes:                 loadHealth.Reasons,
@@ -604,6 +650,25 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		return RunResult{}, err
 	}
 	return result, nil
+}
+
+func applyOTAOutcome(outcome RunOutcome, plan Plan, ota OTAEvidence) RunOutcome {
+	if !plan.OTAEnabled() || ota.Complete {
+		return outcome
+	}
+	reason := "firmware OTA evidence did not satisfy the strict target gate"
+	if len(ota.FailureReasons) > 0 {
+		reason = strings.Join(ota.FailureReasons, "; ")
+	}
+	outcome.Reasons = append(outcome.Reasons, reason)
+	if ota.DevicesSelected != plan.Conditions.Devices || ota.UniqueDeviceResults != plan.Conditions.Devices || ota.DuplicateDeviceResults > 0 {
+		outcome.Status = "INCOMPLETE"
+		outcome.Result = "INCOMPLETE"
+		return outcome
+	}
+	outcome.Status = "COMPLETE"
+	outcome.Result = "FAIL"
+	return outcome
 }
 
 func loadServerEvidence(path string, runID string) (ServerEvidence, error) {
@@ -638,6 +703,7 @@ func loadServerEvidence(path string, runID string) (ServerEvidence, error) {
 type collectedShardResults struct {
 	StageResults        []StageResult
 	LoadGeneratorHealth LoadGeneratorHealth
+	OTA                 OTAEvidence
 }
 
 func loadStartCoordination(path string) StartCoordination {
@@ -1454,6 +1520,8 @@ func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShard
 	}
 	byStage := map[string][]StageResult{}
 	health := LoadGeneratorHealth{}
+	ota := OTAEvidence{}
+	otaFiles := []string{}
 	for _, path := range matches {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -1461,6 +1529,7 @@ func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShard
 		}
 		var shard struct {
 			StageResults        []StageResult `json:"stage_results"`
+			OTA                 OTAEvidence   `json:"ota"`
 			LoadGeneratorHealth struct {
 				Saturated bool     `json:"saturated"`
 				Reason    string   `json:"reason"`
@@ -1472,6 +1541,10 @@ func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShard
 		}
 		for _, stage := range shard.StageResults {
 			byStage[stage.Name] = append(byStage[stage.Name], stage)
+		}
+		if shard.OTA.DevicesSelected > 0 || strings.TrimSpace(shard.OTA.CampaignID) != "" {
+			ota = addOTAEvidence(ota, shard.OTA)
+			otaFiles = append(otaFiles, filepath.Join(filepath.Dir(path), "ota-devices.jsonl"))
 		}
 		if shard.LoadGeneratorHealth.Saturated {
 			health.Saturated = true
@@ -1492,7 +1565,129 @@ func loadCollectedShardResults(shardsDir string, stages []Stage) (collectedShard
 	if len(results) == 0 {
 		return collectedShardResults{}, fmt.Errorf("collected shard results did not contain stage_results")
 	}
-	return collectedShardResults{StageResults: results, LoadGeneratorHealth: health}, nil
+	if ota.DevicesSelected > 0 || len(otaFiles) > 0 {
+		ota = validateOTADeviceEvidence(ota, otaFiles)
+	}
+	return collectedShardResults{StageResults: results, LoadGeneratorHealth: health, OTA: ota}, nil
+}
+
+func addOTAEvidence(left, right OTAEvidence) OTAEvidence {
+	if left.CampaignID == "" {
+		left.CampaignID = right.CampaignID
+	}
+	if left.TargetVersion == "" {
+		left.TargetVersion = right.TargetVersion
+	}
+	if right.CampaignID != "" && left.CampaignID != right.CampaignID {
+		left.FailureReasons = append(left.FailureReasons, "OTA shard campaign ids do not match")
+	}
+	if right.TargetVersion != "" && left.TargetVersion != right.TargetVersion {
+		left.FailureReasons = append(left.FailureReasons, "OTA shard target versions do not match")
+	}
+	left.DevicesSelected += right.DevicesSelected
+	left.MQTTReady += right.MQTTReady
+	left.AssignmentsReceived += right.AssignmentsReceived
+	left.TerminalExpected += right.TerminalExpected
+	left.TerminalMatched += right.TerminalMatched
+	left.ArtifactBytes += right.ArtifactBytes
+	left.ArtifactHashVerified += right.ArtifactHashVerified
+	left.MQTTRebootDisconnects += right.MQTTRebootDisconnects
+	left.MQTTReconnectSuccesses += right.MQTTReconnectSuccesses
+	left.UnexpectedFailures += right.UnexpectedFailures
+	left.ByExpectedTerminal = addIntMap(left.ByExpectedTerminal, right.ByExpectedTerminal)
+	left.ByActualTerminal = addIntMap(left.ByActualTerminal, right.ByActualTerminal)
+	left.HTTPStatusCounts = addIntMap(left.HTTPStatusCounts, right.HTTPStatusCounts)
+	left.HTTPLatencyMS = addOTAPeakLatency(left.HTTPLatencyMS, right.HTTPLatencyMS)
+	left.ArtifactThroughputBPS += right.ArtifactThroughputBPS
+	if right.PeakGoroutines > left.PeakGoroutines {
+		left.PeakGoroutines = right.PeakGoroutines
+	}
+	if right.PeakHeapAllocBytes > left.PeakHeapAllocBytes {
+		left.PeakHeapAllocBytes = right.PeakHeapAllocBytes
+	}
+	left.FailureReasons = append(left.FailureReasons, right.FailureReasons...)
+	return left
+}
+
+func addOTAPeakLatency(left, right map[string]map[string]float64) map[string]map[string]float64 {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	if left == nil {
+		left = map[string]map[string]float64{}
+	}
+	for operation, percentiles := range right {
+		if left[operation] == nil {
+			left[operation] = map[string]float64{}
+		}
+		for percentile, value := range percentiles {
+			if value > left[operation][percentile] {
+				left[operation][percentile] = value
+			}
+		}
+	}
+	return left
+}
+
+func addIntMap(left, right map[string]int) map[string]int {
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	if left == nil {
+		left = map[string]int{}
+	}
+	for key, value := range right {
+		left[key] += value
+	}
+	return left
+}
+
+func validateOTADeviceEvidence(ota OTAEvidence, paths []string) OTAEvidence {
+	seen := map[string]bool{}
+	for _, path := range paths {
+		file, err := os.Open(path)
+		if err != nil {
+			ota.FailureReasons = append(ota.FailureReasons, "OTA per-device evidence is missing")
+			continue
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+		for scanner.Scan() {
+			var row otaDeviceEvidenceRow
+			if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+				ota.FailureReasons = append(ota.FailureReasons, "OTA per-device evidence is invalid")
+				continue
+			}
+			if row.DeviceID == "" {
+				ota.FailureReasons = append(ota.FailureReasons, "OTA per-device evidence has an empty device id")
+				continue
+			}
+			if seen[row.DeviceID] {
+				ota.DuplicateDeviceResults++
+				continue
+			}
+			seen[row.DeviceID] = true
+			if row.CampaignID != ota.CampaignID || row.TargetVersion != ota.TargetVersion || !row.TerminalMatched {
+				ota.FailureReasons = append(ota.FailureReasons, "OTA per-device campaign, target, or terminal evidence mismatched")
+			}
+			if row.ExpectedTerminal == "succeeded" && (!row.ArtifactSizeVerified || !row.ArtifactHashVerified || !row.MQTTRebootDisconnected || !row.MQTTReconnectSucceeded) {
+				ota.FailureReasons = append(ota.FailureReasons, "OTA successful device is missing artifact or reboot evidence")
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			ota.FailureReasons = append(ota.FailureReasons, "OTA per-device evidence could not be read")
+		}
+		_ = file.Close()
+	}
+	ota.UniqueDeviceResults = len(seen)
+	if ota.DuplicateDeviceResults > 0 {
+		ota.FailureReasons = append(ota.FailureReasons, "OTA per-device evidence contains duplicate device ids")
+	}
+	ota.Complete = len(ota.FailureReasons) == 0 && ota.DevicesSelected > 0 &&
+		ota.MQTTReady == ota.DevicesSelected && ota.AssignmentsReceived == ota.DevicesSelected &&
+		ota.TerminalExpected == ota.DevicesSelected && ota.TerminalMatched == ota.DevicesSelected &&
+		ota.UniqueDeviceResults == ota.DevicesSelected && ota.UnexpectedFailures == 0
+	return ota
 }
 
 func isNoShardResultsError(err error) bool {
@@ -1957,12 +2152,15 @@ const runSuccessRateThresholdPercent = 99.5
 func qualificationCorrelations(plan Plan, server ServerCorrelation, runtime RuntimeLogCorrelation) (ServerCorrelation, RuntimeLogCorrelation) {
 	videoFeatureRun := isVideoFeatureProfile(plan.VideoProfile.Name)
 	clipFeatureRun := isClipStorageProfile(plan.ClipStorageProfile.Name)
-	if !videoFeatureRun && !clipFeatureRun {
+	otaFeatureRun := plan.OTAEnabled()
+	if !videoFeatureRun && !clipFeatureRun && !otaFeatureRun {
 		return server, runtime
 	}
 	reason := "not required for WebRTC qualification; MQTT stages validate transport presence"
 	if clipFeatureRun {
 		reason = "not required for Clip qualification; clip operation and reconciliation evidence provide feature correlation"
+	} else if otaFeatureRun {
+		reason = "not required for firmware OTA qualification; exact per-device OTA lifecycle evidence provides feature correlation"
 	}
 	return ServerCorrelation{
 		Status:  "skipped",
@@ -1981,10 +2179,11 @@ func evaluateRunOutcome(plan Plan, evidence ServerEvidence, stages []StageResult
 	}
 	videoFeatureRun := isVideoFeatureProfile(plan.VideoProfile.Name)
 	clipFeatureRun := isClipStorageProfile(plan.ClipStorageProfile.Name)
+	otaFeatureRun := plan.OTAEnabled()
 	videoOnlyRun := plan.VideoEnabled() && hasVideoEvidence(videoEvidence) && len(stages) == 0
-	shadowExemptRun := videoFeatureRun || clipFeatureRun || videoOnlyRun
+	shadowExemptRun := videoFeatureRun || clipFeatureRun || otaFeatureRun || videoOnlyRun
 
-	if !evidence.Complete {
+	if !evidence.Complete && !otaFeatureRun {
 		incomplete = true
 		reasons = append(reasons, "Missing server evidence")
 	}

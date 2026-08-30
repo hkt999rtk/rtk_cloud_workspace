@@ -263,6 +263,40 @@ def test_conditions():
     ])
     return "\n".join(lines)
 
+def firmware_ota_simulation():
+    plan = result.get("plan") or {}
+    profile = plan.get("ota_profile") or {}
+    ota = result.get("ota") or {}
+    if not profile and not ota:
+        return ""
+    actual = ota.get("by_actual_terminal") or {}
+    lines = [
+        "## Firmware OTA Simulation",
+        f"- Campaign ID: `{md(ota.get('campaign_id') or profile.get('campaign_id') or '-')}`",
+        f"- Target version: `{md(ota.get('target_version') or profile.get('target_version') or '-')}`",
+        f"- Evidence complete: {str(bool(ota.get('complete'))).lower()}",
+        f"- Selected / MQTT ready / assigned: {num(ota.get('devices_selected'))} / {num(ota.get('mqtt_ready'))} / {num(ota.get('assignments_received'))}",
+        f"- Terminal matched / expected: {num(ota.get('terminal_matched'))} / {num(ota.get('terminal_expected'))}",
+        f"- Unique / duplicate device results: {num(ota.get('unique_device_results'))} / {num(ota.get('duplicate_device_results'))}",
+        f"- Artifact bytes / hashes verified: {num(ota.get('artifact_bytes'))} / {num(ota.get('artifact_hash_verified'))}",
+        f"- MQTT reboot disconnects / reconnect successes: {num(ota.get('mqtt_reboot_disconnects'))} / {num(ota.get('mqtt_reconnect_successes'))}",
+        f"- Unexpected failures: {num(ota.get('unexpected_failures'))}",
+    ]
+    if actual:
+        lines.append("- Actual terminal states:")
+        for state in sorted(actual):
+            lines.append(f"  - {md(state)}: {num(actual.get(state))}")
+    for reason in ota.get("failure_reasons") or []:
+        lines.append(f"- Failure reason: {md(reason)}")
+    lines.append("- Per-device evidence: `shards/<vm-label>/ota-devices.jsonl`")
+    return "\n".join(lines)
+
+def report_title():
+    plan = result.get("plan") or {}
+    if plan.get("ota_profile") or result.get("ota"):
+        return "Firmware OTA Virtual Device Load Test Report"
+    return "100K Home IoT Device Shadow Load Test Report"
+
 def account_activation():
     plan = result.get("plan") or {}
     conditions = plan.get("conditions") or {}
@@ -1354,21 +1388,26 @@ def report_source_artifacts():
         "workflow-status.log",
         "resource-samples/load-vms.tsv",
         "resource-samples/k8s-nodes.tsv",
+        "shards/<vm-label>/ota-devices.jsonl",
     ]
     lines = []
     for rel in candidates:
-        path = out_dir / rel
-        status = "present" if path.exists() else "missing"
+        if "<vm-label>" in rel:
+            status = "present" if any((out_dir / "shards").glob("*/ota-devices.jsonl")) else "missing"
+        else:
+            status = "present" if (out_dir / rel).exists() else "missing"
         lines.append(f"- `{rel}`: {status}")
     return "\n".join(lines)
 
 replacements = {
+	"REPORT_TITLE": report_title(),
     "RUN_ID": md(result.get("run_id", "")),
     "STATUS": md(result.get("status", "UNKNOWN")),
     "RESULT": md(result.get("result", "UNKNOWN")),
     "STATUS_SUMMARY": status_summary(),
     "ACCOUNT_ACTIVATION": account_activation(),
     "TEST_CONDITIONS": test_conditions(),
+	"FIRMWARE_OTA_SIMULATION": firmware_ota_simulation(),
     "GATE_STANDARDS": gate_standards(),
     "VIDEO_LOAD_PROFILE": video_load_profile(),
     "SCENARIO_MIX": scenario_mix(),

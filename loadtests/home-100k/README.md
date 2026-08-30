@@ -116,6 +116,46 @@ HOME100K_RUN_ID=mqtt1k-$(date -u +%Y%m%dT%H%M%SZ) \
 ./loadtests/home-100k/scripts/home-100k.sh workflow-live
 ```
 
+## Firmware OTA Simulator Profile
+
+`firmware-ota-v1` runs the Go `ota-device-simulator` through the same Home
+load-generator provisioning, sharding, start coordination, collection, and
+aggregation workflow. The device count is the OTA target size; every selected
+device stays online over MQTT, polls the device OTA API, verifies the streamed
+artifact, reports lifecycle transitions, disconnects for reboot, reconnects,
+and reports the target version.
+
+The release and campaign must already exist and be active. The workflow does
+not create, activate, or delete OTA operator resources. Supply the exact
+campaign contract explicitly:
+
+```sh
+HOME100K_SCENARIO_PROFILE=firmware-ota-v1 \
+HOME100K_DEVICES=10000 \
+HOME100K_OTA_CAMPAIGN_ID=<active-campaign-id> \
+HOME100K_OTA_TARGET_VERSION=2.0.0 \
+HOME100K_OTA_CURRENT_VERSION=1.0.0 \
+HOME100K_OTA_HARDWARE_REVISION=rev-a \
+HOME100K_RUN_ID=ota10k-$(date -u +%Y%m%dT%H%M%SZ) \
+./loadtests/home-100k/scripts/home-100k.sh workflow-live
+```
+
+Failure injection is deterministic and optional through
+`HOME100K_OTA_DOWNLOAD_FAILURE_PERCENT`,
+`HOME100K_OTA_VERIFY_FAILURE_PERCENT`,
+`HOME100K_OTA_INSTALL_FAILURE_PERCENT`,
+`HOME100K_OTA_REBOOT_FAILURE_PERCENT`, and `HOME100K_OTA_TIMEOUT_PERCENT`.
+A successful qualification requires exact target coverage, one unique
+per-device evidence row per selected device, matching terminal outcomes,
+verified size and SHA-256 for successful devices, and observed MQTT reboot and
+reconnect. Missing or duplicate per-device evidence makes the run
+`INCOMPLETE`; complete evidence with an unexpected outcome makes it `FAIL`.
+
+Shard evidence is collected as
+`shards/<vm-label>/ota-devices.jsonl`; aggregate OTA counters and the campaign
+contract are stored under `ota` in `results.json` and rendered in
+`TEST_REPORT.md`.
+
 ## Video-Enabled 1K Pilot Profile
 
 `video-1k-v1` is the first video-enabled pilot profile. It keeps the existing

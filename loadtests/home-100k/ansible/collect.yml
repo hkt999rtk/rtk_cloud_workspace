@@ -30,6 +30,13 @@
         flat: true
         fail_on_missing: false
 
+    - name: Fetch per-device firmware OTA evidence
+      ansible.builtin.fetch:
+        src: "{{ remote_out_dir }}/ota-devices.jsonl"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/ota-devices.jsonl"
+        flat: true
+        fail_on_missing: false
+
     - name: Fetch shard report
       ansible.builtin.fetch:
         src: "{{ remote_out_dir }}/TEST_REPORT.md"

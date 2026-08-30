@@ -26,6 +26,7 @@ const (
 	DefaultStageCoolDown             = "30s"
 	DefaultScenarioProfile           = "home-diverse-v1"
 	MQTTShadowCanaryScenarioProfile  = "mqtt-shadow-canary-v1"
+	FirmwareOTAScenarioProfile       = "firmware-ota-v1"
 	VideoCanaryScenarioProfile       = "video-canary-v1"
 	Video1KScenarioProfile           = "video-1k-v1"
 	ClipStorageCanaryScenarioProfile = "clip-storage-canary-v1"
@@ -53,32 +54,33 @@ const (
 )
 
 type PlanOptions struct {
-	EnvRoot                              string  `json:"env_root"`
-	Brandname                            string  `json:"brandname"`
-	BrandPlanFile                        string  `json:"brand_plan_file,omitempty"`
-	Region                               string  `json:"region"`
-	DeviceCount                          int     `json:"device_count,omitempty"`
-	UserCount                            int     `json:"user_count,omitempty"`
-	DevicesPerUser                       int     `json:"devices_per_user,omitempty"`
-	VMCount                              int     `json:"vm_count,omitempty"`
-	VideoGeneratorVMCount                int     `json:"video_generator_vm_count,omitempty"`
-	VideoGeneratorLabelPrefix            string  `json:"video_generator_label_prefix,omitempty"`
-	LoadGeneratorDevicesPerVM            int     `json:"load_generator_devices_per_vm,omitempty"`
-	StageWarmUp                          string  `json:"stage_warm_up"`
-	StageSteady                          string  `json:"stage_steady"`
-	StageCoolDown                        string  `json:"stage_cool_down"`
-	RunnerNofile                         int     `json:"runner_nofile_limit,omitempty"`
-	SessionModel                         string  `json:"device_session_model,omitempty"`
-	RunnerReadModel                      string  `json:"runner_read_model,omitempty"`
-	DeviceTokenRequestTimeout            string  `json:"device_token_request_timeout,omitempty"`
-	DeviceTokenRequestRetries            int     `json:"device_token_request_retries,omitempty"`
-	ScenarioProfile                      string  `json:"scenario_profile,omitempty"`
-	VMLabelPrefix                        string  `json:"vm_label_prefix,omitempty"`
-	FunctionalSuccessThresholdPercent    float64 `json:"functional_success_threshold_percent,omitempty"`
-	ClientTargetCompletenessPercent      float64 `json:"client_target_completeness_percent,omitempty"`
-	ExactEventCorrelationPercent         float64 `json:"exact_event_correlation_percent,omitempty"`
-	AggregateCorrelationTolerancePercent float64 `json:"aggregate_correlation_tolerance_percent,omitempty"`
-	AggregateCorrelationMinTolerance     int64   `json:"aggregate_correlation_min_tolerance,omitempty"`
+	EnvRoot                              string     `json:"env_root"`
+	Brandname                            string     `json:"brandname"`
+	BrandPlanFile                        string     `json:"brand_plan_file,omitempty"`
+	Region                               string     `json:"region"`
+	DeviceCount                          int        `json:"device_count,omitempty"`
+	UserCount                            int        `json:"user_count,omitempty"`
+	DevicesPerUser                       int        `json:"devices_per_user,omitempty"`
+	VMCount                              int        `json:"vm_count,omitempty"`
+	VideoGeneratorVMCount                int        `json:"video_generator_vm_count,omitempty"`
+	VideoGeneratorLabelPrefix            string     `json:"video_generator_label_prefix,omitempty"`
+	LoadGeneratorDevicesPerVM            int        `json:"load_generator_devices_per_vm,omitempty"`
+	StageWarmUp                          string     `json:"stage_warm_up"`
+	StageSteady                          string     `json:"stage_steady"`
+	StageCoolDown                        string     `json:"stage_cool_down"`
+	RunnerNofile                         int        `json:"runner_nofile_limit,omitempty"`
+	SessionModel                         string     `json:"device_session_model,omitempty"`
+	RunnerReadModel                      string     `json:"runner_read_model,omitempty"`
+	DeviceTokenRequestTimeout            string     `json:"device_token_request_timeout,omitempty"`
+	DeviceTokenRequestRetries            int        `json:"device_token_request_retries,omitempty"`
+	ScenarioProfile                      string     `json:"scenario_profile,omitempty"`
+	OTAProfile                           OTAProfile `json:"ota_profile,omitempty"`
+	VMLabelPrefix                        string     `json:"vm_label_prefix,omitempty"`
+	FunctionalSuccessThresholdPercent    float64    `json:"functional_success_threshold_percent,omitempty"`
+	ClientTargetCompletenessPercent      float64    `json:"client_target_completeness_percent,omitempty"`
+	ExactEventCorrelationPercent         float64    `json:"exact_event_correlation_percent,omitempty"`
+	AggregateCorrelationTolerancePercent float64    `json:"aggregate_correlation_tolerance_percent,omitempty"`
+	AggregateCorrelationMinTolerance     int64      `json:"aggregate_correlation_min_tolerance,omitempty"`
 }
 
 type Plan struct {
@@ -87,6 +89,7 @@ type Plan struct {
 	ScenarioProfile    string                   `json:"scenario_profile"`
 	VideoProfile       VideoProfile             `json:"video_profile,omitempty"`
 	ClipStorageProfile ClipStorageProfile       `json:"clip_storage_profile,omitempty"`
+	OTAProfile         OTAProfile               `json:"ota_profile,omitempty"`
 	DeviceMix          map[string]int           `json:"device_mix"`
 	DeviceProfiles     map[string]DeviceProfile `json:"device_profiles"`
 	UserProfiles       map[string]UserProfile   `json:"user_profiles"`
@@ -131,8 +134,34 @@ type ClipStorageProfile struct {
 	Thumbnail            string `json:"thumbnail,omitempty"`
 }
 
+type OTAProfile struct {
+	Name                   string  `json:"name,omitempty"`
+	CampaignID             string  `json:"campaign_id,omitempty"`
+	TargetVersion          string  `json:"target_version,omitempty"`
+	CurrentVersion         string  `json:"current_version,omitempty"`
+	HardwareRevision       string  `json:"hardware_revision,omitempty"`
+	AntiRollbackCounter    int     `json:"anti_rollback_counter,omitempty"`
+	PollInterval           string  `json:"poll_interval,omitempty"`
+	UpgradeTimeout         string  `json:"upgrade_timeout,omitempty"`
+	HTTPConcurrency        int     `json:"http_concurrency,omitempty"`
+	DownloadConcurrency    int     `json:"download_concurrency,omitempty"`
+	InstallDelay           string  `json:"install_delay,omitempty"`
+	RebootDelay            string  `json:"reboot_delay,omitempty"`
+	VerifyDelay            string  `json:"verify_delay,omitempty"`
+	StageJitterPercent     float64 `json:"stage_jitter_percent,omitempty"`
+	DownloadFailurePercent float64 `json:"download_failure_percent,omitempty"`
+	VerifyFailurePercent   float64 `json:"verify_failure_percent,omitempty"`
+	InstallFailurePercent  float64 `json:"install_failure_percent,omitempty"`
+	RebootFailurePercent   float64 `json:"reboot_failure_percent,omitempty"`
+	TimeoutPercent         float64 `json:"timeout_percent,omitempty"`
+}
+
 func (p Plan) VideoEnabled() bool {
 	return strings.TrimSpace(p.VideoProfile.Name) != ""
+}
+
+func (p Plan) OTAEnabled() bool {
+	return strings.TrimSpace(p.OTAProfile.Name) != ""
 }
 
 type TargetWindow struct {
@@ -265,6 +294,10 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		scenarioProfile = DefaultScenarioProfile
 	}
 	videoProfile := videoProfileForScenario(scenarioProfile)
+	otaProfile, err := otaProfileForScenario(scenarioProfile, opts.OTAProfile)
+	if err != nil {
+		return Plan{}, err
+	}
 	if videoProfile.Name == Video1KScenarioProfile && opts.DeviceCount <= 0 && brandPlanFile == "" {
 		opts.DeviceCount = DefaultVideo1KDevices
 	}
@@ -404,10 +437,11 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		ScenarioProfile:    scenarioProfile,
 		VideoProfile:       videoProfile,
 		ClipStorageProfile: clipStorageProfileForScenario(scenarioProfile),
+		OTAProfile:         otaProfile,
 		DeviceMix:          deviceMix,
 		DeviceProfiles:     deviceProfilesForScenario(scenarioProfile),
 		UserProfiles:       homeDiverseUserProfiles(),
-		PresenceMix:        proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}}),
+		PresenceMix:        presenceMixForScenario(scenarioProfile, devices),
 		Target:             targetWindowFromStages(stages),
 		Stages:             stages,
 		Workflow:           workflowSteps(scenarioProfile, videoProfile),
@@ -432,6 +466,88 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 	}
 	plan.Lifecycle = BuildLifecycleActions(plan, "<run_id>")
 	return plan, nil
+}
+
+func otaProfileForScenario(scenario string, profile OTAProfile) (OTAProfile, error) {
+	if strings.TrimSpace(scenario) != FirmwareOTAScenarioProfile {
+		return OTAProfile{}, nil
+	}
+	profile.Name = FirmwareOTAScenarioProfile
+	profile.CampaignID = strings.TrimSpace(profile.CampaignID)
+	profile.TargetVersion = strings.TrimSpace(profile.TargetVersion)
+	profile.CurrentVersion = strings.TrimSpace(profile.CurrentVersion)
+	profile.HardwareRevision = strings.TrimSpace(profile.HardwareRevision)
+	for _, item := range []struct{ name, value string }{
+		{"OTA campaign id", profile.CampaignID},
+		{"OTA target version", profile.TargetVersion},
+		{"OTA current version", profile.CurrentVersion},
+		{"OTA hardware revision", profile.HardwareRevision},
+	} {
+		if item.value == "" {
+			return OTAProfile{}, fmt.Errorf("%s is required for %s", item.name, FirmwareOTAScenarioProfile)
+		}
+	}
+	if profile.AntiRollbackCounter < 0 {
+		return OTAProfile{}, errors.New("OTA anti-rollback counter must be non-negative")
+	}
+	profile.PollInterval = defaultDuration(profile.PollInterval, "5s")
+	profile.UpgradeTimeout = defaultDuration(profile.UpgradeTimeout, "30m")
+	profile.InstallDelay = defaultDuration(profile.InstallDelay, "2s")
+	profile.RebootDelay = defaultDuration(profile.RebootDelay, "2s")
+	profile.VerifyDelay = defaultDuration(profile.VerifyDelay, "1s")
+	for _, item := range []struct{ name, value string }{
+		{"OTA poll interval", profile.PollInterval}, {"OTA upgrade timeout", profile.UpgradeTimeout},
+	} {
+		if err := validateDuration(item.name, item.value); err != nil {
+			return OTAProfile{}, err
+		}
+	}
+	for _, item := range []struct{ name, value string }{
+		{"OTA install delay", profile.InstallDelay}, {"OTA reboot delay", profile.RebootDelay}, {"OTA verify delay", profile.VerifyDelay},
+	} {
+		if err := validateNonNegativeDuration(item.name, item.value); err != nil {
+			return OTAProfile{}, err
+		}
+	}
+	if profile.HTTPConcurrency <= 0 {
+		profile.HTTPConcurrency = 250
+	}
+	if profile.DownloadConcurrency <= 0 {
+		profile.DownloadConcurrency = 64
+	}
+	if profile.DownloadConcurrency > profile.HTTPConcurrency {
+		return OTAProfile{}, errors.New("OTA download concurrency must not exceed HTTP concurrency")
+	}
+	if profile.StageJitterPercent == 0 {
+		profile.StageJitterPercent = 20
+	}
+	percentages := []struct {
+		name  string
+		value float64
+	}{
+		{"OTA stage jitter percent", profile.StageJitterPercent},
+		{"OTA download failure percent", profile.DownloadFailurePercent},
+		{"OTA verify failure percent", profile.VerifyFailurePercent},
+		{"OTA install failure percent", profile.InstallFailurePercent},
+		{"OTA reboot failure percent", profile.RebootFailurePercent},
+		{"OTA timeout percent", profile.TimeoutPercent},
+	}
+	for _, item := range percentages {
+		if item.value < 0 || item.value > 100 {
+			return OTAProfile{}, fmt.Errorf("%s must be between 0 and 100", item.name)
+		}
+	}
+	if profile.DownloadFailurePercent+profile.VerifyFailurePercent+profile.InstallFailurePercent+profile.RebootFailurePercent+profile.TimeoutPercent > 100 {
+		return OTAProfile{}, errors.New("OTA failure percentages must sum to no more than 100")
+	}
+	return profile, nil
+}
+
+func presenceMixForScenario(scenario string, devices int) map[string]int {
+	if strings.TrimSpace(scenario) == FirmwareOTAScenarioProfile {
+		return map[string]int{"online_steady": devices}
+	}
+	return proportionalMix(devices, []ratioBucket{{Name: "online_steady", Weight: 85}, {Name: "offline_desired_queue", Weight: 10}, {Name: "flapping_reconnect", Weight: 5}})
 }
 
 func clipStorageProfileForScenario(scenario string) ClipStorageProfile {
@@ -736,6 +852,17 @@ func validateDuration(label string, value string) error {
 	}
 	if duration <= 0 {
 		return fmt.Errorf("%s duration must be positive, got %q", label, value)
+	}
+	return nil
+}
+
+func validateNonNegativeDuration(label string, value string) error {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fmt.Errorf("%s duration %q is invalid: %w", label, value, err)
+	}
+	if duration < 0 {
+		return fmt.Errorf("%s duration must be non-negative, got %q", label, value)
 	}
 	return nil
 }

@@ -53,6 +53,56 @@ func writeTinyEnvRoot(t *testing.T) string {
 	return root
 }
 
+func TestLoadLiveOTAEvidenceAndCopyProtectedFile(t *testing.T) {
+	root := t.TempDir()
+	resultsPath := filepath.Join(root, "results.json")
+	want := OTAEvidence{CampaignID: "campaign-1", TargetVersion: "2.0.0", DevicesSelected: 2}
+	if err := writeJSONFile(resultsPath, map[string]any{"ota": want}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadLiveOTAEvidence(resultsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CampaignID != want.CampaignID || got.DevicesSelected != want.DevicesSelected {
+		t.Fatalf("OTA evidence = %#v, want %#v", got, want)
+	}
+
+	emptyPath := filepath.Join(root, "empty.json")
+	if err := writeJSONFile(emptyPath, map[string]any{"ota": OTAEvidence{}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadLiveOTAEvidence(emptyPath); err == nil {
+		t.Fatal("loadLiveOTAEvidence() accepted missing aggregate evidence")
+	}
+	if _, err := loadLiveOTAEvidence(filepath.Join(root, "missing.json")); err == nil {
+		t.Fatal("loadLiveOTAEvidence() accepted a missing result file")
+	}
+
+	source := filepath.Join(root, "ota-devices.jsonl")
+	if err := os.WriteFile(source, []byte("device evidence\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "nested", "ota-devices.jsonl")
+	if err := copyProtectedFile(source, destination); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "device evidence\n" || info.Mode().Perm() != 0o600 {
+		t.Fatalf("copied evidence content=%q mode=%#o", raw, info.Mode().Perm())
+	}
+	if err := copyProtectedFile(filepath.Join(root, "missing-source"), destination); err == nil {
+		t.Fatal("copyProtectedFile() accepted a missing source")
+	}
+}
+
 func TestPreflightAcceptsBrandPlan(t *testing.T) {
 	envRoot := t.TempDir()
 	planFile := filepath.Join(t.TempDir(), "brand-plan.json")
@@ -5586,4 +5636,47 @@ func assertShardManifestRange(t *testing.T, path string, role string, start int,
 		}
 	}
 	t.Fatalf("manifest %s missing %s shard [%d,%d): %#v", path, role, start, end, assignment.TaskShards)
+}
+
+func TestLiveLoadModelArgsSelectFirmwareOTAContract(t *testing.T) {
+	plan, err := NewPlan(PlanOptions{
+		EnvRoot: "runtime", Brandname: "RTK", Region: "us-sea",
+		ScenarioProfile: FirmwareOTAScenarioProfile, DeviceCount: 10,
+		OTAProfile: OTAProfile{
+			CampaignID: "campaign-1", TargetVersion: "2.0.0", CurrentVersion: "1.0.0", HardwareRevision: "rev-a",
+			AntiRollbackCounter: 2, PollInterval: "3s", UpgradeTimeout: "45m", HTTPConcurrency: 300, DownloadConcurrency: 80,
+			InstallDelay: "4s", RebootDelay: "5s", VerifyDelay: "6s", StageJitterPercent: 15,
+			DownloadFailurePercent: 1, VerifyFailurePercent: 2, InstallFailurePercent: 3, RebootFailurePercent: 4, TimeoutPercent: 5,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(liveLoadModelArgs(plan), " ")
+	for _, want := range []string{
+		"--load-model ota-device-simulator", "--ota-campaign-id campaign-1", "--ota-target-version 2.0.0",
+		"--ota-current-version 1.0.0", "--ota-hardware-revision rev-a", "--ota-anti-rollback-counter 2",
+		"--ota-poll-interval 3s", "--ota-upgrade-timeout 45m", "--ota-http-concurrency 300", "--ota-download-concurrency 80",
+		"--ota-install-delay 4s", "--ota-reboot-delay 5s", "--ota-verify-delay 6s", "--ota-stage-jitter-percent 15",
+		"--ota-download-failure-percent 1", "--ota-verify-failure-percent 2", "--ota-install-failure-percent 3",
+		"--ota-reboot-failure-percent 4", "--ota-timeout-percent 5",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("OTA load args missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestLiveRunnerTimeoutAllowsFirmwareOTADeadline(t *testing.T) {
+	plan := Plan{
+		OTAProfile: OTAProfile{Name: FirmwareOTAScenarioProfile, UpgradeTimeout: "30m"},
+		Stages:     []Stage{{WarmUp: "2m"}},
+	}
+	got, err := liveRunnerCommandTimeoutForPlan(plan, 150, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 37*time.Minute {
+		t.Fatalf("OTA runner timeout = %s, want 37m", got)
+	}
 }
