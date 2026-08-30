@@ -750,6 +750,11 @@ inodes per shard, and lets future orchestra/coordinator reuse skip uploads when
 the bundle sha256 has not changed.
 
 The source of truth is `<env-root>/artifacts/test-data/<brand>-test-data.sqlite`.
+Here `<brand>` is the fixture writer's lowercase ASCII slug (runs of non-letter/
+non-digit characters become `-`, with edge dashes removed and `brand` as the
+empty fallback). For example, `Identity Owner 20260830 201500` uses
+`identity-owner-20260830-201500-test-data.sqlite`. The preflight, shard bundle,
+and single-device smoke resolve this same path; SQL retains the display name.
 For multi-brand runs, each source brand still owns its own SQLite DB, while the
 per-VM shard bundle may contain rows from multiple brands. Bundle rows include
 `brandname`, `brand_cloud_id`, and `tenant_slug`, so the runner can use the

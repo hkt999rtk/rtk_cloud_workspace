@@ -422,7 +422,8 @@ run_single_device_smoke() {
       return 1
     }
   fi
-  brand_file="$(printf '%s' "$smoke_brandname" | tr '[:upper:]' '[:lower:]')"
+  brand_file="$(printf '%s' "$smoke_brandname" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//')"
+  brand_file="${brand_file:-brand}"
   db_path="$(local_env_root_path)/artifacts/test-data/${brand_file}-test-data.sqlite"
   [[ -f "$db_path" ]] || { echo "FIXTURE_UNAVAILABLE: test-data DB not found: $db_path" >&2; return 1; }
   smoke_dir="$local_out_dir/single-device-smoke"
