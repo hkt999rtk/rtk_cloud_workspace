@@ -590,6 +590,18 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		},
 	},
 	{
+		TestID: "INT-AM-BRANDOWNER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesAndActivatesBrandOwnerByEmail",
+		Workflows: map[string]map[string]string{
+			"WF-CA-BRAND-001": {
+				"create_brand_cloud":          "PASS",
+				"invite_global_brand_owner":   "PASS",
+				"activate_global_brand_owner": "PASS",
+				"login_global_brand_owner":    "PASS",
+				"discover_owner_membership":   "PASS",
+			},
+		},
+	},
+	{
 		TestID: "INT-AM-BRANDUSER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesActiveBrandCloudUser",
 		Assertions: map[string]map[string]string{
 			"REQ-CA-BRAND-USER-PROVISION-001": {
@@ -608,13 +620,6 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 			"WF-CA-AUDIT-001": {
 				"create_audited_brand_cloud": "PASS",
 				"read_brand_cloud_audit":     "PASS",
-			},
-			"WF-CA-BRAND-001": {
-				"create_brand_cloud":  "PASS",
-				"create_brand_owner":  "PASS",
-				"disable_brand_owner": "PASS",
-				"enable_brand_owner":  "PASS",
-				"delete_brand_owner":  "PASS",
 			},
 		},
 	},

@@ -761,6 +761,18 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CA-BRAND-USER-PROVISION-001, REQ-CA-BRAND-AUDIT-001]
     status: active
+  - id: INT-AM-BRANDOWNER-001
+    title: Brand Cloud owner completes email activation and unified global login
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/integration_test.go
+    selector: TestIntegrationPlatformAdminCreatesAndActivatesBrandOwnerByEmail
+    method: PostgreSQL-backed API integration test creates a Brand Cloud, invites its global owner by email, rejects pre-activation login, activates the account, signs in through the global endpoint, and discovers the owner membership through /v1/me.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CA-BRAND-IDENTITY-001, REQ-CA-BRAND-USER-PROVISION-001, REQ-UI-CA-CLOUD-004]
+    status: active
   - id: INT-CA-BRANDBFF-001
     title: Cloud Admin Brand routes require and forward Account Manager authority
     layer: integration
