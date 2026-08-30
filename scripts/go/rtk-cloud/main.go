@@ -2764,10 +2764,11 @@ func runCreateUsers(args []string) error {
 		if err != nil {
 			return createUserResult{}, err
 		}
+		effectiveRole := firstNonEmpty(createResult.Role, *role)
 		result.user = map[string]any{
 			"email":           email,
 			"display_name":    displayName,
-			"role":            *role,
+			"role":            effectiveRole,
 			"id":              createResult.UserID,
 			"user_id":         createResult.UserID,
 			"password":        password,
@@ -6261,6 +6262,7 @@ func accountFindBrandCloud(ctx accountManagerContext, token, brandname string) (
 type accountCreateUserResult struct {
 	Action string
 	UserID string
+	Role   string
 }
 
 func accountCreateUser(ctx accountManagerContext, session *accountPlatformSession, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
@@ -6268,12 +6270,27 @@ func accountCreateUser(ctx accountManagerContext, session *accountPlatformSessio
 }
 
 func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
-	payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": role, "rotate_password": rotate, "activation_mode": "immediate"})
-	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
-		return curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), platformToken, payload)
-	})
+	request := func(requestedRole string) ([]byte, int, error) {
+		payload, _ := json.Marshal(map[string]any{"email": email, "password": password, "display_name": displayName, "role": requestedRole, "rotate_password": rotate, "activation_mode": "immediate"})
+		return curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user create", func(platformToken string) ([]byte, int, error) {
+			return curlJSONStatus(fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, brandCloudID), platformToken, payload)
+		})
+	}
+	body, status, err := request(role)
 	if err != nil {
 		return accountCreateUserResult{}, err
+	}
+	effectiveRole := role
+	if status == http.StatusInternalServerError && role != "owner" {
+		existingRole, lookupErr := accountBrandCloudUserRole(ctx, session, sessionMu, logf, brandCloudID, email)
+		if lookupErr == nil && roleRank(existingRole) > roleRank(role) {
+			logf("preserving higher existing membership role: email=%s requested=%s existing=%s", email, role, existingRole)
+			effectiveRole = existingRole
+			body, status, err = request(effectiveRole)
+			if err != nil {
+				return accountCreateUserResult{}, err
+			}
+		}
 	}
 	if status != 200 && status != 201 {
 		return accountCreateUserResult{}, fmt.Errorf("brand user create failed: email=%s HTTP %d", email, status)
@@ -6287,7 +6304,44 @@ func accountCreateUserWithSessionLock(ctx accountManagerContext, session *accoun
 		action = "assigned"
 	}
 	user, _ := parsed["user"].(map[string]any)
-	return accountCreateUserResult{Action: action, UserID: stringValue(user["id"])}, nil
+	return accountCreateUserResult{Action: action, UserID: stringValue(user["id"]), Role: effectiveRole}, nil
+}
+
+func accountBrandCloudUserRole(ctx accountManagerContext, session *accountPlatformSession, sessionMu *sync.Mutex, logf func(string, ...any), brandCloudID, email string) (string, error) {
+	endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users?limit=1&q=%s", ctx.BaseURL, url.PathEscape(brandCloudID), url.QueryEscape(strings.ToLower(strings.TrimSpace(email))))
+	body, status, err := curlJSONStatusWithPlatformRetryLocked(ctx, session, sessionMu, logf, "brand user lookup", func(platformToken string) ([]byte, int, error) {
+		return curlJSONStatus(endpoint, platformToken, nil)
+	})
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("brand user lookup failed: HTTP %d", status)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", err
+	}
+	for _, item := range anySlice(parsed["users"]) {
+		user, _ := item.(map[string]any)
+		if strings.EqualFold(stringValue(user["email"]), email) {
+			return stringValue(user["role"]), nil
+		}
+	}
+	return "", nil
+}
+
+func roleRank(role string) int {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "owner":
+		return 3
+	case "admin":
+		return 2
+	case "member":
+		return 1
+	default:
+		return 0
+	}
 }
 
 type accountUserLoginResponse struct {
