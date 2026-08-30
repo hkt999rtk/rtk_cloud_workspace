@@ -178,7 +178,6 @@ func (r *deploymentPreflightReporter) result() error {
 func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflightReporter) {
 	required := []string{
 		filepath.Join(cfg.RuntimeRoot, "state", "provider-preflight.env"),
-		filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml"),
 		filepath.Join(cfg.RuntimeRoot, "env", "stack.env"),
 	}
 	store, err := newSecretStore("", cfg.Environment)
@@ -187,6 +186,7 @@ func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflig
 		return
 	}
 	required = append(required,
+		store.KubeconfigPath(),
 		filepath.Join(store.Root, "openbao", "unseal-key"),
 		filepath.Join(store.Root, "openbao", "root-token"),
 		filepath.Join(store.Root, "runtime", "postgres"),
@@ -211,7 +211,11 @@ func validateAcceptanceRuntime(cfg deploymentConfig, reporter *deploymentPreflig
 }
 
 func validateDeploymentKubeAccess(cfg deploymentConfig) error {
-	kubeconfig := filepath.Join(cfg.RuntimeRoot, "state", "kubeconfig.yaml")
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	kubeconfig := store.KubeconfigPath()
 	cmd := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "--request-timeout=10s", "get", "--raw=/readyz")
 	out, err := cmd.CombinedOutput()
 	if err != nil {

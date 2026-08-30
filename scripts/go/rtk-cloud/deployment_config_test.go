@@ -345,19 +345,26 @@ func TestDeploymentPreflightAcceptanceRequiresMatchingRuntime(t *testing.T) {
 
 func TestDeploymentPreflightAcceptancePassesWithMatchingRuntime(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
+	store := makeIsolatedTestSecretStore(t, "staging")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for path, contents := range map[string]string{
 		"state/provider-preflight.env": "LKE_CLUSTER_ID=123\n",
-		"state/kubeconfig.yaml":        "apiVersion: v1\n",
 		"env/stack.env":                "CLOUD_STACK_NAME=" + cfg.Values["CLOUD_STACK_NAME"] + "\n",
-		"state/openbao/unseal-key":     "test-unseal-key\n",
-		"state/openbao/root-token":     "test-root-token\n",
-		"state/secrets/postgres":       "test-postgres-password\n",
 	} {
 		writeTestFile(t, filepath.Join(cfg.RuntimeRoot, path), contents)
+	}
+	for path, contents := range map[string]string{
+		"kube/kubeconfig.yaml": "apiVersion: v1\n",
+		"openbao/unseal-key":   "test-unseal-key\n",
+		"openbao/root-token":   "test-root-token\n",
+		"runtime/postgres":     "test-postgres-password\n",
+	} {
+		if err := store.write(path, []byte(contents), true); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	var out bytes.Buffer

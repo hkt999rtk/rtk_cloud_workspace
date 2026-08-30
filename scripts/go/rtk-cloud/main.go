@@ -4746,7 +4746,7 @@ func runStagingE2ETest(args []string) error {
 	}
 	if selection.Reset {
 		if err := validateStagingEmailDeliveryBeforeReset(envRoot); err != nil {
-			return err
+			return fmt.Errorf("staging reset blocked before deleting workloads: %w", err)
 		}
 	}
 	if *outDir == "" {

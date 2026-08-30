@@ -44,7 +44,15 @@ func TestRunStagingE2EResetDeletesWorkloadsByDefault(t *testing.T) {
 
 func TestRunStagingE2EResetRejectsMissingEmailDeliveryBeforeMutation(t *testing.T) {
 	workspace := t.TempDir()
+	_ = makeIsolatedTestSecretStore(t, "staging")
 	envRoot := filepath.Join(workspace, "cloud_env", "staging", "runtime")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "environment.env"), `CLOUD_STACK_NAME=video-cloud-staging
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+DEPLOYMENT_LOCATION=asia-southeast
+AUTH_TOKEN_BASE_URL=https://admin.video-cloud-staging.realtekconnect.com
+SENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com
+SENDMAIL_HTTP_TIMEOUT=15s
+`)
 	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "CLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
 	for _, key := range accountManagerEmailSecretKeys {
 		t.Setenv(key, "")

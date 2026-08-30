@@ -9,6 +9,20 @@ import (
 	"testing"
 )
 
+func makeIsolatedTestSecretStore(t *testing.T, environment string) secretStore {
+	t.Helper()
+	configRoot := filepath.Join(t.TempDir(), "rtk_cloud")
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	store, err := newSecretStore(configRoot, environment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
 func TestMain(m *testing.M) {
 	// Package tests use isolated fixture paths. Production execution never sets
 	// this test-only marker and therefore uses the canonical SecretStore.

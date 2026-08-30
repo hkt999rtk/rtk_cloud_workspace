@@ -143,7 +143,7 @@ func validateStagingEmailDeliveryBeforeReset(envRoot string) error {
 	restore := installAllCredentialEnvironment(env)
 	defer restore()
 	if err := validateAccountManagerEmailDeliveryEnv(env); err != nil {
-		return fmt.Errorf("staging reset blocked before deleting workloads: configure Account Manager email delivery: %w", err)
+		return fmt.Errorf("configure Account Manager email delivery: %w", err)
 	}
 	return nil
 }

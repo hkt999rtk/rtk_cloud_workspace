@@ -299,8 +299,13 @@ func TestRemoveOwnedDNSRecordsStopsOnDrift(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("RTK_CLOUD_GODADDY_API_ROOT", server.URL)
-	t.Setenv("GODADDY_KEY", "key")
-	t.Setenv("GODADDY_SECRET", "secret")
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("operator/env/GODADDY_KEY", []byte("key\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/GODADDY_SECRET", []byte("secret\n"), true); err != nil {
+		t.Fatal(err)
+	}
 	runtimeRoot := t.TempDir()
 	dir := filepath.Join(runtimeRoot, "dns", "godaddy")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
