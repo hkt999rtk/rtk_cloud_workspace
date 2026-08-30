@@ -9,9 +9,8 @@ ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
 git config --global core.sshCommand "ssh -i $HOME/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
 git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
 git config --global --add url."git@github.com:".insteadOf "git@github.com-work:"
-# Self-hosted workspaces can retain nested-submodule files from an earlier
-# checkout. Recreate every submodule worktree so a stale file or symlink cannot
-# block the commit pinned by the current workspace checkout.
-git submodule deinit --all --force
+# Self-hosted runners reuse the checkout between jobs. Deinitialize first so a
+# path that was a symlink in the previous revision can become a submodule again.
+git submodule deinit --force --all
 git submodule sync --recursive
 git submodule update --init --recursive
