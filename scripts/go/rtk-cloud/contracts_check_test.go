@@ -32,6 +32,10 @@ func TestCheckContractsPolicyCanonicalLinks(t *testing.T) {
 			makeContractsTestLink(t, root, "../../copy")
 			writeFile(t, filepath.Join(root, "repos/rtk_account_manager/.gitmodules"), "[submodule \"contracts\"]\npath = docs/rtk_cloud_contracts_doc\nurl = "+contractsRepoURL+"\n")
 		}, want: "does not resolve to the canonical"},
+		{name: "canonical link cannot hide arbitrary registered URL", change: func(t *testing.T, root string, _ map[string]string) {
+			makeContractsTestLink(t, root, "../../rtk_cloud_contracts_doc")
+			writeFile(t, filepath.Join(root, "repos/rtk_account_manager/.gitmodules"), "[submodule \"contracts\"]\npath = docs/rtk_cloud_contracts_doc\nurl = https://example.invalid/unrelated-repository.git\n")
+		}, want: "repos/rtk_account_manager/.gitmodules uses a non-standard contracts URL"},
 		{name: "missing canonical checkout", change: func(t *testing.T, root string, _ map[string]string) {
 			// Keep one consumer resolvable so the canonical-path error is exercised.
 			mkdirAll(t, filepath.Join(root, "repos/copy"))

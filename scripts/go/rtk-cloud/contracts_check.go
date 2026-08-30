@@ -64,16 +64,16 @@ func checkContractsPolicy(check *checkState, workspace string, commits map[strin
 	}
 	byPath := map[string]gitmoduleEntry{}
 	for _, entry := range entries {
-		if !isCanonicalContractsURL(entry.URL) && strings.Contains(entry.URL, "rtk_cloud_contracts_doc") {
+		fullPath := entry.Path
+		if entry.File != ".gitmodules" {
+			fullPath = filepath.ToSlash(filepath.Join(filepath.Dir(entry.File), entry.Path))
+		}
+		if !isCanonicalContractsURL(entry.URL) && (isExpectedContractsPath(fullPath) || strings.Contains(entry.URL, "rtk_cloud_contracts_doc")) {
 			// Do not echo a rejected URL: it may contain embedded credentials.
 			check.fail(fmt.Sprintf("%s uses a non-standard contracts URL", entry.File))
 		}
 		if !isCanonicalContractsURL(entry.URL) {
 			continue
-		}
-		fullPath := entry.Path
-		if entry.File != ".gitmodules" {
-			fullPath = filepath.ToSlash(filepath.Join(filepath.Dir(entry.File), entry.Path))
 		}
 		byPath[fullPath] = entry
 	}
