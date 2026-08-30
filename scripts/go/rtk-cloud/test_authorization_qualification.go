@@ -498,7 +498,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 	{
 		TestID: "INT-AM-SIGNUP-EMAIL-001", Repository: "rtk_account_manager",
 		Targets: []authorizationQualificationTarget{
-			{Package: "./internal/api", GoTest: "TestIntegrationSignupQueuesEncryptedEmailForWorkerDelivery"},
+			{Package: "./internal/api", GoTest: "TestIntegrationSignupQueuesEncryptedEmailForSendMailHTTP"},
 			{Package: "./internal/store", GoTest: "TestEmailOutboxTokenAndQueueAreTransactional"},
 			{Package: "./internal/api", GoTest: "TestIntegrationEmailVerificationAndPasswordRecovery"},
 		},
