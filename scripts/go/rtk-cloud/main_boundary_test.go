@@ -34,7 +34,7 @@ func TestStagingCommandAndArgumentBoundaries(t *testing.T) {
 
 	e2eArgs := stagingE2ETestArgs(stagingE2EArgs{
 		workspace: "/workspace", envRoot: "/env/lke", stackName: "stack", confirmOverride: "confirmed",
-		run: true, plan: true, brandname: "RTK", userCount: 2, deviceCount: 4,
+		run: true, plan: true, brandname: "RTK", userCount: 2, userEmailPrefix: "run-123", userEmailDomain: "users.invalid", deviceCount: 4,
 		deviceMix: "camera=50,light=50", devicePrefix: "test", userConcurrency: 2,
 		deviceConcurrency: 4, bindConcurrency: 2, outDir: "/out", steps: "data,mqtt",
 		skipMQTTProbe: true, skipRemove: true, purgeStorage: true, skipProvision: true,
@@ -42,6 +42,7 @@ func TestStagingCommandAndArgumentBoundaries(t *testing.T) {
 	})
 	for _, expected := range []string{
 		"--run", "confirmed", "--plan", "--out-dir", "/out", "--steps", "data,mqtt",
+		"--user-email-prefix", "run-123", "--user-email-domain", "users.invalid",
 		"--skip-mqtt-probe", "--skip-remove", "--purge-storage", "--skip-provision", "--quiet",
 	} {
 		if !contains(e2eArgs, expected) {

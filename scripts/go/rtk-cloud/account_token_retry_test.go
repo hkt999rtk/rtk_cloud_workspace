@@ -206,7 +206,7 @@ func TestAccountCreateUserReusesValidPlatformSession(t *testing.T) {
 	}
 }
 
-func TestAccountCreateUserPreservesHigherExistingOwnerRole(t *testing.T) {
+func TestAccountCreateUserRejectsExistingHigherOwnerRole(t *testing.T) {
 	accessToken := testJWT(time.Now().Add(time.Hour))
 	postRoles := []string{}
 	getAttempts := 0
@@ -234,15 +234,7 @@ func TestAccountCreateUserPreservesHigherExistingOwnerRole(t *testing.T) {
 			}
 			role := stringValue(request["role"])
 			postRoles = append(postRoles, role)
-			if role == "admin" {
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"action": "assigned",
-				"user":   map[string]string{"id": "user-1"},
-			})
+			w.WriteHeader(http.StatusInternalServerError)
 		default:
 			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
 		}
@@ -251,12 +243,12 @@ func TestAccountCreateUserPreservesHigherExistingOwnerRole(t *testing.T) {
 
 	ctx := accountManagerContext{BaseURL: server.URL}
 	session := accountPlatformSession{AccessToken: accessToken, RefreshToken: testJWT(time.Now().Add(time.Hour))}
-	result, err := accountCreateUser(ctx, &session, func(string, ...any) {}, "brand-1", "owner@example.test", "Owner", "pass", "admin", true)
-	if err != nil {
+	_, err := accountCreateUser(ctx, &session, func(string, ...any) {}, "brand-1", "owner@example.test", "Owner", "pass", "admin", true)
+	if err == nil || !strings.Contains(err.Error(), "use --user-email-prefix") {
 		t.Fatalf("accountCreateUser() error = %v", err)
 	}
-	if result.Role != "owner" || result.UserID != "user-1" || getAttempts != 1 || !reflect.DeepEqual(postRoles, []string{"admin", "owner"}) {
-		t.Fatalf("result=%+v getAttempts=%d postRoles=%v", result, getAttempts, postRoles)
+	if getAttempts != 1 || !reflect.DeepEqual(postRoles, []string{"admin"}) {
+		t.Fatalf("getAttempts=%d postRoles=%v", getAttempts, postRoles)
 	}
 }
 
