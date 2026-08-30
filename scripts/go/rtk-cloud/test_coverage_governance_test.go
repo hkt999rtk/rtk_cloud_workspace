@@ -306,6 +306,28 @@ func TestRunTestCoverageAggregateCombinesGoAndJavaScriptModules(t *testing.T) {
 	if report.Status != "PASS" || report.Profile != "aggregate" || len(report.Cases) != len(cfg.Modules) {
 		t.Fatalf("aggregate report = %#v", report)
 	}
+
+	subsetRunID := "unit-coverage-aggregate-subset"
+	subsetOutDir := filepath.Join(workspace, ".artifacts", "test-runs", subsetRunID)
+	defer os.RemoveAll(subsetOutDir)
+	if err := runTestCoverageAggregate([]string{
+		"--input-dir", input,
+		"--run-id", subsetRunID,
+		"--modules-json", `["workspace-tooling"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	subsetRaw, err := os.ReadFile(filepath.Join(subsetOutDir, "coverage", "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var subsetReport coverageReport
+	if err := json.Unmarshal(subsetRaw, &subsetReport); err != nil {
+		t.Fatal(err)
+	}
+	if subsetReport.Status != "PASS" || len(subsetReport.Cases) != 1 || subsetReport.Cases[0].Name != "workspace-tooling" {
+		t.Fatalf("subset aggregate report = %#v", subsetReport)
+	}
 }
 
 func TestCoverageGovernanceHandlesPolicyAndInputBranches(t *testing.T) {

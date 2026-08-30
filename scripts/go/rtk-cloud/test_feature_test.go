@@ -448,20 +448,15 @@ func TestFeatureSelectionUsesChangedPathsAndLabels(t *testing.T) {
 	}
 }
 
-func TestFeatureSelectionSharedPathSelectsAllFeatures(t *testing.T) {
+func TestFeatureSelectionCatalogChangeDoesNotSelectLoadFeatures(t *testing.T) {
 	selection, err := selectFeatureQualifications(testCatalog{},
 		[]string{"tests/catalog.yaml"},
 		nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(selection.Features, ",") != "clip-storage,device-shadow,video-webrtc" {
-		t.Fatalf("shared path selected features = %v", selection.Features)
-	}
-	for _, feature := range selection.Features {
-		if strings.Join(selection.MatchedPaths[feature], ",") != "tests/catalog.yaml" {
-			t.Fatalf("%s matched paths = %v", feature, selection.MatchedPaths[feature])
-		}
+	if selection.Required || len(selection.Features) != 0 {
+		t.Fatalf("catalog-only change selected load features = %v", selection.Features)
 	}
 }
 

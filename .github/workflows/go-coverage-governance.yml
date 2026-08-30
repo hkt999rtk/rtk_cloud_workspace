@@ -10,9 +10,37 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Select affected coverage jobs
+    runs-on: ubuntu-latest
+    outputs:
+      policy: ${{ steps.select.outputs.policy }}
+      go_modules: ${{ steps.select.outputs.go_modules }}
+      node_modules: ${{ steps.select.outputs.node_modules }}
+      coverage_modules: ${{ steps.select.outputs.coverage_modules }}
+      run_unit: ${{ steps.select.outputs.run_unit }}
+      run_node: ${{ steps.select.outputs.run_node }}
+      run_coverage: ${{ steps.select.outputs.run_coverage }}
+      account_manager_postgres: ${{ steps.select.outputs.account_manager_postgres }}
+      billing_postgres: ${{ steps.select.outputs.billing_postgres }}
+      video_cloud_postgres_emqx: ${{ steps.select.outputs.video_cloud_postgres_emqx }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Select affected modules
+        id: select
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: scripts/ci/select-coverage-jobs.sh "$BASE_REF" HEAD "${{ github.event_name }}"
+
   policy:
     name: Catalog, policy, and inventory
-    runs-on: [self-hosted, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.policy == 'true'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -33,23 +61,14 @@ jobs:
 
   unit:
     name: Go unit coverage (${{ matrix.module }})
-    runs-on: [self-hosted, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.run_unit == 'true'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        module:
-          - workspace-tooling
-          - workspace-e2e
-          - home-load-runner
-          - account-manager
-          - billing-service
-          - cloud-admin-backend
-          - cloud-client-golang
-          - cloud-frontend
-          - cloud-logger
-          - video-cloud
-          - godaddy-dns-toolkit
+        module: ${{ fromJSON(needs.changes.outputs.go_modules) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -97,14 +116,14 @@ jobs:
 
   node:
     name: JavaScript unit coverage and inventory (${{ matrix.module }})
-    runs-on: [self-hosted, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.run_node == 'true'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        module:
-          - cloud-admin-web
-          - cloud-client-javascript
+        module: ${{ fromJSON(needs.changes.outputs.node_modules) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -148,7 +167,9 @@ jobs:
 
   account-manager-postgres:
     name: Account Manager PostgreSQL coverage
-    runs-on: [self-hosted, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.account_manager_postgres == 'true'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     services:
       postgres:
@@ -194,7 +215,9 @@ jobs:
 
   billing-postgres:
     name: Billing PostgreSQL and virtual-payment coverage
-    runs-on: [self-hosted, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.billing_postgres == 'true'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     services:
       postgres:
@@ -242,7 +265,9 @@ jobs:
 
   video-cloud-postgres-emqx:
     name: Video Cloud PostgreSQL and EMQX coverage
-    runs-on: [self-hosted, Linux, X64]
+    needs: changes
+    if: needs.changes.outputs.video_cloud_postgres_emqx == 'true'
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 30
     services:
       postgres:
@@ -317,9 +342,9 @@ jobs:
 
   aggregate:
     name: Coverage aggregate and redaction
-    if: always()
-    needs: [policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
-    runs-on: [self-hosted, Linux, X64]
+    if: always() && needs.changes.outputs.run_coverage == 'true'
+    needs: [changes, policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -340,7 +365,9 @@ jobs:
           path: .artifacts/coverage-input
       - name: Aggregate Go and JavaScript coverage
         working-directory: scripts/go
-        run: go run ./rtk-cloud -- test-coverage-aggregate --input-dir ../../.artifacts/coverage-input --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        env:
+          COVERAGE_MODULES: ${{ needs.changes.outputs.coverage_modules }}
+        run: go run ./rtk-cloud -- test-coverage-aggregate --input-dir ../../.artifacts/coverage-input --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --modules-json "$COVERAGE_MODULES"
       - name: Upload aggregate report
         if: always()
         uses: actions/upload-artifact@v6

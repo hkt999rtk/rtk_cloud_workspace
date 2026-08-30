@@ -1322,7 +1322,6 @@ func selectFeatureQualifications(catalog testCatalog, changedFiles, labels []str
 	}
 	selected := map[string]bool{}
 	sharedPatterns := []string{
-		"tests/catalog.yaml",
 		"scripts/go/rtk-cloud/**",
 		"loadtests/home-100k/**",
 		"e2e_test/video_cloud/load/**",
