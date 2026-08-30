@@ -643,8 +643,8 @@ cases:
     layer: integration
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/usercache/store_test.go
-    selector: "./internal/usercache#TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable,./internal/usercache#TestStoreRegisterRefreshesUserAuthCacheAfterCommit,./internal/usercache#TestStoreBrandAndEndUserMutationsRefreshCache,./internal/usercache#TestStoreIgnoresCacheReadAndWriteErrors"
-    method: Store-decorator integration tests inject Redis read/write failures across platform, Brand and end-user paths and require PostgreSQL reads and committed mutations to remain authoritative.
+    selector: "./internal/usercache#TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable,./internal/usercache#TestStoreRegisterRefreshesUserAuthCacheAfterCommit,./internal/usercache#TestStoreEndUserMutationRefreshesCache,./internal/usercache#TestStoreIgnoresCacheReadAndWriteErrors"
+    method: Store-decorator integration tests inject Redis read/write failures across global-human and end-user paths and require PostgreSQL reads and committed mutations to remain authoritative.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]

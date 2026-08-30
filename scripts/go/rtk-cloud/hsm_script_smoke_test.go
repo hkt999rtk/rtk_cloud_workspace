@@ -36,12 +36,6 @@ func TestCreateUsersUsesAccountManagerBaseURLOverrideAndWritesSQLite(t *testing.
 				})
 				return
 			}
-			t.Fatalf("global user login used platform auth endpoint")
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
-			var payload map[string]string
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode global login payload: %v", err)
-			}
 			if payload["app_csr_pem"] == "" {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"user":            map[string]string{"id": "user-1", "email": payload["email"]},

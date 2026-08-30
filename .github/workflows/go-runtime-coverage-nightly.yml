@@ -546,11 +546,11 @@ jobs:
           curl -fsS -D "$platform_headers" -o /dev/null \
             -H 'content-type: application/json' \
             --data-binary "@$platform_payload" \
-            http://127.0.0.1:18082/api/auth/platform/login
+            http://127.0.0.1:18082/api/auth/login
           curl -fsS -D "$customer_headers" -o /dev/null \
             -H 'content-type: application/json' \
             --data-binary "@$customer_payload" \
-            http://127.0.0.1:18082/api/auth/customer/login
+            http://127.0.0.1:18082/api/auth/login
           E2E_PLATFORM_SESSION_ID="$(sed -nE 's/^[Ss]et-[Cc]ookie: rtk_admin_session=([^;]+).*/\1/p' "$platform_headers" | head -1)"
           E2E_CUSTOMER_SESSION_ID="$(sed -nE 's/^[Ss]et-[Cc]ookie: rtk_admin_session=([^;]+).*/\1/p' "$customer_headers" | head -1)"
           test -n "$E2E_PLATFORM_SESSION_ID"

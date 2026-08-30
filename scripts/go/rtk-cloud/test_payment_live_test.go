@@ -100,7 +100,7 @@ func TestPaymentLiveBootstrapRequiresFixedOrganizationConfirmation(t *testing.T)
 
 func TestPaymentLiveWritesProtectedEphemeralCustomerSession(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/auth/customer/login" || r.Method != http.MethodPost {
+		if r.URL.Path != "/api/auth/login" || r.Method != http.MethodPost {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		http.SetCookie(w, &http.Cookie{Name: "rtk_admin_session", Value: strings.Repeat("s", 32), Path: "/", HttpOnly: true})
@@ -269,7 +269,7 @@ func TestPaymentLiveCustomerSessionRejectsLoginFailures(t *testing.T) {
 func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/auth/customer/login":
+		case "/api/auth/login":
 			http.SetCookie(w, &http.Cookie{Name: "rtk_admin_session", Value: strings.Repeat("s", 32)})
 			w.WriteHeader(http.StatusOK)
 		case "/api/me/active-org":

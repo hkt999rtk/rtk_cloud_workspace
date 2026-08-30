@@ -464,7 +464,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		Targets: []authorizationQualificationTarget{
 			{Package: "./internal/usercache", GoTest: "TestStoreGetUserFallsBackToPostgresWhenRedisUnavailable"},
 			{Package: "./internal/usercache", GoTest: "TestStoreRegisterRefreshesUserAuthCacheAfterCommit"},
-			{Package: "./internal/usercache", GoTest: "TestStoreBrandAndEndUserMutationsRefreshCache"},
+			{Package: "./internal/usercache", GoTest: "TestStoreEndUserMutationRefreshesCache"},
 			{Package: "./internal/usercache", GoTest: "TestStoreIgnoresCacheReadAndWriteErrors"},
 		},
 		Assertions: map[string]map[string]string{
@@ -472,7 +472,6 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 				"postgres_read_survives_cache_outage": "PASS",
 				"committed_write_not_rolled_back":     "PASS",
 				"platform_cache_refreshed":            "PASS",
-				"brand_cache_refreshed":               "PASS",
 				"end_user_cache_refreshed":            "PASS",
 				"cache_write_failure_ignored":         "PASS",
 			},

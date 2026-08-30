@@ -553,7 +553,7 @@ func writePaymentLiveCustomerSession(ctx context.Context, client *http.Client, b
 	if err != nil {
 		return err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/auth/customer/login", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+"/api/auth/login", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
