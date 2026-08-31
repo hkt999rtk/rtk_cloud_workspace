@@ -6,6 +6,7 @@ sources:
   - { id: SPEC-CONTRACT-AUTH, path: repos/rtk_cloud_contracts_doc/AUTH.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
   - { id: SPEC-CONTRACT-AUTHZ, path: repos/rtk_cloud_contracts_doc/AUTHORIZATION.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
   - { id: SPEC-CONTRACT-BRAND-CLOUD, path: repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
+  - { id: SPEC-CONTRACT-MULTICLOUD, path: repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md, parser: markdown, authority: canonical, owner: cloud_platform }
   - { id: SPEC-CONTRACT-PROVISION, path: repos/rtk_cloud_contracts_doc/PROVISION.md, parser: markdown, authority: canonical, owner: provisioning }
   - { id: SPEC-CONTRACT-PROVISION-OPERATIONS, path: repos/rtk_cloud_contracts_doc/PROVISION_OPERATIONS.yaml, parser: operations, authority: canonical, owner: provisioning }
   - { id: SPEC-CONTRACT-ONBOARDING, path: repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md, parser: markdown, authority: draft, owner: provisioning }
