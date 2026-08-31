@@ -8,10 +8,10 @@ deployment details are not yet confirmed.
 
 | ID | Boundary | Data crossing | Channel | Key evidence |
 | --- | --- | --- | --- | --- |
-| TB1 | Internet app/admin clients -> reverse proxy/TLS -> Video Cloud API | Bearer tokens, WebRTC offers, media requests, admin/device commands | HTTPS/WSS | `docs/private-cloud-deployment.md`, `repos/rtk_video_cloud/README.md`, `repos/rtk_cloud_contracts_doc/AUTH.md`, `repos/rtk_cloud_contracts_doc/STREAMING.md` |
-| TB2 | Device -> mTLS/token issuance -> device-scoped API/WebSocket/MQTT | Device certificate, `devid`, access/refresh tokens, telemetry, media uploads, SDP answers | mTLS/HTTPS, WSS, MQTT | `repos/rtk_cloud_contracts_doc/AUTH.md`, `repos/rtk_cloud_contracts_doc/PROVISION.md`, `repos/rtk_cloud_contracts_doc/STREAMING.md` |
-| TB3 | Account Manager/Admin BFF -> Video Cloud protected APIs | Admin bearer tokens, tenant/device lifecycle commands, activation/deactivation state | HTTPS, BFF proxying, cross-service channel | `docs/account-manager-admin-boundary.md`, `repos/rtk_cloud_contracts_doc/PROVISION.md` |
-| TB4 | Video Cloud -> Postgres/object storage/EMQX/TURN registry | Runtime state, media, firmware, broker messages, TURN nodes/secrets | SQL, filesystem/S3, MQTT, HTTP/HMAC | `docs/private-cloud-deployment.md`, `repos/rtk_video_cloud/README.md`, `repos/rtk_cloud_contracts_doc/STREAMING.md` |
+| TB1 | Internet app/admin clients -> reverse proxy/TLS -> Video Cloud API | Bearer tokens, WebRTC offers, media requests, admin/device commands | HTTPS/WSS | `docs/private-cloud-deployment.md`, `repos/rtk_video_cloud/README.md`, `repos/rtk_cloud_contracts_doc/auth.md`, `repos/rtk_cloud_contracts_doc/streaming.md` |
+| TB2 | Device -> mTLS/token issuance -> device-scoped API/WebSocket/MQTT | Device certificate, `devid`, access/refresh tokens, telemetry, media uploads, SDP answers | mTLS/HTTPS, WSS, MQTT | `repos/rtk_cloud_contracts_doc/auth.md`, `repos/rtk_cloud_contracts_doc/provision.md`, `repos/rtk_cloud_contracts_doc/streaming.md` |
+| TB3 | Account Manager/Admin BFF -> Video Cloud protected APIs | Admin bearer tokens, tenant/device lifecycle commands, activation/deactivation state | HTTPS, BFF proxying, cross-service channel | `docs/account-manager-admin-boundary.md`, `repos/rtk_cloud_contracts_doc/provision.md` |
+| TB4 | Video Cloud -> Postgres/object storage/EMQX/TURN registry | Runtime state, media, firmware, broker messages, TURN nodes/secrets | SQL, filesystem/S3, MQTT, HTTP/HMAC | `docs/private-cloud-deployment.md`, `repos/rtk_video_cloud/README.md`, `repos/rtk_cloud_contracts_doc/streaming.md` |
 | TB5 | Deployment pipeline/operator -> env files/secrets/release artifacts | DSNs, JWT secrets, MQTT credentials, object keys, deploy keys, release bundles | GitHub secrets, host env files, object storage, SSH/systemd | `docs/private-cloud-deployment.md`, `docs/deployment-secrets-governance.md`, `README.md` |
 
 ## STRIDE Rows

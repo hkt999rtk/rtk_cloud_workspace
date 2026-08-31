@@ -618,10 +618,10 @@ def build_doc() -> None:
         "rtk_cloud_workspace/docs/account-manager-admin-boundary.md",
         "rtk_cloud_workspace/docs/video-cloud-load-test-roadmap.md",
         "rtk_cloud_admin/docs/webui-customer-view-design.md",
-        "rtk_cloud_client/docs/SAMPLE_UI_DESIGN_SYSTEM.md",
-        "rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md",
-        "rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md",
-        "rtk_cloud_client/docs/SDK_USER_DELIVERY.md",
+        "rtk_cloud_client/docs/sample_ui_design_system.md",
+        "rtk_cloud_contracts_doc/product_onboarding.md",
+        "rtk_cloud_contracts_doc/firmware_campaign.md",
+        "rtk_cloud_client/docs/sdk_user_delivery.md",
     ]:
         add_bullet(doc, item)
 

@@ -12,7 +12,7 @@ on:
       - "scripts/go/rtk-cloud/payment_simulator_lke_test.go"
       - "scripts/go/rtk-cloud/provider_lke.go"
       - "docs/lke-migration-inventory.md"
-      - "scripts/README.zh-TW.md"
+      - "scripts/README.md"
   workflow_dispatch:
     inputs:
       owner:

@@ -38,7 +38,7 @@
   "artifacts": {
     "run_plan": "loadtests/home-100k/plans/<run_id>/plan.json",
     "shard_results": "loadtests/home-100k/reports/<run_id>/shards/",
-    "aggregate_report": "loadtests/home-100k/reports/<run_id>/TEST_REPORT.md",
+    "aggregate_report": "loadtests/home-100k/reports/<run_id>/test_report.md",
     "server_evidence": "loadtests/home-100k/reports/<run_id>/server-evidence.json"
   },
   "cleanup_plan": [

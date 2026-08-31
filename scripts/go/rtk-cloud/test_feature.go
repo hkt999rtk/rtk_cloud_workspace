@@ -903,7 +903,7 @@ func writeFeatureStageReports(dir string, spec featureRunSpec, manifest featureE
 		return err
 	}
 	report := renderFeatureReport(manifest)
-	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), report, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test_report.md"), report, 0o644); err != nil {
 		return err
 	}
 	junit := renderFeatureStageJUnit(manifest)
@@ -914,7 +914,7 @@ func writeFeatureStageReports(dir string, spec featureRunSpec, manifest featureE
 		path string
 		raw  []byte
 	}{
-		{path: "TEST_REPORT.md", raw: report},
+		{path: "test_report.md", raw: report},
 		{path: "junit.xml", raw: junit},
 	}
 	for caseIndex := range manifest.Cases {
@@ -1124,7 +1124,7 @@ func collectFeatureEvidenceFiles(dir string) []featureEvidenceFile {
 		// The stage report is rendered only after the manifest is written. Including
 		// it here would record the hash of the previous report and make the final
 		// artifact unverifiable.
-		if filepath.Base(rel) == "TEST_REPORT.md" {
+		if filepath.Base(rel) == "test_report.md" {
 			return nil
 		}
 		raw, readErr := os.ReadFile(path)

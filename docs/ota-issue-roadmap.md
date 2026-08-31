@@ -11,8 +11,8 @@ Last reviewed: 2026-04-30.
 This roadmap maps the Realtek Connect+ OTA campaign-depth gap to concrete
 GitHub issues by owner repository. It is not the normative contract. The
 normative cross-repo OTA campaign interface source is
-`repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`, with route inventory in
-`repos/rtk_cloud_contracts_doc/HTTP_API.md`.
+`repos/rtk_cloud_contracts_doc/firmware_campaign.md`, with route inventory in
+`repos/rtk_cloud_contracts_doc/http_api.md`.
 
 ## Strategy
 
@@ -96,7 +96,7 @@ semantics before adding full campaign engine behavior.
 
 Dependencies:
 
-- `rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
+- `rtk_cloud_contracts_doc/firmware_campaign.md`
 - existing firmware release, target, rollout, report, cancel, and download routes
 
 Acceptance criteria:
@@ -125,7 +125,7 @@ campaign contract.
 
 Dependencies:
 
-- `rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
+- `rtk_cloud_contracts_doc/firmware_campaign.md`
 - current firmware route helpers in native, Android, iOS, and JavaScript/TypeScript
 
 Acceptance criteria:

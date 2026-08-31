@@ -19,7 +19,7 @@
 - Contracts repository: hkt999rtk/rtk_cloud_contracts_doc
 - Contracts commit: N/A
 - Contracts URL: repos/rtk_cloud_contracts_doc
-- Contract files referenced: TEST_REPORT.md policy
+- Contract files referenced: test_report.md policy
 - PR / issue / release: N/A
 - Artifact version: N/A
 
@@ -80,7 +80,7 @@
 
 ## Artifacts And Logs
 
-- Report path: docs/LOAD_TEST_REPORT.md
+- Report path: docs/load_test_report.md
 - Raw log directory: N/A
 - Sanitized artifact directory: .artifacts/report-candidates/docs/
 - CI artifact URL: N/A

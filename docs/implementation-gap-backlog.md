@@ -18,11 +18,11 @@ owning repository.
 
 Normative and primary sources:
 
-- `repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
-- `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
-- `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md`
-- `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
-- `repos/rtk_cloud_contracts_doc/METRICS_EXPORT.md`
+- `repos/rtk_cloud_contracts_doc/product_onboarding.md`
+- `repos/rtk_cloud_contracts_doc/firmware_campaign.md`
+- `repos/rtk_cloud_contracts_doc/product_readiness.md`
+- `repos/rtk_cloud_contracts_doc/telemetry_insights.md`
+- `repos/rtk_cloud_contracts_doc/metrics_export.md`
 - `docs/private-cloud-deployment.md`
 - `docs/product-level-evidence.md`
 - `docs/cross-service-broker-packaging.md`
@@ -71,7 +71,7 @@ instructions.
 Dependencies:
 
 - `docs/private-cloud-deployment.md`
-- `repos/rtk_account_manager/docs/SPEC.md`
+- `repos/rtk_account_manager/docs/spec.md`
 - current migration and service startup model
 
 Acceptance criteria:
@@ -121,7 +121,7 @@ private-cloud production service.
 Dependencies:
 
 - `docs/private-cloud-deployment.md`
-- `repos/rtk_cloud_admin/docs/SPEC.md`
+- `repos/rtk_cloud_admin/docs/spec.md`
 - Account Manager and Video Cloud upstream base URLs
 
 Acceptance criteria:
@@ -143,8 +143,8 @@ upstream facts instead of demo/cache-only projections.
 
 Dependencies:
 
-- `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md`
-- `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
+- `repos/rtk_cloud_contracts_doc/product_readiness.md`
+- `repos/rtk_cloud_contracts_doc/telemetry_insights.md`
 - Account Manager device/readiness projection APIs
 - Video Cloud telemetry and fleet health APIs
 
@@ -170,7 +170,7 @@ private-cloud BOM.
 Dependencies:
 
 - `docs/private-cloud-deployment.md`
-- `repos/rtk_cloud_frontend/docs/SPEC.md`
+- `repos/rtk_cloud_frontend/docs/spec.md`
 - current container/native deployment and SQLite lead/analytics storage
 
 Acceptance criteria:
@@ -222,7 +222,7 @@ multi-consumer event bus requirement appears.
 Dependencies:
 
 - `docs/private-cloud-deployment.md`
-- `repos/rtk_account_manager/docs/PROVISIONING_AND_EVENT_CHANNEL_PLAN.md`
+- `repos/rtk_account_manager/docs/provisioning_and_event_channel_plan.md`
 - `repos/rtk_video_cloud/docs/cross-service-lifecycle-runbook.md`
 
 Acceptance criteria:
@@ -244,9 +244,9 @@ Summary: close deterministic release evidence gaps for package consumers.
 
 Dependencies:
 
-- `repos/rtk_cloud_client/docs/TESTING.md`
-- `repos/rtk_cloud_client/docs/DELIVERABLES_AND_TEST_PROGRAMS.md`
-- `repos/rtk_cloud_client/docs/RELEASE_VALIDATION_REPORT.md`
+- `repos/rtk_cloud_client/docs/testing.md`
+- `repos/rtk_cloud_client/docs/deliverables_and_test_programs.md`
+- `repos/rtk_cloud_client/docs/release_validation_report.md`
 
 Acceptance criteria:
 
@@ -265,7 +265,7 @@ hardware validation.
 
 Dependencies:
 
-- `repos/rtk_cloud_client/docs/TESTING.md`
+- `repos/rtk_cloud_client/docs/testing.md`
 - Pro2 vendor SDK and ASDK artifacts from Git LFS
 - a configured video-cloud test server and device credentials
 

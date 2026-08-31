@@ -24,7 +24,7 @@ Use this order when reading or updating the cost model:
 2. `aws-pricing-sources.md` records the original public AWS pricing snapshot and
    first-pass estimate. Do not rewrite it when only the architecture assumption
    changes; create or update a derived adjustment instead.
-3. `../../aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf`
+3. `../../aws_report/realtek_iot_cost_review_reply_v1.10_20260630.pdf`
    is the internal AWS-team review input. It is not a public pricing source.
 4. `aws-review-adjustments.md` combines the source pricing snapshot, AWS review
    feedback, and Realtek clarifications into the review-adjusted estimate.

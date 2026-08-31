@@ -363,7 +363,7 @@ Security/regression IDs remain stable after activation.
 ```text
 .artifacts/test-runs/<run-id>/payments/
   results.json
-  TEST_REPORT.md
+  test_report.md
   evidence-manifest.json
   account-manager/
     junit.xml

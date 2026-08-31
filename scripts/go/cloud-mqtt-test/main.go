@@ -6138,7 +6138,7 @@ func writeOutputs(outDir string, result map[string]any) error {
 		return err
 	}
 	resultsFile := filepath.Join(outDir, "results.json")
-	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(outDir, "test_report.md")
 	result["results_file"] = resultsFile
 	result["report_file"] = reportFile
 	report := renderReport(result)

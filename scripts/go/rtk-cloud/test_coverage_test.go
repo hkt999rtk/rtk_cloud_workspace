@@ -467,7 +467,7 @@ func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
 	if report.Cases[0].Name != "home-load-runner" || report.Cases[0].Status != "PASS" {
 		t.Fatalf("selected coverage case = %#v", report.Cases[0])
 	}
-	markdown, err := os.ReadFile(filepath.Join(runDir, "coverage", "TEST_REPORT.md"))
+	markdown, err := os.ReadFile(filepath.Join(runDir, "coverage", "test_report.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

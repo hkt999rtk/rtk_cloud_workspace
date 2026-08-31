@@ -15,10 +15,10 @@ Audience:
 
 Related contracts:
 
-- [TELEMETRY_INSIGHTS.md](../repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md)
-- [FIRMWARE_CAMPAIGN.md](../repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md)
-- [FRONTEND_STYLE.md](../repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md)
-- [HTTP_API.md](../repos/rtk_cloud_contracts_doc/HTTP_API.md)
+- [telemetry_insights.md](../repos/rtk_cloud_contracts_doc/telemetry_insights.md)
+- [firmware_campaign.md](../repos/rtk_cloud_contracts_doc/firmware_campaign.md)
+- [frontend_style.md](../repos/rtk_cloud_contracts_doc/frontend_style.md)
+- [http_api.md](../repos/rtk_cloud_contracts_doc/http_api.md)
 
 ---
 
@@ -94,15 +94,15 @@ The implemented Customer View supersedes both navigation sketches above. It
 uses fixed groups in this order:
 
 ```
-品牌雲       → 品牌雲首頁（總覽／成員與權限／設定）
-設備營運     → 設備、群組與標籤、設備註冊、批次工作
-產品與更新   → Product 與服務、ChipSet & SDK、韌體更新
-監控與分析   → 影像播放狀況、報表
-帳號管理     → 帳務與自動加值
+Brand Cloud          → Brand Cloud Home (Overview / Members and Permissions / Settings)
+Device Operations    → Devices, Groups and Tags, Device Provisioning, Batch Jobs
+Products and Updates → Products and Services, Chipset and SDK, Firmware Updates
+Monitoring and Analytics → Video Playback, Reports
+Account Management   → Billing and Automatic Top-Up
 ```
 
 `/console/{cloudId}/overview`, `/access`, and `/settings` are separate deep
-links inside one Brand Cloud shell. `團隊與權限` is not a standalone sidebar
+links inside one Brand Cloud shell. `Team and Permissions` is not a standalone sidebar
 item. Capability-aware navigation visibility is separate from route access,
 and each data source can fail without hiding unrelated fleet or team content.
 See the canonical Customer View design linked at the top of this document for
@@ -141,7 +141,7 @@ A 7-day or 30-day line chart showing daily:
 - count of devices in `warning` or `critical` health state
 
 Data source: derived from `device.health.summary` events per
-TELEMETRY_INSIGHTS.md. Backend aggregates per org per day.
+telemetry_insights.md. Backend aggregates per org per day.
 
 Toggle between 7d / 30d view. Default 7d.
 
@@ -192,7 +192,7 @@ Remove `video_cloud_devid`. Add `Firmware` and `Health`.
 
 ### Status Display
 
-Keep the underlying readiness state values from PRODUCT_READINESS.md. Use
+Keep the underlying readiness state values from product_readiness.md. Use
 title-case for display:
 
 | Internal value | Display label |
@@ -275,7 +275,7 @@ For each active firmware campaign in the org:
 | State | campaign state badge |
 | Started | start timestamp |
 
-Use campaign and device rollout vocabulary from FIRMWARE_CAMPAIGN.md exactly.
+Use campaign and device rollout vocabulary from firmware_campaign.md exactly.
 Do not rename `applied` → "done" or `skipped` → "excluded".
 
 ### Per-Campaign Drill-Down
@@ -447,7 +447,7 @@ Response:
 ```
 
 Data source: `firmware.version.observed` and `firmware.rollout.status_changed`
-events; existing `/query_firmware_rollout` route from HTTP_API.md.
+events; existing `/query_firmware_rollout` route from http_api.md.
 
 ### `GET /api/fleet/stream-stats`
 
@@ -575,11 +575,11 @@ For each new frontend section, the implementation must verify:
 
 - No internal IDs (`video_cloud_devid`, operation IDs) are exposed in
   customer-facing views
-- State labels use contract vocabulary (title-cased) from PRODUCT_READINESS.md
-  and FIRMWARE_CAMPAIGN.md
-- Health signals use vocabulary from TELEMETRY_INSIGHTS.md
+- State labels use contract vocabulary (title-cased) from product_readiness.md
+  and firmware_campaign.md
+- Health signals use vocabulary from telemetry_insights.md
 - Charts display a loading state when data is unavailable
 - Empty states are defined (e.g., "No campaigns active", "No stream data yet")
 - Tables show the most actionable items first (worst-performing devices at top)
-- Color usage follows FRONTEND_STYLE.md tokens
+- Color usage follows frontend_style.md tokens
 - Platform View content does not appear in Customer View routes

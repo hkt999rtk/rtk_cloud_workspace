@@ -77,7 +77,7 @@ stack config before and after applying the experiment sizing:
 - `<env-root>/artifacts/capacity-experiments/<run-id>/stack.env.before`
 - `<env-root>/artifacts/capacity-experiments/<run-id>/stack.env.applied`
 - `<env-root>/artifacts/capacity-experiments/<run-id>/capacity-run-summary.json`
-- `loadtests/home-100k/reports/<run-id>/TEST_REPORT.md`
+- `loadtests/home-100k/reports/<run-id>/test_report.md`
 - `loadtests/home-100k/reports/<run-id>/results.json`
 
 The wrapper applies the reference sizing formulas when explicit overrides are
@@ -154,7 +154,7 @@ reports are useful for failure taxonomy only.
 
 ### `cap2k-multiport-20260622T173743Z` Notes
 
-- Report: `loadtests/home-100k/reports/cap2k-multiport-20260622T173743Z/TEST_REPORT.md`
+- Report: `loadtests/home-100k/reports/cap2k-multiport-20260622T173743Z/test_report.md`
 - Summary:
   `cloud_env/staging/lke/artifacts/capacity-experiments/cap2k-multiport-20260622T173743Z/capacity-run-summary.json`
 - Request:
@@ -182,7 +182,7 @@ reports are useful for failure taxonomy only.
 
 ### `cap10k-anchor-20260622T142103Z` Notes
 
-- Report: `loadtests/home-100k/reports/cap10k-anchor-20260622T142103Z/TEST_REPORT.md`
+- Report: `loadtests/home-100k/reports/cap10k-anchor-20260622T142103Z/test_report.md`
 - Summary: `cloud_env/staging/lke/artifacts/capacity-experiments/cap10k-anchor-20260622T142103Z/capacity-run-summary.json`
 - Data setup passed: 500 users in 42s, 10000 devices in 148s, 10000 binds in
   277s, bind validation in 29s.
@@ -201,7 +201,7 @@ reports are useful for failure taxonomy only.
 
 ### `cap50k-anchor-20260622T152637Z` Notes
 
-- Report: `loadtests/home-100k/reports/cap50k-anchor-20260622T152637Z/TEST_REPORT.md`
+- Report: `loadtests/home-100k/reports/cap50k-anchor-20260622T152637Z/test_report.md`
 - Summary: `cloud_env/staging/lke/artifacts/capacity-experiments/cap50k-anchor-20260622T152637Z/capacity-run-summary.json`
 - Data setup passed: 2500 users in 99s, 50000 devices in 222s, 50000 binds in
   1468s, bind validation in 153s.
@@ -254,7 +254,7 @@ reports are useful for failure taxonomy only.
 
 ### `cap50k-multiport-20260622T180635Z` Notes
 
-- Report: `loadtests/home-100k/reports/cap50k-multiport-20260622T180635Z/TEST_REPORT.md`
+- Report: `loadtests/home-100k/reports/cap50k-multiport-20260622T180635Z/test_report.md`
 - Summary:
   `cloud_env/staging/lke/artifacts/capacity-experiments/cap50k-multiport-20260622T180635Z/capacity-run-summary.json`
 - Request:
@@ -286,7 +286,7 @@ reports are useful for failure taxonomy only.
 
 ### `cap50k-mqttmem-20260622T195155Z` Notes
 
-- Report: `loadtests/home-100k/reports/cap50k-mqttmem-20260622T195155Z/TEST_REPORT.md`
+- Report: `loadtests/home-100k/reports/cap50k-mqttmem-20260622T195155Z/test_report.md`
 - Summary:
   `cloud_env/staging/lke/artifacts/capacity-experiments/cap50k-mqttmem-20260622T195155Z/capacity-run-summary.json`
 - Request:
@@ -318,7 +318,7 @@ reports are useful for failure taxonomy only.
 
 ### `cap50k-logger4g-20260622T213248Z` Notes
 
-- Report: `loadtests/home-100k/reports/cap50k-logger4g-20260622T213248Z/TEST_REPORT.md`
+- Report: `loadtests/home-100k/reports/cap50k-logger4g-20260622T213248Z/test_report.md`
 - Summary:
   `cloud_env/staging/lke/artifacts/capacity-experiments/cap50k-logger4g-20260622T213248Z/capacity-run-summary.json`
 - Request:
@@ -365,7 +365,7 @@ reports are useful for failure taxonomy only.
 ### `lt50k-video-turn-20260702T124500Z` Logger Evidence Notes
 
 - Report:
-  `loadtests/home-100k/reports/lt50k-video-turn-20260702T124500Z/TEST_REPORT.md`
+  `loadtests/home-100k/reports/lt50k-video-turn-20260702T124500Z/test_report.md`
 - Result: `INCOMPLETE`. This run must not be used as a 50K-with-WebRTC capacity
   coefficient.
 - MQTT/shadow client signal: 50000 device attempts produced 49996 MQTT connect
@@ -507,7 +507,7 @@ reports are useful for failure taxonomy only.
 ### `lt100k-5vm-20260623T111248Z` Notes
 
 - Report:
-  `loadtests/home-100k/reports/lt100k-5vm-20260623T111248Z/TEST_REPORT.md`
+  `loadtests/home-100k/reports/lt100k-5vm-20260623T111248Z/test_report.md`
 - Summary:
   `cloud_env/staging/lke/artifacts/capacity-experiments/lt100k-5vm-20260623T111248Z/capacity-run-summary.json`
 - Formula input: `load_generator_devices_per_vm=20000`; the load-generator VM
@@ -618,7 +618,7 @@ environment architecture override.
 A capacity recommendation is reviewable only when it cites:
 
 - all `capacity-run-summary.json` rows used as evidence,
-- the exact `TEST_REPORT.md` for each row,
+- the exact `test_report.md` for each row,
 - the chosen conservative safe coefficients,
 - the computed 100K config,
 - the bottleneck analysis for every failed or incomplete run,

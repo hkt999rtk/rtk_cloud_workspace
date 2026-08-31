@@ -34,7 +34,7 @@ func featureCoverageFixture(t *testing.T) (string, testCatalog, featureCaseEvide
 		Gate: "pr", Environments: []string{"ci"}, Evidence: []string{"json"}, Status: "active",
 		Revision: "fixture-revision",
 		SpecSource: specRequirementSource{
-			DocumentID: "SPEC-TEST", Path: "docs/SPEC.md", Section: "REQ-E2E-TEST-FLOW-001",
+			DocumentID: "SPEC-TEST", Path: "docs/spec.md", Section: "REQ-E2E-TEST-FLOW-001",
 		},
 	}
 	catalog := testCatalog{
@@ -99,10 +99,10 @@ func TestFeatureCoverageCannotPassWithIncompleteSpecInventory(t *testing.T) {
 	inventory := specInventory{
 		SchemaVersion: specInventorySchema,
 		Candidates: []specRequirementCandidate{{
-			DocumentID: "SPEC-TEST", SourcePath: "docs/SPEC.md", Status: "required", Revision: "candidate",
+			DocumentID: "SPEC-TEST", SourcePath: "docs/spec.md", Status: "required", Revision: "candidate",
 		}},
 		Findings: []specInventoryFinding{{
-			Code: "UNSPECIFIED_NORMATIVE_CLAUSE", Source: "docs/SPEC.md", Blocking: true,
+			Code: "UNSPECIFIED_NORMATIVE_CLAUSE", Source: "docs/spec.md", Blocking: true,
 		}},
 	}
 	report := assessFeatureCoverageWithInventory(
@@ -553,7 +553,7 @@ func TestWriteCaseFeatureEvidenceProducesCompleteLiveContract(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "summary.json"), []byte(`{"overall":"pass"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("# PASS\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test_report.md"), []byte("# PASS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "junit.xml"), []byte(`<?xml version="1.0"?><testsuite tests="1" failures="0"><testcase name="live"/></testsuite>`), 0o644); err != nil {
@@ -622,7 +622,7 @@ func TestWriteCaseFeatureEvidenceKeepsWorkflowGapIncompleteInObserveMode(t *test
 		if err := os.WriteFile(filepath.Join(dir, "summary.json"), []byte(`{"overall":"pass"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("# PASS\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, "test_report.md"), []byte("# PASS\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(dir, "junit.xml"), []byte(`<?xml version="1.0"?><testsuite tests="1" failures="0"><testcase name="live"/></testsuite>`), 0o644); err != nil {

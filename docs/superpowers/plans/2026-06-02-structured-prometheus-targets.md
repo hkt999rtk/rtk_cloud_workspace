@@ -99,7 +99,7 @@ Expected: existing unrelated changes are understood before touching files. Do no
 - Modify: `repos/rtk_video_cloud/linode_deploy/internal/deployer/deployer.go`
 - Modify: `repos/rtk_video_cloud/linode_deploy/internal/deployer/deployer_test.go`
 - Modify: `repos/rtk_video_cloud/linode_deploy/configs/video-cloud-staging-5vm.yaml.example`
-- Modify: `repos/rtk_video_cloud/linode_deploy/docs/RUNBOOK.md`
+- Modify: `repos/rtk_video_cloud/linode_deploy/docs/runbook.md`
 
 - [ ] **Step 1: Add failing manifest test for structured targets**
 
@@ -202,7 +202,7 @@ Expected: PASS.
 
 Update `repos/rtk_video_cloud/linode_deploy/configs/video-cloud-staging-5vm.yaml.example` with the `prometheus_targets` block shown in this plan.
 
-Update `repos/rtk_video_cloud/linode_deploy/docs/RUNBOOK.md` to state:
+Update `repos/rtk_video_cloud/linode_deploy/docs/runbook.md` to state:
 
 - Prometheus scrapes declared external app targets only over private/VPC addresses.
 - `admin_metrics_private_ip` is legacy host/nginx exporter support.
@@ -216,7 +216,7 @@ Update `repos/rtk_video_cloud/linode_deploy/docs/RUNBOOK.md` to state:
 - Modify: `repos/rtk_account_manager/internal/api/api.go`
 - Create or modify: `repos/rtk_account_manager/internal/api/prometheus_metrics.go`
 - Create or modify: `repos/rtk_account_manager/internal/api/prometheus_metrics_test.go`
-- Modify: `repos/rtk_account_manager/linode_deploy/docs/RUNBOOK.md`
+- Modify: `repos/rtk_account_manager/linode_deploy/docs/runbook.md`
 
 - [ ] **Step 1: Write failing route test**
 

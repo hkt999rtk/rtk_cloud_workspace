@@ -51,11 +51,11 @@ submodule that participates in product evidence:
 
 | Filename | Expected source |
 | --- | --- |
-| `docs/TEST_REPORT.md` | PR validation and normal CI evidence. |
-| `docs/RELEASE_TEST_REPORT.md` | Package, binary, SDK, image, or deployment artifact release validation. |
-| `docs/READINESS_TEST_REPORT.md` | Deployed service readiness evidence. |
-| `docs/LOAD_TEST_REPORT.md` | Load or performance validation evidence. |
-| `docs/HARDWARE_TEST_REPORT.md` | Hardware, lab, mobile-device, or runner-specific evidence. |
+| `docs/test_report.md` | PR validation and normal CI evidence. |
+| `docs/release_test_report.md` | Package, binary, SDK, image, or deployment artifact release validation. |
+| `docs/readiness_test_report.md` | Deployed service readiness evidence. |
+| `docs/load_test_report.md` | Load or performance validation evidence. |
+| `docs/hardware_test_report.md` | Hardware, lab, mobile-device, or runner-specific evidence. |
 
 The generated evidence bundle writes the inventory to
 `reports/canonical-reports.tsv` with:
@@ -78,9 +78,9 @@ Result semantics:
 Use `RTK_EVIDENCE_REQUIRED_REPORTS` to mark expected reports for a specific
 evidence run. It accepts space-separated selectors:
 
-- `repos/rtk_cloud_client:docs/LOAD_TEST_REPORT.md`
+- `repos/rtk_cloud_client:docs/load_test_report.md`
 - `repos/rtk_video_cloud:*`
-- `*:docs/TEST_REPORT.md`
+- `*:docs/test_report.md`
 - `*:*`
 
 If a missing report matches a required selector, the wrapper records `BLOCKED`

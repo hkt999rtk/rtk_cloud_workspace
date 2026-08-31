@@ -986,14 +986,14 @@ func runDocsCheck(args []string) error {
 		"docs/architecture.md",
 		"docs/contracts-submodule-governance.md",
 		"docs/documentation-governance.md",
-		"docs/deployment-operations.zh-TW.md",
+		"docs/deployment-operations.md",
 		"docs/deployment-secrets-governance.md",
 		"docs/examples/operator.env.example",
 		"docs/linode-ci-runners.md",
 		"docs/examples/secrets-manifest.example.json",
 		"docs/testing.md",
-		"docs/testing-operations.zh-TW.md",
-		"docs/LOAD_TEST_REPORT.md",
+		"docs/testing-operations.md",
+		"docs/load_test_report.md",
 		"e2e_test/README.md",
 		"e2e_test/go.mod",
 		"e2e_test/fixtures/README.md",
@@ -1009,7 +1009,7 @@ func runDocsCheck(args []string) error {
 		"docs/product-level-evidence.md",
 		"docs/cross-service-broker-packaging.md",
 		"repos/rtk_cloud_contracts_doc/README.md",
-		"scripts/README.zh-TW.md",
+		"scripts/README.md",
 		"scripts/go/go.mod",
 		"scripts/go/rtk-cloud/main.go",
 		"scripts/go/rtk-cloud/internal/envroot/envroot.go",
@@ -1049,7 +1049,7 @@ func runDocsCheck(args []string) error {
 	for _, path := range []string{
 		"repos/rtk_cloud_client/docs/README.md",
 		"repos/rtk_video_cloud/docs/architecture.md",
-		"repos/rtk_account_manager/docs/SPEC.md",
+		"repos/rtk_account_manager/docs/spec.md",
 		"repos/rtk_cloud_frontend/README.md",
 		"repos/rtk_cloud_admin/README.md",
 	} {
@@ -1532,7 +1532,7 @@ func writeDeterministicE2EEvidence(workspace, outputDir, runID string, started, 
 		return err
 	}
 	report := fmt.Sprintf("# Deterministic E2E\n\n- Status: **PASS**\n- Test ID: `SVC-WS-E2E-001` (supporting evidence only)\n- Run ID: `%s`\n- Workspace commit: `%s`\n- Results SHA-256: `%x`\n", runID, strings.TrimSpace(commit), sum)
-	return os.WriteFile(filepath.Join(outputDir, "TEST_REPORT.md"), []byte(report), 0o644)
+	return os.WriteFile(filepath.Join(outputDir, "test_report.md"), []byte(report), 0o644)
 }
 
 func runTestUI(args []string) error {
@@ -4906,7 +4906,7 @@ func runStagingE2ETest(args []string) error {
 		}
 	}
 	summaryFile := filepath.Join(*outDir, "summary.json")
-	reportFile := filepath.Join(*outDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(*outDir, "test_report.md")
 	summary := map[string]any{
 		"overall":      overall,
 		"generated_at": time.Now().UTC().Format(time.RFC3339),
@@ -5021,7 +5021,7 @@ func runStagingE2E(args []string) error {
 		outDir: runOutDir, skipMQTTProbe: *skipMQTTProbe, skipRemove: *skipRemove, purgeStorage: *purgeStorage, quiet: *quiet, resume: *resume,
 		steps: *steps,
 	}))
-	if reportErr := writeStagingInstallReport(ctx.provider, filepath.Join(runOutDir, "summary.json"), filepath.Join(runOutDir, "TEST_REPORT.md"), runOutDir); reportErr != nil && err == nil {
+	if reportErr := writeStagingInstallReport(ctx.provider, filepath.Join(runOutDir, "summary.json"), filepath.Join(runOutDir, "test_report.md"), runOutDir); reportErr != nil && err == nil {
 		err = reportErr
 	}
 	if err == nil {
@@ -5349,13 +5349,13 @@ func writeStagingInstallReport(provider, summaryFile, e2eReportFile, reportDir s
 	if value := summary.Artifacts["bind_validation_dir"]; value != "" {
 		fmt.Fprintf(&buf, "- Bind validation: `%s`\n", value)
 	}
-	fmt.Fprintf(&buf, "- MQTT report: `%s`\n", filepath.Join(reportDir, "home-mqtt", "TEST_REPORT.md"))
+	fmt.Fprintf(&buf, "- MQTT report: `%s`\n", filepath.Join(reportDir, "home-mqtt", "test_report.md"))
 	return os.WriteFile(filepath.Join(reportDir, "INSTALL_REPORT.md"), buf.Bytes(), 0o644)
 }
 
 func printStagingFinalReportPaths(reportDir string) {
 	summaryFile := filepath.Join(reportDir, "summary.json")
-	reportFile := filepath.Join(reportDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(reportDir, "test_report.md")
 	installReportFile := filepath.Join(reportDir, "INSTALL_REPORT.md")
 	fmt.Fprintln(os.Stdout)
 	fmt.Fprintln(os.Stdout, "Final report paths:")
@@ -5382,7 +5382,7 @@ func printStagingFinalReportPaths(reportDir string) {
 			}
 		}
 	}
-	fmt.Fprintf(os.Stdout, "mqtt_report_file=%s\n", filepath.Join(reportDir, "home-mqtt", "TEST_REPORT.md"))
+	fmt.Fprintf(os.Stdout, "mqtt_report_file=%s\n", filepath.Join(reportDir, "home-mqtt", "test_report.md"))
 }
 
 type mqttLogVerifyResults struct {
@@ -6074,7 +6074,7 @@ func renderE2EReport(overall, envRoot, stack, brandname, testDataDB, bindValidat
 	fmt.Fprintf(&b, "- Test data DB: `%s`\n", testDataDB)
 	fmt.Fprintf(&b, "- Bind validation: `%s`\n", bindValidationDir)
 	fmt.Fprintf(&b, "- Data setup summary: `%s`\n", dataSetupSummaryFile)
-	fmt.Fprintf(&b, "- Home MQTT report: `%s`\n", filepath.Join(mqttDir, "TEST_REPORT.md"))
+	fmt.Fprintf(&b, "- Home MQTT report: `%s`\n", filepath.Join(mqttDir, "test_report.md"))
 	fmt.Fprintf(&b, "- Home MQTT results: `%s`\n", filepath.Join(mqttDir, "results.json"))
 	fmt.Fprintf(&b, "- MQTT log verification summary: `%s`\n", mqttLogVerifySummaryFile)
 	return b.String()

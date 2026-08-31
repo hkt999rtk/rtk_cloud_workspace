@@ -40,7 +40,7 @@ func TestGenerateReportScriptRendersFirmwareOTAEvidence(t *testing.T) {
 	if output, err := exec.Command("bash", script, "--out-dir", outDir).CombinedOutput(); err != nil {
 		t.Fatalf("generate-report.sh error = %v output=%s", err, output)
 	}
-	report, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	report, err := os.ReadFile(filepath.Join(outDir, "test_report.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 				Status: "completed",
 			}},
 		},
-		ReportFile: filepath.Join(outDir, "TEST_REPORT.md"),
+		ReportFile: filepath.Join(outDir, "test_report.md"),
 	}
 	brandPlan := map[string]any{
 		"run_id": "script-report-test",
@@ -280,9 +280,9 @@ func TestGenerateReportScriptRendersTemplateWithResourceTimelines(t *testing.T) 
 	if err != nil {
 		t.Fatalf("generate-report.sh error = %v output=%s", err, string(output))
 	}
-	reportRaw, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	reportRaw, err := os.ReadFile(filepath.Join(outDir, "test_report.md"))
 	if err != nil {
-		t.Fatalf("ReadFile(TEST_REPORT.md) error = %v", err)
+		t.Fatalf("ReadFile(test_report.md) error = %v", err)
 	}
 	report := string(reportRaw)
 	for _, want := range []string{
@@ -427,9 +427,9 @@ func TestGenerateReportScriptRendersVideoEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate-report.sh error = %v output=%s", err, string(output))
 	}
-	reportRaw, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	reportRaw, err := os.ReadFile(filepath.Join(outDir, "test_report.md"))
 	if err != nil {
-		t.Fatalf("ReadFile(TEST_REPORT.md) error = %v", err)
+		t.Fatalf("ReadFile(test_report.md) error = %v", err)
 	}
 	report := string(reportRaw)
 	for _, want := range []string{

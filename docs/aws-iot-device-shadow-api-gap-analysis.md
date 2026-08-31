@@ -42,7 +42,7 @@ aliases.
 
 The RTK findings are based on these workspace sources:
 
-- [`repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md`](../repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md)
+- [`repos/rtk_cloud_contracts_doc/device_shadow.md`](../repos/rtk_cloud_contracts_doc/device_shadow.md)
 - [`repos/rtk_video_cloud/docs/device-shadow-spec.md`](../repos/rtk_video_cloud/docs/device-shadow-spec.md)
 - [`repos/rtk_video_cloud/internal/deviceshadow/service.go`](../repos/rtk_video_cloud/internal/deviceshadow/service.go)
 - [`repos/rtk_video_cloud/internal/httpapi/device_shadow.go`](../repos/rtk_video_cloud/internal/httpapi/device_shadow.go)

@@ -214,7 +214,7 @@ func TestRunPlatformLiveEvidenceWritesBothCaseManifests(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, dir := range []string{"scrape", "bff-sources"} {
-		for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "feature-evidence.json"} {
+		for _, name := range []string{"results.json", "junit.xml", "test_report.md", "feature-evidence.json"} {
 			if _, err := os.Stat(filepath.Join(outDir, dir, name)); err != nil {
 				t.Fatalf("missing %s/%s: %v", dir, name, err)
 			}

@@ -520,7 +520,7 @@ func Run(opts RunOptions) (RunResult, error) {
 		PlanFile:              filepath.Join(outDir, "plan.json"),
 		ResultsFile:           filepath.Join(outDir, "results.json"),
 		ServerEvidenceFile:    filepath.Join(outDir, "server-evidence.json"),
-		ReportFile:            filepath.Join(outDir, "TEST_REPORT.md"),
+		ReportFile:            filepath.Join(outDir, "test_report.md"),
 	}
 	if err := writeJSONFile(result.PlanFile, plan); err != nil {
 		return RunResult{}, err
@@ -617,7 +617,7 @@ func AggregateCollectedRun(opts AggregateOptions) (RunResult, error) {
 		PlanFile:              filepath.Join(outDir, "plan.json"),
 		ResultsFile:           filepath.Join(outDir, "results.json"),
 		ServerEvidenceFile:    filepath.Join(outDir, "server-evidence.json"),
-		ReportFile:            filepath.Join(outDir, "TEST_REPORT.md"),
+		ReportFile:            filepath.Join(outDir, "test_report.md"),
 	}
 	if err := writeJSONFile(result.PlanFile, plan); err != nil {
 		return RunResult{}, err

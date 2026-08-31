@@ -69,16 +69,16 @@ appendix source index unless the report owner explicitly changes the framework.
 
 | # | Slide | Primary proof object |
 | --- | --- | --- |
-| 1 | Cover / 核心管理訊息 | Master cover background, Realtek logo, core message. |
-| 2 | 本次報告要先建立共同上下文 | Major topic map: why cloud exists, schedule/release path, portal/sales loop, technical/security design, deployment/cost/support. |
+| 1 | Cover / Core Management Message | Master cover background, Realtek logo, core message. |
+| 2 | Establish Shared Context for This Report | Major topic map: why cloud exists, schedule/release path, portal/sales loop, technical/security design, deployment/cost/support. |
 | 3 | Cloud Relationship / Tenant Structure | Realtek Platform Root -> Brand Cloud -> users/devices diagram. |
 | 4 | Why We Need This Cloud | Business-driver chart plus first-phase priority chart; no long goal list. |
 | 5 | Customer / Use Case Fit | Target-customer cards linking customer need, cloud proof, and IoT module sales path. |
-| 6 | Cloud 是 module product path | Executive summary claims plus product-to-KPI flow. |
+| 6 | Cloud Is the Module Product Path | Executive summary claims plus product-to-KPI flow. |
 | 7 | Two Cloud Types in This Report | Difference between Operational IoT/Video Cloud and Portal Web / Marketing Cloud. |
-| 8 | Transition：Operational Cloud 目前進度與 8 月路徑 | Topic break before status, schedule, loading test, video gate, and current-vs-production target. |
-| 9 | 目前狀態總結 | Status summary table plus schedule snapshot. |
-| 10 | Schedule Path：May 1 到 Public | Timeline / milestone lane with `目前位置`, Aug.1 loading pass, August alpha, September beta, and public path. |
+| 8 | Transition: Operational Cloud Progress and August Path | Topic break before status, schedule, loading test, video gate, and current-vs-production target. |
+| 9 | Current Status Summary | Status summary table plus schedule snapshot. |
+| 10 | Schedule Path: May 1 to Public | Timeline / milestone lane with `Current Position`, Aug.1 loading pass, August alpha, September beta, and public path. |
 | 11 | Release Gate Definition | Visual gate definition for Aug.1 loading pass, alpha, beta, and public path. |
 | 12 | Loading Test Readiness | IoT 100K validated / video gate pending readiness matrix. |
 | 13 | 100K Loading Test Result | 8/8, 7/7, and 6/6 result table with connect, ACK, CPU, memory, and baseline recommendation. |
@@ -87,16 +87,16 @@ appendix source index unless the report owner explicitly changes the framework.
 | 16 | Video Schedule Lane | 5,000 video-camera loading-test path to Aug.1. |
 | 17 | Current vs Target Architecture | Current staging vs Production Target, with scaling facility designed in staging and auto scaling reserved for production deployment. |
 | 18 | Transition：Portal Web / Digital Marketing | Chapter title page explaining the switch from operational cloud to marketing/portal cloud. |
-| 19 | Portal Web：市場入口與開發者導流 | Live `webtest.mgmeet.io` screenshot plus why-we-need-it and feature summary. |
+| 19 | Portal Web: Market Entry and Developer Acquisition | Live `webtest.mgmeet.io` screenshot plus why-we-need-it and feature summary. |
 | 20 | Portal Web / Digital Marketing | Observation -> content decision -> sales action -> result/learning loop, with explicit linkage back to IoT module selling. |
-| 21 | Transition：Operational Cloud 技術設計與安全管理 | Topic break before runtime capability, PKI/security, and threat-model evidence. |
+| 21 | Transition: Operational Cloud Technical Design and Security Management | Topic break before runtime capability, PKI/security, and threat-model evidence. |
 | 22 | WebRTC / Video Storage | WebRTC signaling flow plus video-storage readiness matrix. |
 | 23 | MQTT / Device Shadow | MQTT transport vs IoT shadow state-management table. |
-| 24 | STRIDE：Security implementation 的檢查語言 | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
+| 24 | STRIDE: Review Language for Security Implementation | Hub-and-spoke STRIDE graphic mapping six threat categories to cloud implementation controls. |
 | 25 | Security / PKI Management | Device trust-chain and security-management matrix. |
 | 26 | HSM / PKCS#11 Signer Design | Key-custody boundary for certissuer and token signing; service gets signing capability, not raw private key material. |
 | 27 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
-| 28 | Transition：Deployment、操作流程與 Evidence | Topic break before Linode/LKE runtime, cost comparison, operation screenshots, and SDK flow. |
+| 28 | Transition: Deployment, Operational Flow, and Evidence | Topic break before Linode/LKE runtime, cost comparison, operation screenshots, and SDK flow. |
 | 29 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
 | 30 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
 | 31 | AWS User Login / Auth Flow | Cognito, API Gateway, service auth, and app token path. |
@@ -115,14 +115,14 @@ appendix source index unless the report owner explicitly changes the framework.
 | 44 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
 | 45 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
 | 46 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 47 | Appendix：素材與來源索引 | Dense material/source/status table. |
+| 47 | Appendix: Materials and Source Index | Dense material/source/status table. |
 | 48 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 
 - Use one main claim and one dominant proof object per slide.
 - Apply the non-AI sense writing rules in `../guidelines.md`: avoid formulaic
-  contrast sentences such as "這不是 A，而是 B"; write direct management
+  contrast sentences such as "This is not A; it is B"; write direct management
   claims tied to evidence, risk, or next action.
 - Put a major-topic map immediately after the cover when the report is for
   leaders who may not already know why the cloud exists.

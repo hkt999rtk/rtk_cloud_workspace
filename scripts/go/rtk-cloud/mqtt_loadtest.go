@@ -342,7 +342,7 @@ func runRemoteMQTTLoadShards(input remoteMQTTLoadInput) error {
 		if err := runSCP(host+":"+shellQuoteArg(filepath.Join(remoteOut, "results.json")), filepath.Join(localShardDir, "results.json")); err != nil {
 			return fmt.Errorf("copy shard %d results from %s: %w", idx, host, err)
 		}
-		_ = runSCP(host+":"+shellQuoteArg(filepath.Join(remoteOut, "TEST_REPORT.md")), filepath.Join(localShardDir, "TEST_REPORT.md"))
+		_ = runSCP(host+":"+shellQuoteArg(filepath.Join(remoteOut, "test_report.md")), filepath.Join(localShardDir, "test_report.md"))
 	}
 	return runMQTTLoadTestAggregate([]string{"--input-dir", localShards, "--out-dir", filepath.Join(input.LocalOutDir, "aggregate")})
 }
@@ -464,7 +464,7 @@ func runMQTTLoadTestAggregate(args []string) error {
 		return err
 	}
 	resultsFile := filepath.Join(*outDir, "results.json")
-	reportFile := filepath.Join(*outDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(*outDir, "test_report.md")
 	result["results_file"] = resultsFile
 	result["report_file"] = reportFile
 	if err := writeJSON(resultsFile, result); err != nil {

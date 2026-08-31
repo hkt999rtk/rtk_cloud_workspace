@@ -17,7 +17,7 @@ class ReportCandidateTests(unittest.TestCase):
     def test_report_type_maps_to_allowlisted_canonical_path(self) -> None:
         self.assertEqual(
             report_candidate.canonical_path_for("LOAD_TEST_REPORT"),
-            Path("docs/LOAD_TEST_REPORT.md"),
+            Path("docs/load_test_report.md"),
         )
         with self.assertRaisesRegex(report_candidate.ReportCandidateError, "not allowlisted"):
             report_candidate.canonical_path_for("TEST_REPORT")
@@ -25,7 +25,7 @@ class ReportCandidateTests(unittest.TestCase):
     def test_validate_rejects_non_allowlisted_paths_and_secret_like_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            candidate = root / ".artifacts/report-candidates/docs/LOAD_TEST_REPORT.md"
+            candidate = root / ".artifacts/report-candidates/docs/load_test_report.md"
             candidate.parent.mkdir(parents=True)
             candidate.write_text(
                 "# rtk_cloud_workspace E2E Load Test Report\n\n"
@@ -40,7 +40,7 @@ class ReportCandidateTests(unittest.TestCase):
                 report_candidate.validate_candidate(
                     report_type="LOAD_TEST_REPORT",
                     candidate_path=candidate,
-                    canonical_path=root / "docs/LOAD_TEST_REPORT.md",
+                    canonical_path=root / "docs/load_test_report.md",
                 )
 
             with self.assertRaisesRegex(report_candidate.ReportCandidateError, "expected canonical"):
@@ -54,7 +54,7 @@ class ReportCandidateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "local.md"
-            output = root / ".artifacts/report-candidates/docs/LOAD_TEST_REPORT.md"
+            output = root / ".artifacts/report-candidates/docs/load_test_report.md"
             source.write_text("# Raw Report\n\n## Result Summary\n\nPASS\n", encoding="utf-8")
 
             report_candidate.build_candidate(

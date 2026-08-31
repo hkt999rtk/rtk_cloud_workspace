@@ -305,7 +305,7 @@ func writePassingLiveArtifacts(outDir, suite, testID, runID string) error {
 		return err
 	}
 	report := fmt.Sprintf("# %s\n\n- Run ID: `%s`\n- Test ID: `%s`\n- Status: **PASS**\n- Credentials and target addresses: redacted\n", suite, runID, testID)
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), []byte(report), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), []byte(report), 0o644); err != nil {
 		return err
 	}
 	logLine := fmt.Sprintf("run_id=%s test_id=%s status=PASS sensitive_fields=redacted\n", runID, testID)

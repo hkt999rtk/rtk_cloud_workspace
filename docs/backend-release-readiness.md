@@ -21,7 +21,7 @@ or Admin production-proxy work unless a regression is found.
 | Repository | Commit | Backend closeout status | Evidence |
 | --- | --- | --- | --- |
 | `rtk_account_manager` | `796988e` | Foundation complete. | Local `GOWORK=off go test ./...` passed; readiness smoke/runbook docs exist. |
-| `rtk_video_cloud` | `972a0f5` | Foundation complete. | Local `GOWORK=off go test ./...` passed; canonical local `TEST_REPORT.md`, `READINESS_TEST_REPORT.md`, and `RELEASE_TEST_REPORT.md` replace bootstrap placeholders. |
+| `rtk_video_cloud` | `972a0f5` | Foundation complete. | Local `GOWORK=off go test ./...` passed; canonical local `test_report.md`, `readiness_test_report.md`, and `release_test_report.md` replace bootstrap placeholders. |
 | `rtk_cloud_admin` | `7f14fca` | Foundation complete. | Local `GOWORK=off go test ./...` passed; account/video proxy routes, customer-safe DTOs, WebRTC stream stats, firmware, telemetry, and unavailable states exist. |
 | `rtk_cloud_logger` | `46ea9da` | Foundation complete. | Local `GOWORK=off go test ./...` passed. |
 | `rtk_cloud_frontend` | `39d5bb4` | Backend-adjacent server foundation complete. | Local `GOWORK=off go test ./...` passed; public WebRTC-only wording is guarded by route tests. |

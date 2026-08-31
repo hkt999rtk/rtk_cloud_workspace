@@ -380,7 +380,7 @@ jobs:
       - name: Publish summary
         if: always()
         run: |
-          report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/coverage/TEST_REPORT.md"
+          report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/coverage/test_report.md"
           if [ -f "$report" ]; then
             cat "$report" >> "$GITHUB_STEP_SUMMARY"
           fi

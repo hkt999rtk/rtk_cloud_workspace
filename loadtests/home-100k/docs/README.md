@@ -37,6 +37,6 @@ READMEs.
 - `../scenarios/default.description.env`: non-secret live/debug configuration.
 - `../scripts/home-100k.sh`: public workflow script.
 - `../scripts/generate-report.sh`: fixed-format report generator.
-- `../reports/templates/TEST_REPORT.md.tmpl`: Markdown report template.
+- `../reports/templates/test_report.md.tmpl`: Markdown report template.
 - `../reports/schema.md`: report and artifact schema, including two-host
   WebRTC ladder artifacts and TURN evidence gates.

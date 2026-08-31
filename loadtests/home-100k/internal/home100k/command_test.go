@@ -637,7 +637,7 @@ func TestExecuteRunWithoutLiveProvisionerProducesIncompleteReport(t *testing.T) 
 			t.Fatalf("run output missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(stderr.String(), filepath.Join(outDir, "TEST_REPORT.md")) {
+	if !strings.Contains(stderr.String(), filepath.Join(outDir, "test_report.md")) {
 		t.Fatalf("stderr missing artifact path: %s", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(outDir, "results.json")); err != nil {
@@ -3873,7 +3873,7 @@ func TestExecuteShardRunWritesShardArtifacts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(outDir, "results.json")); err != nil {
 		t.Fatalf("missing shard results: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "TEST_REPORT.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "test_report.md")); err != nil {
 		t.Fatalf("missing shard report: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(outDir, "results.json"))
@@ -4469,7 +4469,7 @@ func TestExecuteCollectDefaultsToDryRun(t *testing.T) {
 		t.Fatalf("Execute(collect) code = %d stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"remote_results_glob"`) || !strings.Contains(out, `TEST_REPORT.md`) {
+	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"remote_results_glob"`) || !strings.Contains(out, `test_report.md`) {
 		t.Fatalf("collect output missing artifact layout:\n%s", out)
 	}
 }
@@ -5556,7 +5556,7 @@ func TestExecuteAggregateWritesRunLevelReport(t *testing.T) {
 	if !strings.Contains(stdout.String(), `"status": "INCOMPLETE"`) || !strings.Contains(stdout.String(), `"report_file"`) {
 		t.Fatalf("aggregate stdout missing INCOMPLETE/report path:\n%s", stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(outDir, "TEST_REPORT.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(outDir, "test_report.md")); err != nil {
 		t.Fatalf("missing aggregate report: %v", err)
 	}
 }
@@ -5639,7 +5639,7 @@ func TestExecuteAggregateWritesVideoOnlyRunLevelReport(t *testing.T) {
 	if result.VideoEvidence.WebRTCMedia.Successes != 5 || result.VideoEvidence.TURN.ActiveSessions != 20 {
 		t.Fatalf("video-only aggregate evidence = media %d turn sessions %d, want 5/20", result.VideoEvidence.WebRTCMedia.Successes, result.VideoEvidence.TURN.ActiveSessions)
 	}
-	reportRaw, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	reportRaw, err := os.ReadFile(filepath.Join(outDir, "test_report.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

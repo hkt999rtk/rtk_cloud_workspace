@@ -19,7 +19,7 @@ go run ./scripts/go/rtk-cloud -- mqtt-test \
 
 `go run ./scripts/go/rtk-cloud -- mqtt-test` is the direct entry point. Reports are written under
 `<env-root>/artifacts/home-mqtt-loadtest/<timestamp>/` and include both
-`results.json` and `TEST_REPORT.md`.
+`results.json` and `test_report.md`.
 
 The command resolves `cloud_env/staging` to `cloud_env/staging/runtime`, reads
 the existing user/device artifacts, and runs a "home daily use" workload where

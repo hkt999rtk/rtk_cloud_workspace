@@ -1132,7 +1132,7 @@ func executeShardRun(args []string, stdout io.Writer, stderr io.Writer) int {
 		outDir = filepath.Join("loadtests", "home-100k", "reports", runID, values.role, fmt.Sprintf("%03d", values.shardIndex))
 	}
 	resultFile := filepath.Join(outDir, "results.json")
-	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(outDir, "test_report.md")
 	if err := writeJSONFile(resultFile, map[string]any{
 		"run_id":                runID,
 		"role":                  values.role,
@@ -1259,7 +1259,7 @@ func runLiveShard(plan Plan, assignment VMAssignment, values shardRunFlagValues,
 		runErr = nil
 	}
 	resultFile := filepath.Join(outDir, "results.json")
-	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(outDir, "test_report.md")
 	status := "completed"
 	partial := false
 	errorText := ""
@@ -1892,7 +1892,7 @@ func executeCollect(args []string, stdout io.Writer, stderr io.Writer) int {
 			filepath.Join(outDir, "plan.json"),
 			filepath.Join(outDir, "results.json"),
 			filepath.Join(outDir, "server-evidence.json"),
-			filepath.Join(outDir, "TEST_REPORT.md"),
+			filepath.Join(outDir, "test_report.md"),
 		},
 	})
 }

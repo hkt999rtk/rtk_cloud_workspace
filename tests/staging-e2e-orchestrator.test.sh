@@ -225,8 +225,8 @@ JSON
 	;;
 mqtt-test)
 	mkdir -p "$TMP/mqtt-report"
-	printf '{"overall":"pass","status":"PASS","report_file":"%s","results_file":"%s"}\\n' "$TMP/mqtt-report/TEST_REPORT.md" "$TMP/mqtt-report/results.json"
-	printf '# MQTT Report\\nPASS\\n' > "$TMP/mqtt-report/TEST_REPORT.md"
+	printf '{"overall":"pass","status":"PASS","report_file":"%s","results_file":"%s"}\\n' "$TMP/mqtt-report/test_report.md" "$TMP/mqtt-report/results.json"
+	printf '# MQTT Report\\nPASS\\n' > "$TMP/mqtt-report/test_report.md"
 	printf '{"overall":"pass","devices":[{"device_id":"dev-1","runtime_log_stream_id":"mqtt-e2e-dev-1","runtime_log_expectations":[{"seq":1,"source":"device_client","message":"mqtt_e2e telemetry device_client publish"}]}]}\\n' > "$TMP/mqtt-report/results.json"
 	;;
 mqtt-log-verify)
