@@ -1,6 +1,10 @@
 # Deployment Secrets Governance
 
-Status: workspace source document for deployment secret layout and handling.
+Status: active workspace source document for deployment secret handling.
+
+Owner: rtk_cloud_workspace.
+
+Last reviewed: 2026-08-31.
 
 This document defines how RTK Cloud deployment secrets, keys, certificates,
 runtime environment files, bootstrap tokens, and operator state are organized.
@@ -25,55 +29,27 @@ It is a governance document only; it must not contain secret values.
 
 ## Canonical Local Secret Root
 
-The canonical local secret root is:
+The canonical local secret root is defined by [SecretStore](secret-store.md):
 
 ```text
-.secrets/<environment>/<provider>/<service>/
+~/.config/rtk_cloud/<environment>/
 ```
 
-V1 environments:
+Environment names such as `staging` and `prod` select independent stores; there
+is no implicit alias, shared fallback or staging-to-production reuse.
+`RTK_CLOUD_CONFIG_ROOT` may select a different parent directory. The repository
+`cloud_env/<environment>/runtime/` contains non-secret generated state only.
 
-```text
-local
-staging
-production
-```
-
-V1 providers:
-
-```text
-local
-linode
-lke
-```
-
-V1 services:
-
-```text
-video-cloud
-account-manager
-admin
-frontend
-e2e
-```
-
-Production-like and staging runtime are now LKE/K8s-based, so active runtime
-secrets use `.secrets/<environment>/lke/<service>/` for bootstrap pointers,
-manifests, public certificates, rollback material, and operator-local recovery
-references. Older `.secrets/production/linode/<service>/` material is legacy VM
-reference only and must not be treated as the current deployment path.
-If a future deployment uses AWS or GCP, add a parallel provider directory such
-as `.secrets/production/aws/video-cloud/` without changing the service directory
-shape.
-
-The `shared/` top-level tree is for operator-scope credentials that are not
-owned by one deployable service. It is not a deployment environment.
+The former `.secrets/<environment>/<provider>/<service>/` layout is
+reference-only migration input, not the current deployment or recovery source.
+Only `secrets migrate` may read legacy secret paths; normal deployment and
+backup commands do not fall back to them.
 
 ## OpenBao Source Of Truth
 
 OpenBao is the target secret manager for staging and production. The local
-`.secrets/<environment>/<provider>/<service>/` tree remains the operator
-bootstrap and rollback interface, but long-lived runtime secrets should be
+environment-specific SecretStore remains the operator bootstrap and recovery
+interface, but long-lived service-generated runtime secrets should be
 stored in OpenBao once the selected K8s secret-injection path is approved.
 
 V1 OpenBao responsibilities:
@@ -143,62 +119,30 @@ render step reads OpenBao KV entries and writes root-owned files under
 starts the service. This preserves the current process config boundary while
 moving secret ownership to OpenBao.
 
-## Standard Service Directory
-
-Every service secret directory uses the same layout:
+## Local SecretStore Layout
 
 ```text
-.secrets/<environment>/<provider>/<service>/
-  env/
-  certs/
-  public-certs/
-  private-keys/
-  tokens/
-  state/
-  manifest.json
+~/.config/rtk_cloud/<environment>/
+  operator/
+  runtime/
+  pki/
+  openbao/
+  kube/
+  test/
 ```
 
 | Directory | Purpose |
 | --- | --- |
-| `env/` | Runtime `.env` files and deploy-time environment files. |
-| `certs/` | Certificate chains or client/server certificates. |
-| `public-certs/` | Public CA or public certificate copies safe to distribute to verifiers. |
-| `private-keys/` | Private keys; files should be mode `0600`. |
-| `tokens/` | Bootstrap, admin, API, or short-lived operator tokens. |
-| `state/` | Provider state such as Linode ids, IPs, firewall ids, and DNS state. |
-| `manifest.json` | Non-secret metadata inventory for the directory. |
+| `operator/` | Environment-bound provider/operator credentials; independent recovery access. |
+| `runtime/` | Long-lived runtime secret catalog; explicitly selected encrypted backup material. |
+| `pki/` | Deployment PKI and certificate/key material, not a replacement for OpenBao issuer state. |
+| `openbao/` | TLS material and separately controlled seal/bootstrap access; never archive the whole directory indiscriminately. |
+| `kube/` | Environment kubeconfig; recreate for a replacement cluster. |
+| `test/` | Test-only Device/user credentials and databases; separate controller handoff. |
 
-## Recommended Initial Tree
-
-```text
-.secrets/
-  local/
-    local/
-      dev/
-  staging/
-    linode/
-      video-cloud/
-      account-manager/
-      admin/
-      frontend/
-      e2e/
-  production/
-    linode/
-      video-cloud/
-      account-manager/
-      admin/
-      frontend/
-      e2e/
-  shared/
-    linode/
-    dns/
-    ssh/
-    github/
-```
-
-Shared directories hold operator-level material that is not owned by one
-service, for example SSH keys, DNS API credentials, GitHub deploy credentials,
-or Linode Object Storage credentials.
+Directories are `0700`, files `0600`. Short-lived access/admin tokens are not
+persisted. Use `secrets inventory` for non-secret metadata rather than creating
+a second service-directory catalog.
 
 ## LKE Secret Management Target
 
@@ -207,7 +151,8 @@ images, or CI logs the source of truth for runtime secrets. The target secret
 boundary is:
 
 - OpenBao or an approved customer secret manager stores long-lived runtime
-  secrets, PKI state, policy, and audit logs.
+  secrets, PKI state and policy; audit is emitted to an independently retained
+  sink and must not be rewound with core storage.
 - Workloads authenticate to OpenBao through Kubernetes auth or another reviewed
   workload identity method. AppRole remains a legacy VM bridge unless a specific
   transition runbook approves it.
@@ -221,11 +166,20 @@ boundary is:
   keys, and raw private key PEM values must never be committed, embedded in
   images, placed in public documentation, or stored in readiness artifacts.
 
-TODO: confirm the LKE OpenBao storage backend, HA mode, seal/unseal process,
-recovery key escrow, audit sink, policy naming, Kubernetes auth roles, and
-backup/restore procedure before producing production manifests.
+The current LKE adapter uses standalone OpenBao file storage. The
+[core backup/restore procedure](backup-restore.md) handles it with an offline
+PVC archive matched to PostgreSQL. Production still requires approved HA/seal
+design, independent recovery-key escrow, audit retention, auth rebinding and a
+successful full recovery rehearsal; local backup script tests do not close
+those gates.
 
-## Manifest Rules
+## Legacy Manifest Example (Reference Only)
+
+The older service-level manifest example below remains migration/reference
+material. Current deployments use the SecretStore catalog and `secrets
+inventory`; current core archives use the versioned manifest documented in
+[backup-restore.md](backup-restore.md). All public inventories follow the same
+no-secret-values rule.
 
 Each `manifest.json` records metadata only. It must not contain raw secret
 values, private key PEM blocks, bearer tokens, JWTs, passwords, DSNs with
@@ -253,24 +207,17 @@ See `docs/examples/secrets-manifest.example.json`.
 
 ## Deployment Script Interface
 
-Deployment scripts should accept an explicit secret directory:
+Current workspace commands select the environment explicitly:
 
 ```sh
-DEPLOY_ENV=staging
-DEPLOY_PROVIDER=linode
-DEPLOY_SERVICE=account-manager
-DEPLOY_SECRETS_DIR=.secrets/${DEPLOY_ENV}/${DEPLOY_PROVIDER}/${DEPLOY_SERVICE}
+go run ./scripts/go/rtk-cloud -- secrets verify --environment staging
+go run ./scripts/go/rtk-cloud -- secrets inventory --environment staging
 ```
 
-Follow-up service PRs may keep documented legacy path fallbacks temporarily, but
-new docs and examples should prefer `DEPLOY_SECRETS_DIR`.
-
-When OpenBao is enabled, `DEPLOY_SECRETS_DIR` should contain only bootstrap
-material, non-secret manifests, public certificates, and rollback env files.
-Deployment scripts must not copy raw OpenBao-managed runtime secrets from
-operator machines to hosts except as an explicit rollback path.
-
-OpenBao-aware deployment scripts should accept:
+`DEPLOY_SECRETS_DIR` and AppRole-based VM rendering are legacy service
+interfaces, not workspace SecretStore fallbacks. A reviewed legacy bridge may
+use the following service-specific OpenBao settings; Kubernetes workload auth
+must follow the selected LKE injection contract:
 
 ```sh
 OPENBAO_ADDR=https://openbao.internal:8200
@@ -295,10 +242,11 @@ runtime values.
 redacted reports, generated fixtures, or local debugging material. It is not a
 long-term deployment secret store.
 
-Long-lived deploy secrets belong under `.secrets/`. E2E fixture secrets that are
-intentionally reused across runs should be represented in
-`.secrets/<environment>/<provider>/e2e/` or documented by pointer from that
-manifest.
+Long-lived deploy secrets belong in the environment SecretStore and/or their
+owning cloud secret manager. Reused E2E credentials belong under that
+environment's `test/` tree. Encrypted core backups use a dedicated private
+directory/bucket outside release artifacts; unseal shares and backup decryption
+identities are escrowed independently. See [backup-restore.md](backup-restore.md).
 
 ## Security Rules
 
@@ -320,24 +268,26 @@ manifest.
   produced until the LKE secret-management gate in
   `docs/lke-migration-inventory.md` is complete and human-approved.
 
-## V1 Migration Order
+## Current Deployment and Recovery Order
 
 1. Update documentation first: governance, service config maps, certissuer
    design, OpenBao bootstrap, rollout, rollback, and acceptance criteria.
-2. Create local ignored `.secrets/` directories for Linode staging and
-   production that hold only bootstrap material, manifests, public certificates,
-   and rollback files.
+2. Initialize/verify the environment SecretStore. Use the explicit migration
+   command for legacy inputs; do not create new `.secrets/` deployment trees.
 3. Stand up OpenBao with TLS, audit logging, `kv-v2`, and PKI mounts for
    device/factory, app/user, and gateway/server certificates.
 4. Move operator-local Account Manager, Admin, Video Cloud, and E2E secret
    material into OpenBao without committing values.
-5. Add service-specific PRs so deployment scripts support OpenBao-backed env
-   rendering while preserving `DEPLOY_SECRETS_DIR` rollback.
+5. Keep runtime injection and local recovery material aligned with the
+   SecretStore catalog; preserve reviewed legacy bridges only where necessary.
 6. Switch `cmd/certissuer` staging config to the OpenBao PKI signer provider.
 7. Complete the LKE secret-management gate before writing production
    Kubernetes manifests, Helm values, or CI/CD deployment pipelines.
 8. Run staging validation, including `scripts/run-staging-e2e.sh`.
-9. Rotate any values previously exposed in tracked files or logs.
+9. Rehearse matched core backup/restore with separately retrieved escrow before
+   production approval. Restore original PKI, then reconcile external
+   revocation, billing and notification side effects before resuming traffic.
+10. Rotate any values previously exposed in tracked files or logs.
 
 The OpenBao migration is not accepted until the staging end-to-end command
 passes:

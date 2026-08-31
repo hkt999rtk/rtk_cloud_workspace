@@ -63,6 +63,12 @@ scripts/restore-staging-runtime.sh \
   --target-runtime "$PWD/cloud_env/staging/runtime"
 ```
 
+The restore tool copies only `env/stack.env`, `state/provider-preflight.env`
+and its small documented allowlist of LKE controller metadata; it does not
+recursively copy service env, kubeconfig, keys or test databases. Review any
+additional non-secret controller artifacts separately. For matched cloud data
+recovery after deployment, follow [Core Backup and Restore](backup-restore.md).
+
 The restore tool handles only non-sensitive runtime. Prepare the SecretStore
 separately and pass `secrets verify`. GitHub Actions should write GitHub Secrets
 to a temporary job-specific `RTK_CLOUD_CONFIG_ROOT` and delete it when the job

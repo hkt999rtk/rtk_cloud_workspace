@@ -48,6 +48,8 @@ type commandSpec struct {
 }
 
 var commands = map[string]commandSpec{
+	"backup":                           {run: runBackup},
+	"restore":                          {run: runRestore},
 	"bind-devices":                     {run: runBindDevices},
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
 	"activate-load-owner":              {run: runActivateLoadOwner},
@@ -159,6 +161,9 @@ func run(args []string) error {
 		return nil
 	}
 	args = normalizeLegacyPathArgs(args)
+	if err := recoveryMutationGuard(args); err != nil {
+		return err
+	}
 	var err error
 	args, err = normalizeEnvironmentArgs(args)
 	if err != nil {
@@ -190,7 +195,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "test-feature-coverage" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
 		return args, nil
 	}
 	var environment, workspace string
@@ -987,6 +992,8 @@ func runDocsCheck(args []string) error {
 		"docs/contracts-submodule-governance.md",
 		"docs/documentation-governance.md",
 		"docs/deployment-operations.md",
+		"docs/backup-restore.md",
+		"docs/examples/backup-config.example.json",
 		"docs/deployment-secrets-governance.md",
 		"docs/examples/operator.env.example",
 		"docs/linode-ci-runners.md",

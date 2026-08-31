@@ -152,6 +152,15 @@ evidence bundles from a half-configured environment.
 | `RTK_EVIDENCE_OBJECT_STORAGE_BACKUP_REF` | Link/path to object storage backup evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_FRONTEND_BACKUP_REF` | Link/path to frontend lead DB backup evidence. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_EMQX_BACKUP_REF` | Link/path to EMQX config/state backup evidence. | unset, recorded as `SKIP` |
+
+The authoritative matched-set procedure is [Core Backup and Restore](backup-restore.md).
+Core archive validation, a remote completion marker, and a successful live
+restore drill are distinct evidence. A `scope=core` backup excludes object
+payloads; it must not turn the object-storage backup evidence into `PASS`.
+Keep unsupported/unrehearsed checks as `SKIP`/blocked and attach measured
+RPO/RTO, PKI/issuer validation, database/SQLite/durable Redis checks and external
+payment/revocation reconciliation before production sign-off. References above
+remain references, not automatic recovery verification.
 | `RTK_EVIDENCE_ACCOUNT_MANAGER_COLLECTOR_CMD` | Account manager collector command. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_ADMIN_COLLECTOR_CMD` | Admin dashboard collector command. | unset, recorded as `SKIP` |
 | `RTK_EVIDENCE_FRONTEND_COLLECTOR_CMD` | Frontend collector command. | unset, recorded as `SKIP` |
@@ -219,8 +228,11 @@ Before a private-cloud deployment is considered evidence-ready:
 - Metrics snapshots or links are present for selected runtime services.
 - EMQX status is present when MQTT transport is enabled.
 - Broker smoke reference is present when MQTT transport is enabled.
-- Backup references cover Postgres, object storage, frontend lead storage, and
-  EMQX where those components are deployed.
+- Backup/restore references cover the matched core set (all application
+  PostgreSQL databases including Billing, OpenBao, frontend/Admin SQLite,
+  durable Redis and selected runtime configuration), plus independent object
+  storage and audit/escrow recovery where required. EMQX configuration/state
+  responsibilities are explicit. Core-only evidence cannot pass object recovery.
 - Disabled optional components appear as `SKIP` with an intentional reason.
 - Missing required canonical reports appear as `BLOCKED` with the expected
   repo-owned path and pinned submodule commit.

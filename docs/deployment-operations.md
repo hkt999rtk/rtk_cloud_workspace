@@ -19,12 +19,13 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | --- | --- | --- |
 | Check tracked configuration | `deployment preflight --operation plan` | No |
 | Create a new environment | `deployment plan` -> `deployment provision` | Provision does |
-| Take over an existing environment | Restore the complete runtime -> `deployment preflight --operation acceptance` | Preflight does not |
+| Take over an existing environment | Transfer matching non-secret controller state and SecretStore -> `deployment preflight --operation acceptance` | Preflight does not |
+| Restore core data after deployment | [Matched backup/restore procedure](backup-restore.md) under a maintenance/write fence | Explicit restore replaces selected datasets after a safety backup |
 | Accept an existing environment | `deployment acceptance` | Creates or updates test data; does not rebuild the deployment |
 | One-time environment rehearsal | `deployment test` | Creates resources and removes the owned resources at the end |
 | Remove an environment | `deployment remove` | Deletes resources owned by that stack |
 
-Every active runtime is located at:
+Non-secret generated controller runtime is located at:
 
 ```text
 cloud_env/<environment>/runtime
@@ -32,7 +33,9 @@ cloud_env/<environment>/runtime
 
 Neither `cloud_env/staging/lke` nor `cloud_env/staging/linode` is an active input.
 Do not copy, rename, or symlink a legacy path into the runtime. For an existing
-environment, restore the complete runtime state matching that cluster.
+environment, transfer matching controller state and separately recover its
+SecretStore. Core data restoration uses the explicit recovery procedure, not a
+recursive controller-directory copy.
 
 ## Information Required Before Deployment
 
@@ -163,10 +166,12 @@ See [`staging-from-scratch.md`](staging-from-scratch.md) for the complete stagin
 
 ## Take Over an Existing Environment
 
-A Git clone does not include runtime. To take over the same cluster, restore all
-of `cloud_env/<env>/runtime/` from the current operator or an approved encrypted
-backup. Do not copy only the kubeconfig, and do not reprovision from an empty
-runtime.
+A Git clone does not include runtime or secrets. To take over the same cluster,
+transfer the allowlisted non-secret controller state from
+`cloud_env/<env>/runtime/` and separately recover the matching environment
+SecretStore under `~/.config/rtk_cloud/<env>/`. Do not copy only kubeconfig or
+reprovision from empty controller state. This handoff does not restore cloud
+databases or OpenBao.
 
 ```sh
 scripts/restore-staging-runtime.sh \
@@ -183,6 +188,22 @@ kubeconfig, OpenBao/PostgreSQL state, and Kubernetes API access. Any missing sta
 means the handoff is incomplete. See
 [`staging-runtime-bootstrap.md`](staging-runtime-bootstrap.md) for detailed
 transfer and permission requirements.
+
+## Core Data Backup and Restore After Deployment
+
+Use [Core Backup and Restore](backup-restore.md) for the authoritative matched
+data procedure and `rtk-cloud backup` / `rtk-cloud restore` commands. V1 uses a
+manual maintenance window, not zero downtime, and covers staging, prod and
+other explicitly configured environments. Redis cache is excluded, but durable
+shadow/index/outbox state is included.
+
+For disaster recovery, deploy matching infrastructure/releases under external
+traffic and dispatch isolation, then explicitly apply the core backup. The
+restore command always saves a target safety backup before overwriting data,
+keeps maintenance active, and requires verification plus reconciliation before
+resume. Ordinary provisioning is not a restore-target mode and must not be used
+to regenerate lost PKI as a substitute for restoring the original issuer state.
+Media/firmware payloads and independent audit/escrow are separate dependencies.
 
 ## Rehearsal, Removal, and Evidence
 

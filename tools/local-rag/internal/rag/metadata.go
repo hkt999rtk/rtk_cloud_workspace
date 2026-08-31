@@ -103,7 +103,7 @@ func ClassifyDocument(relativePath string) (string, string) {
 		return "reference-only", "generated"
 	}
 	if strings.HasPrefix(path, "docs/") {
-		if strings.Contains(path, "/adr/") || name == "documentation-governance.md" || name == "architecture.md" || name == "readme.md" {
+		if strings.Contains(path, "/adr/") || name == "documentation-governance.md" || name == "architecture.md" || name == "backup-restore.md" || name == "readme.md" {
 			return "source", "workspace"
 		}
 		return "supporting-note", "workspace"

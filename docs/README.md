@@ -10,6 +10,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | Goal | Document |
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
+| Back up or restore matched core data under maintenance | [Core Backup and Restore](backup-restore.md) |
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
 | Build a fresh staging environment and run canonical 1K validation | [Staging from scratch](staging-from-scratch.md) |
@@ -26,6 +27,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [backup-restore.md](backup-restore.md) | Source | Environment-scoped maintenance backup/restore, matched core data, escrow, safety backups, exclusions and qualification gates. |
 | [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Canonical contract | Platform Root of Trust, Platform Admin bootstrap, CA hierarchy, certificate lifecycle, rollover, revocation, custody, and recovery. |
 | [lke-migration-inventory.md](lke-migration-inventory.md) | Source | Documentation-first LKE migration inventory, current architecture review, target summary, and implementation gates. |
 | [cost/README.md](cost/README.md) | Index | AWS cost estimation materials, including service mapping, sizing worksheet, pricing sources, and support-plan assumptions. |
