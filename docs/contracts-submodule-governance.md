@@ -119,6 +119,16 @@ fragments are explicitly unsupported. Schema identifiers require a separately ve
 they can be accepted. This explicit restriction prevents the preflight checker
 and validator from silently resolving the same reference to different files.
 
+OpenAPI map traversal retains extension context (Paths, Responses and Callback
+objects) and Link literal context. Component names beginning with `x-` remain
+real components. The resolver itself has no HTTP handler and can read only
+documents already loaded by preflight; it cannot bypass this boundary even if
+the pinned validator interprets arbitrary data as a reference. Known upstream
+limitations remain: 0.7.2 can misinterpret `$ref` in Paths/Callback extensions,
+and its 3.1 meta-schema restricts Link parameter literals to strings. Preflight
+tests distinguish these cases from full-validator acceptance; no upstream
+validation errors are suppressed or waived.
+
 The `OpenAPI Contract Validation` workspace workflow runs these commands and
 `test-spec-inventory check --mode required` when the validator, registered
 repository gitlinks, specification registry, catalog, generated traceability,

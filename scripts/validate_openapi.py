@@ -6,7 +6,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import yaml
-from openapi_spec_validator import validate
+from jsonschema_path import SchemaPath
+from openapi_spec_validator.shortcuts import get_validator_cls
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -33,10 +34,10 @@ def local_documents(path, workspace, documents):
             documents[source] = yaml.load(source.read_text(), Loader=UniqueKeyLoader)
         return source, documents[source]
 
-    def walk(value, source, context="openapi"):
+    def walk(value, source, context="openapi", map_values=False, extensions=False):
         if not isinstance(value, (dict, list)):
             return
-        key = (source, id(value), context)
+        key = (source, id(value), context, map_values, extensions)
         if key in visited:
             return
         visited.add(key)
@@ -44,9 +45,10 @@ def local_documents(path, workspace, documents):
             for child in value:
                 walk(child, source, context)
             return
-        if context.endswith("-map"):
-            for child in value.values():
-                walk(child, source, context.removesuffix("-map"))
+        if map_values:
+            for name, child in value.items():
+                if not extensions or not name.startswith("x-"):
+                    walk(child, source, context)
             return
         if context == "schema":
             # The pinned resolver does not honor identifier/dynamic bases. Reject them
@@ -73,19 +75,31 @@ def local_documents(path, workspace, documents):
         for name, child in value.items():
             if context == "schema":
                 if name in ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas"):
-                    walk(child, source, "schema-map")
+                    walk(child, source, "schema", map_values=True)
                 elif name in ("allOf", "anyOf", "oneOf", "prefixItems", "items", "additionalItems",
                               "additionalProperties", "unevaluatedItems", "unevaluatedProperties",
                               "contains", "contentSchema", "if", "then", "else", "not", "propertyNames"):
                     walk(child, source, "schema")
+            elif name.startswith("x-") or name == "$ref":
+                continue
+            elif context == "components":
+                component_context = {"schemas": "schema", "links": "link", "callbacks": "callback", "responses": "response"}.get(name, "openapi")
+                walk(child, source, component_context, map_values=True)
+            elif context == "link" and name in ("parameters", "requestBody"):
+                continue
+            elif context == "callback":
+                walk(child, source, "pathitem")
+            elif name == "components":
+                walk(child, source, "components")
             elif name == "schema":
                 walk(child, source, "schema")
-            elif name == "schemas":
-                walk(child, source, "schema-map")
-            elif name in ("paths", "webhooks", "responses", "parameters", "headers", "requestBodies",
-                          "callbacks", "links", "securitySchemes", "content", "encoding", "examples"):
-                walk(child, source, "openapi-map" if isinstance(child, dict) else "openapi")
-            elif not name.startswith("x-") and name not in ("example", "value", "default", "enum", "const", "$ref"):
+            elif name in ("paths", "responses"):
+                walk(child, source, "pathitem" if name == "paths" else "response", map_values=True, extensions=True)
+            elif name in ("webhooks", "callbacks", "links"):
+                walk(child, source, {"webhooks": "pathitem", "callbacks": "callback", "links": "link"}[name], map_values=True)
+            elif name in ("parameters", "headers", "content", "encoding", "examples"):
+                walk(child, source, map_values=isinstance(child, dict))
+            elif name not in ("example", "value", "default", "enum", "const"):
                 walk(child, source)
 
     path, document = load(path)
@@ -93,11 +107,28 @@ def local_documents(path, workspace, documents):
     return document
 
 
+def validate(document, base_uri, documents):
+    def cached_file(uri):
+        target = urlsplit(uri)
+        if target.scheme != "file" or target.netloc or target.query:
+            raise ValueError("resolver may only read preflighted local files")
+        path = Path(unquote(target.path)).resolve()
+        if path not in documents:
+            raise ValueError("resolver requested a file not checked by preflight")
+        return documents[path]
+
+    # No default HTTP/file reader: even a pinned-library traversal bug cannot
+    # fetch a remote URL or read a file that escaped duplicate/locality checks.
+    schema_path = SchemaPath.from_dict(document, base_uri=base_uri, handlers={"file": cached_file})
+    get_validator_cls(document)(schema_path).validate()
+
+
 def validate_file(path, workspace):
-    document = local_documents(path, workspace, {})
+    documents = {}
+    document = local_documents(path, workspace, documents)
     if not isinstance(document, dict) or document.get("openapi") not in ("3.0.3", "3.1.0"):
         raise ValueError("expected an OpenAPI 3.0.3 or 3.1.0 document")
-    validate(document, base_uri=path.resolve().as_uri())
+    validate(document, base_uri=path.resolve().as_uri(), documents=documents)
 
 
 def main():

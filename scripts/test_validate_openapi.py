@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import yaml
 
-from validate_openapi import validate_file
+from validate_openapi import local_documents, validate, validate_file
 
 
 class OpenAPIValidationTests(unittest.TestCase):
@@ -167,6 +167,57 @@ class OpenAPIValidationTests(unittest.TestCase):
         self.write("container.json", {"schemas": {"a/b~c": {"type": "object", "examples": [{"$id": "data"}]}}})
         spec = self.spec(schema={"$ref": "container.json#/schemas/a~1b~0c"})
         validate_file(self.write("api.json", spec), self.root)
+
+    def test_extensions_in_paths_responses_and_callbacks_are_data(self):
+        data = {"$ref": "missing-data", "$dynamicRef": "https://example.invalid/data"}
+        spec = self.spec()
+        spec["paths"] = {"x-debug": data, "/items": {"get": {
+            "responses": {"200": {"description": "ok"}, "x-debug": data},
+            "callbacks": {"Changed": {"x-debug": data}},
+        }}}
+        path = self.write("api.json", spec)
+        self.assertEqual(local_documents(path, self.root, {}), spec)
+        # The pinned library also misinterprets some extension $refs itself;
+        # this assertion covers preflight, not an upstream-validator waiver.
+
+    def test_link_literal_parameters_and_request_body_are_data(self):
+        data = {"$ref": "missing-data", "$id": "data"}
+        spec = self.spec("3.0.3")
+        spec["paths"] = {"/items": {"get": {"operationId": "getItems", "responses": {"200": {
+            "description": "ok", "links": {"Next": {
+                "operationId": "getItems", "parameters": {"cursor": data}, "requestBody": data,
+            }},
+        }}}}}
+        spec["components"]["links"] = {"x-named-link": {"operationId": "getItems", "requestBody": data}}
+        validate_file(self.write("api.json", spec), self.root)
+
+    def test_extension_like_component_names_are_not_skipped(self):
+        for field in ("responses", "parameters", "headers", "requestBodies", "callbacks", "links", "examples", "securitySchemes"):
+            with self.subTest(field=field):
+                spec = self.spec()
+                spec["components"][field] = {"x-component": {"$ref": "https://example.invalid/component"}}
+                with patch("validate_openapi.validate") as resolver:
+                    with self.assertRaisesRegex(ValueError, "local files or fragments"):
+                        validate_file(self.write("api.json", spec), self.root)
+                    resolver.assert_not_called()
+
+    def test_resolver_cannot_fetch_unchecked_files_or_remote_urls(self):
+        for ref in ("https://example.invalid/unexpected", "file:///tmp/unexpected-schema.yaml", "unchecked.json"):
+            with self.subTest(ref=ref):
+                spec = self.spec(schema={"$ref": ref})
+                path = self.write("api.json", spec)
+                with patch("jsonschema_path.handlers.urllib.urlopen") as fetch:
+                    with self.assertRaises(Exception):
+                        validate(spec, path.as_uri(), {path.resolve(): spec})
+                    fetch.assert_not_called()
+
+    def test_pinned_extension_reference_bug_fails_without_fetching(self):
+        spec = self.spec()
+        spec["paths"] = {"x-payload": {"$ref": "https://example.invalid/data"}}
+        with patch("jsonschema_path.handlers.urllib.urlopen") as fetch:
+            with self.assertRaises(Exception):
+                validate_file(self.write("api.json", spec), self.root)
+            fetch.assert_not_called()
 
     def test_ci_triggers_cover_inventory_implementation_and_module_inputs(self):
         root = Path(__file__).resolve().parent.parent
