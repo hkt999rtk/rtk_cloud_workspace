@@ -109,9 +109,13 @@ operation's intended constraints.
 
 The pinned validator does not implement JSON Schema identifier/dynamic base
 resolution. This gate therefore rejects `$id`, `$dynamicRef` and `$dynamicAnchor`
-in entry and referenced documents before resolution, including nested schemas.
-Use document-relative `$ref`
-paths; schema identifiers require a separately verified resolver upgrade before
+in Schema Objects before resolution, including nested and referenced schemas.
+It distinguishes schema/property maps from arbitrary examples, defaults, enums
+and extension payloads: data keys named `$id` or `$ref` are not schema keywords.
+A `$ref` targeting such a payload still checks the target as a schema/reference
+object, so arbitrary-data exclusions cannot bypass reference preflight.
+Use document-relative `$ref` paths and JSON Pointer fragments; named anchor
+fragments are explicitly unsupported. Schema identifiers require a separately verified resolver upgrade before
 they can be accepted. This explicit restriction prevents the preflight checker
 and validator from silently resolving the same reference to different files.
 

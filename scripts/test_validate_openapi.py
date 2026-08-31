@@ -101,6 +101,73 @@ class OpenAPIValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"schema \$dynamicAnchor bases are unsupported"):
             validate_file(path, self.root)
 
+    def test_schema_like_keys_in_data_and_property_names_are_allowed(self):
+        data = {"$id": "customer-1", "$dynamicRef": "https://example.invalid/data", "$dynamicAnchor": "data", "$ref": "missing-data.json"}
+        schema = {"type": "object", "properties": {name: {"type": "string"} for name in data},
+                  "example": data, "default": data, "enum": [data], "x-payload": data}
+        for version in ("3.0.3", "3.1.0"):
+            with self.subTest(version=version):
+                spec = self.spec(version, schema)
+                spec["components"]["examples"] = {"Payload": {"value": data}}
+                spec["x-payload"] = data
+                validate_file(self.write("api.json", spec), self.root)
+
+    def test_schema_property_names_do_not_hide_real_schema_keywords(self):
+        for name in ("example", "default", "value", "$id", "x-data"):
+            with self.subTest(name=name):
+                schema = {"type": "object", "properties": {name: {"$dynamicRef": "https://example.invalid/schema"}}}
+                with patch("validate_openapi.validate") as resolver:
+                    with self.assertRaisesRegex(ValueError, r"schema \$dynamicRef bases are unsupported"):
+                        validate_file(self.write("api.json", self.spec(schema=schema)), self.root)
+                    resolver.assert_not_called()
+
+    def test_reference_to_data_subtree_is_checked_as_a_schema(self):
+        spec = self.spec(schema={"$ref": "#/x-payload"})
+        spec["x-payload"] = {"$id": "https://example.invalid/root", "$ref": "child.json"}
+        with patch("validate_openapi.validate") as resolver:
+            with self.assertRaisesRegex(ValueError, r"schema \$id bases are unsupported"):
+                validate_file(self.write("api.json", spec), self.root)
+            resolver.assert_not_called()
+
+    def test_external_fragment_is_checked_with_schema_context(self):
+        self.write("container.json", {"payload": {"$dynamicRef": "https://example.invalid/schema"}})
+        spec = self.spec(schema={"$ref": "container.json#/payload"})
+        with patch("validate_openapi.validate") as resolver:
+            with self.assertRaisesRegex(ValueError, r"schema \$dynamicRef bases are unsupported"):
+                validate_file(self.write("api.json", spec), self.root)
+            resolver.assert_not_called()
+
+    def test_schema_examples_and_const_are_arbitrary_data(self):
+        data = {"$id": "record", "$ref": "https://example.invalid/data"}
+        spec = self.spec(schema={"const": data, "examples": [data]})
+        spec["paths"] = {"/items": {"get": {"responses": {"200": {
+            "description": "ok", "content": {"application/json": {
+                "schema": {"type": "object"}, "example": data,
+                "examples": {"Named": {"value": data}},
+            }},
+        }}}}}
+        validate_file(self.write("api.json", spec), self.root)
+
+    def test_named_anchors_are_explicitly_unsupported(self):
+        path = self.write("api.json", self.spec(schema={"$ref": "#node"}))
+        with patch("validate_openapi.validate") as resolver:
+            with self.assertRaisesRegex(ValueError, "named reference anchors are unsupported"):
+                validate_file(path, self.root)
+            resolver.assert_not_called()
+
+    def test_example_reference_is_not_ignored(self):
+        spec = self.spec()
+        spec["components"]["examples"] = {"Payload": {"$ref": "https://example.invalid/example.json"}}
+        with patch("validate_openapi.validate") as resolver:
+            with self.assertRaisesRegex(ValueError, "local files or fragments"):
+                validate_file(self.write("api.json", spec), self.root)
+            resolver.assert_not_called()
+
+    def test_pointer_escaping_and_referenced_schema_examples(self):
+        self.write("container.json", {"schemas": {"a/b~c": {"type": "object", "examples": [{"$id": "data"}]}}})
+        spec = self.spec(schema={"$ref": "container.json#/schemas/a~1b~0c"})
+        validate_file(self.write("api.json", spec), self.root)
+
     def test_ci_triggers_cover_inventory_implementation_and_module_inputs(self):
         root = Path(__file__).resolve().parent.parent
         workflow = yaml.load((root / ".github/workflows/contracts-openapi.yml").read_text(), Loader=yaml.BaseLoader)

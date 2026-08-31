@@ -23,36 +23,73 @@ class UniqueKeyLoader(yaml.SafeLoader):
 
 def local_documents(path, workspace, documents):
     """Check each local reference before the spec validator resolves it."""
-    path = path.resolve()
-    if not path.is_relative_to(workspace.resolve()):
-        raise ValueError("reference escapes the workspace")
-    if path in documents:
-        return documents[path]
-    document = yaml.load(path.read_text(), Loader=UniqueKeyLoader)
-    documents[path] = document
+    visited = set()
 
-    def walk(value):
-        if isinstance(value, dict):
+    def load(source):
+        source = source.resolve()
+        if not source.is_relative_to(workspace.resolve()):
+            raise ValueError("reference escapes the workspace")
+        if source not in documents:
+            documents[source] = yaml.load(source.read_text(), Loader=UniqueKeyLoader)
+        return source, documents[source]
+
+    def walk(value, source, context="openapi"):
+        if not isinstance(value, (dict, list)):
+            return
+        key = (source, id(value), context)
+        if key in visited:
+            return
+        visited.add(key)
+        if isinstance(value, list):
+            for child in value:
+                walk(child, source, context)
+            return
+        if context.endswith("-map"):
+            for child in value.values():
+                walk(child, source, context.removesuffix("-map"))
+            return
+        if context == "schema":
             # The pinned resolver does not honor identifier/dynamic bases. Reject them
             # before validation so the guard and resolver cannot inspect different
             # documents (or resolve a supposedly local reference over the network).
             for keyword in ("$id", "$dynamicRef", "$dynamicAnchor"):
                 if keyword in value:
                     raise ValueError(f"schema {keyword} bases are unsupported; use document-relative $ref paths")
-            ref = value.get("$ref")
-            if isinstance(ref, str):
-                uri = urlsplit(ref)
-                if uri.scheme or uri.netloc or uri.query:
-                    raise ValueError("OpenAPI references must be local files or fragments")
-                if uri.path:
-                    local_documents(path.parent / unquote(uri.path), workspace, documents)
-            for child in value.values():
-                walk(child)
-        elif isinstance(value, list):
-            for child in value:
-                walk(child)
+        ref = value.get("$ref")
+        if isinstance(ref, str):
+            uri = urlsplit(ref)
+            if uri.scheme or uri.netloc or uri.query:
+                raise ValueError("OpenAPI references must be local files or fragments")
+            target_path, target = load(source.parent / unquote(uri.path) if uri.path else source)
+            fragment = unquote(uri.fragment)
+            if fragment and not fragment.startswith("/"):
+                raise ValueError("named reference anchors are unsupported; use JSON Pointer fragments")
+            for token in fragment.split("/")[1:]:
+                token = token.replace("~1", "/").replace("~0", "~")
+                target = target[int(token)] if isinstance(target, list) else target[token]
+            # A reference can make an otherwise arbitrary example/extension value
+            # a schema: check that target in the reference site's context too.
+            walk(target, target_path, context)
+        for name, child in value.items():
+            if context == "schema":
+                if name in ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas"):
+                    walk(child, source, "schema-map")
+                elif name in ("allOf", "anyOf", "oneOf", "prefixItems", "items", "additionalItems",
+                              "additionalProperties", "unevaluatedItems", "unevaluatedProperties",
+                              "contains", "contentSchema", "if", "then", "else", "not", "propertyNames"):
+                    walk(child, source, "schema")
+            elif name == "schema":
+                walk(child, source, "schema")
+            elif name == "schemas":
+                walk(child, source, "schema-map")
+            elif name in ("paths", "webhooks", "responses", "parameters", "headers", "requestBodies",
+                          "callbacks", "links", "securitySchemes", "content", "encoding", "examples"):
+                walk(child, source, "openapi-map" if isinstance(child, dict) else "openapi")
+            elif not name.startswith("x-") and name not in ("example", "value", "default", "enum", "const", "$ref"):
+                walk(child, source)
 
-    walk(document)
+    path, document = load(path)
+    walk(document, path)
     return document
 
 
