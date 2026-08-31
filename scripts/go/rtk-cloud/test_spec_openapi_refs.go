@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 
@@ -10,6 +12,64 @@ import (
 )
 
 type openAPIPathResolver func(sourcePath, ref string) (map[string]yaml.Node, error)
+
+const canonicalOpenAPIPath = "repos/rtk_cloud_contracts_doc/openapi.yaml"
+
+// Only partial runners may substitute the documented consumer checkout when
+// the root contract is absent. Central inventory reads remain strict. All
+// available copies must identify the registered contract and agree byte-for-byte;
+// never silently choose between different contract versions.
+func newRunnerOpenAPIReader(registry, available specSourceRegistry, readFile func(string) ([]byte, error)) func(string) ([]byte, error) {
+	var canonical specSourceRegistryItem
+	for _, source := range registry.Sources {
+		if source.Path == canonicalOpenAPIPath && source.Parser == "openapi" && source.Authority == "canonical" {
+			canonical = source
+		}
+	}
+	var aliases []string
+	for _, source := range available.Sources {
+		parts := strings.Split(source.Path, "/")
+		if source.Parser != "openapi" || source.Path == canonicalOpenAPIPath || len(parts) < 3 || parts[0] != "repos" {
+			continue
+		}
+		if (len(parts) == 3 && parts[2] == "openapi.yaml") || (len(parts) == 4 && parts[2] == "docs" && parts[3] == "openapi.yaml") {
+			aliases = append(aliases, path.Join("repos", parts[1], "docs/rtk_cloud_contracts_doc/openapi.yaml"))
+		}
+	}
+	return func(target string) ([]byte, error) {
+		raw, err := readFile(target)
+		if target != canonicalOpenAPIPath || canonical.ID == "" || !os.IsNotExist(err) {
+			return raw, err
+		}
+		var selected []byte
+		for _, alias := range aliases {
+			candidate, readErr := readFile(alias)
+			if os.IsNotExist(readErr) {
+				continue
+			}
+			if readErr != nil {
+				return nil, fmt.Errorf("read runner contract alias %s: %w", alias, readErr)
+			}
+			var doc struct {
+				Spec struct {
+					ID     string `yaml:"id"`
+					Status string `yaml:"status"`
+				} `yaml:"x-rtk-spec"`
+			}
+			if parseErr := yaml.Unmarshal(candidate, &doc); parseErr != nil || doc.Spec.ID != canonical.ID || doc.Spec.Status != canonical.Authority {
+				return nil, fmt.Errorf("runner contract alias %s does not identify the registered canonical contract", alias)
+			}
+			if selected != nil && !bytes.Equal(selected, candidate) {
+				return nil, fmt.Errorf("runner contract aliases disagree; initialize the canonical contracts checkout")
+			}
+			selected = candidate
+		}
+		if selected == nil {
+			return nil, err
+		}
+		return selected, nil
+	}
+}
 
 // Resolve Path Item references only from registered local OpenAPI documents.
 // No network, arbitrary workspace file, schema reference traversal or file URI.
@@ -35,7 +95,7 @@ func newOpenAPIPathResolver(registry specSourceRegistry, readFile func(string) (
 		// layout. Load the registered canonical document, never an arbitrary alias.
 		parts := strings.Split(target, "/")
 		if len(parts) == 5 && parts[0] == "repos" && strings.HasSuffix(target, "/docs/rtk_cloud_contracts_doc/openapi.yaml") {
-			target = "repos/rtk_cloud_contracts_doc/openapi.yaml"
+			target = canonicalOpenAPIPath
 		}
 		if !registered[target] {
 			return nil, fmt.Errorf("Path Item target is not a registered OpenAPI document")

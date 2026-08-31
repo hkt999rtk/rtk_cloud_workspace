@@ -317,14 +317,22 @@ func loadAvailableSpecInventory(workspace string) (specInventory, error) {
 	if len(available.Sources) == 0 {
 		return specInventory{}, errors.New("runner checkout contains no registered spec source")
 	}
-	return loadSpecInventoryWithReader(available, func(path string) ([]byte, error) {
+	readFile := func(path string) ([]byte, error) {
 		return os.ReadFile(filepath.Join(workspace, filepath.FromSlash(path)))
-	})
+	}
+	// Availability controls which documents contribute inventory, not which
+	// registered documents their references may resolve. Partial runners can
+	// use a validated consumer checkout of the canonical contract for references.
+	resolvePath := newOpenAPIPathResolver(registry, newRunnerOpenAPIReader(registry, available, readFile))
+	return loadSpecInventoryWithResolver(available, readFile, resolvePath)
 }
 
 func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(string) ([]byte, error)) (specInventory, error) {
+	return loadSpecInventoryWithResolver(registry, readFile, newOpenAPIPathResolver(registry, readFile))
+}
+
+func loadSpecInventoryWithResolver(registry specSourceRegistry, readFile func(string) ([]byte, error), resolvePath openAPIPathResolver) (specInventory, error) {
 	inventory := specInventory{SchemaVersion: specInventorySchema, Sources: registry.Sources}
-	resolvePath := newOpenAPIPathResolver(registry, readFile)
 	featureIndex, requirementIndex := map[string]int{}, map[string]string{}
 	type pendingWorkflowSource struct {
 		source specSourceRegistryItem
@@ -1376,7 +1384,7 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 			fmt.Fprintf(&b, "| `%s` | `%s` | %s | `%s` | `%s` | %s | %s → %s | %s | `%s` |\n",
 				workflow.ID, workflow.FeatureID, joinCatalogValues(workflow.RequirementIDs), step.ID, step.OperationRef,
 				joinCatalogValues(dependencies), joinCatalogValues(step.Consumes), joinCatalogValues(step.Produces),
-			escapeMarkdownCell(transition), step.Expected)
+				escapeMarkdownCell(transition), step.Expected)
 		}
 	}
 	fmt.Fprintln(&b)

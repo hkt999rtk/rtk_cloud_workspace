@@ -3,9 +3,147 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestAvailableSpecInventoryResolvesNestedContractWithoutRootCheckout(t *testing.T) {
+	workspace := t.TempDir()
+	writeTestFile(t, filepath.Join(workspace, "tests/spec-sources.yaml"), `schema_version: 1
+sources:
+  - {id: SPEC-CONTRACT-OPENAPI, path: repos/rtk_cloud_contracts_doc/openapi.yaml, parser: openapi, authority: canonical, owner: cloud_platform}
+  - {id: SPEC-VC-OPENAPI, path: repos/rtk_video_cloud/docs/openapi.yaml, parser: openapi, authority: service, owner: rtk_video_cloud}
+`)
+	consumerPath := "repos/rtk_video_cloud/docs/openapi.yaml"
+	writeTestFile(t, filepath.Join(workspace, consumerPath), `x-rtk-spec: {id: SPEC-VC-OPENAPI, status: normative}
+paths:
+  /clouds:
+    $ref: './rtk_cloud_contracts_doc/openapi.yaml#/paths/~1clouds'
+`)
+	aliasPath := filepath.Join(workspace, "repos/rtk_video_cloud/docs/rtk_cloud_contracts_doc/openapi.yaml")
+	contract := `x-rtk-spec: {id: SPEC-CONTRACT-OPENAPI, status: canonical}
+paths:
+  /clouds:
+    get:
+      operationId: listClouds
+      x-rtk-feature-id: FEAT-TEST-CLOUD-001
+      x-rtk-requirement-ids: [REQ-TEST-CLOUD-001]
+      responses: {'200': {description: original}}
+`
+	writeTestFile(t, aliasPath, contract)
+	inventory, err := loadAvailableSpecInventory(workspace)
+	if err != nil || len(inventory.Sources) != 1 || len(inventory.Operations) != 1 {
+		t.Fatalf("partial runner inventory: %+v, %v", inventory, err)
+	}
+	op := inventory.Operations[0]
+	if op.DocumentID != "SPEC-VC-OPENAPI" || op.SourcePath != consumerPath || op.OperationID != "listClouds" || len(op.RequirementIDs) != 1 {
+		t.Fatalf("reference lost consumer identity or requirements: %+v", op)
+	}
+	writeTestFile(t, aliasPath, strings.Replace(contract, "description: original", "description: changed", 1))
+	changed, err := loadAvailableSpecInventory(workspace)
+	if err != nil || changed.Operations[0].Revision == op.Revision {
+		t.Fatalf("partial reference digest did not change: %v", err)
+	}
+	if _, err := loadSpecInventory(workspace); err == nil || !strings.Contains(err.Error(), canonicalOpenAPIPath) {
+		t.Fatalf("central inventory must still require root contracts: %v", err)
+	}
+	// A populated canonical checkout wins; stale nested files cannot override it.
+	writeTestFile(t, filepath.Join(workspace, canonicalOpenAPIPath), contract)
+	complete, err := loadAvailableSpecInventory(workspace)
+	if err != nil || len(complete.Operations) != 2 {
+		t.Fatalf("complete runner inventory: %+v, %v", complete, err)
+	}
+	for _, operation := range complete.Operations {
+		if operation.Revision != op.Revision {
+			t.Fatalf("nested contract overrode canonical contract: %+v", operation)
+		}
+	}
+}
+
+func TestRunnerOpenAPIReaderKeepsAllowlistAndRejectsAmbiguousAliases(t *testing.T) {
+	canonical := specSourceRegistryItem{ID: "SPEC-CONTRACT-OPENAPI", Path: canonicalOpenAPIPath, Parser: "openapi", Authority: "canonical"}
+	available := specSourceRegistry{Sources: []specSourceRegistryItem{
+		{Path: "repos/rtk_video_cloud/docs/openapi.yaml", Parser: "openapi"},
+		{Path: "repos/rtk_account_manager/openapi.yaml", Parser: "openapi"},
+		{Path: "repos/ignored/docs/spec.md", Parser: "markdown"},
+		{Path: "unrelated.yaml", Parser: "openapi"},
+		{Path: "repos/ignored/other.yaml", Parser: "openapi"},
+		canonical,
+	}}
+	registry := specSourceRegistry{Sources: []specSourceRegistryItem{canonical}}
+	vcAlias := "repos/rtk_video_cloud/docs/rtk_cloud_contracts_doc/openapi.yaml"
+	amAlias := "repos/rtk_account_manager/docs/rtk_cloud_contracts_doc/openapi.yaml"
+	valid := "x-rtk-spec: {id: SPEC-CONTRACT-OPENAPI, status: canonical}\npaths: {}\n"
+	for _, tc := range []struct {
+		name, first, second, want string
+		rootErr, aliasErr         error
+		unregistered              bool
+	}{
+		{name: "one available alias", first: valid},
+		{name: "agreeing aliases", first: valid, second: valid},
+		{name: "later available alias", second: valid},
+		{name: "missing aliases", want: "file does not exist"},
+		{name: "conflicting aliases", first: valid, second: valid + "# different revision\n", want: "disagree"},
+		{name: "invalid YAML", first: "[", want: "does not identify"},
+		{name: "wrong ID", first: strings.ReplaceAll(valid, "SPEC-CONTRACT-OPENAPI", "SPEC-OTHER"), want: "does not identify"},
+		{name: "wrong authority", first: strings.ReplaceAll(valid, "canonical", "draft"), want: "does not identify"},
+		{name: "alias unreadable", aliasErr: os.ErrPermission, want: "permission denied"},
+		{name: "root unreadable", rootErr: os.ErrPermission, first: valid, want: "permission denied"},
+		{name: "unregistered canonical", unregistered: true, first: valid, want: "file does not exist"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reads := []string{}
+			reader := func(target string) ([]byte, error) {
+				reads = append(reads, target)
+				switch target {
+				case canonicalOpenAPIPath:
+					if tc.rootErr != nil {
+						return nil, tc.rootErr
+					}
+				case vcAlias:
+					if tc.aliasErr != nil {
+						return nil, tc.aliasErr
+					}
+					if tc.first != "" {
+						return []byte(tc.first), nil
+					}
+				case amAlias:
+					if tc.second != "" {
+						return []byte(tc.second), nil
+					}
+				default:
+					t.Fatalf("unregistered alias read: %s", target)
+				}
+				return nil, os.ErrNotExist
+			}
+			allowed := registry
+			if tc.unregistered {
+				allowed = specSourceRegistry{}
+			}
+			raw, err := newRunnerOpenAPIReader(allowed, available, reader)(canonicalOpenAPIPath)
+			if tc.want != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("want %q, got %v", tc.want, err)
+				}
+			} else if err != nil || string(raw) != valid {
+				t.Fatalf("unexpected contract: %q, %v", raw, err)
+			}
+			if (tc.rootErr != nil || tc.unregistered) && len(reads) != 1 {
+				t.Fatalf("fallback bypassed registration/permission error: %v", reads)
+			}
+		})
+	}
+	reads := 0
+	reader := newRunnerOpenAPIReader(registry, available, func(target string) ([]byte, error) {
+		reads++
+		return nil, os.ErrNotExist
+	})
+	if _, err := reader("another.yaml"); !os.IsNotExist(err) || reads != 1 {
+		t.Fatalf("non-contract reads must not fall back: %d, %v", reads, err)
+	}
+}
 
 func TestOpenAPIRegisteredPathReferencesPreserveConsumerOperations(t *testing.T) {
 	canonical := specSourceRegistryItem{ID: "SPEC-CONTRACT-OPENAPI", Path: "repos/rtk_cloud_contracts_doc/openapi.yaml", Parser: "openapi", Authority: "canonical"}
