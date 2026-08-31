@@ -130,7 +130,7 @@ run-scoped files include:
 
 ```text
 .artifacts/test-runs/billing-staging-<github-run-id>-<run-attempt>/
-  payments/staging-live/TEST_REPORT.md
+  payments/staging-live/test_report.md
   payments/staging-live/qualification-context.json
   payments/staging-live/evidence/
   cloud-admin-billing/

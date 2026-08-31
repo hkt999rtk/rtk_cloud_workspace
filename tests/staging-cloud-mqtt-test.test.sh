@@ -162,8 +162,8 @@ fi
 jq -e '.overall == "blocked" and .status == "BLOCKED"' "$TMP/blocked.out" >/dev/null
 grep -F 'Status: BLOCKED | Overall: blocked' "$TMP/blocked.stderr" >/dev/null
 grep -F 'missing key file' "$TMP/blocked.stderr" >/dev/null
-grep -F 'missing key file' "$TMP/blocked/TEST_REPORT.md" >/dev/null
-if grep -Ei 'secret|password|bearer|BEGIN' "$TMP/blocked/TEST_REPORT.md" "$TMP/blocked/results.json" >/dev/null; then
+grep -F 'missing key file' "$TMP/blocked/test_report.md" >/dev/null
+if grep -Ei 'secret|password|bearer|BEGIN' "$TMP/blocked/test_report.md" "$TMP/blocked/results.json" >/dev/null; then
 	echo "blocked report output must be redacted" >&2
 	exit 1
 fi

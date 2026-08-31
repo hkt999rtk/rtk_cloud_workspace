@@ -39,8 +39,8 @@
 
     - name: Fetch shard report
       ansible.builtin.fetch:
-        src: "{{ remote_out_dir }}/TEST_REPORT.md"
-        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/TEST_REPORT.md"
+        src: "{{ remote_out_dir }}/test_report.md"
+        dest: "{{ local_out_dir }}/shards/{{ vm_label }}/test_report.md"
         flat: true
         fail_on_missing: false
 

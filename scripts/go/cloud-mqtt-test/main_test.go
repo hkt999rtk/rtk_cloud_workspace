@@ -1888,7 +1888,7 @@ func TestRenderConsoleShowsRuntimeMQTTTraceData(t *testing.T) {
 		"profile":          "smoke",
 		"duration_seconds": 120,
 		"results_file":     "/tmp/results.json",
-		"report_file":      "/tmp/TEST_REPORT.md",
+		"report_file":      "/tmp/test_report.md",
 		"devices": []deviceResult{{
 			DeviceID:   "rtk-0041",
 			DeviceType: "light",

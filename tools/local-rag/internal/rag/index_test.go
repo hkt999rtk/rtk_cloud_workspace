@@ -128,7 +128,7 @@ func TestContractsSourceRanksAboveCopiedContractDocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(results) == 0 || results[0].FilePath != "repos/rtk_cloud_contracts_doc/AUTH.md" {
+	if len(results) == 0 || results[0].FilePath != "repos/rtk_cloud_contracts_doc/auth.md" {
 		t.Fatalf("unexpected top result: %+v", results)
 	}
 }
@@ -203,7 +203,7 @@ func TestQueryReturnsAnswerCitationsAndConflictNotes(t *testing.T) {
 	if !strings.Contains(response.Answer, "直接答案") || len(response.Citations) == 0 || len(response.MatchedChunks) == 0 || len(response.ConfidenceNotes) == 0 || len(response.Conflicts) == 0 {
 		t.Fatalf("bad query response: %+v", response)
 	}
-	if response.Citations[0].Path != "repos/rtk_cloud_contracts_doc/AUTH.md" {
+	if response.Citations[0].Path != "repos/rtk_cloud_contracts_doc/auth.md" {
 		t.Fatalf("top citation = %+v", response.Citations[0])
 	}
 }

@@ -331,7 +331,7 @@ jobs:
             .artifacts/e2e_test/cloud_validation/**/ios/*.ips
             .artifacts/e2e_test/cloud_validation/**/virtual-device.log
             .artifacts/e2e_test/cloud_validation/**/virtual-device/results.json
-            .artifacts/e2e_test/cloud_validation/**/virtual-device/TEST_REPORT.md
+            .artifacts/e2e_test/cloud_validation/**/virtual-device/test_report.md
             .artifacts/e2e_test/cloud_validation/**/platform_test.log
             .artifacts/e2e_test/cloud_validation/**/redaction-failures.txt
             .artifacts/e2e_test/cloud_validation/**/feature-evidence.json
@@ -447,7 +447,7 @@ jobs:
             .artifacts/e2e_test/cloud_validation/**/android/*.txt
             .artifacts/e2e_test/cloud_validation/**/virtual-device.log
             .artifacts/e2e_test/cloud_validation/**/virtual-device/results.json
-            .artifacts/e2e_test/cloud_validation/**/virtual-device/TEST_REPORT.md
+            .artifacts/e2e_test/cloud_validation/**/virtual-device/test_report.md
             .artifacts/e2e_test/cloud_validation/**/platform_test.log
             .artifacts/e2e_test/cloud_validation/**/redaction-failures.txt
             .artifacts/e2e_test/cloud_validation/**/feature-evidence.json

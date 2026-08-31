@@ -169,7 +169,7 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	if readiness["prepared_by_lifecycle"] != true || readiness["status"] != "PASS" {
 		t.Fatalf("transport readiness evidence = %#v", readiness)
 	}
-	for _, name := range []string{"results.json", "junit.xml", "TEST_REPORT.md", "provisioning-account-workflow.json", "provisioning-claim-workflow.json", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
+	for _, name := range []string{"results.json", "junit.xml", "test_report.md", "provisioning-account-workflow.json", "provisioning-claim-workflow.json", "provisioning-deactivation-workflow.json", "provisioning-unprovision-workflow.json", "provisioning-signoff-workflow.json"} {
 		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
 			t.Fatalf("missing %s: %v", name, err)
 		}
@@ -592,7 +592,7 @@ func TestProvisioningLiveCasesProduceRequirementAndWorkflowEvidence(t *testing.T
 	if err := writeJSON(filepath.Join(outDir, "results.json"), map[string]any{"status": "PASS"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), []byte("# Provisioning PASS\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), []byte("# Provisioning PASS\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(outDir, "junit.xml"), []byte(`<testsuite tests="1"><testcase name="provisioning"/></testsuite>`+"\n"), 0o644); err != nil {

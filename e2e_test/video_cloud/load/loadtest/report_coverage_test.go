@@ -25,10 +25,10 @@ func TestReportPersistenceAndPublicThresholdWrappers(t *testing.T) {
 	if err != nil || loaded.RunID != result.RunID {
 		t.Fatalf("ReadJSON() = %#v, %v", loaded, err)
 	}
-	if err := WriteMarkdown(filepath.Join(dir, "TEST_REPORT.md"), loaded); err != nil {
+	if err := WriteMarkdown(filepath.Join(dir, "test_report.md"), loaded); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "TEST_REPORT.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "test_report.md")); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,16 +1,16 @@
-# Architecture defaults 與 deployment adapters
+# Architecture Defaults and Deployment Adapters
 
-本目錄保存所有 environment 共用的 deployment contract，不保存任何 environment identity、runtime state 或 secret。
+This directory stores deployment contracts shared by all environments. It must not contain environment identity, runtime state, or secrets.
 
-- `architectures/kubernetes/`：workloads、capacity、logical node classes、每類 node 的最低 vCPU/memory、placement、edge 與 TURN intent。
-- `adapters/lke/`：logical location 到 LKE region 的 mapping、Linode instance catalog 與 provider implementation defaults；不保存 account quota。
-- `adapters/eks/`、`adapters/gke/`：adapter contract；目前不支援 mutation。
-- `dns_adapters/godaddy/`、`dns_adapters/route53/`：可獨立於 deployment adapter 選擇的 DNS provider defaults 與 schema。
+- `architectures/kubernetes/`: workloads, capacity, logical node classes, minimum vCPU and memory for each node class, placement, edge, and TURN intent.
+- `adapters/lke/`: logical-location-to-LKE-region mappings, the Linode instance catalog, and provider implementation defaults. It must not contain account quotas.
+- `adapters/eks/` and `adapters/gke/`: adapter contracts; mutation is not currently supported.
+- `dns_adapters/godaddy/` and `dns_adapters/route53/`: DNS provider defaults and schemas that can be selected independently of the deployment adapter.
 
-新增 environment 時不要複製或修改這些 defaults；請依 [`cloud_env/README.md`](../cloud_env/README.md) 建立 environment，並只在該 environment 的 `overrides/` 寫差異。
+When adding an environment, do not copy or modify these defaults. Create the environment according to [`cloud_env/README.md`](../cloud_env/README.md), and put only environment-specific differences in its `overrides/` directory.
 
-只有當所有 environment 的共用架構或 provider mapping 都要改變時，才修改本目錄。Architecture 不得出現 provider-specific key；adapter 不得覆寫 architecture key。Persistent storage capacity 是 workload/storage intent，不是 node Product sizing。
+Modify this directory only when the shared architecture or provider mappings must change for every environment. Architecture files must not contain provider-specific keys, and adapters must not override architecture keys. Persistent storage capacity is workload and storage intent, not node-product sizing.
 
-Shared capacity planner 先依 workload registry 計算 effective Pod replicas，再依每個 logical node class 的 planning shape、system reserve、aggregate requests 與 spread floor 計算 effective node count。Adapter 只能選擇符合 planning shape 的 provider Product，不得重新計算 replicas 或 node count。
+The shared capacity planner first calculates effective Pod replicas from the workload registry. It then calculates the effective node count from each logical node class's planning shape, system reserve, aggregate requests, and spread floor. An adapter may only select provider products that satisfy the planning shape; it must not recalculate replicas or node counts.
 
-DNS adapter 與 deployment adapter 正交。Shared DNS orchestration 只處理 hostname、record intent、convergence 與 ACME DNS-01 lifecycle；GoDaddy/Route53 credentials、zone discovery、API mutation 與 provider IDs 只能存在 DNS adapter 或 ignored runtime。完整 contract 見 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
+The DNS adapter is independent of the deployment adapter. Shared DNS orchestration handles only hostnames, record intent, convergence, and the ACME DNS-01 lifecycle. GoDaddy or Route53 credentials, zone discovery, API mutation, and provider IDs may exist only in the DNS adapter or ignored runtime. See [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md) for the complete contract.

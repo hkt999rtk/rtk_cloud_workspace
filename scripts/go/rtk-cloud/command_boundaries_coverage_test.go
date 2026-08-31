@@ -86,7 +86,7 @@ func TestReportAndProvisioningBoundaryHelpers(t *testing.T) {
   "env_root":"/tmp/runtime",
   "stack":"qualification",
   "brandname":"RTK",
-  "artifacts":{"report_file":"TEST_REPORT.md","data_setup_summary_file":"data.json","bind_validation_dir":"bind"},
+  "artifacts":{"report_file":"test_report.md","data_setup_summary_file":"data.json","bind_validation_dir":"bind"},
   "steps":[{"name":"catalog","status":"PASS","duration_seconds":2,"log_file":"catalog.log"}]
 }`), 0o600); err != nil {
 		t.Fatal(err)

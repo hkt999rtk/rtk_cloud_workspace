@@ -448,7 +448,7 @@ func NewPlan(opts PlanOptions) (Plan, error) {
 		Artifacts: Artifacts{
 			RunPlan:         "loadtests/home-100k/plans/<run_id>/plan.json",
 			ShardResults:    "loadtests/home-100k/reports/<run_id>/shards/",
-			AggregateReport: "loadtests/home-100k/reports/<run_id>/TEST_REPORT.md",
+			AggregateReport: "loadtests/home-100k/reports/<run_id>/test_report.md",
 			ServerEvidence:  "loadtests/home-100k/reports/<run_id>/server-evidence.json",
 		},
 		CleanupPlan: []string{

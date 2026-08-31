@@ -64,10 +64,10 @@ Open questions:
 | Required secret categories include DSNs, JWT/auth signing secrets, MQTT credentials, cloud credentials, object storage keys, deploy keys, and private clip/certificate assets. | `docs/private-cloud-deployment.md`, `docs/deployment-secrets-governance.md` |
 | Account Manager is authoritative for identity, tenant context, authorization, entitlement, device registry, and provisioning intent. | `docs/account-manager-admin-boundary.md` |
 | Admin dashboard/BFF state is non-authoritative when upstream services are configured. | `docs/account-manager-admin-boundary.md` |
-| Device mTLS can derive canonical device identity and reject body `devid` conflicts; token issuance must remain subject-bound. | `repos/rtk_cloud_contracts_doc/AUTH.md` |
-| Factory certificate issuance is separate from normal token refresh and CSR alone is not authentication. | `repos/rtk_cloud_contracts_doc/PROVISION.md` |
-| WebRTC stream routes use bearer auth and have app/admin/device route-specific scope rules. | `repos/rtk_cloud_contracts_doc/STREAMING.md` |
-| TURN registry v1 uses shared-key HMAC headers and the signing key must not be exposed to apps, devices, SDK validation artifacts, or logs. | `repos/rtk_cloud_contracts_doc/STREAMING.md` |
+| Device mTLS can derive canonical device identity and reject body `devid` conflicts; token issuance must remain subject-bound. | `repos/rtk_cloud_contracts_doc/auth.md` |
+| Factory certificate issuance is separate from normal token refresh and CSR alone is not authentication. | `repos/rtk_cloud_contracts_doc/provision.md` |
+| WebRTC stream routes use bearer auth and have app/admin/device route-specific scope rules. | `repos/rtk_cloud_contracts_doc/streaming.md` |
+| TURN registry v1 uses shared-key HMAC headers and the signing key must not be exposed to apps, devices, SDK validation artifacts, or logs. | `repos/rtk_cloud_contracts_doc/streaming.md` |
 
 ## System Model
 

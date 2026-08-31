@@ -3,47 +3,47 @@ schema_version: 1
 # This registry only declares legal source documents and their authority.
 # Product features and requirements are parsed from the documents themselves.
 sources:
-  - { id: SPEC-CONTRACT-AUTH, path: repos/rtk_cloud_contracts_doc/AUTH.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
-  - { id: SPEC-CONTRACT-AUTHZ, path: repos/rtk_cloud_contracts_doc/AUTHORIZATION.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
-  - { id: SPEC-CONTRACT-BRAND-CLOUD, path: repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
-  - { id: SPEC-CONTRACT-MULTICLOUD, path: repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md, parser: markdown, authority: canonical, owner: cloud_platform }
-  - { id: SPEC-CONTRACT-PROVISION, path: repos/rtk_cloud_contracts_doc/PROVISION.md, parser: markdown, authority: canonical, owner: provisioning }
-  - { id: SPEC-CONTRACT-PROVISION-OPERATIONS, path: repos/rtk_cloud_contracts_doc/PROVISION_OPERATIONS.yaml, parser: operations, authority: canonical, owner: provisioning }
-  - { id: SPEC-CONTRACT-ONBOARDING, path: repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md, parser: markdown, authority: draft, owner: provisioning }
-  - { id: SPEC-CONTRACT-READINESS, path: repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md, parser: markdown, authority: draft, owner: cloud_platform }
-  - { id: SPEC-CONTRACT-SHADOW, path: repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
-  - { id: SPEC-CONTRACT-TRANSPORT, path: repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md, parser: markdown, authority: canonical, owner: rtk_cloud_client }
-  - { id: SPEC-CONTRACT-STREAMING, path: repos/rtk_cloud_contracts_doc/STREAMING.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
-  - { id: SPEC-CONTRACT-MEDIA, path: repos/rtk_cloud_contracts_doc/SNAPSHOT_AND_MEDIA.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
-  - { id: SPEC-CONTRACT-FIRMWARE, path: repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md, parser: markdown, authority: proposed, owner: rtk_cloud_admin }
-  - { id: SPEC-CONTRACT-LOGGING, path: repos/rtk_cloud_contracts_doc/SERVICE_LOGGING.md, parser: markdown, authority: canonical, owner: rtk_cloud_logger }
-  - { id: SPEC-CONTRACT-LOGGING-OPERATIONS, path: repos/rtk_cloud_contracts_doc/SERVICE_LOGGING_OPERATIONS.yaml, parser: operations, authority: canonical, owner: rtk_cloud_logger }
-  - { id: SPEC-CONTRACT-BILLING-SERVICE, path: repos/rtk_cloud_contracts_doc/BILLING_SERVICE.md, parser: markdown, authority: canonical, owner: rtk_billing }
-  - { id: SPEC-CONTRACT-PAYMENTS, path: repos/rtk_cloud_contracts_doc/PAYMENTS_AND_BALANCE.md, parser: markdown, authority: canonical, owner: rtk_billing }
-  - { id: SPEC-CONTRACT-PRICING-INVOICE, path: repos/rtk_cloud_contracts_doc/PRICING_AND_INVOICING.md, parser: markdown, authority: canonical, owner: rtk_billing }
-  - { id: SPEC-CONTRACT-BILLING-ACTIVITY, path: repos/rtk_cloud_contracts_doc/BILLING_ACTIVITY.md, parser: markdown, authority: canonical, owner: rtk_billing }
-  - { id: SPEC-CONTRACT-FRONTEND, path: repos/rtk_cloud_contracts_doc/FRONTEND_STYLE.md, parser: markdown, authority: canonical, owner: rtk_cloud_admin }
+  - { id: SPEC-CONTRACT-AUTH, path: repos/rtk_cloud_contracts_doc/auth.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
+  - { id: SPEC-CONTRACT-AUTHZ, path: repos/rtk_cloud_contracts_doc/authorization.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
+  - { id: SPEC-CONTRACT-BRAND-CLOUD, path: repos/rtk_cloud_contracts_doc/brand_cloud_admin.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
+  - { id: SPEC-CONTRACT-MULTICLOUD, path: repos/rtk_cloud_contracts_doc/multicloud_ownership.md, parser: markdown, authority: canonical, owner: cloud_platform }
+  - { id: SPEC-CONTRACT-PROVISION, path: repos/rtk_cloud_contracts_doc/provision.md, parser: markdown, authority: canonical, owner: provisioning }
+  - { id: SPEC-CONTRACT-PROVISION-OPERATIONS, path: repos/rtk_cloud_contracts_doc/provision_operations.yaml, parser: operations, authority: canonical, owner: provisioning }
+  - { id: SPEC-CONTRACT-ONBOARDING, path: repos/rtk_cloud_contracts_doc/product_onboarding.md, parser: markdown, authority: draft, owner: provisioning }
+  - { id: SPEC-CONTRACT-READINESS, path: repos/rtk_cloud_contracts_doc/product_readiness.md, parser: markdown, authority: draft, owner: cloud_platform }
+  - { id: SPEC-CONTRACT-SHADOW, path: repos/rtk_cloud_contracts_doc/device_shadow.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
+  - { id: SPEC-CONTRACT-TRANSPORT, path: repos/rtk_cloud_contracts_doc/device_transport.md, parser: markdown, authority: canonical, owner: rtk_cloud_client }
+  - { id: SPEC-CONTRACT-STREAMING, path: repos/rtk_cloud_contracts_doc/streaming.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
+  - { id: SPEC-CONTRACT-MEDIA, path: repos/rtk_cloud_contracts_doc/snapshot_and_media.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
+  - { id: SPEC-CONTRACT-FIRMWARE, path: repos/rtk_cloud_contracts_doc/firmware_campaign.md, parser: markdown, authority: proposed, owner: rtk_cloud_admin }
+  - { id: SPEC-CONTRACT-LOGGING, path: repos/rtk_cloud_contracts_doc/service_logging.md, parser: markdown, authority: canonical, owner: rtk_cloud_logger }
+  - { id: SPEC-CONTRACT-LOGGING-OPERATIONS, path: repos/rtk_cloud_contracts_doc/service_logging_operations.yaml, parser: operations, authority: canonical, owner: rtk_cloud_logger }
+  - { id: SPEC-CONTRACT-BILLING-SERVICE, path: repos/rtk_cloud_contracts_doc/billing_service.md, parser: markdown, authority: canonical, owner: rtk_billing }
+  - { id: SPEC-CONTRACT-PAYMENTS, path: repos/rtk_cloud_contracts_doc/payments_and_balance.md, parser: markdown, authority: canonical, owner: rtk_billing }
+  - { id: SPEC-CONTRACT-PRICING-INVOICE, path: repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md, parser: markdown, authority: canonical, owner: rtk_billing }
+  - { id: SPEC-CONTRACT-BILLING-ACTIVITY, path: repos/rtk_cloud_contracts_doc/billing_activity.md, parser: markdown, authority: canonical, owner: rtk_billing }
+  - { id: SPEC-CONTRACT-FRONTEND, path: repos/rtk_cloud_contracts_doc/frontend_style.md, parser: markdown, authority: canonical, owner: rtk_cloud_admin }
   - { id: SPEC-CONTRACT-OPENAPI, path: repos/rtk_cloud_contracts_doc/openapi.yaml, parser: openapi, authority: canonical, owner: cloud_platform }
-  - { id: SPEC-CONTRACT-WORKFLOWS, path: repos/rtk_cloud_contracts_doc/FEATURE_WORKFLOWS.yaml, parser: workflow, authority: canonical, owner: cloud_platform }
+  - { id: SPEC-CONTRACT-WORKFLOWS, path: repos/rtk_cloud_contracts_doc/feature_workflows.yaml, parser: workflow, authority: canonical, owner: cloud_platform }
 
-  - { id: SPEC-AM, path: repos/rtk_account_manager/docs/SPEC.md, parser: markdown, authority: service, owner: rtk_account_manager }
+  - { id: SPEC-AM, path: repos/rtk_account_manager/docs/spec.md, parser: markdown, authority: service, owner: rtk_account_manager }
   - { id: SPEC-AM-OPENAPI, path: repos/rtk_account_manager/openapi.yaml, parser: openapi, authority: service, owner: rtk_account_manager }
 
   - { id: SPEC-BILLING-OPENAPI, path: repos/rtk_billing/openapi.yaml, parser: openapi, authority: service, owner: rtk_billing }
 
-  - { id: SPEC-CA, path: repos/rtk_cloud_admin/docs/SPEC.md, parser: markdown, authority: service, owner: rtk_cloud_admin }
-  - { id: SPEC-CA-OPERATIONS, path: repos/rtk_cloud_admin/docs/SPEC_OPERATIONS.yaml, parser: operations, authority: service, owner: rtk_cloud_admin }
+  - { id: SPEC-CA, path: repos/rtk_cloud_admin/docs/spec.md, parser: markdown, authority: service, owner: rtk_cloud_admin }
+  - { id: SPEC-CA-OPERATIONS, path: repos/rtk_cloud_admin/docs/spec_operations.yaml, parser: operations, authority: service, owner: rtk_cloud_admin }
   - { id: SPEC-CA-OPENAPI, path: repos/rtk_cloud_admin/docs/openapi.yaml, parser: openapi, authority: service, owner: rtk_cloud_admin }
   - { id: SPEC-CA-BRAND-DESIGN, path: repos/rtk_cloud_admin/docs/platform-brand-cloud-management-design.md, parser: markdown, authority: approved, owner: rtk_cloud_admin }
-  - { id: SPEC-CA-BRAND-OPERATIONS, path: repos/rtk_cloud_admin/docs/BRAND_MANAGEMENT_OPERATIONS.yaml, parser: operations, authority: approved, owner: rtk_cloud_admin }
+  - { id: SPEC-CA-BRAND-OPERATIONS, path: repos/rtk_cloud_admin/docs/brand_management_operations.yaml, parser: operations, authority: approved, owner: rtk_cloud_admin }
   - { id: SPEC-CA-DASHBOARD-DESIGN, path: repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md, parser: markdown, authority: approved, owner: rtk_cloud_admin }
-  - { id: SPEC-CA-ROLES, path: repos/rtk_cloud_admin/docs/ROLES.md, parser: markdown, authority: draft, owner: rtk_cloud_admin }
+  - { id: SPEC-CA-ROLES, path: repos/rtk_cloud_admin/docs/roles.md, parser: markdown, authority: draft, owner: rtk_cloud_admin }
 
-  - { id: SPEC-SDK, path: repos/rtk_cloud_client/docs/SPEC.md, parser: markdown, authority: service, owner: rtk_cloud_client }
-  - { id: SPEC-SDK-TRANSPORT, path: repos/rtk_cloud_client/docs/TRANSPORTS.md, parser: markdown, authority: service, owner: rtk_cloud_client }
-  - { id: SPEC-SDK-RUNTIME, path: repos/rtk_cloud_client/docs/PRODUCTION_RUNTIME_CONTRACT.md, parser: markdown, authority: service, owner: rtk_cloud_client }
-  - { id: SPEC-SDK-OPERATIONS, path: repos/rtk_cloud_client/docs/SDK_OPERATIONS.yaml, parser: operations, authority: service, owner: rtk_cloud_client }
-  - { id: SPEC-SDK-PKI, path: repos/rtk_cloud_client/docs/PKI_DEVICE_AUTH.md, parser: markdown, authority: draft, owner: rtk_cloud_client }
+  - { id: SPEC-SDK, path: repos/rtk_cloud_client/docs/spec.md, parser: markdown, authority: service, owner: rtk_cloud_client }
+  - { id: SPEC-SDK-TRANSPORT, path: repos/rtk_cloud_client/docs/transports.md, parser: markdown, authority: service, owner: rtk_cloud_client }
+  - { id: SPEC-SDK-RUNTIME, path: repos/rtk_cloud_client/docs/production_runtime_contract.md, parser: markdown, authority: service, owner: rtk_cloud_client }
+  - { id: SPEC-SDK-OPERATIONS, path: repos/rtk_cloud_client/docs/sdk_operations.yaml, parser: operations, authority: service, owner: rtk_cloud_client }
+  - { id: SPEC-SDK-PKI, path: repos/rtk_cloud_client/docs/pki_device_auth.md, parser: markdown, authority: draft, owner: rtk_cloud_client }
 
   - { id: SPEC-VC-SHADOW, path: repos/rtk_video_cloud/docs/device-shadow-spec.md, parser: markdown, authority: service, owner: rtk_video_cloud }
   - { id: SPEC-VC-WEBRTC, path: repos/rtk_video_cloud/docs/webrtc-stream-contract.md, parser: markdown, authority: service, owner: rtk_video_cloud }

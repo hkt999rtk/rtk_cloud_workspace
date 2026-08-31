@@ -557,7 +557,7 @@ def loadtest_run_summary(spec: dict[str, object]) -> dict[str, object]:
     return {
         **spec,
         "runDir": str(run_dir),
-        "reportFile": str(run_dir / "TEST_REPORT.md"),
+        "reportFile": str(run_dir / "test_report.md"),
         "status": results.get("status", "n/a"),
         "result": results.get("result", "n/a"),
         "devices": devices,
@@ -858,7 +858,7 @@ def build_aws_review_adjusted_estimate(base_without_hsm: str, robust_without_hsm
     return {
         "status": "available",
         "source": str(AWS_REVIEW_ADJUSTMENTS_PATH),
-        "reviewPdf": str(ROOT / "aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf"),
+        "reviewPdf": str(ROOT / "aws_report/realtek_iot_cost_review_reply_v1.10_20260630.pdf"),
         "scenarios": {
             "infraBase": fmt(infra_base),
             "defaultWithCa": fmt(default_with_ca),

@@ -24,10 +24,10 @@ The workspace snapshot includes:
 
 | Goal | Entry point |
 | --- | --- |
-| Prepare a controller, create or take over an environment, and deploy | [`docs/deployment-operations.zh-TW.md`](docs/deployment-operations.zh-TW.md) |
-| Prepare data and run local, acceptance, qualification, or load tests | [`docs/testing-operations.zh-TW.md`](docs/testing-operations.zh-TW.md) |
+| Prepare a controller, create or take over an environment, and deploy | [`docs/deployment-operations.md`](docs/deployment-operations.md) |
+| Prepare data and run local, acceptance, qualification, or load tests | [`docs/testing-operations.md`](docs/testing-operations.md) |
 | Create or review tracked environment configuration | [`cloud_env/README.md`](cloud_env/README.md) |
-| Troubleshoot a restored staging runtime | [`docs/staging-runtime-bootstrap.zh-TW.md`](docs/staging-runtime-bootstrap.zh-TW.md) |
+| Troubleshoot a restored staging runtime | [`docs/staging-runtime-bootstrap.md`](docs/staging-runtime-bootstrap.md) |
 | Browse architecture, governance, contracts, and historical evidence | [`docs/README.md`](docs/README.md) |
 
 The only active generated runtime path is
@@ -88,7 +88,7 @@ Run the workspace baseline from the repository root:
 (cd scripts/go && go run ./rtk-cloud -- test-matrix)
 ```
 
-See the [testing operator guide](docs/testing-operations.zh-TW.md) for service,
+See the [testing operator guide](docs/testing-operations.md) for service,
 deterministic E2E, UI, and deployed acceptance test commands.
 
 ## Load Testing
@@ -159,9 +159,9 @@ go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging --c
 
 Provision and acceptance details, credential boundaries, runtime restore, and
 destructive-operation warnings are in the
-[deployment operator guide](docs/deployment-operations.zh-TW.md). Test data,
+[deployment operator guide](docs/deployment-operations.md). Test data,
 qualification, load profiles, monitoring, report gates, resume, and cleanup are
-in the [testing operator guide](docs/testing-operations.zh-TW.md).
+in the [testing operator guide](docs/testing-operations.md).
 
 ## Remove a Deployed Environment
 

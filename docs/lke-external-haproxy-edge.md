@@ -91,7 +91,7 @@ The live staging deployment validated on 2026-06-18 uses:
 The live report for that run is:
 
 ```text
-cloud_env/staging/lke/artifacts/staging-e2e/20260618T085249Z/TEST_REPORT.md
+cloud_env/staging/lke/artifacts/staging-e2e/20260618T085249Z/test_report.md
 ```
 
 ## Artifacts

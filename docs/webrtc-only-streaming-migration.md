@@ -12,7 +12,7 @@ ICE server selection through static STUN/TURN configuration or the TURN
 registry. Legacy RTSP relay and legacy video relay terms are retained only in
 historical, migration, or negative-test context.
 
-Canonical contract source: `repos/rtk_cloud_contracts_doc/WEBRTC_ONLY_STREAMING_MIGRATION.md`.
+Canonical contract source: `repos/rtk_cloud_contracts_doc/webrtc_only_streaming_migration.md`.
 
 ## Issue Order
 

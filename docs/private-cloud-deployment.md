@@ -34,9 +34,9 @@ customer deployment before opening service-specific work.
 | Cross-service service logging | `docs/service-logging-architecture.md` | Central logger, journald forwarder, correlation, retention, and provisioning dependency plan. |
 | Video cloud config | `repos/rtk_video_cloud/docs/config-map.md` | Runtime env map including Postgres, blob, MQTT, TURN, and certissuer settings. |
 | Legacy Linux/systemd deployment reference | `docs/linode-staging-deployment-snapshot.md` | Historical migration reference only; not an active operator entry point. |
-| Account manager behavior | `repos/rtk_account_manager/docs/SPEC.md` | Account, org, auth, registry, fleet, and provisioning scope. |
+| Account manager behavior | `repos/rtk_account_manager/docs/spec.md` | Account, org, auth, registry, fleet, and provisioning scope. |
 | Frontend deployment | `repos/rtk_cloud_frontend/README.md` | Container packaging, SQLite persistence, reverse-proxy TLS assumption. |
-| Frontend product copy | `repos/rtk_cloud_frontend/docs/SPEC.md` | Private cloud website wording and availability boundaries. |
+| Frontend product copy | `repos/rtk_cloud_frontend/docs/spec.md` | Private cloud website wording and availability boundaries. |
 
 ## Deployment Product Boundary
 

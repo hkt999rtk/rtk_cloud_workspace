@@ -265,7 +265,7 @@ jobs:
             echo "- Services: selected from the workspace diff; all on shared test-governance changes"
             echo "- Code coverage: per-module overall ratchets, 80% changed-Go-statement gate, JavaScript line/branch/function gates, and Video Cloud critical-package gates"
             echo "- Feature coverage: requirement-level product evidence; currently observe-only and never increased by code coverage"
-            report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-node/coverage/TEST_REPORT.md"
+            report=".artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-node/coverage/test_report.md"
             if [ -f "$report" ]; then
               echo
               sed -n '1,12p' "$report"

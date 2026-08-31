@@ -655,7 +655,7 @@ func enrichReport(cfg Config, report *RunReport) {
 		"virtual_device_ready":  cfg.ReadyFile,
 		"virtual_device_log":    filepath.Join(cfg.OutDir, "virtual-device.log"),
 		"virtual_device_result": filepath.Join(cfg.OutDir, "virtual-device", "results.json"),
-		"virtual_device_report": filepath.Join(cfg.OutDir, "virtual-device", "TEST_REPORT.md"),
+		"virtual_device_report": filepath.Join(cfg.OutDir, "virtual-device", "test_report.md"),
 		"platform_test_log":     filepath.Join(cfg.OutDir, "platform_test.log"),
 		"ios_launch_log":        filepath.Join(cfg.OutDir, "ios-simulator-launch.log"),
 		"ios_system_log":        filepath.Join(cfg.OutDir, "ios", "simulator-system.log"),

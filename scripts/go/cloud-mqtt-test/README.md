@@ -34,7 +34,7 @@ workspace_root="$PWD"
   --mqtt-probe true)
 ```
 
-The run writes the normal `results.json` and `TEST_REPORT.md` plus a protected
+The run writes the normal `results.json` and `test_report.md` plus a protected
 `ota-devices.jsonl` containing one redacted row per selected device.
 
 The first OTA check and every subsequent check are staggered per device using

@@ -240,12 +240,12 @@ case "${1:-}" in
 	workflow-live)
 		mkdir -p "reports/$run_id"
 		printf '{"ok":true}\n' > "reports/$run_id/results.json"
-		cat > "reports/$run_id/TEST_REPORT.md" <<'EOF_REPORT'
+		cat > "reports/$run_id/test_report.md" <<'EOF_REPORT'
 - Status: COMPLETE
 - Result: SUCCESS
 EOF_REPORT
 		if [[ "$run_id" == "cap-account-pass" ]]; then
-			printf '%s\n' '- Formal email-activated owners: 2/2 (PASS)' >> "reports/$run_id/TEST_REPORT.md"
+			printf '%s\n' '- Formal email-activated owners: 2/2 (PASS)' >> "reports/$run_id/test_report.md"
 		fi
 		;;
 	destroy-vms)

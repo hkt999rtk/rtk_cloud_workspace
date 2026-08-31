@@ -202,7 +202,7 @@ func buildLKECapacityRunSummary(runDir, envRoot string, targetDevices, mqttRepli
 		GeneratedAt:        time.Now().UTC().Format(time.RFC3339),
 		RunID:              runID,
 		RunDir:             runDir,
-		ReportFile:         firstNonEmpty(stringValue(results["report_file"]), filepath.Join(runDir, "TEST_REPORT.md")),
+		ReportFile:         firstNonEmpty(stringValue(results["report_file"]), filepath.Join(runDir, "test_report.md")),
 		ResultsFile:        resultsPath,
 		ServerEvidenceFile: serverEvidenceFile,
 		EnvRoot:            envRoot,

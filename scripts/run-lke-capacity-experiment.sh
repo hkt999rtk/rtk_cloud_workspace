@@ -160,7 +160,7 @@ cleanup_load_generators() {
 }
 
 report_success() {
-	local report="$REPORT_DIR/TEST_REPORT.md"
+	local report="$REPORT_DIR/test_report.md"
 	[[ -f "$report" ]] || return 1
 	grep -F -- '- Status: COMPLETE' "$report" >/dev/null || return 1
 	grep -F -- '- Result: SUCCESS' "$report" >/dev/null || return 1

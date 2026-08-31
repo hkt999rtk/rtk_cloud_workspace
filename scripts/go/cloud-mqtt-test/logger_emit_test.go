@@ -73,7 +73,7 @@ func TestEmitCentralLoggerEventPostsMQTTSummaryWithoutLeakingToken(t *testing.T)
 		"status":             "PASS",
 		"overall":            "pass",
 		"results_file":       filepath.Join(envRoot, "artifacts", "results.json"),
-		"report_file":        filepath.Join(envRoot, "artifacts", "TEST_REPORT.md"),
+		"report_file":        filepath.Join(envRoot, "artifacts", "test_report.md"),
 		"metrics":            map[string]any{"commands_attempted": 6, "commands_passed": 6, "devices_selected": 6},
 		"mqtt":               map[string]any{"probe_result": "PASS"},
 		"ota":                map[string]any{"campaign_id": "campaign-1", "target_version": "2.0.0"},

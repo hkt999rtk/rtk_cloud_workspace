@@ -2,7 +2,7 @@
 
 Status: Derived planning note
 Source pricing snapshot: `aws-pricing-sources.md`
-AWS review source: `../../aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf`
+AWS review source: `../../aws_report/realtek_iot_cost_review_reply_v1.10_20260630.pdf`
 Review date: 2026-06-30
 
 This note records the adjusted AWS managed-service estimate after reviewing AWS
@@ -14,7 +14,7 @@ pricing snapshot. It is the derived cost model used by the status-report PPTX.
 - Public unit prices and the original first-pass estimate live in
   `aws-pricing-sources.md`.
 - AWS-team feedback lives in
-  `../../aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf`.
+  `../../aws_report/realtek_iot_cost_review_reply_v1.10_20260630.pdf`.
 - Realtek architecture clarifications are captured in this file as derived
   adjustments, not by rewriting the original pricing snapshot.
 - The status-report generator reads the pricing snapshot plus this derived

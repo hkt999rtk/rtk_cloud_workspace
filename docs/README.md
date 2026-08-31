@@ -9,8 +9,8 @@ in the owning service repository; shared wire and payload contracts belong in
 
 | Goal | Document |
 | --- | --- |
-| Prepare, deploy, restore, accept, or remove an environment | [Deployment 操作指南](deployment-operations.zh-TW.md) |
-| Prepare and run local, acceptance, qualification, or load tests | [測試操作指南](testing-operations.zh-TW.md) |
+| Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
+| Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
 | Build a fresh staging environment and run canonical 1K validation | [Staging from scratch](staging-from-scratch.md) |
 
@@ -26,6 +26,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
+| [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Canonical contract | Platform Root of Trust, Platform Admin bootstrap, CA hierarchy, certificate lifecycle, rollover, revocation, custody, and recovery. |
 | [lke-migration-inventory.md](lke-migration-inventory.md) | Source | Documentation-first LKE migration inventory, current architecture review, target summary, and implementation gates. |
 | [cost/README.md](cost/README.md) | Index | AWS cost estimation materials, including service mapping, sizing worksheet, pricing sources, and support-plan assumptions. |
 | [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
@@ -60,7 +61,7 @@ evidence, not current operator instructions.
 | Document | Purpose |
 | --- | --- |
 | [cloud-deployment-architecture.md](cloud-deployment-architecture.md) | Provider-neutral environment, architecture, adapter, and runtime model. |
-| [cloud-env-layout.zh-TW.md](cloud-env-layout.zh-TW.md) | Tracked environment and ignored runtime directory layout. |
+| [cloud-env-layout.md](cloud-env-layout.md) | Tracked environment and ignored runtime directory layout. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Secret ownership, storage, injection, and redaction rules. |
 | [dns-adapter-architecture.md](dns-adapter-architecture.md) | DNS adapter selection, credentials, state, and mutation boundary. |
 | [lke-external-haproxy-edge.md](lke-external-haproxy-edge.md) | Current LKE external HAProxy edge contract. |
@@ -82,7 +83,7 @@ evidence, not current operator instructions.
 
 | Document | Purpose |
 | --- | --- |
-| [staging-runtime-bootstrap.zh-TW.md](staging-runtime-bootstrap.zh-TW.md) | Restore or validate matching ignored runtime on another controller. |
+| [staging-runtime-bootstrap.md](staging-runtime-bootstrap.md) | Restore or validate matching ignored runtime on another controller. |
 | [billing-staging-qualification.md](billing-staging-qualification.md) | Dispatch, monitor, assess, and hand off the Billing staging qualification without exposing credentials. |
 | [../loadtests/home-100k/docs/prepare-another-machine.md](../loadtests/home-100k/docs/prepare-another-machine.md) | Prepare another Home load-test controller or generator. |
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Cross-service startup/request/async dependency failure policy. |
@@ -98,6 +99,7 @@ evidence, not current operator instructions.
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Canonical contracts submodule path, URL, and commit alignment. |
 | [artifact-release-governance.md](artifact-release-governance.md) | Versioned release artifact policy and adoption matrix. |
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Account Manager and Cloud Admin responsibility boundary. |
+| [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Cross-repository Platform Root, Platform Admin, CA, certificate lifecycle, and recovery authority. |
 | [service-logging-architecture.md](service-logging-architecture.md) | Cross-service logging topology and ownership. |
 | [adr/README.md](adr/README.md) | Architecture decision records. |
 
@@ -124,7 +126,7 @@ points unless linked from one of the active guides above.
 | Contracts source of truth | [repos/rtk_cloud_contracts_doc](../repos/rtk_cloud_contracts_doc/README.md) |
 | Client SDK | [repos/rtk_cloud_client/docs](../repos/rtk_cloud_client/docs/README.md) |
 | Video Cloud | [repos/rtk_video_cloud/docs](../repos/rtk_video_cloud/docs/architecture.md) |
-| Account Manager | [repos/rtk_account_manager/docs](../repos/rtk_account_manager/docs/SPEC.md) |
+| Account Manager | [repos/rtk_account_manager/docs](../repos/rtk_account_manager/docs/spec.md) |
 | Billing | [repos/rtk_billing](../repos/rtk_billing/README.md) |
 | Ameba WebRTC SDK | [repos/rtk_ameba_webrtc](../repos/rtk_ameba_webrtc/README.md) |
 | Frontend | [repos/rtk_cloud_frontend](../repos/rtk_cloud_frontend/README.md) |

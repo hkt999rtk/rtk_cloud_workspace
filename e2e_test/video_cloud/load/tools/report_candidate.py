@@ -15,7 +15,7 @@ from typing import Sequence
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 ALLOWLISTED_REPORTS = {
-    "LOAD_TEST_REPORT": Path("docs/LOAD_TEST_REPORT.md"),
+    "LOAD_TEST_REPORT": Path("docs/load_test_report.md"),
 }
 
 REPORT_TITLES = {

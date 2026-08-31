@@ -790,7 +790,7 @@ func TestDefaultPlanArtifactsMatchCollectedRunLayout(t *testing.T) {
 	if plan.Artifacts.ShardResults != "loadtests/home-100k/reports/<run_id>/shards/" {
 		t.Fatalf("shard results artifact = %q", plan.Artifacts.ShardResults)
 	}
-	if plan.Artifacts.AggregateReport != "loadtests/home-100k/reports/<run_id>/TEST_REPORT.md" {
+	if plan.Artifacts.AggregateReport != "loadtests/home-100k/reports/<run_id>/test_report.md" {
 		t.Fatalf("aggregate report artifact = %q", plan.Artifacts.AggregateReport)
 	}
 	if plan.Artifacts.ServerEvidence != "loadtests/home-100k/reports/<run_id>/server-evidence.json" {

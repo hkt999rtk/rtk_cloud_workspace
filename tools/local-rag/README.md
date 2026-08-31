@@ -19,7 +19,7 @@ From this directory:
 ```sh
 go run ./cmd/rag --workspace ../.. index --full
 go run ./cmd/rag --workspace ../.. status
-go run ./cmd/rag --workspace ../.. query "device 怎麼取得認證"
+go run ./cmd/rag --workspace ../.. query "how does a device obtain credentials"
 go run ./cmd/rag-server --workspace ../.. --port 8765
 ```
 
@@ -57,7 +57,7 @@ Disable OpenAI calls and use local SQLite FTS/extractive answers only:
 
 ```sh
 RTK_RAG_ENABLE_EMBEDDINGS=0 RTK_RAG_ENABLE_ANSWERS=0 \
-go run ./cmd/rag --workspace ../.. query "device 怎麼取得認證"
+go run ./cmd/rag --workspace ../.. query "how does a device obtain credentials"
 ```
 
 ## Index Scope
@@ -85,7 +85,7 @@ Example query:
 ```sh
 curl -s http://127.0.0.1:8765/api/query \
   -H 'content-type: application/json' \
-  -d '{"query":"video server 的組成有哪些"}'
+  -d '{"query":"what are the video server components"}'
 ```
 
 ## Tests

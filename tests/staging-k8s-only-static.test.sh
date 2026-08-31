@@ -9,12 +9,12 @@ active_paths=(
 	"$ROOT/scripts/provision-staging.sh" \
 	"$ROOT/scripts/run-staging-acceptance.sh" \
 	"$ROOT/README.md" \
-	"$ROOT/scripts/README.zh-TW.md" \
-	"$ROOT/docs/cloud-env-layout.zh-TW.md" \
-	"$ROOT/docs/deployment-operations.zh-TW.md" \
+	"$ROOT/scripts/README.md" \
+	"$ROOT/docs/cloud-env-layout.md" \
+	"$ROOT/docs/deployment-operations.md" \
 	"$ROOT/docs/private-cloud-deployment.md" \
 	"$ROOT/docs/testing.md" \
-	"$ROOT/docs/testing-operations.zh-TW.md" \
+	"$ROOT/docs/testing-operations.md" \
 	"$ROOT/scripts/go/rtk-cloud/deployment_preflight.go" \
 	"$ROOT/scripts/go/rtk-cloud/main.go" \
 	"$ROOT/scripts/go/rtk-cloud/provision.go" \

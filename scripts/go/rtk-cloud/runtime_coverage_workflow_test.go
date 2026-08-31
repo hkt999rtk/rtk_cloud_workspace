@@ -244,7 +244,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"--skip-remove --skip-provision",
 		"--steps lifecycle",
 		`mv "$live_dir/summary.json" "$live_dir/onboarding-summary.json"`,
-		`mv "$live_dir/TEST_REPORT.md" "$live_dir/ONBOARDING_TEST_REPORT.md"`,
+		`mv "$live_dir/test_report.md" "$live_dir/onboarding_test_report.md"`,
 		`--out-dir "$live_dir"`,
 	} {
 		if !strings.Contains(lifecycle, expected) {

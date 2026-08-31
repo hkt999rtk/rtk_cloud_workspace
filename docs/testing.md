@@ -128,7 +128,7 @@ writes:
 ```text
 .artifacts/test-runs/<run-id>/coverage/
   results.json
-  TEST_REPORT.md
+  test_report.md
   unit-inventory.json
   modules/<module>/
     coverage.out
@@ -281,7 +281,7 @@ assessment. UI output is written to:
   results.json
   junit.xml
   evidence-manifest.json
-  TEST_REPORT.md
+  test_report.md
   evidence/<test-id>.png
   playwright-report/
   raw/
@@ -303,14 +303,14 @@ Feature qualification output is written to:
   canary/
     results.json
     evidence-manifest.json
-    TEST_REPORT.md
+    test_report.md
   qualification-1k/
     plan.json
     results.json
     server-evidence.json
     runtime-log-evidence.json
     evidence-manifest.json
-    TEST_REPORT.md
+    test_report.md
   qualification-report.json
   qualification-report.md
 ```
@@ -360,7 +360,7 @@ The video cloud API-level load runner is also workspace-owned:
 - Package: `e2e_test/video_cloud/load/loadtest/`
 - Scripts: `e2e_test/video_cloud/load/scripts/`
 - Tools: `e2e_test/video_cloud/load/tools/`
-- Product load report: `docs/LOAD_TEST_REPORT.md`
+- Product load report: `docs/load_test_report.md`
 
 `rtk_cloud_client` owns SDK and client package validation. It no longer owns the
 cross-cloud video load runner. `rtk_video_cloud` owns server prerequisites,
@@ -402,7 +402,7 @@ The orchestrator performs K8s reset, K8s rollout readiness checks, create brand,
 create users, create/factory-enroll devices, bind/provision devices, validate the
 bind artifact, run `go run ./scripts/go/rtk-cloud -- mqtt-test`, and verify
 persisted MQTT runtime logs. It writes sanitized
-`summary.json` and `TEST_REPORT.md` under
+`summary.json` and `test_report.md` under
 `<env-root>/artifacts/staging-e2e/<timestamp>/`; per-step logs remain local
 operator artifacts and should not be committed.
 
@@ -414,7 +414,7 @@ app certificate bootstrap, video-side lifecycle, or mTLS prerequisites as
 `BLOCKED`, not as pass.
 
 Bulk device onboarding validation uses the workspace script sequence documented
-in `scripts/README.zh-TW.md`: create users, generate/factory-enroll devices,
+in `scripts/README.md`: create users, generate/factory-enroll devices,
 bind/provision devices, then validate the SQLite test-data DB. The validation
 profile lives under `e2e_test/provisioning/bulk_bind_validation/` and is invoked
 via:

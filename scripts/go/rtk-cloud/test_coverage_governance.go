@@ -538,7 +538,7 @@ func runRuntimeCoverage(workspace, outDir string, cfg coverageConfig, report cov
 	if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderCoverageReport(report), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderCoverageReport(report), 0o644); err != nil {
 		return err
 	}
 	if report.Status != "PASS" {
@@ -789,7 +789,7 @@ func runTestCoverageAggregate(args []string) error {
 	if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderCoverageReport(report), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderCoverageReport(report), 0o644); err != nil {
 		return err
 	}
 	if report.Status != "PASS" {

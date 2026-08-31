@@ -1542,7 +1542,7 @@ async function slideAwsCostSourceUrls(p, payload) {
   });
 
   addShape(slide, { x: 70, y: 635, w: 1130, h: 30, fill: C.paleAmber, line: "#E3C25A" });
-  addText(slide, "Tracked source files: docs/cost/aws-pricing-sources.md, docs/cost/aws-review-adjustments.md, and aws_report/Realtek_IoT_Cost_Review_Reply_v1.10 - 20260630.pdf.", { x: 92, y: 643, w: 1090, h: 12 }, { size: 8.4, color: C.navy, bold: true, align: "center", face: FONT_EN });
+  addText(slide, "Tracked source files: docs/cost/aws-pricing-sources.md, docs/cost/aws-review-adjustments.md, and aws_report/realtek_iot_cost_review_reply_v1.10_20260630.pdf.", { x: 92, y: 643, w: 1090, h: 12 }, { size: 8.4, color: C.navy, bold: true, align: "center", face: FONT_EN });
   return slide;
 }
 

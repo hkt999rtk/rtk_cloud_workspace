@@ -75,6 +75,25 @@ Use these status values for contracts, policies, and ADRs:
 - Run `go run ./scripts/go/rtk-cloud -- contracts-check` before committing
   contracts submodule path, URL, or pointer changes.
 
+## Filename and Language Rules
+
+- Use lowercase ASCII filenames for first-party documentation. `README.md` is the
+  only general documentation-name exception.
+- Do not use whitespace in documentation filenames. Prefer the naming style
+  already established by the owning directory.
+- English is the source language for workspace, contracts, service design,
+  operations, validation, and test documentation. An English document must not
+  retain a `.zh-TW`, `.zh-CN`, or similar locale suffix after translation.
+- Realtek Connect+ frontend localization is an explicit product exception.
+  Localized content under `repos/rtk_cloud_frontend/content/`, localized frontend
+  test fixtures, and localized frontend design screenshots retain their locale
+  suffixes and translated content.
+- Tool- and ecosystem-defined names such as `AGENTS.md`, `SKILL.md`,
+  `CMakeLists.txt`, `LICENSE`, and `THIRD_PARTY_NOTICES.md` retain their standard
+  names. Vendored third-party trees retain upstream filenames.
+- Rename tracked documents with Git and update every link, script, workflow,
+  generated index, and test that refers to the old path in the same change.
+
 ## Metadata Template
 
 New source documents should start with a short metadata block:

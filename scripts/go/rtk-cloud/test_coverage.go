@@ -277,10 +277,10 @@ func runTestCoverage(args []string) error {
 	if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderCoverageReport(report), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderCoverageReport(report), 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("Coverage report: %s\n", filepath.Join(outDir, "TEST_REPORT.md"))
+	fmt.Printf("Coverage report: %s\n", filepath.Join(outDir, "test_report.md"))
 	if report.Status != "PASS" {
 		return exitCode(1)
 	}
