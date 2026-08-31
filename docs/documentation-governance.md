@@ -4,7 +4,7 @@ Status: active workspace policy.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-04-28.
+Last reviewed: 2026-08-31.
 
 ## Purpose
 
@@ -30,9 +30,9 @@ are authoritative, and how to review changes.
 - If service implementation and contracts disagree, update either the
   implementation or the contracts explicitly. Do not let a service-local summary
   silently override the contracts.
-- Nested contracts submodules should be pinned to the same commit as
-  `repos/rtk_cloud_contracts_doc` unless a deliberate compatibility test needs a
-  different snapshot.
+- Service contracts paths should link to the canonical workspace checkout, or
+  retain a registered submodule pinned to the same commit. A separate compatibility
+  experiment with a different snapshot is not a passing workspace contracts check.
 - Consumer repositories that need a local contracts checkout should mount it at
   `docs/rtk_cloud_contracts_doc`; see
   [contracts-submodule-governance.md](contracts-submodule-governance.md).

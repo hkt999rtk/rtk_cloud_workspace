@@ -10,7 +10,8 @@ import (
 	"strings"
 )
 
-const contractsRepoURL = "git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git"
+const contractsRepoURL = "git@github-work.com:hkt999rtk/rtk_cloud_contracts_doc.git"
+const contractsRepoLegacySSHURL = "git@github.com-work:hkt999rtk/rtk_cloud_contracts_doc.git"
 const contractsRepoHTTPSURL = "https://github.com/hkt999rtk/rtk_cloud_contracts_doc.git"
 
 var expectedContractsPaths = []string{
@@ -63,20 +64,30 @@ func checkContractsPolicy(check *checkState, workspace string, commits map[strin
 	}
 	byPath := map[string]gitmoduleEntry{}
 	for _, entry := range entries {
-		if !isCanonicalContractsURL(entry.URL) && strings.Contains(entry.URL, "rtk_cloud_contracts_doc") {
-			check.fail(fmt.Sprintf("%s uses non-standard contracts URL %s", entry.File, entry.URL))
-		}
-		if !isCanonicalContractsURL(entry.URL) {
-			continue
-		}
 		fullPath := entry.Path
 		if entry.File != ".gitmodules" {
 			fullPath = filepath.ToSlash(filepath.Join(filepath.Dir(entry.File), entry.Path))
 		}
+		if !isCanonicalContractsURL(entry.URL) && (isExpectedContractsPath(fullPath) || strings.Contains(entry.URL, "rtk_cloud_contracts_doc")) {
+			// Do not echo a rejected URL: it may contain embedded credentials.
+			check.fail(fmt.Sprintf("%s uses a non-standard contracts URL", entry.File))
+		}
+		if !isCanonicalContractsURL(entry.URL) {
+			continue
+		}
 		byPath[fullPath] = entry
 	}
-	for _, path := range expectedContractsPaths {
-		if _, ok := byPath[path]; ok {
+	for i, path := range expectedContractsPaths {
+		_, registered := byPath[path]
+		info, _ := os.Lstat(filepath.Join(workspace, filepath.FromSlash(path)))
+		isLink := info != nil && info.Mode()&os.ModeSymlink != 0
+		if i > 0 && (!registered || isLink) {
+			if err := checkCanonicalContractsLink(workspace, path); err != nil {
+				check.fail(fmt.Sprintf("%s: %v", path, err))
+			} else {
+				check.pass("contracts link resolves to canonical checkout: " + path)
+			}
+		} else if registered {
 			check.pass("contracts submodule path registered: " + path)
 		} else {
 			check.fail("contracts submodule path missing: " + path)
@@ -106,13 +117,37 @@ func checkContractsPolicy(check *checkState, workspace string, commits map[strin
 	}
 }
 
+func checkCanonicalContractsLink(workspace, path string) error {
+	abs := filepath.Join(workspace, filepath.FromSlash(path))
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return fmt.Errorf("contracts link unavailable: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return errors.New("contracts path must be a registered submodule or canonical symlink")
+	}
+	target, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return fmt.Errorf("contracts link cannot be resolved: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(filepath.Join(workspace, expectedContractsPaths[0]))
+	if err != nil {
+		return fmt.Errorf("canonical contracts checkout unavailable: %w", err)
+	}
+	if target != canonical {
+		return errors.New("contracts link does not resolve to the canonical workspace checkout")
+	}
+	return nil
+}
+
 func renderContractsPolicyReport(rootCommit string, findings []contractsPolicyFinding) string {
 	var b strings.Builder
-	b.WriteString("== contracts submodule policy ==\n")
+	b.WriteString("== contracts checkout policy ==\n")
 	if rootCommit != "" {
 		b.WriteString("contracts_root_commit=" + rootCommit + "\n")
 	}
 	b.WriteString("contracts_standard_path=docs/rtk_cloud_contracts_doc\n")
+	b.WriteString("contracts_consumer_layout=canonical-symlink-or-aligned-submodule\n")
 	b.WriteString("contracts_standard_url=" + contractsRepoURL + "\n")
 	b.WriteString("contracts_standard_https_url=" + contractsRepoHTTPSURL + "\n")
 	for _, finding := range findings {
@@ -122,7 +157,7 @@ func renderContractsPolicyReport(rootCommit string, findings []contractsPolicyFi
 }
 
 func isCanonicalContractsURL(url string) bool {
-	return url == contractsRepoURL || url == contractsRepoHTTPSURL
+	return url == contractsRepoURL || url == contractsRepoLegacySSHURL || url == contractsRepoHTTPSURL
 }
 
 func isExpectedContractsPath(path string) bool {
