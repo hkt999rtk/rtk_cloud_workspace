@@ -85,3 +85,55 @@ The checks verify standard paths, the accepted URL policy, canonical link target
 and consumer commit alignment with the root contracts checkout. This topology
 check does not replace OpenAPI validation or semantic contract/implementation
 acceptance tests.
+
+### OpenAPI structural validation
+
+Validate the canonical, Account Manager, Billing and Cloud Admin specifications with
+their declared OpenAPI dialects (3.1.0 and 3.0.3). Run this separately from the
+topology check and the observe-mode specification inventory:
+
+```sh
+openapi_venv_dir="$(mktemp -d)"
+python3 -m venv "$openapi_venv_dir"
+"$openapi_venv_dir/bin/python" -m pip install -r scripts/openapi-requirements.txt
+"$openapi_venv_dir/bin/python" -m unittest discover -s scripts -p test_validate_openapi.py
+"$openapi_venv_dir/bin/python" scripts/validate_openapi.py
+```
+
+The validator rejects duplicate YAML keys and validates schemas and references.
+References must be local files within the workspace or document fragments;
+initialize recursive submodules before running it. It checks referenced YAML
+documents for duplicate keys as well as the four entry points. Schema component
+names that collide but have different constraints must be split, preserving each
+operation's intended constraints.
+
+The pinned validator does not implement JSON Schema identifier/dynamic base
+resolution. This gate therefore rejects `$id`, `$dynamicRef` and `$dynamicAnchor`
+in Schema Objects before resolution, including nested and referenced schemas.
+It distinguishes schema/property maps from arbitrary examples, defaults, enums
+and extension payloads: data keys named `$id` or `$ref` are not schema keywords.
+A `$ref` targeting such a payload still checks the target as a schema/reference
+object, so arbitrary-data exclusions cannot bypass reference preflight.
+Use document-relative `$ref` paths and JSON Pointer fragments; named anchor
+fragments are explicitly unsupported. Schema identifiers require a separately verified resolver upgrade before
+they can be accepted. This explicit restriction prevents the preflight checker
+and validator from silently resolving the same reference to different files.
+
+OpenAPI map traversal retains extension context (Paths, Responses and Callback
+objects) and Link literal context. Component names beginning with `x-` remain
+real components. The resolver itself has no HTTP handler and can read only
+documents already loaded by preflight; it cannot bypass this boundary even if
+the pinned validator interprets arbitrary data as a reference. Known upstream
+limitations remain: 0.7.2 can misinterpret `$ref` in Paths/Callback extensions,
+and its 3.1 meta-schema restricts Link parameter literals to strings. Preflight
+tests distinguish these cases from full-validator acceptance; no upstream
+validation errors are suppressed or waived.
+
+The `OpenAPI Contract Validation` workspace workflow runs these commands and
+`test-spec-inventory check --mode required` when the validator, registered
+repository gitlinks, specification registry, catalog, generated traceability,
+full `scripts/go/rtk-cloud` command package, or Go module/workspace inputs change.
+Strict inventory rejects blocking findings; nonblocking draft candidates
+remain visible. This is an additional CI gate; `pre-pr`, an observe-mode inventory
+result, and this structural check do not substitute for one another or for
+behavioral acceptance tests.
