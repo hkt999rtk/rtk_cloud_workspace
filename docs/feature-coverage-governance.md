@@ -37,6 +37,17 @@ Only the root `repos/rtk_cloud_contracts_doc` checkout is scanned as the
 canonical contract source. Nested pinned copies are not counted again.
 Duplicate IDs or conflicting definitions are reported as `SPEC_DRIFT`.
 
+Partial `test-ui`/`test-e2e` checkouts inventory only registered documents that
+are present. A consumer OpenAPI Path Item reference may use its documented nested
+contracts checkout when the root OpenAPI contract is absent. This is reference
+resolution only: it neither registers the nested copy as another source nor
+changes the consumer operation's document identity. The copy must identify the
+registered canonical contract; multiple available copies must agree exactly.
+An existing root contract always takes precedence, and unreadable or conflicting
+copies fail closed. Central inventory commands still require every registered
+source, including the root contract; remote and unregistered references remain
+forbidden.
+
 Run:
 
 ```sh
