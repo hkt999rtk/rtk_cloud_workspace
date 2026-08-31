@@ -85,3 +85,32 @@ The checks verify standard paths, the accepted URL policy, canonical link target
 and consumer commit alignment with the root contracts checkout. This topology
 check does not replace OpenAPI validation or semantic contract/implementation
 acceptance tests.
+
+### OpenAPI structural validation
+
+Validate the canonical, Account Manager, Billing and Cloud Admin specifications with
+their declared OpenAPI dialects (3.1.0 and 3.0.3). Run this separately from the
+topology check and the observe-mode specification inventory:
+
+```sh
+openapi_venv_dir="$(mktemp -d)"
+python3 -m venv "$openapi_venv_dir"
+"$openapi_venv_dir/bin/python" -m pip install -r scripts/openapi-requirements.txt
+"$openapi_venv_dir/bin/python" -m unittest discover -s scripts -p test_validate_openapi.py
+"$openapi_venv_dir/bin/python" scripts/validate_openapi.py
+```
+
+The validator rejects duplicate YAML keys and validates schemas and references.
+References must be local files within the workspace or document fragments;
+initialize recursive submodules before running it. It checks referenced YAML
+documents for duplicate keys as well as the four entry points. Schema component
+names that collide but have different constraints must be split, preserving each
+operation's intended constraints.
+
+The `OpenAPI Contract Validation` workspace workflow runs these commands and
+`test-spec-inventory check --mode required` when the validator, registered
+repository gitlinks, specification registry, catalog or generated traceability
+changes. Strict inventory rejects blocking findings; nonblocking draft candidates
+remain visible. This is an additional CI gate; `pre-pr`, an observe-mode inventory
+result, and this structural check do not substitute for one another or for
+behavioral acceptance tests.
