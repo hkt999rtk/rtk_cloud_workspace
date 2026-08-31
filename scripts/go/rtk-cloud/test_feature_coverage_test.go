@@ -500,6 +500,29 @@ func TestWriteFeatureCoverageReportAndCommitValidation(t *testing.T) {
 	}
 }
 
+func TestFeatureCommitRepositoriesIncludeBilling(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositories := featureCommitRepositories(workspace)
+	if got, want := repositories["billing"], filepath.Join(workspace, "repos", "rtk_billing"); got != want {
+		t.Fatalf("billing repository = %q, want %q", got, want)
+	}
+	feature := testCatalogFeature{CommitAnchors: []string{"billing"}}
+	commits, err := currentFeatureCommits(workspace, feature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := gitOutput(repositories["billing"], "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commits["billing"] != strings.TrimSpace(want) {
+		t.Fatalf("billing commit = %q, want %q", commits["billing"], strings.TrimSpace(want))
+	}
+}
+
 func TestFeatureEvidenceFileErrorsAndFailedAssertion(t *testing.T) {
 	if err := verifyFeatureEvidenceFiles(nil); err == nil {
 		t.Fatal("missing evidence accepted")

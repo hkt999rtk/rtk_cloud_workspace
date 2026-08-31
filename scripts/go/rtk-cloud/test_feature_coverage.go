@@ -981,6 +981,7 @@ func validateFeatureCommits(workspace string, feature testCatalogFeature, commit
 func featureCommitRepositories(workspace string) map[string]string {
 	return map[string]string{
 		"account_manager": filepath.Join(workspace, "repos", "rtk_account_manager"),
+		"billing":         filepath.Join(workspace, "repos", "rtk_billing"),
 		"cloud_admin":     filepath.Join(workspace, "repos", "rtk_cloud_admin"),
 		"cloud_client":    filepath.Join(workspace, "repos", "rtk_cloud_client"),
 		"video_cloud":     filepath.Join(workspace, "repos", "rtk_video_cloud"),
