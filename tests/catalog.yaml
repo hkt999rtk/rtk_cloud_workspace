@@ -37,6 +37,426 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
+  - id: INT-VC-BILLING-HTTP-001
+    title: Durable Video Cloud outbox delivers exact facts to real Billing HTTP
+    layer: integration
+    owner: cloud_platform
+    source: repos/rtk_video_cloud/internal/mqttusageapp/billing_forwarder_integration_test.go
+    selector: TestBillingForwarderDeliversToRealBillingHTTP
+    method: An opt-in local cross-process run starts the exact Billing candidate with an isolated PostgreSQL database. Video Cloud atomically creates two outbox facts, receives exact created and duplicate responses, marks both delivered, and verifies changed quantity under the same ID returns conflict. It does not prove source cutoff completeness, distributed outbox ownership, capacity, CI, settlement, or staging.
+    runner: test-services
+    environments: [local]
+    evidence: [console, junit]
+    verifies: [REQ-BILL-USAGE-DELIVERY-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-BILLING-OUTBOX-001
+    title: Complete usage receipts atomically retain immutable Billing facts for retry
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/usage_outbox_integration_test.go
+    selector: "./internal/usage#TestBillingFactsMapCompleteEventDeterministically,./internal/usage#TestBillingClientRequiresExactIdempotentReceipt,./internal/usage#TestBillingClientRefusesRedirectAndMalformedBoundaries,./internal/postgres#TestBillingUsageOutboxIsAtomicImmutableAndRetryable,./internal/postgres#TestUsageCollectorCommitsFactsProjectionReceiptsAndCursorTogether,./internal/postgres#TestUsageCollectorRollsBackWholePageOnConflictAndRejectsStoreReplacement,./internal/mqttusageapp#TestForwardBillingFactsRetriesExactRowsAndDrainsBoundedly,./internal/config#TestValidateMQTTUsageRequiresCompleteBillingUsageBoundary"
+    method: Unit and isolated PostgreSQL tests derive one deterministic Billing fact per measurement, bind the full canonical event, create all payloads in the source-receipt transaction, backfill only complete receipts, reject mutation/deletion/regression, retain ambiguous failures, bound backlog work, require a dedicated secure Billing boundary, and accept only exact created/duplicate responses. It does not certify producer drainage, Logger high-water completeness, rating, settlement, or transfer.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-BILL-USAGE-DELIVERY-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-LOGGER-VC-COLLECTOR-001
+    title: Real Logger HTTP inbox feeds the atomic Video Cloud usage collector
+    layer: integration
+    owner: cloud_platform
+    source: repos/rtk_video_cloud/internal/postgres/usage_collector_logger_integration_test.go
+    selector: TestUsageCollectorConsumesRealLoggerBillingInbox
+    method: An opt-in local cross-process run starts the exact Logger candidate with a new private bbolt inbox, posts one canonical event and its replay through the billing HTTP boundary, then uses the real Video Cloud inbox client and isolated PostgreSQL collector to verify accepted/duplicate receipts and one atomic fact, MQTT projection, Logger receipt, and cursor. It does not prove Logger HA/PVC restore, producer drainage, Billing rating or settlement, CI, or staging.
+    runner: test-services
+    environments: [local]
+    evidence: [console, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-LOGGER-BILLING-001]
+    status: active
+  - id: INT-VC-USAGE-COLLECTOR-001
+    title: Logger receipt cursor, usage facts and MQTT projection commit as one transaction
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/usage_collector_integration_test.go
+    selector: "./internal/postgres#TestUsageCollectorCommitsFactsProjectionReceiptsAndCursorTogether,./internal/postgres#TestUsageCollectorRollsBackWholePageOnConflictAndRejectsStoreReplacement,./internal/usage#TestLoggerInboxSourceVerifiesStoreSequenceContentAndNoStore,./internal/usage#TestLoggerInboxSourceFailsClosedOnMalformedOrUntrustedResponses,./internal/mqttusageapp#TestCollectUsagePagesDrainsStableCursorPages,./internal/mqttusageapp#TestCollectUsagePagesFailsClosedAndBoundsBacklog"
+    method: Isolated PostgreSQL and strict HTTP fixtures verify store-bound continuous receipt pages, content binding, no-store responses, late horizons, concurrent old-cursor rejection, atomic immutable facts/MQTT projection/receipt/cursor writes, whole-page rollback, monotonic database guards, startup collection and bounded backlog. This does not prove producer drainage, legacy Loki reconciliation, Logger volume/HA, Billing rating or ownership-transfer settlement.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-LOGGER-BILLING-001]
+    status: active
+  - id: INT-LOGGER-BILLING-INBOX-001
+    title: Durable billing receipts preserve content and complete commit-sequence pagination
+    layer: integration
+    owner: rtk_cloud_logger
+    source: repos/rtk_cloud_logger/billing_inbox_test.go
+    selector: "./#TestBillingInboxConcurrentReplayAndConflicts,./#TestBillingInboxPagesStableHorizonAndLateEvents,./#TestBillingInboxRecoversAfterProcessExit,./#TestBillingInboxRejectsUnsafeStorageAndInvalidInput,./#TestBillingInboxHTTPBoundaryAndPagination,./#TestBillingInboxBoundsAndCorruptReceipt,./#TestBillingInboxRejectsSymlinksClosedAndMalformedFiles,./#TestBillingCredentialCannotBypassWithEmptyOrMixedStream"
+    method: Local bbolt and a crash subprocess verify atomic receipt identity, financial content conflicts, integer precision, 1002 equal-timestamp records, fixed page horizons and late arrivals, retained identity across restart, missing/foreign/corrupt storage rejection, response byte bounds and billing/operational credential isolation. No consumer cursor transaction, historical Loki reconciliation, HA routing, volume deployment, archival or producer-drain completeness is asserted.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-LOGGER-BILLING-001]
+    status: active
+  - id: INT-VC-EMQX-CALLBACK-001
+    title: Actual EMQX preserves callback identity on HTTP retry and separates subscriber fanout
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/mqtt/billing_callback_integration_test.go
+    selector: TestEMQXBillingCallbackRetryIntegration
+    method: Opt-in local-owned Docker broker runs the workspace billing configuration script. After committing a publish callback the handler returns 503; actual EMQX retries with the same UUID while two subscribers have distinct delivery UUIDs. Binary byte counts and replay after meter restart remain exact. Requires Docker Desktop and an explicit local image/script; not broker restart, certificate trust, HA routing or durable Logger evidence.
+    runner: test-services
+    environments: [local]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-CALLBACK-REPLAY-001
+    title: Broker callback receipts and usage counts commit together across restart and replay
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/usage/callback_test.go
+    selector: "./internal/usage#TestCallbackReceiptsSurviveRestartAndDoNotCollapseDeliveries,./internal/usage#TestCallbackTransactionRollbackAndLegacyImport,./internal/usage#TestCallbackRequiresStableIDAndValidBinaryPayload,./internal/usage#TestPersistentMeterRecoversFrozenAndUnflushedUsageAfterProcessExit,./internal/mqttusageapp#TestBrokerCallbackHTTPRejectsIdentityConflictsAndMissingIDs,./internal/mqttusageapp#TestConfiguredMeterRestoresAcknowledgedBrokerObservation"
+    method: Local bbolt transactions and real application/PostgreSQL tests verify concurrent duplicate callbacks, changed-field conflicts, separate subscriber deliveries, binary byte counts, legacy import preservation, precommit rollback and lost committed replies. Process-exit recovery retains deduplication. This does not prove EMQX buffering/retry identity, durable Logger retention, distributed producer routing or scale capacity.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-METER-CHECKPOINT-001
+    title: Persistent meter restores acknowledged observations and retains failed deliveries
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/usage/checkpoint_test.go
+    selector: "./internal/usage#TestPersistentMeterRecoversFrozenAndUnflushedUsageAfterProcessExit,./internal/usage#TestPersistentMeterRetainsLostAckAndFailsClosedOnCheckpointDamage,./internal/usage#TestPersistentMeterRejectsUnsafePathsAndReversedClock,./internal/mqttusageapp#TestConfiguredMeterRestoresAcknowledgedBrokerObservation,./internal/mqttusageapp#TestMeterRecoveryHonorsCanceledContext,./internal/mqttusageapp#TestMeterRecoveryFlushDoesNotWaitForInterval,./internal/usage#TestLoggerSinkRequiresExactEventAcknowledgment"
+    method: A child process exits without Close or Flush; a new process restores synced pending events and unflushed counters with original epoch and IDs. Tests reject competing ownership, corruption, unsafe paths and reversed clocks. Real application/PostgreSQL composition acknowledges a broker callback, restarts, and sends through a real Logger HTTP handler backed by its memory test store. Checkpoint failure returns 503, and bounded per-event receipts gate acknowledgment. This does not prove raw broker callback deduplication, durable Logger retention, PVC deployment or load capacity.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-BILLING-PERIOD-BARRIER-001
+    title: Invoice preparation serializes usage writes and retries under the cloud account lock
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/billingstore/period_barrier_integration_test.go
+    selector: "./internal/billingstore#TestInvoiceCloseFencesConcurrentUsageAndRechecksIncompleteRetry,./internal/billingstore#TestInvoiceCloseWaitsForCommittedUsageAndSerializesCompetingCloses,./internal/billingstore#TestInvoiceCloseFailureRollsBackPeriodAndRejectsWrongAccount"
+    method: Real isolated PostgreSQL connections pause invoice reads and verify actual blocking PIDs. Prior usage commits before pricing; late usage is rejected after closure; concurrent closes reuse one invoice; incomplete retries reacquire the fence. Injected line-write failure rolls back period and invoice, and mismatched cloud/account is denied. This does not certify upstream usage completeness or producer drainage.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-INVOICE-LIFECYCLE-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-BILLING-USAGE-INTEGRITY-001
+    title: Billing usage replay binds every immutable fact field
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/billingstore/usage_integrity_integration_test.go
+    selector: TestUsageReplayBindsEveryFieldRatherThanTrustingSourceHash
+    method: Isolated PostgreSQL verifies full-field replay binding, UUID and timestamp normalization, concurrent conflicting writes and immutable SQL evidence. A supplied source hash cannot authorize altered scope or quantity. This does not prove upstream collection or settlement completeness.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-INVOICE-LIFECYCLE-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-USAGE-INTEGRITY-001
+    title: Usage receipts commit complete immutable metric sets
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/usage_integrity_integration_test.go
+    selector: "./internal/postgres#TestUsageReceiptSerializesFullEventAndRejectsChangedReplay,./internal/postgres#TestUsageEventCommitRequiresAllMetricsAndRollsBackPartialWrites,./internal/postgres#TestLegacyUsageReplayCannotCertifyOrExtendHistoricalMeasurements"
+    method: Owned PostgreSQL verifies concurrent replay, immutable cloud and audit binding, all-metric transaction rollback, receipt completeness and legacy replay without inferred receipts. It does not certify Logger paging, durable cursors, Billing forwarding or producer drain.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: UNIT-VC-USAGE-RETRY-001
+    title: Meter retries preserve the frozen usage window and fail closed without ingestion credentials
+    layer: unit
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/usage/integrity_test.go
+    selector: "./internal/usage#TestUsageEvidenceRejectsChangedReplayAndOwnsItsSnapshot,./internal/usage#TestMeterRetriesFrozenSnapshotAfterPartialLostAcknowledgment,./internal/usage#TestMeterKeepsSubmicrosecondWindowOpen,./internal/mqttusageapp#TestUsageIngestWithoutConfiguredCredentialFailsClosed"
+    method: Memory-ledger tests simulate a lost committed acknowledgment, preserve original event identity on retry, separate new observations, reject overflow and changed payloads, and keep submicrosecond windows open. HTTP tests reject all three ingestion routes with no token. In-memory retry is not restart durability or a real Logger acknowledgment proof.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-CANCEL-001
+    title: Cancellation intents fence delayed admissions without inventing quota or releasing handoff holds
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/factory_enrollment_cancellation_integration_test.go
+    selector: "./internal/store#TestFactoryCancellationFencesAbsentAndDelayedAdmissions,./internal/store#TestFactoryCancellationRacesAdmissionAndPreservesIssuedOutcomes,./internal/store#TestFactoryCancellationValidationAndPersistenceFailures,./internal/store#TestFactoryEnrollmentPendingResultsBlockHandoffEvenWithAllReceipts,./internal/api#TestIntegrationFactoryCancellationRequiresTrustedCredentialAndFullBinding,./internal/usercache#TestStoreFactoryCoordinationRoutesBypassUserCache"
+    method: Isolated PostgreSQL and real AM HTTP enforce dedicated cancellation authority, immutable admission provenance, late-admission fencing, quota preservation, audit rollback, terminal replay and handoff holds. A never-admitted cancellation key consumes no quota and cannot become issued. Issuer evidence and lifecycle dispatch remain separate checks.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: UNIT-AM-FACTORY-HANDOFF-001
+    title: AM accepts only authenticated fully bound factory participant evidence
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/factoryhandoff/client_test.go
+    selector: "./internal/factoryhandoff#TestFactoryHandoffClientValidatesConfigurationAndExactReceipts,./internal/factoryhandoff#TestFactoryHandoffClientRejectsIncompleteOrMismatchedProof,./internal/factoryhandoff#TestFactoryHandoffClientBindsTerminalDecisionsAndRejectsTransportUncertainty"
+    method: Bounded HTTP fixtures exercise exact scope, cutoff, count and digest receipts, terminal decision replay, configuration, redirects, malformed or missing evidence and uncertain transport. A 200 without complete durable evidence cannot release the AM operation fence. Real factory compatibility is exercised by INT-AM-FACTORY-SERVICES-001.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-FACTORY-HANDOFF-001
+    title: Durable factory cloud freeze precedes drain evidence and survives uncertain completion
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/factoryenrollapp/cloud_handoff_integration_test.go
+    selector: "./internal/factoryenrollapp#TestFactoryCloudHandoffApplicationRetainsFenceAcrossLostCompletion,./internal/postgres#TestFactoryCloudHandoffFreezesDrainsAndReplaysDurableDecisions,./internal/postgres#TestFactoryCloudHandoffAbortTombstonesAndConcurrentAdmission,./internal/postgres#TestFactoryCloudHandoffRejectsInvalidAndUnavailableEvidence,./internal/factoryenroll#TestFactoryCloudHandoffBindingAndDecisionValidation,./internal/factoryenroll#TestFactoryCloudHandoffPrepareReconcilesOnlyProvenWork,./internal/factoryenroll#TestFactoryCloudHandoffProjectedRecoveryRejectsUncertainCompletion,./internal/factoryenroll#TestFactoryCloudHandoffEndpointAuthenticatesAndFailsClosed"
+    method: Actual factory application, PostgreSQL and mTLS issuer with an AM HTTP fault fixture retain the hold after lost completion and recover after application recreation. Concurrent admission, terminal decision replay, abort-before-prepare tombstones, version floors, immutable counts and credential boundaries are checked. Unknown signing/projection remains pending; real AM dispatch, Billing settlement and other producer cutoffs are not implied.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-HANDOFF-001, REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-MULTICLOUD-RECOVERY-001
+    title: Durable cancellation worker closes AM before terminalizing the consumer journal
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/factoryenrollapp/recovery_integration_test.go
+    selector: "./internal/factoryenrollapp#TestFactoryRecoveryApplicationResumesDurableQueue,./internal/factoryenroll#TestFactoryRecoveryRetriesEveryDurableBoundaryWithoutFalseCompletion,./internal/factoryenroll#TestFactoryRecoveryEndpointQueuesOnlyAuthenticatedScopedRequests,./internal/postgres#TestFactoryCancellationJournalRetainsPendingUntilAMCompletion"
+    method: Actual factory application and background loop resume persisted cancellation requests after application recreation, using PostgreSQL journal/locks and mTLS issuer against an AM HTTP fixture. Boundary failures retain holds and immutable evidence; unauthorized requests, delayed public retries and premature drain are rejected. Real AM compatibility is covered by INT-AM-FACTORY-SERVICES-001; lifecycle decision dispatch and started-signature recovery are not implied.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-VC-MULTICLOUD-CANCEL-001
+    title: Trusted issuer cancellation fences unclaimed reservations without guessing signing outcomes
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/factoryenrollapp/issuer_cancel_integration_test.go
+    selector: "./internal/factoryenrollapp#TestFactoryIssuerCancellationAcrossMTLSAndPostgres,./internal/postgres#TestFactoryCancellationSerializesWithSigningClaims,./internal/certissuer#TestFactoryCancellationFencesDelayedSigningAndReplays,./internal/certissuer#TestFactoryCancellationRejectsUntrustedMalformedAndUnknownOutcomes,./internal/factoryenroll#TestIssuerCancellationClientValidatesFullReceipt,./internal/factoryenroll#TestHTTPRemoteIssuerClientPresentsClientCertificate"
+    method: Real mTLS issuer/client and isolated PostgreSQL verify cancellation competes with signing on one reservation key, replays exact evidence, fences delayed signing and rejects started or completed issuance. Concurrent repository tests, malformed or mismatched receipts, unavailable storage and redirect rejection preserve holds. This tests the issuer primitive, not AM completion, background recovery or cloud handoff cutoffs.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-AM-FACTORY-SERVICES-001
+    title: Real Account Manager and factory application reconcile a lost committed response
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/factory_application_contract_integration_test.go
+    selector: "./internal/api#TestIntegrationFactoryApplicationAcrossRealServices"
+    method: AM runs its real HTTP router, JWT verifier, authorization and PostgreSQL ledger against a separately compiled Video Cloud factory application, journal, projections and mTLS issuer. Dropping issued and not-issued completion responses after real commits, then recreating the application and replaying preserves one signature, exact cancellation evidence, counters and projections. A revoked-owner prepared intent is durably canceled with no new signature or duplicate audit. Requires TEST_FACTORY_APPLICATION_BINARY and TEST_FACTORY_APPLICATION_DSN; absence is a skip, not proof. Does not establish process/cluster restart, lifecycle decision dispatch, started-signature recovery, Product CA or producer/Billing cutoffs.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
+    status: active
+  - id: INT-VC-MULTICLOUD-FLOW-001
+    title: Factory application coordinates admission, signing and projections before completion
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/factoryenrollapp/coordination_integration_test.go
+    selector: "./internal/factoryenrollapp#TestFactoryApplicationCoordinatesIssuerAndDurableProjections,./internal/factoryenrollapp#TestNewRejectsPartialFactoryCoordinationConfiguration,./internal/postgres#TestFactoryEnrollmentLockSerializesAcrossConnectionsAndReleasesOnCancel,./internal/factoryenroll#TestCoordinationFailsClosedBeforeAndAfterExternalSteps,./internal/factoryenroll#TestCoordinationVerifiesCertificateIdentityKeyAndReceipt,./internal/certissuer#TestFactoryReplayOnlyNeverCreatesClaimOrSigns"
+    method: Real factory application, PostgreSQL journal/projections/session locks and mTLS issuer run against an AM HTTP fixture. Lost completion and twelve retries preserve one certificate and no projection rewrites; revoked callers cannot retrieve results. Missing coordination, malformed receipts and replay-only misses fail closed. This is not real AM integration, autonomous recovery or a producer/Billing cutoff test.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001, REQ-VC-FACTORY-BOUNDARY-001]
+    status: active
+  - id: INT-VC-MULTICLOUD-JOURNAL-001
+    title: Factory consumer journal preserves scoped progress and unresolved work
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/factory_enrollment_integration_test.go
+    selector: "./internal/postgres#TestFactoryEnrollmentJournalPersistsOrderedReplayAndPendingScope,./internal/postgres#TestFactoryEnrollmentJournalRejectsMutationAndUnavailableStorage,./internal/factoryenroll#TestJournalTransitionsBindEvidenceAndKeepIssuerNamespaces"
+    method: Owned PostgreSQL tests race 12 preparations and each progress transition, replay after schema restart, reject changed bindings and direct state bypasses, namespace issuer IDs by reservation and retain unresolved cloud-scoped work on storage failure. Tests cover the journal primitive, not the still-unwired factory handler, cancellation or producer handoff cutoff.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-TRANSPORT-001
+    title: Factory coordination authenticates service and production scope with an independent client
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/factory_enrollments_integration_test.go
+    selector: "./internal/api#TestIntegrationFactoryCoordinationBindsCredentialsScopeAndReconciliation,./internal/api#TestIntegrationFactoryCoordinationRejectsInvalidProductionJWTs,./internal/api#TestIntegrationFactoryCoordinationFailsClosedOnMalformedOrUnavailableRequests,./internal/api#TestIntegrationFactoryCoordinationWithVideoCloudClient,./internal/config#TestFactoryEnrollmentCredentialIsDedicated,./internal/config#TestLoadFactoryEnrollmentCredentialValidation,./internal/usercache#TestStoreFactoryCoordinationRoutesBypassUserCache"
+    method: Owned PostgreSQL and real AM HTTP validate dedicated credentials, production JWTs, immutable scope and terminal replay. Cross-repository execution additionally requires TEST_FACTORY_ADMISSION_CLIENT built from Video Cloud testdata; its absence is a skip, not wire-compatibility evidence. Factory journal and producer cutoff integration remain separate.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
+    status: active
+  - id: INT-VC-MULTICLOUD-ISSUER-001
+    title: Factory issuer persists pre-sign claims and replays one certificate
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/certissuer_http_integration_test.go
+    selector: "./internal/postgres#TestFactoryIssuerHTTPReplaysOnePersistedCertificate,./internal/postgres#TestFactoryIssuerClaimsPersistAndSerializeAcrossRepositories,./internal/certissuer#TestFactoryClaimSerializesConcurrentSigning,./internal/certissuer#TestFactoryClaimFailuresNeverResignUnknownOutcomes"
+    method: Local TLS HTTP, cryptographic signer and PostgreSQL tests preserve one durable factory claim across concurrent retries, reject unknown-outcome resigning and legacy clobbering, and replay the same persisted certificate. This does not establish Account Manager admission wiring, HSM reconciliation or production handoff cutoffs.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-VC-FACTORY-BOUNDARY-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-FACTORY-001
+    title: Factory admission reserves quantity and blocks handoff until results reconcile
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/factory_enrollment_reservations_integration_test.go
+    selector: "./internal/store#TestFactoryEnrollmentReservationsSerializeQuotaAndReplayResults,./internal/store#TestFactoryEnrollmentAdmissionRechecksAuthorityAndProvenance,./internal/store#TestFactoryEnrollmentPendingResultsBlockHandoffEvenWithAllReceipts,./internal/store#TestFactoryEnrollmentWritesRollbackOnPersistenceFailure,./internal/store#TestFactoryEnrollmentResultValidationAndConcurrentCompletion,./internal/store#TestFactoryEnrollmentPlatformAuthorityIsPersistedAndRechecked,./internal/store#TestFactoryEnrollmentRechecksRunAfterWaitingForCloudLock"
+    method: Isolated PostgreSQL race tests reserve quota under current operator and ownership authority, reject stale scope and changed payloads, reconcile definite terminal outcomes exactly once, and independently block handoff readiness while any reservation is unresolved. Synthetic participant receipts do not constitute real factory or issuer integration evidence.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-PRODUCTION-001
+    title: Production run issuance binds current Product authority and atomic signing
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/production_run_authorization_integration_test.go
+    selector: "./internal/store#TestProductionRunIssuanceRequiresCurrentProductAuthority,./internal/store#TestProductionRunIssuanceFailuresNeverReturnTokenOrCommitRun,./internal/api#TestIntegrationProductionRunRechecksAdmissionBeforeSigning,./internal/api#TestIntegrationPlatformAdminCreatesProductionRunJWT"
+    method: Isolated PostgreSQL and HTTP tests enforce current Product and platform authority before signing, preserve handoff fences, bind the JWT to the locked run and Product snapshot, and reject signer or commit failures without token delivery or partial run and audit records.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-PRODUCT-001
+    title: Product mutations reauthorize cloud scope and preserve concurrent patches
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_item_profile_authorization_integration_test.go
+    selector: "./internal/store#TestProductWritesRequireCurrentAuthorityAndApprovedScope,./internal/store#TestProductMutationAuditAndCommitFailuresRollBack,./internal/store#TestConcurrentProductPatchesPreserveDisjointFields,./internal/api#TestIntegrationProductWritesReauthorizeAfterAdmission"
+    method: Isolated PostgreSQL and HTTP tests enforce Product admission and viewer ceilings, reject revoked human and platform authority, preserve handoff fences, roll back Product grant and audit changes, and serialize disjoint patches without lost fields.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-TOKEN-001
+    title: Platform token writes preserve current authority and manufacturer cloud fences
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_claim_token_administration_integration_test.go
+    selector: "./internal/store#TestPlatformClaimTokenAdministrationRechecksAuthority,./internal/store#TestPlatformClaimTokenAdministrationLocksManufacturerAndTargetClouds,./internal/store#TestPlatformClaimTokenAdministrationAuditAndCommitRollback,./internal/store#TestPlatformTokenRevocationRejectsScopeChangeWhileWaiting,./internal/api#TestIntegrationClaimTokenWritesRecheckRevokedPlatformAuthority"
+    method: Isolated PostgreSQL and HTTP tests recheck platform authority inside token writes, enforce Product and manufacturer cloud scope, hold handoff fences, reject moved or deleted token scopes, and verify atomic secret-free audit and revocation replay.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-OVERRIDE-001
+    title: Privileged claim overrides recheck platform authority and both cloud scopes
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_claim_override_authorization_integration_test.go
+    selector: "./internal/store#TestClaimOverridesRequirePlatformAuthorityOperationalCloudsAndProduct,./internal/store#TestClaimOverrideWriteFailuresRollBackThenRetry,./internal/store#TestClaimOverridesLockOppositeCloudMovesInTheSameOrder,./internal/store#TestClaimOverrideRejectsInconsistentStateWithoutMutation,./internal/store#TestUnprovisionFailureKeepsDeviceAndDoesNotQueueWork,./internal/api#TestIntegrationPlatformUnprovisionRechecksRevokedPrivilege"
+    method: Isolated PostgreSQL and HTTP tests reject revoked platform privileges and inactive or fenced source and target clouds, enforce Brand Cloud Product hierarchy, preserve legacy customer recovery, serialize reverse moves, and roll back all claim mutations on write or commit failure.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-AM-CLAIM-TRANSFER-001, REQ-AM-CLAIM-RECLAIM-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-CLAIM-001
+    title: Claim and unprovision enforce current cloud authority without merging App identity
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_claim_authorization_integration_test.go
+    selector: "./internal/store#TestClaimAdmissionRequiresCurrentOwnerApprovedProductScope,./internal/store#TestClaimAndUnprovisionAuditFailurePreservesDeviceAndClaim,./internal/store#TestPlatformUnprovisionRechecksPrivilegeAndCloudFence,./internal/store#TestEndUserClaimKeepsIdentitySeparateAndRollsBackBindingFailure,./internal/api#TestIntegrationPlatformUnprovisionRechecksRevokedPrivilege,./internal/api#TestIntegrationDeviceWritesReauthorizeAfterMiddlewareAdmission"
+    method: Isolated PostgreSQL and HTTP tests enforce Product admission and revoked human or platform authority, keep lifecycle fences during cancellation, roll back claim and unprovision audit failures, and keep App claim consumption and device binding atomic under a separate end-user identity.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001, REQ-AM-END-USER-ISOLATION-001, REQ-AM-DEVICE-BINDING-AUTH-001]
+    status: active
+  - id: INT-AM-CLOUDBOOTSTRAP-001
+    title: New-cloud Billing events commit with the unique owner and survive worker loss
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/billing_cloud_creation_integration_test.go
+    selector: "./internal/store#TestBillingCloudCreationOutboxCommitsWithUniqueInitialOwner,./internal/store#TestBillingCloudCreationOutboxPartitionsLeasesAndPreservesEventOnTimeout,./internal/store#TestBillingCloudCreationFailureRollsBackSignupAndExcludesLegacyOrganizations,./internal/database#TestBillingCreationMigrationDoesNotInferHistoricalResponsibility"
+    method: Owned PostgreSQL tests bind the immutable initial owner at signup commit, reject missing receipts, roll back signup on deferred outbox failure, exclude legacy customer organizations and recover disjoint leased batches without stale-worker acknowledgment.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
+  - id: UNIT-AM-CLOUDBOOTSTRAP-001
+    title: Cloud bootstrap transport requires dedicated credentials and exact receipts
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/billingbootstrap/client_test.go
+    selector: "./internal/billingbootstrap#TestBillingBootstrapClientRequiresExactAuthenticatedCreationReceipt,./internal/billingbootstrap#TestBillingBootstrapWorkerRetainsFailuresAndStopsOnCancellation,./internal/config#TestBillingCloudCreationConfigRequiresSeparateOriginAndCredential"
+    method: Loopback HTTP and worker tests reject redirects, mismatched or oversized evidence, reused secrets and unavailable replies while preserving retry and cancellation semantics.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
+  - id: INT-AM-CLOUDBOOTSTRAP-002
+    title: Real AM worker recovers a lost Billing bootstrap commit response
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/billing_cloud_creation_contract_integration_test.go
+    selector: "./internal/api#TestIntegrationBillingCloudCreationAcrossRealServices"
+    method: Real signup persistence and AM worker call an independently compiled Billing API against separate owned databases; a lost committed reply is retried with one account, responsibility period and audit event. Requires TEST_BILLING_BOOTSTRAP_BINARY, TEST_BILLING_BOOTSTRAP_DIR and TEST_BILLING_BOOTSTRAP_DSN; absence is a skip, not cross-service evidence. This is not email activation, financial reconciliation or transfer qualification.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
+  - id: INT-BILL-CLOUDBOOTSTRAP-001
+    title: Billing initializes new-cloud responsibility exactly once without adopting history
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentstore/cloud_creation_test.go
+    selector: "./internal/paymentstore#TestCloudCreationBootstrapIsAtomicIdempotentAndNeverAdoptsLegacyAccounts,./internal/paymentstore#TestCloudCreationBootstrapRejectsUnprovenEventsAndRollsBack,./internal/api#TestCloudCreationRequiresSeparateCredentialAndBoundedEvidence,./internal/config#TestCloudCreationCredentialIsOptionalAndSeparate,./internal/api#TestBillingWritersWaitForCreationInsteadOfOrphaningAccounts,./internal/billingservice#TestClosePeriodWaitsForAccountProvisioningBeforeAnyInvoiceWrites"
+    method: Owned PostgreSQL and HTTP tests prove concurrent replay creates one zero-balance account and immutable responsibility receipt, reject legacy account adoption and malformed or unauthorized events, and roll back all provisioning writes when audit persistence fails.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
+  - id: UNIT-AM-MULTICLOUD-ELIGIBILITY-001
+    title: Ownership eligibility transport rejects incomplete or mismatched Billing evidence
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/billinghandoff/ownership_eligibility_test.go
+    selector: "./internal/billinghandoff#TestOwnershipEligibilityTransportValidatesBindingAndEvidence,./internal/billinghandoff#TestOwnershipEligibilityRejectsInvalidRequestsAndHTTPFailures"
+    method: Loopback HTTP tests bind cloud owner target action and version, reject absent amounts stale proofs invalid blockers and unavailable responses, and retain independent financial checks for nonnegative balances.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-BILL-MULTICLOUD-ELIGIBILITY-001
+    title: Read-only eligibility permits nonnegative credit without weakening closure or reconciliation
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/paymentstore/ownership_eligibility_test.go
+    selector: "./internal/paymentstore#TestOwnershipEligibilityIsReadOnlyAndAcceptsNonnegativeCredit,./internal/paymentstore#TestOwnershipEligibilityRetainsBlockersAndRejectsInvalidScope,./internal/api#TestOwnershipEligibilityHTTPBoundary"
+    method: Isolated PostgreSQL tests cover negative zero and positive balances, stale collector receipts, independent blockers, unchanged monetary state, strict internal authentication and deletion requiring zero balance.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001]
+    status: active
+  - id: INT-AM-MULTICLOUD-ADMISSION-001
+    title: Human lifecycle admission rechecks authority before queuing work
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/store/device_lifecycle_authorization_integration_test.go
+    selector: "./internal/store#TestLifecycleUserAdmissionRechecksAuthorityAndAuditsOnce,./internal/store#TestLifecycleUserAdmissionAuditFailureRollsBackOutboxAndProjection,./internal/store#TestLifecycleUserAdmissionRejectsAbsentActorAndWrongOperation,./internal/api#TestIntegrationDeviceWritesReauthorizeAfterMiddlewareAdmission"
+    method: Isolated PostgreSQL and HTTP tests prove viewer and former-owner requests cannot enqueue provision or deactivate work after admission changes, and audit failure rolls back operations outbox and device projection. Synthetic owner changes are not end-to-end handoff evidence.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
+    status: active
   - { id: UNIT-BILL-IDENTITY-001, title: Billing tenant context requires the global human user actor, layer: unit, owner: rtk_billing, source: repos/rtk_billing/internal/api/server_test.go, selector: TestTenantContextRequiresGlobalUserIdentity, method: Go middleware tests accept global user context and reject retired tenant actors app end users and missing actor or correlation fields., runner: test-coverage, environments: [local, ci], evidence: [json, junit], verifies: [REQ-BILL-SERVICE-AUTH-001], status: active }
   - { <<: *ui_local, id: UI-CA-AUTH-VIEW-001, title: Dual-role account switches views and Brand Cloud in one session, source: repos/rtk_cloud_admin/web/e2e/account-view.spec.mjs, selector: "[UI-CA-AUTH-VIEW-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-ACTIVATE-001, title: Email activation routes to the resolved account view, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-ACTIVATE-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
@@ -574,12 +994,12 @@ cases:
     verifies: [REQ-AM-END-USER-ISOLATION-001, REQ-AM-END-USER-PROJECTION-001, REQ-AM-DEVICE-BINDING-AUTH-001, REQ-AM-APP-AUTHORIZATION-001]
     status: active
   - id: INT-AM-IDENTITY-BRANDUSER-001
-    title: Brand user credentials remain tenant-scoped and cannot authorize platform or APP identity routes
+    title: Brand membership uses global human login while retired tenant authentication is rejected
     layer: integration
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/api/integration_test.go
-    selector: TestIntegrationPlatformAdminCreatesActiveBrandCloudUser
-    method: PostgreSQL-backed Brand user lifecycle test proves normalized tenant-local identity, platform-login and APP-route rejection, verified and disabled state enforcement, and Brand-only credential rotation.
+    selector: "./internal/api#TestIntegrationPlatformAdminCreatesActiveBrandCloudUser,./internal/api#TestIntegrationRetiredTenantAuthenticationAndTokensRejected"
+    method: PostgreSQL-backed tests prove restricted immediate provisioning creates a global user and membership, global login succeeds, membership activation state is returned, and retired tenant routes and tokens cannot authenticate.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
@@ -615,7 +1035,7 @@ cases:
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/api/integration_test.go
     selector: "./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery,./internal/store#TestBrandCloudLoginActivationTokenIsTenantScoped"
-    method: PostgreSQL-backed auth tests cover hashed verification, login and reset token purposes, enumeration-safe throttling, tenant scope, expiry, single use and replay rejection.
+    method: PostgreSQL-backed global auth tests cover verification and reset purposes, enumeration-safe throttling, expiry and replay rejection. Retained legacy token-store tests verify historical tenant separation only and do not enable retired tenant authentication routes.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
@@ -794,8 +1214,8 @@ cases:
     layer: integration
     owner: rtk_cloud_admin
     source: repos/rtk_cloud_admin/internal/app/app_test.go
-    selector: ./internal/app#TestCustomerLoginRefreshesAndProxyMode,./internal/app#TestCustomerPasswordLoginRejectsAccountsWithoutCustomerOrganizations,./internal/app#TestPlatformLoginRejectsLocalBreakGlassCredentials,./internal/app#TestPlatformAdminLoginFallsBackToAccountManagerPlatformAdmin,./internal/app#TestPlatformAdminUpstreamUnauthorizedInvalidatesSession,./internal/app#TestPlatformAdminReadModelsUseAccountManagerAdminInventory,./internal/app#TestPlatformAdminReadModelsSurfaceUpstreamFailure,./internal/app#TestPrometheusMetrics
-    method: Targeted in-process BFF tests prove upstream authority, customer and platform session workflows, capability projection, break-glass rejection, read-model ownership, failure handling, and runtime observability.
+    selector: ./internal/app#TestCustomerLoginRefreshesAndProxyMode,./internal/app#TestCustomerPasswordLoginAllowsGlobalAccountsWithoutMemberships,./internal/app#TestAccountViewPreservesAccountSessionAndRotatedTokens,./internal/app#TestPlatformLoginRejectsLocalBreakGlassCredentials,./internal/app#TestPlatformAdminLoginFallsBackToAccountManagerPlatformAdmin,./internal/app#TestPlatformAdminUpstreamUnauthorizedInvalidatesSession,./internal/app#TestPlatformAdminReadModelsUseAccountManagerAdminInventory,./internal/app#TestPlatformAdminReadModelsSurfaceUpstreamFailure,./internal/app#TestPrometheusMetrics
+    method: Targeted in-process BFF tests prove upstream authority, global login including accounts without memberships, shared account-session view switching, capability projection, break-glass rejection, read-model ownership, failure handling, and runtime observability.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
@@ -847,7 +1267,7 @@ cases:
     runner: test-services
     environments: [ci]
     evidence: [json, junit]
-    verifies: [REQ-CONTRACT-LOGGING-BILLING-001, REQ-CONTRACT-LOGGING-BOUNDARY-001, REQ-CONTRACT-LOGGING-CARDINALITY-001, REQ-CONTRACT-LOGGING-COMPATIBILITY-001, REQ-CONTRACT-LOGGING-CORRELATION-001, REQ-CONTRACT-LOGGING-DELIVERY-001, REQ-CONTRACT-LOGGING-FIELDS-001, REQ-CONTRACT-LOGGING-QUERY-001, REQ-CONTRACT-LOGGING-REDACTION-001]
+    verifies: [REQ-CONTRACT-LOGGING-BILLING-001, REQ-CONTRACT-LOGGING-BOUNDARY-001, REQ-CONTRACT-LOGGING-CARDINALITY-001, REQ-CONTRACT-LOGGING-COMPATIBILITY-001, REQ-CONTRACT-LOGGING-CORRELATION-001, REQ-CONTRACT-LOGGING-DELIVERY-001, REQ-CONTRACT-LOGGING-FIELDS-001, REQ-CONTRACT-LOGGING-QUERY-001, REQ-CONTRACT-LOGGING-REDACTION-001, REQ-LOGGER-BOUNDARY-001, REQ-LOGGER-ADOPTION-001, REQ-LOGGER-FIELDS-001, REQ-LOGGER-QUERY-001, REQ-LOGGER-HTTP-001, REQ-LOGGER-REDACTION-001, REQ-LOGGER-DEPLOYMENT-001, REQ-LOGGER-DELIVERY-001, REQ-LOGGER-CARDINALITY-001, REQ-LOGGER-INTEGRATION-001]
     status: active
   - id: INT-VC-PROV-CHANNEL-001
     title: Provisioning channel preserves device partition identity and operation replay safety
@@ -1198,6 +1618,12 @@ cases:
   - { <<: *ui_smoke, id: UI-CA-BILLING-004, title: Normalized billing activity opens a customer-safe timeline, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-004]", tags: [smoke, billing, activity], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-005, title: Billing profile update preserves immutable invoice snapshot semantics, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-005]", tags: [smoke, billing, invoice, profile], verifies: [REQ-CA-BILLING-001] }
   - { <<: *ui_smoke, id: UI-CA-BILLING-006, title: Hosted NewebPay top-up posts only encrypted provider fields, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-006]", tags: [smoke, billing, payment, newebpay, hosted-charge], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-007, title: Viewer cannot access Billing or unscoped Billing APIs, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-007]", tags: [smoke, billing], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-008, title: Billing tabs keep explicit cloud scope and reject stale ownership writes, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-008]", tags: [smoke, billing], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-BILLING-009, title: Passive ownership revocation clears payer content, source: repos/rtk_cloud_admin/web/e2e/billing.spec.mjs, selector: "[UI-CA-BILLING-009]", tags: [smoke, billing], verifies: [REQ-CA-BILLING-001] }
+  - { <<: *ui_smoke, id: UI-CA-PRODUCTS-101, title: Cloud-scoped Product CRUD preserves pagination viewer limits and revocation, source: repos/rtk_cloud_admin/web/e2e/scoped-products.spec.mjs, selector: "[UI-CA-PRODUCTS-101]", verifies: [REQ-MULTICLOUD-UI-001, REQ-MULTICLOUD-SHARING-001] }
+  - { <<: *ui_smoke, id: UI-CA-DEVICES-101, title: Product device display editing preserves cloud scope and revocation, source: repos/rtk_cloud_admin/web/e2e/product-devices.spec.mjs, selector: "[UI-CA-DEVICES-101]", verifies: [REQ-MULTICLOUD-UI-001, REQ-MULTICLOUD-SHARING-001] }
+  - { <<: *ui_smoke, id: UI-CA-SHARING-102, title: Viewer invitation preserves selected Products across pages and scope failures, source: repos/rtk_cloud_admin/web/e2e/sharing-products.spec.mjs, selector: "[UI-CA-SHARING-102]", verifies: [REQ-MULTICLOUD-UI-001, REQ-MULTICLOUD-SHARING-001] }
   - { <<: *ui_staging, id: UI-CA-BILLING-STG-001, title: Real staging billing overview remains tenant scoped and provider safe, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-001]", tags: [smoke, staging, billing, payment], verifies: [REQ-CA-BILLING-001, REQ-BILL-DATA-BOUNDARY-001] }
   - { <<: *ui_staging, id: UI-CA-BILLING-STG-002, title: Real staging invoice detail serves immutable PDF evidence, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-002]", tags: [smoke, staging, billing, invoice], verifies: [REQ-CA-BILLING-001, REQ-AM-INVOICE-DOCUMENT-001] }
   - { <<: *ui_staging, id: UI-CA-BILLING-STG-003, title: Real staging billing activity and profile remain customer safe, source: repos/rtk_cloud_admin/web/e2e/billing-staging.spec.mjs, selector: "[UI-CA-BILLING-STG-003]", tags: [smoke, staging, billing, activity, profile], verifies: [REQ-CA-BILLING-001, REQ-AM-BILLING-ACTIVITY-001] }
