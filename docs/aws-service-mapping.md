@@ -23,15 +23,15 @@ codebase.
 | --- | --- | --- |
 | Current private-cloud BOM | `docs/private-cloud-deployment.md` | Component inventory, single-node and production-like profiles, infrastructure expectations. |
 | Cross-repo boundaries | `docs/architecture.md` | Source-of-truth repository ownership and service boundaries. |
-| Account manager | `repos/rtk_account_manager/docs/SPEC.md` | Account, organization, RBAC, device registry, provisioning, and Postgres persistence scope. |
-| Admin console | `repos/rtk_cloud_admin/docs/SPEC.md` | Go BFF, React SPA, SQLite-local console state, upstream proxy boundaries. |
+| Account manager | `repos/rtk_account_manager/docs/spec.md` | Account, organization, RBAC, device registry, provisioning, and Postgres persistence scope. |
+| Admin console | `repos/rtk_cloud_admin/docs/spec.md` | Go BFF, React SPA, SQLite-local console state, upstream proxy boundaries. |
 | Public website | `repos/rtk_cloud_frontend/README.md` | Go website, SQLite lead/analytics/search persistence, container deployment shape. |
 | Video cloud runtime | `repos/rtk_video_cloud/docs/architecture.md` | API and worker entrypoints, WebRTC/TURN, MQTT, blob storage, telemetry, NATS, Postgres. |
 | Video cloud config | `repos/rtk_video_cloud/docs/config-map.md` | Concrete env-backed infrastructure knobs for blob, MQTT, TURN, Redis-compatible cache, NATS, and log ingestion. |
 | Video cloud database | `repos/rtk_video_cloud/docs/postgres-schema.md` | Database split, table inventory, log DB option, retention notes. |
-| Video cloud PKI and enrollment | `repos/rtk_video_cloud/docs/factory-enrollment-server.md`, `repos/rtk_cloud_contracts_doc/AUTH.md` | Factory enrollment, certissuer, device/app certificates, mTLS, revocation, and signing boundaries. |
+| Video cloud PKI and enrollment | `repos/rtk_video_cloud/docs/factory-enrollment-server.md`, `repos/rtk_cloud_contracts_doc/auth.md` | Factory enrollment, certissuer, device/app certificates, mTLS, revocation, and signing boundaries. |
 | Cross-service broker | `docs/cross-service-broker-packaging.md` | NATS JetStream default, acceptable equivalent requirements, broker ownership split. |
-| Contract overview | `repos/rtk_cloud_contracts_doc/CONTRACT_OVERVIEW.md` | Device transport, product telemetry, metrics, and runtime log surfaces. |
+| Contract overview | `repos/rtk_cloud_contracts_doc/contract_overview.md` | Device transport, product telemetry, metrics, and runtime log surfaces. |
 
 ## Mapping Principles
 

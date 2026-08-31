@@ -1057,7 +1057,7 @@ cases:
     title: SDK cross-language timeout cancellation shutdown retry and adapter contract
     layer: integration
     owner: rtk_cloud_client
-    source: repos/rtk_cloud_client/docs/PRODUCTION_RUNTIME_CONTRACT.md
+    source: repos/rtk_cloud_client/docs/production_runtime_contract.md
     selector: "Cross-language runtime control and lifecycle"
     method: JavaScript adapter and native runtime integration tests exercise deterministic timeouts, cancellation, distinct outcomes, no-retry behavior, pending-work shutdown, and platform mapping.
     runner: test-services
@@ -1069,7 +1069,7 @@ cases:
     title: SDK transport adapter owner snapshot WebSocket and MQTT contract
     layer: integration
     owner: rtk_cloud_client
-    source: repos/rtk_cloud_client/docs/TRANSPORTS.md
+    source: repos/rtk_cloud_client/docs/transports.md
     selector: "Native transport adapter contract"
     method: JavaScript and native integration tests jointly prove current-owner routing and capabilities, wire-distinct snapshot framing, WebSocket lifecycle, MQTT hook ownership, explicit unsupported behavior, and adapter isolation.
     runner: test-services

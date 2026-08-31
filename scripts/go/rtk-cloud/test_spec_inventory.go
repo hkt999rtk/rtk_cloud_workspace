@@ -1376,7 +1376,7 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 			fmt.Fprintf(&b, "| `%s` | `%s` | %s | `%s` | `%s` | %s | %s → %s | %s | `%s` |\n",
 				workflow.ID, workflow.FeatureID, joinCatalogValues(workflow.RequirementIDs), step.ID, step.OperationRef,
 				joinCatalogValues(dependencies), joinCatalogValues(step.Consumes), joinCatalogValues(step.Produces),
-				escapeMarkdownCell(transition), step.Expected)
+			escapeMarkdownCell(transition), step.Expected)
 		}
 	}
 	fmt.Fprintln(&b)
@@ -1389,7 +1389,7 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 	for _, candidate := range inventory.Candidates {
 		fmt.Fprintf(&b, "| `%s` | `%s@L%d` | `%s` | `%s` | `%s` | %s |\n",
 			candidate.SourcePath, candidate.Section, candidate.Line, candidate.Authority, candidate.Status,
-			shortDigest(candidate.Revision), escapeMarkdownCell(candidate.Statement))
+			shortDigest(candidate.Revision), escapeSpecInventoryCell(candidate.Statement))
 	}
 	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "## Findings")
@@ -1397,9 +1397,17 @@ func renderSpecInventoryReport(inventory specInventory, cases []testCatalogCase)
 	fmt.Fprintln(&b, "| Code | Source | Reference | Blocking | Assessment |")
 	fmt.Fprintln(&b, "| --- | --- | --- | --- | --- |")
 	for _, finding := range inventory.Findings {
-		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%t` | %s |\n", finding.Code, finding.Source, finding.Reference, finding.Blocking, escapeMarkdownCell(finding.Assessment))
+		fmt.Fprintf(&b, "| `%s` | `%s` | `%s` | `%t` | %s |\n", finding.Code, finding.Source, finding.Reference, finding.Blocking, escapeSpecInventoryCell(finding.Assessment))
 	}
 	return []byte(b.String())
+}
+
+func escapeSpecInventoryCell(value string) string {
+	// Candidate statements are excerpts from their source documents. Relative
+	// links in those excerpts lose their source-directory context when rendered
+	// into the workspace report, so present them as text instead of emitting
+	// misleading or broken links.
+	return strings.ReplaceAll(escapeMarkdownCell(value), "[", `\[`)
 }
 
 func inventoryReportJSON(inventory specInventory) map[string]any {

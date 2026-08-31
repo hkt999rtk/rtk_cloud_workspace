@@ -248,7 +248,7 @@ Commands:
   run-video-loadtest      Run the workspace video load runner into <out-dir>/video.
   collect-server-evidence Review or live-collect server evidence.
   aggregate               Aggregate collected shards and server evidence.
-  generate-report         Generate TEST_REPORT.md from collected artifacts and template.
+  generate-report         Generate test_report.md from collected artifacts and template.
   list-vms                Review or live-list leftover VMs by run id.
   shutdown-vms            Live-shutdown VMs by state file for reuse.
   destroy-vms             Review or live-destroy VMs by state file; manual cleanup only.
@@ -444,7 +444,7 @@ run_single_device_smoke() {
     echo "TOKEN_BOOTSTRAP_FAILED or MQTT_SMOKE_FAILED: see $smoke_dir/console.log" >&2
     return 1
   fi
-  echo "single-device actor smoke passed: $smoke_dir/TEST_REPORT.md" >&2
+  echo "single-device actor smoke passed: $smoke_dir/test_report.md" >&2
 }
 
 duration_millis() {
@@ -1019,8 +1019,8 @@ PY
     shard_count="$(find "$local_out_dir/shards" -name results.json -type f | wc -l | tr -d ' ')"
   fi
   report_status="not-written"
-  if [[ -f "$local_out_dir/TEST_REPORT.md" ]]; then
-    report_status="$( (grep -m1 '^- Status:' "$local_out_dir/TEST_REPORT.md" || true) | sed 's/^- Status: //')"
+  if [[ -f "$local_out_dir/test_report.md" ]]; then
+    report_status="$( (grep -m1 '^- Status:' "$local_out_dir/test_report.md" || true) | sed 's/^- Status: //')"
     if [[ -z "$report_status" ]]; then
       report_status="unknown"
     fi
@@ -1050,7 +1050,7 @@ PY
 }
 
 current_report_status() {
-  local report="$local_out_dir/TEST_REPORT.md"
+  local report="$local_out_dir/test_report.md"
   local status=""
   if [[ -f "$report" ]]; then
     status="$( (grep -m1 '^- Status:' "$report" || true) | sed 's/^- Status: //')"
@@ -1059,7 +1059,7 @@ current_report_status() {
 }
 
 current_report_result() {
-  local report="$local_out_dir/TEST_REPORT.md"
+  local report="$local_out_dir/test_report.md"
   local result=""
   if [[ -f "$report" ]]; then
     result="$( (grep -m1 '^- Result:' "$report" || true) | sed 's/^- Result: //')"

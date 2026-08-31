@@ -105,12 +105,12 @@ Writing standards are documented in [`guidelines.md`](guidelines.md).
 It is intentionally stable so the same skeleton can be reused for weekly
 management reports:
 
-- 封面 / 核心管理訊息
-- 第一頁目前狀態總結
-- 第一部分：摘要
-- 第二部分：時程與 Loading Test 路徑
+- Cover / core management message
+- Opening status summary
+- Part 1: Summary
+- Part 2: Schedule and load-test path
   - Release gate definition
-- 第三部分：Cloud / Product / KPI 細節
+- Part 3: Cloud / Product / KPI details
   - Cloud relationship / tenant structure
   - Customer / use-case fit
   - Portal web / digital marketing
@@ -118,10 +118,10 @@ management reports:
   - MQTT / Device Shadow Management
   - Security / PKI trust management
   - Threat model / cyber security review
-- 第四部分：操作畫面與使用流程
-- 第五部分：Linode Staging 部署與設定
-- 審閱清單
-- Appendix：素材與來源索引
+- Part 4: Operational screens and user flows
+- Part 5: Linode staging deployment and configuration
+- Review checklist
+- Appendix: Materials and source index
 
 ## Schedule Policy
 
@@ -218,8 +218,8 @@ TURN/ICE configuration, session lifecycle, and stream-health evidence. Video
 storage covers snapshot/media upload, metadata and clip id, listing/info
 lookup, download authorization, byte-range behavior, delete behavior,
 retention/backup status, and storage configuration category. Use
-`repos/rtk_cloud_contracts_doc/STREAMING.md` and
-`repos/rtk_cloud_contracts_doc/SNAPSHOT_AND_MEDIA.md` as the primary source
+`repos/rtk_cloud_contracts_doc/streaming.md` and
+`repos/rtk_cloud_contracts_doc/snapshot_and_media.md` as the primary source
 documents.
 
 ## Security / PKI Policy
@@ -256,8 +256,8 @@ transport, command delivery, event/log ingress, and broker evidence. Device
 shadow covers cloud-held state management: `state.desired`, `state.reported`,
 `state.delta`, `version`, `clientToken`, lifecycle bootstrap, deactivation
 behavior, and unprovision tombstones. Use
-`repos/rtk_cloud_contracts_doc/DEVICE_TRANSPORT.md` and
-`repos/rtk_cloud_contracts_doc/DEVICE_SHADOW.md` as the primary source
+`repos/rtk_cloud_contracts_doc/device_transport.md` and
+`repos/rtk_cloud_contracts_doc/device_shadow.md` as the primary source
 documents.
 
 ## Evidence Policy

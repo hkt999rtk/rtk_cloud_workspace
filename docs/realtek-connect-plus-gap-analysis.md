@@ -29,19 +29,19 @@ workspace pins used by this planning note.
 Primary external-facing source:
 
 - `repos/rtk_cloud_frontend/README.md`
-- `repos/rtk_cloud_frontend/docs/SPEC.md`
+- `repos/rtk_cloud_frontend/docs/spec.md`
 
 Primary implementation and contract sources:
 
-- `repos/rtk_cloud_contracts_doc/PRODUCT_READINESS.md`
-- `repos/rtk_cloud_contracts_doc/TELEMETRY_INSIGHTS.md`
-- `repos/rtk_cloud_contracts_doc/METRICS_EXPORT.md`
-- `repos/rtk_cloud_contracts_doc/FIRMWARE_CAMPAIGN.md`
-- `repos/rtk_account_manager/docs/SPEC.md`
+- `repos/rtk_cloud_contracts_doc/product_readiness.md`
+- `repos/rtk_cloud_contracts_doc/telemetry_insights.md`
+- `repos/rtk_cloud_contracts_doc/metrics_export.md`
+- `repos/rtk_cloud_contracts_doc/firmware_campaign.md`
+- `repos/rtk_account_manager/docs/spec.md`
 - `repos/rtk_video_cloud/docs/architecture.md`
 - `repos/rtk_video_cloud/docs/firmware-campaign-alignment.md`
-- `repos/rtk_cloud_admin/docs/SPEC.md`
-- `repos/rtk_cloud_client/docs/TESTING.md`
+- `repos/rtk_cloud_admin/docs/spec.md`
+- `repos/rtk_cloud_client/docs/testing.md`
 - `docs/private-cloud-deployment.md`
 
 ## Classification Legend

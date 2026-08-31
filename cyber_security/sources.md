@@ -31,12 +31,12 @@ use this file to make security analysis retrievable.
 
 | Source | Role in analysis |
 | --- | --- |
-| `repos/rtk_cloud_contracts_doc/AUTH.md` | Product auth contract, bearer scopes, device mTLS, revocation, token recovery, and compatibility constraints. |
-| `repos/rtk_cloud_contracts_doc/AUTHORIZATION.md` | Product authorization roles, scopes, permissions, and ACL ownership. |
-| `repos/rtk_cloud_contracts_doc/PROVISION.md` | Provisioning phases, certificate issuance boundary, device activation, service ACLs, and failure semantics. |
-| `repos/rtk_cloud_contracts_doc/STREAMING.md` | WebRTC signaling, stream route auth, TURN registry, session lifecycle, and error model. |
-| `repos/rtk_cloud_contracts_doc/SNAPSHOT_AND_MEDIA.md` | Media download and snapshot access expectations. |
-| `repos/rtk_cloud_contracts_doc/CROSS_SERVICE_CHANNEL.md` | Account/video command and event channel semantics where available in the pinned snapshot. |
+| `repos/rtk_cloud_contracts_doc/auth.md` | Product auth contract, bearer scopes, device mTLS, revocation, token recovery, and compatibility constraints. |
+| `repos/rtk_cloud_contracts_doc/authorization.md` | Product authorization roles, scopes, permissions, and ACL ownership. |
+| `repos/rtk_cloud_contracts_doc/provision.md` | Provisioning phases, certificate issuance boundary, device activation, service ACLs, and failure semantics. |
+| `repos/rtk_cloud_contracts_doc/streaming.md` | WebRTC signaling, stream route auth, TURN registry, session lifecycle, and error model. |
+| `repos/rtk_cloud_contracts_doc/snapshot_and_media.md` | Media download and snapshot access expectations. |
+| `repos/rtk_cloud_contracts_doc/cross_service_channel.md` | Account/video command and event channel semantics where available in the pinned snapshot. |
 
 ## Supporting Sources
 

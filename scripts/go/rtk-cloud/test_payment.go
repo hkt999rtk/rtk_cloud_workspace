@@ -166,7 +166,7 @@ func runTestPayment(args []string) error {
 	if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
 		return err
 	}
 	cleanup := map[string]any{
@@ -191,7 +191,7 @@ func runTestPayment(args []string) error {
 		if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
 			return err
 		}
 	}
@@ -205,7 +205,7 @@ func runTestPayment(args []string) error {
 	}
 
 	evidenceNames := []string{
-		"results.json", "TEST_REPORT.md", "cleanup-report.json", "redaction-report.json",
+		"results.json", "test_report.md", "cleanup-report.json", "redaction-report.json",
 		"billing-service/coverage.out", "billing-service/coverage.log", "billing-service/junit.xml",
 		"billing-service/package-coverage.json", "billing-service/test-events.json", "billing-service/unit-manifest.json",
 	}
@@ -226,7 +226,7 @@ func runTestPayment(args []string) error {
 	if err := writeJSON(filepath.Join(outDir, "evidence-manifest.json"), manifestOut); err != nil {
 		return err
 	}
-	fmt.Printf("Payment report: %s\n", filepath.Join(outDir, "TEST_REPORT.md"))
+	fmt.Printf("Payment report: %s\n", filepath.Join(outDir, "test_report.md"))
 	if report.Status != "PASS" {
 		return exitCode(1)
 	}

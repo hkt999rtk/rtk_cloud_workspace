@@ -271,7 +271,7 @@ func runProvisioningLifecycleEvidence(args []string) error {
 		return err
 	}
 	report := fmt.Sprintf("# Provisioning Lifecycle Qualification\n\n- Run ID: `%s`\n- Status: **PASS**\n- Account provisioning device: `%s`\n- Owner app certificate/token readiness: **PASS**\n- Registry device disabled after deactivation: **PASS**\n- Unprovision device: `%s`\n- Previous owner binding released: **PASS**\n- Factory identity preserved: **PASS**\n", *runID, deactivation.DeviceID, unprovision.DeviceID)
-	return os.WriteFile(filepath.Join(*outDir, "TEST_REPORT.md"), []byte(report), 0o644)
+	return os.WriteFile(filepath.Join(*outDir, "test_report.md"), []byte(report), 0o644)
 }
 
 func disableAccountRegistryDevice(ctx accountManagerContext, brandCloudID, accountDeviceID, bearer string) error {

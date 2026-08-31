@@ -71,7 +71,7 @@ Common failure classifications include:
 - `CLEANUP_FAILED`: run-created VM deletion needs operator follow-up.
 
 Before running on a newly cloned workspace, prepare the staging runtime using
-[`docs/staging-runtime-bootstrap.zh-TW.md`](../../docs/staging-runtime-bootstrap.zh-TW.md).
+[`docs/staging-runtime-bootstrap.md`](../../docs/staging-runtime-bootstrap.md).
 The runtime is intentionally not stored in Git.
 
 ## Goals
@@ -154,7 +154,7 @@ reconnect. Missing or duplicate per-device evidence makes the run
 Shard evidence is collected as
 `shards/<vm-label>/ota-devices.jsonl`; aggregate OTA counters and the campaign
 contract are stored under `ota` in `results.json` and rendered in
-`TEST_REPORT.md`.
+`test_report.md`.
 
 ## Video-Enabled 1K Pilot Profile
 
@@ -183,7 +183,7 @@ HOME100K_RUN_ID=video1k-$(date -u +%Y%m%dT%H%M%SZ) \
 The wrapper writes video runner artifacts to
 `loadtests/home-100k/reports/<run_id>/video/`. `aggregate` reads the existing
 `e2e_test/video_cloud/load` JSON output and folds WebRTC lifecycle, media, and
-TURN evidence into `TEST_REPORT.md`.
+TURN evidence into `test_report.md`.
 
 The 1K qualification runs that video runner on the live `us-sea` load-generator
 VM (`HOME100K_VIDEO_LOADTEST_MODE=remote-sharded`) rather than on the operator
@@ -203,7 +203,7 @@ signaling-only pass is never reported as media-capacity success.
 `video-50k-turn-v1` and `video-100k-turn-v1` keep the Home MQTT/shadow run as
 background load and add a relay-only WebRTC viewer ladder for coturn sizing.
 The video runner is still `e2e_test/video_cloud/load`; the home runner owns
-orchestration, evidence collection, and the final `TEST_REPORT.md`.
+orchestration, evidence collection, and the final `test_report.md`.
 
 Default TURN sizing shape:
 
@@ -676,7 +676,7 @@ Required behavior:
   and measured run window.
 - `aggregate` reads collected shard results plus `server-evidence.json` and
   writes run-level `plan.json` and `results.json`. The public script then runs
-  `scripts/generate-report.sh` to render `TEST_REPORT.md` from the fixed
+  `scripts/generate-report.sh` to render `test_report.md` from the fixed
   template and collected artifacts.
 - `list-vms` lists leftover load-generator VMs by `home-100k`, `run_id`, and
   `load-generator` tags when cleanup needs review.
@@ -1104,7 +1104,7 @@ run-level `start-coordination.json` records ready barrier, configured start
 delay, per-VM start timestamps, and max start skew.
 `collect --live` reads `vms.json`, regenerates the same inventory, and runs
 `loadtests/home-100k/ansible/collect.yml` to fetch each VM's `results.json`,
-`TEST_REPORT.md`, `coordination.json`, runner daemon log, resource snapshot,
+`test_report.md`, `coordination.json`, runner daemon log, resource snapshot,
 and sync telemetry into
 `--out-dir/shards/<vm-label>/` and `--out-dir/sync-telemetry.d/`.
 `collect-server-evidence --live` runs Kubernetes evidence probes with `kubectl`
@@ -1138,8 +1138,8 @@ It writes `server-evidence.json` when `--out-dir` is set. Partial probe failure 
 operator-facing `home-100k.sh aggregate` command runs
 `scripts/generate-report.sh`, which reads `results.json`, server evidence,
 sync telemetry, workflow status logs, and resource sample TSV files to render
-the fixed-format `TEST_REPORT.md` from
-`reports/templates/TEST_REPORT.md.tmpl`. Any shard with
+the fixed-format `test_report.md` from
+`reports/templates/test_report.md.tmpl`. Any shard with
 `load_generator_health.saturated=true` forces `INCOMPLETE` so load-generator
 saturation cannot be mistaken for server capacity.
 `cleanup-home-100k-vms.sh` is the emergency cleanup helper for leftover Linode
@@ -1155,7 +1155,7 @@ loadtests/home-100k/scripts/cleanup-home-100k-vms.sh --run-id <run-id> --yes
 Use `--prefix <value>` only when intentionally cleaning a different test
 tag family.
 `run` writes `plan.json`, `results.json`, `server-evidence.json`, and
-`TEST_REPORT.md` to the selected output directory. Without a server evidence
+`test_report.md` to the selected output directory. Without a server evidence
 file, the run is intentionally marked `INCOMPLETE`. The live shard execution may
 wrap or reuse existing `rtk-cloud mqtt-loadtest` logic for MQTT transport, but
 this package owns the 100K home scenario, VM lifecycle action plan, scenario

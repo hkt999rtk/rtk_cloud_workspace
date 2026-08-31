@@ -44,8 +44,8 @@ Use the master font rules exactly:
 
 | Language | Font |
 | --- | --- |
-| Traditional Chinese | Microsoft JhengHei / `微軟正黑體` |
-| Simplified Chinese | Microsoft YaHei / `微软雅黑` |
+| Traditional Chinese | Microsoft JhengHei |
+| Simplified Chinese | Microsoft YaHei |
 | English / numbers | Arial |
 
 Guidance:
@@ -201,7 +201,7 @@ Recommended slide sequence for a status-report deck:
 When an AI or LLM generates slides from this master:
 
 - Start from the master style; do not invent a new corporate look.
-- Keep `微軟正黑體` for Traditional Chinese and Arial for English.
+- Keep Microsoft JhengHei for Traditional Chinese and Arial for English.
 - Use the extracted background/logo assets from this directory.
 - Keep slide content in Traditional Chinese by default.
 - Preserve literal API names, repository names, endpoint paths, and status

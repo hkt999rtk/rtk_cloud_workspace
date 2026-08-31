@@ -15,7 +15,7 @@ func TestBuildLKECapacityRunSummaryExtractsCapacityRow(t *testing.T) {
   "run_id":"lt1k",
   "status":"COMPLETE",
   "result":"SUCCESS",
-  "report_file":"TEST_REPORT.md",
+  "report_file":"test_report.md",
   "server_evidence_file":"server-evidence.json",
   "plan":{"conditions":{"env_root":"`+envRoot+`","devices":1000,"users":50,"devices_per_user":20,"vm_count":1,"load_generator_devices_per_vm":20000}},
   "load_generator_health":{"saturated":false},

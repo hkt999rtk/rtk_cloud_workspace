@@ -28,11 +28,11 @@ artifact credentials are unavailable.
 | Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Broker ownership decision, profiles, streams, retention, and evidence expectations. |
 | Gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Workspace-level comparison note. |
 | Issue backlog | `docs/implementation-gap-backlog.md` | Concrete foundation issue bodies and ordering. |
-| Account/user/device registry | `repos/rtk_account_manager/docs/SPEC.md` | Account manager owns org, user, auth, RBAC, registry, signup, quota, and account-side readiness behavior. |
+| Account/user/device registry | `repos/rtk_account_manager/docs/spec.md` | Account manager owns org, user, auth, RBAC, registry, signup, quota, and account-side readiness behavior. |
 | Video/device runtime | `repos/rtk_video_cloud/docs/architecture.md` | Video cloud owns activation, transport, firmware campaign, telemetry, metrics, media, and runtime signals. |
-| Admin dashboard | `repos/rtk_cloud_admin/docs/SPEC.md` | Admin dashboard owns the B2B operator UI/BFF and must not replace upstream systems of record. |
+| Admin dashboard | `repos/rtk_cloud_admin/docs/spec.md` | Admin dashboard owns the B2B operator UI/BFF and must not replace upstream systems of record. |
 | SDK package behavior | `repos/rtk_cloud_client/docs/README.md` | SDK repo owns package-native helpers, release validation, and package evidence. |
-| Public wording | `repos/rtk_cloud_frontend/docs/SPEC.md` | Website copy should follow implementation and deployment status. |
+| Public wording | `repos/rtk_cloud_frontend/docs/spec.md` | Website copy should follow implementation and deployment status. |
 
 ## Owner Matrix
 
@@ -48,7 +48,7 @@ artifact credentials are unavailable.
 | Cross-service broker packaging | Retired | `hkt999rtk/rtk_cloud_workspace` | `docs/cross-service-broker-packaging.md` records that shared broker packaging is not part of the current runtime; future async coordination should use explicit APIs plus DB-backed outbox/retry unless a real multi-consumer event bus requirement appears. |
 | SDK release coverage artifacts | Done | `hkt999rtk/rtk_cloud_client` | Android/iOS/native coverage exports and release validation artifacts. |
 | Pro2/FreeRTOS live-lab validation | Done | `hkt999rtk/rtk_cloud_client` | Live hardware release test program with clean skip/block reporting. |
-| Video Cloud local backend reports | Done | `hkt999rtk/rtk_video_cloud` | `docs/TEST_REPORT.md`, `docs/READINESS_TEST_REPORT.md`, and `docs/RELEASE_TEST_REPORT.md` record local backend validation and explicit live-environment skips. |
+| Video Cloud local backend reports | Done | `hkt999rtk/rtk_video_cloud` | `docs/test_report.md`, `docs/readiness_test_report.md`, and `docs/release_test_report.md` record local backend validation and explicit live-environment skips. |
 
 ## Completed Or No-Reopen Baseline
 

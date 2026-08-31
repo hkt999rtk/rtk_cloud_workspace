@@ -11,8 +11,8 @@ Last reviewed: 2026-04-30.
 This roadmap maps the Realtek Connect+ provisioning gap to concrete GitHub
 issues by owner repository. It is intentionally not the normative contract. The
 normative cross-repo interface source is
-`repos/rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`, with the existing
-cloud-side provisioning contract in `repos/rtk_cloud_contracts_doc/PROVISION.md`.
+`repos/rtk_cloud_contracts_doc/product_onboarding.md`, with the existing
+cloud-side provisioning contract in `repos/rtk_cloud_contracts_doc/provision.md`.
 
 ## Strategy
 
@@ -89,7 +89,7 @@ Android, iOS, and JavaScript/TypeScript.
 
 Dependencies:
 
-- `rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
+- `rtk_cloud_contracts_doc/product_onboarding.md`
 
 Acceptance criteria:
 
@@ -111,7 +111,7 @@ factory identity input.
 Dependencies:
 
 - local onboarding SDK interface issue
-- `rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
+- `rtk_cloud_contracts_doc/product_onboarding.md`
 
 Acceptance criteria:
 
@@ -129,7 +129,7 @@ Summary: define account-side ownership rules for user/org/device binding.
 
 Dependencies:
 
-- `rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
+- `rtk_cloud_contracts_doc/product_onboarding.md`
 
 Acceptance criteria:
 
@@ -168,8 +168,8 @@ cross-service provisioning.
 
 Dependencies:
 
-- `rtk_cloud_contracts_doc/PRODUCT_ONBOARDING.md`
-- `rtk_cloud_contracts_doc/CROSS_SERVICE_CHANNEL.md`
+- `rtk_cloud_contracts_doc/product_onboarding.md`
+- `rtk_cloud_contracts_doc/cross_service_channel.md`
 - account-side provisioning/deactivation operation support
 
 Acceptance criteria:

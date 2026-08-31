@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-template="$repo_root/loadtests/home-100k/reports/templates/TEST_REPORT.md.tmpl"
+template="$repo_root/loadtests/home-100k/reports/templates/test_report.md.tmpl"
 out_dir=""
 
 usage() {
@@ -11,7 +11,7 @@ usage: $(basename "$0") --out-dir <run-artifact-dir> [--template <template-file>
 
 Reads results.json, server-evidence.json, sync telemetry, workflow logs, and
 resource-samples/*.tsv from the run artifact directory, then writes the fixed
-format TEST_REPORT.md.
+format test_report.md.
 EOF
 }
 
@@ -1447,6 +1447,6 @@ unresolved = re.findall(r"\{\{[A-Z0-9_]+\}\}", report)
 if unresolved:
     raise SystemExit(f"unresolved template markers: {', '.join(sorted(set(unresolved)))}")
 
-(out_dir / "TEST_REPORT.md").write_text(report.rstrip() + "\n")
-print(f"report_file={out_dir / 'TEST_REPORT.md'}", file=sys.stderr)
+(out_dir / "test_report.md").write_text(report.rstrip() + "\n")
+print(f"report_file={out_dir / 'test_report.md'}", file=sys.stderr)
 PY

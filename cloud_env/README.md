@@ -1,21 +1,19 @@
-# 建立與設定 environment
+# Creating and Configuring an Environment
 
-這是新增 `dev`、`staging`、`prod`、`qa` 或其他 deployment environment 的操作入口。架構責任與解析原理見 [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md)；共用 defaults 與 adapter keys 見 [`cloud_deploy/README.md`](../cloud_deploy/README.md)；多環境 Object Storage 與憑證生命週期見 [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md)。
+This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, and [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for multi-environment Object Storage and credential lifecycles.
 
-要從全新 clone 建立 LKE staging、完成服務驗收並執行 1K MQTT/Device
-Shadow 測試，請依序執行 [`staging-from-scratch.md`](../docs/staging-from-scratch.md)。不要把該流程用於
-已存在的 cluster；既有環境應先安全還原其 ignored `runtime/`。
+To build LKE staging from a fresh clone, complete service acceptance, and run the 1K MQTT/Device Shadow test, follow [`staging-from-scratch.md`](../docs/staging-from-scratch.md). Do not use that procedure for an existing cluster; safely restore the existing environment's ignored `runtime/` first.
 
-## 建立最小設定
+## Create the Minimal Configuration
 
-Environment identity 直接取自 `cloud_env/` 下的目錄名稱；名稱使用小寫英數字與 `-`。不要複製既有 environment 的 `runtime/`。
+The environment identity comes directly from its directory name under `cloud_env/`. Use lowercase alphanumeric characters and `-`. Do not copy another environment's `runtime/`.
 
 ```sh
 environment=qa
 mkdir -p "cloud_env/$environment/overrides"
 ```
 
-建立 `cloud_env/qa/environment.env`：
+Create `cloud_env/qa/environment.env`:
 
 ```env
 CLOUD_STACK_NAME=video-cloud-qa
@@ -23,13 +21,13 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 DEPLOYMENT_LOCATION=us-west
 ```
 
-| Key | 必填 | 用途 |
+| Key | Required | Purpose |
 | --- | --- | --- |
-| `CLOUD_STACK_NAME` | 是 | Cluster、namespace、DNS 與 destructive confirmation 使用的唯一 stack 名稱。 |
-| `CLOUD_DNS_ROOT_DOMAIN` | 是 | Public service hostname 的根網域。 |
-| `DEPLOYMENT_LOCATION` | 是 | Provider-neutral logical location；adapter 會轉換成實際 provider region。 |
+| `CLOUD_STACK_NAME` | Yes | Unique stack name used by the cluster, namespace, DNS, and destructive confirmation. |
+| `CLOUD_DNS_ROOT_DOMAIN` | Yes | Root domain for public service hostnames. |
+| `DEPLOYMENT_LOCATION` | Yes | Provider-neutral logical location; the adapter maps it to a provider region. |
 
-建立 `cloud_env/qa/deployment.env`：
+Create `cloud_env/qa/deployment.env`:
 
 ```env
 DEPLOYMENT_ARCHITECTURE=kubernetes
@@ -37,15 +35,15 @@ DEPLOYMENT_ADAPTER=lke
 DNS_ADAPTER=godaddy
 ```
 
-| Key | 必填 | 用途 |
+| Key | Required | Purpose |
 | --- | --- | --- |
-| `DEPLOYMENT_ARCHITECTURE` | 是 | 選擇共用 architecture；目前為 `kubernetes`。 |
-| `DEPLOYMENT_ADAPTER` | 是 | 選擇 provider adapter；目前只有 `lke` 支援 mutation，`eks`、`gke` 只會 validate 後 fail fast。 |
-| `DNS_ADAPTER` | 是 | 獨立選擇 DNS provider；`godaddy` 與 `route53` 都支援 mutation。 |
+| `DEPLOYMENT_ARCHITECTURE` | Yes | Selects the shared architecture; currently `kubernetes`. |
+| `DEPLOYMENT_ADAPTER` | Yes | Selects the provider adapter. Only `lke` currently supports mutation; `eks` and `gke` validate and then fail fast. |
+| `DNS_ADAPTER` | Yes | Selects the DNS provider independently; both `godaddy` and `route53` support mutation. |
 
-## 選填 overrides
+## Optional Overrides
 
-沒有差異時不需要建立 override 檔。需要調整 workload、capacity 或 topology 時，將 [`cloud_deploy/architectures/kubernetes/`](../cloud_deploy/architectures/kubernetes/) 已存在的 key 寫入 `overrides/architecture.env`：
+Do not create an override file when there are no differences. To adjust workload, capacity, or topology, place existing keys from [`cloud_deploy/architectures/kubernetes/`](../cloud_deploy/architectures/kubernetes/) in `overrides/architecture.env`:
 
 ```env
 CAPACITY_TARGET_CONNECTIONS=1000
@@ -57,29 +55,24 @@ NODE_CLASS_BROKER_MIN_VCPU=4
 NODE_CLASS_BROKER_MIN_MEMORY_GIB=8
 ```
 
-Environment 不指定 LKE region、Linode type 或 provider account quota。Adapter 根據 logical location 與 node-class resource minima 選擇 provider resources，實際結果只寫入 ignored runtime evidence。
+An environment does not specify an LKE region, Linode type, or provider account quota. The adapter selects provider resources from the logical location and node-class resource minima. Resolved results are written only to ignored runtime evidence.
 
-`overrides/adapter.env` 只保留給經審查的 provider escape hatch，不是建立 environment 的標準設定。一般 dev、staging、prod 應保持空白。Provider account limit 由 operator 放在 ignored runtime：
+`overrides/adapter.env` is reserved for reviewed provider escape hatches; it is not standard environment configuration. Keep it empty for normal dev, staging, and prod environments. The operator stores the provider account limit in ignored runtime:
 
 ```env
 # cloud_env/qa/runtime/adapters/lke/account.env
 LKE_ACTIVE_SERVICE_LIMIT=20
 ```
 
-Staging 的實際檔案位置是：
+The actual staging file path is:
 
 ```text
 cloud_env/staging/runtime/adapters/lke/account.env
 ```
 
-`LKE_ACTIVE_SERVICE_LIMIT` 是 Linode account 允許的 active-service 上限，
-不是另一個 API secret，也不是 architecture/default config。Linode API
-目前不提供可由 `LINODE_TOKEN` 查詢這個上限的 endpoint，因此 operator 必須
-依 Linode account confirmation 手動設定。Deployment 會在任何付費資源建立前
-比較 `current active services + planned resources` 與這個上限；值不明時應
-停止，不要猜測。
+`LKE_ACTIVE_SERVICE_LIMIT` is the active-service limit allowed for the Linode account. It is neither another API secret nor architecture/default configuration. The Linode API does not currently expose an endpoint that can query this limit with `LINODE_TOKEN`, so the operator must set it manually from Linode's account confirmation. Before creating any billable resource, deployment compares `current active services + planned resources` with this limit. Stop if the value is unknown; do not guess.
 
-建立 staging account state：
+Create the staging account state:
 
 ```sh
 mkdir -p cloud_env/staging/runtime/adapters/lke
@@ -89,11 +82,9 @@ cp cloud_env/staging/runtime/adapters/lke/account.env.example \
 chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
 ```
 
-也可以直接編輯 `account.env`，將 example 裡的 `20` 換成 Linode 確認的實際
-上限。
+You may also edit `account.env` directly and replace the example value `20` with the actual limit confirmed by Linode.
 
-如果另一台已完成 staging setup 的 workspace 已有這個檔案，可以安全複製其
-operator state；不要把它 commit：
+If another workspace with a completed staging setup already has this file, you may safely copy its operator state. Do not commit it:
 
 ```sh
 cp /path/to/known-good-workspace/cloud_env/staging/runtime/adapters/lke/account.env \
@@ -101,11 +92,9 @@ cp /path/to/known-good-workspace/cloud_env/staging/runtime/adapters/lke/account.
 chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
 ```
 
-`20` 只是已確認 account limit 的例子；執行者必須以自己 Linode account
-收到的實際上限替換。檔案位於被 Git 忽略的 `runtime/`，不會隨 `git clone`
-取得。
+`20` is only an example of a confirmed account limit. Replace it with the actual limit for your Linode account. The file is under the Git-ignored `runtime/` directory and is not obtained through `git clone`.
 
-Architecture override 不得包含 provider key；adapter override 不得包含 workload、capacity 或 topology key。Unknown key、錯誤型別與跨層 key 會在 plan 階段失敗。
+Architecture overrides must not contain provider keys, and adapter overrides must not contain workload, capacity, or topology keys. Unknown keys, invalid types, and cross-layer keys fail during planning.
 
 ### Certificate algorithm policy
 
@@ -131,14 +120,13 @@ for Ed25519 or P-256 subject keys. These settings do not control public ACME
 certificates, JWT/EdDSA token signing, OTA signing, SSH keys, or PKCS#11 signer
 selection.
 
-每個 environment 也必須追蹤 `storage.env`，宣告 runtime media policy、bucket 與 environment-owned prefix；範例與 lifecycle 見 [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md)。
+Each environment must also track `storage.env`, which declares the runtime media policy, bucket, and environment-owned prefix. See [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for examples and the lifecycle.
 
-DNS provider 的選填 escape hatch 使用 `overrides/dns.env`。一般 environment 不設定 hosted-zone ID、API endpoint、AWS access key 或 GoDaddy key。GoDaddy credentials 只從 `~/.config/rtk_cloud/<environment>/operator/env/` 讀取；Route53 所需 credentials 也必須存入同一 environment store。詳細設定見 [`docs/secret-store.md`](../docs/secret-store.md) 與 [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md)。
+Use `overrides/dns.env` for optional DNS-provider escape hatches. A normal environment does not set a hosted-zone ID, API endpoint, AWS access key, or GoDaddy key. GoDaddy credentials are read only from `~/.config/rtk_cloud/<environment>/operator/env/`; Route53 credentials must be stored in the same environment store. See [`docs/secret-store.md`](../docs/secret-store.md) and [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md) for details.
 
-## 驗證與 provision
+## Validate and Provision
 
-先確認 tracked config 不會被 Git ignore，再執行不寫入 runtime、不修改 cloud resource
-的 preflight：
+First confirm that tracked configuration is not ignored by Git. Then run preflight, which neither writes runtime state nor modifies cloud resources:
 
 ```sh
 git check-ignore "cloud_env/qa/environment.env" || true
@@ -148,7 +136,7 @@ go run ./scripts/go/rtk-cloud -- deployment preflight \
 go run ./scripts/go/rtk-cloud -- deployment plan --environment qa
 ```
 
-檢查 generic plan 中的 environment、logical location、minimum/effective replicas、每類 node 的 aggregate requests 與 effective count，再檢查 adapter-private `runtime/adapters/lke/resolved-resources.env` 的實際 region/Product。Load test 只使用 normalized `runtime/state/provider-preflight.env`，不讀 adapter-private state。確認無誤後才執行 mutation：
+Review the environment, logical location, minimum/effective replicas, aggregate requests for each node class, and effective count in the generic plan. Then review the resolved region and product in adapter-private `runtime/adapters/lke/resolved-resources.env`. Load tests use only normalized `runtime/state/provider-preflight.env`; they do not read adapter-private state. Perform mutation only after the plan is correct:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- deployment provision \
@@ -156,10 +144,9 @@ go run ./scripts/go/rtk-cloud -- deployment provision \
   --confirm video-cloud-qa
 ```
 
-## 統一的 environment test lifecycle
+## Unified Environment Test Lifecycle
 
-所有 environment 使用同一支 script 與相同參數格式；不要為 dev、staging 或
-prod 複製 deployment script：
+All environments use the same script and argument format. Do not copy the deployment script for dev, staging, or prod:
 
 ```sh
 scripts/deploy-environment.sh plan --environment dev
@@ -168,24 +155,18 @@ scripts/deploy-environment.sh test --environment staging --confirm video-cloud-s
 scripts/deploy-environment.sh test --environment prod --confirm video-cloud-prod
 ```
 
-`test` 固定執行 `provision -> acceptance -> cleanup`。Provision 或 acceptance
-失敗時仍會執行 cleanup。Cleanup 只依該 environment 的 stack ownership 移除
-DNS、LKE、VM、firewall、VPC 與 environment-owned empty Object Storage bucket；
-sanitized test evidence 保留在 ignored `runtime/artifacts/`。如果任何 provider
-resource 無法移除，整個 test 必須回報失敗，不得把 environment 視為已清除。
-執行 public HTTPS DNS-01 前，operator host 必須已安裝 `certbot`，且 GoDaddy
-credential 必須能讀寫 `CLOUD_DNS_ROOT_DOMAIN` 的 DNS records。
+`test` always runs `provision -> acceptance -> cleanup`. Cleanup still runs if provisioning or acceptance fails. Based only on that environment's stack ownership, cleanup removes DNS, LKE, VMs, firewalls, VPCs, and empty environment-owned Object Storage buckets. Sanitized test evidence remains in ignored `runtime/artifacts/`. If any provider resource cannot be removed, the entire test must report failure and the environment must not be considered clean. Before running public HTTPS DNS-01, the operator host must have `certbot` installed and the GoDaddy credential must be able to read and write DNS records for `CLOUD_DNS_ROOT_DOMAIN`.
 
-LKE mutation 需要 operator 提供 `LINODE_TOKEN`。Token、kubeconfig、certificates、service secrets、device credentials、SQLite、state 與 artifacts 只能存在 `cloud_env/qa/runtime/` 或 operator secret source，不得寫入上述 tracked `.env` 檔，也不得 commit。
+LKE mutation requires the operator to provide `LINODE_TOKEN`. Tokens, kubeconfigs, certificates, service secrets, device credentials, SQLite databases, state, and artifacts may exist only in `cloud_env/qa/runtime/` or an operator secret source. They must not be written to the tracked `.env` files above or committed.
 
 ## Review checklist
 
-- Environment 目錄名稱清楚且使用小寫英數字與 `-`。
-- `CLOUD_STACK_NAME` 與 DNS 名稱不會碰撞其他 environment。
-- 只覆寫與此 environment 確實不同的值。
-- Architecture override 沒有 `LKE_*`、`EKS_*`、`GKE_*`。
-- dev、staging、prod 的 adapter override 不包含正常 region、Product 或 quota。
-- Provider account limit 只存在 ignored adapter runtime，不進版控。
-- DNS adapter 已選擇，且 environment 沒有 provider zone ID 或 DNS credentials。
-- `deployment plan` 成功且 resolved plan 不含 secret。
-- `runtime/` 保持 ignored，沒有從其他 environment 複製 state。
+- The environment directory name is clear and uses lowercase alphanumeric characters and `-`.
+- `CLOUD_STACK_NAME` and DNS names do not collide with another environment.
+- Only values that genuinely differ for this environment are overridden.
+- Architecture overrides contain no `LKE_*`, `EKS_*`, or `GKE_*` keys.
+- Adapter overrides for dev, staging, and prod contain no normal region, product, or quota settings.
+- The provider account limit exists only in ignored adapter runtime and is not version-controlled.
+- A DNS adapter is selected, and the environment contains no provider zone ID or DNS credentials.
+- `deployment plan` succeeds and the resolved plan contains no secrets.
+- `runtime/` remains ignored and contains no state copied from another environment.

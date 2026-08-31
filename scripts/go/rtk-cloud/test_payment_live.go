@@ -205,7 +205,7 @@ func runTestPaymentLive(args []string) error {
 	if report.Status != "PASS" {
 		return fmt.Errorf("payment staging-live qualification failed: %s", report.Assessment)
 	}
-	fmt.Printf("Payment staging-live report: %s\n", filepath.Join(outDir, "TEST_REPORT.md"))
+	fmt.Printf("Payment staging-live report: %s\n", filepath.Join(outDir, "test_report.md"))
 	return nil
 }
 
@@ -1256,7 +1256,7 @@ func writePaymentLiveReports(outDir string, report paymentEvidenceReport, cleanu
 	if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
 		return err
 	}
 	cleanupStatus := "PASS"
@@ -1280,14 +1280,14 @@ func writePaymentLiveReports(outDir string, report paymentEvidenceReport, cleanu
 		if err := writeJSON(filepath.Join(outDir, "results.json"), report); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(outDir, "TEST_REPORT.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(outDir, "test_report.md"), renderPaymentEvidenceReport(report), 0o644); err != nil {
 			return err
 		}
 	}
 	if err := writeJSON(filepath.Join(outDir, "redaction-report.json"), map[string]any{"schema_version": 1, "run_id": report.RunID, "status": redactionStatus, "generated_at": time.Now().UTC().Format(time.RFC3339), "findings": issues}); err != nil {
 		return err
 	}
-	evidenceNames := []string{"results.json", "TEST_REPORT.md", "execution.log", "cleanup-report.json", "redaction-report.json", "evidence/LIVE-STG-SIMULATOR-001@desktop.png", "evidence/LIVE-STG-SIMULATOR-001@mobile.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-desktop.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-mobile.png"}
+	evidenceNames := []string{"results.json", "test_report.md", "execution.log", "cleanup-report.json", "redaction-report.json", "evidence/LIVE-STG-SIMULATOR-001@desktop.png", "evidence/LIVE-STG-SIMULATOR-001@mobile.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-desktop.png", "evidence/LIVE-STG-SIMULATOR-001@newebpay-mobile.png"}
 	evidence := make([]paymentEvidenceFile, 0, len(evidenceNames))
 	for _, name := range evidenceNames {
 		path := filepath.Join(outDir, filepath.FromSlash(name))

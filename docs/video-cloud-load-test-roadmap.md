@@ -88,7 +88,7 @@ Workspace layout:
 - `e2e_test/video_cloud/load/loadtest/`: actor scheduler, WebRTC/Pion validation, reporting, and threshold evaluation.
 - `e2e_test/video_cloud/load/scripts/`: local and two-host execution scripts.
 - `e2e_test/video_cloud/load/tools/`: report candidate and two-host aggregation helpers.
-- `docs/LOAD_TEST_REPORT.md`: canonical product-level load report file.
+- `docs/load_test_report.md`: canonical product-level load report file.
 
 
 CLI examples:
@@ -200,7 +200,7 @@ V1 is complete when:
 - `rtk_video_cloud` documents the server prerequisites required to run the test
   without guessing.
 - `loadtests/home-100k` can merge home MQTT/shadow evidence and two-host WebRTC
-  ladder artifacts into one `TEST_REPORT.md`.
+  ladder artifacts into one `test_report.md`.
 
 ## Future Profile
 

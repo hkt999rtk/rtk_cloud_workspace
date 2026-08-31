@@ -35,10 +35,10 @@ status reports.
 | Source | Use in report |
 | --- | --- |
 | `repos/rtk_cloud_frontend/README.md` | Portal positioning, marketing foundation, SEO/social metadata, sitemap/robots, contact lead capture, analytics, multilingual routes, and public website boundaries. |
-| `repos/rtk_cloud_frontend/docs/SPEC.md` | Current portal implementation, visual direction, content system, routes, and product marketing scope. |
-| `repos/rtk_cloud_frontend/docs/ANALYTICS.md` | First-party analytics purpose, privacy guardrails, event model, CTA/engagement tracking, and admin aggregate behavior. |
-| `repos/rtk_cloud_frontend/docs/API_REFERENCE.md` | `/api/event`, `/api/search`, `/contact`, `/admin/leads`, and admin export surfaces. |
-| `repos/rtk_cloud_frontend/docs/MANUAL_CONTENT_SYSTEM.md` | File-backed manual/content system and managed content workflow. |
+| `repos/rtk_cloud_frontend/docs/spec.md` | Current portal implementation, visual direction, content system, routes, and product marketing scope. |
+| `repos/rtk_cloud_frontend/docs/analytics.md` | First-party analytics purpose, privacy guardrails, event model, CTA/engagement tracking, and admin aggregate behavior. |
+| `repos/rtk_cloud_frontend/docs/api_reference.md` | `/api/event`, `/api/search`, `/contact`, `/admin/leads`, and admin export surfaces. |
+| `repos/rtk_cloud_frontend/docs/manual_content_system.md` | File-backed manual/content system and managed content workflow. |
 
 ## Master Slide / Presentation Design
 

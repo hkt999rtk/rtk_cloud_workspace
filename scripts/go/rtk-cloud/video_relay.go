@@ -1429,7 +1429,7 @@ func writeVideoRelayFailed(outDir string, result videoRelayResult, reason string
 
 func writeVideoRelayFinal(outDir string, result videoRelayResult) (videoRelayResult, error) {
 	resultsFile := filepath.Join(outDir, "results.json")
-	reportFile := filepath.Join(outDir, "TEST_REPORT.md")
+	reportFile := filepath.Join(outDir, "test_report.md")
 	if result.Artifacts == nil {
 		result.Artifacts = map[string]string{}
 	}

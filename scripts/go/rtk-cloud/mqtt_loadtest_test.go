@@ -209,7 +209,7 @@ func TestMQTTLoadAggregateCommandReadsShardFiles(t *testing.T) {
 	if err := runMQTTLoadTestAggregate([]string{"--input-dir", filepath.Join(root, "shards"), "--out-dir", outDir}); err != nil {
 		t.Fatal(err)
 	}
-	report, err := os.ReadFile(filepath.Join(outDir, "TEST_REPORT.md"))
+	report, err := os.ReadFile(filepath.Join(outDir, "test_report.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

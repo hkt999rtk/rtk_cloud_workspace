@@ -210,7 +210,7 @@ func TestWriteFeatureStageReportsMaterializesNotRunArtifactsWithoutOverwritingRe
 	if err := writeFeatureStageReports(stageDir, spec, manifest); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"plan.json", "results.json", "evidence-manifest.json", "feature-evidence.json", "TEST_REPORT.md", "junit.xml"} {
+	for _, name := range []string{"plan.json", "results.json", "evidence-manifest.json", "feature-evidence.json", "test_report.md", "junit.xml"} {
 		if stat, err := os.Stat(filepath.Join(stageDir, name)); err != nil || stat.Size() == 0 {
 			t.Fatalf("%s was not materialized: stat=%v err=%v", name, stat, err)
 		}
@@ -263,7 +263,7 @@ func TestCollectFeatureEvidenceFilesExcludesRenderedStageReport(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "results.json"), []byte(`{"status":"PASS"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "TEST_REPORT.md"), []byte("rendered after manifest"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "test_report.md"), []byte("rendered after manifest"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	files := collectFeatureEvidenceFiles(dir)
