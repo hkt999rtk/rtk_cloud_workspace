@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from validate_openapi import validate_file
 
@@ -24,6 +25,7 @@ class OpenAPIValidationTests(unittest.TestCase):
 
     def write(self, name, value):
         path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value if isinstance(value, str) else json.dumps(value))
         return path
 
@@ -53,6 +55,28 @@ class OpenAPIValidationTests(unittest.TestCase):
         self.write("schema.yaml", "type: object\ntype: string\n")
         path = self.write("api.json", self.spec(schema={"$ref": "schema.yaml"}))
         with self.assertRaisesRegex(ValueError, "duplicate YAML key 'type'"):
+            validate_file(path, self.root)
+
+    def test_schema_id_cannot_hide_duplicate_keys_in_another_base(self):
+        self.write("child.yaml", "type: string\n")
+        self.write("schemas/child.yaml", "type: object\ntype: string\n")
+        path = self.write("api.json", self.spec(schema={"$id": "schemas/root.yaml", "$ref": "child.yaml"}))
+        with self.assertRaisesRegex(ValueError, r"schema \$id bases are unsupported"):
+            validate_file(path, self.root)
+
+    def test_schema_ids_are_rejected_before_the_resolver_runs(self):
+        for identifier in ("schemas/root.yaml", "https://example.invalid/schema.yaml", "//example.invalid/schema.yaml", "../outside/schema.yaml"):
+            with self.subTest(identifier=identifier):
+                path = self.write("api.json", self.spec(schema={"type": "object", "properties": {"child": {"$id": identifier, "$ref": "child.yaml"}}}))
+                with patch("validate_openapi.validate") as resolver:
+                    with self.assertRaisesRegex(ValueError, r"schema \$id bases are unsupported"):
+                        validate_file(path, self.root)
+                    resolver.assert_not_called()
+
+    def test_referenced_documents_cannot_introduce_schema_ids(self):
+        self.write("schemas/child.yaml", "$id: https://example.invalid/root.yaml\ntype: string\n")
+        path = self.write("api.json", self.spec(schema={"$ref": "schemas/child.yaml"}))
+        with self.assertRaisesRegex(ValueError, r"schema \$id bases are unsupported"):
             validate_file(path, self.root)
 
     def test_missing_reference_is_rejected(self):

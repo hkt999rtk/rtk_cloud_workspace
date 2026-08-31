@@ -33,6 +33,11 @@ def local_documents(path, workspace, documents):
 
     def walk(value):
         if isinstance(value, dict):
+            # The pinned resolver does not honor schema $id bases. Reject them
+            # before validation so the guard and resolver cannot inspect different
+            # documents (or resolve a supposedly local reference over the network).
+            if "$id" in value:
+                raise ValueError("schema $id bases are unsupported; use document-relative $ref paths")
             ref = value.get("$ref")
             if isinstance(ref, str):
                 uri = urlsplit(ref)

@@ -107,6 +107,13 @@ documents for duplicate keys as well as the four entry points. Schema component
 names that collide but have different constraints must be split, preserving each
 operation's intended constraints.
 
+The pinned validator does not implement JSON Schema `$id` base resolution.
+This gate therefore rejects `$id` in entry and referenced documents before
+resolution, including nested schema identifiers. Use document-relative `$ref`
+paths; schema identifiers require a separately verified resolver upgrade before
+they can be accepted. This explicit restriction prevents the preflight checker
+and validator from silently resolving the same reference to different files.
+
 The `OpenAPI Contract Validation` workspace workflow runs these commands and
 `test-spec-inventory check --mode required` when the validator, registered
 repository gitlinks, specification registry, catalog or generated traceability
