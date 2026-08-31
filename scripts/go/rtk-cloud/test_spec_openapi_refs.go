@@ -33,7 +33,8 @@ func newOpenAPIPathResolver(registry specSourceRegistry, readFile func(string) (
 		}
 		// Consumer contracts symlinks are the documented canonical workspace
 		// layout. Load the registered canonical document, never an arbitrary alias.
-		if strings.HasPrefix(target, "repos/") && strings.HasSuffix(target, "/docs/rtk_cloud_contracts_doc/openapi.yaml") {
+		parts := strings.Split(target, "/")
+		if len(parts) == 5 && parts[0] == "repos" && strings.HasSuffix(target, "/docs/rtk_cloud_contracts_doc/openapi.yaml") {
 			target = "repos/rtk_cloud_contracts_doc/openapi.yaml"
 		}
 		if !registered[target] {

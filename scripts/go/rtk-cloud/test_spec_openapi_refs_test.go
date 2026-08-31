@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -51,6 +52,53 @@ paths:
 	conflict := wrapper + "    post: {operationId: shadow}\n"
 	if _, _, err = parseOpenAPISpecWithResolver(consumer, []byte(conflict), resolver); err == nil {
 		t.Fatal("ambiguous local override accepted")
+	}
+}
+
+func TestOpenAPIPathReferenceErrorsAndNestedInheritance(t *testing.T) {
+	registry := specSourceRegistry{Sources: []specSourceRegistryItem{{Path: "api.yaml", Parser: "openapi"}}}
+	for _, tc := range []struct {
+		name, body, ref, want string
+	}{
+		{"invalid document", "paths: [", "#/paths/~1a", "yaml"},
+		{"invalid item", "paths: {'/a': []}", "#/paths/~1a", "unmarshal"},
+		{"nested conflict", "paths: {'/a': {$ref: '#/paths/~1b', get: {}}, '/b': {get: {}}}", "#/paths/~1a", "conflicting"},
+		{"nested missing", "paths: {'/a': {$ref: '#/paths/~1b'}}", "#/paths/~1a", "does not exist"},
+		{"trailing pointer escape", "", "#/paths/~", "invalid JSON Pointer"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := newOpenAPIPathResolver(registry, func(string) ([]byte, error) { return []byte(tc.body), nil })
+			if _, err := resolver("api.yaml", tc.ref); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q: %v", tc.want, err)
+			}
+		})
+	}
+	sentinel := errors.New("registered file unreadable")
+	resolver := newOpenAPIPathResolver(registry, func(string) ([]byte, error) { return nil, sentinel })
+	if _, err := resolver("api.yaml", "#/paths/~1a"); !errors.Is(err, sentinel) {
+		t.Fatalf("reader error lost: %v", err)
+	}
+	resolver = newOpenAPIPathResolver(registry, func(string) ([]byte, error) {
+		return []byte("paths: {'/a': {$ref: '#/paths/~1b', summary: alias}, '/b': {$ref: '#/paths/~1~01'}, '/~1': {get: {operationId: escaped}}}"), nil
+	})
+	item, err := resolver("api.yaml", "#/paths/~1a")
+	if err != nil || len(item) != 2 || item["summary"].Value != "alias" {
+		t.Fatalf("nested inherited fields: %+v, %v", item, err)
+	}
+	var operation map[string]string
+	node := item["get"]
+	if err := node.Decode(&operation); err != nil || operation["operationId"] != "escaped" {
+		t.Fatalf("escaped JSON Pointer did not resolve: %+v, %v", operation, err)
+	}
+	// Excessive chains fail deterministically even without a cycle.
+	var body strings.Builder
+	body.WriteString("paths:\n")
+	for i := 0; i < 33; i++ {
+		fmt.Fprintf(&body, "  '/%d': {$ref: '#/paths/~1%d'}\n", i, i+1)
+	}
+	resolver = newOpenAPIPathResolver(registry, func(string) ([]byte, error) { return []byte(body.String()), nil })
+	if _, err := resolver("api.yaml", "#/paths/~10"); err == nil || !strings.Contains(err.Error(), "excessive") {
+		t.Fatalf("reference depth limit missing: %v", err)
 	}
 }
 
