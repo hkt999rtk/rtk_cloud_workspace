@@ -85,7 +85,7 @@
 | `repos/rtk_cloud_admin/docs/SPEC.md#REQ-CA-BFF-BREAK-GLASS-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-BREAK-GLASS-001` | `` | `b4f8ed6d09e1` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-PROFILE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PROFILE-001` | `independent` | `f660bd4dee07` | `canonical` | `active` | `INT-AM-BRANDPROFILE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-SOURCE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-SOURCE-001` | `independent` | `f2de797b0093` | `canonical` | `active` | `INT-CA-BRANDBFF-001` | `test-services` |
-| `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-IDENTITY-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `workflow` | `84bd74aa168c` | `canonical` | `active` | `INT-AM-BRANDIDENT-001`, `INT-AM-BRANDOWNER-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-IDENTITY-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `workflow` | `fcf2d2e6b9bf` | `canonical` | `active` | `INT-AM-BRANDIDENT-001`, `INT-AM-BRANDOWNER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-MEMBER-INVITE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-MEMBER-INVITE-001` | `workflow` | `f0b8c91c5ea1` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-PRIVACY-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PRIVACY-001` | `independent` | `6dfb6cc8f80f` | `canonical` | `active` | `INT-AM-BRANDIDENT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/BRAND_CLOUD_ADMIN.md#REQ-CA-BRAND-ADMIN-AUTH-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-ADMIN-AUTH-001` | `independent` | `7fa3ed81d66f` | `canonical` | `active` | `INT-AM-BRANDADMIN-001` | `test-services` |
@@ -225,7 +225,7 @@
 | `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-OWNER-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-OWNER-001` | `workflow` | `757a69f25eed` | `canonical` | `planned` | — | — |
 | `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-SHARING-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-SHARING-001` | `workflow` | `93da20e41009` | `canonical` | `planned` | — | — |
 | `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-LIFECYCLE-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-LIFECYCLE-001` | `workflow` | `497150ebc19a` | `canonical` | `planned` | — | — |
-| `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-HANDOFF-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `workflow` | `730bf4bd52b2` | `canonical` | `planned` | — | — |
+| `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-HANDOFF-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `workflow` | `802c2bd5643d` | `canonical` | `planned` | — | — |
 | `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-UI-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-UI-001` | `workflow` | `50b3c8a577c0` | `canonical` | `planned` | — | — |
 | `repos/rtk_cloud_contracts_doc/MULTICLOUD_OWNERSHIP.md#REQ-MULTICLOUD-RELEASE-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-RELEASE-001` | `workflow` | `f74337dd09e4` | `canonical` | `planned` | — | — |
 | `repos/rtk_cloud_contracts_doc/SERVICE_LOGGING.md#REQ-CONTRACT-LOGGING-BOUNDARY-001` | `FEAT-CONTRACT-SERVICE-LOGGING-001` | `REQ-CONTRACT-LOGGING-BOUNDARY-001` | `` | `869c1a5b4d89` | `canonical` | `active` | `INT-LOGGER-CONTRACT-001` | `test-services` |
@@ -492,7 +492,7 @@
 | `SPEC-CONTRACT-OPENAPI#signup` | `POST /v1/auth/signup` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `18df926b4b50` |
 | `SPEC-CONTRACT-OPENAPI#verifyEmail` | `POST /v1/auth/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `4d92b7935b36` |
 | `SPEC-CONTRACT-OPENAPI#acceptDeveloperBrandCloudMemberInvitation` | `POST /v1/developer/brand-cloud-member-invitations/accept` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-MEMBER-INVITE-001` | `d44d869c2ec5` |
-| `SPEC-CONTRACT-OPENAPI#acceptBrandCloudOwnerTransfer` | `POST /v1/developer/brand-cloud-owner-transfers/accept` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `ffdb828f9880` |
+| `SPEC-CONTRACT-OPENAPI#acceptBrandCloudOwnerTransfer` | `POST /v1/developer/brand-cloud-owner-transfers/accept` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `d6543ad77b7d` |
 | `SPEC-CONTRACT-OPENAPI#createDeveloperBrandCloud` | `POST /v1/developer/brand-clouds` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-OWNER-001`, `REQ-MULTICLOUD-LIFECYCLE-001` | `b5c85d1cfda0` |
 | `SPEC-CONTRACT-OPENAPI#listDeveloperBrandClouds` | `GET /v1/developer/brand-clouds` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-OWNER-001` | `794721016e9d` |
 | `SPEC-CONTRACT-OPENAPI#deleteDeveloperBrandCloud` | `DELETE /v1/developer/brand-clouds/{brandCloudId}` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-LIFECYCLE-001` | `79fcf67d06c0` |
@@ -506,7 +506,7 @@
 | `SPEC-CONTRACT-OPENAPI#removeDeveloperBrandCloudMember` | `DELETE /v1/developer/brand-clouds/{brandCloudId}/members/{userId}` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-SHARING-001` | `9202af269b4d` |
 | `SPEC-CONTRACT-OPENAPI#updateDeveloperBrandCloudMember` | `PATCH /v1/developer/brand-clouds/{brandCloudId}/members/{userId}` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-SHARING-001` | `b8f56e28e233` |
 | `SPEC-CONTRACT-OPENAPI#getDeveloperCloudOperation` | `GET /v1/developer/brand-clouds/{brandCloudId}/operations/{operationId}` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-LIFECYCLE-001`, `REQ-MULTICLOUD-HANDOFF-001` | `1b910c03cad3` |
-| `SPEC-CONTRACT-OPENAPI#requestBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `eb3d722c5e4f` |
+| `SPEC-CONTRACT-OPENAPI#requestBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `8f6da9641d6e` |
 | `SPEC-CONTRACT-OPENAPI#getBrandCloudOwnerTransfer` | `GET /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `e92695b58bdd` |
 | `SPEC-CONTRACT-OPENAPI#cancelBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}/cancel` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `524b8ac43115` |
 | `SPEC-CONTRACT-OPENAPI#confirmBrandCloudOwnerTransfer` | `POST /v1/developer/brand-clouds/{brandCloudId}/owner-transfer/{transferId}/confirm` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `704af7751e55` |
