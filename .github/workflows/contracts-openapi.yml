@@ -12,7 +12,11 @@ on:
       - 'tests/spec-sources.yaml'
       - 'tests/catalog.yaml'
       - 'docs/spec-test-traceability.md'
-      - 'scripts/go/rtk-cloud/test_spec_inventory*.go'
+      - 'scripts/go/rtk-cloud/**'
+      - 'scripts/go/go.mod'
+      - 'scripts/go/go.sum'
+      - 'go.work'
+      - 'go.work.sum'
   push:
     branches: [main]
     paths:
@@ -25,7 +29,11 @@ on:
       - 'tests/spec-sources.yaml'
       - 'tests/catalog.yaml'
       - 'docs/spec-test-traceability.md'
-      - 'scripts/go/rtk-cloud/test_spec_inventory*.go'
+      - 'scripts/go/rtk-cloud/**'
+      - 'scripts/go/go.mod'
+      - 'scripts/go/go.sum'
+      - 'go.work'
+      - 'go.work.sum'
 
 permissions:
   contents: read

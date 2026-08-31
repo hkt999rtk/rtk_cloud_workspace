@@ -6,6 +6,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import yaml
+
 from validate_openapi import validate_file
 
 
@@ -78,6 +80,35 @@ class OpenAPIValidationTests(unittest.TestCase):
         path = self.write("api.json", self.spec(schema={"$ref": "schemas/child.yaml"}))
         with self.assertRaisesRegex(ValueError, r"schema \$id bases are unsupported"):
             validate_file(path, self.root)
+
+    def test_dynamic_references_are_rejected_before_resolution(self):
+        for ref in ("https://example.invalid/schema.yaml", "//example.invalid/schema.yaml", "missing.yaml", "../outside.yaml", "#node"):
+            with self.subTest(ref=ref):
+                path = self.write("api.json", self.spec(schema={"$dynamicRef": ref}))
+                with patch("validate_openapi.validate") as resolver:
+                    with self.assertRaisesRegex(ValueError, r"schema \$dynamicRef bases are unsupported"):
+                        validate_file(path, self.root)
+                    resolver.assert_not_called()
+
+    def test_referenced_documents_cannot_hide_dynamic_references(self):
+        self.write("schemas/child.yaml", "$dynamicRef: https://example.invalid/root.yaml\n")
+        path = self.write("api.json", self.spec(schema={"$ref": "schemas/child.yaml"}))
+        with self.assertRaisesRegex(ValueError, r"schema \$dynamicRef bases are unsupported"):
+            validate_file(path, self.root)
+
+    def test_dynamic_anchors_are_explicitly_unsupported(self):
+        path = self.write("api.json", self.spec(schema={"type": "object", "properties": {"node": {"$dynamicAnchor": "node", "type": "string"}}}))
+        with self.assertRaisesRegex(ValueError, r"schema \$dynamicAnchor bases are unsupported"):
+            validate_file(path, self.root)
+
+    def test_ci_triggers_cover_inventory_implementation_and_module_inputs(self):
+        root = Path(__file__).resolve().parent.parent
+        workflow = yaml.load((root / ".github/workflows/contracts-openapi.yml").read_text(), Loader=yaml.BaseLoader)
+        for event in ("pull_request", "push"):
+            with self.subTest(event=event):
+                paths = workflow["on"][event]["paths"]
+                for source in ("scripts/go/rtk-cloud/**", "scripts/go/go.mod", "scripts/go/go.sum", "go.work", "go.work.sum"):
+                    self.assertIn(source, paths)
 
     def test_missing_reference_is_rejected(self):
         path = self.write("api.json", self.spec(schema={"$ref": "missing.yaml"}))

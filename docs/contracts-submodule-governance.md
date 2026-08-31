@@ -107,17 +107,19 @@ documents for duplicate keys as well as the four entry points. Schema component
 names that collide but have different constraints must be split, preserving each
 operation's intended constraints.
 
-The pinned validator does not implement JSON Schema `$id` base resolution.
-This gate therefore rejects `$id` in entry and referenced documents before
-resolution, including nested schema identifiers. Use document-relative `$ref`
+The pinned validator does not implement JSON Schema identifier/dynamic base
+resolution. This gate therefore rejects `$id`, `$dynamicRef` and `$dynamicAnchor`
+in entry and referenced documents before resolution, including nested schemas.
+Use document-relative `$ref`
 paths; schema identifiers require a separately verified resolver upgrade before
 they can be accepted. This explicit restriction prevents the preflight checker
 and validator from silently resolving the same reference to different files.
 
 The `OpenAPI Contract Validation` workspace workflow runs these commands and
 `test-spec-inventory check --mode required` when the validator, registered
-repository gitlinks, specification registry, catalog or generated traceability
-changes. Strict inventory rejects blocking findings; nonblocking draft candidates
+repository gitlinks, specification registry, catalog, generated traceability,
+full `scripts/go/rtk-cloud` command package, or Go module/workspace inputs change.
+Strict inventory rejects blocking findings; nonblocking draft candidates
 remain visible. This is an additional CI gate; `pre-pr`, an observe-mode inventory
 result, and this structural check do not substitute for one another or for
 behavioral acceptance tests.
