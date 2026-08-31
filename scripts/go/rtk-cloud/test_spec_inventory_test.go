@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -236,6 +237,58 @@ paths:
 	}
 	if first[0].Revision == third[0].Revision {
 		t.Fatal("OpenAPI contract change did not alter operation revision")
+	}
+}
+
+func TestOpenAPIInventoryUsesYAMLStructure(t *testing.T) {
+	source := specSourceRegistryItem{ID: "SPEC-API", Path: "openapi.yaml", Parser: "openapi", Authority: "service"}
+	base := `openapi: 3.1.0
+x-rtk-spec: {id: SPEC-API, status: normative}
+paths:
+  /devices:
+    get:
+      operationId: readDevices
+      x-rtk-feature-id: FEAT-TEST-FLOW-001
+      x-rtk-requirement-ids:
+        - REQ-E2E-TEST-FLOW-001
+        - REQ-E2E-TEST-FLOW-002
+      responses: {'200': {description: ok}}
+`
+	want, findings, err := parseOpenAPISpec(source, []byte(base))
+	if err != nil || len(findings) != 0 || len(want) != 1 {
+		t.Fatalf("base: %v %+v %+v", err, findings, want)
+	}
+	variants := []string{
+		strings.Replace(base, "x-rtk-requirement-ids:\n        - REQ-E2E-TEST-FLOW-001\n        - REQ-E2E-TEST-FLOW-002", "x-rtk-requirement-ids: [REQ-E2E-TEST-FLOW-001, REQ-E2E-TEST-FLOW-002] # same IDs", 1),
+		strings.Replace(base, "  /devices:", "  '/devices':", 1),
+		strings.ReplaceAll(base, "  ", "    "),
+		base + "  x-example: {get: {operationId: ignoredExample}}\n",
+	}
+	for _, input := range variants {
+		got, findings, err := parseOpenAPISpec(source, []byte(input))
+		if err != nil || len(findings) != 0 || !reflect.DeepEqual(got, want) {
+			t.Fatalf("format changed operations/revision: %v %+v\ngot=%+v\nwant=%+v", err, findings, got, want)
+		}
+	}
+	// A nested response example must never supply a missing operation's mapping.
+	nested := strings.Replace(base, "      x-rtk-feature-id: FEAT-TEST-FLOW-001\n", "", 1)
+	nested = strings.Replace(nested, "      responses:", "      x-example:\n        x-rtk-feature-id: FEAT-TEST-FLOW-001\n      responses:", 1)
+	_, findings, err = parseOpenAPISpec(source, []byte(nested))
+	if err != nil || !hasSpecFinding(findings, "UNMAPPED_OPERATION") {
+		t.Fatalf("nested mapping accepted: %v %+v", err, findings)
+	}
+	for _, input := range []string{
+		strings.Replace(base, "      operationId: readDevices", "      operationId: readDevices\n      operationId: duplicate", 1),
+		strings.Replace(base, "x-rtk-requirement-ids:\n        - REQ-E2E-TEST-FLOW-001\n        - REQ-E2E-TEST-FLOW-002", "x-rtk-requirement-ids: {wrong: shape}", 1),
+		base + "  /devices: {post: {operationId: duplicatePath}}\n",
+	} {
+		if _, _, err := parseOpenAPISpec(source, []byte(input)); err == nil {
+			t.Fatal("invalid or ambiguous YAML accepted")
+		}
+	}
+	_, findings, err = parseOpenAPISpec(source, []byte("x-rtk-spec: {id: SPEC-API, status: normative}\npaths: {'/devices': {$ref: '#/components/pathItems/devices'}}\n"))
+	if err != nil || !hasSpecFinding(findings, "UNRESOLVED_PATH_ITEM") {
+		t.Fatalf("referenced operations silently omitted: %v %+v", err, findings)
 	}
 }
 

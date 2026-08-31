@@ -324,6 +324,7 @@ func loadAvailableSpecInventory(workspace string) (specInventory, error) {
 
 func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(string) ([]byte, error)) (specInventory, error) {
 	inventory := specInventory{SchemaVersion: specInventorySchema, Sources: registry.Sources}
+	resolvePath := newOpenAPIPathResolver(registry, readFile)
 	featureIndex, requirementIndex := map[string]int{}, map[string]string{}
 	type pendingWorkflowSource struct {
 		source specSourceRegistryItem
@@ -387,7 +388,7 @@ func loadSpecInventoryWithReader(registry specSourceRegistry, readFile func(stri
 			inventory.Findings = append(inventory.Findings, findings...)
 			continue
 		}
-		operations, findings, parseErr := parseOpenAPISpec(source, raw)
+		operations, findings, parseErr := parseOpenAPISpecWithResolver(source, raw, resolvePath)
 		if parseErr != nil {
 			return specInventory{}, parseErr
 		}
@@ -815,83 +816,109 @@ func specRequirementRevision(title string, metadata specRequirementMetadata, bod
 }
 
 func parseOpenAPISpec(source specSourceRegistryItem, raw []byte) ([]specOpenAPIOperation, []specInventoryFinding, error) {
+	return parseOpenAPISpecWithResolver(source, raw, nil)
+}
+
+func parseOpenAPISpecWithResolver(source specSourceRegistryItem, raw []byte, resolve openAPIPathResolver) ([]specOpenAPIOperation, []specInventoryFinding, error) {
+	// Parse YAML structure rather than indentation/line syntax. Inline lists,
+	// quoted paths and extension examples must not change the denominator.
+	var document struct {
+		Metadata struct {
+			ID     string `yaml:"id"`
+			Status string `yaml:"status"`
+		} `yaml:"x-rtk-spec"`
+		Paths map[string]yaml.Node `yaml:"paths"`
+	}
+	if err := yaml.Unmarshal(raw, &document); err != nil {
+		return nil, nil, fmt.Errorf("parse OpenAPI inventory %s: %w", source.Path, err)
+	}
 	var findings []specInventoryFinding
-	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
-	if !regexp.MustCompile(`(?m)^x-rtk-spec:\s*\n(?:  .*\n)*?  id:\s*["']?` + regexp.QuoteMeta(source.ID) + `["']?\s*$`).MatchString(text) {
+	if document.Metadata.ID != source.ID {
 		findings = append(findings, specInventoryFinding{
 			Code: "MISSING_DOCUMENT_METADATA", Source: source.Path, Blocking: sourceAuthorityRequired(source.Authority),
 			Assessment: "registered OpenAPI source has no matching x-rtk-spec metadata",
 		})
 	}
-	statusMatch := regexp.MustCompile(`(?m)^x-rtk-spec:\s*\n(?:  .*\n)*?  status:\s*["']?([^"'\s]+)["']?\s*$`).FindStringSubmatch(text)
-	if statusMatch == nil {
+	if document.Metadata.Status == "" {
 		findings = append(findings, specInventoryFinding{
-			Code: "REVIEW_REQUIRED", Source: source.Path, Blocking: false,
+			Code: "REVIEW_REQUIRED", Source: source.Path,
 			Assessment: "OpenAPI document has no explicit status",
 		})
-	} else if !specDocumentStatusMatchesAuthority(statusMatch[1], source.Authority) {
+	} else if !specDocumentStatusMatchesAuthority(document.Metadata.Status, source.Authority) {
 		findings = append(findings, specInventoryFinding{
 			Code: "DOCUMENT_STATUS_MISMATCH", Source: source.Path, Blocking: true,
-			Assessment: fmt.Sprintf("OpenAPI status %q does not match registry authority %q", statusMatch[1], source.Authority),
+			Assessment: fmt.Sprintf("OpenAPI status %q does not match registry authority %q", document.Metadata.Status, source.Authority),
 		})
 	}
 	var operations []specOpenAPIOperation
-	lines := strings.Split(text, "\n")
-	inPaths := false
-	route := ""
-	for i := 0; i < len(lines); {
-		line := lines[i]
-		if line == "paths:" {
-			inPaths = true
-			i++
+	for route, pathNode := range document.Paths {
+		if !strings.HasPrefix(route, "/") {
 			continue
 		}
-		if inPaths && len(line) > 0 && line[0] != ' ' && line != "paths:" {
-			break
+		var pathItem map[string]yaml.Node
+		if err := pathNode.Decode(&pathItem); err != nil {
+			return nil, findings, fmt.Errorf("%s path %s: %w", source.Path, route, err)
 		}
-		if !inPaths {
-			i++
-			continue
+		if ref, referenced := pathItem["$ref"]; referenced {
+			if resolve == nil {
+				findings = append(findings, specInventoryFinding{
+					Code: "UNRESOLVED_PATH_ITEM", Source: source.Path, Reference: route, Blocking: true,
+					Assessment: "referenced path items must be resolved before inventory can establish their operations",
+				})
+			} else {
+				inherited, err := resolve(source.Path, ref.Value)
+				if err != nil {
+					return nil, findings, fmt.Errorf("%s path %s reference: %w", source.Path, route, err)
+				}
+				// OpenAPI does not define conflicting local/inherited fields. Refuse
+				// to guess which operation or parameters should control the inventory.
+				for key, node := range inherited {
+					if _, duplicate := pathItem[key]; duplicate {
+						return nil, findings, fmt.Errorf("%s path %s duplicates referenced field %s", source.Path, route, key)
+					}
+					pathItem[key] = node
+				}
+			}
 		}
-		if match := regexp.MustCompile(`^  (/[^:]+):\s*$`).FindStringSubmatch(line); match != nil {
-			route = strings.Trim(match[1], `"'`)
-			i++
-			continue
-		}
-		methodMatch := regexp.MustCompile(`^    ([a-z]+):\s*$`).FindStringSubmatch(line)
-		if methodMatch == nil || !openAPIMethods[methodMatch[1]] {
-			i++
-			continue
-		}
-		method := methodMatch[1]
-		start := i
-		i++
-		for i < len(lines) && !regexp.MustCompile(`^    [a-z]+:\s*$`).MatchString(lines[i]) && !regexp.MustCompile(`^  /[^:]+:\s*$`).MatchString(lines[i]) && (strings.TrimSpace(lines[i]) == "" || strings.HasPrefix(lines[i], "      ")) {
-			i++
-		}
-		block := lines[start:i]
-		operationID := openAPIBlockScalar(block, "operationId")
-		featureID := openAPIBlockScalar(block, "x-rtk-feature-id")
-		requirementIDs := openAPIBlockList(block, "x-rtk-requirement-ids")
-		revision, revisionErr := canonicalOpenAPIOperationRevision(block)
-		if revisionErr != nil {
-			return nil, findings, fmt.Errorf("%s operation %s: %w", source.Path, operationID, revisionErr)
-		}
-		item := specOpenAPIOperation{
-			DocumentID: source.ID, SourcePath: source.Path, Path: route, Method: strings.ToUpper(method), OperationID: operationID,
-			FeatureID: featureID, RequirementIDs: requirementIDs, Revision: revision,
-		}
-		operations = append(operations, item)
-		if operationID == "" {
-			findings = append(findings, specInventoryFinding{
-				Code: "MISSING_OPERATION_ID", Source: source.Path, Reference: strings.ToUpper(method) + " " + route,
-				Blocking: true, Assessment: "public OpenAPI operation has no operationId",
-			})
-		} else if featureID == "" || len(requirementIDs) == 0 {
-			findings = append(findings, specInventoryFinding{
-				Code: "UNMAPPED_OPERATION", Source: source.Path, Reference: operationID, Blocking: true,
-				Assessment: "public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids",
-			})
+		for method, node := range pathItem {
+			if !openAPIMethods[method] {
+				continue
+			}
+			var metadata struct {
+				OperationID    string   `yaml:"operationId"`
+				FeatureID      string   `yaml:"x-rtk-feature-id"`
+				RequirementIDs []string `yaml:"x-rtk-requirement-ids"`
+			}
+			if err := node.Decode(&metadata); err != nil {
+				return nil, findings, fmt.Errorf("%s %s %s operation metadata: %w", source.Path, method, route, err)
+			}
+			// Preserve the established digest representation {method: operation}.
+			var operation any
+			if err := node.Decode(&operation); err != nil {
+				return nil, findings, fmt.Errorf("%s %s %s operation: %w", source.Path, method, route, err)
+			}
+			canonical, err := json.Marshal(map[string]any{method: operation})
+			if err != nil {
+				return nil, findings, fmt.Errorf("canonicalize operation revision: %w", err)
+			}
+			sum := sha256.Sum256(canonical)
+			item := specOpenAPIOperation{
+				DocumentID: source.ID, SourcePath: source.Path, Path: route, Method: strings.ToUpper(method),
+				OperationID: metadata.OperationID, FeatureID: metadata.FeatureID,
+				RequirementIDs: metadata.RequirementIDs, Revision: hex.EncodeToString(sum[:]),
+			}
+			operations = append(operations, item)
+			if item.OperationID == "" {
+				findings = append(findings, specInventoryFinding{
+					Code: "MISSING_OPERATION_ID", Source: source.Path, Reference: strings.ToUpper(method) + " " + route,
+					Blocking: true, Assessment: "public OpenAPI operation has no operationId",
+				})
+			} else if item.FeatureID == "" || len(item.RequirementIDs) == 0 {
+				findings = append(findings, specInventoryFinding{
+					Code: "UNMAPPED_OPERATION", Source: source.Path, Reference: item.OperationID, Blocking: true,
+					Assessment: "public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids",
+				})
+			}
 		}
 	}
 	sort.Slice(operations, func(i, j int) bool {
@@ -1236,39 +1263,6 @@ func workflowAncestors(stepID string, index map[string]specWorkflowStep) map[str
 	return ancestors
 }
 
-func openAPIBlockScalar(lines []string, key string) string {
-	re := regexp.MustCompile(`^\s+` + regexp.QuoteMeta(key) + `:\s*["']?([^"'\s]+)["']?\s*$`)
-	for _, line := range lines {
-		if match := re.FindStringSubmatch(line); match != nil {
-			return match[1]
-		}
-	}
-	return ""
-}
-
-func openAPIBlockList(lines []string, key string) []string {
-	keyRE := regexp.MustCompile(`^(\s+)` + regexp.QuoteMeta(key) + `:\s*$`)
-	var out []string
-	listIndent := -1
-	for _, line := range lines {
-		if match := keyRE.FindStringSubmatch(line); match != nil {
-			listIndent = len(match[1])
-			continue
-		}
-		if listIndent >= 0 {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "- ") {
-				out = append(out, strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")), `"'`))
-				continue
-			}
-			if trimmed != "" && len(line)-len(strings.TrimLeft(line, " ")) <= listIndent {
-				break
-			}
-		}
-	}
-	return out
-}
-
 func sourceAuthorityRequired(authority string) bool {
 	return authority == "canonical" || authority == "service" || authority == "approved"
 }
@@ -1290,26 +1284,6 @@ func specDocumentStatusMatchesAuthority(status, authority string) bool {
 	default:
 		return false
 	}
-}
-
-func canonicalOpenAPIOperationRevision(lines []string) (string, error) {
-	if len(lines) == 0 {
-		return "", errors.New("empty OpenAPI operation")
-	}
-	normalizedLines := make([]string, len(lines))
-	for i, line := range lines {
-		normalizedLines[i] = strings.TrimPrefix(line, "    ")
-	}
-	var operation any
-	if err := yaml.Unmarshal([]byte(strings.Join(normalizedLines, "\n")), &operation); err != nil {
-		return "", fmt.Errorf("parse operation for revision: %w", err)
-	}
-	canonical, err := json.Marshal(operation)
-	if err != nil {
-		return "", fmt.Errorf("canonicalize operation revision: %w", err)
-	}
-	sum := sha256.Sum256(canonical)
-	return hex.EncodeToString(sum[:]), nil
 }
 
 func countSpecRequirements(features []testCatalogFeature) int {
