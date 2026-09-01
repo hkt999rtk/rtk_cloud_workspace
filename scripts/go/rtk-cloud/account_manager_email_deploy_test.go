@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -302,6 +303,55 @@ func TestMergeAccountManagerEmailSecretPreservesExistingData(t *testing.T) {
 		if strings.TrimSpace(data[key].(string)) == "" {
 			t.Fatalf("%s was not populated", key)
 		}
+	}
+}
+
+func TestMergeAccountManagerEmailSecretChecksumCoversAllRuntimeData(t *testing.T) {
+	for _, key := range accountManagerEmailSecretKeys {
+		t.Setenv(key, "")
+	}
+	env := map[string]string{
+		"AUTH_TOKEN_BASE_URL":         "https://admin.staging.example.test",
+		"SENDMAIL_HTTP_BASE_URL":      "https://sm.realtekconnect.com",
+		"SENDMAIL_HTTP_BEARER_TOKEN":  "opaque-token",
+		"EMAIL_OUTBOX_ENCRYPTION_KEY": base64.StdEncoding.EncodeToString(make([]byte, 32)),
+	}
+	secret := func(token string) map[string]any {
+		return map[string]any{"data": map[string]any{
+			"DATABASE_URL":                 base64.StdEncoding.EncodeToString([]byte("postgres://fixture")),
+			"BILLING_CLOUD_CREATION_TOKEN": base64.StdEncoding.EncodeToString([]byte(token)),
+		}}
+	}
+	firstSecret := secret("first-token")
+	first, err := mergeAccountManagerEmailSecret(firstSecret, maps.Clone(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := mergeAccountManagerEmailSecret(secret("second-token"), maps.Clone(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("non-email runtime Secret rotation must update the Account Manager pod checksum")
+	}
+
+	reordered := map[string]any{"data": map[string]any{
+		"BILLING_CLOUD_CREATION_TOKEN": base64.StdEncoding.EncodeToString([]byte("first-token")),
+		"DATABASE_URL":                 base64.StdEncoding.EncodeToString([]byte("postgres://fixture")),
+	}}
+	stable, err := mergeAccountManagerEmailSecret(reordered, maps.Clone(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stable != first {
+		firstData := firstSecret["data"].(map[string]any)
+		stableData := reordered["data"].(map[string]any)
+		for key, value := range firstData {
+			if stableData[key] != value {
+				t.Fatalf("runtime Secret fixture differs at %s", key)
+			}
+		}
+		t.Fatal("runtime Secret checksum must not depend on map iteration order")
 	}
 }
 
