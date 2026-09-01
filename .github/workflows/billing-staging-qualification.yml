@@ -119,6 +119,14 @@ jobs:
           cp cloud_env/staging/environment.env "$(dirname "$BILLING_STAGING_ENV_ROOT")/environment.env"
           mkdir -p "$BILLING_STAGING_ENV_ROOT/env"
           cp cloud_env/staging/linode/env/stack.env "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          for key in \
+            AUTH_TOKEN_BASE_URL SENDMAIL_HTTP_BASE_URL SENDMAIL_HTTP_TIMEOUT \
+            EMAIL_OUTBOX_POLL_INTERVAL EMAIL_OUTBOX_BATCH_SIZE EMAIL_OUTBOX_MAX_ATTEMPTS \
+            EMAIL_OUTBOX_RETRY_BASE EMAIL_OUTBOX_RETRY_MAX; do
+            setting="$(awk -v key="$key" 'index($0, key "=") == 1 { print; exit }' cloud_env/staging/environment.env)"
+            test -n "$setting"
+            printf '%s\n' "$setting" >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          done
           perl -0pi -e 's/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m' "$BILLING_STAGING_ENV_ROOT/env/stack.env"
           go run ./scripts/go/rtk-cloud -- sync-env \
             --workspace "$GITHUB_WORKSPACE" \
