@@ -1336,7 +1336,7 @@ func runTestServices(args []string) error {
 		}
 	}
 	if strings.TrimSpace(*qualificationOutputDir) != "" {
-		for _, requiredRepo := range []string{"rtk_account_manager", "rtk_cloud_admin", "rtk_video_cloud"} {
+		for _, requiredRepo := range []string{"rtk_account_manager", "rtk_billing", "rtk_cloud_admin", "rtk_video_cloud"} {
 			if len(selected) > 0 && !selected[requiredRepo] {
 				return fmt.Errorf("--qualification-output-dir requires %s to be selected", requiredRepo)
 			}
