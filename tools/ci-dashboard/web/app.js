@@ -150,6 +150,7 @@ function updateSummary() {
   const visible = lane => lane.filter(cardMatches).length;
   document.querySelector("#repo-count").textContent = state.snapshot.repositories.length;
   document.querySelector("#active-count").textContent = state.snapshot.queued.length + state.snapshot.running.length;
+  document.querySelector("#running-summary-count").textContent = state.snapshot.running.length;
   document.querySelector("#failed-count").textContent = state.snapshot.completed.filter(card => failed(card.conclusion)).length;
   document.querySelector("#sync-age").textContent = age(state.snapshot.lastSuccessfulSync);
   const rate = state.snapshot.rateLimit;
