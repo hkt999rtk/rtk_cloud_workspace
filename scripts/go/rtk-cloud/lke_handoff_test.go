@@ -16,11 +16,13 @@ func handoffLKETestEnv(enabled bool) map[string]string {
 	return map[string]string{
 		"CLOUD_STACK_NAME":                           "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN":                         "video-cloud-staging.example.test",
+		"ACCOUNT_MANAGER_DOMAIN":                     "account-manager.video-cloud-staging.example.test",
 		"CLOUD_ADMIN_DOMAIN":                         "admin.video-cloud-staging.example.test",
 		"LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED": enabledValue,
 		"LKE_ACCOUNT_MANAGER_IMAGE":                  "registry.example.test/account-manager:test",
 		"LKE_BILLING_IMAGE":                          "registry.example.test/billing:test",
 		"LKE_VIDEO_CLOUD_IMAGE":                      "registry.example.test/video-cloud:test",
+		"LKE_CLOUD_LOGGER_IMAGE":                     "registry.example.test/cloud-logger:test",
 	}
 }
 
@@ -62,6 +64,9 @@ func TestLKEHandoffRuntimeWiresDedicatedCredentialsAndEndpoints(t *testing.T) {
 	env := handoffLKETestEnv(true)
 
 	account := lkeAccountManagerSecretManifest(env)
+	if !strings.Contains(account, "ACCOUNT_MANAGER_FACTORY_ENROLLMENT_TOKEN:") || !strings.Contains(lkeFactoryEnrollRuntimeSecretManifest(env), "FACTORY_ENROLL_ACCOUNT_MANAGER_TOKEN:") {
+		t.Fatal("factory admission must use one dedicated credential on both sides")
+	}
 	cases := []struct {
 		name        string
 		token       string
@@ -119,6 +124,9 @@ func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 	}, "\n---\n")
 	for _, want := range []string{
 		"name: FACTORY_ENROLL_RECOVERY_TOKEN",
+		"name: FACTORY_ENROLL_ACCOUNT_MANAGER_URL",
+		`value: "https://account-manager.video-cloud-staging.example.test"`,
+		"name: FACTORY_ENROLL_ACCOUNT_MANAGER_TOKEN",
 		"key: FACTORY_ENROLL_RECOVERY_TOKEN",
 		"name: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN",
 		"key: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN",
@@ -129,6 +137,8 @@ func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 		"name: VIDEO_CLOUD_EMQX_API_SECRET",
 		"name: mqtt-usage-checkpoint",
 		"claimName: video-cloud-mqttusage-checkpoint",
+		"name: prepare-mqtt-usage-checkpoint",
+		"chmod 0700 /var/lib/video-cloud/mqtt-usage",
 		"type: Recreate",
 	} {
 		if !strings.Contains(consumers, want) {
@@ -202,11 +212,15 @@ func TestLKEHandoffGeneratedManifestsAreValidYAML(t *testing.T) {
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "handoff-test")
 	env := handoffLKETestEnv(true)
 	manifests := map[string]string{
-		"account-manager-secret": lkeAccountManagerSecretManifest(env),
-		"handoff-worker":         lkeAccountManagerHandoffWorkerManifest(env),
-		"mqtt-secret":            lkeMQTTRuntimeSecretManifest(env, lkeMQTTMaterial{}),
-		"mqtt-config":            lkeMQTTConfigManifest(env),
-		"mqtt-usage-secret":      lkeVideoCloudWorkersSecretManifest(env),
+		"account-manager-secret":  lkeAccountManagerSecretManifest(env),
+		"factory-secret":          lkeFactoryEnrollRuntimeSecretManifest(env),
+		"factory-deployment":      lkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{}),
+		"handoff-worker":          lkeAccountManagerHandoffWorkerManifest(env),
+		"cloud-logger-deployment": lkeCloudLoggerDeploymentManifest(env),
+		"cloud-logger-pvc":        lkeCloudLoggerBillingInboxPVCManifest(env),
+		"mqtt-secret":             lkeMQTTRuntimeSecretManifest(env, lkeMQTTMaterial{}),
+		"mqtt-config":             lkeMQTTConfigManifest(env),
+		"mqtt-usage-secret":       lkeVideoCloudWorkersSecretManifest(env),
 		"mqtt-usage-deployment": lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{
 			Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400,
 		}),

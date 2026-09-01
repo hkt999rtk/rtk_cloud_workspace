@@ -25,6 +25,8 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"cancel-in-progress: false",
 		"BILLING_STAGING_QUALIFICATION_ENABLED",
 		"options: [plan, run]",
+		"initialize_billing_inbox:",
+		"LKE_CLOUD_LOGGER_INITIALIZE_BILLING_INBOX=true",
 		"video-cloud-staging-lke",
 		"test-payment",
 		"--profile staging-live",

@@ -3352,6 +3352,10 @@ func TestLKECloudLoggerResourceDefaultsCoverLoadTestEvidence(t *testing.T) {
 		`memory: "2Gi"`,
 		`name: RTK_CLOUD_LOGGER_LOKI_URL`,
 		`value: "http://video-cloud-loki.video-cloud-staging-observability.svc.cluster.local:3100"`,
+		"type: Recreate",
+		"name: prepare-billing-inbox",
+		"claimName: cloud-logger-billing-inbox",
+		`"/var/lib/rtk-cloud-logger/billing-inbox.db"`,
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("expected %q in cloud-logger manifest, got:\n%s", want, manifest)
@@ -3359,6 +3363,17 @@ func TestLKECloudLoggerResourceDefaultsCoverLoadTestEvidence(t *testing.T) {
 	}
 	if strings.Contains(manifest, "_STORE") || strings.Contains(manifest, "store:") {
 		t.Fatalf("cloud-logger manifest must not expose a store selector:\n%s", manifest)
+	}
+	if strings.Contains(manifest, `"-initialize-billing-inbox"`) {
+		t.Fatal("cloud-logger billing inbox initialization must be explicit")
+	}
+	pvc := lkeCloudLoggerBillingInboxPVCManifest(env)
+	if !strings.Contains(pvc, "kind: PersistentVolumeClaim") || !strings.Contains(pvc, "storage: 5Gi") {
+		t.Fatalf("cloud-logger billing inbox PVC is incomplete:\n%s", pvc)
+	}
+	env["LKE_CLOUD_LOGGER_INITIALIZE_BILLING_INBOX"] = "true"
+	if initialized := lkeCloudLoggerDeploymentManifest(env); !strings.Contains(initialized, `"-initialize-billing-inbox"`) {
+		t.Fatal("explicit one-time billing inbox initialization flag was not rendered")
 	}
 }
 
