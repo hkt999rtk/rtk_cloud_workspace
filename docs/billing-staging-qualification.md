@@ -49,7 +49,10 @@ activation to create an owner. After global `/v1/auth/login`, the verified
 member creates a fresh Brand Cloud through
 `POST /v1/developer/brand-clouds`; that canonical operation makes the member
 the cloud's sole owner. All Billing mutations and evidence for the run use that
-fresh cloud, not the bootstrap cloud.
+fresh cloud, not the bootstrap cloud. Tenant Billing requests carry the exact
+`owner_user_id` and `ownership_version` returned by that create response. The
+runner waits only for the asynchronous Billing ownership/account projection;
+invalid or stale ownership evidence fails immediately instead of being retried.
 
 ## Required Access And Repository Configuration
 
