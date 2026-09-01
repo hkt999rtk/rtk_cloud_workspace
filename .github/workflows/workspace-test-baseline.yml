@@ -8,6 +8,7 @@ on:
       - 'go.work'
       - 'go.work.sum'
       - 'loadtests/home-100k/**'
+      - 'repos/rtk_billing'
       - 'repos/rtk_cloud_contracts_doc'
       - 'scripts/ci/init-submodules.sh'
   push:
@@ -18,6 +19,7 @@ on:
       - 'go.work'
       - 'go.work.sum'
       - 'loadtests/home-100k/**'
+      - 'repos/rtk_billing'
       - 'repos/rtk_cloud_contracts_doc'
       - 'scripts/ci/init-submodules.sh'
   workflow_dispatch:
@@ -36,6 +38,28 @@ jobs:
     timeout-minutes: 45
     services:
       postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      account_manager_fixture:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      billing_fixture:
         image: postgres:16-alpine
         env:
           POSTGRES_PASSWORD: postgres
@@ -74,6 +98,12 @@ jobs:
         run: |
           printf 'TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
             '${{ job.services.postgres.ports[5432] }}' >> "$GITHUB_ENV"
+          printf 'ACCOUNT_MANAGER_HANDOFF_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
+            '${{ job.services.account_manager_fixture.ports[5432] }}' >> "$GITHUB_ENV"
+          printf 'ACCOUNT_MANAGER_DELETION_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
+            '${{ job.services.account_manager_fixture.ports[5432] }}' >> "$GITHUB_ENV"
+          printf 'TEST_BILLING_BOOTSTRAP_DSN=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
+            '${{ job.services.billing_fixture.ports[5432] }}' >> "$GITHUB_ENV"
 
       - name: Initialize workspace submodules
         shell: bash
@@ -103,6 +133,21 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
+
+      - name: Build independent Billing cross-service fixture
+        working-directory: repos/rtk_billing
+        shell: bash
+        env:
+          GOWORK: "off"
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/rtk-billing-api.test"
+          go test -c -o "$fixture" ./internal/api
+          {
+            printf 'TEST_BILLING_BOOTSTRAP_BINARY=%s\n' "$fixture"
+            printf 'TEST_BILLING_BOOTSTRAP_DIR=%s/repos/rtk_billing\n' "$GITHUB_WORKSPACE"
+            printf 'ACCOUNT_MANAGER_HANDOFF_CLIENT_DIR=%s/repos/rtk_account_manager\n' "$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
 
       - name: Resolve comparison base
         id: diff
