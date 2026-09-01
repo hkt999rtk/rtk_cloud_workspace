@@ -66,10 +66,23 @@ func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox str
 }
 
 func loadTestMailboxBase(mailbox string) (string, string, error) {
-	local, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(mailbox)), "@")
+	mailbox = strings.ToLower(strings.TrimSpace(mailbox))
+	local, domain, ok := strings.Cut(mailbox, "@")
 	local, _, _ = strings.Cut(local, "+")
-	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") || strings.ContainsAny(local+domain, " \t\r\n") {
-		return "", "", fmt.Errorf("operator mailbox must be a valid email address")
+	if !ok {
+		return "", "", fmt.Errorf("operator mailbox is missing the @ separator")
+	}
+	if local == "" {
+		return "", "", fmt.Errorf("operator mailbox is missing the local part")
+	}
+	if domain == "" {
+		return "", "", fmt.Errorf("operator mailbox is missing the domain")
+	}
+	if strings.Contains(domain, "@") {
+		return "", "", fmt.Errorf("operator mailbox contains multiple @ separators")
+	}
+	if strings.ContainsAny(local+domain, " \t\r\n") {
+		return "", "", fmt.Errorf("operator mailbox contains whitespace")
 	}
 	return local, domain, nil
 }
