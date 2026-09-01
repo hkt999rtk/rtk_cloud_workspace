@@ -127,6 +127,21 @@ jobs:
             test -n "$setting"
             printf '%s\n' "$setting" >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
           done
+          current_video_cloud="$RUNNER_TEMP/current-video-cloud-api.json"
+          kubectl --request-timeout=15s -n video-cloud-staging-video-cloud \
+            get deployment video-cloud-api -o json > "$current_video_cloud"
+          tracked_bucket="$(awk -F= '$1 == "RUNTIME_MEDIA_STORAGE_BUCKET" { print $2; exit }' cloud_env/staging/storage.env)"
+          tracked_prefix="$(awk -F= '$1 == "RUNTIME_MEDIA_STORAGE_PREFIX" { print $2; exit }' cloud_env/staging/storage.env)"
+          for key in \
+            VIDEO_CLOUD_BLOB_ENDPOINT VIDEO_CLOUD_BLOB_REGION VIDEO_CLOUD_BLOB_BUCKET \
+            VIDEO_CLOUD_BLOB_PREFIX VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE; do
+            value="$(jq -er --arg key "$key" \
+              '.spec.template.spec.containers[] | select(.name == "app") | .env[] | select(.name == $key) | .value' \
+              "$current_video_cloud")"
+            printf '%s=%s\n' "$key" "$value" >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          done
+          test "$(awk -F= '$1 == "VIDEO_CLOUD_BLOB_BUCKET" { value=$2 } END { print value }' "$BILLING_STAGING_ENV_ROOT/env/stack.env")" = "$tracked_bucket"
+          test "$(awk -F= '$1 == "VIDEO_CLOUD_BLOB_PREFIX" { value=$2 } END { print value }' "$BILLING_STAGING_ENV_ROOT/env/stack.env")" = "$tracked_prefix"
           perl -0pi -e 's/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m' "$BILLING_STAGING_ENV_ROOT/env/stack.env"
           go run ./scripts/go/rtk-cloud -- sync-env \
             --workspace "$GITHUB_WORKSPACE" \
