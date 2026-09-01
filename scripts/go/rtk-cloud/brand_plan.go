@@ -67,13 +67,6 @@ func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox str
 
 func loadTestMailboxBase(mailbox string) (string, string, error) {
 	mailbox = strings.ToLower(strings.TrimSpace(mailbox))
-	if !strings.Contains(mailbox, "@") {
-		domain := strings.ToLower(strings.TrimSpace(os.Getenv("RTK_CLOUD_IMAP_EMAIL_DOMAIN")))
-		if domain == "" {
-			return "", "", fmt.Errorf("operator mailbox is missing the @ separator and RTK_CLOUD_IMAP_EMAIL_DOMAIN is unset")
-		}
-		mailbox += "@" + domain
-	}
 	local, domain, ok := strings.Cut(mailbox, "@")
 	local, _, _ = strings.Cut(local, "+")
 	if !ok {

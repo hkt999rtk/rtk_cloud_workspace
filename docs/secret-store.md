@@ -84,7 +84,7 @@ staging bundle. `LINODE_TOKEN`, `GHCR_PULL_USERNAME`, `GHCR_PULL_TOKEN`,
 materialized into `operator/env/` by the CI-only allowlist. Every runtime ID in
 the current catalog must still be present in the appropriate bundle.
 
-When the canonical `IMAP_EMAIL_ADDR` is an IMAP login local-part instead of a
-complete address, staging email qualifications use the non-secret staging
-environment variable `RTK_CLOUD_IMAP_EMAIL_DOMAIN` to form run-scoped owner
-and viewer recipient addresses. The stored IMAP login value remains unchanged.
+Staging email qualifications additionally require the staging environment
+secret `IMAP_EMAIL_ADDR`. The workflow injects it into the job-local bundle
+before materialization so an empty legacy bundle field cannot silently disable
+email activation. It is never written to the repository or uploaded evidence.

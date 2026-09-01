@@ -37,7 +37,6 @@ jobs:
       CLOUD_PROVIDER: lke
       CLOUD_STACK_NAME: video-cloud-staging
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
-      RTK_CLOUD_IMAP_EMAIL_DOMAIN: ${{ vars.RTK_CLOUD_IMAP_EMAIL_DOMAIN }}
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
     steps:
       - uses: actions/checkout@v6
@@ -108,6 +107,7 @@ jobs:
         if: env.MULTICLOUD_MODE == 'run'
         env:
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
+          IMAP_EMAIL_ADDR: ${{ secrets.IMAP_EMAIL_ADDR }}
         shell: bash
         run: |
           set -euo pipefail
@@ -134,6 +134,11 @@ jobs:
           bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
           chmod 0600 "$bundle"
+          test -n "$IMAP_EMAIL_ADDR"
+          patched_bundle="$bundle.patched"
+          jq '.operator.IMAP_EMAIL_ADDR = env.IMAP_EMAIL_ADDR' "$bundle" > "$patched_bundle"
+          chmod 0600 "$patched_bundle"
+          mv "$patched_bundle" "$bundle"
           scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle" "$KUBECONFIG"
           go run ./scripts/go/rtk-cloud -- secrets verify \
             --environment staging \
