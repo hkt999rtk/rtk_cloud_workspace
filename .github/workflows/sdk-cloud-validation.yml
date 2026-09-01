@@ -139,8 +139,8 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
@@ -276,8 +276,8 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
@@ -389,8 +389,8 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
@@ -487,8 +487,8 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1

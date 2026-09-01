@@ -83,6 +83,20 @@ func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 			t.Fatalf("%s must coordinate the host-local Cloud Admin UI port", name)
 		}
 	}
+	workflowFiles, err := filepath.Glob(filepath.Join(workspace, ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowFiles = append(workflowFiles, filepath.Join(workspace, "scripts", "ci", "init-submodules.sh"))
+	for _, path := range workflowFiles {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "git config --global") {
+			t.Fatalf("%s must not mutate host-global Git config on shared runners", path)
+		}
+	}
 }
 
 func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
