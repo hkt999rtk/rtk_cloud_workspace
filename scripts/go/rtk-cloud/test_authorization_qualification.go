@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -38,7 +39,7 @@ type authorizationQualificationTarget struct {
 	OutputContains []string
 }
 
-var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
+var authorizationQualificationSpecs = slices.Concat([]authorizationQualificationSpec{
 	{
 		TestID: "INT-VC-AUTH-BOUNDARY-001", Repository: "rtk_video_cloud", Package: "./internal/httpapi", GoTest: "TestRequestTokenRequiresAuthorization",
 		Assertions: map[string]map[string]string{
@@ -862,7 +863,7 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 			},
 		},
 	},
-}, deviceContractQualificationSpecs...)
+}, deviceContractQualificationSpecs, multicloudQualificationSpecs)
 
 type goTestJSONEvent struct {
 	Action string `json:"Action"`

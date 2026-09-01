@@ -11,6 +11,7 @@ on:
       - 'repos/rtk_billing'
       - 'repos/rtk_cloud_contracts_doc'
       - 'scripts/ci/init-submodules.sh'
+      - 'scripts/go/rtk-cloud/**'
   push:
     branches: [main]
     paths:
@@ -22,6 +23,7 @@ on:
       - 'repos/rtk_billing'
       - 'repos/rtk_cloud_contracts_doc'
       - 'scripts/ci/init-submodules.sh'
+      - 'scripts/go/rtk-cloud/**'
   workflow_dispatch:
 
 permissions:
@@ -230,7 +232,7 @@ jobs:
         working-directory: scripts/go
         run: |
           go run ./rtk-cloud -- test-services \
-            --repo rtk_account_manager,rtk_cloud_admin,rtk_video_cloud \
+            --repo rtk_account_manager,rtk_billing,rtk_cloud_admin,rtk_video_cloud \
             --qualification-only \
             --install \
             --qualification-run-id "$FEATURE_EVIDENCE_RUN_ID" \
