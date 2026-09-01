@@ -34,14 +34,16 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"/api/auth/logout",
 		"BILLING_STAGING_ENV_ROOT",
 		"$RUNNER_TEMP/billing-staging-runtime",
-		"lke-build-images",
-		"ghcr.io/hkt999rtk/rtk_cloud_workspace/account-manager-migrate:sha-$commit",
-		"ghcr.io/hkt999rtk/rtk_cloud_workspace/cloud-admin:sha-$commit-lke-web-v1",
-		"--workloads billing,cloud-admin",
+		"lke-resolve-images",
+		"GHCR_PULL_USERNAME",
+		"GHCR_PULL_TOKEN",
+		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_BILLING_IMAGE",
 		"LKE_CLOUD_ADMIN_IMAGE",
-		"Deploy only Billing and Cloud Admin without rotating shared PKI",
-		"packages: write",
+		"Deploy the coordinated multicloud stack without rotating shared PKI",
+		"packages: read",
 		"rollout status deployment/billing",
+		"rollout status deployment/account-manager-handoff-worker",
 		"e2e:billing:staging",
 		"retention-days: 90",
 	} {
@@ -57,6 +59,12 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 	}
 	if strings.Contains(body, "linode_deploy") || strings.Contains(body, "deploy/linode") {
 		t.Fatal("Billing staging qualification must remain K8s-only")
+	}
+	if strings.Contains(body, "lke-build-images") || strings.Contains(body, "docker build") || strings.Contains(body, "docker push") {
+		t.Fatal("staging qualification must use official CI-published service images")
+	}
+	if strings.Contains(body, "--workloads ") {
+		t.Fatal("enabled ownership handoff requires one coordinated full-stack deploy")
 	}
 	if strings.Contains(body, "            --dns \\") {
 		t.Fatal("recurring Billing qualification must not reconcile shared public edge infrastructure")
@@ -81,6 +89,8 @@ func TestBillingStagingQualificationWorkflowRunbookIsAgentReady(t *testing.T) {
 		"rtk-payment-simulator-qualification",
 		"LINODE_TOKEN",
 		"CI_RUNNER_GITHUB_WORK_KEY",
+		"GHCR_PULL_TOKEN",
+		"RTK_CLOUD_SECRET_BUNDLE",
 		"BILLING_STAGING_OTHER_ORG_ID",
 		"BILLING_STAGING_QUALIFICATION_ENABLED",
 		"LIVE-STG-SIMULATOR-001",
@@ -96,6 +106,7 @@ func TestBillingStagingQualificationWorkflowRunbookIsAgentReady(t *testing.T) {
 		"Do not retry blindly",
 		"Do not rotate shared PKI",
 		"Do not cancel another run",
+		"never build, push or retag a staging image",
 	} {
 		if !strings.Contains(body, required) {
 			t.Errorf("Billing staging qualification runbook missing %q", required)
@@ -120,5 +131,19 @@ func TestBillingStagingQualificationWorkflowRunbookIsAgentReady(t *testing.T) {
 	}
 	if !strings.Contains(string(testingDoc), "--bootstrap-test-org --env-root cloud_env/staging/runtime") {
 		t.Fatal("testing guide does not use the canonical staging runtime path")
+	}
+}
+
+func TestStagingEnablesTheCoordinatedOwnershipHandoffWorker(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, "cloud_env", "staging", "linode", "env", "stack.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED=true") {
+		t.Fatal("staging must explicitly enable the ownership handoff coordinator")
 	}
 }

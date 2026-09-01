@@ -18,7 +18,7 @@ on:
 
 permissions:
   contents: read
-  packages: write
+  packages: read
 
 concurrency:
   group: staging-mutating-tests
@@ -69,15 +69,15 @@ jobs:
       - uses: docker/setup-buildx-action@v3
         if: env.BILLING_QUALIFICATION_MODE == 'run'
 
-      - name: Log in to GHCR for the pinned Billing image
+      - name: Log in to GHCR for official service images
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.GHCR_PULL_USERNAME }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
 
-      - name: Build and publish pinned Billing, Account Manager, and Cloud Admin production images when missing
+      - name: Resolve official Billing, Account Manager, and Cloud Admin images
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         shell: bash
         run: |
@@ -88,36 +88,17 @@ jobs:
           go run ./scripts/go/rtk-cloud -- sync-env \
             --workspace "$GITHUB_WORKSPACE" \
             --env-root "$BILLING_STAGING_ENV_ROOT"
-          commit="$(git -C repos/rtk_billing rev-parse --short=12 HEAD)"
-          image="ghcr.io/hkt999rtk/rtk_billing/billing:sha-$commit"
-          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
-            go run ./scripts/go/rtk-cloud -- lke-build-images \
-              --workspace "$GITHUB_WORKSPACE" \
-              --env-root "$BILLING_STAGING_ENV_ROOT" \
-              --workloads billing \
-              --image "$image"
-          fi
-          echo "LKE_BILLING_IMAGE=$image" >> "$GITHUB_ENV"
-          commit="$(git -C repos/rtk_account_manager rev-parse --short=12 HEAD)"
-          image="ghcr.io/hkt999rtk/rtk_cloud_workspace/account-manager-migrate:sha-$commit"
-          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
-            go run ./scripts/go/rtk-cloud -- lke-build-images \
-              --workspace "$GITHUB_WORKSPACE" \
-              --env-root "$BILLING_STAGING_ENV_ROOT" \
-              --workloads account-manager \
-              --image "$image"
-          fi
-          echo "LKE_ACCOUNT_MANAGER_IMAGE=$image" >> "$GITHUB_ENV"
-          commit="$(git -C repos/rtk_cloud_admin rev-parse --short=12 HEAD)"
-          image="ghcr.io/hkt999rtk/rtk_cloud_workspace/cloud-admin:sha-$commit-lke-web-v1"
-          if ! docker buildx imagetools inspect "$image" >/dev/null 2>&1; then
-            go run ./scripts/go/rtk-cloud -- lke-build-images \
-              --workspace "$GITHUB_WORKSPACE" \
-              --env-root "$BILLING_STAGING_ENV_ROOT" \
-              --workloads cloud-admin \
-              --image "$image"
-          fi
-          echo "LKE_CLOUD_ADMIN_IMAGE=$image" >> "$GITHUB_ENV"
+          manifest="$BILLING_STAGING_ENV_ROOT/artifacts/lke-images/lke-image-manifest.json"
+          mkdir -p "$(dirname "$manifest")"
+          go run ./scripts/go/rtk-cloud -- lke-resolve-images \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$BILLING_STAGING_ENV_ROOT" \
+            --owner hkt999rtk \
+            --out "$manifest"
+          for key in LKE_BILLING_IMAGE LKE_ACCOUNT_MANAGER_IMAGE LKE_CLOUD_ADMIN_IMAGE; do
+            value="$(jq -er --arg key "$key" '.env[$key]' "$manifest")"
+            printf '%s=%s\n' "$key" "$value" >> "$GITHUB_ENV"
+          done
 
       - name: Validate qualification mode and catalog
         shell: bash
@@ -161,11 +142,11 @@ jobs:
           chmod 0600 "$kubeconfig"
           echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
 
-      - name: Deploy only Billing and Cloud Admin without rotating shared PKI
+      - name: Deploy the coordinated multicloud stack without rotating shared PKI
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         env:
-          GHCR_PULL_USERNAME: ${{ github.actor }}
-          GHCR_PULL_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_PULL_USERNAME: ${{ secrets.GHCR_PULL_USERNAME }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
         shell: bash
         run: |
@@ -183,7 +164,6 @@ jobs:
             --preflight \
             --apply \
             --deploy \
-            --workloads billing,cloud-admin \
             --confirm video-cloud-staging
 
       - name: Verify deployed Billing rollout and public health
@@ -195,6 +175,12 @@ jobs:
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing --timeout=180s
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing-payment-worker --timeout=180s
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/payment-simulator --timeout=180s
+          kubectl --request-timeout=15s -n video-cloud-staging-account-manager \
+            rollout status deployment/account-manager --timeout=180s
+          kubectl --request-timeout=15s -n video-cloud-staging-account-manager \
+            rollout status deployment/account-manager-handoff-worker --timeout=180s
+          kubectl --request-timeout=15s -n video-cloud-staging-admin \
+            rollout status deployment/cloud-admin --timeout=180s
           curl --fail --silent --show-error --retry 5 --retry-all-errors \
             --max-time 15 \
             https://billing.video-cloud-staging.realtekconnect.com/readyz >/dev/null
