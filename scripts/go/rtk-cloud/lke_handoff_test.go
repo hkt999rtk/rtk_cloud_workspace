@@ -101,6 +101,28 @@ func TestLKEHandoffRuntimeWiresDedicatedCredentialsAndEndpoints(t *testing.T) {
 	}
 }
 
+func TestLKEBillingCloudCreationWiresDedicatedCredentialWithoutHandoff(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "billing-creation-test")
+	env := handoffLKETestEnv(false)
+	account := lkeAccountManagerSecretManifest(env)
+	billing := lkeBillingSecretManifest(env)
+	token := lkeBillingCloudCreationToken()
+	if !strings.Contains(account, `BILLING_CLOUD_CREATION_BASE_URL: "https://billing.video-cloud-staging.example.test"`) {
+		t.Fatalf("account-manager secret missing trusted Billing creation origin:\n%s", account)
+	}
+	for name, manifest := range map[string]string{"account-manager": account, "billing": billing} {
+		if !strings.Contains(manifest, fmt.Sprintf("BILLING_CLOUD_CREATION_TOKEN: %q", token)) {
+			t.Fatalf("%s secret missing dedicated Billing cloud-creation credential", name)
+		}
+	}
+	for _, other := range []string{lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingHandoffToken()} {
+		if token == other {
+			t.Fatal("Billing cloud-creation credential must be distinct")
+		}
+	}
+}
+
 func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "handoff-test")

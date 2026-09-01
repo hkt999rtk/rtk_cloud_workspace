@@ -323,6 +323,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"grafana-admin-password", "grafana", "manual"}, {"clip-private-key-seed", "video-cloud", "manual"},
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
+		{"billing-cloud-creation", "account-manager,billing", "manual"},
 		{"billing-handoff", "account-manager,billing", "manual"},
 		{"factory-handoff", "account-manager,factoryenroll", "manual"},
 		{"video-control-handoff", "account-manager,video-cloud", "manual"},
@@ -369,6 +370,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_BILLING_USAGE_TOKEN"},
 		},
 		"billing-debit-token": {{"-billing", "billing-runtime", "BILLING_DEBIT_TOKEN"}},
+		"billing-cloud-creation": {
+			{"-account-manager", "account-manager-runtime", "BILLING_CLOUD_CREATION_TOKEN"},
+			{"-billing", "billing-runtime", "BILLING_CLOUD_CREATION_TOKEN"},
+		},
 		"billing-handoff": {
 			{"-account-manager", "account-manager-runtime", "BILLING_HANDOFF_TOKEN"},
 			{"-billing", "billing-runtime", "BILLING_HANDOFF_TOKEN"},

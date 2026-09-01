@@ -53,6 +53,10 @@ fresh cloud, not the bootstrap cloud. Tenant Billing requests carry the exact
 `owner_user_id` and `ownership_version` returned by that create response. The
 runner waits only for the asynchronous Billing ownership/account projection;
 invalid or stale ownership evidence fails immediately instead of being retried.
+The Account Manager API and Billing receiver use a dedicated
+`billing-cloud-creation` SecretStore credential for that projection. It must be
+present on both services and must not reuse the service, internal, debit, or
+ownership-handoff credential.
 
 ## Required Access And Repository Configuration
 
@@ -200,7 +204,7 @@ workflow logs or artifact contents containing suspected credentials into chat.
 | Resolve official pinned images | Canonical release workflow result, GHCR read permission and exact `sha-<commit>` tag. | Repair or wait for the normal service release workflow; never build, push or retag a staging image here. |
 | Acquire staging kubeconfig | `LINODE_TOKEN`, cluster label, and Linode API status. | Do not print the response or create a replacement cluster. |
 | Deploy coordinated stack | Preflight output, rollout events, Account Manager handoff worker, Billing and Admin readiness. | Do not rotate PKI, reconcile DNS, or narrow the full-stack deployment while ownership handoff is enabled. |
-| Billing staging qualification | The first failed live Test ID, run-scoped Brand Cloud state, Billing worker, and ledger correlation. | Confirm payment cleanup ran before considering a rerun. |
+| Billing staging qualification | The first failed live Test ID, run-scoped Brand Cloud state, cloud-creation outbox/worker, Billing worker, and ledger correlation. | A projection timeout requires restoring the paired cloud-creation transport; do not merely lengthen the timeout. Confirm payment cleanup ran before considering a rerun. |
 | Cloud Admin Billing smoke | Ephemeral session creation, organization/invoice context, desktop/mobile screenshots, and public endpoint health. | Confirm the logout step ran; never preserve or reuse the session. |
 | Session revoke or evidence upload | Logout response, payment cleanup report, redaction result, and artifact presence. | Treat the run as failed and escalate cleanup status before any rerun. |
 
