@@ -22,6 +22,9 @@ and performs one coordinated full-stack deployment before running dedicated
 tests against the LKE `video-cloud-staging` stack. The full deployment is
 required because ownership handoff enables Account Manager, Billing, Factory,
 Video Control Plane and MQTT usage participants as one runtime boundary.
+The run-scoped runtime is seeded with the tracked, non-secret staging
+`environment.env`, so Account Manager email delivery and other service
+settings use the canonical staging topology instead of an empty CI directory.
 
 Do not rotate shared PKI, reconcile DNS, delete the LKE cluster or node pools,
 delete CI runners or artifact storage, use a legacy VM deployment path, cancel

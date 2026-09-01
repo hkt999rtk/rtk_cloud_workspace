@@ -34,6 +34,8 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"/api/auth/logout",
 		"BILLING_STAGING_ENV_ROOT",
 		"$RUNNER_TEMP/billing-staging-runtime",
+		"cloud_env/staging/environment.env",
+		"$(dirname \"$BILLING_STAGING_ENV_ROOT\")/environment.env",
 		"lke-resolve-images",
 		"get secret ghcr-pull",
 		"GHCR_PULL_USERNAME",
