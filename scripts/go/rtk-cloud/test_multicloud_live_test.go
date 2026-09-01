@@ -206,6 +206,20 @@ else:
 	if err != nil || token != "mail-token" {
 		t.Fatalf("invitation token=%q error=%v", token, err)
 	}
+	if _, err := multicloudRunScopedViewerEmail(accountManagerContext{StackValues: map[string]string{"CLOUD_ENV_NAME": "INVALID"}}, "run"); err == nil {
+		t.Fatal("invalid secret environment was accepted")
+	}
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", filepath.Join(t.TempDir(), "missing"))
+	if _, err := multicloudRunScopedViewerEmail(ctx, "run"); err == nil || !strings.Contains(err.Error(), "read canonical operator settings") {
+		t.Fatalf("missing operator store error = %v", err)
+	}
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	if err := store.write(filepath.Join("operator", "env", "IMAP_EMAIL_ADDR"), []byte("mailbox+existing@example.test\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := multicloudRunScopedViewerEmail(ctx, "run"); err == nil || !strings.Contains(err.Error(), "plain email address") {
+		t.Fatalf("existing plus alias error = %v", err)
+	}
 }
 
 func TestMulticloudSmallHelpersFailClosed(t *testing.T) {
