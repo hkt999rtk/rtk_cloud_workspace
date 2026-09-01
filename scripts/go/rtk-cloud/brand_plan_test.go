@@ -496,8 +496,11 @@ func TestResolveLoadTestBrandPlanRejectsInvalidInputs(t *testing.T) {
 	}{
 		{"short run", "CANARY", "short", "imap@example.test"},
 		{"bad target", "25K", "run-12345", "imap@example.test"},
+		{"missing separator", "CANARY", "run-12345", "imap.example.test"},
 		{"missing local", "CANARY", "run-12345", "@example.test"},
+		{"missing domain", "CANARY", "run-12345", "imap@"},
 		{"multiple at signs", "CANARY", "run-12345", "imap@example.test@other.test"},
+		{"embedded whitespace", "CANARY", "run-12345", "imap@exam ple.test"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
