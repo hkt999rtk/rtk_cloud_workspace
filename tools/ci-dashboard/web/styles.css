@@ -28,10 +28,11 @@ h1 { font-size: 22px; letter-spacing: .04em; margin: 0; }
 .live-dot.online { background: var(--success); box-shadow: 0 0 0 5px rgba(56,201,118,.1); }
 .live-dot.pulse { animation: live-pulse 600ms ease-out; }
 main { max-width: 1800px; margin: 0 auto; padding: 22px 24px 60px; }
-.summary { display: grid; grid-template-columns: repeat(3, minmax(110px, 160px)) 1fr; gap: 12px; margin-bottom: 16px; }
+.summary { display: grid; grid-template-columns: repeat(4, minmax(110px, 160px)) 1fr; gap: 12px; margin-bottom: 16px; }
 .summary > div { background: rgba(15,22,35,.72); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; gap: 8px; align-items: baseline; }
 .summary strong { font-size: 24px; }
 .summary span { color: var(--muted); font-size: 12px; }
+.summary .running-stat strong { color: var(--running); }
 .summary .failed-stat strong { color: var(--failure); }
 .summary .sync-stat { justify-content: flex-end; }
 .fleet-panel { background: rgba(15,22,35,.72); border: 1px solid var(--line); border-radius: 13px; padding: 12px; margin-bottom: 16px; }
