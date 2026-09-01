@@ -119,6 +119,11 @@ gh run view "$BILLING_RUN_ID" --repo "$BILLING_REPO" \
   --json url,headSha,status,conclusion
 ```
 
+For the first retained Cloud Logger billing inbox only, add
+`-f initialize_billing_inbox=true`. This is an explicit one-time cutover flag;
+normal and scheduled runs leave it false so missing retained storage fails
+closed instead of silently creating a new financial stream.
+
 The underlying runner also requires the fixed test-organization confirmation
 `rtk-payment-simulator-qualification`. The workflow supplies it; an agent must
 not substitute a different organization.

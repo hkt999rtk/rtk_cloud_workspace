@@ -15,6 +15,11 @@ on:
         description: Run mode requires video-cloud-staging-lke
         type: string
         required: false
+      initialize_billing_inbox:
+        description: One-time explicit initialization of the retained Cloud Logger billing inbox
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: read
@@ -34,6 +39,7 @@ jobs:
     env:
       BILLING_QUALIFICATION_MODE: ${{ github.event_name == 'schedule' && 'run' || inputs.mode }}
       BILLING_QUALIFICATION_CONFIRM: ${{ github.event_name == 'schedule' && 'video-cloud-staging-lke' || inputs.confirm }}
+      BILLING_QUALIFICATION_INITIALIZE_INBOX: ${{ github.event_name == 'workflow_dispatch' && inputs.initialize_billing_inbox || false }}
       BILLING_QUALIFICATION_RUN_ID: billing-staging-${{ github.run_id }}-${{ github.run_attempt }}
       CLOUD_PROVIDER: lke
       CLOUD_STACK_NAME: video-cloud-staging
@@ -129,6 +135,9 @@ jobs:
           done
           awk -F= '/^[A-Z0-9_]+=/ { print }' \
             cloud_env/staging/overrides/architecture.env >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          if [ "$BILLING_QUALIFICATION_INITIALIZE_INBOX" = "true" ]; then
+            printf '%s\n' 'LKE_CLOUD_LOGGER_INITIALIZE_BILLING_INBOX=true' >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
+          fi
           current_video_cloud="$RUNNER_TEMP/current-video-cloud-api.json"
           kubectl --request-timeout=15s -n video-cloud-staging-video-cloud \
             get deployment video-cloud-api -o json > "$current_video_cloud"
