@@ -322,6 +322,10 @@ jobs:
       - name: Run integration-aware coverage
         working-directory: scripts/go
         env:
+          # All Video Cloud integration packages share this job's isolated
+          # database. Serialize package processes so concurrent EnsureSchema
+          # calls cannot race in PostgreSQL's system catalogs.
+          GOFLAGS: "-p=1"
           VIDEO_CLOUD_TEST_DSN: postgres://vc_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/vc_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
           VIDEO_CLOUD_MQTT_TEST_ADDR: 127.0.0.1:1883
         run: go run ./rtk-cloud -- test-coverage --profile pr --module video-cloud --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr"
