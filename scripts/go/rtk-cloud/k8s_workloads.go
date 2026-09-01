@@ -177,6 +177,9 @@ func validateK8SWorkloadSelection(env map[string]string, opts provisionOptions) 
 			return fmt.Errorf("unknown K8s workload %q; valid workloads: %s", key, strings.Join(validKeys, ","))
 		}
 	}
+	if lkeAccountManagerHandoffWorkerEnabled(env) {
+		return fmt.Errorf("handoff worker requires a coordinated full deploy without --workloads")
+	}
 	mutating := opts.mode.reset || opts.mode.apply || opts.mode.dns || opts.mode.deploy || opts.mode.e2e
 	if mutating && opts.confirm != env["CLOUD_STACK_NAME"] {
 		return fmt.Errorf("targeted K8s mutation requires --confirm %s", env["CLOUD_STACK_NAME"])

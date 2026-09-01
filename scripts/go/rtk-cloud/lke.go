@@ -1361,7 +1361,112 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowVideoCloudLoggerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowRedisClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowPrometheusScrapeNetworkPolicyManifest(env))
+	if lkeAccountManagerHandoffWorkerEnabled(env) {
+		manifests = append(manifests, lkeAccountManagerHandoffNetworkPolicyManifests(env)...)
+	}
 	return manifests
+}
+
+func lkeAccountManagerHandoffNetworkPolicyManifests(env map[string]string) []string {
+	return []string{
+		lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env),
+		lkeAllowAccountManagerHandoffVideoCloudNetworkPolicyManifest(env),
+		lkeAllowMQTTUsageEMQXManagementNetworkPolicyManifest(env),
+	}
+}
+
+func lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-account-manager-handoff
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: billing
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: account-manager-handoff-worker
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-mqttusage
+      ports:
+        - { protocol: TCP, port: 8080 }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"), lkeNamespaceName(env, "video-cloud"))
+}
+
+func lkeAllowAccountManagerHandoffVideoCloudNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-account-manager-handoff
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [video-cloud-api, factoryenroll, video-cloud-mqttusage]
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: account-manager-handoff-worker
+      ports:
+        - { protocol: TCP, port: 8080 }
+        - { protocol: TCP, port: 18443 }
+        - { protocol: TCP, port: 19400 }
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"))
+}
+
+func lkeAllowMQTTUsageEMQXManagementNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mqttusage-emqx-management
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mqtt
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-mqttusage
+      ports:
+        - { protocol: TCP, port: 18083 }
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
 }
 
 func lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env map[string]string) string {
@@ -2067,6 +2172,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if err := kubectlApply(lkeAccountManagerEmailWorkerManifest(env)); err != nil {
 			return err
 		}
+		if lkeAccountManagerHandoffWorkerEnabled(env) {
+			if err := kubectlApply(lkeAccountManagerHandoffWorkerManifest(env)); err != nil {
+				return err
+			}
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "deployment/account-manager-handoff-worker", "--ignore-not-found=true"); err != nil {
+			return err
+		}
 	}
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
 		return err
@@ -2095,6 +2207,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if lkeWorkloadSelected(env, opts, "account-manager") {
 		if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-outbox-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return err
+		}
+		if lkeAccountManagerHandoffWorkerEnabled(env) {
+			if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-handoff-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+				return err
+			}
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
@@ -2360,6 +2477,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-worker ./cmd/email-worker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-handoff-worker ./cmd/handoff-worker
 
 FROM debian:bookworm-slim
 WORKDIR /app
@@ -2374,6 +2492,7 @@ COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager
 COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manager-email-worker
 COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin
 COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker
+COPY --from=builder /out/rtk-account-manager-handoff-worker /app/rtk-account-manager-handoff-worker
 COPY --from=builder /src/migrations /app/migrations
 USER app
 EXPOSE 8080
@@ -2685,6 +2804,13 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if err := lkeApplyRedisRuntime(env); err != nil {
 		return err
 	}
+	if lkeAccountManagerHandoffWorkerEnabled(env) {
+		for _, manifest := range lkeAccountManagerHandoffNetworkPolicyManifests(env) {
+			if err := kubectlApply(manifest); err != nil {
+				return err
+			}
+		}
+	}
 	var material lkeCertIssuerMaterial
 	materialReady := false
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
@@ -2932,6 +3058,11 @@ func lkeRemoveK8sCoturnRuntime(env map[string]string) error {
 func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOptions) error {
 	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
 		return err
+	}
+	if lkeAccountManagerHandoffWorkerEnabled(env) {
+		if err := kubectlApply(lkeVideoCloudMQTTUsageCheckpointPVCManifest(env)); err != nil {
+			return err
+		}
 	}
 	rollouts := []lkeRolloutTarget{}
 	for _, service := range lkeVideoCloudAuxiliaryServices() {
@@ -4944,8 +5075,9 @@ stringData:
   FACTORY_ENROLL_AUTH_KEY: %q
   FACTORY_ENROLL_PRODUCTION_JWT_SECRET: %q
   FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE: %q
+  FACTORY_ENROLL_RECOVERY_TOKEN: %q
   POSTGRES_PASSWORD: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeFactoryEnrollAuthKey(env), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("postgres"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeFactoryEnrollAuthKey(env), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeRuntimeSecretValue("postgres"))
 }
 
 func lkeVideoCloudRuntimeSecretManifest(env map[string]string) string {
@@ -4969,10 +5101,11 @@ stringData:
   VIDEO_CLOUD_TURN_SHARED_SECRET: %q
   VIDEO_CLOUD_MQTT_BROKER_AUTH_KEY: %q
   VIDEO_CLOUD_MQTT_SERVER_PASSWORD: %q
+  VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN: %q
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
   clip-private-key.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
 }
 
 func lkeClipPrivateKeyPEM() string {
@@ -5012,7 +5145,15 @@ stringData:
   cacert.pem: %q
   EMQX_HTTP_AUTHENTICATION: %q
   EMQX_DASHBOARD_PASSWORD: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], serverChain, material.ServerKey, serverChain, material.ServerKey, material.CACert, material.CACert, lkeEMQXHTTPAuthentication(env), lkeRuntimeSecretValue("emqx-dashboard-password"))
+  handoff-api-keys.conf: %q
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], serverChain, material.ServerKey, serverChain, material.ServerKey, material.CACert, material.CACert, lkeEMQXHTTPAuthentication(env), lkeRuntimeSecretValue("emqx-dashboard-password"), lkeEMQXHandoffAPIKeyBootstrap(env))
+}
+
+func lkeEMQXHandoffAPIKeyBootstrap(env map[string]string) string {
+	if !lkeAccountManagerHandoffWorkerEnabled(env) {
+		return ""
+	}
+	return lkeRuntimeSecretValue("emqx-handoff-api-key") + ":" + lkeRuntimeSecretValue("emqx-handoff-api-secret") + ":administrator\n"
 }
 
 func lkeEMQXHTTPAuthentication(env map[string]string) string {
@@ -5038,8 +5179,15 @@ data:
 }
 
 func lkeEMQXTenantBaseHOCON(env map[string]string) string {
+	handoff := ""
+	if lkeAccountManagerHandoffWorkerEnabled(env) {
+		handoff = `api_key {
+  bootstrap_file = "/opt/emqx/etc/certs/handoff-api-keys.conf"
+}
+`
+	}
 	if !lkeMQTTTenantNamespaceEnabled(env) {
-		return "rewrite = []\n"
+		return "rewrite = []\n" + handoff
 	}
 	return `authorization {
   no_match = deny
@@ -5061,7 +5209,7 @@ rewrite = [
     dest_topic = "_bc/${username}/$1"
   }
 ]
-`
+` + handoff
 }
 
 func lkeMQTTTenantNamespaceEnabled(env map[string]string) bool {
@@ -5216,7 +5364,7 @@ spec:
         - name: mqtt-config
           configMap:
             name: mqtt-config
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env)), tlsChecksum, env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeMQTTReplicas(env), lkeConfigChecksum(lkeEMQXTenantBaseHOCON(env), lkeEMQXHTTPAuthentication(env), lkeEMQXHandoffAPIKeyBootstrap(env)), tlsChecksum, env["CLOUD_STACK_NAME"], placement, firstNonEmpty(os.Getenv("LKE_MQTT_IMAGE"), "emqx/emqx:5.8.7"), lkeNamespaceName(env, "video-cloud"), lkeEMQXNodeCookie(env), lkeEMQXStaticSeeds(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), authEnabled, lkeEMQXListenerAcceptors(env), lkeEMQXListenerBacklog(env), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_MAILBOX_SIZE"], "131072"), firstNonEmpty(os.Getenv("LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"), env["LKE_EMQX_FORCE_SHUTDOWN_MAX_HEAP_SIZE"], "512MB"), authEnv, lkeContainerResourcesManifest(env, "mqtt"))
 }
 
 func lkeMQTTReplicas(env map[string]string) int {
@@ -5597,9 +5745,13 @@ stringData:
   POSTGRES_PASSWORD: %q
   VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: %q
   VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: %q
+  VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN: %q
+  VIDEO_CLOUD_BILLING_USAGE_TOKEN: %q
+  VIDEO_CLOUD_EMQX_API_KEY: %q
+  VIDEO_CLOUD_EMQX_API_SECRET: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeBillingInternalToken()), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
 }
 
 func lkeCloudLoggerRuntimeSecretManifest(env map[string]string) string {
@@ -5727,11 +5879,55 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
 `, lkeVideoCloudAPIBaseURL(env))
 	}
 	mqttUsageEnv := ""
+	mqttUsageVolumeMount := ""
+	mqttUsageVolume := ""
+	mqttUsageStrategy := ""
 	if service.Name == "video-cloud-mqttusage" {
 		mqttUsageEnv = `            - name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL
               value: "5s"
             - name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL
               value: "5s"
+`
+	}
+	if service.Name == "video-cloud-mqttusage" && lkeAccountManagerHandoffWorkerEnabled(env) {
+		mqttUsageEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN
+            - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
+              value: "http://billing.%s.svc.cluster.local:80/v1/internal/billing/usage-facts"
+            - name: VIDEO_CLOUD_BILLING_USAGE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_BILLING_USAGE_TOKEN
+            - name: VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL
+              value: "10s"
+            - name: VIDEO_CLOUD_EMQX_API_URL
+              value: "http://mqtt:18083/api/v5"
+            - name: VIDEO_CLOUD_EMQX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_EMQX_API_KEY
+            - name: VIDEO_CLOUD_EMQX_API_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_EMQX_API_SECRET
+            - name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR
+              value: "/var/lib/video-cloud/mqtt-usage"
+`, lkeNamespaceName(env, "billing"))
+		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
+              mountPath: /var/lib/video-cloud/mqtt-usage
+`
+		mqttUsageVolume = `        - name: mqtt-usage-checkpoint
+          persistentVolumeClaim:
+            claimName: video-cloud-mqttusage-checkpoint
+`
+		mqttUsageStrategy = `  strategy:
+    type: Recreate
 `
 	}
 	body := fmt.Sprintf(`apiVersion: apps/v1
@@ -5746,7 +5942,7 @@ metadata:
     rtk.realtek.com/stack: %s
 spec:
   replicas: %d
-  selector:
+%s  selector:
     matchLabels:
       app.kubernetes.io/name: %s
   template:
@@ -5767,7 +5963,7 @@ spec:
 %s          volumeMounts:
             - name: logger-spool
               mountPath: /var/lib/video_cloud/logger-spool
-          env:
+%s          env:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -5855,10 +6051,29 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv)
+%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume)
 	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
 	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
 	return body
+}
+
+func lkeVideoCloudMQTTUsageCheckpointPVCManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video-cloud-mqttusage-checkpoint
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-mqttusage
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: %s
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_USAGE_STORAGE"), env["LKE_VIDEO_CLOUD_MQTT_USAGE_STORAGE"], "5Gi"))
 }
 
 func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
@@ -6774,6 +6989,7 @@ func lkeFactoryEnrollDeploymentManifest(env map[string]string, material lkeCertI
 		lkeRuntimeSecretValue("factory-enroll-auth"),
 		lkeFactoryProductionJWTSecret(env),
 		lkeFactoryProductionJWTAudience(env),
+		lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()),
 		lkeCertIssuerBaseURL(env),
 		material.FactoryCert,
 		material.ServiceCA,
@@ -6834,6 +7050,11 @@ spec:
                 secretKeyRef:
                   name: factoryenroll-runtime
                   key: FACTORY_ENROLL_PRODUCTION_JWT_AUDIENCE
+            - name: FACTORY_ENROLL_RECOVERY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: factoryenroll-runtime
+                  key: FACTORY_ENROLL_RECOVERY_TOKEN
             - name: FACTORY_ENROLL_ADDR
               value: ":18443"
             - name: VIDEO_CLOUD_ENV
@@ -7041,11 +7262,23 @@ stringData:
   VIDEO_CLOUD_LIFECYCLE_BASE_URL: %q
   VIDEO_CLOUD_LIFECYCLE_TOKEN: %q
   VIDEO_CLOUD_LIFECYCLE_TIMEOUT: %q
+  BILLING_HANDOFF_BASE_URL: %q
+  BILLING_HANDOFF_TOKEN: %q
+  FACTORY_HANDOFF_BASE_URL: %q
+  FACTORY_HANDOFF_TOKEN: %q
+  VIDEO_CONTROL_PLANE_HANDOFF_BASE_URL: %q
+  VIDEO_CONTROL_PLANE_HANDOFF_TOKEN: %q
+  MQTT_USAGE_HANDOFF_BASE_URL: %q
+  MQTT_USAGE_HANDOFF_TOKEN: %q
+  HANDOFF_WORKER_POLL_INTERVAL: %q
+  HANDOFF_WORKER_LEASE_DURATION: %q
+  HANDOFF_WORKER_STEP_TIMEOUT: %q
+  HANDOFF_WORKER_BATCH_SIZE: %q
   APP_CERT_ISSUER_BASE_URL: %q
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -7101,6 +7334,55 @@ func lkeBillingDebitToken() string {
 	return lkeRuntimeSecretValue("billing-debit-token")
 }
 
+func lkeBillingHandoffToken() string {
+	return lkeRuntimeSecretValue("billing-handoff")
+}
+
+func lkeFactoryHandoffToken() string {
+	return lkeRuntimeSecretValue("factory-handoff")
+}
+
+func lkeVideoControlHandoffToken() string {
+	return lkeRuntimeSecretValue("video-control-handoff")
+}
+
+func lkeMQTTUsageHandoffToken() string {
+	return lkeRuntimeSecretValue("mqtt-usage-handoff")
+}
+
+func lkeAccountManagerHandoffWorkerEnabled(env map[string]string) bool {
+	raw := firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED"), env["LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED"], "false")
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func lkeHandoffRuntimeValue(env map[string]string, value string) string {
+	if !lkeAccountManagerHandoffWorkerEnabled(env) {
+		return ""
+	}
+	return value
+}
+
+func lkeBillingHandoffInternalURL(env map[string]string) string {
+	return lkeBillingInternalURL(env)
+}
+
+func lkeFactoryHandoffInternalURL(env map[string]string) string {
+	return "http://factoryenroll." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:80"
+}
+
+func lkeVideoControlHandoffInternalURL(env map[string]string) string {
+	return "http://video-cloud-api." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:80"
+}
+
+func lkeMQTTUsageHandoffInternalURL(env map[string]string) string {
+	return "http://video-cloud-mqttusage." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:19400"
+}
+
 func lkeBillingDatabaseURL(env map[string]string) string {
 	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
 }
@@ -7123,6 +7405,7 @@ stringData:
   BILLING_SERVICE_TOKEN: %q
   BILLING_INTERNAL_TOKEN: %q
   BILLING_DEBIT_TOKEN: %q
+  BILLING_HANDOFF_TOKEN: %q
   BILLING_DEBIT_SOURCE: "rtk_billing"
   PAYMENT_SIMULATOR_ENABLED: "true"
   PAYMENT_SIMULATOR_RUN_ID: %q
@@ -7145,7 +7428,7 @@ stringData:
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkePaymentSimulatorInternalURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkePaymentSimulatorInternalURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -7541,6 +7824,76 @@ spec:
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], checksum, lkeImagePullSecretName(env), image)
 }
 
+func lkeAccountManagerHandoffWorkerManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(
+		lkeAccountManagerDatabaseURL(env),
+		lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)),
+		lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)),
+		lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)),
+		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)),
+		lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()),
+		firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"),
+		firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"),
+		firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"),
+		firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"),
+	)
+	image := ""
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			image = workload.Image
+			break
+		}
+	}
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-manager-handoff-worker
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-handoff-worker
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: account-manager-handoff-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: account-manager-handoff-worker
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: worker
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-handoff-worker"]
+          envFrom:
+            - secretRef:
+                name: account-manager-runtime
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], checksum, lkeImagePullSecretName(env), image)
+}
+
 func lkeAccountManagerMigrationJobManifest(env map[string]string) string {
 	image := ""
 	for _, workload := range lkeWorkloads(env) {
@@ -7709,6 +8062,14 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"),
 			lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"),
 			lkeEmailOutboxEncryptionKey(env),
+			lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)),
+			lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()),
+			lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)),
+			lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()),
+			lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)),
+			lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()),
+			lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)),
+			lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()),
 		}
 		if certIssuerMaterial != nil {
 			checksumValues = append(checksumValues, certIssuerMaterial.ClientCert, certIssuerMaterial.ServiceCA)
@@ -7734,7 +8095,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
+`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime
@@ -7804,6 +8165,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
                   key: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
             - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL
               value: %q
+            - name: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN
             - name: VIDEO_CLOUD_LOGGER_ENDPOINT
               value: %q
             - name: VIDEO_CLOUD_LOGGER_TOKEN
@@ -8110,6 +8476,11 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeRuntimeSecretValue("video-auth"),
 		lkeRuntimeSecretValue("mqtt-broker-auth"),
 		lkeRuntimeSecretValue("mqtt-server-password"),
+		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeBillingInternalToken()),
+		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")),
+		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")),
 		lkeClipPrivateKeyPEM(),
 		lkeVideoCloudAPIBaseURL(env),
 		env["VIDEO_CLOUD_BLOB_ENDPOINT"],
