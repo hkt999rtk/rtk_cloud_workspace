@@ -83,6 +83,16 @@ func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 			t.Fatalf("%s must coordinate the host-local Cloud Admin UI port", name)
 		}
 	}
+	baseline := readWorkflow("workspace-test-baseline.yml")
+	for _, required := range []string{
+		"git lfs checkout -- \"$fixture\"",
+		"sha256sum \"$fixture\"",
+		"H.264 fixture is not materialized from Git LFS",
+	} {
+		if !strings.Contains(baseline, required) {
+			t.Fatalf("workspace baseline must verify its LFS media fixture with %q", required)
+		}
+	}
 	workflowFiles, err := filepath.Glob(filepath.Join(workspace, ".github", "workflows", "*.yml"))
 	if err != nil {
 		t.Fatal(err)

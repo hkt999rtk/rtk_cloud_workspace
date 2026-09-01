@@ -56,6 +56,20 @@ jobs:
           lfs: true
           submodules: false
 
+      - name: Materialize and verify the H.264 Git LFS fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture=e2e_test/video_cloud/load/testdata/testsrc2_1080p_2s.h264
+          git lfs checkout -- "$fixture"
+          expected=$(git show "HEAD:$fixture" | awk '/^oid sha256:/ {sub(/^oid sha256:/, ""); print; exit}')
+          actual=$(sha256sum "$fixture" | awk '{print $1}')
+          test -n "$expected"
+          if [ "$actual" != "$expected" ]; then
+            echo "H.264 fixture is not materialized from Git LFS" >&2
+            exit 1
+          fi
+
       - name: Configure job-local PostgreSQL endpoint
         run: |
           printf 'TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
