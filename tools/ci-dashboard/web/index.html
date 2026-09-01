@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>CI Flight Deck</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL OPERATIONS</p>
+      <h1>CI FLIGHT DECK</h1>
+    </div>
+    <div class="live-block" aria-live="polite">
+      <span id="live-dot" class="live-dot"></span>
+      <strong id="live-label">CONNECTING</strong>
+      <span id="clock" class="mono">--:--:--</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="summary" aria-label="Dashboard summary">
+      <div><strong id="repo-count">0</strong><span>repositories</span></div>
+      <div><strong id="active-count">0</strong><span>active</span></div>
+      <div class="failed-stat"><strong id="failed-count">0</strong><span>failed</span></div>
+      <div class="sync-stat"><strong id="sync-age" class="mono">—</strong><span id="rate-limit">Last sync</span></div>
+    </section>
+
+    <section class="fleet-panel" aria-label="Monitored repositories">
+      <header><span>REPOSITORY FLEET</span><small>workspace + RTK submodules</small></header>
+      <div id="repo-fleet" class="repo-fleet"></div>
+    </section>
+
+    <section class="toolbar" aria-label="Filters">
+      <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Search workflow, PR, branch, actor…"></label>
+      <label>Repo<select id="repo-filter"><option value="">All repositories</option></select></label>
+      <label>Trigger<select id="trigger-filter"><option value="">All triggers</option></select></label>
+      <button id="refresh" type="button" title="Refresh dashboard snapshot">↻ Refresh</button>
+    </section>
+
+    <section class="board" aria-label="GitHub Actions runs">
+      <section class="lane queued-lane">
+        <header><span>QUEUED</span><b id="queued-count">0</b></header>
+        <div id="queued" class="card-list"></div>
+      </section>
+      <section class="lane running-lane">
+        <header><span>RUNNING</span><b id="running-count">0</b></header>
+        <div id="running" class="card-list"></div>
+      </section>
+      <section class="lane completed-lane">
+        <header><span>COMPLETED</span><b id="completed-count">0 / 20</b></header>
+        <div id="completed" class="card-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <div id="backdrop" class="backdrop" hidden></div>
+  <aside id="drawer" class="drawer" aria-label="Run details" aria-hidden="true">
+    <button id="drawer-close" class="drawer-close" type="button" aria-label="Close details">×</button>
+    <div id="drawer-content"></div>
+  </aside>
+
+  <template id="card-template">
+    <article class="run-card" tabindex="0">
+      <span class="heat-rail"></span>
+      <div class="card-topline">
+        <h2 class="workflow"></h2>
+        <span class="status-badge"></span>
+      </div>
+      <p class="topic"></p>
+      <div class="schedule mono"></div>
+      <div class="meta"><span class="actor"></span><span class="start-time mono"></span></div>
+      <div class="card-footer"><strong class="elapsed mono"></strong><span class="jobs"></span></div>
+      <div class="attempt-row"></div>
+    </article>
+  </template>
+
+  <template id="group-template">
+    <section class="run-group">
+      <header class="group-header">
+        <div class="group-identity"><span class="group-repo"></span><span class="submodule-badge">SUBMODULE</span><strong class="group-workflow"></strong></div>
+        <span class="group-attempt mono"></span>
+      </header>
+      <p class="group-source"></p>
+      <p class="group-branch mono"></p>
+      <div class="group-jobs"></div>
+    </section>
+  </template>
+  <script src="/app.js" defer></script>
+</body>
+</html>
