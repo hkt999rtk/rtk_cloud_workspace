@@ -71,11 +71,15 @@ while IFS=$'\t' read -r relative encoded; do
   chmod 0600 "$target"
 done < <(jq -r '(.files // {}) | to_entries[] | [.key, (.value | @base64)] | @tsv' "$bundle")
 
+# Verify the desired SecretStore before installing the kubeconfig.  A full
+# K8s-mirror comparison belongs after deployment: doing it here would make a
+# new catalog entry or an intentional rotation impossible to bootstrap.
+go run "$repo_root/scripts/go/rtk-cloud" -- secrets verify \
+  --environment "$environment" --config-root "$RTK_CLOUD_CONFIG_ROOT" >/dev/null
+
 if [[ -n "$kubeconfig" ]]; then
   [[ -f "$kubeconfig" && ! -L "$kubeconfig" ]] || { echo "kubeconfig must be a regular file" >&2; exit 2; }
   install -m 0600 "$kubeconfig" "$environment_root/kube/kubeconfig.yaml"
 fi
 
-go run "$repo_root/scripts/go/rtk-cloud" -- secrets verify \
-  --environment "$environment" --config-root "$RTK_CLOUD_CONFIG_ROOT" >/dev/null
-echo "materialized and verified CI SecretStore for $environment"
+echo "materialized and content-verified CI SecretStore for $environment"

@@ -178,6 +178,9 @@ jobs:
             --apply \
             --deploy \
             --confirm video-cloud-staging
+          go run ./scripts/go/rtk-cloud -- secrets verify \
+            --environment staging \
+            --config-root "$RTK_CLOUD_CONFIG_ROOT"
 
       - name: Verify deployed Billing rollout and public health
         if: env.BILLING_QUALIFICATION_MODE == 'run'

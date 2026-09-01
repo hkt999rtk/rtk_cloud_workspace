@@ -69,8 +69,12 @@ scripts/ci/materialize-rtk-cloud-secret-store.sh \
 ```
 
 The helper requires the root to be inside `RUNNER_TEMP`, refuses symlinks,
-traversal and overwrites, applies `0700`/`0600`, then runs the same catalog and
-Kubernetes binding verification as local deployment.
+traversal and overwrites, applies `0700`/`0600`, and verifies the complete
+catalog before installing the job kubeconfig. Deployment workflows must run
+`secrets verify` again after applying the desired runtime Secrets; that second
+check compares every Kubernetes binding to the canonical value. Keeping the
+mirror comparison after apply permits a newly added catalog entry or an
+intentional rotation to bootstrap without weakening the final verification.
 
 Staging deployment jobs require the environment secret
 `RTK_CLOUD_SECRET_BUNDLE`. The isolated runtime-coverage job requires a
