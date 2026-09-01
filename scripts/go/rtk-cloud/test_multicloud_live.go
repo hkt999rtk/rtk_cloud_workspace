@@ -18,6 +18,11 @@ import (
 
 const multicloudLiveConfirmation = "video-cloud-staging-lke"
 
+var (
+	multicloudViewerEmailResolver     = multicloudRunScopedViewerEmail
+	multicloudInvitationWaiterFactory = multicloudInvitationTokenWaiter
+)
+
 type multicloudLiveHTTPClient struct {
 	baseURL string
 	client  *http.Client
@@ -128,7 +133,7 @@ func runTestMulticloud(args []string) error {
 	if err != nil {
 		return err
 	}
-	viewerEmail, err := multicloudRunScopedViewerEmail(ctx, *runID)
+	viewerEmail, err := multicloudViewerEmailResolver(ctx, *runID)
 	if err != nil {
 		return err
 	}
@@ -147,7 +152,7 @@ func runTestMulticloud(args []string) error {
 	if ownerLogin.User.ID != owner.UserID || viewerLogin.User.ID != createdViewer.UserID {
 		return errors.New("global login identity does not match the exact provisioned global user_id")
 	}
-	waitInvitation, err := multicloudInvitationTokenWaiter(workspace, ctx, viewerEmail)
+	waitInvitation, err := multicloudInvitationWaiterFactory(workspace, ctx, viewerEmail)
 	if err != nil {
 		return err
 	}
