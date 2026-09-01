@@ -42,6 +42,8 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"LKE_BILLING_IMAGE",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"Deploy the coordinated multicloud stack without rotating shared PKI",
+		"secrets verify",
+		"--config-root \"$RTK_CLOUD_CONFIG_ROOT\"",
 		"packages: read",
 		"rollout status deployment/billing",
 		"rollout status deployment/account-manager-handoff-worker",
@@ -69,6 +71,9 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 	}
 	if strings.Contains(body, "--workloads ") {
 		t.Fatal("enabled ownership handoff requires one coordinated full-stack deploy")
+	}
+	if strings.Index(body, "go run ./scripts/go/rtk-cloud -- secrets verify") < strings.Index(body, "go run ./scripts/go/rtk-cloud -- provision") {
+		t.Fatal("Kubernetes secret mirror verification must run after the desired stack is applied")
 	}
 	if strings.Contains(body, "            --dns \\") {
 		t.Fatal("recurring Billing qualification must not reconcile shared public edge infrastructure")
