@@ -83,3 +83,9 @@ staging bundle. `LINODE_TOKEN`, `GHCR_PULL_USERNAME`, `GHCR_PULL_TOKEN`,
 `GODADDY_KEY`, and `GODADDY_SECRET` may be supplied as job secrets and are
 materialized into `operator/env/` by the CI-only allowlist. Every runtime ID in
 the current catalog must still be present in the appropriate bundle.
+
+Staging email qualifications additionally require the staging environment
+secret `RTK_CLOUD_IMAP_OPERATOR_BUNDLE`, containing the six `IMAP_*` operator
+settings. The workflow merges it into the job-local bundle before
+materialization so empty legacy bundle fields cannot silently disable email
+activation. It is never written to the repository or uploaded evidence.

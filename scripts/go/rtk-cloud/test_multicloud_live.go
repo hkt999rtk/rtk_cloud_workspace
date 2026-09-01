@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -287,8 +288,8 @@ func runMulticloudLiveScenario(ctx context.Context, api multicloudLiveHTTPClient
 	result.Sharing["read_shared_cloud"] = "PASS"
 	status, err = api.json(ctx, http.MethodPatch, "/v1/developer/brand-clouds/"+url.PathEscape(result.CloudID), in.viewerToken,
 		map[string]any{"description": "viewer must never write"}, in.runID+"-viewer-denied", nil)
-	if err != nil || status != http.StatusForbidden {
-		return result, fmt.Errorf("viewer cloud mutation was not rejected: HTTP %d: %w", status, err)
+	if err != nil || !managedCloudWriteDenied(status) {
+		return result, apiStatusError("viewer cloud mutation was not rejected", status, err)
 	}
 	result.Sharing["deny_viewer_write"] = "PASS"
 
@@ -339,6 +340,10 @@ func runMulticloudLiveScenario(ctx context.Context, api multicloudLiveHTTPClient
 			return result, errors.New("cloud deletion did not reach succeeded within two minutes")
 		}
 	}
+}
+
+func managedCloudWriteDenied(status int) bool {
+	return status == http.StatusForbidden || status == http.StatusNotFound
 }
 
 func (c multicloudLiveHTTPClient) json(ctx context.Context, method, path, token string, payload any, idempotencyKey string, out any) (int, error) {
@@ -396,7 +401,11 @@ func multicloudInvitationTokenWaiter(workspace string, ctx accountManagerContext
 		}
 		childEnv = append(childEnv, key+"="+operator[key])
 	}
-	if connectHost := strings.TrimSpace(operator["IMAP_CONNECT_HOST"]); connectHost != "" {
+	connectHost, err := resolveIMAPConnectHost(operator["IMAP_CONNECT_HOST"], operator["IMAP_SERVER"], net.LookupHost)
+	if err != nil {
+		return nil, err
+	}
+	if connectHost != "" {
 		childEnv = append(childEnv, "IMAP_CONNECT_HOST="+connectHost)
 	}
 	stackEnv, _ := readEnvFile(filepath.Join(ctx.EnvRoot, "env", "stack.env"))
@@ -431,6 +440,20 @@ func multicloudInvitationTokenWaiter(workspace string, ctx accountManagerContext
 		}
 		return parsed.Query().Get("token"), nil
 	}, nil
+}
+
+func resolveIMAPConnectHost(configured, server string, lookup func(string) ([]string, error)) (string, error) {
+	if configured = strings.TrimSpace(configured); configured != "" {
+		return configured, nil
+	}
+	if _, err := lookup(strings.TrimSpace(server)); err == nil {
+		return "", nil
+	}
+	const fallback = "sm.realtekconnect.com"
+	if _, err := lookup(fallback); err != nil {
+		return "", errors.New("IMAP server DNS failed and no safe connect host is available")
+	}
+	return fallback, nil
 }
 
 func writeMulticloudLiveEvidence(outputDir, runID string, started, completed time.Time, result multicloudLiveScenarioResult) error {

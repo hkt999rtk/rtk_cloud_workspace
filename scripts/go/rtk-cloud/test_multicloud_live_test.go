@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -251,6 +252,46 @@ func TestMulticloudSmallHelpersFailClosed(t *testing.T) {
 	status, err := (multicloudLiveHTTPClient{baseURL: server.URL, client: server.Client()}).json(context.Background(), http.MethodGet, "/", "token", nil, "key", &output)
 	if status != http.StatusOK || err == nil || !strings.Contains(err.Error(), "decode HTTP 200 response") {
 		t.Fatalf("invalid JSON status=%d error=%v", status, err)
+	}
+}
+
+func TestResolveIMAPConnectHost(t *testing.T) {
+	lookup := func(host string) ([]string, error) {
+		switch host {
+		case "imap.example.test":
+			return nil, errors.New("not resolvable")
+		case "sm.realtekconnect.com":
+			return []string{"192.0.2.1"}, nil
+		default:
+			return nil, errors.New("unexpected host")
+		}
+	}
+	if got, err := resolveIMAPConnectHost("127.0.0.1", "imap.example.test", lookup); err != nil || got != "127.0.0.1" {
+		t.Fatalf("configured host = %q, error = %v", got, err)
+	}
+	if got, err := resolveIMAPConnectHost("", "imap.example.test", lookup); err != nil || got != "sm.realtekconnect.com" {
+		t.Fatalf("fallback host = %q, error = %v", got, err)
+	}
+	if got, err := resolveIMAPConnectHost("", "sm.realtekconnect.com", lookup); err != nil || got != "" {
+		t.Fatalf("direct host = %q, error = %v", got, err)
+	}
+	if _, err := resolveIMAPConnectHost("", "imap.example.test", func(string) ([]string, error) {
+		return nil, errors.New("not resolvable")
+	}); err == nil {
+		t.Fatal("missing primary and fallback DNS was accepted")
+	}
+}
+
+func TestManagedCloudWriteDenied(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		if !managedCloudWriteDenied(status) {
+			t.Fatalf("HTTP %d was not treated as a denied viewer write", status)
+		}
+	}
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized, http.StatusConflict} {
+		if managedCloudWriteDenied(status) {
+			t.Fatalf("HTTP %d was treated as a denied viewer write", status)
+		}
 	}
 }
 

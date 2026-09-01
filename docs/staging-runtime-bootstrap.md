@@ -171,9 +171,10 @@ generated data into the original staging cluster.
 
 ### Enable the ownership handoff coordinator
 
-The Account Manager ownership handoff worker is disabled by default. Enable it
-only when Account Manager, Billing, Factory Enrollment, Video Cloud, MQTT usage,
-and EMQX are being deployed together at compatible versions:
+The Account Manager ownership handoff and cloud-deletion recovery workers are
+disabled by default and enabled together. Enable them only when Account Manager,
+Billing, Factory Enrollment, Video Cloud, MQTT usage, and EMQX are being deployed
+together at compatible versions:
 
 ```sh
 export LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED=true
@@ -187,7 +188,9 @@ go run ./scripts/go/rtk-cloud -- deployment provision \
 Do not pass `--workloads` while the coordinator is enabled. The deployment must
 rotate all participant credentials, apply the internal NetworkPolicies, create
 the MQTT usage checkpoint PVC, and roll out every participant as one coordinated
-operation. The SecretStore catalog owns the dedicated handoff and EMQX API
+operation. This also installs the deletion worker and its restricted Billing and
+Video Control Plane ingress; a deployment missing that worker cannot qualify
+empty-cloud deletion. The SecretStore catalog owns the dedicated handoff and EMQX API
 credentials; do not substitute human login, dashboard, tenant, Billing debit, or
 other service credentials. The MQTT usage checkpoint uses `ReadWriteOnce` and a
 single `Recreate` deployment so a rollout cannot attach the same volume to two
