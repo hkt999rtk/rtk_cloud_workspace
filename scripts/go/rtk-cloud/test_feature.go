@@ -1212,6 +1212,7 @@ func featureCommitAnchors(workspace string) (map[string]string, error) {
 	paths := map[string]string{
 		"workspace": workspace, "video_cloud": filepath.Join(workspace, "repos", "rtk_video_cloud"),
 		"account_manager": filepath.Join(workspace, "repos", "rtk_account_manager"),
+		"billing":         filepath.Join(workspace, "repos", "rtk_billing"),
 		"cloud_logger":    filepath.Join(workspace, "repos", "rtk_cloud_logger"),
 		"contracts":       filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc"),
 	}
@@ -1242,6 +1243,7 @@ func verifyFeatureDeploymentCommits(envRoot string, commits map[string]string) e
 	required := map[string]string{
 		"repos/rtk_video_cloud":     commits["video_cloud"],
 		"repos/rtk_account_manager": commits["account_manager"],
+		"repos/rtk_billing":         commits["billing"],
 		"repos/rtk_cloud_logger":    commits["cloud_logger"],
 	}
 	for sourcePath, wanted := range required {

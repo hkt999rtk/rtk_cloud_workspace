@@ -348,15 +348,19 @@ var authorizationQualificationSpecs = append([]authorizationQualificationSpec{
 		},
 	},
 	{
-		TestID: "INT-AM-IDENTITY-BRANDUSER-001", Repository: "rtk_account_manager", Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesActiveBrandCloudUser",
+		TestID: "INT-AM-IDENTITY-BRANDUSER-001", Repository: "rtk_account_manager",
+		Targets: []authorizationQualificationTarget{
+			{Package: "./internal/api", GoTest: "TestIntegrationPlatformAdminCreatesActiveBrandCloudUser"},
+			{Package: "./internal/api", GoTest: "TestIntegrationRetiredTenantAuthenticationAndTokensRejected"},
+		},
 		Assertions: map[string]map[string]string{
 			"REQ-AM-BRAND-USER-BOUNDARY-001": {
-				"brand_email_normalized":         "PASS",
-				"tenant_login_required":          "PASS",
-				"platform_login_rejected":        "PASS",
-				"app_identity_route_rejected":    "PASS",
-				"disabled_brand_user_rejected":   "PASS",
-				"brand_password_rotation_scoped": "PASS",
+				"global_user_created":              "PASS",
+				"brand_membership_scoped":          "PASS",
+				"global_login_succeeds":            "PASS",
+				"global_activation_state_returned": "PASS",
+				"tenant_auth_routes_rejected":      "PASS",
+				"legacy_tenant_token_rejected":     "PASS",
 			},
 		},
 	},
@@ -1061,17 +1065,21 @@ func runAuthorizationQualificationWithSpecs(workspace, outputDir, runID string, 
 			}
 			workflowAssertions = append(workflowAssertions, assertion)
 		}
-		var caseFeature testCatalogFeature
+		caseFeature := testCatalogFeature{}
+		commitAnchors := map[string]bool{}
 		for _, requirementID := range requirementIDs {
 			feature, ok := features[requirementID]
 			if !ok {
 				return fmt.Errorf("%s requirement %s has no canonical feature", spec.TestID, requirementID)
 			}
-			if caseFeature.ID != "" && caseFeature.ID != feature.ID {
-				return fmt.Errorf("%s spans features %s and %s", spec.TestID, caseFeature.ID, feature.ID)
+			for _, anchor := range feature.CommitAnchors {
+				commitAnchors[anchor] = true
 			}
-			caseFeature = feature
 		}
+		for anchor := range commitAnchors {
+			caseFeature.CommitAnchors = append(caseFeature.CommitAnchors, anchor)
+		}
+		sort.Strings(caseFeature.CommitAnchors)
 		commits, err := currentFeatureCommits(workspace, caseFeature)
 		if err != nil {
 			return err
