@@ -196,10 +196,11 @@ func TestInstallQualificationNPMDependenciesReportsFailures(t *testing.T) {
 func TestSelectChangedServiceReposSelectsOnlyChangedGitlinks(t *testing.T) {
 	got := selectChangedServiceRepos([]string{
 		"docs/testing.md",
+		"repos/rtk_billing",
 		"repos/rtk_cloud_admin",
 		"repos/rtk_video_cloud",
 	})
-	want := []string{"rtk_cloud_admin", "rtk_video_cloud"}
+	want := []string{"rtk_billing", "rtk_cloud_admin", "rtk_video_cloud"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("selected repos = %v, want %v", got, want)
 	}

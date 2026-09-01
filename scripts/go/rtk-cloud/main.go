@@ -1221,6 +1221,7 @@ type serviceTestSpec struct {
 
 var managedServiceRepos = []string{
 	"rtk_account_manager",
+	"rtk_billing",
 	"rtk_cloud_admin",
 	"rtk_cloud_client",
 	"rtk_cloud_frontend",
@@ -1290,6 +1291,7 @@ func runTestServices(args []string) error {
 
 	specs := []serviceTestSpec{
 		{name: "rtk_account_manager", dir: filepath.Join(workspace, "repos", "rtk_account_manager"), cmd: []string{"go", "test", "./..."}},
+		{name: "rtk_billing", dir: filepath.Join(workspace, "repos", "rtk_billing"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_admin", dir: filepath.Join(workspace, "repos", "rtk_cloud_admin"), cmd: []string{"go", "test", "./..."}},
 		{name: "rtk_cloud_admin/web", dir: filepath.Join(workspace, "repos", "rtk_cloud_admin", "web"), cmd: []string{"npm", "test"}},
 		{name: "rtk_cloud_client/golang", dir: filepath.Join(workspace, "repos", "rtk_cloud_client", "packages", "golang"), cmd: []string{"go", "test", "./..."}},
