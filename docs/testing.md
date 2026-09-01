@@ -166,6 +166,12 @@ it is expected to fail while legacy compatibility wrappers still exist.
 `test-live` is plan-only by default and delegates to the staging E2E flow; a
 live run still requires `--run --confirm <CLOUD_STACK_NAME>`.
 
+`test-multicloud` is also plan-only by default. Its guarded staging-live run
+qualifies a formally activated global owner's second-cloud CRUD and the
+cloud-membership portion of viewer invitation, acceptance, read-only enforcement,
+and revocation. The `Multi-cloud Staging Qualification` workflow adds one
+certificate-bound device/MQTT round trip and uploads only redacted evidence.
+
 ## Feature Qualification
 
 `test-feature` reuses the Home, Video, and Clip load runners to qualify

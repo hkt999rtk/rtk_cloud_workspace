@@ -252,6 +252,33 @@ Explicit staging/live E2E entry point. The default prints a plan without modifyi
 (cd scripts/go && go run ./rtk-cloud -- test-live --environment staging --run --confirm video-cloud-staging)
 ```
 
+### `test-multicloud`
+
+Qualify the deployed staging multi-cloud lifecycle with a formally email-activated
+global owner. Plan mode is read-only. Run mode uses the owner's cached global
+credential to create and rename a second empty Brand Cloud, accepts and revokes an
+emailed viewer invitation, verifies read-only enforcement, and soft-deletes the
+empty cloud through public APIs. It does not modify cloud state through PostgreSQL.
+
+```sh
+(cd scripts/go && go run ./rtk-cloud -- test-multicloud --profile staging-live --run-id manual-multicloud-001)
+(cd scripts/go && go run ./rtk-cloud -- test-multicloud \
+  --profile staging-live \
+  --workspace ../.. \
+  --env-root ../../cloud_env/staging/runtime \
+  --brandname RTK-LOAD-CANARY-manual-multicloud-001-B01 \
+  --run-id manual-multicloud-001 \
+  --run \
+  --confirm video-cloud-staging-lke)
+```
+
+The manual GitHub Actions entry point is `Multi-cloud Staging Qualification`.
+Its run mode first creates the owner through public signup and real email
+activation, provisions one representative device and app certificate, then runs
+the multi-cloud and MQTT checks. Uploaded evidence excludes SQLite credentials and
+raw logs. The sharing evidence covers the cloud-membership slice only; Product
+read and pending Product-invitation invalidation remain separate qualifications.
+
 ### `go run ./scripts/go/rtk-cloud -- docs-check`
 
 Validate workspace documentation entry points, important runbooks, E2E directories, submodule documentation, and contracts-submodule alignment.

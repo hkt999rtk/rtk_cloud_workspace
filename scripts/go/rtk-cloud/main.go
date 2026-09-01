@@ -110,6 +110,7 @@ var commands = map[string]commandSpec{
 	"test-factory-live":                {run: runTestFactoryLive},
 	"test-live":                        {run: runTestLive},
 	"test-matrix":                      {run: runTestMatrix},
+	"test-multicloud":                  {run: runTestMulticloud},
 	"test-payment":                     {run: runTestPayment},
 	"test-platform-live":               {run: runPlatformLiveEvidence},
 	"test-services":                    {run: runTestServices},
@@ -2939,8 +2940,12 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 	activatedOwners := 0
 	for _, brand := range plan.Brands {
 		brandSlug := brandSlug(brand.Brandname)
-		if err := runStep(brandSlug+"_create_brand", commandWithArgs(cfg.Scripts["create-brand"], "--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname)...); err != nil {
-			return err
+		if cfg.EmailOwners {
+			steps = append(steps, e2eStep{Name: brandSlug + "_create_brand", Status: "SKIP", ExitCode: 0})
+		} else {
+			if err := runStep(brandSlug+"_create_brand", commandWithArgs(cfg.Scripts["create-brand"], "--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot, "--brandname", brand.Brandname)...); err != nil {
+				return err
+			}
 		}
 		if cfg.EmailOwners {
 			if brand.DeveloperUsers["owner"] != 1 {
@@ -6935,48 +6940,28 @@ func runActivateLoadOwner(args []string) error {
 	if uidStart < 1 {
 		return errors.New("IMAP snapshot did not return a valid UIDNEXT")
 	}
-	session, err := accountLoginSession(ctx, func(string, ...any) {})
+	ownerEmail := strings.ToLower(strings.TrimSpace(*email))
+	payload, _ := json.Marshal(map[string]string{"email": ownerEmail})
+	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/auth/signup", "", payload)
 	if err != nil {
 		return err
 	}
-	brandCloud, err := accountFindBrandCloud(ctx, session.AccessToken, *brandname)
-	if err != nil {
-		return err
-	}
-	brandCloudID := stringValue(brandCloud["id"])
-	tenantSlug := stringValue(brandCloud["tenant_slug"])
-	if brandCloudID == "" || tenantSlug == "" {
-		return errors.New("resolved Brand Cloud is missing id or tenant_slug")
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"email": strings.ToLower(strings.TrimSpace(*email)), "display_name": strings.TrimSpace(*displayName),
-		"role": "owner", "activation_mode": "email",
-	})
-	body, status, err := curlJSONStatus(
-		fmt.Sprintf("%s/v1/admin/brand-clouds/%s/users", ctx.BaseURL, url.PathEscape(brandCloudID)),
-		session.AccessToken, payload,
-	)
-	if err != nil {
-		return err
-	}
-	if status != http.StatusCreated && !(status == http.StatusOK && *resume) {
-		return fmt.Errorf("pending owner creation failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+	if status != http.StatusAccepted {
+		return fmt.Errorf("public owner signup failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
 	}
 	var created map[string]any
 	if err := json.Unmarshal(body, &created); err != nil {
-		return fmt.Errorf("decode pending owner response: %w", err)
+		return fmt.Errorf("decode public owner signup response: %w", err)
 	}
-	globalUser, _ := created["user"].(map[string]any)
-	if status == http.StatusOK {
-		pending, _ := globalUser["signup_pending_verification"].(bool)
-		verified, _ := globalUser["email_verified"].(bool)
-		if !pending || verified || !strings.EqualFold(stringValue(globalUser["email"]), strings.TrimSpace(*email)) {
-			return errors.New("resume requires the matching pending, unverified owner account")
-		}
-	}
+	globalUser := objectValue(created["user"])
+	brandCloud := objectValue(created["brand_cloud"])
 	userID := stringValue(globalUser["id"])
-	if userID == "" {
-		return errors.New("pending owner response is missing user.id")
+	brandCloudID := stringValue(brandCloud["id"])
+	tenantSlug := stringValue(brandCloud["tenant_slug"])
+	if userID == "" || brandCloudID == "" || tenantSlug == "" ||
+		!strings.EqualFold(stringValue(globalUser["email"]), ownerEmail) ||
+		stringValue(brandCloud["name"]) != ownerEmail {
+		return errors.New("public signup response is missing the exact pending user and default owned cloud")
 	}
 	delivered, err := runIMAPJSON(helper, imapEnv, "wait", "--uid-start", strconv.Itoa(uidStart), "--timeout", firstNonEmpty(os.Getenv("LOAD_OWNER_IMAP_TIMEOUT"), "180"))
 	if err != nil {
@@ -6999,7 +6984,7 @@ func runActivateLoadOwner(args []string) error {
 		"LOAD_OWNER_PASSWORD="+password,
 		"LOAD_OWNER_EMAIL="+strings.ToLower(strings.TrimSpace(*email)),
 		"LOAD_OWNER_DISPLAY_NAME="+strings.TrimSpace(*displayName),
-		"LOAD_OWNER_BRAND_NAME="+strings.TrimSpace(*brandname),
+		"LOAD_OWNER_BRAND_NAME="+ownerEmail,
 		"LOAD_OWNER_TENANT_SLUG="+tenantSlug,
 		"LOAD_OWNER_ADMIN_BASE_URL="+adminBaseURL,
 		"LOAD_OWNER_EVIDENCE_PATH="+*evidencePath,
@@ -7013,6 +6998,22 @@ func runActivateLoadOwner(args []string) error {
 		detail := strings.ReplaceAll(string(output), activationURL, "<redacted-activation-url>")
 		detail = strings.ReplaceAll(detail, password, "<redacted-password>")
 		return fmt.Errorf("owner browser activation failed: %s", truncateForLog(detail, 500))
+	}
+	verifiedLogin, err := accountLoginUserFull(ctx, tenantSlug, ownerEmail, password, "")
+	if err != nil {
+		return fmt.Errorf("login activated public owner: %w", err)
+	}
+	var renamed map[string]any
+	status, err = (multicloudLiveHTTPClient{
+		baseURL: strings.TrimRight(ctx.BaseURL, "/"),
+		client:  &http.Client{Timeout: 30 * time.Second},
+	}).json(context.Background(), http.MethodPatch, "/v1/developer/brand-clouds/"+url.PathEscape(brandCloudID), verifiedLogin.Tokens.AccessToken,
+		map[string]any{"name": strings.TrimSpace(*brandname), "description": "Email-activated load-test owner cloud"}, *runID+"-rename-owner-cloud", &renamed)
+	if err != nil || status != http.StatusOK || stringValue(objectValue(renamed["brand_cloud"])["id"]) != brandCloudID {
+		return apiStatusError("rename email-activated owner cloud", status, err)
+	}
+	if err := rewriteLoadOwnerEvidenceBrandName(*evidencePath, ownerEmail, strings.TrimSpace(*brandname)); err != nil {
+		return err
 	}
 	appCertificateSubject := "app-user:" + userID
 	appKeyAlgorithms, err := appCertificateKeyAlgorithms(ctx)
@@ -7050,6 +7051,20 @@ func runActivateLoadOwner(args []string) error {
 		"status": "PASS", "run_id": *runID, "brandname": *brandname, "tenant_slug": tenantSlug,
 		"activated_owners": 1, "imap_uid": imapUID, "evidence_path": *evidencePath,
 	})
+}
+
+func rewriteLoadOwnerEvidenceBrandName(path, initialName, finalName string) error {
+	var evidence map[string]any
+	if err := readJSONFile(path, &evidence); err != nil {
+		return fmt.Errorf("read owner activation evidence before rename: %w", err)
+	}
+	if stringValue(evidence["schema"]) != "rtk.load-owner-activation.evidence.v1" ||
+		stringValue(evidence["status"]) != "PASS" ||
+		stringValue(evidence["brand_name"]) != initialName {
+		return errors.New("owner activation evidence does not match the public signup cloud")
+	}
+	evidence["brand_name"] = finalName
+	return writeJSON(path, evidence)
 }
 
 func reuseVerifiedLoadOwner(ctx accountManagerContext, brandname, email, runID, evidencePath string) (bool, error) {

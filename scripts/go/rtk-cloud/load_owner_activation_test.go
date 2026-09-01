@@ -20,37 +20,39 @@ func TestRunActivateLoadOwnerCompletesFormalEmailFlowAndStoresCredentials(t *tes
 		ownerEmail  = "imap-test01+load-run-20260726-b01@realtekconnect.com"
 		displayName = "RTK Load CANARY run-20260726 Brand 01 Owner"
 	)
-	var createdPayload, ownerLoginPayload map[string]any
-	creationStatus := http.StatusCreated
+	var signupPayload, ownerLoginPayload, renamePayload map[string]any
 	creationCalls := 0
-	pendingOwner := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/signup":
+			creationCalls++
+			if err := json.NewDecoder(r.Body).Decode(&signupPayload); err != nil {
+				t.Errorf("decode signup payload: %v", err)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprintf(w, `{"user":{"id":"owner-id","email":%q,"signup_pending_verification":true},"brand_cloud":{"id":"brand-id","name":%q,"tenant_slug":%q,"owner_user_id":"owner-id"}}`, ownerEmail, ownerEmail, tenantSlug)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
 			var loginPayload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&loginPayload); err != nil {
 				t.Errorf("decode login payload: %v", err)
 			}
-			if loginPayload["email"] != ownerEmail {
-				fmt.Fprint(w, `{"tokens":{"access_token":"platform-access","refresh_token":"platform-refresh"}}`)
-				return
+			if _, ok := loginPayload["app_csr_pem"]; ok {
+				ownerLoginPayload = loginPayload
 			}
-			ownerLoginPayload = loginPayload
 			fmt.Fprintf(w, `{
 				"user":{"id":"owner-id","email":%q},
 				"tokens":{"access_token":"owner-access","refresh_token":"owner-refresh"},
 				"app_certificate":{"status":"issued","subject":"app-user:owner-id","certificate_pem":"certificate","fingerprint_sha256":"abc123"}
 			}`, ownerEmail)
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
-			fmt.Fprintf(w, `{"brand_clouds":[{"id":"brand-id","name":%q,"tenant_slug":%q}]}`, brandName, tenantSlug)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds/brand-id/users":
-			creationCalls++
-			if err := json.NewDecoder(r.Body).Decode(&createdPayload); err != nil {
-				t.Errorf("decode owner payload: %v", err)
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1/developer/brand-clouds/brand-id":
+			if r.Header.Get("Authorization") != "Bearer owner-access" || r.Header.Get("Idempotency-Key") == "" {
+				t.Errorf("rename owner authorization or idempotency key missing")
 			}
-			w.WriteHeader(creationStatus)
-			fmt.Fprintf(w, `{"action":"pending_activation","user":{"id":"owner-id","email":%q,"signup_pending_verification":%t,"email_verified":%t}}`, ownerEmail, pendingOwner, !pendingOwner)
+			if err := json.NewDecoder(r.Body).Decode(&renamePayload); err != nil {
+				t.Errorf("decode rename payload: %v", err)
+			}
+			fmt.Fprintf(w, `{"brand_cloud":{"id":"brand-id","name":%q,"tenant_slug":%q,"owner_user_id":"owner-id"}}`, brandName, tenantSlug)
 		default:
 			http.Error(w, "unexpected request", http.StatusNotFound)
 		}
@@ -123,10 +125,11 @@ IMAP_EMAIL_FOLDER=INBOX
 		t.Fatal(err)
 	}
 
-	if createdPayload["activation_mode"] != "email" ||
-		createdPayload["role"] != "owner" ||
-		createdPayload["email"] != ownerEmail {
-		t.Fatalf("pending owner payload = %+v", createdPayload)
+	if signupPayload["email"] != ownerEmail || len(signupPayload) != 1 {
+		t.Fatalf("public signup payload = %+v", signupPayload)
+	}
+	if renamePayload["name"] != brandName {
+		t.Fatalf("owner rename payload = %+v", renamePayload)
 	}
 	csrPEM, _ := ownerLoginPayload["app_csr_pem"].(string)
 	block, _ := pem.Decode([]byte(csrPEM))
@@ -157,22 +160,11 @@ IMAP_EMAIL_FOLDER=INBOX
 	if storedUserID != "owner-id" || !strings.EqualFold(storedEmail, ownerEmail) || password == "" || role != "owner" {
 		t.Fatalf("stored owner user_id=%q email=%q password_set=%v role=%q", storedUserID, storedEmail, password != "", role)
 	}
-	if err := os.Remove(evidencePath); err != nil {
-		t.Fatal(err)
-	}
-	creationStatus = http.StatusOK
 	if err := runActivateLoadOwner(append(args, "--resume")); err != nil {
-		t.Fatalf("retry matching pending owner: %v", err)
+		t.Fatalf("resume verified owner: %v", err)
 	}
-	if creationCalls != 2 {
-		t.Fatalf("owner creation calls = %d, want 2", creationCalls)
-	}
-	if err := os.Remove(evidencePath); err != nil {
-		t.Fatal(err)
-	}
-	pendingOwner = false
-	if err := runActivateLoadOwner(append(args, "--resume")); err == nil || !strings.Contains(err.Error(), "matching pending, unverified owner") {
-		t.Fatalf("verified owner retry error = %v", err)
+	if creationCalls != 1 {
+		t.Fatalf("public signup calls = %d, want 1 after resume", creationCalls)
 	}
 }
 
