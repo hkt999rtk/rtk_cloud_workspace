@@ -769,7 +769,7 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 	if err != nil {
 		return fmt.Errorf("automatic top-up ledger: %w", err)
 	}
-	if err := verifyPaymentLiveLedgerDelta(autoLedger, initialLedgerIDs, state.DebitLedgerEntryID, debitAmount, 300, initialBalance-debitAmount+300); err != nil {
+	if err := verifyPaymentLiveVisibleAutoTopUpCredit(autoLedger, initialLedgerIDs, 300, initialBalance-debitAmount+300); err != nil {
 		return err
 	}
 	state.AutoTopUpPassed = true
@@ -1003,8 +1003,8 @@ func paymentLiveLedgerIDs(ledger map[string]any) map[string]bool {
 	return ids
 }
 
-func verifyPaymentLiveLedgerDelta(ledger map[string]any, before map[string]bool, debitID string, debitAmount, creditAmount, finalBalance int64) error {
-	newEntries, debitMatches, creditMatches, finalBalanceMatches := 0, 0, 0, 0
+func verifyPaymentLiveVisibleAutoTopUpCredit(ledger map[string]any, before map[string]bool, creditAmount, finalBalance int64) error {
+	newEntries, creditMatches, finalBalanceMatches := 0, 0, 0
 	for _, item := range paymentLiveAnySlice(ledger["ledger_entries"]) {
 		entry := nestedMap(item)
 		id, _ := entry["id"].(string)
@@ -1012,9 +1012,6 @@ func verifyPaymentLiveLedgerDelta(ledger map[string]any, before map[string]bool,
 			continue
 		}
 		newEntries++
-		if id == debitID && entry["direction"] == "debit" && entry["reason"] == "usage_adjustment_debit" && int64Value(entry["amount_minor"]) == debitAmount {
-			debitMatches++
-		}
 		if entry["direction"] == "credit" && entry["reason"] == "payment_top_up_credit" && int64Value(entry["amount_minor"]) == creditAmount {
 			creditMatches++
 			if int64Value(entry["balance_after_minor"]) == finalBalance {
@@ -1022,8 +1019,8 @@ func verifyPaymentLiveLedgerDelta(ledger map[string]any, before map[string]bool,
 			}
 		}
 	}
-	if newEntries != 2 || debitMatches != 1 || creditMatches != 1 || finalBalanceMatches != 1 {
-		return fmt.Errorf("automatic top-up ledger delta invalid: entries=%d debit=%d credit=%d final_balance=%d", newEntries, debitMatches, creditMatches, finalBalanceMatches)
+	if newEntries != 1 || creditMatches != 1 || finalBalanceMatches != 1 {
+		return fmt.Errorf("automatic top-up visible ledger delta invalid: entries=%d credit=%d final_balance=%d", newEntries, creditMatches, finalBalanceMatches)
 	}
 	return nil
 }

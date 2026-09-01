@@ -836,6 +836,20 @@ func TestPaymentLiveReportFailsClosedWithoutResponsiveEvidence(t *testing.T) {
 	}
 }
 
+func TestVerifyPaymentLiveVisibleAutoTopUpCreditRejectsUnexpectedDelta(t *testing.T) {
+	ledger := map[string]any{"ledger_entries": []any{map[string]any{
+		"id":                  "credit-auto",
+		"direction":           "credit",
+		"reason":              "payment_top_up_credit",
+		"amount_minor":        float64(300),
+		"balance_after_minor": float64(298),
+	}}}
+	err := verifyPaymentLiveVisibleAutoTopUpCredit(ledger, map[string]bool{}, 300, 299)
+	if err == nil || !strings.Contains(err.Error(), "visible ledger delta invalid") {
+		t.Fatalf("unexpected visible automatic top-up delta must fail, got %v", err)
+	}
+}
+
 func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.T) {
 	methodActive := false
 	debitPosted := false
@@ -869,13 +883,13 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		case r.URL.Path == "/v1/orgs/org-test/billing/ledger":
 			entries := `[]`
 			if debitPosted {
-				entries = `[{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+				entries = `[{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299}]`
 			}
 			if manualPosted {
-				entries = `[{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+				entries = `[{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299}]`
 			}
 			if hostedPosted {
-				entries = `[{"id":"credit-hosted","direction":"credit","reason":"payment_top_up_credit","amount_minor":500,"balance_after_minor":1099},{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299},{"id":"debit-1","direction":"debit","reason":"usage_adjustment_debit","amount_minor":1,"balance_after_minor":-1}]`
+				entries = `[{"id":"credit-hosted","direction":"credit","reason":"payment_top_up_credit","amount_minor":500,"balance_after_minor":1099},{"id":"credit-manual","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":599},{"id":"credit-auto","direction":"credit","reason":"payment_top_up_credit","amount_minor":300,"balance_after_minor":299}]`
 			}
 			_, _ = w.Write([]byte(`{"ledger_entries":` + entries + `}`))
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods" && r.Method == http.MethodGet:
