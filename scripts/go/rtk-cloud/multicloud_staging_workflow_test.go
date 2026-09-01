@@ -26,6 +26,7 @@ func TestMulticloudStagingWorkflowUsesFormalOwnerAndScopedEvidence(t *testing.T)
 		"mqtt-test",
 		"RTK_CLOUD_SECRET_BUNDLE",
 		"materialize-rtk-cloud-secret-store.sh staging",
+		"uses: actions/upload-artifact@v6",
 		"brand-plan-multicloud-staging.json",
 		"multicloud-staging/**",
 		"owner-activation/**",
@@ -34,7 +35,7 @@ func TestMulticloudStagingWorkflowUsesFormalOwnerAndScopedEvidence(t *testing.T)
 			t.Fatalf("multi-cloud staging workflow is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"ubuntu-latest", "initialize_billing_inbox", "**/*.sqlite", "data/logs/**"} {
+	for _, forbidden := range []string{"ubuntu-latest", "initialize_billing_inbox", "actions/upload-artifact@v4", "**/*.sqlite", "data/logs/**"} {
 		if strings.Contains(workflow, forbidden) {
 			t.Fatalf("multi-cloud staging workflow contains forbidden boundary %q", forbidden)
 		}
