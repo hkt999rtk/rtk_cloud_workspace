@@ -116,6 +116,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          cp cloud_env/staging/environment.env "$(dirname "$BILLING_STAGING_ENV_ROOT")/environment.env"
           mkdir -p "$BILLING_STAGING_ENV_ROOT/env"
           cp cloud_env/staging/linode/env/stack.env "$BILLING_STAGING_ENV_ROOT/env/stack.env"
           perl -0pi -e 's/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m' "$BILLING_STAGING_ENV_ROOT/env/stack.env"
