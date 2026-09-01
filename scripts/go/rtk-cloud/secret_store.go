@@ -322,6 +322,12 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"grafana-admin-password", "grafana", "manual"}, {"clip-private-key-seed", "video-cloud", "manual"},
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
+		{"billing-handoff", "account-manager,billing", "manual"},
+		{"factory-handoff", "account-manager,factoryenroll", "manual"},
+		{"video-control-handoff", "account-manager,video-cloud", "manual"},
+		{"mqtt-usage-handoff", "account-manager,video-cloud-workers", "manual"},
+		{"emqx-handoff-api-key", "mqtt,video-cloud-workers", "manual"},
+		{"emqx-handoff-api-secret", "mqtt,video-cloud-workers", "manual"},
 		{"payment-simulator-callback", "billing", "manual"}, {"payment-simulator-admin-token", "billing", "manual"},
 		{"payment-reference-encryption", "billing", "manual"}, {"newebpay-hash-key-seed", "billing", "manual"},
 		{"newebpay-hash-iv-seed", "billing", "manual"}, {"email-outbox-encryption", "account-manager", "manual"},
@@ -353,13 +359,38 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"cloud-logger-billing-usage-token": {{"-logger", "cloud-logger-runtime", "RTK_CLOUD_LOGGER_BILLING_USAGE_TOKEN"}},
 		"grafana-admin-password":           {{"-observability", "video-cloud-grafana-admin", "admin-password"}},
 		"billing-service-token":            {{"-billing", "billing-runtime", "BILLING_SERVICE_TOKEN"}},
-		"billing-internal-token":           {{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"}},
-		"billing-debit-token":              {{"-billing", "billing-runtime", "BILLING_DEBIT_TOKEN"}},
-		"payment-simulator-shared":         {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_SHARED_SECRET"}},
-		"payment-simulator-callback":       {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_CALLBACK_SECRET"}},
-		"payment-simulator-admin-token":    {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_ADMIN_TOKEN"}},
-		"payment-reference-encryption":     {{"-billing", "billing-runtime", "PAYMENT_REFERENCE_ENCRYPTION_KEY"}},
-		"email-outbox-encryption":          {{"-account-manager", "account-manager-runtime", "EMAIL_OUTBOX_ENCRYPTION_KEY"}},
+		"billing-internal-token": {
+			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
+			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_BILLING_USAGE_TOKEN"},
+		},
+		"billing-debit-token": {{"-billing", "billing-runtime", "BILLING_DEBIT_TOKEN"}},
+		"billing-handoff": {
+			{"-account-manager", "account-manager-runtime", "BILLING_HANDOFF_TOKEN"},
+			{"-billing", "billing-runtime", "BILLING_HANDOFF_TOKEN"},
+		},
+		"factory-handoff": {
+			{"-account-manager", "account-manager-runtime", "FACTORY_HANDOFF_TOKEN"},
+			{"-video-cloud", "factoryenroll-runtime", "FACTORY_ENROLL_RECOVERY_TOKEN"},
+		},
+		"video-control-handoff": {
+			{"-account-manager", "account-manager-runtime", "VIDEO_CONTROL_PLANE_HANDOFF_TOKEN"},
+			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN"},
+		},
+		"mqtt-usage-handoff": {
+			{"-account-manager", "account-manager-runtime", "MQTT_USAGE_HANDOFF_TOKEN"},
+			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN"},
+		},
+		"emqx-handoff-api-key": {
+			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_EMQX_API_KEY"},
+		},
+		"emqx-handoff-api-secret": {
+			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_EMQX_API_SECRET"},
+		},
+		"payment-simulator-shared":      {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_SHARED_SECRET"}},
+		"payment-simulator-callback":    {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_CALLBACK_SECRET"}},
+		"payment-simulator-admin-token": {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_ADMIN_TOKEN"}},
+		"payment-reference-encryption":  {{"-billing", "billing-runtime", "PAYMENT_REFERENCE_ENCRYPTION_KEY"}},
+		"email-outbox-encryption":       {{"-account-manager", "account-manager-runtime", "EMAIL_OUTBOX_ENCRYPTION_KEY"}},
 	}
 	return table[id]
 }

@@ -169,6 +169,30 @@ bindings into runtime artifacts. Follow [`scripts/README.md`](../scripts/README.
 for the complete user/Device creation and binding sequence. Do not mix newly
 generated data into the original staging cluster.
 
+### Enable the ownership handoff coordinator
+
+The Account Manager ownership handoff worker is disabled by default. Enable it
+only when Account Manager, Billing, Factory Enrollment, Video Cloud, MQTT usage,
+and EMQX are being deployed together at compatible versions:
+
+```sh
+export LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED=true
+export LKE_VIDEO_CLOUD_MQTT_USAGE_STORAGE=5Gi
+
+go run ./scripts/go/rtk-cloud -- deployment provision \
+  --environment staging \
+  --confirm video-cloud-staging
+```
+
+Do not pass `--workloads` while the coordinator is enabled. The deployment must
+rotate all participant credentials, apply the internal NetworkPolicies, create
+the MQTT usage checkpoint PVC, and roll out every participant as one coordinated
+operation. The SecretStore catalog owns the dedicated handoff and EMQX API
+credentials; do not substitute human login, dashboard, tenant, Billing debit, or
+other service credentials. The MQTT usage checkpoint uses `ReadWriteOnce` and a
+single `Recreate` deployment so a rollout cannot attach the same volume to two
+pods concurrently.
+
 ## Checks Before Starting a Load Test
 
 The default runtime path is:
