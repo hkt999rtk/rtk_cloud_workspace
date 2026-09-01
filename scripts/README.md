@@ -27,7 +27,29 @@ scripts/deploy-environment.sh test \
 
 Replace `dev` and the confirmation stack with `staging` or `prod`; do not copy or fork the script. `test` removes cloud and DNS resources owned by the stack after success or failure and retains sanitized evidence.
 
-Generated kubeconfigs, services, secrets, devices, and artifacts live under Git-ignored `cloud_env/<environment>/runtime/`. LKE cluster, pool, and resource IDs are adapter-private runtime state. Shared Kubernetes runtime and load tests read only normalized runtime. If a matching cluster exists but the environment lacks matching OpenBao/PostgreSQL operator state, provisioning stops before mutation to prevent new secrets from being paired with an old PVC.
+Non-secret generated state lives under Git-ignored `cloud_env/<environment>/runtime/`.
+Kubeconfigs, service secrets, private keys and Device credentials live in the
+environment [SecretStore](../docs/secret-store.md), not the workspace runtime.
+LKE cluster, pool, and resource IDs are adapter-private runtime state. Shared
+Kubernetes runtime and load tests read normalized runtime. If a matching cluster
+exists but the environment lacks matching OpenBao/PostgreSQL operator state,
+provisioning stops before mutation to prevent new secrets from being paired
+with an old PVC.
+
+## Core Backup and Restore
+
+`go run ./scripts/go/rtk-cloud -- backup --help` and `restore --help` expose
+environment-scoped maintenance backup, inspection, remote transfer, restore,
+verification and explicit resume. See [Core Backup and Restore](../docs/backup-restore.md)
+for the authoritative inventory, configuration/check requirements, safety
+backup, separate escrow and production qualification limits. The v1 archive is
+`scope=core`: Redis durable shadow data is included, cache is not; media/firmware
+payloads and external audit recovery are separate.
+
+`restore-staging-runtime.sh` is a narrow non-secret controller-state copy tool,
+not a database/OpenBao/SecretStore restore command.
+
+## Kubernetes Deployment Details
 
 The LKE adapter owns Linode LKE cluster discovery, creation, and kubeconfig retrieval. Shared Kubernetes runtime owns RTK workloads, namespaces, secrets, deployments, services, ingress, network policy, rollout, and E2E orchestration. Deployment requires container images. The following may be set explicitly:
 

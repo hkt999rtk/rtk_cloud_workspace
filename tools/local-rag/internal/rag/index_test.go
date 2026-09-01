@@ -118,8 +118,8 @@ func TestYAMLOpenAPIIngestionAndClassification(t *testing.T) {
 
 func TestContractsSourceRanksAboveCopiedContractDocs(t *testing.T) {
 	workspace := makeWorkspace(t)
-	writeFile(t, filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc", "AUTH.md"), "# Auth\n\nDevice token is issued by canonical contract.\n")
-	writeFile(t, filepath.Join(workspace, "repos", "rtk_video_cloud", "docs", "rtk_cloud_contracts_doc", "AUTH.md"), "# Auth\n\nDevice token is copied service documentation.\n")
+	writeFile(t, filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc", "auth.md"), "# Auth\n\nDevice token is issued by canonical contract.\n")
+	writeFile(t, filepath.Join(workspace, "repos", "rtk_video_cloud", "docs", "rtk_cloud_contracts_doc", "auth.md"), "# Auth\n\nDevice token is copied service documentation.\n")
 	index := makeIndex(workspace)
 	if _, err := index.IndexFull(context.Background()); err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestRepositoryStatusReportsDirtySubmoduleLikeRepo(t *testing.T) {
 
 func TestQueryReturnsAnswerCitationsAndConflictNotes(t *testing.T) {
 	workspace := makeWorkspace(t)
-	writeFile(t, filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc", "AUTH.md"), "# Auth\n\nDevices obtain credentials during activation using a signed device certificate.\n")
+	writeFile(t, filepath.Join(workspace, "repos", "rtk_cloud_contracts_doc", "auth.md"), "# Auth\n\nDevices obtain credentials during activation using a signed device certificate.\n")
 	writeFile(t, filepath.Join(workspace, "repos", "rtk_video_cloud", "docs", "auth.md"), "# Auth\n\nLegacy notes say devices use a bootstrap token before certificates.\n")
 	index := makeIndex(workspace)
 	if _, err := index.IndexFull(context.Background()); err != nil {

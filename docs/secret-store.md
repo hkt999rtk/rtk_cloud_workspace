@@ -39,6 +39,21 @@ Short-lived access and admin tokens are never persisted. Their long-lived
 signing secret is stored under `runtime/`; tokens are minted in memory when
 needed.
 
+## Backup and Recovery Boundary
+
+Follow [Core Backup and Restore](backup-restore.md) for the matched OpenBao,
+PostgreSQL and runtime-secret backup set. Explicitly selected `runtime/`, `pki/`
+and OpenBao TLS files are encrypted with the core archive; selected Kubernetes
+runtime copies must be synchronized and verified after restore. The workspace
+runtime directory is not a private-key backup.
+
+Operator/provider credentials, kubeconfig, age decryption identities, root
+tokens and unseal/recovery material require independent escrow/access. They are
+not automatically packed with core data. The recovery process preserves those
+target-local paths and its maintenance journal while replacing selected runtime
+credentials. Losing seal access or an offline Root/HSM cannot be repaired by
+generating a new key and treating it as the original identity.
+
 ## GitHub Actions
 
 CI stores values in GitHub Actions Secrets and materializes them only for one

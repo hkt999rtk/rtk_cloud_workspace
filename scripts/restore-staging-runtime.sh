@@ -7,8 +7,10 @@ Usage:
   restore-staging-runtime.sh --source-runtime PATH [--target-runtime PATH]
   restore-staging-runtime.sh --check-only [--target-runtime PATH]
 
-The source must be a trusted copy of the existing staging runtime. The script
-does not delete target files and does not create or modify cloud resources.
+Copies only an allowlist of non-secret controller state from a trusted staging
+runtime. This is NOT a database/OpenBao/SecretStore disaster-recovery tool.
+It does not delete target files or create/modify cloud resources.
+See docs/backup-restore.md for coordinated core backup and restore.
 EOF
 }
 
@@ -50,26 +52,43 @@ if [[ "$check_only" == false && -z "$source_runtime" ]]; then
 fi
 
 required_paths=(
+  "state/provider-preflight.env"
+  "env/stack.env"
+)
+
+optional_paths=(
   "adapters/lke/account.env"
   "adapters/lke/state.env"
   "adapters/lke/config.env"
-  "state/kubeconfig.yaml"
-  "state/provider-preflight.env"
   "state/video-cloud-staging.state.json"
-  "state/openbao/root-token"
-  "state/openbao/unseal-key"
-  "env/stack.env"
-  "services/account-manager/account-manager-platform-admin.env"
-  "services/account-manager/account-manager.env"
-  "services/video-cloud/video-cloud.env"
-  "devices/test_device/loadtest.env"
-  "artifacts/test-data/rtk-test-data.sqlite"
 )
+
+check_path() {
+  local path="$1"
+  [[ "$path" == /* ]] || { echo "absolute paths are required" >&2; return 1; }
+  while [[ "$path" != / ]]; do
+    [[ ! -L "$path" ]] || { echo "symlink paths are refused" >&2; return 1; }
+    path="$(dirname "$path")"
+  done
+}
+
+check_nonsecret_file() {
+  local path="$1"
+  check_path "$path"
+  [[ -f "$path" ]] || { echo "runtime member is not a regular file" >&2; return 1; }
+  # Defensive legacy-content check, not a general-purpose secret scanner.
+  # Never print matching lines: they may be credentials.
+  if LC_ALL=C grep -Eiq -- '-----BEGIN .*PRIVATE KEY-----|(^|["[:space:]])[A-Z0-9_]*(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|DSN)["[:space:]]*[:=]|postgres(ql)?://[^[:space:]]+:[^[:space:]]+@' "$path"; then
+    echo "possible secret-bearing legacy runtime; use secrets migrate first" >&2
+    return 1
+  fi
+}
 
 check_runtime() {
   local root="$1"
   local missing=0
   local relative
+  check_path "$root"
   if [[ ! -d "$root" ]]; then
     echo "runtime directory missing: $root" >&2
     return 1
@@ -83,23 +102,32 @@ check_runtime() {
   if [[ "$missing" -ne 0 ]]; then
     return 1
   fi
-  if [[ "$(stat -f '%Lp' "$root/state/kubeconfig.yaml" 2>/dev/null || true)" != "600" ]]; then
-    echo "expected mode 600: $root/state/kubeconfig.yaml" >&2
-    return 1
-  fi
-  if [[ "$(stat -f '%Lp' "$root/adapters/lke/account.env" 2>/dev/null || true)" != "600" ]]; then
-    echo "expected mode 600: $root/adapters/lke/account.env" >&2
-    return 1
-  fi
+  for relative in "${required_paths[@]}" "${optional_paths[@]}"; do
+    if [[ -e "$root/$relative" || -L "$root/$relative" ]]; then
+      check_nonsecret_file "$root/$relative" || return 1
+    fi
+  done
   echo "staging runtime check passed: $root"
 }
 
 if [[ "$check_only" == false ]]; then
   [[ -d "$source_runtime" ]] || { echo "source runtime missing: $source_runtime" >&2; exit 1; }
   check_runtime "$source_runtime"
+  check_path "$target_runtime"
   mkdir -p "$target_runtime"
-  rsync -a "$source_runtime/" "$target_runtime/"
-  chmod 600 "$target_runtime/state/kubeconfig.yaml" "$target_runtime/adapters/lke/account.env"
+  # Validate all destinations before copying; never recursively transfer the
+  # runtime tree (older trees contain kubeconfig, keys and raw service env).
+  for relative in "${required_paths[@]}" "${optional_paths[@]}"; do
+    check_path "$target_runtime/$relative"
+    [[ ! -e "$target_runtime/$relative" || -f "$target_runtime/$relative" ]] || exit 1
+  done
+  for relative in "${required_paths[@]}" "${optional_paths[@]}"; do
+    if [[ -f "$source_runtime/$relative" ]]; then
+      mkdir -p "$(dirname "$target_runtime/$relative")"
+      cp "$source_runtime/$relative" "$target_runtime/$relative"
+      chmod 600 "$target_runtime/$relative"
+    fi
+  done
 fi
 
 check_runtime "$target_runtime"

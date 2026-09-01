@@ -67,7 +67,7 @@ as the active staging or production path.
 | Secrets manager | Yes | platform/operator | GitHub Environment secrets or host-side manager are currently documented patterns. | Stores DSNs, auth secrets, MQTT credentials, webhook secrets, deploy keys, private keys. |
 | Observability stack | Yes for production-like profile | platform/operator | Video cloud exposes Prometheus endpoints and evidence collectors. | Scrapes metrics, collects logs, stores alerts, keeps readiness evidence. |
 | Central service logger | Yes for production-like profile | `rtk_cloud_logger` with workspace provisioning | K8s runtime owns logger deployment and service integration. Legacy native flow covered logger resource provisioning, Loki-backed backend service, journald forwarders, readiness checks, artifacts, cleanup, and Cloud Admin dashboard wiring; keep it as reference only. Container/file sources such as EMQX broker per-publish logs still need a source adapter. | Stores queryable service logs across account, video, admin, frontend, and workload/runtime sources without requiring Grafana for the v1 dashboard. |
-| Backup storage | Yes for production-like profile | platform/operator | Not packaged as a single workspace script. | Stores database dumps, object storage backups, env/secrets escrow metadata, release manifests. |
+| Backup storage | Yes for production-like profile | platform/operator | Workspace `backup` / `restore` commands; [core recovery procedure](backup-restore.md). | Matched encrypted core data; media/firmware payload backup and independent escrow remain separate. |
 
 ## Deployment Profiles
 
@@ -377,20 +377,32 @@ tested standby/failover path or an equivalent managed PostgreSQL contract.
 Backups are mandatory for production-like profiles and optional but recommended
 for single-node evaluation.
 
-Minimum backup set:
+The canonical cross-repository procedure and complete inventory are in
+[Core Backup and Restore](backup-restore.md). Version 1 is manual maintenance,
+environment-scoped, with an encrypted local archive and a dedicated private
+remote copy. It includes Billing PostgreSQL, OpenBao file storage, Cloud Admin
+and frontend SQLite, durable Redis shadow/index/outbox data, selected runtime
+secrets and enabled worker checkpoints. Cache, leases and locks are excluded.
+Object payloads and independently retained audit are outside `scope=core`;
+their independent recovery remains a production obligation.
+
+Production recovery responsibilities (not all automated by v1):
 
 | Data | Owner | Backup guidance | Restore check |
 | --- | --- | --- | --- |
 | Account manager PostgreSQL | platform/operator with `rtk_account_manager` schema ownership | Scheduled logical dump or managed database backup. | Restore into test DB and run auth/org/device smoke. |
 | Video cloud PostgreSQL | platform/operator with `rtk_video_cloud` schema ownership | Scheduled logical dump or managed database backup. | Restore into test DB and run video-cloud smoke. |
+| Billing PostgreSQL and OpenBao | platform/operator with service owners | Matched maintenance backup with the other databases; preserve original PKI and separate seal escrow. | Reconcile billing/provider outcomes, issuer references and revocation before dispatch resumes. |
 | Object/blob storage | platform/operator | Versioned bucket, lifecycle snapshot, or filesystem backup. | Restore representative snapshot/clip/firmware objects. |
 | Frontend leads SQLite | `rtk_cloud_frontend` / platform | Backup mounted `/data/connectplus.db` or migrate to production DB. | Restore and verify admin lead listing/export. |
+| Frontend analytics and Cloud Admin SQLite | service owners / platform | Offline PVC archive, include all database files and remaining WAL. | Integrity and service-local checks. |
+| Durable Redis shadow state | `rtk_video_cloud` / platform | Explicit durable prefixes only; cache is not the complete Redis dataset. | Documents, index, tombstones and outbox version/delivery checks. |
 | Runtime env and non-secret manifest | platform/operator | Store redacted env key inventory and release manifest. | Confirm required keys are known without leaking secrets. |
 | Secrets | platform/operator | Secret-manager backup/escrow according to customer policy. | Rotation drill, not plaintext restore in git. |
 | EMQX config | platform/operator | Back up broker config, auth policy, TLS material references. | Broker smoke after restore. |
 
-Restore drills should run before a production-like deployment is called
-customer-ready.
+Restore drills must run before a production-like deployment is called
+customer-ready. Local script tests do not qualify live LKE/OpenBao recovery.
 
 ## Observability And Evidence
 

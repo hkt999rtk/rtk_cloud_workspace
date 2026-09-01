@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "environment": "staging",
+  "stack": "video-cloud-staging",
+  "namespaces": ["video-cloud-staging-platform"],
+  "lock_namespace": "video-cloud-staging-platform",
+  "directory": "/private/rtk-backups/staging",
+  "recipients": ["REPLACE_WITH_AGE_X25519_PUBLIC_RECIPIENT"],
+  "remote": {
+    "endpoint": "https://REPLACE_WITH_PRIVATE_BACKUP_ENDPOINT",
+    "region": "REPLACE_WITH_REGION",
+    "bucket": "REPLACE_WITH_DEDICATED_PRIVATE_BACKUP_BUCKET",
+    "prefix": "staging/core"
+  },
+  "timeout_seconds": 300,
+  "max_archive_bytes": 1073741824,
+  "workloads": [
+    {"namespace": "video-cloud-staging-platform", "kind": "deployment", "name": "replace-with-api-workload", "role": "application"},
+    {"namespace": "video-cloud-staging-platform", "kind": "statefulset", "name": "postgresql", "role": "data"},
+    {"namespace": "video-cloud-staging-platform", "kind": "statefulset", "name": "openbao", "role": "offline"}
+  ],
+  "components": [
+    {"id": "postgres-globals", "kind": "postgres", "namespace": "video-cloud-staging-platform", "pod": "postgresql-0", "pvc": "data-postgresql-0", "user": "postgres", "database": "@globals"},
+    {"id": "account-manager", "kind": "postgres", "namespace": "video-cloud-staging-platform", "pod": "postgresql-0", "user": "postgres", "database": "rtk_account_manager"},
+    {"id": "billing", "kind": "postgres", "namespace": "video-cloud-staging-platform", "pod": "postgresql-0", "user": "postgres", "database": "rtk_billing"},
+    {"id": "video-cloud", "kind": "postgres", "namespace": "video-cloud-staging-platform", "pod": "postgresql-0", "user": "postgres", "database": "video_cloud"},
+    {"id": "openbao", "kind": "volume", "namespace": "video-cloud-staging-platform", "pvc": "replace-with-openbao-pvc", "purpose": "openbao-file", "image": "REPLACE_WITH_HELPER_IMAGE@sha256:REPLACE_WITH_REVIEWED_DIGEST"},
+    {"id": "runtime-secrets", "kind": "secretstore", "paths": ["runtime", "pki", "openbao/tls.crt", "openbao/tls.key", "openbao/tls-ca.crt"]}
+  ],
+  "excluded_pvcs": [],
+  "preflight_checks": [{"id": "identity-fence-storage-escrow", "argv": ["/operator/recovery/staging-preflight"]}],
+  "startup_checks": [{"id": "fence-before-private-startup", "argv": ["/operator/recovery/staging-startup"]}],
+  "quiescence_checks": [{"id": "all-writers-drained", "argv": ["/operator/recovery/staging-quiescence"]}],
+  "recovery_checks": [{"id": "unseal-rebind-reconcile", "argv": ["/operator/recovery/staging-recovery"]}],
+  "health_checks": [{"id": "private-service-smoke", "argv": ["/operator/recovery/staging-health"]}],
+  "external_dependencies": [
+    "REPLACE: media/firmware bucket, prefix and version-retention references; payloads not included",
+    "REPLACE: external audit retention and payment/email reconciliation owners",
+    "REPLACE: independently retained release images and offline Root/HSM/seal escrow references",
+    "INCOMPLETE EXAMPLE: add every workload/PVC, frontend/admin SQLite, durable Redis, checkpoints and selected runtime Kubernetes objects before use"
+  ]
+}
