@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -319,11 +320,22 @@ func mergeAccountManagerEmailSecret(secret map[string]any, env map[string]string
 			delete(raw, key)
 		}
 	}
-	values := make([]string, 0, len(accountManagerEmailSecretKeys)*2)
 	for _, key := range accountManagerEmailSecretKeys {
 		value := strings.TrimSpace(firstNonEmpty(os.Getenv(key), env[key], defaults[key]))
 		raw[key] = base64.StdEncoding.EncodeToString([]byte(value))
-		values = append(values, key, value)
+	}
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys)*2)
+	for _, key := range keys {
+		encoded, ok := raw[key].(string)
+		if !ok {
+			return "", fmt.Errorf("account-manager-runtime Secret key %s is not encoded data", key)
+		}
+		values = append(values, key, encoded)
 	}
 	return lkeConfigChecksum(values...), nil
 }
