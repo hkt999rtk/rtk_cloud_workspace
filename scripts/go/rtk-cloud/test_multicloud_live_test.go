@@ -282,6 +282,19 @@ func TestResolveIMAPConnectHost(t *testing.T) {
 	}
 }
 
+func TestManagedCloudWriteDenied(t *testing.T) {
+	for _, status := range []int{http.StatusForbidden, http.StatusNotFound} {
+		if !managedCloudWriteDenied(status) {
+			t.Fatalf("HTTP %d was not treated as a denied viewer write", status)
+		}
+	}
+	for _, status := range []int{http.StatusOK, http.StatusUnauthorized, http.StatusConflict} {
+		if managedCloudWriteDenied(status) {
+			t.Fatalf("HTTP %d was treated as a denied viewer write", status)
+		}
+	}
+}
+
 func TestRunMulticloudLiveScenarioUsesGlobalOwnerInvitationAndDeletionAPIs(t *testing.T) {
 	const (
 		cloudID  = "11111111-1111-4111-8111-111111111111"
