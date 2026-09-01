@@ -123,7 +123,12 @@ jobs:
 
       - name: Run deterministic product UI evidence
         working-directory: scripts/go
+        shell: bash
         run: |
+          # Coordinate the fixed local BFF port across runner registrations
+          # hosted by the same physical Linux machine.
+          exec 9>/tmp/rtk-cloud-admin-ui.lock
+          flock -w 1800 9
           go run ./rtk-cloud -- test-ui \
             --full --desktop --mobile --install \
             --run-id "$FEATURE_EVIDENCE_RUN_ID"

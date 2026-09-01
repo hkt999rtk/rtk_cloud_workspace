@@ -77,6 +77,12 @@ func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 	if strings.Count(admin, "max-parallel: 1") != 1 {
 		t.Fatalf("Cloud Admin desktop/mobile E2E must run serially")
 	}
+	for _, name := range []string{"cloud-admin-e2e.yml", "workspace-test-baseline.yml", "go-runtime-coverage-nightly.yml"} {
+		workflow := readWorkflow(name)
+		if !strings.Contains(workflow, "/tmp/rtk-cloud-admin-ui.lock") || !strings.Contains(workflow, "flock -w 1800 9") {
+			t.Fatalf("%s must coordinate the host-local Cloud Admin UI port", name)
+		}
+	}
 }
 
 func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {

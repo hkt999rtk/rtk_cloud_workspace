@@ -196,10 +196,13 @@ jobs:
           go run ./scripts/go/rtk-cloud -- test-e2e \
             --run-id "$RUNTIME_COVERAGE_RUN_ID" \
             --output-dir "$evidence_root/e2e"
+          exec 9>/tmp/rtk-cloud-admin-ui.lock
+          flock -w 1800 9
           go run ./scripts/go/rtk-cloud -- test-ui \
             --full --desktop --mobile --install \
             --run-id "$RUNTIME_COVERAGE_RUN_ID" \
             --output-dir "$evidence_root/ui"
+          flock -u 9
           qualification_postgres="runtime-qualification-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           cleanup_qualification_postgres() {
             docker rm -f "$qualification_postgres" >/dev/null 2>&1 || true
