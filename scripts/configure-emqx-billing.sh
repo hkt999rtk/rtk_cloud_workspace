@@ -68,13 +68,17 @@ upsert_json() {
 }
 
 jq -n --arg url "$callback_url" '{type:"http",name:"billing_usage",url:$url,enable:true,pool_size:4,pool_type:"random",connect_timeout:"15s"}' > "$tmp_dir/connector.json"
-jq -n --arg token "$VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN" '{type:"http",name:"billing_usage_publish",connector:"billing_usage",enable:true,parameters:{path:"/v1/internal/mqtt/usage",method:"post",headers:{"content-type":"application/json",authorization:("Bearer "+$token)},body:"{\"event\":\"${event}\",\"username\":\"${username}\",\"clientid\":\"${clientid}\",\"topic\":\"${topic}\",\"payload\":${payload},\"node\":\"${node}\",\"timestamp\":${timestamp},\"publish_received_at\":${publish_received_at}}"},resource_opts:{query_mode:"sync",worker_pool_size:8}}' > "$tmp_dir/publish-action.json"
-jq -n --arg token "$VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN" '{type:"http",name:"billing_usage_delivery",connector:"billing_usage",enable:true,parameters:{path:"/v1/internal/mqtt/usage",method:"post",headers:{"content-type":"application/json",authorization:("Bearer "+$token)},body:"{\"event\":\"${event}\",\"username\":\"${username}\",\"from_username\":\"${from_username}\",\"clientid\":\"${clientid}\",\"from_clientid\":\"${from_clientid}\",\"topic\":\"${topic}\",\"payload\":${payload},\"node\":\"${node}\",\"timestamp\":${timestamp}}"},resource_opts:{query_mode:"sync",worker_pool_size:8}}' > "$tmp_dir/delivery-action.json"
-jq -n '{name:"billing_usage_publish",enable:true,sql:"SELECT '\''message.publish'\'' as event, username, clientid, topic, payload, node, timestamp, publish_received_at FROM \"#\" WHERE username != '\''video-cloud-server'\''",actions:["http:billing_usage_publish"]}' > "$tmp_dir/publish-rule.json"
+# Omitting body uses EMQX's JSON encoding of the selected row. Do not splice
+# unescaped topics/client IDs or binary MQTT payloads into a JSON template.
+jq -n --arg token "$VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN" '{type:"http",name:"billing_usage_publish",connector:"billing_usage",enable:true,parameters:{path:"/v1/internal/mqtt/usage",method:"post",headers:{"content-type":"application/json",authorization:("Bearer "+$token)}},resource_opts:{query_mode:"sync",worker_pool_size:8}}' > "$tmp_dir/publish-action.json"
+jq -n --arg token "$VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN" '{type:"http",name:"billing_usage_delivery",connector:"billing_usage",enable:true,parameters:{path:"/v1/internal/mqtt/usage",method:"post",headers:{"content-type":"application/json",authorization:("Bearer "+$token)}},resource_opts:{query_mode:"sync",worker_pool_size:8}}' > "$tmp_dir/delivery-action.json"
+# callback_id belongs to this rule evaluation and remains in the buffered row
+# across HTTP retries. MQTT id alone would collapse subscriber fanout deliveries.
+jq -n '{name:"billing_usage_publish",enable:true,sql:"SELECT '\''message.publish'\'' as event, uuid_v4() as callback_id, id, username, clientid, topic, base64_encode(payload) as payload_b64, node, timestamp, publish_received_at FROM \"#\" WHERE username != '\''video-cloud-server'\''",actions:["http:billing_usage_publish"]}' > "$tmp_dir/publish-rule.json"
 # EMQX 5.8 (the staging broker version) exposes this event through the
 # backward-compatible event topic. Newer brokers may also support the
 # namespaced "$events/message/delivered" spelling.
-jq -n '{name:"billing_usage_delivery",enable:true,sql:"SELECT '\''message.delivered'\'' as event, username, clientid, from_username, from_clientid, topic, payload, node, timestamp FROM \"$events/message_delivered\" WHERE username != '\''video-cloud-server'\''",actions:["http:billing_usage_delivery"]}' > "$tmp_dir/delivery-rule.json"
+jq -n '{name:"billing_usage_delivery",enable:true,sql:"SELECT '\''message.delivered'\'' as event, uuid_v4() as callback_id, id, username, clientid, from_username, from_clientid, topic, base64_encode(payload) as payload_b64, node, timestamp, publish_received_at FROM \"$events/message_delivered\" WHERE username != '\''video-cloud-server'\''",actions:["http:billing_usage_delivery"]}' > "$tmp_dir/delivery-rule.json"
 
 upsert_json connectors billing_usage "$tmp_dir/connector.json"
 upsert_json actions billing_usage_publish "$tmp_dir/publish-action.json"

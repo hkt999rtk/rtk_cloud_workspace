@@ -758,6 +758,10 @@ func TestVerifyFeatureDeploymentCommitsRequiresDigestAndCommit(t *testing.T) {
 			"image": "registry/account:test", "digest": "sha256:account",
 		},
 		map[string]any{
+			"source_path": "repos/rtk_billing", "source_commit": "billing-commit",
+			"image": "registry/billing:test", "digest": "sha256:billing",
+		},
+		map[string]any{
 			"source_path": "repos/rtk_cloud_logger", "source_commit": "logger-commit",
 			"image": "registry/logger:test", "digest": "sha256:logger",
 		},
@@ -766,7 +770,7 @@ func TestVerifyFeatureDeploymentCommitsRequiresDigestAndCommit(t *testing.T) {
 	if err := writeJSONFile(path, map[string]any{"images": images}); err != nil {
 		t.Fatal(err)
 	}
-	commits := map[string]string{"video_cloud": "video-commit", "account_manager": "account-commit", "cloud_logger": "logger-commit"}
+	commits := map[string]string{"video_cloud": "video-commit", "account_manager": "account-commit", "billing": "billing-commit", "cloud_logger": "logger-commit"}
 	if err := verifyFeatureDeploymentCommits(envRoot, commits); err != nil {
 		t.Fatalf("valid deployment anchors rejected: %v", err)
 	}

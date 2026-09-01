@@ -1,5 +1,12 @@
 schema_version: 1
 cases:
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#My%20Clouds%20is%20available%20without%20memberships%3B%20scoped%20next%20requires%20membership
+      module: cloud-admin-web
+      language: javascript
+      source: src/auth-routing.test.mjs
+      title: My Clouds is available without memberships; scoped next requires membership
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20next%20accepts%20only%20admin%20and%20console%20paths
       module: cloud-admin-web
       language: javascript
@@ -176,6 +183,83 @@ cases:
       language: javascript
       source: src/chipset-sdk.test.mjs
       title: provider dashboard helpers compute and filter design data
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-billing.test.mjs#Billing%20routes%20and%20downloads%20are%20cloud-scoped%2C%20never%20active-session%20scoped
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-billing.test.mjs
+      title: Billing routes and downloads are cloud-scoped, never active-session scoped
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-billing.test.mjs#two%20clouds%20load%20independently%20and%20inconsistent%20ownership%20readbacks%20fail%20closed
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-billing.test.mjs
+      title: two clouds load independently and inconsistent ownership readbacks fail closed
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#Product%20paths%20bind%20both%20identities%20and%20reject%20path%20injection
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: Product paths bind both identities and reject path injection
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#accepted%20invitations%20use%20a%20validated%20explicit%20cloud%20and%20Product%20destination
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: accepted invitations use a validated explicit cloud and Product destination
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#cross-cloud%20Product%20and%20unproven%20totals%20are%20withheld
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: cross-cloud Product and unproven totals are withheld
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#list%20preserves%20filtered%20totals%2C%20offset%20and%20cancellation%20in%20its%20explicit%20cloud
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: list preserves filtered totals, offset and cancellation in its explicit cloud
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#permission%20failures%20never%20display%20upstream%20diagnostics
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: permission failures never display upstream diagnostics
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-sharing.test.mjs#204%20membership%20removal%20does%20not%20try%20decoding%20nonexistent%20JSON
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-sharing.test.mjs
+      title: 204 membership removal does not try decoding nonexistent JSON
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-sharing.test.mjs#reordered%20Product%20scope%20retries%20same%20intent%3B%20narrower%20scope%20gets%20a%20new%20key
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-sharing.test.mjs
+      title: reordered Product scope retries same intent; narrower scope gets a new key
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-sharing.test.mjs#scope%20labels%20never%20label%20admin%2Fmember%20read-only%20and%20routes%20bind%20target%20cloud
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-sharing.test.mjs
+      title: scope labels never label admin/member read-only and routes bind target cloud
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-sharing.test.mjs#sharing%20defaults%20require%20explicit%20nonempty%20Product%20scope%3B%20whole%20cloud%20needs%20consent
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-sharing.test.mjs
+      title: sharing defaults require explicit nonempty Product scope; whole cloud needs consent
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/device-actions.test.mjs#deviceActionState%20disables%20actions%20when%20telemetry%20source%20is%20unavailable
@@ -454,6 +538,62 @@ cases:
       title: service console initializes with English as its only supported locale
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/managed-clouds.test.mjs#managed%20routes%20bind%20valid%20cloud%20and%20Product%20identities%2C%20not%20a%20selected%20global%20cloud
+      module: cloud-admin-web
+      language: javascript
+      source: src/managed-clouds.test.mjs
+      title: managed routes bind valid cloud and Product identities, not a selected global cloud
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/managed-clouds.test.mjs#remote%20diagnostics%20are%20never%20displayed%20as%20UI%20errors
+      module: cloud-admin-web
+      language: javascript
+      source: src/managed-clouds.test.mjs
+      title: remote diagnostics are never displayed as UI errors
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/managed-clouds.test.mjs#requests%20carry%20explicit%20scope%20and%20cancellation%20without%20trusted%20actor%20headers
+      module: cloud-admin-web
+      language: javascript
+      source: src/managed-clouds.test.mjs
+      title: requests carry explicit scope and cancellation without trusted actor headers
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/managed-clouds.test.mjs#retries%20keep%20the%20key%20but%20changing%20content%20or%20cloud%20never%20replays%20another%20intent
+      module: cloud-admin-web
+      language: javascript
+      source: src/managed-clouds.test.mjs
+      title: retries keep the key but changing content or cloud never replays another intent
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/owner-handoff.test.mjs#accepted%20and%20finalizing%20are%20not%20complete%2C%20and%20postcommit%20cancellation%20is%20forbidden
+      module: cloud-admin-web
+      language: javascript
+      source: src/owner-handoff.test.mjs
+      title: accepted and finalizing are not complete, and postcommit cancellation is forbidden
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/owner-handoff.test.mjs#changing%20amount%2C%20currency%20or%20versions%20invalidates%20the%20exact%20confirmation%20key
+      module: cloud-admin-web
+      language: javascript
+      source: src/owner-handoff.test.mjs
+      title: changing amount, currency or versions invalidates the exact confirmation key
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/owner-handoff.test.mjs#non-member%20participants%20can%20reach%20the%20operation%20shell%2C%20never%20arbitrary%20cloud%20content
+      module: cloud-admin-web
+      language: javascript
+      source: src/owner-handoff.test.mjs
+      title: non-member participants can reach the operation shell, never arbitrary cloud content
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/owner-handoff.test.mjs#zero%20and%20positive%20settled%20amounts%20are%20eligible%2C%20negatives%20and%20unsafe%20numbers%20never%20are
+      module: cloud-admin-web
+      language: javascript
+      source: src/owner-handoff.test.mjs
+      title: zero and positive settled amounts are eligible, negatives and unsafe numbers never are
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/platform-view.test.mjs#auditCoverageCopy%20documents%20current%20write-side%20limits
       module: cloud-admin-web
       language: javascript
@@ -508,6 +648,34 @@ cases:
       language: javascript
       source: src/platform-view.test.mjs
       title: workload helpers map k8s status to stable labels and tones
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-devices.test.mjs#device%20URLs%20require%20all%20three%20explicit%20identities
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-devices.test.mjs
+      title: device URLs require all three explicit identities
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-devices.test.mjs#device%20errors%20omit%20service%20diagnostics
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-devices.test.mjs
+      title: device errors omit service diagnostics
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-devices.test.mjs#device%20list%20forwards%20filtering%20and%20cancellation%2C%20retaining%20server%20total
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-devices.test.mjs
+      title: device list forwards filtering and cancellation, retaining server total
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-devices.test.mjs#device%20responses%20reject%20wrong%20Product%2C%20duplicate%20IDs%20and%20missing%20totals
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-devices.test.mjs
+      title: device responses reject wrong Product, duplicate IDs and missing totals
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#Brand%20Cloud%20navigation%20and%20route%20access%20are%20evaluated%20independently
