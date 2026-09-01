@@ -217,8 +217,8 @@ else:
 	if err := store.write(filepath.Join("operator", "env", "IMAP_EMAIL_ADDR"), []byte("mailbox+existing@example.test\n"), true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := multicloudRunScopedViewerEmail(ctx, "run"); err == nil || !strings.Contains(err.Error(), "plain email address") {
-		t.Fatalf("existing plus alias error = %v", err)
+	if got, err := multicloudRunScopedViewerEmail(ctx, "run"); err != nil || got != "mailbox+multicloud-run@example.test" {
+		t.Fatalf("existing plus alias result = %q, error = %v", got, err)
 	}
 }
 

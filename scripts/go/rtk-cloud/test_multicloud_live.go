@@ -192,9 +192,9 @@ func multicloudRunScopedViewerEmail(ctx accountManagerContext, runID string) (st
 	if err != nil {
 		return "", fmt.Errorf("read canonical operator settings: %w", err)
 	}
-	local, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(operator["IMAP_EMAIL_ADDR"])), "@")
-	if !ok || local == "" || domain == "" || strings.Contains(local, "+") {
-		return "", errors.New("operator IMAP mailbox must be a plain email address")
+	local, domain, err := loadTestMailboxBase(operator["IMAP_EMAIL_ADDR"])
+	if err != nil {
+		return "", fmt.Errorf("operator IMAP mailbox: %w", err)
 	}
 	return local + "+multicloud-" + runID + "@" + domain, nil
 }

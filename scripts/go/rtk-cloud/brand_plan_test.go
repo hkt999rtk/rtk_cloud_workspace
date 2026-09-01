@@ -497,7 +497,7 @@ func TestResolveLoadTestBrandPlanRejectsInvalidInputs(t *testing.T) {
 		{"short run", "CANARY", "short", "imap@example.test"},
 		{"bad target", "25K", "run-12345", "imap@example.test"},
 		{"missing local", "CANARY", "run-12345", "@example.test"},
-		{"plus mailbox", "CANARY", "run-12345", "imap+old@example.test"},
+		{"multiple at signs", "CANARY", "run-12345", "imap@example.test@other.test"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -505,6 +505,23 @@ func TestResolveLoadTestBrandPlanRejectsInvalidInputs(t *testing.T) {
 				t.Fatal("invalid plan identity accepted")
 			}
 		})
+	}
+}
+
+func TestResolveLoadTestBrandPlanReplacesExistingMailboxTag(t *testing.T) {
+	base := loadTestBrandPlan{
+		TotalDevices: 1, DevicesPerUser: 1,
+		Brands: []loadTestBrandConfig{{
+			Brandname: "Brand", Devices: 1, NormalUsers: 1,
+			DeveloperUsers: map[string]int{"owner": 1},
+		}},
+	}
+	plan, err := resolveLoadTestBrandPlan(base, "CANARY", "run-12345", "IMAP+old@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plan.Brands[0].OwnerEmail, "imap+load-run-12345-b01@example.test"; got != want {
+		t.Fatalf("owner email = %q, want %q", got, want)
 	}
 }
 

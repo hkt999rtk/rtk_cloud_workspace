@@ -45,9 +45,9 @@ func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox str
 	if target != "1K" && target != "50K" && target != "100K" && target != "CANARY" {
 		return loadTestBrandPlan{}, fmt.Errorf("target must be 1K, 50K, 100K, or CANARY")
 	}
-	local, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(mailbox)), "@")
-	if !ok || local == "" || domain == "" || strings.Contains(local, "+") {
-		return loadTestBrandPlan{}, fmt.Errorf("operator mailbox must be a plain email address")
+	local, domain, err := loadTestMailboxBase(mailbox)
+	if err != nil {
+		return loadTestBrandPlan{}, err
 	}
 	resolved := plan
 	resolved.RunID = runID
@@ -63,6 +63,15 @@ func resolveLoadTestBrandPlan(plan loadTestBrandPlan, target, runID, mailbox str
 		resolved.Brands[i] = brand
 	}
 	return resolved, resolved.validate()
+}
+
+func loadTestMailboxBase(mailbox string) (string, string, error) {
+	local, domain, ok := strings.Cut(strings.ToLower(strings.TrimSpace(mailbox)), "@")
+	local, _, _ = strings.Cut(local, "+")
+	if !ok || local == "" || domain == "" || strings.Contains(domain, "@") || strings.ContainsAny(local+domain, " \t\r\n") {
+		return "", "", fmt.Errorf("operator mailbox must be a valid email address")
+	}
+	return local, domain, nil
 }
 
 func loadLoadTestBrandPlan(path string) (loadTestBrandPlan, error) {
