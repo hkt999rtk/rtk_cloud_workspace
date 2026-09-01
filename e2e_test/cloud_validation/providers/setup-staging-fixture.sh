@@ -133,11 +133,11 @@ write_recovery_bundle() {
   local recovery_user_json='[]' recovery_binding_json='[]'
   local foreign_recovery_user_json='[]' foreign_recovery_binding_json='[]'
   if [[ -f "$db" ]]; then
-    recovery_user_json="$(sqlite_json_array "$db" "select email, brand_cloud_id, tenant_slug, body_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
+    recovery_user_json="$(sqlite_json_array "$db" "select user_id, email, brand_cloud_id, tenant_slug from users where tenant_slug = '$cloud_slug' order by email limit 1")"
     recovery_binding_json="$(sqlite_json_array "$db" "select device_id, account_device_id from device_bindings where tenant_slug = '$cloud_slug' order by assignment_index limit 1")"
   fi
   if [[ -f "$foreign_db" ]]; then
-    foreign_recovery_user_json="$(sqlite_json_array "$foreign_db" "select email, brand_cloud_id, tenant_slug, body_json from users where tenant_slug = '$foreign_cloud_slug' order by email limit 1")"
+    foreign_recovery_user_json="$(sqlite_json_array "$foreign_db" "select user_id, email, brand_cloud_id, tenant_slug from users where tenant_slug = '$foreign_cloud_slug' order by email limit 1")"
     foreign_recovery_binding_json="$(sqlite_json_array "$foreign_db" "select device_id, account_device_id from device_bindings where tenant_slug = '$foreign_cloud_slug' order by assignment_index limit 1")"
   fi
   mkdir -p "$(dirname "$bundle")"
@@ -162,10 +162,8 @@ write_recovery_bundle() {
     def fixture_resources($users; $bindings; $role):
       ($users[0] // {}) as $u |
       ($bindings[0] // {}) as $b |
-      ($u.body_json // "{}" | fromjson? // {}) as $body |
-      (if (($body.brand_cloud_user_id // "") | length) > 0 then [
-        {kind:"brand_cloud_user", id:$body.brand_cloud_user_id, email:($u.email // ""), brand_cloud_id:($u.brand_cloud_id // ""), fixture_role:$role},
-        {kind:"app_certificate", owner_id:$body.brand_cloud_user_id, brand_cloud_id:($u.brand_cloud_id // ""), fixture_role:$role}
+      (if (($u.user_id // "") | length) > 0 then [
+        {kind:"organization_membership", id:$u.user_id, email:($u.email // ""), brand_cloud_id:($u.brand_cloud_id // ""), fixture_role:$role}
       ] else [] end) +
       (if (($b.account_device_id // "") | length) > 0 then [
         {kind:"device_binding", id:$b.account_device_id, device_id:($b.device_id // ""), brand_cloud_id:($u.brand_cloud_id // ""), fixture_role:$role}
@@ -366,9 +364,9 @@ fi
 chmod 600 "$db" "$foreign_db"
 write_recovery_bundle "post_setup_validation" 1
 
-user_json="$($sqlite -json "$db" "select email, password, brand_cloud_id, tenant_slug, app_credentials_json, app_certificate_json, body_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
+user_json="$($sqlite -json "$db" "select user_id, email, password, brand_cloud_id, tenant_slug, app_credentials_json, app_certificate_json from users where tenant_slug = '$cloud_slug' order by email limit 1")"
 binding_json="$($sqlite -json "$db" "select device_id, account_device_id, assigned_email from device_bindings where tenant_slug = '$cloud_slug' order by assignment_index limit 1")"
-foreign_user_json="$($sqlite -json "$foreign_db" "select email, brand_cloud_id, tenant_slug, body_json from users where tenant_slug = '$foreign_cloud_slug' order by email limit 1")"
+foreign_user_json="$($sqlite -json "$foreign_db" "select user_id, email, brand_cloud_id, tenant_slug from users where tenant_slug = '$foreign_cloud_slug' order by email limit 1")"
 foreign_binding_json="$($sqlite -json "$foreign_db" "select device_id, account_device_id, assigned_email from device_bindings where tenant_slug = '$foreign_cloud_slug' order by assignment_index limit 1")"
 if ! jq -e 'length == 1' <<<"$user_json" >/dev/null || ! jq -e 'length == 1' <<<"$binding_json" >/dev/null || \
    ! jq -e 'length == 1' <<<"$foreign_user_json" >/dev/null || ! jq -e 'length == 1' <<<"$foreign_binding_json" >/dev/null; then
@@ -380,11 +378,11 @@ email="$(jq -er '.[0].email' <<<"$user_json")"
 password="$(jq -er '.[0].password' <<<"$user_json")"
 brand_cloud_id="$(jq -er '.[0].brand_cloud_id' <<<"$user_json")"
 tenant_slug="$(jq -er '.[0].tenant_slug' <<<"$user_json")"
-brand_cloud_user_id="$(jq -er '.[0].body_json | fromjson | .brand_cloud_user_id' <<<"$user_json")"
+global_user_id="$(jq -er '.[0].user_id' <<<"$user_json")"
 device_id="$(jq -er '.[0].device_id' <<<"$binding_json")"
 account_device_id="$(jq -er '.[0].account_device_id' <<<"$binding_json")"
 foreign_brand_cloud_id="$(jq -er '.[0].brand_cloud_id' <<<"$foreign_user_json")"
-foreign_brand_cloud_user_id="$(jq -er '.[0].body_json | fromjson | .brand_cloud_user_id' <<<"$foreign_user_json")"
+foreign_global_user_id="$(jq -er '.[0].user_id' <<<"$foreign_user_json")"
 foreign_email="$(jq -er '.[0].email' <<<"$foreign_user_json")"
 foreign_device_id="$(jq -er '.[0].device_id' <<<"$foreign_binding_json")"
 foreign_account_device_id="$(jq -er '.[0].account_device_id' <<<"$foreign_binding_json")"
@@ -416,12 +414,9 @@ chmod 600 "$revoked_app_identity_password_file"
 openssl pkcs12 -export -out "$revoked_app_identity" -inkey "$revoked_app_key" -in "$revoked_app_cert" -passout "file:$revoked_app_identity_password_file"
 rm -f -- "$revoked_app_identity_password_file"
 
-# Rotate the fixture identity before platform execution. The mobile scenario
-# must prove that this preserved old identity is rejected while the newly
-# issued identity can obtain a token and perform an authorized device read.
-curl --fail --silent --show-error --max-time 15 --request POST \
-  --header "@$account_headers" --header 'Content-Type: application/json' --data '{}' \
-  "${account_url%/}/v1/admin/brand-clouds/$brand_cloud_id/users/$brand_cloud_user_id/app-certificate/revoke" >/dev/null
+# Rotate the fixture identity before platform execution. Global login owns
+# human certificate rotation; Brand Cloud identity is only the later resource
+# scope. The preserved old identity must fail while the replacement succeeds.
 
 app_key="$secret_root/app-private-key.pem"
 app_csr="$secret_root/app-certificate.csr.pem"
@@ -432,12 +427,12 @@ app_cert_raw="$secret_root/app-certificate-chain.raw.pem"
 app_identity="$secret_root/app-identity.p12"
 app_identity_password_file="$secret_root/app-identity-password.txt"
 openssl ecparam -name prime256v1 -genkey -noout -out "$app_key"
-openssl req -new -key "$app_key" -subj "/CN=app-brand-cloud-user:$brand_cloud_user_id" -out "$app_csr"
+openssl req -new -key "$app_key" -subj "/CN=app-user:$global_user_id" -out "$app_csr"
 jq -n --arg email "$email" --arg password "$password" --rawfile csr "$app_csr" \
-  '{email:$email,password:$password,app_csr_pem:$csr}' > "$app_login_request"
+  '{email:$email,password:$password,app_csr_pem:$csr,rotate_app_certificate:true}' > "$app_login_request"
 curl --fail --silent --show-error --max-time 15 \
   --header 'Content-Type: application/json' --data-binary "@$app_login_request" \
-  "${account_url%/}/v1/brand-clouds/$tenant_slug/auth/login" > "$app_login_response"
+  "${account_url%/}/v1/auth/login" > "$app_login_response"
 jq -e '.app_certificate.status == "issued" and
   (((.app_certificate.certificate_chain_pem // .app_certificate.certificate_pem // "") | length) > 0)' \
   "$app_login_response" >/dev/null
@@ -577,11 +572,11 @@ jq -n \
   --arg revoked_pkcs12_password "$revoked_app_identity_password" \
   --arg device_certificate_path "$device_cert" \
   --arg device_private_key_path "$device_key" \
-  --arg user_id "$brand_cloud_user_id" \
+  --arg user_id "$global_user_id" \
   --arg email "$email" \
   --arg cloud_id "$brand_cloud_id" \
   --arg account_device_id "$account_device_id" \
-  --arg foreign_user_id "$foreign_brand_cloud_user_id" \
+  --arg foreign_user_id "$foreign_global_user_id" \
   --arg foreign_email "$foreign_email" \
   --arg foreign_cloud_id "$foreign_brand_cloud_id" \
   --arg foreign_account_device_id "$foreign_account_device_id" \
@@ -624,12 +619,10 @@ jq -n \
     },
     local_temporary_files: [$token_file, $token_request_file, $cloud_file],
     resources: [
-      {kind:"brand_cloud_user", id:$user_id, email:$email, brand_cloud_id:$cloud_id, fixture_role:"primary"},
+      {kind:"organization_membership", id:$user_id, email:$email, brand_cloud_id:$cloud_id, fixture_role:"primary"},
       {kind:"device_binding", id:$account_device_id, device_id:$device_id, brand_cloud_id:$cloud_id, fixture_role:"primary"},
-      {kind:"app_certificate", owner_id:$user_id, brand_cloud_id:$cloud_id, fixture_role:"primary"},
-      {kind:"brand_cloud_user", id:$foreign_user_id, email:$foreign_email, brand_cloud_id:$foreign_cloud_id, fixture_role:"foreign"},
+      {kind:"organization_membership", id:$foreign_user_id, email:$foreign_email, brand_cloud_id:$foreign_cloud_id, fixture_role:"foreign"},
       {kind:"device_binding", id:$foreign_account_device_id, device_id:$foreign_device_id, brand_cloud_id:$foreign_cloud_id, fixture_role:"foreign"},
-      {kind:"app_certificate", owner_id:$foreign_user_id, brand_cloud_id:$foreign_cloud_id, fixture_role:"foreign"},
       {kind:"local_fixture_root", path:$secret_root}
     ]
   }' > "$bundle"
