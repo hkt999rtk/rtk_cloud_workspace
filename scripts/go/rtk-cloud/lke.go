@@ -1396,8 +1396,10 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: %s
           podSelector:
-            matchLabels:
-              app.kubernetes.io/name: account-manager-handoff-worker
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [account-manager-handoff-worker, account-manager-cloud-deletion-worker]
       ports:
         - { protocol: TCP, port: 8080 }
     - from:
@@ -1435,8 +1437,10 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: %s
           podSelector:
-            matchLabels:
-              app.kubernetes.io/name: account-manager-handoff-worker
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [account-manager-handoff-worker, account-manager-cloud-deletion-worker]
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 18443 }
@@ -2176,7 +2180,12 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			if err := kubectlApply(lkeAccountManagerHandoffWorkerManifest(env)); err != nil {
 				return err
 			}
+			if err := kubectlApply(lkeAccountManagerCloudDeletionWorkerManifest(env)); err != nil {
+				return err
+			}
 		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "deployment/account-manager-handoff-worker", "--ignore-not-found=true"); err != nil {
+			return err
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "deployment/account-manager-cloud-deletion-worker", "--ignore-not-found=true"); err != nil {
 			return err
 		}
 	}
@@ -2210,6 +2219,9 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 		if lkeAccountManagerHandoffWorkerEnabled(env) {
 			if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-handoff-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+				return err
+			}
+			if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "rollout", "status", "deployment/account-manager-cloud-deletion-worker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 				return err
 			}
 		}
@@ -2478,6 +2490,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-handoff-worker ./cmd/handoff-worker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/rtk-account-manager-cloud-deletion-worker ./cmd/cloud-deletion-worker
 
 FROM debian:bookworm-slim
 WORKDIR /app
@@ -2493,6 +2506,7 @@ COPY --from=builder /out/rtk-account-manager-email-worker /app/rtk-account-manag
 COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin
 COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker
 COPY --from=builder /out/rtk-account-manager-handoff-worker /app/rtk-account-manager-handoff-worker
+COPY --from=builder /out/rtk-account-manager-cloud-deletion-worker /app/rtk-account-manager-cloud-deletion-worker
 COPY --from=builder /src/migrations /app/migrations
 USER app
 EXPOSE 8080
@@ -7966,6 +7980,72 @@ spec:
           image: %s
           imagePullPolicy: IfNotPresent
           command: ["/app/rtk-account-manager-handoff-worker"]
+          envFrom:
+            - secretRef:
+                name: account-manager-runtime
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], checksum, lkeImagePullSecretName(env), image)
+}
+
+func lkeAccountManagerCloudDeletionWorkerManifest(env map[string]string) string {
+	checksum := lkeConfigChecksum(
+		lkeAccountManagerDatabaseURL(env),
+		lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)),
+		lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)),
+		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()),
+		firstNonEmpty(lkeEnvValue(env, "CLOUD_DELETION_WORKER_POLL_INTERVAL"), "5s"),
+		firstNonEmpty(lkeEnvValue(env, "CLOUD_DELETION_WORKER_LEASE_DURATION"), "2m"),
+		firstNonEmpty(lkeEnvValue(env, "CLOUD_DELETION_WORKER_STEP_TIMEOUT"), "45s"),
+		firstNonEmpty(lkeEnvValue(env, "CLOUD_DELETION_WORKER_BATCH_SIZE"), "10"),
+	)
+	image := ""
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			image = workload.Image
+			break
+		}
+	}
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: account-manager-cloud-deletion-worker
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: account-manager-cloud-deletion-worker
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: account-manager-cloud-deletion-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: account-manager-cloud-deletion-worker
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: worker
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/app/rtk-account-manager-cloud-deletion-worker"]
           envFrom:
             - secretRef:
                 name: account-manager-runtime

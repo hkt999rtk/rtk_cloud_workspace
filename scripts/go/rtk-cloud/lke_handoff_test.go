@@ -167,6 +167,16 @@ func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 			t.Fatalf("handoff worker manifest missing %q:\n%s", want, worker)
 		}
 	}
+	deletionWorker := lkeAccountManagerCloudDeletionWorkerManifest(env)
+	for _, want := range []string{
+		"name: account-manager-cloud-deletion-worker",
+		`command: ["/app/rtk-account-manager-cloud-deletion-worker"]`,
+		"name: account-manager-runtime",
+	} {
+		if !strings.Contains(deletionWorker, want) {
+			t.Fatalf("cloud deletion worker manifest missing %q:\n%s", want, deletionWorker)
+		}
+	}
 
 	material := lkeCertIssuerMaterial{}
 	consumers := strings.Join([]string{
@@ -233,7 +243,7 @@ func TestLKEHandoffNetworkPoliciesAllowOnlyCoordinatorPorts(t *testing.T) {
 	env := handoffLKETestEnv(true)
 	manifests := strings.Join(lkeAccountManagerHandoffNetworkPolicyManifests(env), "\n---\n")
 	for _, want := range []string{
-		"app.kubernetes.io/name: account-manager-handoff-worker",
+		"values: [account-manager-handoff-worker, account-manager-cloud-deletion-worker]",
 		"values: [video-cloud-api, factoryenroll, video-cloud-mqttusage]",
 		"app.kubernetes.io/name: video-cloud-mqttusage",
 		"name: allow-mqttusage-emqx-management",
@@ -268,6 +278,7 @@ func TestLKEHandoffGeneratedManifestsAreValidYAML(t *testing.T) {
 		"factory-secret":          lkeFactoryEnrollRuntimeSecretManifest(env),
 		"factory-deployment":      lkeFactoryEnrollDeploymentManifest(env, lkeCertIssuerMaterial{}),
 		"handoff-worker":          lkeAccountManagerHandoffWorkerManifest(env),
+		"cloud-deletion-worker":   lkeAccountManagerCloudDeletionWorkerManifest(env),
 		"cloud-logger-deployment": lkeCloudLoggerDeploymentManifest(env),
 		"cloud-logger-pvc":        lkeCloudLoggerBillingInboxPVCManifest(env),
 		"mqtt-secret":             lkeMQTTRuntimeSecretManifest(env, lkeMQTTMaterial{}),

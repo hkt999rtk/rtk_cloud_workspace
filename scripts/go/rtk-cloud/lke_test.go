@@ -4389,6 +4389,7 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 		"go build -trimpath -o /out/rtk-account-manager-email-outbox-admin ./cmd/email-outbox-admin",
 		"go build -trimpath -o /out/rtk-account-manager-outbox-worker ./cmd/outbox-worker",
 		"go build -trimpath -o /out/rtk-account-manager-handoff-worker ./cmd/handoff-worker",
+		"go build -trimpath -o /out/rtk-account-manager-cloud-deletion-worker ./cmd/cloud-deletion-worker",
 		"apt-get install -y --no-install-recommends ca-certificates",
 		"COPY --from=builder /out/rtk-account-manager-migrate /app/rtk-account-manager-migrate",
 		"COPY --from=builder /out/rtk-account-manager-user-cache /app/rtk-account-manager-user-cache",
@@ -4396,6 +4397,7 @@ func TestAccountManagerDockerfileIncludesMigrateBinaryAndMigrations(t *testing.T
 		"COPY --from=builder /out/rtk-account-manager-email-outbox-admin /app/rtk-account-manager-email-outbox-admin",
 		"COPY --from=builder /out/rtk-account-manager-outbox-worker /app/rtk-account-manager-outbox-worker",
 		"COPY --from=builder /out/rtk-account-manager-handoff-worker /app/rtk-account-manager-handoff-worker",
+		"COPY --from=builder /out/rtk-account-manager-cloud-deletion-worker /app/rtk-account-manager-cloud-deletion-worker",
 		"COPY --from=builder /src/migrations /app/migrations",
 	} {
 		if !strings.Contains(body, want) {

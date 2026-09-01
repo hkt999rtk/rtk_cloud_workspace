@@ -433,6 +433,30 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
     status: active
+  - id: INT-VC-CLOUD-DELETION-001
+    title: Video Control Plane attests complete cloud-deletion resource inventory
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/postgres/resource_cloud_handoff_integration_test.go
+    selector: "./internal/postgres#TestVideoControlPlaneDeletionObserverReportsEmptyAndLiveInventory,./internal/postgres#TestVideoControlPlaneDeletionHoldFencesWritesAndCancellationIsDurable,./internal/cloudhandoff#TestVideoControlPlaneDeletionEvidenceIsAuthenticatedAndBound,./internal/cloudhandoff#TestVideoControlPlaneDeletionHoldAndCancellationAreBound"
+    method: PostgreSQL and authenticated HTTP tests bind fresh no-store evidence to the exact cloud owner and authorization versions, report device/resource/job/lifecycle blockers, persist a write fence, durably cancel or reject delayed preparation, and reject an unreviewed MQTT observer route.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
+  - id: UNIT-AM-CLOUD-DELETION-001
+    title: Account Manager rejects untrusted Video Cloud deletion evidence
+    layer: unit
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/factoryhandoff/client_test.go
+    selector: "./internal/factoryhandoff#TestVideoControlPlaneDeletionObserverBindsScopeAndEvidence,./internal/factoryhandoff#TestVideoControlPlaneDeletionProducerHoldsAndCancelsExactBinding"
+    method: Dedicated transport tests require fixed Video Control Plane routes and credentials, validate exact scope/blocker/receipt/digest evidence, and bind durable hold and cancellation acknowledgments before Account Manager advances deletion.
+    runner: test-coverage
+    environments: [local, ci]
+    evidence: [json, junit]
+    verifies: [REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
   - id: INT-BILL-CLOUDBOOTSTRAP-001
     title: Billing initializes new-cloud responsibility exactly once without adopting history
     layer: integration
