@@ -6917,18 +6917,12 @@ func runActivateLoadOwner(args []string) error {
 		childEnv = append(childEnv, key+"="+value)
 	}
 	connectHost := operator["IMAP_CONNECT_HOST"]
-	imapServer := operator["IMAP_SERVER"]
 	if rtkCloudTestMode() {
 		connectHost = firstNonEmpty(os.Getenv("IMAP_CONNECT_HOST"), connectHost)
-		imapServer = firstNonEmpty(os.Getenv("IMAP_SERVER"), imapServer)
 	}
-	if connectHost == "" {
-		if _, lookupErr := net.LookupHost(imapServer); lookupErr != nil {
-			if _, fallbackErr := net.LookupHost("sm.realtekconnect.com"); fallbackErr != nil {
-				return errors.New("IMAP server DNS failed and no safe connect host is available")
-			}
-			connectHost = "sm.realtekconnect.com"
-		}
+	connectHost, err = resolveIMAPConnectHost(connectHost, firstNonEmpty(os.Getenv("IMAP_SERVER"), operator["IMAP_SERVER"]), net.LookupHost)
+	if err != nil {
+		return err
 	}
 	if connectHost != "" {
 		childEnv = append(childEnv, "IMAP_CONNECT_HOST="+connectHost)
