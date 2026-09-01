@@ -57,6 +57,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.work
+          cache: false
           cache-dependency-path: scripts/go/go.sum
 
       - uses: actions/setup-node@v6

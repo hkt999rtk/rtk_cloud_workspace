@@ -151,6 +151,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
+          cache: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -283,6 +284,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
+          cache: false
       - name: Run iOS validation
         run: |
           chmod +x e2e_test/cloud_validation/scripts/*.sh e2e_test/cloud_validation/providers/*.sh repos/rtk_cloud_client/tools/*.sh
@@ -395,6 +397,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
+          cache: false
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -492,6 +495,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25.x"
+          cache: false
       - name: Run shared Shadow feature qualification
         run: |
           go run ./scripts/go/rtk-cloud -- test-feature \
