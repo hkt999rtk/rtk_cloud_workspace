@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-08-19
+Last reviewed: 2026-09-01
 
 Audience: internal test operators, maintainers, and delegated agents
 
@@ -16,9 +16,12 @@ operator who already owns a matching staging runtime.
 ## Safety Boundary
 
 The canonical entry point is `.github/workflows/billing-staging-qualification.yml`
-in `hkt999rtk/rtk_cloud_workspace`. It deploys only the pinned Billing, Account
-Manager migration, and Cloud Admin workloads before running dedicated tests
-against the LKE `video-cloud-staging` stack.
+in `hkt999rtk/rtk_cloud_workspace`. It resolves the official CI-published
+images pinned by workspace `main`, verifies that every image exists remotely,
+and performs one coordinated full-stack deployment before running dedicated
+tests against the LKE `video-cloud-staging` stack. The full deployment is
+required because ownership handoff enables Account Manager, Billing, Factory,
+Video Control Plane and MQTT usage participants as one runtime boundary.
 
 Do not rotate shared PKI, reconcile DNS, delete the LKE cluster or node pools,
 delete CI runners or artifact storage, use a legacy VM deployment path, cancel
@@ -43,6 +46,9 @@ read, print, copy, or store their values:
 | --- | --- | --- |
 | Secret | `LINODE_TOKEN` | Obtain the existing LKE kubeconfig without logging credentials. |
 | Secret | `CI_RUNNER_GITHUB_WORK_KEY` | Initialize the pinned private submodules. |
+| Secret | `GHCR_PULL_USERNAME` | Authenticate read-only access to official service packages. |
+| Secret | `GHCR_PULL_TOKEN` | Verify and pull the exact `sha-<commit>` service images. |
+| Secret | `RTK_CLOUD_SECRET_BUNDLE` | Materialize the existing staging SecretStore without printing values. |
 | Variable | `BILLING_STAGING_OTHER_ORG_ID` | Prove the Cloud Admin view cannot cross tenant boundaries. |
 | Variable | `BILLING_STAGING_QUALIFICATION_ENABLED` | Set to `true` only when the scheduled live qualification is enabled. Manual dispatch does not require it. |
 
@@ -155,9 +161,9 @@ workflow logs or artifact contents containing suspected credentials into chat.
 | Failing step | Check first | Required action |
 | --- | --- | --- |
 | Initialize private sources | Repository key configuration and pinned submodule reachability. | Report the step and run URL; do not replace pinned commits. |
-| Build/publish pinned images | GHCR permissions, image tag, and build log without copying credentials. | Retry only after the permission or registry fault is understood. |
+| Resolve official pinned images | Canonical release workflow result, GHCR read permission and exact `sha-<commit>` tag. | Repair or wait for the normal service release workflow; never build, push or retag a staging image here. |
 | Acquire staging kubeconfig | `LINODE_TOKEN`, cluster label, and Linode API status. | Do not print the response or create a replacement cluster. |
-| Deploy workloads | Preflight output, rollout events, and Billing/Admin pod readiness. | Do not rotate PKI, reconcile DNS, or broaden the workload list. |
+| Deploy coordinated stack | Preflight output, rollout events, Account Manager handoff worker, Billing and Admin readiness. | Do not rotate PKI, reconcile DNS, or narrow the full-stack deployment while ownership handoff is enabled. |
 | Billing staging qualification | The first failed live Test ID, dedicated organization state, Billing worker, and ledger correlation. | Confirm payment cleanup ran before considering a rerun. |
 | Cloud Admin Billing smoke | Ephemeral session creation, organization/invoice context, desktop/mobile screenshots, and public endpoint health. | Confirm the logout step ran; never preserve or reuse the session. |
 | Session revoke or evidence upload | Logout response, payment cleanup report, redaction result, and artifact presence. | Treat the run as failed and escalate cleanup status before any rerun. |
