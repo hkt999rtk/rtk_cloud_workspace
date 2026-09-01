@@ -37,9 +37,19 @@ credentials out of the job-only SecretStore.
 
 Do not rotate shared PKI, reconcile DNS, delete the LKE cluster or node pools,
 delete CI runners or artifact storage, use a legacy VM deployment path, cancel
-an in-progress `staging-mutating-tests` run, or reuse customer identities. The
-qualification is allowed to mutate only the fixed dedicated organization named
-`rtk-payment-simulator-qualification` and its run-scoped payment state.
+an in-progress `staging-mutating-tests` run, or reuse an unrelated customer
+identity. The qualification may mutate only its stable bootstrap Brand Cloud,
+the audited staging-only member used to obtain a global account session, and
+the fresh run-scoped Brand Cloud and payment state created by that member.
+
+The stable bootstrap cloud exists only to provision or rotate the verified
+qualification member through the audited staging-only admin endpoint. The
+qualification never calls public registration and never bypasses public email
+activation to create an owner. After global `/v1/auth/login`, the verified
+member creates a fresh Brand Cloud through
+`POST /v1/developer/brand-clouds`; that canonical operation makes the member
+the cloud's sole owner. All Billing mutations and evidence for the run use that
+fresh cloud, not the bootstrap cloud.
 
 ## Required Access And Repository Configuration
 
@@ -124,9 +134,12 @@ For the first retained Cloud Logger billing inbox only, add
 normal and scheduled runs leave it false so missing retained storage fails
 closed instead of silently creating a new financial stream.
 
-The underlying runner also requires the fixed test-organization confirmation
+The underlying runner also requires the fixed safety confirmation
 `rtk-payment-simulator-qualification`. The workflow supplies it; an agent must
-not substitute a different organization.
+not substitute a different confirmation. This string authorizes only the
+stable qualification bootstrap identity plus the fresh run-scoped Brand Cloud
+created by the workflow; it is not the display name of a reusable Billing test
+cloud.
 
 ## PASS Gate
 
@@ -184,7 +197,7 @@ workflow logs or artifact contents containing suspected credentials into chat.
 | Resolve official pinned images | Canonical release workflow result, GHCR read permission and exact `sha-<commit>` tag. | Repair or wait for the normal service release workflow; never build, push or retag a staging image here. |
 | Acquire staging kubeconfig | `LINODE_TOKEN`, cluster label, and Linode API status. | Do not print the response or create a replacement cluster. |
 | Deploy coordinated stack | Preflight output, rollout events, Account Manager handoff worker, Billing and Admin readiness. | Do not rotate PKI, reconcile DNS, or narrow the full-stack deployment while ownership handoff is enabled. |
-| Billing staging qualification | The first failed live Test ID, dedicated organization state, Billing worker, and ledger correlation. | Confirm payment cleanup ran before considering a rerun. |
+| Billing staging qualification | The first failed live Test ID, run-scoped Brand Cloud state, Billing worker, and ledger correlation. | Confirm payment cleanup ran before considering a rerun. |
 | Cloud Admin Billing smoke | Ephemeral session creation, organization/invoice context, desktop/mobile screenshots, and public endpoint health. | Confirm the logout step ran; never preserve or reuse the session. |
 | Session revoke or evidence upload | Logout response, payment cleanup report, redaction result, and artifact presence. | Treat the run as failed and escalate cleanup status before any rerun. |
 

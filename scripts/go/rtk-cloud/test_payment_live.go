@@ -70,7 +70,6 @@ var (
 	paymentLiveAccountLoginSession   = accountLoginSession
 	paymentLiveRuntimeSecretValue    = lkeRuntimeSecretValueFromFlags
 	paymentLiveAccountListClouds     = accountListBrandClouds
-	paymentLiveAccountCreateCloud    = accountCreateBrandCloud
 	paymentLiveAccountCreateUser     = accountCreateUser
 	paymentLiveGeneratePassword      = paymentLiveRandomPassword
 	paymentLiveLoadCustomer          = loadPaymentLiveQualificationCustomer
@@ -283,7 +282,35 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load LKE Billing debit credential: %w", err)
 	}
+	manager, err := paymentLiveAccountManagerContext(workspace, cfg.EnvRoot)
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("load staging platform-admin credentials: %w", err)
+	}
+	defer manager.Close()
+	manager.BaseURL = cfg.AccountManagerBaseURL
+	platformSession, err := paymentLiveAccountLoginSession(manager, func(string, ...any) {})
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("staging platform-admin login: %w", err)
+	}
 	client := paymentLiveHTTPClient()
+	clouds, err := paymentLiveAccountListClouds(manager, platformSession.AccessToken, 200)
+	if err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("list qualification bootstrap clouds: %w", err)
+	}
+	bootstrapCloudID := ""
+	for _, item := range paymentLiveAnySlice(clouds["brand_clouds"]) {
+		cloud := nestedMap(item)
+		if cloud["name"] == paymentLiveBootstrapOrgName {
+			bootstrapCloudID, _ = cloud["id"].(string)
+			break
+		}
+	}
+	if bootstrapCloudID == "" {
+		bootstrapCloudID, err = paymentLiveCreateCustomerOrg(context.Background(), client, cfg.AccountManagerBaseURL, platformSession.AccessToken, paymentLiveBootstrapOrgName)
+		if err != nil {
+			return cfg, "", "", "", "", fmt.Errorf("create qualification bootstrap cloud: %w", err)
+		}
+	}
 	customer, found, err := paymentLiveLoadCustomer(workspace, cfg.EnvRoot)
 	if err != nil {
 		return cfg, "", "", "", "", fmt.Errorf("load dedicated qualification customer: %w", err)
@@ -297,6 +324,9 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 		if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, customer); err != nil {
 			return cfg, "", "", "", "", fmt.Errorf("persist qualification customer bootstrap credential: %w", err)
 		}
+	}
+	if _, err := paymentLiveAccountCreateUser(manager, &platformSession, func(string, ...any) {}, bootstrapCloudID, customer.Email, "Billing Qualification", customer.Password, "member", true); err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("create audited staging qualification member: %w", err)
 	}
 	customer, err = paymentLiveEnsureCustomer(context.Background(), client, cfg.AccountManagerBaseURL, customer)
 	if err != nil {
@@ -435,41 +465,13 @@ func ensurePaymentLiveQualificationCustomer(ctx context.Context, client *http.Cl
 	if err != nil {
 		return customer, err
 	}
-	if status == http.StatusUnauthorized {
-		var registered map[string]any
-		status, err = paymentLiveJSONStatus(ctx, client, http.MethodPost, baseURL+"/v1/auth/register", "", map[string]any{"email": customer.Email, "password": customer.Password, "display_name": "Billing Qualification", "organization_name": paymentLiveBootstrapOrgName}, &registered)
-		if err != nil {
-			return customer, err
-		}
-		if status != http.StatusCreated {
-			return customer, fmt.Errorf("register qualification customer: HTTP %d", status)
-		}
-		customer.OrganizationID, _ = nestedMap(registered["organization"])["id"].(string)
-		customer.AccessToken, _ = nestedMap(registered["tokens"])["access_token"].(string)
-	} else if status == http.StatusOK {
+	if status == http.StatusOK {
 		customer = loggedIn
 	} else {
-		return customer, fmt.Errorf("login qualification customer: HTTP %d", status)
+		return customer, fmt.Errorf("login audited staging qualification member: HTTP %d", status)
 	}
 	if customer.AccessToken == "" {
 		return customer, errors.New("qualification customer login returned no access token")
-	}
-	if customer.OrganizationID == "" {
-		var organizations map[string]any
-		status, err := paymentLiveJSONStatus(ctx, client, http.MethodGet, baseURL+"/v1/orgs", customer.AccessToken, nil, &organizations)
-		if err != nil {
-			return customer, err
-		}
-		if status != http.StatusOK {
-			return customer, fmt.Errorf("list qualification customer organizations: HTTP %d", status)
-		}
-		for _, item := range paymentLiveAnySlice(organizations["organizations"]) {
-			organization := nestedMap(item)
-			if organization["name"] == paymentLiveBootstrapOrgName && organization["organization_kind"] == "customer_org" {
-				customer.OrganizationID, _ = organization["id"].(string)
-				break
-			}
-		}
 	}
 	return customer, nil
 }
@@ -509,15 +511,33 @@ func paymentLiveJSONStatus(ctx context.Context, client *http.Client, method, end
 }
 
 func createPaymentLiveQualificationOrganization(ctx context.Context, client *http.Client, baseURL, token, name string) (string, error) {
-	var created map[string]any
-	status, err := paymentLiveJSONStatus(ctx, client, http.MethodPost, baseURL+"/v1/orgs", token, map[string]string{"name": strings.TrimSpace(name)}, &created)
+	cloudName := strings.TrimSpace(name)
+	body, err := json.Marshal(map[string]string{"name": cloudName, "description": "Run-scoped staging Billing qualification"})
 	if err != nil {
 		return "", err
 	}
-	if status != http.StatusCreated {
-		return "", fmt.Errorf("HTTP %d", status)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/developer/brand-clouds", bytes.NewReader(body))
+	if err != nil {
+		return "", err
 	}
-	organizationID, _ := nestedMap(created["organization"])["id"].(string)
+	keyHash := sha256.Sum256([]byte(cloudName))
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "billing-qualification-cloud-"+hex.EncodeToString(keyHash[:12]))
+	response, err := client.Do(request)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		_, _ = io.Copy(io.Discard, response.Body)
+		return "", fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
+		return "", err
+	}
+	organizationID, _ := nestedMap(created["brand_cloud"])["id"].(string)
 	if organizationID == "" {
 		return "", errors.New("organization response has no ID")
 	}
