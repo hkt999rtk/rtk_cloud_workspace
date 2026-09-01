@@ -28,6 +28,10 @@ settings use the canonical staging topology instead of an empty CI directory.
 The workflow projects only the allowlisted Account Manager email settings into
 the generated `stack.env`; the bearer credential remains in the job-only
 SecretStore bundle.
+It also reuses the current deployed Video Cloud's non-secret blob endpoint and
+region while requiring its bucket and prefix to match tracked `storage.env`.
+This preserves the existing media location without copying object-store
+credentials out of the job-only SecretStore.
 
 Do not rotate shared PKI, reconcile DNS, delete the LKE cluster or node pools,
 delete CI runners or artifact storage, use a legacy VM deployment path, cancel
