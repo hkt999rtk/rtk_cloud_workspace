@@ -28,6 +28,8 @@ settings use the canonical staging topology instead of an empty CI directory.
 The workflow projects only the allowlisted Account Manager email settings into
 the generated `stack.env`; the bearer credential remains in the job-only
 SecretStore bundle.
+It also applies the tracked architecture overrides, including capacity and
+certificate algorithm policy, to the same run-scoped stack.
 It also reuses the current deployed Video Cloud's non-secret blob endpoint and
 region while requiring its bucket and prefix to match tracked `storage.env`.
 This preserves the existing media location without copying object-store
