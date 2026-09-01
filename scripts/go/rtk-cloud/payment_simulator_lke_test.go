@@ -241,7 +241,7 @@ func TestPaymentSimulatorLKEManifestsUseApprovedIsolatedTopology(t *testing.T) {
 		`NEWEBPAY_ENABLED: "true"`,
 		`NEWEBPAY_ENVIRONMENT: "sandbox"`,
 		`NEWEBPAY_MERCHANT_ID: "RTKSIMULATOR"`,
-		`NEWEBPAY_SIMULATOR_BASE_URL: "http://payment-simulator.video-cloud-staging-billing.svc.cluster.local:80"`,
+		`NEWEBPAY_SIMULATOR_BASE_URL: "https://payment-simulator.video-cloud-staging.realtekconnect.com"`,
 		`NEWEBPAY_NOTIFY_URL: "http://billing.video-cloud-staging-billing.svc.cluster.local:80/v1/payment-webhooks/newebpay"`,
 		`NEWEBPAY_RETURN_URL: "https://admin.video-cloud-staging.realtekconnect.com/console/billing/activity"`,
 		`PAYMENT_SIMULATOR_NEWEBPAY_NOTIFY_URL: "http://billing.video-cloud-staging-billing.svc.cluster.local:80/v1/payment-webhooks/newebpay"`,
