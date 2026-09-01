@@ -18,6 +18,7 @@ import (
 )
 
 func TestPaymentLiveBillingRequestUsesServiceIdentityAndExactPermission(t *testing.T) {
+	owner := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if got := request.Header.Get("Authorization"); got != "Bearer "+strings.Repeat("b", 32) {
 			t.Errorf("authorization = %q", got)
@@ -25,8 +26,11 @@ func TestPaymentLiveBillingRequestUsesServiceIdentityAndExactPermission(t *testi
 		if got := request.Header.Get("X-Billing-Permissions"); got != "billing_account.read" {
 			t.Errorf("permission = %q", got)
 		}
-		if request.Header.Get("X-Billing-Actor-Type") != "user" || request.Header.Get("X-Billing-Actor-ID") == "" {
+		if request.Header.Get("X-Billing-Actor-Type") != "user" || request.Header.Get("X-Billing-Actor-ID") != owner {
 			t.Error("missing trusted brand-cloud actor identity")
+		}
+		if request.Header.Get("X-Billing-Ownership-Version") != "7" {
+			t.Errorf("ownership version = %q", request.Header.Get("X-Billing-Ownership-Version"))
 		}
 		if request.Header.Get("X-Request-ID") == "" {
 			t.Error("missing trusted request context")
@@ -36,9 +40,48 @@ func TestPaymentLiveBillingRequestUsesServiceIdentityAndExactPermission(t *testi
 	}))
 	defer server.Close()
 	var output map[string]any
-	if err := paymentLiveBillingJSON(context.Background(), server.Client(), http.MethodGet, server.URL, strings.Repeat("b", 32), "billing_account.read", nil, nil, &output); err != nil {
+	if err := paymentLiveBillingJSON(context.Background(), server.Client(), paymentLiveConfig{OwnerUserID: owner, OwnershipVersion: 7}, http.MethodGet, server.URL, strings.Repeat("b", 32), "billing_account.read", nil, nil, &output); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestPaymentLiveBillingAccountWaitsOnlyForProjectionAvailability(t *testing.T) {
+	t.Run("eventual projection", func(t *testing.T) {
+		requests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			if requests == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"account":{"available_balance_minor":0}}`))
+		}))
+		defer server.Close()
+		cfg := paymentLiveConfig{OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1, Timeout: 3 * time.Second}
+		var account map[string]any
+		if err := waitPaymentLiveBillingAccount(context.Background(), server.Client(), cfg, server.URL, "token", &account); err != nil {
+			t.Fatal(err)
+		}
+		if requests != 2 || nestedInt64(account["account"], "available_balance_minor") != 0 {
+			t.Fatalf("requests=%d account=%+v", requests, account)
+		}
+	})
+
+	t.Run("invalid ownership is not retried", func(t *testing.T) {
+		requests := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			w.WriteHeader(http.StatusBadRequest)
+		}))
+		defer server.Close()
+		cfg := paymentLiveConfig{OwnerUserID: "invalid", OwnershipVersion: 1, Timeout: 3 * time.Second}
+		var account map[string]any
+		err := waitPaymentLiveBillingAccount(context.Background(), server.Client(), cfg, server.URL, "token", &account)
+		if err == nil || !strings.Contains(err.Error(), "HTTP 400") || requests != 1 {
+			t.Fatalf("requests=%d err=%v", requests, err)
+		}
+	})
 }
 
 func TestPaymentLiveScreenshotUsesInstalledChromiumAndExplicitViewport(t *testing.T) {
@@ -346,11 +389,11 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 		customer.AccessToken = "customer-token"
 		return customer, nil
 	}
-	paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, token, name string) (string, error) {
+	paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, token, name string) (paymentLiveBrandCloud, error) {
 		if token != "customer-token" || name != paymentLiveBootstrapOrgName+" unit-reuse" {
 			t.Fatalf("unexpected run cloud request: token=%q name=%q", token, name)
 		}
-		return "run-org", nil
+		return paymentLiveBrandCloud{ID: "run-org", OwnerUserID: "owner-user", OwnershipVersion: 3}, nil
 	}
 
 	sessionFile := filepath.Join(t.TempDir(), "session", "customer")
@@ -366,7 +409,7 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 	if !closed {
 		t.Fatal("qualification bootstrap did not close platform-admin context")
 	}
-	if got.OrgID != "run-org" || accountToken != "customer-token" || billingToken != "secret-BILLING_SERVICE_TOKEN" || internalToken != "secret-BILLING_INTERNAL_TOKEN" || debitToken != "secret-BILLING_DEBIT_TOKEN" {
+	if got.OrgID != "run-org" || got.OwnerUserID != "owner-user" || got.OwnershipVersion != 3 || accountToken != "customer-token" || billingToken != "secret-BILLING_SERVICE_TOKEN" || internalToken != "secret-BILLING_INTERNAL_TOKEN" || debitToken != "secret-BILLING_DEBIT_TOKEN" {
 		t.Fatalf("unexpected bootstrap result: org=%q account=%q billing=%q internal=%q debit=%q", got.OrgID, accountToken, billingToken, internalToken, debitToken)
 	}
 	if raw, err := os.ReadFile(sessionFile); err != nil || string(raw) != strings.Repeat("s", 32) {
@@ -422,15 +465,15 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 		}
 		return accountCreateUserResult{Action: "created"}, nil
 	}
-	paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, token, name string) (string, error) {
+	paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, token, name string) (paymentLiveBrandCloud, error) {
 		switch {
 		case token == "platform-token" && name == paymentLiveBootstrapOrgName:
-			return "bootstrap-org", nil
+			return paymentLiveBrandCloud{ID: "bootstrap-org", OwnerUserID: "platform-owner", OwnershipVersion: 1}, nil
 		case token == "customer-token" && name == paymentLiveBootstrapOrgName+" unit-create":
-			return "run-org", nil
+			return paymentLiveBrandCloud{ID: "run-org", OwnerUserID: "customer-owner", OwnershipVersion: 1}, nil
 		default:
 			t.Fatalf("unexpected cloud creation: token=%q name=%q", token, name)
-			return "", nil
+			return paymentLiveBrandCloud{}, nil
 		}
 	}
 
@@ -438,8 +481,8 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.OrgID != "run-org" {
-		t.Fatalf("created Brand Cloud ID = %q", cfg.OrgID)
+	if cfg.OrgID != "run-org" || cfg.OwnerUserID != "customer-owner" || cfg.OwnershipVersion != 1 {
+		t.Fatalf("created Brand Cloud scope = org:%q owner:%q version:%d", cfg.OrgID, cfg.OwnerUserID, cfg.OwnershipVersion)
 	}
 	if saves != 2 {
 		t.Fatalf("qualification customer secret saves = %d, want 2", saves)
@@ -551,14 +594,14 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 				}
 				return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "qualification-org", AccessToken: "customer-token"}, nil
 			}
-			paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, _ string, name string) (string, error) {
+			paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, _ string, name string) (paymentLiveBrandCloud, error) {
 				if test.stage == "create-bootstrap" && name == paymentLiveBootstrapOrgName {
-					return "", errors.New("bootstrap failed")
+					return paymentLiveBrandCloud{}, errors.New("bootstrap failed")
 				}
 				if test.stage == "create-org" && name != paymentLiveBootstrapOrgName {
-					return "", errors.New("create failed")
+					return paymentLiveBrandCloud{}, errors.New("create failed")
 				}
-				return "qualification-org", nil
+				return paymentLiveBrandCloud{ID: "qualification-org", OwnerUserID: "owner-user", OwnershipVersion: 1}, nil
 			}
 			paymentLiveAccountCreateUser = func(accountManagerContext, *accountPlatformSession, func(string, ...any), string, string, string, string, string, bool) (accountCreateUserResult, error) {
 				if test.stage == "user" {
@@ -646,12 +689,25 @@ func TestPaymentLiveQualificationOrganizationAPIFailsClosed(t *testing.T) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"brand_cloud":{"id":"run-org","owner_user_id":"owner-user","ownership_version":7}}`))
+		}))
+		defer server.Close()
+		organization, err := createPaymentLiveQualificationOrganization(context.Background(), server.Client(), server.URL, "customer-token", " Qualification run-1 ")
+		if err != nil || organization.ID != "run-org" || organization.OwnerUserID != "owner-user" || organization.OwnershipVersion != 7 {
+			t.Fatalf("create organization: cloud=%+v err=%v", organization, err)
+		}
+	})
+
+	t.Run("create response missing ownership evidence", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"brand_cloud":{"id":"run-org"}}`))
 		}))
 		defer server.Close()
-		organizationID, err := createPaymentLiveQualificationOrganization(context.Background(), server.Client(), server.URL, "customer-token", " Qualification run-1 ")
-		if err != nil || organizationID != "run-org" {
-			t.Fatalf("create organization: id=%q err=%v", organizationID, err)
+		_, err := createPaymentLiveQualificationOrganization(context.Background(), server.Client(), server.URL, "customer-token", "Qualification run-invalid")
+		if err == nil || !strings.Contains(err.Error(), "exact owner and ownership version") {
+			t.Fatalf("missing ownership evidence error = %v", err)
 		}
 	})
 
@@ -703,7 +759,7 @@ func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 	if err := os.WriteFile(internalTokenFile, []byte(strings.Repeat("i", 32)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, InternalTokenFile: internalTokenFile, DebitTokenFile: debitTokenFile, Timeout: time.Minute}
+	cfg := paymentLiveConfig{Run: true, AccountManagerBaseURL: "https://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", OrgID: "org-test", OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1, AccountTokenFile: tokenFile, BillingTokenFile: billingTokenFile, InternalTokenFile: internalTokenFile, DebitTokenFile: debitTokenFile, Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "--confirm") {
 		t.Fatalf("wrong stack confirmation must fail, got %v", err)
 	}
@@ -718,7 +774,7 @@ func TestPaymentLiveRequiresExactSafetyConfirmations(t *testing.T) {
 }
 
 func TestPaymentLiveRejectsRawOrInsecureCredentials(t *testing.T) {
-	cfg := paymentLiveConfig{Run: true, Confirm: paymentLiveConfirmation, OrgID: "org-test", ConfirmTestOrg: "org-test", AccountManagerBaseURL: "http://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
+	cfg := paymentLiveConfig{Run: true, Confirm: paymentLiveConfirmation, OrgID: "org-test", OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1, ConfirmTestOrg: "org-test", AccountManagerBaseURL: "http://account-manager.video-cloud-staging.realtekconnect.com", BillingBaseURL: "https://billing.video-cloud-staging.realtekconnect.com", Timeout: time.Minute}
 	if err := validatePaymentLiveConfig(cfg); err == nil || !strings.Contains(err.Error(), "approved HTTPS") {
 		t.Fatalf("insecure URL must fail, got %v", err)
 	}
@@ -803,6 +859,9 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		if strings.HasPrefix(r.URL.Path, "/v1/orgs/org-test/") && r.Header.Get("Authorization") != "Bearer "+strings.Repeat("b", 32) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/orgs/org-test/") && (r.Header.Get("X-Billing-Actor-ID") != "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" || r.Header.Get("X-Billing-Ownership-Version") != "1") {
+			t.Fatalf("missing exact owner scope: actor=%q version=%q", r.Header.Get("X-Billing-Actor-ID"), r.Header.Get("X-Billing-Ownership-Version"))
 		}
 		switch {
 		case r.URL.Path == "/v1/orgs/org-test/billing/account":
@@ -900,7 +959,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		return os.WriteFile(output, []byte("synthetic png"), 0o644)
 	}
 	t.Cleanup(func() { paymentLiveScreenshot = oldScreenshot })
-	cfg := paymentLiveConfig{RunID: "live-success", BillingBaseURL: server.URL, OrgID: "org-test", Timeout: time.Second}
+	cfg := paymentLiveConfig{RunID: "live-success", BillingBaseURL: server.URL, OrgID: "org-test", OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1, Timeout: time.Second}
 	state := paymentLiveState{}
 	if err := executePaymentLive(context.Background(), client, t.TempDir(), outDir, cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &state); err != nil {
 		t.Fatal(err)
@@ -943,7 +1002,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		"--profile", "staging-live", "--run-id", runID, "--run",
 		"--account-manager-base-url", "https://account-manager.video-cloud-staging.realtekconnect.com",
 		"--billing-base-url", "https://billing.video-cloud-staging.realtekconnect.com",
-		"--org-id", "org-test", "--billing-token-file", tokenFile, "--internal-token-file", internalTokenFile, "--debit-token-file", debitTokenFile,
+		"--org-id", "org-test", "--owner-user-id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "--ownership-version", "1", "--billing-token-file", tokenFile, "--internal-token-file", internalTokenFile, "--debit-token-file", debitTokenFile,
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	}); err != nil {
 		t.Fatal(err)
@@ -973,7 +1032,7 @@ func TestPaymentLiveCommandAndHTTPFailuresFailClosed(t *testing.T) {
 		"--run", "--run-id", "short-token",
 		"--account-manager-base-url", "https://account-manager.video-cloud-staging.realtekconnect.com",
 		"--billing-base-url", "https://billing.video-cloud-staging.realtekconnect.com",
-		"--org-id", "org-test", "--billing-token-file", shortToken, "--internal-token-file", validInternalToken, "--debit-token-file", validDebitToken,
+		"--org-id", "org-test", "--owner-user-id", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "--ownership-version", "1", "--billing-token-file", shortToken, "--internal-token-file", validInternalToken, "--debit-token-file", validDebitToken,
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	})
 	if err == nil || !strings.Contains(err.Error(), "implausibly short") {
@@ -1048,7 +1107,7 @@ func TestExecutePaymentLiveRejectsUnsafePreflightStates(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			cfg := paymentLiveConfig{RunID: "unsafe", BillingBaseURL: server.URL, OrgID: "org-test", Timeout: time.Second}
+			cfg := paymentLiveConfig{RunID: "unsafe", BillingBaseURL: server.URL, OrgID: "org-test", OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1, Timeout: time.Second}
 			err := executePaymentLive(context.Background(), server.Client(), t.TempDir(), t.TempDir(), cfg, strings.Repeat("b", 32), strings.Repeat("i", 32), strings.Repeat("d", 32), &paymentLiveState{})
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want %q", err, tt.want)
@@ -1062,7 +1121,7 @@ func TestPaymentLiveCleanupAndRedactionFailuresAreReported(t *testing.T) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
-	err := cleanupPaymentLive(context.Background(), server.Client(), paymentLiveConfig{BillingBaseURL: server.URL, OrgID: "org-test", RunID: "cleanup"}, "token", paymentLiveState{MethodID: "method-1", PolicyVersion: 2})
+	err := cleanupPaymentLive(context.Background(), server.Client(), paymentLiveConfig{BillingBaseURL: server.URL, OrgID: "org-test", OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1, RunID: "cleanup"}, "token", paymentLiveState{MethodID: "method-1", PolicyVersion: 2})
 	if err == nil || !strings.Contains(err.Error(), "read policy for cleanup") || !strings.Contains(err.Error(), "revoke method") {
 		t.Fatalf("cleanup error = %v", err)
 	}
