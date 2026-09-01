@@ -25,6 +25,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   playwright:
     name: Playwright ${{ matrix.ui }} E2E
@@ -32,6 +36,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         ui: [desktop, mobile]
     steps:

@@ -2,8 +2,9 @@
 
 Status: workspace source document for RTK Cloud self-hosted CI runner VMs.
 
-This document defines the Linode CI runner topology used when GitHub Actions
-jobs require repo-specific self-hosted labels. CI runner VMs are not intended to
+This document defines the shared Linux X64 runner topology used by GitHub
+Actions. The default topology concentrates CI capacity on one large host with a
+fixed organization-wide runner-slot budget. CI runner hosts are not intended to
 stay on permanently. The operator flow is:
 
 1. Boot the shared Linode Linux CI runner VM before CI.
@@ -28,18 +29,14 @@ GitHub can start the job.
 
 ## Runner Topology
 
-The Linux validation profile uses one shared Linode VM with multiple
-repo-scoped GitHub runner registrations. This keeps existing repository
-permissions and labels intact while reducing the number of powered Linode
-instances.
+The Linux validation profile uses one large shared host. It runs a fixed number
+of organization-scoped GitHub runner registrations; each registration is one
+execution slot. All approved repositories share those slots through the same
+`self-hosted`, `Linux`, and `X64` capability labels.
 
-| VM label | GitHub repo | Runner name | Runner labels | Recommended type | Reason |
-| --- | --- | --- | --- | --- | --- |
-| `rtk-shared-linux-ci` | `hkt999rtk/rtk_account_manager` | `rtk-ci-account-manager` | `self-hosted`, `Linux`, `X64`, `account-manager-ci` | `g6-standard-4` | Account Manager CI uses Go tests and PostgreSQL service containers. |
-| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_admin` | `rtk-ci-cloud-admin` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-admin-ci` | `g6-standard-4` | Admin CI uses Go and Node 22/npm frontend validation. |
-| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_frontend` | `rtk-ci-cloud-frontend` | `self-hosted`, `Linux`, `X64`, `rtk_cloud_frontend`, `go` | `g6-standard-4` | Frontend CI is Go-based and can use Chrome/Chromium for visual smoke. |
-| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_client` | `rtk-ci-cloud-client-linux` | `self-hosted`, `Linux`, `X64`, `client-sdk-ci` | `g6-standard-4` | Client Linux CI needs Go, CMake/Ninja/CTest, and Node/npm. |
-| `rtk-shared-linux-ci` | `hkt999rtk/rtk_cloud_logger` | `rtk-ci-cloud-logger` | `self-hosted`, `Linux`, `X64`, `rtk-cloud-logger-ci` | `g6-standard-4` | Logger CI is a lightweight Go package validation. |
+| Host label | Registration scope | Runner names | Runner labels | Capacity rule |
+| --- | --- | --- | --- | --- |
+| `rtk-shared-linux-ci` | organization `hkt999rtk` | `rtk-ci-linux-01` through the configured slot count | `self-hosted`, `Linux`, `X64` | Fixed from measured CPU, memory, Docker, and storage capacity; adding a repository never adds a slot. |
 
 The shared host is for Linux validation only. Do not register CD/deploy labels
 on it, including `account-manager-cd`, `video-cloud-cd`, or
@@ -115,7 +112,7 @@ Required values:
 | Variable | Purpose |
 | --- | --- |
 | `LINODE_TOKEN` | Linode API token with instance/firewall permissions. |
-| `GITHUB_TOKEN` | GitHub token allowed to create repo self-hosted runner registration tokens. |
+| `GITHUB_TOKEN` | GitHub token allowed to create organization self-hosted runner registration tokens. |
 | `CI_RUNNER_ALLOWED_SSH_CIDRS` | Comma-separated operator CIDRs allowed to SSH to runner VMs. |
 | `CI_RUNNER_PUBLIC_KEY_PATH` | SSH public key installed on the runner VMs. |
 | `CI_RUNNER_SSH_KEY` | SSH private key used by the provision script after VM creation. |
@@ -135,7 +132,7 @@ Optional values:
 
 ## First-Time Provisioning
 
-Run this once, or when rebuilding a runner VM:
+Provision the host infrastructure once, or when rebuilding the shared runner:
 
 ```sh
 export WORKSPACE=/path/to/rtk_cloud_workspace
@@ -147,19 +144,19 @@ set +a
 go run ./scripts/go/rtk-cloud -- ci-runners provision
 ```
 
-The script:
+The provisioning command creates the host and firewall. The operator bootstrap
+on that host must then:
 
-1. Creates the missing shared Linode VM and firewall.
-2. Waits for SSH readiness.
-3. Fetches a fresh GitHub runner registration token per repository.
-4. Installs Go, Node.js 22, Docker, Docker Compose, CMake, Ninja,
+1. Wait for SSH readiness.
+2. Fetch fresh organization runner registration tokens for the configured fixed slots.
+3. Install Go, Node.js 22, Docker, Docker Compose, CMake, Ninja,
    Chrome when available, build tools, and the GitHub Actions runner.
-5. Registers repo-scoped runners on the shared VM with the required labels.
-6. Writes local ignored state containing Linode ids, public IPs, runner names,
-   and repo mappings.
+4. Register the fixed organization-scoped runner slots with the common capability labels.
+5. Write local ignored state containing Linode ids, public IPs, runner names,
+   and slot mappings.
 
-The script is idempotent for already existing VM labels. If a label already
-exists, it reuses the VM and re-runs bootstrap.
+Runner registration tokens are never persisted. Rebuilding the host requires
+fresh tokens and replacement of the old offline registrations.
 
 ## Current Workspace CI Boundary
 
@@ -176,6 +173,27 @@ hardware, deployment, and staging-mutating jobs retain their dedicated labels
 and authorization boundaries. If fewer Linux X64 runners are online, jobs queue
 until matching capacity is available; workflows must not work around an offline
 runner by naming another machine.
+
+The preferred topology is one large Linux X64 host with a deliberately bounded
+set of organization-scoped runner slots shared with the approved repositories.
+Each registration is one concurrent execution slot, so a large host may run
+several registrations, but the slot count is derived from the host CPU, memory,
+Docker, and storage budgets. Do not create one registration per repository:
+that makes concurrency grow whenever another repository is added and bypasses
+the host capacity budget. GitHub schedules registrations rather than physical
+machines and does not infer that identical names, labels, or addresses share
+resources.
+
+The large host is a single failure and I/O domain. Its runner-slot services must
+share an explicit systemd/cgroup budget, Docker data must live on monitored
+storage, and the host thin-pool data and metadata percentages must be alerted
+before either is exhausted. Adding a repository must not add another slot.
+
+Workflow fan-out is also bounded. Pull-request updates cancel an older run of
+the same workflow and PR, Go unit coverage runs at most two matrix entries at a
+time, JavaScript coverage runs one entry at a time, and desktop/mobile browser
+qualification runs serially. These limits reduce burst load; they do not replace
+the fixed organization-wide slot budget.
 
 The runner lifecycle remains external to GitHub Actions. Pull-request workflows
 do not boot a runner VM or require a locally injected Linode token. Explicit

@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Select affected coverage jobs
@@ -67,6 +71,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         module: ${{ fromJSON(needs.changes.outputs.go_modules) }}
     steps:
@@ -122,6 +127,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         module: ${{ fromJSON(needs.changes.outputs.node_modules) }}
     steps:
