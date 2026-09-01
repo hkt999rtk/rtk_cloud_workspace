@@ -25,7 +25,7 @@ func TestMulticloudStagingWorkflowUsesFormalOwnerAndScopedEvidence(t *testing.T)
 		"--confirm \"$MULTICLOUD_CONFIRM\"",
 		"mqtt-test",
 		"RTK_CLOUD_SECRET_BUNDLE",
-		"IMAP_EMAIL_ADDR",
+		"RTK_CLOUD_IMAP_OPERATOR_BUNDLE",
 		"materialize-rtk-cloud-secret-store.sh staging",
 		"uses: actions/upload-artifact@v6",
 		"brand-plan-multicloud-staging.json",

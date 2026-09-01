@@ -107,7 +107,7 @@ jobs:
         if: env.MULTICLOUD_MODE == 'run'
         env:
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
-          IMAP_EMAIL_ADDR: ${{ secrets.IMAP_EMAIL_ADDR }}
+          RTK_CLOUD_IMAP_OPERATOR_BUNDLE: ${{ secrets.RTK_CLOUD_IMAP_OPERATOR_BUNDLE }}
         shell: bash
         run: |
           set -euo pipefail
@@ -134,11 +134,16 @@ jobs:
           bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
           chmod 0600 "$bundle"
-          test -n "$IMAP_EMAIL_ADDR"
+          test -n "$RTK_CLOUD_IMAP_OPERATOR_BUNDLE"
+          imap_bundle="$bundle.imap"
+          printf '%s' "$RTK_CLOUD_IMAP_OPERATOR_BUNDLE" > "$imap_bundle"
+          chmod 0600 "$imap_bundle"
+          jq -e '. as $imap | ($imap | type == "object") and (["IMAP_SERVER", "IMAP_EMAIL_ADDR", "IMAP_EMAIL_PASSWORD", "IMAP_EMAIL_PORT", "IMAP_EMAIL_SECURITY", "IMAP_EMAIL_FOLDER"] | all(. as $key | ($imap[$key] | type == "string" and length > 0)))' "$imap_bundle" >/dev/null
           patched_bundle="$bundle.patched"
-          jq '.operator.IMAP_EMAIL_ADDR = env.IMAP_EMAIL_ADDR' "$bundle" > "$patched_bundle"
+          jq -s '.[0] as $base | .[1] as $imap | $base | .operator += $imap' "$bundle" "$imap_bundle" > "$patched_bundle"
           chmod 0600 "$patched_bundle"
           mv "$patched_bundle" "$bundle"
+          rm -f "$imap_bundle"
           scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle" "$KUBECONFIG"
           go run ./scripts/go/rtk-cloud -- secrets verify \
             --environment staging \
@@ -218,4 +223,6 @@ jobs:
           config_root="$RUNNER_TEMP/rtk_cloud"
           case "$config_root/" in "$RUNNER_TEMP/"*) rm -rf "$config_root" ;; *) exit 1 ;; esac
           rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json.imap"
+          rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json.patched"
           rm -f "$RUNNER_TEMP/multicloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.kubeconfig"
