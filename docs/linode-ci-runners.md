@@ -163,20 +163,23 @@ exists, it reuses the VM and re-runs bootstrap.
 
 ## Current Workspace CI Boundary
 
-Pull requests use GitHub-hosted runners and changed-path selection. Only the
-affected workspace, service, catalog, gitlink, and UI jobs run automatically.
-Unrelated coverage modules and integration services are skipped.
+Pull requests, pushes to `main`, and explicit workflow dispatches use the shared
+Linux X64 capability pool. Linux jobs select
+`[self-hosted, Linux, X64]`; workflows must not name an individual runner such
+as `ci-0`. GitHub may assign any online runner that reports all three labels.
+Changed-path selection still limits automatic pull-request work to affected
+workspace, service, catalog, gitlink, and UI jobs. Unrelated coverage modules
+and integration services are skipped.
 
-Pushes to `main` and explicit full workflow dispatches retain the `ci-0`
-self-hosted runner boundary. Pull-request workflows do not boot
-`rtk-shared-linux-ci`, wait for repo-scoped self-hosted runners, or require a
-locally injected Linode token. Staging-mutating feature qualification remains
-explicit and uses its dedicated runner.
+The same capability policy applies to service-repository Linux CI. macOS, ARM,
+hardware, deployment, and staging-mutating jobs retain their dedicated labels
+and authorization boundaries. If fewer Linux X64 runners are online, jobs queue
+until matching capacity is available; workflows must not work around an offline
+runner by naming another machine.
 
-Service repositories may still create artifacts without the shared Linode runner:
-their own GitHub-hosted `ubuntu-latest` jobs can upload bundles, checksums,
-manifests, or CI evidence directly to Linode Object Storage when those workflows
-have the required secrets.
+The runner lifecycle remains external to GitHub Actions. Pull-request workflows
+do not boot a runner VM or require a locally injected Linode token. Explicit
+staging qualification keeps its separate authorization and secret boundary.
 
 An Object Storage artifact is not evidence that `rtk-shared-linux-ci` was
 running. Check the artifact manifest fields such as `workflow`, `run_id`,

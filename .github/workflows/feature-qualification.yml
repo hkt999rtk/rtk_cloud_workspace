@@ -58,7 +58,7 @@ permissions:
 jobs:
   select:
     name: Select load-sensitive features
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       required: ${{ steps.selection.outputs.required }}
       features: ${{ steps.selection.outputs.features }}
@@ -360,7 +360,7 @@ jobs:
     name: Feature qualification result
     if: always()
     needs: [select, qualify]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - name: Enforce selected qualification result
         shell: bash

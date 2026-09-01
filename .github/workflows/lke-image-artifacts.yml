@@ -31,7 +31,7 @@ permissions:
 jobs:
   validate:
     name: Validate LKE image manifest tooling
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
       - name: Check out workspace metadata
