@@ -296,7 +296,8 @@ func TestPaymentSimulatorUsesApprovedPublicTLSRoute(t *testing.T) {
 	}
 }
 
-func TestNewebPayCredentialChangeRollsBillingSimulatorAndWorker(t *testing.T) {
+func TestNewebPayRuntimeChangeRollsBillingSimulatorAndWorker(t *testing.T) {
+	t.Setenv("PAYMENT_SIMULATOR_DOMAIN", "")
 	base := map[string]string{
 		"CLOUD_STACK_NAME":   "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
@@ -305,18 +306,26 @@ func TestNewebPayCredentialChangeRollsBillingSimulatorAndWorker(t *testing.T) {
 		"NEWEBPAY_HASH_KEY":  "11111111111111111111111111111111",
 		"NEWEBPAY_HASH_IV":   "1111111111111111",
 	}
-	changed := mapsClone(base)
-	changed["NEWEBPAY_HASH_KEY"] = "22222222222222222222222222222222"
-
 	workload := lkeWorkload{Key: "billing", Name: "billing", Image: base["LKE_BILLING_IMAGE"]}
-	for name, manifests := range map[string][2]string{
-		"billing":   {lkeDeploymentManifest(base, workload, nil), lkeDeploymentManifest(changed, workload, nil)},
-		"simulator": {lkePaymentSimulatorDeploymentManifest(base), lkePaymentSimulatorDeploymentManifest(changed)},
-		"worker":    {lkeBillingPaymentWorkerManifest(base), lkeBillingPaymentWorkerManifest(changed)},
+	for _, mutation := range []struct {
+		name, key, value string
+	}{
+		{"credential", "NEWEBPAY_HASH_KEY", "22222222222222222222222222222222"},
+		{"hosted endpoint", "PAYMENT_SIMULATOR_DOMAIN", "payments-alt.video-cloud-staging.realtekconnect.com"},
 	} {
-		if manifests[0] == manifests[1] {
-			t.Fatalf("%s deployment checksum did not change with NewebPay credential", name)
-		}
+		t.Run(mutation.name, func(t *testing.T) {
+			changed := mapsClone(base)
+			changed[mutation.key] = mutation.value
+			for name, manifests := range map[string][2]string{
+				"billing":   {lkeDeploymentManifest(base, workload, nil), lkeDeploymentManifest(changed, workload, nil)},
+				"simulator": {lkePaymentSimulatorDeploymentManifest(base), lkePaymentSimulatorDeploymentManifest(changed)},
+				"worker":    {lkeBillingPaymentWorkerManifest(base), lkeBillingPaymentWorkerManifest(changed)},
+			} {
+				if manifests[0] == manifests[1] {
+					t.Fatalf("%s deployment checksum did not change with NewebPay %s", name, mutation.name)
+				}
+			}
+		})
 	}
 }
 
