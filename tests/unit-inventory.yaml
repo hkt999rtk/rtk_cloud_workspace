@@ -545,6 +545,20 @@ cases:
       title: service console initializes with English as its only supported locale
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/live-auth-script.test.mjs#email-signup-live-e2e.mjs%20follows%20the%20canonical%20sign-in%20button%20label
+      module: cloud-admin-web
+      language: javascript
+      source: src/live-auth-script.test.mjs
+      title: email-signup-live-e2e.mjs follows the canonical sign-in button label
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/live-auth-script.test.mjs#load-owner-activation-live-e2e.mjs%20follows%20the%20canonical%20sign-in%20button%20label
+      module: cloud-admin-web
+      language: javascript
+      source: src/live-auth-script.test.mjs
+      title: load-owner-activation-live-e2e.mjs follows the canonical sign-in button label
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/managed-clouds.test.mjs#managed%20routes%20bind%20valid%20cloud%20and%20Product%20identities%2C%20not%20a%20selected%20global%20cloud
       module: cloud-admin-web
       language: javascript
