@@ -15,6 +15,16 @@ const duration = ms => {
 const age = value => value ? duration(Date.now() - date(value).getTime()) + " ago" : "—";
 const localTime = value => value ? date(value).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}) : "—";
 const failed = value => ["failure", "timed_out", "action_required", "startup_failure"].includes(value);
+const resultClass = value => {
+  const normalized = String(value || "unknown").toLowerCase();
+  if (normalized === "success") return "success";
+  if (failed(normalized)) return "failure";
+  if (["in_progress", "running"].includes(normalized)) return "running";
+  if (["queued", "pending", "waiting", "requested"].includes(normalized)) return "pending";
+  if (["cancelled", "skipped", "neutral"].includes(normalized)) return "muted";
+  return "unknown";
+};
+const resultBadge = value => `<span class="result-badge result-${resultClass(value)}">${escapeHTML(value || "unknown").replaceAll("_", " ")}</span>`;
 const statusText = card => failed(card.conclusion) ? `✕ ${card.conclusion.replaceAll("_", " ")}` : card.conclusion === "success" ? "✓ success" : card.status === "in_progress" ? "● running" : card.status;
 const statusClass = card => failed(card.conclusion) ? "failure" : card.conclusion === "success" ? "success" : ["cancelled","skipped","neutral"].includes(card.conclusion) ? "cancelled" : card.status === "in_progress" ? "running" : "queued";
 const heat = ms => ms < 300000 ? "#38c976" : ms < 900000 ? "#a6d957" : ms < 1800000 ? "#ffb547" : ms < 3600000 ? "#ff7849" : "#ff4d67";
@@ -231,8 +241,8 @@ async function openDrawer(key) {
 
 function renderAttempt(attempt) {
   const bad = failed(attempt.conclusion);
-  const jobs = (attempt.jobs || []).map(job => `<details class="job"><summary><span>${escapeHTML(job.name)}</span><b>${escapeHTML(job.conclusion || job.status)}</b></summary><ul class="steps">${(job.steps || []).map(step => `<li><span>${escapeHTML(step.name)}</span><span>${escapeHTML(step.conclusion || step.status)}</span></li>`).join("")}</ul></details>`).join("");
-  return `<section class="attempt ${bad ? "failed" : ""}"><header><strong>Attempt ${attempt.number}</strong><span>${escapeHTML(attempt.conclusion || attempt.status)}</span></header>${jobs || '<p class="loading">No jobs returned</p>'}</section>`;
+  const jobs = (attempt.jobs || []).map(job => `<details class="job"><summary><span>${escapeHTML(job.name)}</span>${resultBadge(job.conclusion || job.status)}</summary><ul class="steps">${(job.steps || []).map(step => `<li><span>${escapeHTML(step.name)}</span>${resultBadge(step.conclusion || step.status)}</li>`).join("")}</ul></details>`).join("");
+  return `<section class="attempt ${bad ? "failed" : ""}"><header><strong>Attempt ${attempt.number}</strong>${resultBadge(attempt.conclusion || attempt.status)}</header>${jobs || '<p class="loading">No jobs returned</p>'}</section>`;
 }
 
 function closeDrawer() {

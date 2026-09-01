@@ -103,6 +103,13 @@ main { max-width: 1800px; margin: 0 auto; padding: 22px 24px 60px; }
 .attempt { border: 1px solid var(--line); border-radius: 12px; margin: 15px 0; overflow: hidden; }
 .attempt > header { padding: 12px 14px; background: #151f2e; display: flex; justify-content: space-between; }
 .attempt.failed > header { color: var(--failure); background: #281923; }
+.result-badge { --result-color: var(--muted); display: inline-flex; align-items: center; justify-content: center; min-width: 82px; padding: 3px 8px; border: 1px solid color-mix(in srgb, var(--result-color) 48%, transparent); border-radius: 999px; background: color-mix(in srgb, var(--result-color) 12%, transparent); color: var(--result-color); font-size: 10px; font-weight: 900; line-height: 1.2; letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.result-success { --result-color: var(--success); }
+.result-running { --result-color: var(--running); box-shadow: 0 0 14px color-mix(in srgb, var(--running) 18%, transparent); }
+.result-pending { --result-color: var(--warning); }
+.result-failure { --result-color: var(--failure); }
+.result-muted { --result-color: #8c98a8; }
+.result-unknown { --result-color: #b6a6d8; }
 .job { padding: 12px 14px; border-top: 1px solid var(--line); }
 .job > summary { cursor: pointer; display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .steps { list-style: none; margin: 10px 0 0; padding: 0; color: var(--muted); font-size: 11px; }
