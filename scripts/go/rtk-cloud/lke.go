@@ -7509,7 +7509,7 @@ stringData:
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -7609,6 +7609,10 @@ spec:
 
 func lkePaymentSimulatorPublicDomain(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("PAYMENT_SIMULATOR_DOMAIN"), env["PAYMENT_SIMULATOR_DOMAIN"], "payment-simulator."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
+func lkeNewebPayEndpointBaseURL(env map[string]string) string {
+	return "https://" + lkePaymentSimulatorPublicDomain(env)
 }
 
 func lkeBillingPublicDomain(env map[string]string) string {
@@ -7759,7 +7763,7 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env)), lkeImagePullSecretName(env), lkeBillingImage(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env)), lkeImagePullSecretName(env), lkeBillingImage(env))
 }
 
 func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
@@ -8178,7 +8182,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
+`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime
