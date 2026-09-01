@@ -99,6 +99,14 @@ func TestLKEHandoffRuntimeWiresDedicatedCredentialsAndEndpoints(t *testing.T) {
 			t.Fatalf("account-manager secret missing %q:\n%s", want, account)
 		}
 	}
+	for name, manifest := range map[string]string{
+		"billing":     lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env),
+		"video-cloud": lkeAllowAccountManagerHandoffVideoCloudNetworkPolicyManifest(env),
+	} {
+		if !strings.Contains(manifest, "values: [account-manager, account-manager-handoff-worker, account-manager-cloud-deletion-worker]") {
+			t.Fatalf("%s handoff policy does not allow synchronous API preflight:\n%s", name, manifest)
+		}
+	}
 }
 
 func TestLKEBillingCloudCreationWiresDedicatedCredentialWithoutHandoff(t *testing.T) {
@@ -239,11 +247,11 @@ func TestLKEHandoffMQTTUsageHasDurableCheckpointAndEMQXBootstrap(t *testing.T) {
 	}
 }
 
-func TestLKEHandoffNetworkPoliciesAllowOnlyCoordinatorPorts(t *testing.T) {
+func TestLKEHandoffNetworkPoliciesAllowRequiredCallersOnlyOnCoordinatorPorts(t *testing.T) {
 	env := handoffLKETestEnv(true)
 	manifests := strings.Join(lkeAccountManagerHandoffNetworkPolicyManifests(env), "\n---\n")
 	for _, want := range []string{
-		"values: [account-manager-handoff-worker, account-manager-cloud-deletion-worker]",
+		"values: [account-manager, account-manager-handoff-worker, account-manager-cloud-deletion-worker]",
 		"values: [video-cloud-api, factoryenroll, video-cloud-mqttusage]",
 		"app.kubernetes.io/name: video-cloud-mqttusage",
 		"name: allow-mqttusage-emqx-management",
