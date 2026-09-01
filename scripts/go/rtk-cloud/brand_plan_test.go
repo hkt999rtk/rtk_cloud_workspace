@@ -285,7 +285,7 @@ func TestEmailOwnerActivationFailureStopsBeforeSyntheticMembersAndDevices(t *tes
 		t.Fatal(readErr)
 	}
 	got := string(raw)
-	if !strings.Contains(got, "create-brand\nactivate-owner\n") || strings.Contains(got, "create-users") {
+	if got != "activate-owner\n" || strings.Contains(got, "create-users") || strings.Contains(got, "create-brand") {
 		t.Fatalf("command order did not fail before synthetic provisioning:\n%s", got)
 	}
 }
@@ -330,20 +330,17 @@ func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := string(raw)
-	if strings.Count(log, "create-brand ") != 2 ||
+	if strings.Contains(log, "create-brand ") ||
 		strings.Count(log, "activate-owner ") != 2 ||
 		strings.Count(log, "setup-brand ") != 2 ||
 		strings.Contains(log, "create-users ") {
 		t.Fatalf("unexpected command counts:\n%s", log)
 	}
-	firstCreate := strings.Index(log, "create-brand ")
 	firstActivate := strings.Index(log, "activate-owner ")
 	firstSetup := strings.Index(log, "setup-brand ")
-	secondCreate := strings.LastIndex(log, "create-brand ")
 	secondActivate := strings.LastIndex(log, "activate-owner ")
 	secondSetup := strings.LastIndex(log, "setup-brand ")
-	if !(firstCreate < firstActivate && firstActivate < firstSetup &&
-		firstSetup < secondCreate && secondCreate < secondActivate && secondActivate < secondSetup) {
+	if !(firstActivate < firstSetup && firstSetup < secondActivate && secondActivate < secondSetup) {
 		t.Fatalf("formal activation was not sequenced before synthetic setup:\n%s", log)
 	}
 	if !strings.Contains(log, "--user-email-domain users.invalid") ||

@@ -1,0 +1,18 @@
+{
+  "total_devices": 1,
+  "devices_per_user": 1,
+  "brands": [
+    {
+      "brandname": "RTK-MULTICLOUD-STAGING",
+      "devices": 1,
+      "normal_users": 1,
+      "developer_users": {
+        "owner": 1,
+        "admin": 0
+      },
+      "device_mix": {
+        "camera": 1
+      }
+    }
+  ]
+}

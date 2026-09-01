@@ -150,6 +150,28 @@ func TestReadUsersListFallsBackToPrivilegedStagingUsersWithoutMembers(t *testing
 	}
 }
 
+func TestReadUserByRoleRequiresCompleteGlobalCredential(t *testing.T) {
+	store, err := openTestDataStore(t.TempDir(), "RTK")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	owner := map[string]any{"id": "global-owner", "email": "owner@example.test", "password": "owner-password", "role": "owner", "tokens": map[string]any{"access_token": "old-token"}}
+	if err := store.ReplaceUsers("RTK", "cloud-id", "tenant-slug", "owner", []map[string]any{owner}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ReadUserByRole("RTK", "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserID != "global-owner" || got.Email != "owner@example.test" || got.Password != "owner-password" || got.Tokens.AccessToken != "old-token" {
+		t.Fatalf("owner credential = %+v", got)
+	}
+	if _, err := store.ReadUserByRole("RTK", "viewer"); err == nil || !strings.Contains(err.Error(), "no viewer credential") {
+		t.Fatalf("missing role error = %v", err)
+	}
+}
+
 func TestTestDataStoreClearUsersRemovesEveryRoleForBrandOnly(t *testing.T) {
 	store, err := openTestDataStore(t.TempDir(), "RTK")
 	if err != nil {

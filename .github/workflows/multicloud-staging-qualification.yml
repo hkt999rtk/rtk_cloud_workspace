@@ -1,0 +1,215 @@
+name: Multi-cloud Staging Qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Validate the plan or execute the staging qualification
+        type: choice
+        options: [plan, run]
+        default: plan
+        required: true
+      confirm:
+        description: Run mode requires video-cloud-staging-lke
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: staging-mutating-tests
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    name: Owner activation, multi-cloud lifecycle, sharing, and MQTT
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 120
+    environment: staging
+    env:
+      MULTICLOUD_MODE: ${{ inputs.mode }}
+      MULTICLOUD_CONFIRM: ${{ inputs.confirm }}
+      MULTICLOUD_RUN_ID: multicloud-${{ github.run_id }}-${{ github.run_attempt }}
+      MULTICLOUD_ENV_ROOT: ${{ github.workspace }}/.artifacts/runtime/multicloud-staging
+      MULTICLOUD_PLAN: loadtests/home-100k/scenarios/brand-plan-multicloud-staging.json
+      CLOUD_PROVIDER: lke
+      CLOUD_STACK_NAME: video-cloud-staging
+      CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
+      LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize private service sources
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.work
+          cache: false
+          cache-dependency-path: scripts/go/go.sum
+
+      - uses: actions/setup-node@v7
+        if: env.MULTICLOUD_MODE == 'run'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: repos/rtk_cloud_admin/web/package-lock.json
+
+      - name: Validate catalog and non-mutating qualification plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- test-catalog check
+          go run ./scripts/go/rtk-cloud -- test-multicloud \
+            --profile staging-live \
+            --run-id "$MULTICLOUD_RUN_ID"
+          if [ "$MULTICLOUD_MODE" = "run" ] && [ "$MULTICLOUD_CONFIRM" != "video-cloud-staging-lke" ]; then
+            echo "run mode requires the exact video-cloud-staging-lke confirmation" >&2
+            exit 1
+          fi
+
+      - name: Install Chromium for formal owner email activation
+        if: env.MULTICLOUD_MODE == 'run'
+        working-directory: repos/rtk_cloud_admin/web
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Acquire staging kubeconfig
+        if: env.MULTICLOUD_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          clusters="$RUNNER_TEMP/multicloud-clusters.json"
+          response="$RUNNER_TEMP/multicloud-kubeconfig.json"
+          kubeconfig="$RUNNER_TEMP/multicloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.kubeconfig"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $LINODE_TOKEN" \
+            "https://api.linode.com/v4/lke/clusters?page_size=100" > "$clusters"
+          cluster_id="$(jq -er --arg label "$CLOUD_STAGING_LKE_CLUSTER_LABEL" '.data[] | select(.label == $label) | .id' "$clusters")"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $LINODE_TOKEN" \
+            "https://api.linode.com/v4/lke/clusters/$cluster_id/kubeconfig" > "$response"
+          jq -er '.kubeconfig' "$response" | openssl base64 -d -A > "$kubeconfig"
+          chmod 0600 "$kubeconfig"
+          echo "KUBECONFIG=$kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Prepare isolated staging runtime and operator SecretStore
+        if: env.MULTICLOUD_MODE == 'run'
+        env:
+          RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$MULTICLOUD_ENV_ROOT")"
+          cp cloud_env/staging/environment.env "$(dirname "$MULTICLOUD_ENV_ROOT")/environment.env"
+          mkdir -p "$MULTICLOUD_ENV_ROOT/env"
+          cp cloud_env/staging/linode/env/stack.env "$MULTICLOUD_ENV_ROOT/env/stack.env"
+          for key in \
+            AUTH_TOKEN_BASE_URL SENDMAIL_HTTP_BASE_URL SENDMAIL_HTTP_TIMEOUT \
+            EMAIL_OUTBOX_POLL_INTERVAL EMAIL_OUTBOX_BATCH_SIZE EMAIL_OUTBOX_MAX_ATTEMPTS \
+            EMAIL_OUTBOX_RETRY_BASE EMAIL_OUTBOX_RETRY_MAX; do
+            setting="$(awk -v key="$key" 'index($0, key "=") == 1 { print; exit }' cloud_env/staging/environment.env)"
+            test -n "$setting"
+            printf '%s\n' "$setting" >> "$MULTICLOUD_ENV_ROOT/env/stack.env"
+          done
+          awk -F= '/^[A-Z0-9_]+=/ { print }' cloud_env/staging/overrides/architecture.env >> "$MULTICLOUD_ENV_ROOT/env/stack.env"
+          perl -0pi -e 's/^CLOUD_PROVIDER=.*/CLOUD_PROVIDER=lke/m' "$MULTICLOUD_ENV_ROOT/env/stack.env"
+          go run ./scripts/go/rtk-cloud -- sync-env \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$MULTICLOUD_ENV_ROOT"
+          export RTK_CLOUD_CONFIG_ROOT="$RUNNER_TEMP/rtk_cloud"
+          echo "RTK_CLOUD_CONFIG_ROOT=$RTK_CLOUD_CONFIG_ROOT" >> "$GITHUB_ENV"
+          test -n "$RTK_CLOUD_SECRET_BUNDLE"
+          bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
+          chmod 0600 "$bundle"
+          scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle" "$KUBECONFIG"
+          go run ./scripts/go/rtk-cloud -- secrets verify \
+            --environment staging \
+            --config-root "$RTK_CLOUD_CONFIG_ROOT"
+
+      - name: Create one formal email-activated owner and representative device
+        if: env.MULTICLOUD_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./scripts/go/rtk-cloud -- staging-e2e-data-setup \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$MULTICLOUD_ENV_ROOT" \
+            --brand-plan "$MULTICLOUD_PLAN" \
+            --load-run-id "$MULTICLOUD_RUN_ID" \
+            --load-target CANARY \
+            --email-activate-owners \
+            --user-concurrency 1 \
+            --device-concurrency 1 \
+            --bind-concurrency 1 \
+            --out-dir ".artifacts/test-runs/$MULTICLOUD_RUN_ID/data"
+
+      - name: Execute global-owner multi-cloud lifecycle and emailed viewer sharing
+        if: env.MULTICLOUD_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brand="RTK-LOAD-CANARY-${MULTICLOUD_RUN_ID}-B01"
+          go run ./scripts/go/rtk-cloud -- test-multicloud \
+            --profile staging-live \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$MULTICLOUD_ENV_ROOT" \
+            --brandname "$brand" \
+            --run-id "$MULTICLOUD_RUN_ID" \
+            --output-dir ".artifacts/test-runs/$MULTICLOUD_RUN_ID/multicloud-staging" \
+            --run \
+            --confirm "$MULTICLOUD_CONFIRM"
+
+      - name: Execute representative certificate-bound MQTT round trip
+        if: env.MULTICLOUD_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          brand="RTK-LOAD-CANARY-${MULTICLOUD_RUN_ID}-B01"
+          go run ./scripts/go/rtk-cloud -- mqtt-test \
+            --workspace "$GITHUB_WORKSPACE" \
+            --env-root "$MULTICLOUD_ENV_ROOT" \
+            --brandname "$brand" \
+            --profile smoke \
+            --run-id "$MULTICLOUD_RUN_ID" \
+            --duration-seconds 20 \
+            --max-users 1 \
+            --concurrency 1 \
+            --out-dir ".artifacts/test-runs/$MULTICLOUD_RUN_ID/mqtt"
+
+      - name: Upload redacted qualification evidence
+        if: always() && env.MULTICLOUD_MODE == 'run'
+        uses: actions/upload-artifact@v4
+        with:
+          name: multicloud-staging-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/multicloud-staging/**
+            .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/data/summary.json
+            .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/data/owner-activation/**
+            .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/data/**/summary.json
+            .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/mqtt/results.json
+            .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/mqtt/test_report.md
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Remove temporary staging credentials
+        if: always() && env.MULTICLOUD_MODE == 'run'
+        shell: bash
+        run: |
+          set -euo pipefail
+          config_root="$RUNNER_TEMP/rtk_cloud"
+          case "$config_root/" in "$RUNNER_TEMP/"*) rm -rf "$config_root" ;; *) exit 1 ;; esac
+          rm -f "$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          rm -f "$RUNNER_TEMP/multicloud-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.kubeconfig"

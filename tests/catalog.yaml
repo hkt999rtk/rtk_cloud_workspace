@@ -738,6 +738,30 @@ cases:
     tags: [billing, invoice, staging, document]
     verifies: [REQ-AM-PRICING-VERSION-001, REQ-AM-INVOICE-LIFECYCLE-001, REQ-AM-INVOICE-DOCUMENT-001, REQ-BILL-SERVICE-AUTH-001]
     status: active
+  - id: LIVE-STG-MULTICLOUD-LIFECYCLE-001
+    title: Verified global owner creates renames lists and soft-deletes a second staging Brand Cloud
+    layer: live
+    owner: cloud_platform
+    source: scripts/go/rtk-cloud/test_multicloud_live.go
+    selector: runTestMulticloud
+    method: A formally email-activated owner logs in through the global endpoint, creates a second empty Brand Cloud with an idempotency key, verifies independent ownership quota and exact owner identity, renames it without changing its UUID, obtains zero-balance empty-resource preflight evidence, requests the durable deletion API, and waits for its succeeded tombstone. The run never edits cloud state through PostgreSQL.
+    runner: test-live
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    verifies: [REQ-MULTICLOUD-OWNER-001, REQ-MULTICLOUD-LIFECYCLE-001]
+    status: active
+  - id: LIVE-STG-MULTICLOUD-SHARING-001
+    title: Staging viewer membership requires emailed acceptance and loses access on revocation
+    layer: live
+    owner: cloud_platform
+    source: scripts/go/rtk-cloud/test_multicloud_live.go
+    selector: runTestMulticloud
+    method: The same formal owner invites an existing audited verified developer with all-products read-only scope, the target receives the real email and accepts as the matching global account, lists the cloud only as shared, is denied a cloud mutation, and loses cloud access immediately after owner revocation. This is the cloud-membership slice of WF-MULTICLOUD-SHARING-001; Product read and pending Product-invitation invalidation remain separate evidence and are not inferred.
+    runner: test-live
+    environments: [staging]
+    evidence: [json, markdown, logs]
+    verifies: [REQ-MULTICLOUD-SHARING-001, REQ-CA-BRAND-MEMBER-INVITE-001]
+    status: active
   - id: E2E-AM-AUTOTOPUP-001
     title: Balance crossing produces one fake-provider transaction and one credit
     layer: e2e

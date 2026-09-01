@@ -384,6 +384,28 @@ func (s *testDataStore) ReadUsersList(brandname string) (map[string]userCredenti
 	return byEmail, list, rows.Err()
 }
 
+func (s *testDataStore) ReadUserByRole(brandname, role string) (userCredential, error) {
+	var user userCredential
+	var tokensJSON string
+	err := s.DB.QueryRow(`
+		select coalesce(user_id, ''), email, password, tokens_json
+		from users
+		where brandname = ? and role = ?
+		order by updated_at desc, email
+		limit 1`, brandname, role).Scan(&user.UserID, &user.Email, &user.Password, &tokensJSON)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return userCredential{}, fmt.Errorf("no %s credential is cached for %s", role, brandname)
+		}
+		return userCredential{}, err
+	}
+	if strings.TrimSpace(user.UserID) == "" || strings.TrimSpace(user.Email) == "" || strings.TrimSpace(user.Password) == "" {
+		return userCredential{}, fmt.Errorf("cached %s credential is incomplete for %s", role, brandname)
+	}
+	_ = json.Unmarshal([]byte(tokensJSON), &user.Tokens)
+	return user, nil
+}
+
 func (s *testDataStore) ReplaceDevices(brandname, runID string, devices []generatedDevice, credentials map[string]testDataDeviceCredential) error {
 	tx, err := s.DB.Begin()
 	if err != nil {
