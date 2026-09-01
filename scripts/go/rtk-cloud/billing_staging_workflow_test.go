@@ -35,6 +35,7 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"BILLING_STAGING_ENV_ROOT",
 		"$RUNNER_TEMP/billing-staging-runtime",
 		"lke-resolve-images",
+		"get secret ghcr-pull",
 		"GHCR_PULL_USERNAME",
 		"GHCR_PULL_TOKEN",
 		"LKE_ACCOUNT_MANAGER_IMAGE",
@@ -63,11 +64,45 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 	if strings.Contains(body, "lke-build-images") || strings.Contains(body, "docker build") || strings.Contains(body, "docker push") {
 		t.Fatal("staging qualification must use official CI-published service images")
 	}
+	if strings.Contains(body, "secrets.GHCR_PULL_USERNAME") || strings.Contains(body, "secrets.GHCR_PULL_TOKEN") {
+		t.Fatal("staging qualification must reuse the existing masked cluster pull identity")
+	}
 	if strings.Contains(body, "--workloads ") {
 		t.Fatal("enabled ownership handoff requires one coordinated full-stack deploy")
 	}
 	if strings.Contains(body, "            --dns \\") {
 		t.Fatal("recurring Billing qualification must not reconcile shared public edge infrastructure")
+	}
+}
+
+func TestLKEImageResolverUsesTheExistingMaskedStagingPullIdentity(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "lke-image-artifacts.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, required := range []string{
+		"environment: staging",
+		"secrets.LINODE_TOKEN",
+		"get secret ghcr-pull",
+		"::add-mask::",
+		"docker login ghcr.io",
+		"lke-resolve-images",
+		"Remove temporary staging credentials",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("LKE resolver workflow missing %q", required)
+		}
+	}
+	if strings.Contains(body, "secrets.GHCR_PULL_USERNAME") || strings.Contains(body, "secrets.GHCR_PULL_TOKEN") {
+		t.Fatal("LKE resolver must not depend on absent repository package secrets")
+	}
+	if strings.Contains(body, "lke-build-images") || strings.Contains(body, "docker build") || strings.Contains(body, "docker push") {
+		t.Fatal("LKE resolver must not publish staging images")
 	}
 }
 
@@ -89,7 +124,6 @@ func TestBillingStagingQualificationWorkflowRunbookIsAgentReady(t *testing.T) {
 		"rtk-payment-simulator-qualification",
 		"LINODE_TOKEN",
 		"CI_RUNNER_GITHUB_WORK_KEY",
-		"GHCR_PULL_TOKEN",
 		"RTK_CLOUD_SECRET_BUNDLE",
 		"BILLING_STAGING_OTHER_ORG_ID",
 		"BILLING_STAGING_QUALIFICATION_ENABLED",

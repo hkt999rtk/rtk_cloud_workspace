@@ -46,11 +46,14 @@ read, print, copy, or store their values:
 | --- | --- | --- |
 | Secret | `LINODE_TOKEN` | Obtain the existing LKE kubeconfig without logging credentials. |
 | Secret | `CI_RUNNER_GITHUB_WORK_KEY` | Initialize the pinned private submodules. |
-| Secret | `GHCR_PULL_USERNAME` | Authenticate read-only access to official service packages. |
-| Secret | `GHCR_PULL_TOKEN` | Verify and pull the exact `sha-<commit>` service images. |
 | Secret | `RTK_CLOUD_SECRET_BUNDLE` | Materialize the existing staging SecretStore without printing values. |
 | Variable | `BILLING_STAGING_OTHER_ORG_ID` | Prove the Cloud Admin view cannot cross tenant boundaries. |
 | Variable | `BILLING_STAGING_QUALIFICATION_ENABLED` | Set to `true` only when the scheduled live qualification is enabled. Manual dispatch does not require it. |
+
+The workflow reads the existing `ghcr-pull` identity from the staging Account
+Manager namespace after obtaining the kubeconfig, masks both fields, and uses
+it only to verify and pull the official images. It does not require or create a
+duplicate repository-level package credential.
 
 Before dispatching, verify access and inspect recent runs:
 
