@@ -2888,9 +2888,20 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		return err
 	}
 	if cfg.EmailOwners {
-		operator, readErr := readEnvFile(cfg.OperatorEnvFile)
+		var operator map[string]string
+		var readErr error
+		if rtkCloudTestMode() && strings.TrimSpace(cfg.OperatorEnvFile) != "" {
+			operator, readErr = readEnvFile(cfg.OperatorEnvFile)
+		} else {
+			stackEnv, _ := readEnvFile(filepath.Join(cfg.EnvRoot, "env", "stack.env"))
+			store, storeErr := newSecretStore("", firstNonEmpty(stackEnv["CLOUD_ENV_NAME"], "staging"))
+			if storeErr != nil {
+				return storeErr
+			}
+			operator, readErr = store.readOperator()
+		}
 		if readErr != nil {
-			return fmt.Errorf("read operator env: %w", readErr)
+			return fmt.Errorf("read canonical operator settings: %w", readErr)
 		}
 		mailbox := firstNonEmpty(os.Getenv("IMAP_EMAIL_ADDR"), operator["IMAP_EMAIL_ADDR"])
 		plan, err = resolveLoadTestBrandPlan(plan, cfg.LoadTarget, cfg.RunID, mailbox)
@@ -2956,7 +2967,10 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 				"--workspace", cfg.Workspace, "--env-root", cfg.EnvRoot,
 				"--brandname", brand.Brandname, "--email", brand.OwnerEmail,
 				"--display-name", brand.OwnerName, "--run-id", cfg.RunID,
-				"--operator-env-file", cfg.OperatorEnvFile, "--evidence-path", evidencePath,
+				"--evidence-path", evidencePath,
+			}
+			if rtkCloudTestMode() && strings.TrimSpace(cfg.OperatorEnvFile) != "" {
+				args = append(args, "--operator-env-file", cfg.OperatorEnvFile)
 			}
 			if cfg.Resume {
 				args = append(args, "--resume")

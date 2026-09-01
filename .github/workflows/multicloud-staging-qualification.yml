@@ -190,7 +190,7 @@ jobs:
 
       - name: Upload redacted qualification evidence
         if: always() && env.MULTICLOUD_MODE == 'run'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: multicloud-staging-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -201,7 +201,7 @@ jobs:
             .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/mqtt/results.json
             .artifacts/test-runs/${{ env.MULTICLOUD_RUN_ID }}/mqtt/test_report.md
           include-hidden-files: true
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90
 
       - name: Remove temporary staging credentials

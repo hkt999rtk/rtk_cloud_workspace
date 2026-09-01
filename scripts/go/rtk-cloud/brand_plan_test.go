@@ -290,6 +290,53 @@ func TestEmailOwnerActivationFailureStopsBeforeSyntheticMembersAndDevices(t *tes
 	}
 }
 
+func TestEmailOwnerActivationReadsProductionSecretStoreWithoutLegacyEnvFile(t *testing.T) {
+	temp := t.TempDir()
+	configRoot := filepath.Join(temp, "config")
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	store, err := newSecretStore(configRoot, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write(filepath.Join("operator", "env", "IMAP_EMAIL_ADDR"), []byte("imap-test01@realtekconnect.com\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(temp, "env", "stack.env"), "CLOUD_ENV_NAME=staging\n")
+	commandLog := filepath.Join(temp, "commands.log")
+	activate := filepath.Join(temp, "activate-owner.sh")
+	writeTestFile(t, activate, fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" > %q\nexit 1\n", commandLog))
+	if err := os.Chmod(activate, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_TEST_MODE", "0")
+	err = runStagingE2EMultiBrandDataSetup(stagingE2EMultiBrandConfig{
+		Workspace:       filepath.Join("..", "..", ".."),
+		EnvRoot:         temp,
+		BrandPlanFile:   filepath.Join("..", "..", "..", "loadtests", "home-100k", "scenarios", "brand-plan-email-owner-canary.json"),
+		DeviceMix:       "camera=2",
+		DevicePrefix:    "canary",
+		UserConcurrency: 1, DeviceConcurrency: 1, BindConcurrency: 1,
+		OutDir: temp, RunID: "run-20260726", LoadTarget: "CANARY",
+		EmailOwners: true,
+		Scripts: map[string]string{
+			"activate-owner": activate,
+		},
+	})
+	if err == nil {
+		t.Fatal("activation fixture failure was ignored")
+	}
+	raw, readErr := os.ReadFile(commandLog)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if strings.Contains(string(raw), "--operator-env-file") {
+		t.Fatalf("production owner activation received retired env-file flag: %s", raw)
+	}
+}
+
 func TestEmailOwnerActivationCompletesBeforeEachBrandSetup(t *testing.T) {
 	temp := t.TempDir()
 	operatorEnv := filepath.Join(temp, "operator.env")
