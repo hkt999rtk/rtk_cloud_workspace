@@ -525,6 +525,24 @@ func TestResolveLoadTestBrandPlanReplacesExistingMailboxTag(t *testing.T) {
 	}
 }
 
+func TestResolveLoadTestBrandPlanCompletesMailboxLocalPartFromConfiguredDomain(t *testing.T) {
+	t.Setenv("RTK_CLOUD_IMAP_EMAIL_DOMAIN", "Example.Test")
+	base := loadTestBrandPlan{
+		TotalDevices: 1, DevicesPerUser: 1,
+		Brands: []loadTestBrandConfig{{
+			Brandname: "Brand", Devices: 1, NormalUsers: 1,
+			DeveloperUsers: map[string]int{"owner": 1},
+		}},
+	}
+	plan, err := resolveLoadTestBrandPlan(base, "CANARY", "run-12345", "IMAP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := plan.Brands[0].OwnerEmail, "imap+load-run-12345-b01@example.test"; got != want {
+		t.Fatalf("owner email = %q, want %q", got, want)
+	}
+}
+
 func TestLoadOwnerEvidenceSchemaDoesNotPersistCredentialsOrActivationURL(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "repos", "rtk_cloud_admin", "web", "scripts", "load-owner-activation-live-e2e.mjs")
 	raw, err := os.ReadFile(path)

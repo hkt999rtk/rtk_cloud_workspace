@@ -37,6 +37,7 @@ jobs:
       CLOUD_PROVIDER: lke
       CLOUD_STACK_NAME: video-cloud-staging
       CLOUD_STAGING_LKE_CLUSTER_LABEL: video-cloud-staging-lke
+      RTK_CLOUD_IMAP_EMAIL_DOMAIN: ${{ vars.RTK_CLOUD_IMAP_EMAIL_DOMAIN }}
       LINODE_TOKEN: ${{ secrets.LINODE_TOKEN }}
     steps:
       - uses: actions/checkout@v6
