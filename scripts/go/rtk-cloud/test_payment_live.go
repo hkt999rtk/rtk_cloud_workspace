@@ -78,6 +78,7 @@ var (
 	paymentLiveSaveCustomer          = savePaymentLiveQualificationCustomer
 	paymentLiveEnsureCustomer        = ensurePaymentLiveQualificationCustomer
 	paymentLiveCreateCustomerOrg     = createPaymentLiveQualificationOrganization
+	paymentLiveListCustomerClouds    = listPaymentLiveQualificationClouds
 )
 
 type paymentLiveQualificationCustomer struct {
@@ -86,6 +87,8 @@ type paymentLiveQualificationCustomer struct {
 
 type paymentLiveBrandCloud struct {
 	ID               string
+	Name             string
+	MyRole           string
 	OwnerUserID      string
 	OwnershipVersion int64
 }
@@ -358,14 +361,31 @@ func bootstrapPaymentLiveOrganization(workspace string, cfg paymentLiveConfig) (
 	if customer.AccessToken == "" {
 		return cfg, "", "", "", "", errors.New("dedicated qualification customer has no access token")
 	}
-	persistentCustomer := customer
-	persistentCustomer.OrganizationID = ""
-	if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, persistentCustomer); err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("persist qualification customer credential: %w", err)
-	}
-	runCloud, err := paymentLiveCreateCustomerOrg(context.Background(), client, cfg.AccountManagerBaseURL, customer.AccessToken, paymentLiveBootstrapOrgName+" "+cfg.RunID)
+	ownedClouds, err := paymentLiveListCustomerClouds(context.Background(), client, cfg.AccountManagerBaseURL, customer.AccessToken)
 	if err != nil {
-		return cfg, "", "", "", "", fmt.Errorf("create run-scoped qualification organization: %w", err)
+		return cfg, "", "", "", "", fmt.Errorf("list dedicated qualification customer clouds: %w", err)
+	}
+	runCloud, found := selectPaymentLiveQualificationCloud(ownedClouds, customer.OrganizationID)
+	if !found {
+		runCloud, err = paymentLiveCreateCustomerOrg(context.Background(), client, cfg.AccountManagerBaseURL, customer.AccessToken, paymentLiveBootstrapOrgName+" "+cfg.RunID)
+		if err != nil {
+			var responseErr *paymentLiveHTTPError
+			if !errors.As(err, &responseErr) || responseErr.Status != http.StatusConflict {
+				return cfg, "", "", "", "", fmt.Errorf("create dedicated qualification organization: %w", err)
+			}
+			ownedClouds, err = paymentLiveListCustomerClouds(context.Background(), client, cfg.AccountManagerBaseURL, customer.AccessToken)
+			if err != nil {
+				return cfg, "", "", "", "", fmt.Errorf("recover qualification organization after create conflict: %w", err)
+			}
+			runCloud, found = selectPaymentLiveQualificationCloud(ownedClouds, "")
+			if !found {
+				return cfg, "", "", "", "", errors.New("qualification organization create conflicted without a reusable owned cloud")
+			}
+		}
+	}
+	customer.OrganizationID = runCloud.ID
+	if err := paymentLiveSaveCustomer(workspace, cfg.EnvRoot, customer); err != nil {
+		return cfg, "", "", "", "", fmt.Errorf("persist qualification customer credential: %w", err)
 	}
 	cfg.OrgID = runCloud.ID
 	cfg.OwnerUserID = runCloud.OwnerUserID
@@ -557,18 +577,50 @@ func createPaymentLiveQualificationOrganization(ctx context.Context, client *htt
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusCreated {
 		_, _ = io.Copy(io.Discard, response.Body)
-		return paymentLiveBrandCloud{}, fmt.Errorf("HTTP %d", response.StatusCode)
+		return paymentLiveBrandCloud{}, &paymentLiveHTTPError{Method: http.MethodPost, Endpoint: request.URL.String(), Status: response.StatusCode}
 	}
 	var created map[string]any
 	if err := json.NewDecoder(response.Body).Decode(&created); err != nil {
 		return paymentLiveBrandCloud{}, err
 	}
 	cloud := nestedMap(created["brand_cloud"])
-	result := paymentLiveBrandCloud{ID: stringValue(cloud["id"]), OwnerUserID: stringValue(cloud["owner_user_id"]), OwnershipVersion: int64Value(cloud["ownership_version"])}
+	result := paymentLiveBrandCloud{ID: stringValue(cloud["id"]), Name: stringValue(cloud["name"]), MyRole: "owner", OwnerUserID: stringValue(cloud["owner_user_id"]), OwnershipVersion: int64Value(cloud["ownership_version"])}
 	if result.ID == "" || result.OwnerUserID == "" || result.OwnershipVersion < 1 {
 		return paymentLiveBrandCloud{}, errors.New("organization response has no exact owner and ownership version")
 	}
 	return result, nil
+}
+
+func listPaymentLiveQualificationClouds(ctx context.Context, client *http.Client, baseURL, token string) ([]paymentLiveBrandCloud, error) {
+	var payload map[string]any
+	status, err := paymentLiveJSONStatus(ctx, client, http.MethodGet, strings.TrimRight(baseURL, "/")+"/v1/developer/brand-clouds?view=owned&limit=100", token, nil, &payload)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, &paymentLiveHTTPError{Method: http.MethodGet, Endpoint: strings.TrimRight(baseURL, "/") + "/v1/developer/brand-clouds", Status: status}
+	}
+	clouds := make([]paymentLiveBrandCloud, 0)
+	for _, item := range paymentLiveAnySlice(payload["brand_clouds"]) {
+		cloud := nestedMap(item)
+		candidate := paymentLiveBrandCloud{ID: stringValue(cloud["id"]), Name: stringValue(cloud["name"]), MyRole: stringValue(cloud["my_role"]), OwnerUserID: stringValue(cloud["owner_user_id"]), OwnershipVersion: int64Value(cloud["ownership_version"])}
+		if candidate.ID != "" && candidate.MyRole == "owner" && candidate.OwnerUserID != "" && candidate.OwnershipVersion > 0 && strings.HasPrefix(candidate.Name, paymentLiveBootstrapOrgName+" billing-staging-") {
+			clouds = append(clouds, candidate)
+		}
+	}
+	return clouds, nil
+}
+
+func selectPaymentLiveQualificationCloud(clouds []paymentLiveBrandCloud, preferredID string) (paymentLiveBrandCloud, bool) {
+	for _, cloud := range clouds {
+		if preferredID != "" && cloud.ID == preferredID {
+			return cloud, true
+		}
+	}
+	if len(clouds) == 0 {
+		return paymentLiveBrandCloud{}, false
+	}
+	return clouds[0], true
 }
 
 func activatePaymentLiveCustomerOrganization(ctx context.Context, client *http.Client, baseURL, organizationID, sessionFile string) error {

@@ -333,6 +333,7 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 	oldSaveCustomer := paymentLiveSaveCustomer
 	oldEnsureCustomer := paymentLiveEnsureCustomer
 	oldCreateCustomerOrg := paymentLiveCreateCustomerOrg
+	oldListCustomerClouds := paymentLiveListCustomerClouds
 	oldClient := paymentLiveHTTPClient
 	t.Cleanup(func() {
 		paymentLiveAccountManagerContext = oldContext
@@ -345,6 +346,7 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 		paymentLiveSaveCustomer = oldSaveCustomer
 		paymentLiveEnsureCustomer = oldEnsureCustomer
 		paymentLiveCreateCustomerOrg = oldCreateCustomerOrg
+		paymentLiveListCustomerClouds = oldListCustomerClouds
 		paymentLiveHTTPClient = oldClient
 	})
 
@@ -382,18 +384,19 @@ func TestPaymentLiveBootstrapReusesDedicatedBrandCloudAndMintsCustomerSession(t 
 	}
 	paymentLiveHTTPClient = func() *http.Client { return server.Client() }
 	paymentLiveLoadCustomer = func(workspace, envRoot string) (paymentLiveQualificationCustomer, bool, error) {
-		return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "qualification-org"}, true, nil
+		return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "run-org"}, true, nil
 	}
 	paymentLiveSaveCustomer = func(string, string, paymentLiveQualificationCustomer) error { return nil }
 	paymentLiveEnsureCustomer = func(_ context.Context, _ *http.Client, _ string, customer paymentLiveQualificationCustomer) (paymentLiveQualificationCustomer, error) {
 		customer.AccessToken = "customer-token"
 		return customer, nil
 	}
-	paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, token, name string) (paymentLiveBrandCloud, error) {
-		if token != "customer-token" || name != paymentLiveBootstrapOrgName+" unit-reuse" {
-			t.Fatalf("unexpected run cloud request: token=%q name=%q", token, name)
-		}
-		return paymentLiveBrandCloud{ID: "run-org", OwnerUserID: "owner-user", OwnershipVersion: 3}, nil
+	paymentLiveListCustomerClouds = func(context.Context, *http.Client, string, string) ([]paymentLiveBrandCloud, error) {
+		return []paymentLiveBrandCloud{{ID: "run-org", Name: paymentLiveBootstrapOrgName + " billing-staging-existing", MyRole: "owner", OwnerUserID: "owner-user", OwnershipVersion: 3}}, nil
+	}
+	paymentLiveCreateCustomerOrg = func(context.Context, *http.Client, string, string, string) (paymentLiveBrandCloud, error) {
+		t.Fatal("persisted qualification cloud must be reused")
+		return paymentLiveBrandCloud{}, nil
 	}
 
 	sessionFile := filepath.Join(t.TempDir(), "session", "customer")
@@ -428,6 +431,7 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 	oldEnsureCustomer := paymentLiveEnsureCustomer
 	oldPassword := paymentLiveGeneratePassword
 	oldCreateCustomerOrg := paymentLiveCreateCustomerOrg
+	oldListCustomerClouds := paymentLiveListCustomerClouds
 	t.Cleanup(func() {
 		paymentLiveAccountManagerContext = oldContext
 		paymentLiveAccountLoginSession = oldLogin
@@ -439,6 +443,7 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 		paymentLiveEnsureCustomer = oldEnsureCustomer
 		paymentLiveGeneratePassword = oldPassword
 		paymentLiveCreateCustomerOrg = oldCreateCustomerOrg
+		paymentLiveListCustomerClouds = oldListCustomerClouds
 	})
 	paymentLiveAccountManagerContext = func(string, string) (accountManagerContext, error) { return accountManagerContext{}, nil }
 	paymentLiveAccountLoginSession = func(accountManagerContext, func(string, ...any)) (accountPlatformSession, error) {
@@ -459,6 +464,7 @@ func TestPaymentLiveBootstrapCreatesMissingDedicatedBrandCloud(t *testing.T) {
 		customer.AccessToken = "customer-token"
 		return customer, nil
 	}
+	paymentLiveListCustomerClouds = func(context.Context, *http.Client, string, string) ([]paymentLiveBrandCloud, error) { return nil, nil }
 	paymentLiveAccountCreateUser = func(_ accountManagerContext, session *accountPlatformSession, _ func(string, ...any), orgID, email, displayName, password, role string, rotate bool) (accountCreateUserResult, error) {
 		if session.AccessToken != "platform-token" || orgID != "bootstrap-org" || email != paymentLiveBootstrapCustomerEmail || displayName != "Billing Qualification" || password != "Q!temporary-password" || role != "member" || !rotate {
 			t.Fatalf("unexpected audited member creation: org=%q email=%q role=%q", orgID, email, role)
@@ -500,6 +506,7 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 	oldSaveCustomer := paymentLiveSaveCustomer
 	oldEnsureCustomer := paymentLiveEnsureCustomer
 	oldCreateCustomerOrg := paymentLiveCreateCustomerOrg
+	oldListCustomerClouds := paymentLiveListCustomerClouds
 	t.Cleanup(func() {
 		paymentLiveAccountManagerContext = oldContext
 		paymentLiveAccountLoginSession = oldLogin
@@ -511,6 +518,7 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 		paymentLiveSaveCustomer = oldSaveCustomer
 		paymentLiveEnsureCustomer = oldEnsureCustomer
 		paymentLiveCreateCustomerOrg = oldCreateCustomerOrg
+		paymentLiveListCustomerClouds = oldListCustomerClouds
 	})
 
 	for _, test := range []struct {
@@ -530,7 +538,8 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 		{stage: "user", want: "create audited staging qualification member"},
 		{stage: "ensure-customer", want: "ensure dedicated qualification customer"},
 		{stage: "save-org", want: "persist qualification customer credential"},
-		{stage: "create-org", want: "create run-scoped qualification organization"},
+		{stage: "list-customer", want: "list dedicated qualification customer clouds"},
+		{stage: "create-org", want: "create dedicated qualification organization"},
 		{stage: "session", want: "missing protocol scheme"},
 	} {
 		t.Run(test.stage, func(t *testing.T) {
@@ -593,6 +602,12 @@ func TestPaymentLiveBootstrapFailsClosedAtEveryCredentialAndIdentityStage(t *tes
 					return paymentLiveQualificationCustomer{}, errors.New("ensure failed")
 				}
 				return paymentLiveQualificationCustomer{Email: paymentLiveBootstrapCustomerEmail, Password: "Q!temporary-password", OrganizationID: "qualification-org", AccessToken: "customer-token"}, nil
+			}
+			paymentLiveListCustomerClouds = func(context.Context, *http.Client, string, string) ([]paymentLiveBrandCloud, error) {
+				if test.stage == "list-customer" {
+					return nil, errors.New("customer list failed")
+				}
+				return nil, nil
 			}
 			paymentLiveCreateCustomerOrg = func(_ context.Context, _ *http.Client, _ string, _ string, name string) (paymentLiveBrandCloud, error) {
 				if test.stage == "create-bootstrap" && name == paymentLiveBootstrapOrgName {
@@ -708,6 +723,48 @@ func TestPaymentLiveQualificationOrganizationAPIFailsClosed(t *testing.T) {
 		_, err := createPaymentLiveQualificationOrganization(context.Background(), server.Client(), server.URL, "customer-token", "Qualification run-invalid")
 		if err == nil || !strings.Contains(err.Error(), "exact owner and ownership version") {
 			t.Fatalf("missing ownership evidence error = %v", err)
+		}
+	})
+
+	t.Run("owned cloud list filters and selects persisted cloud", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Query().Get("view") != "owned" || r.Header.Get("Authorization") != "Bearer customer-token" {
+				t.Fatalf("unexpected owned cloud list request: %s %s", r.Method, r.URL.String())
+			}
+			_, _ = w.Write([]byte(`{"brand_clouds":[{"id":"shared","name":"RTK Payment Simulator Qualification billing-staging-shared","my_role":"viewer","owner_user_id":"other","ownership_version":1},{"id":"first","name":"RTK Payment Simulator Qualification billing-staging-first","my_role":"owner","owner_user_id":"owner-user","ownership_version":2},{"id":"persisted","name":"RTK Payment Simulator Qualification billing-staging-persisted","my_role":"owner","owner_user_id":"owner-user","ownership_version":3}]}`))
+		}))
+		defer server.Close()
+		clouds, err := listPaymentLiveQualificationClouds(context.Background(), server.Client(), server.URL, "customer-token")
+		if err != nil || len(clouds) != 2 {
+			t.Fatalf("list qualification clouds: clouds=%+v err=%v", clouds, err)
+		}
+		selected, found := selectPaymentLiveQualificationCloud(clouds, "persisted")
+		if !found || selected.ID != "persisted" || selected.OwnershipVersion != 3 {
+			t.Fatalf("persisted qualification cloud was not selected: %+v found=%v", selected, found)
+		}
+		selected, found = selectPaymentLiveQualificationCloud(clouds, "missing")
+		if !found || selected.ID != "first" {
+			t.Fatalf("fallback qualification cloud was not selected: %+v found=%v", selected, found)
+		}
+	})
+
+	t.Run("owned cloud list rejects HTTP failure", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+		defer server.Close()
+		_, err := listPaymentLiveQualificationClouds(context.Background(), server.Client(), server.URL, "customer-token")
+		var responseErr *paymentLiveHTTPError
+		if !errors.As(err, &responseErr) || responseErr.Status != http.StatusServiceUnavailable {
+			t.Fatalf("owned cloud list did not fail closed: %v", err)
+		}
+	})
+
+	t.Run("create conflict remains typed for recovery", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusConflict) }))
+		defer server.Close()
+		_, err := createPaymentLiveQualificationOrganization(context.Background(), server.Client(), server.URL, "customer-token", "Qualification conflict")
+		var responseErr *paymentLiveHTTPError
+		if !errors.As(err, &responseErr) || responseErr.Status != http.StatusConflict {
+			t.Fatalf("create conflict was not recoverable: %v", err)
 		}
 	})
 
