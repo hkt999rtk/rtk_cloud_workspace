@@ -192,7 +192,7 @@ func runTestPaymentLive(args []string) error {
 	runErr := executePaymentLive(context.Background(), client, workspace, outDir, cfg, billingToken, internalToken, debitToken, &state)
 	cleanupErr := cleanupPaymentLive(context.Background(), client, cfg, billingToken, state)
 	if runErr == nil && cleanupErr == nil {
-		state.InvoiceID, runErr = seedPaymentLiveInvoice(context.Background(), client, cfg, internalToken)
+		state.InvoiceID, runErr = seedPaymentLiveInvoice(context.Background(), client, cfg, billingToken, internalToken)
 		if runErr != nil {
 			runErr = fmt.Errorf("invoice qualification: %w", runErr)
 		} else {
@@ -1098,7 +1098,10 @@ func joinPaymentLiveErrors(runErr, cleanupErr error) string {
 	return strings.Join(parts, "; ")
 }
 
-func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymentLiveConfig, internalToken string) (string, error) {
+func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymentLiveConfig, billingToken, internalToken string) (string, error) {
+	if err := ensurePaymentLiveBillingProfile(ctx, client, cfg, billingToken); err != nil {
+		return "", fmt.Errorf("configure qualification billing profile: %w", err)
+	}
 	now := time.Now().UTC()
 	periodStart := now.Truncate(time.Hour).Add(-2 * time.Hour)
 	periodEnd := periodStart.Add(time.Hour)
@@ -1145,6 +1148,38 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 		return "", errors.New("close qualification period returned no invoice ID")
 	}
 	return invoiceID, nil
+}
+
+func ensurePaymentLiveBillingProfile(ctx context.Context, client *http.Client, cfg paymentLiveConfig, billingToken string) error {
+	endpoint := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID) + "/billing/profile"
+	var current map[string]any
+	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodGet, endpoint, billingToken, "billing_profile.read", nil, nil, &current); err != nil {
+		return fmt.Errorf("read billing profile: %w", err)
+	}
+	profile := nestedMap(current["billing_profile"])
+	version := int64Value(profile["version"])
+	if version < 1 {
+		return errors.New("billing profile has no version")
+	}
+	requiresConfiguration, _ := profile["requires_configuration"].(bool)
+	if !requiresConfiguration {
+		return nil
+	}
+	headers := map[string]string{"If-Match": strconv.FormatInt(version, 10)}
+	body := map[string]any{
+		"legal_name": paymentLiveBootstrapOrgName, "locale": "zh-TW", "timezone": "Asia/Taipei",
+		"delivery_preference": "portal", "version": version,
+	}
+	var updated map[string]any
+	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodPut, endpoint, billingToken, "billing_profile.manage", headers, body, &updated); err != nil {
+		return fmt.Errorf("update billing profile: %w", err)
+	}
+	updatedProfile := nestedMap(updated["billing_profile"])
+	configured, _ := updatedProfile["requires_configuration"].(bool)
+	if configured || int64Value(updatedProfile["version"]) <= version {
+		return errors.New("billing profile remains unconfigured")
+	}
+	return nil
 }
 
 func paymentLiveQualificationUsageID(runID, organizationID string) string {
