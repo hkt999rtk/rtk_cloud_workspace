@@ -39,6 +39,7 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 		"AUTH_TOKEN_BASE_URL SENDMAIL_HTTP_BASE_URL SENDMAIL_HTTP_TIMEOUT",
 		"EMAIL_OUTBOX_POLL_INTERVAL EMAIL_OUTBOX_BATCH_SIZE EMAIL_OUTBOX_MAX_ATTEMPTS",
 		"printf '%s\\n' \"$setting\" >> \"$BILLING_STAGING_ENV_ROOT/env/stack.env\"",
+		"cloud_env/staging/overrides/architecture.env >> \"$BILLING_STAGING_ENV_ROOT/env/stack.env\"",
 		"get deployment video-cloud-api -o json",
 		"VIDEO_CLOUD_BLOB_ENDPOINT VIDEO_CLOUD_BLOB_REGION VIDEO_CLOUD_BLOB_BUCKET",
 		"RUNTIME_MEDIA_STORAGE_BUCKET",
@@ -86,6 +87,13 @@ func TestBillingStagingQualificationWorkflowIsControlledAndEvidenceBacked(t *tes
 	}
 	if strings.Contains(body, "            --dns \\") {
 		t.Fatal("recurring Billing qualification must not reconcile shared public edge infrastructure")
+	}
+	architecture, err := os.ReadFile(filepath.Join(workspace, "cloud_env", "staging", "overrides", "architecture.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(architecture), "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=") {
+		t.Fatal("tracked staging architecture must define the internal certificate algorithm")
 	}
 }
 

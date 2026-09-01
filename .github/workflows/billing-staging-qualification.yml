@@ -127,6 +127,8 @@ jobs:
             test -n "$setting"
             printf '%s\n' "$setting" >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
           done
+          awk -F= '/^[A-Z0-9_]+=/ { print }' \
+            cloud_env/staging/overrides/architecture.env >> "$BILLING_STAGING_ENV_ROOT/env/stack.env"
           current_video_cloud="$RUNNER_TEMP/current-video-cloud-api.json"
           kubectl --request-timeout=15s -n video-cloud-staging-video-cloud \
             get deployment video-cloud-api -o json > "$current_video_cloud"
