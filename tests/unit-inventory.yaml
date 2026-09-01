@@ -311,6 +311,13 @@ cases:
       title: evidence reporter accepts standard and staging-qualified test IDs
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/evidence-reporter.test.mjs#evidence%20reporter%20does%20not%20overwrite%20a%20preserved%20passing%20screenshot%20with%20a%20failed%20rerun
+      module: cloud-admin-web
+      language: javascript
+      source: src/evidence-reporter.test.mjs
+      title: evidence reporter does not overwrite a preserved passing screenshot with a failed rerun
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/evidence-reporter.test.mjs#evidence%20reporter%20fails%20closed%20for%20invalid%20or%20incomplete%20evidence
       module: cloud-admin-web
       language: javascript

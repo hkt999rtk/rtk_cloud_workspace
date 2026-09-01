@@ -25,13 +25,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   playwright:
     name: Playwright ${{ matrix.ui }} E2E
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         ui: [desktop, mobile]
     steps:
@@ -51,8 +56,8 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
           git submodule sync
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --depth=1 \
@@ -62,6 +67,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.26.3'
+          cache: false
 
       - uses: actions/setup-node@v7
         with:
@@ -82,7 +88,12 @@ jobs:
         working-directory: scripts/go
         env:
           E2E_TEST_RUN_ID: gh-${{ github.run_id }}-${{ github.run_attempt }}
-        run: go run ./rtk-cloud -- test-ui --${{ matrix.ui }} --full --run-id "$E2E_TEST_RUN_ID"
+        shell: bash
+        run: |
+          # Runner registrations on the same host share loopback port 18082.
+          exec 9>/tmp/rtk-cloud-admin-ui.lock
+          flock -w 1800 9
+          go run ./rtk-cloud -- test-ui --${{ matrix.ui }} --full --run-id "$E2E_TEST_RUN_ID"
 
       - name: Upload E2E artifacts
         if: always()

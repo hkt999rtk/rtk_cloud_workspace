@@ -18,10 +18,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   submodules:
     name: Check submodule pointers
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - name: Check out workspace metadata

@@ -9,10 +9,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   changes:
     name: Select affected coverage jobs
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       policy: ${{ steps.select.outputs.policy }}
       go_modules: ${{ steps.select.outputs.go_modules }}
@@ -40,7 +44,7 @@ jobs:
     name: Catalog, policy, and inventory
     needs: changes
     if: needs.changes.outputs.policy == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -63,10 +67,11 @@ jobs:
     name: Go unit coverage (${{ matrix.module }})
     needs: changes
     if: needs.changes.outputs.run_unit == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         module: ${{ fromJSON(needs.changes.outputs.go_modules) }}
     steps:
@@ -118,10 +123,11 @@ jobs:
     name: JavaScript unit coverage and inventory (${{ matrix.module }})
     needs: changes
     if: needs.changes.outputs.run_node == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         module: ${{ fromJSON(needs.changes.outputs.node_modules) }}
     steps:
@@ -169,7 +175,7 @@ jobs:
     name: Account Manager PostgreSQL coverage
     needs: changes
     if: needs.changes.outputs.account_manager_postgres == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
       postgres:
@@ -217,7 +223,7 @@ jobs:
     name: Billing PostgreSQL and virtual-payment coverage
     needs: changes
     if: needs.changes.outputs.billing_postgres == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
       postgres:
@@ -267,7 +273,7 @@ jobs:
     name: Video Cloud PostgreSQL and EMQX coverage
     needs: changes
     if: needs.changes.outputs.video_cloud_postgres_emqx == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     services:
       postgres:
@@ -316,6 +322,10 @@ jobs:
       - name: Run integration-aware coverage
         working-directory: scripts/go
         env:
+          # All Video Cloud integration packages share this job's isolated
+          # database. Serialize package processes so concurrent EnsureSchema
+          # calls cannot race in PostgreSQL's system catalogs.
+          GOFLAGS: "-p=1"
           VIDEO_CLOUD_TEST_DSN: postgres://vc_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/vc_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
           VIDEO_CLOUD_MQTT_TEST_ADDR: 127.0.0.1:1883
         run: go run ./rtk-cloud -- test-coverage --profile pr --module video-cloud --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-video-cloud-pr"
@@ -344,7 +354,7 @@ jobs:
     name: Coverage aggregate and redaction
     if: always() && needs.changes.outputs.run_coverage == 'true'
     needs: [changes, policy, unit, node, account-manager-postgres, billing-postgres, video-cloud-postgres-emqx]
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6

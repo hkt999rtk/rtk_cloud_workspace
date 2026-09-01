@@ -28,10 +28,14 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
     name: Validate LKE image manifest tooling
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 15
     steps:
       - name: Check out workspace metadata
@@ -79,9 +83,9 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
-          git config --global --add url."git@github.com:".insteadOf "https://github.com/"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local --add url."git@github.com:".insteadOf "https://github.com/"
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1

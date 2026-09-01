@@ -35,6 +35,80 @@ func TestCloudAdminE2EInitializesCanonicalRequirementSource(t *testing.T) {
 	}
 }
 
+func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	readWorkflow := func(name string) string {
+		t.Helper()
+		raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+
+	for _, name := range []string{
+		"cloud-admin-e2e.yml",
+		"contracts-openapi.yml",
+		"go-coverage-governance.yml",
+		"lke-image-artifacts.yml",
+		"submodule-pointer-check.yml",
+		"workspace-test-baseline.yml",
+	} {
+		workflow := readWorkflow(name)
+		for _, required := range []string{
+			"group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}",
+			"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+		} {
+			if !strings.Contains(workflow, required) {
+				t.Fatalf("%s is missing shared-runner concurrency control %q", name, required)
+			}
+		}
+	}
+
+	coverage := readWorkflow("go-coverage-governance.yml")
+	if strings.Count(coverage, "max-parallel: 2") != 1 || strings.Count(coverage, "max-parallel: 1") != 1 {
+		t.Fatalf("coverage workflow must bound Go fanout at two and JavaScript fanout at one")
+	}
+	admin := readWorkflow("cloud-admin-e2e.yml")
+	if strings.Count(admin, "max-parallel: 1") != 1 {
+		t.Fatalf("Cloud Admin desktop/mobile E2E must run serially")
+	}
+	for _, name := range []string{"cloud-admin-e2e.yml", "workspace-test-baseline.yml", "go-runtime-coverage-nightly.yml"} {
+		workflow := readWorkflow(name)
+		if !strings.Contains(workflow, "/tmp/rtk-cloud-admin-ui.lock") || !strings.Contains(workflow, "flock -w 1800 9") {
+			t.Fatalf("%s must coordinate the host-local Cloud Admin UI port", name)
+		}
+	}
+	baseline := readWorkflow("workspace-test-baseline.yml")
+	for _, required := range []string{
+		"git lfs checkout -- \"$fixture\"",
+		"sha256sum \"$fixture\"",
+		"H.264 fixture is not materialized from Git LFS",
+	} {
+		if !strings.Contains(baseline, required) {
+			t.Fatalf("workspace baseline must verify its LFS media fixture with %q", required)
+		}
+	}
+	workflowFiles, err := filepath.Glob(filepath.Join(workspace, ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowFiles = append(workflowFiles, filepath.Join(workspace, "scripts", "ci", "init-submodules.sh"))
+	for _, path := range workflowFiles {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "git config --global") {
+			t.Fatalf("%s must not mutate host-global Git config on shared runners", path)
+		}
+	}
+}
+
 func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

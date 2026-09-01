@@ -25,10 +25,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   baseline:
     name: Workspace baseline, E2E, and affected services
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'ci-0' }}
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 45
     services:
       postgres:
@@ -52,6 +56,20 @@ jobs:
           lfs: true
           submodules: false
 
+      - name: Materialize and verify the H.264 Git LFS fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture=e2e_test/video_cloud/load/testdata/testsrc2_1080p_2s.h264
+          git lfs checkout -- "$fixture"
+          expected=$(git show "HEAD:$fixture" | awk '/^oid sha256:/ {sub(/^oid sha256:/, ""); print; exit}')
+          actual=$(sha256sum "$fixture" | awk '{print $1}')
+          test -n "$expected"
+          if [ "$actual" != "$expected" ]; then
+            echo "H.264 fixture is not materialized from Git LFS" >&2
+            exit 1
+          fi
+
       - name: Configure job-local PostgreSQL endpoint
         run: |
           printf 'TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:%s/postgres?sslmode=disable\n' \
@@ -68,9 +86,9 @@ jobs:
           printf '%s\n' "$CI_RUNNER_GITHUB_WORK_KEY" > ~/.ssh/id_ed25519_github_work
           chmod 0600 ~/.ssh/id_ed25519_github_work
           ssh-keyscan github.com >> ~/.ssh/known_hosts
-          git config --global core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
-          git config --global --add url."git@github.com:".insteadOf "git@github-work.com:"
-          git config --global --add url."git@github.com:".insteadOf "git@github.com-work:"
+          git config --local core.sshCommand "ssh -i ~/.ssh/id_ed25519_github_work -o IdentitiesOnly=yes"
+          git config --local --add url."git@github.com:".insteadOf "git@github-work.com:"
+          git config --local --add url."git@github.com:".insteadOf "git@github.com-work:"
           git submodule sync --recursive
           git submodule foreach --recursive 'git reset --hard'
           git submodule update --init --recursive --depth=1
@@ -119,7 +137,12 @@ jobs:
 
       - name: Run deterministic product UI evidence
         working-directory: scripts/go
+        shell: bash
         run: |
+          # Coordinate the fixed local BFF port across runner registrations
+          # hosted by the same physical Linux machine.
+          exec 9>/tmp/rtk-cloud-admin-ui.lock
+          flock -w 1800 9
           go run ./rtk-cloud -- test-ui \
             --full --desktop --mobile --install \
             --run-id "$FEATURE_EVIDENCE_RUN_ID"
