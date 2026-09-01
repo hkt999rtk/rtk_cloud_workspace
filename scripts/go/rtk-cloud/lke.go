@@ -8143,6 +8143,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"),
 			lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"),
 			lkeEmailOutboxEncryptionKey(env),
+			"https://" + lkeBillingPublicDomain(env),
+			lkeBillingCloudCreationToken(),
 			lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)),
 			lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()),
 			lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)),
@@ -8176,7 +8178,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
+`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime
