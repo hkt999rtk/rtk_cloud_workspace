@@ -123,6 +123,36 @@ func TestLKEBillingCloudCreationWiresDedicatedCredentialWithoutHandoff(t *testin
 	}
 }
 
+func TestLKEBillingCloudCreationCredentialRotatesBothWorkloads(t *testing.T) {
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{"billing-cloud-creation": "creation-token-one"}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	env := handoffLKETestEnv(false)
+
+	var account, billing lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		switch workload.Key {
+		case "account-manager":
+			account = workload
+		case "billing":
+			billing = workload
+		}
+	}
+	if account.Key == "" || billing.Key == "" {
+		t.Fatal("account-manager and billing workloads are required")
+	}
+	accountBefore := lkeDeploymentManifest(env, account, nil)
+	billingBefore := lkeDeploymentManifest(env, billing, nil)
+
+	lkeRuntimeSecretCache["billing-cloud-creation"] = "creation-token-two"
+	if changed := lkeDeploymentManifest(env, account, nil); changed == accountBefore {
+		t.Fatal("Billing cloud-creation credential rotation must update the Account Manager pod checksum")
+	}
+	if changed := lkeDeploymentManifest(env, billing, nil); changed == billingBefore {
+		t.Fatal("Billing cloud-creation credential rotation must update the Billing pod checksum")
+	}
+}
+
 func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "handoff-test")
