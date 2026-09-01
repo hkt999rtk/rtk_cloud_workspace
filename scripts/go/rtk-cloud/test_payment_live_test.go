@@ -855,6 +855,7 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 	debitPosted := false
 	manualPosted := false
 	hostedPosted := false
+	profileConfigured := false
 	policyVersion := int64(1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -943,6 +944,14 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		case r.URL.Path == "/v1/orgs/org-test/payment-methods/method-1" && r.Method == http.MethodDelete:
 			methodActive = false
 			_, _ = w.Write([]byte(`{"payment_method":{"status":"revoked"}}`))
+		case r.URL.Path == "/v1/orgs/org-test/billing/profile" && r.Method == http.MethodGet:
+			_, _ = w.Write([]byte(`{"billing_profile":{"version":1,"requires_configuration":true}}`))
+		case r.URL.Path == "/v1/orgs/org-test/billing/profile" && r.Method == http.MethodPut:
+			if r.Header.Get("X-Billing-Permissions") != "billing_profile.manage" || r.Header.Get("If-Match") != "1" {
+				t.Fatalf("billing profile update was not owner-scoped and version-bound")
+			}
+			profileConfigured = true
+			_, _ = w.Write([]byte(`{"billing_profile":{"version":2,"requires_configuration":false}}`))
 		case r.URL.Path == "/v1/internal/billing/pricing-versions" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification"}}`))
 		case r.URL.Path == "/v1/internal/billing/pricing-versions/pricing-qualification/activate" && r.Method == http.MethodPost:
@@ -950,6 +959,9 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		case r.URL.Path == "/v1/internal/billing/usage-facts" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"usage_fact":{"id":"usage-qualification"}}`))
 		case r.URL.Path == "/v1/internal/billing/periods/close" && r.Method == http.MethodPost:
+			if !profileConfigured {
+				t.Fatal("billing period closed before the owner configured the profile")
+			}
 			_, _ = w.Write([]byte(`{"invoice":{"id":"invoice-qualification","state":"settled"}}`))
 		default:
 			t.Fatalf("unexpected payment qualification request: %s %s", r.Method, r.URL.Path)
@@ -1020,6 +1032,28 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		"--confirm", paymentLiveConfirmation, "--confirm-test-org", "org-test", "--timeout", "10s",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if !profileConfigured {
+		t.Fatal("qualification did not configure the owner billing profile")
+	}
+}
+
+func TestEnsurePaymentLiveBillingProfileLeavesConfiguredProfileUnchanged(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/orgs/org-test/billing/profile" || r.Header.Get("X-Billing-Permissions") != "billing_profile.read" {
+			t.Fatalf("unexpected billing profile request: %s %s permission=%q", r.Method, r.URL.Path, r.Header.Get("X-Billing-Permissions"))
+		}
+		_, _ = w.Write([]byte(`{"billing_profile":{"version":3,"requires_configuration":false}}`))
+	}))
+	defer server.Close()
+	cfg := paymentLiveConfig{BillingBaseURL: server.URL, OrgID: "org-test", OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1}
+	if err := ensurePaymentLiveBillingProfile(context.Background(), server.Client(), cfg, strings.Repeat("b", 32)); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("configured profile caused %d requests, want one read", requests)
 	}
 }
 
