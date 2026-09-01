@@ -7336,6 +7336,8 @@ stringData:
   VIDEO_CLOUD_LIFECYCLE_BASE_URL: %q
   VIDEO_CLOUD_LIFECYCLE_TOKEN: %q
   VIDEO_CLOUD_LIFECYCLE_TIMEOUT: %q
+  BILLING_CLOUD_CREATION_BASE_URL: %q
+  BILLING_CLOUD_CREATION_TOKEN: %q
   BILLING_HANDOFF_BASE_URL: %q
   BILLING_HANDOFF_TOKEN: %q
   FACTORY_HANDOFF_BASE_URL: %q
@@ -7352,7 +7354,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -7406,6 +7408,10 @@ func lkeBillingInternalToken() string {
 
 func lkeBillingDebitToken() string {
 	return lkeRuntimeSecretValue("billing-debit-token")
+}
+
+func lkeBillingCloudCreationToken() string {
+	return lkeRuntimeSecretValue("billing-cloud-creation")
 }
 
 func lkeBillingHandoffToken() string {
@@ -7479,6 +7485,7 @@ stringData:
   BILLING_SERVICE_TOKEN: %q
   BILLING_INTERNAL_TOKEN: %q
   BILLING_DEBIT_TOKEN: %q
+  BILLING_CLOUD_CREATION_TOKEN: %q
   BILLING_HANDOFF_TOKEN: %q
   BILLING_DEBIT_SOURCE: "rtk_billing"
   PAYMENT_SIMULATOR_ENABLED: "true"
@@ -7502,7 +7509,7 @@ stringData:
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkePaymentSimulatorInternalURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkePaymentSimulatorInternalURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
