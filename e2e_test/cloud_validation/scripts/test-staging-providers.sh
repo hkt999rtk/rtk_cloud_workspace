@@ -13,6 +13,18 @@ if grep -Fq '"$workspace_root/repos/rtk_cloud_client/docs/rtk_cloud_contracts_do
   echo "cloud validation must not anchor evidence to the SDK nested contracts copy" >&2
   exit 1
 fi
+for provider in \
+  "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh" \
+  "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"; do
+  if grep -Eq 'brand_cloud_user_id|app-brand-cloud-user|/v1/brand-clouds/.*/auth/login|app-certificate/revoke' "$provider"; then
+    echo "staging provider still uses retired tenant human authentication: $provider" >&2
+    exit 1
+  fi
+done
+grep -Fq '"${account_url%/}/v1/auth/login"' \
+  "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh"
+grep -Fq 'rotate_app_certificate:true' \
+  "$root/e2e_test/cloud_validation/providers/setup-staging-fixture.sh"
 offline_controller="$root/e2e_test/cloud_validation/scripts/run-offline-reconnect-controller.sh"
 grep -Fq 'CLOUD_VALIDATION_OFFLINE_START_TIMEOUT_SECONDS:-600' "$offline_controller"
 grep -Fq 'CLOUD_VALIDATION_OFFLINE_POLL_INTERVAL_SECONDS:-0.1' "$offline_controller"
@@ -58,10 +70,10 @@ account_device_id="account-device-${slug}"
 private_key_begin="-----BEGIN PRIVATE"' KEY-----'
 private_key_end="-----END PRIVATE"' KEY-----'
 "$SQLITE_BIN" "$db" <<SQL
-create table users (brandname text, email text, brand_cloud_id text, tenant_slug text, app_credentials_json text, app_certificate_json text, body_json text);
+create table users (brandname text, email text, user_id text, brand_cloud_id text, tenant_slug text, app_credentials_json text, app_certificate_json text, body_json text);
 create table device_bindings (brandname text, tenant_slug text, device_id text, account_device_id text, assigned_email text, assignment_index integer);
 create table device_credentials (brandname text, device_id text, cert_pem text, key_pem text, chain_pem text);
-insert into users values ('$brandname','run-user@users.local','$cloud_id','$tenant_slug','{"private_key_pem":"$private_key_begin\\nkey\\n$private_key_end"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{"brand_cloud_user_id":"$user_id"}');
+insert into users values ('$brandname','run-user@users.local','$user_id','$cloud_id','$tenant_slug','{"private_key_pem":"$private_key_begin\\nkey\\n$private_key_end"}','{"certificate_pem":"-----BEGIN CERTIFICATE-----\\nleaf\\n-----END CERTIFICATE-----","certificate_chain_pem":"-----BEGIN CERTIFICATE-----\\nchain\\n-----END CERTIFICATE-----"}','{}');
 alter table users add column password text default 'fixture-password';
 insert into device_bindings values ('$brandname','$tenant_slug','$device_id','$account_device_id','run-user@users.local',1);
 insert into device_credentials values ('$brandname','$device_id','-----BEGIN CERTIFICATE-----\nleaf\n-----END CERTIFICATE-----','$private_key_begin\nkey\n$private_key_end','-----BEGIN CERTIFICATE-----\nchain\n-----END CERTIFICATE-----');
@@ -106,7 +118,7 @@ if [[ "$joined" == *"--write-out"* && "$joined" == *"/request_token"* ]]; then
   fi
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/unprovision"* && "${FAIL_UNPROVISION:-0}" == "1" ]]; then
   printf '500'
-elif [[ "$joined" == *"--write-out"* && "$joined" == *"/app-certificate/revoke"* && "${FAIL_APP_REVOKE_ONCE:-0}" == "1" && ! -e "${CURL_TRANSIENT_STATE:?CURL_TRANSIENT_STATE is required}" ]]; then
+elif [[ "$joined" == *"--write-out"* && "$joined" == *"/v1/admin/brand-clouds/"* && "$joined" == *"/users/"* && "$joined" == *"DELETE"* && "${FAIL_MEMBERSHIP_DELETE_ONCE:-0}" == "1" && ! -e "${CURL_TRANSIENT_STATE:?CURL_TRANSIENT_STATE is required}" ]]; then
   : > "$CURL_TRANSIENT_STATE"
   exit 28
 elif [[ "$joined" == *"--write-out"* && "$joined" == *"/commands"* ]]; then
@@ -257,7 +269,7 @@ done < <(sed -nE 's/.*--device-prefix ([^ ]+).*/\1/p' "$SETUP_ARGS_LOG")
 export CLOUD_VALIDATION_ENV_ROOT="$tmp/source-env"
 export CLOUD_VALIDATION_CA_BUNDLE="$tmp/ca.pem"
 test "$(stat -f '%Lp' "$CLOUD_VALIDATION_RUNTIME_BUNDLE")" = "600"
-jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.app.revoked_pkcs12_path | length > 0) and (.app.revoked_pkcs12_password | length > 0) and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 7)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
+jq -e '.run_id == "run-ios" and .brand_cloud_slug == "sdk-e2e-ios-a579a0e7" and .brand_cloud_active == true and .app.device_id == "device-sdk-e2e-ios" and (.app.device_transport_access_token | length > 0) and .app.foreign_device_id == "device-sdk-e2e-android" and (.app.revoked_pkcs12_path | length > 0) and (.app.revoked_pkcs12_password | length > 0) and (.test_data_db | endswith("/sdk-e2e-ios-test-data.sqlite")) and ((.resources | length) == 5)' "$CLOUD_VALIDATION_RUNTIME_BUNDLE" >/dev/null
 
 export CLOUD_VALIDATION_READY_FILE="$tmp/out/virtual-device-ready.json"
 export CLOUD_VALIDATION_ACCOUNT_MANAGER_URL="https://account.test"
@@ -334,14 +346,18 @@ if grep -q 'entitlement/revoke' "$CURL_LOG"; then
   exit 1
 fi
 unset FAIL_UNPROVISION
-export FAIL_APP_REVOKE_ONCE=1
-export CURL_TRANSIENT_STATE="$tmp/cleanup-transient-revoke"
+export FAIL_MEMBERSHIP_DELETE_ONCE=1
+export CURL_TRANSIENT_STATE="$tmp/cleanup-transient-membership"
 : > "$CURL_LOG"
 "$root/e2e_test/cloud_validation/providers/cleanup-staging-fixture.sh"
 test ! -e "$tmp/secrets/run-ios"
 jq -e '.status == "PASS" and ([.attempts[].outcome] | index("RETRY") != null)' "$tmp/out/fixture-cleanup/cleanup-report.json" >/dev/null
-test "$(grep -c '/app-certificate/revoke' "$CURL_LOG")" -eq 3
-unset FAIL_APP_REVOKE_ONCE CURL_TRANSIENT_STATE
+test "$(grep -c '/v1/admin/brand-clouds/.*/users/' "$CURL_LOG")" -eq 3
+if grep -q '/app-certificate/revoke' "$CURL_LOG"; then
+  echo "cleanup used retired tenant-scoped certificate revocation" >&2
+  exit 1
+fi
+unset FAIL_MEMBERSHIP_DELETE_ONCE CURL_TRANSIENT_STATE
 
 # A setup failure after remote resources are created must still produce a
 # secret-free recovery manifest and permit deterministic cleanup.
@@ -356,7 +372,7 @@ set -e
 unset FAIL_AFTER_DB
 test "$setup_rc" -eq 27
 test -f "$CLOUD_VALIDATION_RESOURCE_MANIFEST"
-jq -e '.setup_failure.exit_code == 27 and .cleanup_required == true and ([.resources[].kind] | contains(["brand_cloud_user","device_binding","local_fixture_root"]))' "$CLOUD_VALIDATION_RESOURCE_MANIFEST" >/dev/null
+jq -e '.setup_failure.exit_code == 27 and .cleanup_required == true and ([.resources[].kind] | contains(["organization_membership","device_binding","local_fixture_root"]))' "$CLOUD_VALIDATION_RESOURCE_MANIFEST" >/dev/null
 "$root/e2e_test/cloud_validation/scripts/cleanup-fixture.sh"
 test ! -e "$tmp/secrets/run-ios-failed"
 test -f "$CLOUD_VALIDATION_RESOURCE_MANIFEST"
@@ -380,7 +396,7 @@ test "${#long_run_device_prefix}" -le 58
 [[ "$long_run_device_prefix" =~ -[0-9a-f]{10}$ ]]
 jq -e '
   .setup_failure.exit_code == 28 and .cleanup_required == true and
-  ([.resources[].kind] | contains(["brand_cloud_user","local_fixture_root"])) and
+  ([.resources[].kind] | contains(["organization_membership","local_fixture_root"])) and
   ([.resources[].kind] | index("device_binding") | not)
 ' "$CLOUD_VALIDATION_RESOURCE_MANIFEST" >/dev/null
 "$root/e2e_test/cloud_validation/scripts/cleanup-fixture.sh"

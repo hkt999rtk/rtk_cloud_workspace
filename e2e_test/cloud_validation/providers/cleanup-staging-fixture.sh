@@ -131,15 +131,11 @@ done < <(jq -r '.resources[]? | select(.kind == "device_binding") | [(.id // "")
 
 while IFS=$'\t' read -r brand_cloud_id user_id; do
   [[ -n "$brand_cloud_id" && -n "$user_id" ]] || continue
-  if ! cleanup_request "app_certificate_revoke" "$user_id" POST "$secret_root/account-headers.txt" \
-    "${account_url%/}/v1/admin/brand-clouds/$brand_cloud_id/users/$user_id/app-certificate/revoke"; then
-    cleanup_failures=$((cleanup_failures + 1))
-  fi
-  if ! cleanup_request "brand_cloud_user_delete" "$user_id" DELETE "$secret_root/account-headers.txt" \
+  if ! cleanup_request "organization_membership_delete" "$user_id" DELETE "$secret_root/account-headers.txt" \
     "${account_url%/}/v1/admin/brand-clouds/$brand_cloud_id/users/$user_id"; then
     cleanup_failures=$((cleanup_failures + 1))
   fi
-done < <(jq -r '.resources[]? | select(.kind == "brand_cloud_user") | [(.brand_cloud_id // ""), (.id // "")] | @tsv' "$bundle")
+done < <(jq -r '.resources[]? | select(.kind == "organization_membership") | [(.brand_cloud_id // ""), (.id // "")] | @tsv' "$bundle")
 
 if (( cleanup_failures > 0 )); then
   write_cleanup_report "FAIL" "fixture cleanup completed with $cleanup_failures failed remote operation(s)"
