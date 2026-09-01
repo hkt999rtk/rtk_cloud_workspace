@@ -1,0 +1,39 @@
+name: Local CI Dashboard
+
+on:
+  pull_request:
+    paths:
+      - "tools/ci-dashboard/**"
+      - ".github/workflows/local-ci-dashboard.yml"
+  push:
+    branches: [main]
+    paths:
+      - "tools/ci-dashboard/**"
+      - ".github/workflows/local-ci-dashboard.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test local CI dashboard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/ci-dashboard
+    env:
+      GOWORK: "off"
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.0"
+          cache-dependency-path: tools/ci-dashboard/go.mod
+      - name: Unit tests
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build -o "$RUNNER_TEMP/ci-dashboard" .
