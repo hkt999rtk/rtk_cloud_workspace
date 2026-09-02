@@ -786,7 +786,12 @@ func executePaymentLive(ctx context.Context, client *http.Client, workspace, out
 		return err
 	}
 	state.PolicyVersion = nestedInt64(current["auto_topup"], "version")
-	policyBody := map[string]any{"enabled": true, "threshold_minor": 300, "top_up_amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID, "daily_attempt_limit": 2, "daily_amount_limit_minor": 1000, "cooldown_seconds": 3600, "consent": map[string]any{"accepted": true, "text_version": "auto-topup-live-v1", "text_sha256": strings.Repeat("b", 64), "locale": "zh-TW"}}
+	// The qualification organization is deliberately persistent so that its
+	// monetary audit trail is never deleted. Allow the maximum policy-level
+	// attempt budget: repeated staging qualifications on the same UTC day must
+	// not fail after two successful runs merely because the fixture is reused.
+	// Product enforcement still caps this field at ten in ValidatePolicy.
+	policyBody := map[string]any{"enabled": true, "threshold_minor": 300, "top_up_amount_minor": 300, "currency": "TWD", "payment_method_id": state.MethodID, "daily_attempt_limit": 10, "daily_amount_limit_minor": 3000, "cooldown_seconds": 3600, "consent": map[string]any{"accepted": true, "text_version": "auto-topup-live-v1", "text_sha256": strings.Repeat("b", 64), "locale": "zh-TW"}}
 	var policy map[string]any
 	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodPut, base+"/auto-topup", token, "auto_topup.manage", map[string]string{"If-Match": strconv.Quote(strconv.FormatInt(state.PolicyVersion, 10)), "X-Request-Id": "policy-" + cfg.RunID}, policyBody, &policy); err != nil {
 		return fmt.Errorf("enable automatic top-up: %w", err)
