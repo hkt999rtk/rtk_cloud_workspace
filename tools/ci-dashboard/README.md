@@ -28,6 +28,7 @@ Useful flags:
 ```
 
 The browser reads a cached snapshot every five seconds. The Go server polls GitHub once per minute by default and updates elapsed counters without querying GitHub every second.
+GitHub polling is demand-driven: the server starts refreshing when a browser reads the snapshot and stops issuing periodic GitHub API requests about 15 seconds after the last dashboard client activity.
 
 ## Authentication and repository scope
 
