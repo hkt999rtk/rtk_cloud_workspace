@@ -178,7 +178,7 @@ jobs:
     concurrency:
       group: staging-mutating-tests
       cancel-in-progress: false
-    runs-on: m1-local
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 240
     env:
       FEATURE_LIST_JSON: ${{ needs.select.outputs.features }}

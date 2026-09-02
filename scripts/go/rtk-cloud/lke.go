@@ -777,8 +777,19 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: lkeBillingPublicDomain(env), Namespace: lkeNamespaceName(env, "billing"), Service: "billing", ServicePort: 80, TargetPort: envIntDefault("LKE_BILLING_PORT", 8080)},
 		{Host: lkePaymentSimulatorPublicDomain(env), Namespace: lkeNamespaceName(env, "billing"), Service: "payment-simulator", ServicePort: 80, TargetPort: 8081},
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
-		{Host: firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+videoDomain), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
+		{Host: lkeFrontendPublicDomain(env), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
 	}
+}
+
+func lkeFrontendPublicDomain(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
+func lkeSDKPortalBaseURL(env map[string]string) string {
+	if configured := strings.TrimSpace(lkeEnvValue(env, "SDK_PORTAL_BASE_URL")); configured != "" {
+		return strings.TrimRight(configured, "/")
+	}
+	return "https://" + lkeFrontendPublicDomain(env)
 }
 
 func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
@@ -8619,6 +8630,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "cloud-admin" {
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
+            - name: SDK_PORTAL_BASE_URL
+              value: %q
             - name: CLOUD_ADMIN_ENV
               value: "staging"
             - name: DEVELOPER_PKI_TEST_TOOLS_ENABLED
@@ -8631,7 +8644,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeAccountManagerInternalURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+`, lkeAccountManagerInternalURL(env), lkeSDKPortalBaseURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
