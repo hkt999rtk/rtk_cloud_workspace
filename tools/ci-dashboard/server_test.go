@@ -40,6 +40,25 @@ func TestHandlerServesAssetsAndJSON(t *testing.T) {
 	}
 }
 
+func TestRepositoryFleetIsCollapsedToggle(t *testing.T) {
+	server := httptest.NewServer(newHandler(&fakeDashboard{}))
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(body)
+	if !strings.Contains(html, `<details class="fleet-panel">`) || !strings.Contains(html, `<summary class="fleet-toggle">`) {
+		t.Fatal("repository fleet is not rendered as a collapsed details toggle")
+	}
+}
+
 func TestHandlerRejectsUnsafeRunPathAndDoesNotLeakToken(t *testing.T) {
 	fake := &fakeDashboard{}
 	request := httptest.NewRequest(http.MethodGet, "/api/runs/bad%20owner/repo/1", nil)

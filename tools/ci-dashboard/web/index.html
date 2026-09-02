@@ -29,10 +29,13 @@
       <div class="sync-stat"><strong id="sync-age" class="mono">—</strong><span id="rate-limit">Last sync</span></div>
     </section>
 
-    <section class="fleet-panel" aria-label="Monitored repositories">
-      <header><span>REPOSITORY FLEET</span><small>workspace + RTK submodules</small></header>
+    <details class="fleet-panel">
+      <summary class="fleet-toggle">
+        <span>REPOSITORY FLEET</span>
+        <span class="fleet-meta"><small>workspace + RTK submodules</small><span class="fleet-chevron" aria-hidden="true">⌄</span></span>
+      </summary>
       <div id="repo-fleet" class="repo-fleet"></div>
-    </section>
+    </details>
 
     <section class="toolbar" aria-label="Filters">
       <label class="search"><span>⌕</span><input id="search" type="search" placeholder="Search workflow, PR, branch, actor…"></label>
