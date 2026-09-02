@@ -5392,7 +5392,7 @@ func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testin
 
 func TestBuildBindAssignmentsIncludesHomeDiverseDeviceTypes(t *testing.T) {
 	devices := []bindDeviceManifest{
-		{DeviceID: "dev-light", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-light", DeviceType: "light", DeviceItemProfileID: "product-light", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "dev-switch", DeviceType: "switch", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "dev-plug", DeviceType: "smart_plug", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "dev-env", DeviceType: "environment_sensor", ServiceOptions: []string{"mqtt"}},
@@ -5416,6 +5416,9 @@ func TestBuildBindAssignmentsIncludesHomeDiverseDeviceTypes(t *testing.T) {
 		}
 		if assignment.Category != "mqtt_device" {
 			t.Fatalf("%s category = %q, want mqtt_device", device.DeviceType, assignment.Category)
+		}
+		if device.DeviceID == "dev-light" && assignment.ProductID != "product-light" {
+			t.Fatalf("%s product = %q, want product-light", device.DeviceID, assignment.ProductID)
 		}
 		if assignment.AssignedEmail == "" {
 			t.Fatalf("%s missing assigned email", device.DeviceType)

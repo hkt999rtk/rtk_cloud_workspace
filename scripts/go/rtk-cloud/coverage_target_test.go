@@ -420,6 +420,9 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 			if request["organization_id"] != "brand-001" {
 				t.Errorf("organization_id = %v, want brand-001", request["organization_id"])
 			}
+			if request["device_item_profile_id"] != "product-001" {
+				t.Errorf("device_item_profile_id = %v, want product-001", request["device_item_profile_id"])
+			}
 			deviceID := request["video_cloud_devid"].(string)
 			createdMu.Lock()
 			created = append(created, deviceID)
@@ -444,8 +447,8 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	}))
 	defer server.Close()
 	assignments := []bindAssignment{
-		{AssignedEmail: "one@example.test", DeviceID: "device-1", DeviceType: "light", Category: "mqtt_device", ServiceOptions: []string{"mqtt"}},
-		{AssignedEmail: "two@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{AssignedEmail: "one@example.test", DeviceID: "device-1", DeviceType: "light", Category: "mqtt_device", ServiceOptions: []string{"mqtt"}, ProductID: "product-001"},
+		{AssignedEmail: "two@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ProductID: "product-001"},
 	}
 	userSessions := map[string]*brandCloudUserSession{
 		"one@example.test": {Email: "one@example.test", Session: accountPlatformSession{AccessToken: "user-one"}},

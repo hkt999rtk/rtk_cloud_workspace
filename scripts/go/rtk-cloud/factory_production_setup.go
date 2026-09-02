@@ -18,7 +18,12 @@ type factoryProductionCredential struct {
 	BrandCloudID        string
 	DeviceItemProfileID string
 	ProductionRunID     string
+	BatchID             string
 }
+
+type factoryProductionCredentialBundle map[string]factoryProductionCredential
+
+type factoryProductionBundlePreparer func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error)
 
 const runtimeFactoryProductionID = "runtime-e2e"
 
@@ -62,6 +67,66 @@ func prepareFactoryProductionStep(workspace, envRoot, outDir, logsDir, brandname
 		"FACTORY_ENROLL_RUN_ID=" + runID,
 		"FACTORY_ENROLL_BATCH_ID=" + runID,
 		"FACTORY_ENROLL_FACTORY_ID=" + runtimeFactoryProductionID,
+		"FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID=" + credential.DeviceItemProfileID,
+	}, step, nil
+}
+
+func prepareFactoryProductionBundleStep(workspace, envRoot, outDir, logsDir, brandname, runID string, quantity int, deviceMix string, started time.Time, prepare factoryProductionBundlePreparer) ([]string, e2eStep, error) {
+	step := e2eStep{Name: "prepare_factory_production", Status: "PASS", ExitCode: 0, LogFile: filepath.Join(logsDir, "prepare_factory_production.log")}
+	credentials, err := prepare(workspace, envRoot, brandname, runID, quantity, deviceMix, started)
+	step.DurationSeconds = int64(time.Since(started).Seconds())
+	if err != nil {
+		step.Status = "FAIL"
+		step.ExitCode = 1
+		return nil, step, err
+	}
+	if len(credentials) == 0 {
+		step.Status = "FAIL"
+		step.ExitCode = 1
+		return nil, step, errors.New("factory production bundle returned no credentials")
+	}
+	if err := writeFactoryProductionBundleEvidence(filepath.Join(outDir, "factory-production.json"), runID, brandname, credentials); err != nil {
+		return nil, step, err
+	}
+	jwts := map[string]string{}
+	profiles := map[string]string{}
+	batches := map[string]string{}
+	var logBody strings.Builder
+	logBody.WriteString("factory_production_run=PASS\n")
+	for _, deviceType := range loadDeviceTypeNames() {
+		credential, ok := credentials[deviceType]
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(credential.JWT) == "" || strings.TrimSpace(credential.DeviceItemProfileID) == "" || strings.TrimSpace(credential.BatchID) == "" {
+			return nil, step, fmt.Errorf("factory production credential is incomplete for device type %s", deviceType)
+		}
+		jwts[deviceType] = credential.JWT
+		profiles[deviceType] = credential.DeviceItemProfileID
+		batches[deviceType] = credential.BatchID
+		fmt.Fprintf(&logBody, "device_type=%s brand_cloud_id=%s device_item_profile_id=%s production_run_id=%s batch_id=%s\n", deviceType, credential.BrandCloudID, credential.DeviceItemProfileID, credential.ProductionRunID, credential.BatchID)
+	}
+	if err := os.WriteFile(step.LogFile, []byte(logBody.String()), 0o600); err != nil {
+		return nil, step, err
+	}
+	jwtJSON, err := json.Marshal(jwts)
+	if err != nil {
+		return nil, step, err
+	}
+	profileJSON, err := json.Marshal(profiles)
+	if err != nil {
+		return nil, step, err
+	}
+	batchJSON, err := json.Marshal(batches)
+	if err != nil {
+		return nil, step, err
+	}
+	return []string{
+		"FACTORY_ENROLL_PRODUCTION_JWT_BY_DEVICE_TYPE=" + string(jwtJSON),
+		"FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE=" + string(profileJSON),
+		"FACTORY_ENROLL_BATCH_ID_BY_DEVICE_TYPE=" + string(batchJSON),
+		"FACTORY_ENROLL_RUN_ID=" + runID,
+		"FACTORY_ENROLL_FACTORY_ID=" + runtimeFactoryProductionID,
 	}, step, nil
 }
 
@@ -96,7 +161,58 @@ func prepareFactoryProductionCredential(workspace, envRoot, brandname, runID str
 	if err != nil {
 		return factoryProductionCredential{}, err
 	}
-	return factoryProductionCredential{JWT: jwt, BrandCloudID: brandID, DeviceItemProfileID: profileID, ProductionRunID: productionRunID}, nil
+	return factoryProductionCredential{JWT: jwt, BrandCloudID: brandID, DeviceItemProfileID: profileID, ProductionRunID: productionRunID, BatchID: runID}, nil
+}
+
+func prepareFactoryProductionCredentials(workspace, envRoot, brandname, runID string, quantity int, deviceMix string, now time.Time) (factoryProductionCredentialBundle, error) {
+	if strings.TrimSpace(runID) == "" || quantity <= 0 {
+		return nil, errors.New("factory production run requires a run ID and positive quantity")
+	}
+	allocation, err := allocateDeviceMix(quantity, deviceMix)
+	if err != nil {
+		return nil, err
+	}
+	ctx, err := factoryProductionAccountContext(workspace, envRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer ctx.Close()
+	token, err := accountLogin(ctx, func(string, ...any) {})
+	if err != nil {
+		return nil, fmt.Errorf("factory production platform-admin login: %w", err)
+	}
+	brand, err := accountFindBrandCloud(ctx, token, brandname)
+	if err != nil {
+		return nil, err
+	}
+	brandID := stringValue(brand["id"])
+	if brandID == "" {
+		return nil, errors.New("factory production brand cloud has no ID")
+	}
+	credentials := factoryProductionCredentialBundle{}
+	for _, deviceType := range loadDeviceTypes {
+		count := allocation[deviceType.Name]
+		if count == 0 {
+			continue
+		}
+		typedRunID := runID + "-" + deviceType.Name
+		profileDigest := sha256.Sum256([]byte(brandID + "\x00" + typedRunID))
+		profileKey := "e2e-" + fmt.Sprintf("%x", profileDigest[:10])
+		category := loadDeviceCategory(deviceType)
+		profileID, err := ensureFactoryProductionProfileForType(ctx, token, brandID, profileKey, typedRunID, category, deviceType.ServiceOptions)
+		if err != nil {
+			return nil, err
+		}
+		productionRunID, jwt, err := createFactoryProductionRun(ctx, token, brandID, profileID, typedRunID, count, now)
+		if err != nil {
+			return nil, err
+		}
+		credentials[deviceType.Name] = factoryProductionCredential{
+			JWT: jwt, BrandCloudID: brandID, DeviceItemProfileID: profileID,
+			ProductionRunID: productionRunID, BatchID: typedRunID,
+		}
+	}
+	return credentials, nil
 }
 
 func factoryProductionAccountContext(workspace, envRoot string) (accountManagerContext, error) {
@@ -112,6 +228,10 @@ func factoryProductionAccountContext(workspace, envRoot string) (accountManagerC
 }
 
 func ensureFactoryProductionProfile(ctx accountManagerContext, token, brandID, profileKey, runID string) (string, error) {
+	return ensureFactoryProductionProfileForType(ctx, token, brandID, profileKey, runID, "ip_camera", []string{"mqtt", "video_streaming", "video_storage"})
+}
+
+func ensureFactoryProductionProfileForType(ctx accountManagerContext, token, brandID, profileKey, runID, category string, serviceOptions []string) (string, error) {
 	endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/device-item-profiles", ctx.BaseURL, url.PathEscape(brandID))
 	body, status, err := curlJSONStatus(endpoint+"?limit=200", token, nil)
 	if err != nil {
@@ -140,8 +260,8 @@ func ensureFactoryProductionProfile(ctx accountManagerContext, token, brandID, p
 	}
 	payload, err := json.Marshal(map[string]any{
 		"profile_key": profileKey, "display_name": "Runtime factory " + runID,
-		"category": "ip_camera", "ca_profile": "factory-device", "issuer_profile": "runtime-e2e",
-		"service_options":   []string{"mqtt", "video_streaming", "video_storage"},
+		"category": category, "ca_profile": "factory-device", "issuer_profile": "runtime-e2e",
+		"service_options":   serviceOptions,
 		"metadata_defaults": map[string]string{"e2e_run_id": runID},
 	})
 	if err != nil {
@@ -206,5 +326,25 @@ func writeFactoryProductionSetupEvidence(path, runID, brandname string, credenti
 		"brandname": brandname, "brand_cloud_id": credential.BrandCloudID,
 		"device_item_profile_id": credential.DeviceItemProfileID, "production_run_id": credential.ProductionRunID,
 		"production_jwt_issued": true,
+	})
+}
+
+func writeFactoryProductionBundleEvidence(path, runID, brandname string, credentials factoryProductionCredentialBundle) error {
+	items := make([]map[string]any, 0, len(credentials))
+	for _, deviceType := range loadDeviceTypeNames() {
+		credential, ok := credentials[deviceType]
+		if !ok {
+			continue
+		}
+		items = append(items, map[string]any{
+			"device_type": deviceType, "brand_cloud_id": credential.BrandCloudID,
+			"device_item_profile_id": credential.DeviceItemProfileID,
+			"production_run_id":      credential.ProductionRunID, "batch_id": credential.BatchID,
+			"production_jwt_issued": true,
+		})
+	}
+	return writeJSON(path, map[string]any{
+		"schema": "rtk-factory-production-setup/v2", "status": "PASS", "run_id": runID,
+		"brandname": brandname, "credentials": items,
 	})
 }
