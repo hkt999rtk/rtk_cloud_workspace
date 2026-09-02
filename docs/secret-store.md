@@ -84,6 +84,14 @@ staging bundle. `LINODE_TOKEN`, `GHCR_PULL_USERNAME`, `GHCR_PULL_TOKEN`,
 materialized into `operator/env/` by the CI-only allowlist. Every runtime ID in
 the current catalog must still be present in the appropriate bundle.
 
+During the settlement-collector rollout, the repository secret
+`RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN` may supply only the new
+`mqtt-usage-settlement` runtime entry when an existing opaque bundle predates
+that catalog key. Materialization refuses a mismatch if both sources contain
+the entry. Rotate the staging and runtime-coverage bundles to include the same
+value, then remove this transition input; it never replaces other missing
+catalog entries.
+
 Staging email qualifications additionally require the staging environment
 secret `RTK_CLOUD_IMAP_OPERATOR_BUNDLE`, containing the six `IMAP_*` operator
 settings. The workflow merges it into the job-local bundle before

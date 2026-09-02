@@ -328,6 +328,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"factory-handoff", "account-manager,factoryenroll", "manual"},
 		{"video-control-handoff", "account-manager,video-cloud", "manual"},
 		{"mqtt-usage-handoff", "account-manager,video-cloud-workers", "manual"},
+		{"mqtt-usage-settlement", "billing,video-cloud-workers", "manual"},
 		{"emqx-handoff-api-key", "mqtt,video-cloud-workers", "manual"},
 		{"emqx-handoff-api-secret", "mqtt,video-cloud-workers", "manual"},
 		{"payment-simulator-callback", "billing", "manual"}, {"payment-simulator-admin-token", "billing", "manual"},
@@ -389,6 +390,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"mqtt-usage-handoff": {
 			{"-account-manager", "account-manager-runtime", "MQTT_USAGE_HANDOFF_TOKEN"},
 			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN"},
+		},
+		"mqtt-usage-settlement": {
+			{"-billing", "billing-runtime", "MQTT_USAGE_SETTLEMENT_TOKEN"},
+			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN"},
 		},
 		"emqx-handoff-api-key": {
 			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_EMQX_API_KEY"},

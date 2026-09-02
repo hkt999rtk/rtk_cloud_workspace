@@ -4295,7 +4295,7 @@ func TestBillingImageBuildContextUsesProductionMultiProcessImage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"/rtk-billing", "/rtk-billing-payment-worker", "/rtk-billing-payment-simulator", "COPY --from=build /src/migrations /migrations"} {
+	for _, required := range []string{"/rtk-billing", "/rtk-billing-payment-worker", "/rtk-billing-settlement-collector", "/rtk-billing-payment-simulator", "COPY --from=build /src/migrations /migrations"} {
 		if !strings.Contains(string(body), required) {
 			t.Fatalf("Billing production Dockerfile missing %q: %s", required, body)
 		}

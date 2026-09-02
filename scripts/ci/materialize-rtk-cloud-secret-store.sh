@@ -46,6 +46,24 @@ write_object() {
 write_object operator "$environment_root/operator/env"
 write_object runtime "$environment_root/runtime"
 
+# New shared credentials are introduced independently from the opaque bundle so
+# an existing environment can bootstrap one catalog entry without replacing or
+# exposing the rest of its SecretStore. Once the bundle contains the entry, both
+# sources must remain identical until the transition variable is retired.
+bootstrap_runtime_secret() {
+  local id="$1" variable="$2" value="${!2:-}" target="$environment_root/runtime/$1"
+  [[ -n "$value" ]] || return 0
+  if [[ -e "$target" ]]; then
+    [[ ! -L "$target" && -f "$target" ]] || { echo "invalid runtime secret entry: $id" >&2; exit 2; }
+    [[ "$(cat "$target")" == "$value" ]] || { echo "runtime secret transition differs from bundle: $id" >&2; exit 2; }
+    return 0
+  fi
+  printf '%s' "$value" > "$target"
+  chmod 0600 "$target"
+}
+
+bootstrap_runtime_secret mqtt-usage-settlement RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN
+
 # GitHub-provided job secrets may be injected as environment variables. This
 # allowlist is CI-only and does not change deployment credential precedence.
 for key in LINODE_TOKEN GHCR_PULL_USERNAME GHCR_PULL_TOKEN GODADDY_KEY GODADDY_SECRET; do

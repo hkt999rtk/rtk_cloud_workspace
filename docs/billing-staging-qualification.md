@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-09-01
+Last reviewed: 2026-09-02
 
 Audience: internal test operators, maintainers, and delegated agents
 
@@ -22,6 +22,9 @@ and performs one coordinated full-stack deployment before running dedicated
 tests against the LKE `video-cloud-staging` stack. The full deployment is
 required because ownership handoff enables Account Manager, Billing, Factory,
 Video Control Plane and MQTT usage participants as one runtime boundary.
+It also deploys the Billing settlement collector and waits for its rollout; the
+collector alone may request the Video Cloud usage checkpoint through the
+dedicated NetworkPolicy and shared settlement credential.
 The run-scoped runtime is seeded with the tracked, non-secret staging
 `environment.env`, so Account Manager email delivery and other service
 settings use the canonical staging topology instead of an empty CI directory.
@@ -76,6 +79,7 @@ read, print, copy, or store their values:
 | Secret | `LINODE_TOKEN` | Obtain the existing LKE kubeconfig without logging credentials. |
 | Secret | `CI_RUNNER_GITHUB_WORK_KEY` | Initialize the pinned private submodules. |
 | Secret | `RTK_CLOUD_SECRET_BUNDLE` | Materialize the existing staging SecretStore without printing values. |
+| Secret | `RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN` | Transitional isolated value for the new `mqtt-usage-settlement` catalog entry; must match the value incorporated into the next opaque bundle rotation. |
 | Variable | `BILLING_STAGING_OTHER_ORG_ID` | Prove the Cloud Admin view cannot cross tenant boundaries. |
 | Variable | `BILLING_STAGING_QUALIFICATION_ENABLED` | Set to `true` only when the scheduled live qualification is enabled. Manual dispatch does not require it. |
 

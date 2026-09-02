@@ -196,6 +196,7 @@ jobs:
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         env:
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
+          RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: ${{ secrets.RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -225,6 +226,7 @@ jobs:
           namespace="video-cloud-staging-billing"
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing --timeout=180s
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing-payment-worker --timeout=180s
+          kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing-settlement-collector --timeout=180s
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/payment-simulator --timeout=180s
           kubectl --request-timeout=15s -n video-cloud-staging-account-manager \
             rollout status deployment/account-manager --timeout=180s

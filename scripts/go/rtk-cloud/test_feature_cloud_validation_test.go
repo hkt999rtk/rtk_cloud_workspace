@@ -486,6 +486,7 @@ func TestFeatureQualificationCanRunLiveBeforeRequiredMode(t *testing.T) {
 		"run_live:", "execute: ${{ steps.selection.outputs.execute }}", `echo "execute=$execute"`,
 		"needs.select.outputs.mode == 'required' || needs.select.outputs.execute == 'true'",
 		`[ "${{ needs.select.outputs.execute }}" != "true" ]`,
+		"RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Fatalf("feature qualification observe-live wiring is missing %q", required)
