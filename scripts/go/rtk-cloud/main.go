@@ -2568,6 +2568,10 @@ func runCreateBrandnameCloud(args []string) error {
 	if err != nil {
 		return err
 	}
+	ownerUserID, err := accountCurrentUserID(ctx, token)
+	if err != nil {
+		return err
+	}
 	list, err := accountListBrandClouds(ctx, token, 200)
 	if err != nil {
 		return err
@@ -2579,7 +2583,7 @@ func runCreateBrandnameCloud(args []string) error {
 			return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "exists", "brand_cloud": obj})
 		}
 	}
-	created, status, err := accountCreateBrandCloud(ctx, token, *brandname)
+	created, status, err := accountCreateBrandCloud(ctx, token, ownerUserID, *brandname)
 	if err != nil {
 		return err
 	}
@@ -7524,8 +7528,31 @@ func accountListBrandClouds(ctx accountManagerContext, token string, limit int) 
 	return parsed, json.Unmarshal(body, &parsed)
 }
 
-func accountCreateBrandCloud(ctx accountManagerContext, token, brandname string) (map[string]any, int, error) {
-	payload, _ := json.Marshal(map[string]any{"name": brandname, "metadata": map[string]string{"brandname": brandname}})
+func accountCurrentUserID(ctx accountManagerContext, token string) (string, error) {
+	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/me", token, nil)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", fmt.Errorf("current user lookup failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+	}
+	var parsed struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("parse current user response: %w", err)
+	}
+	userID := strings.TrimSpace(parsed.User.ID)
+	if userID == "" {
+		return "", errors.New("current user response did not include a global user ID")
+	}
+	return userID, nil
+}
+
+func accountCreateBrandCloud(ctx accountManagerContext, token, ownerUserID, brandname string) (map[string]any, int, error) {
+	payload, _ := json.Marshal(map[string]any{"name": brandname, "owner_user_id": ownerUserID, "metadata": map[string]string{"brandname": brandname}})
 	body, status, err := curlJSONStatus(ctx.BaseURL+"/v1/admin/brand-clouds", token, payload)
 	if err != nil {
 		return nil, status, err

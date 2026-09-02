@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -146,6 +147,8 @@ func TestBrandCloudCommandsExerciseLoginListFilterAndCreate(t *testing.T) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "platform-token"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/me":
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]string{"id": "11111111-1111-4111-8111-111111111111"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
 			listCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -155,6 +158,13 @@ func TestBrandCloudCommandsExerciseLoginListFilterAndCreate(t *testing.T) {
 				"pagination": map[string]any{"total": 1},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["owner_user_id"] != "11111111-1111-4111-8111-111111111111" {
+				t.Fatalf("owner_user_id = %v", payload["owner_user_id"])
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"brand_cloud": map[string]any{"id": "brand-new", "name": "New Brand"}})
 		default:
@@ -191,6 +201,36 @@ func TestBrandCloudCommandsExerciseLoginListFilterAndCreate(t *testing.T) {
 	}
 	if listCalls != 2 {
 		t.Fatalf("list calls = %d, want 2", listCalls)
+	}
+}
+
+func TestAccountCurrentUserIDRejectsUnusableResponses(t *testing.T) {
+	tests := []struct {
+		name        string
+		status      int
+		body        string
+		wantErrText string
+	}{
+		{name: "upstream failure", status: http.StatusServiceUnavailable, body: `{"error":{"message":"temporarily unavailable"}}`, wantErrText: "current user lookup failed: HTTP 503"},
+		{name: "malformed response", status: http.StatusOK, body: `{`, wantErrText: "parse current user response"},
+		{name: "missing user ID", status: http.StatusOK, body: `{"user":{}}`, wantErrText: "did not include a global user ID"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/me" || r.Header.Get("Authorization") != "Bearer platform-token" {
+					t.Fatalf("request = %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+				}
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer server.Close()
+
+			_, err := accountCurrentUserID(accountManagerContext{BaseURL: server.URL}, "platform-token")
+			if err == nil || !strings.Contains(err.Error(), tt.wantErrText) {
+				t.Fatalf("error = %v, want text %q", err, tt.wantErrText)
+			}
+		})
 	}
 }
 
