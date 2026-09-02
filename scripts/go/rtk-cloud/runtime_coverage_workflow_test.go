@@ -125,6 +125,7 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"video-cloud-staging-lke",
 		"group: staging-mutating-tests",
 		"RUNTIME_COVERAGE_NIGHTLY_ENABLED",
+		"RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN",
 		"RUNTIME_COVERAGE_SHARED_CLUSTER: \"1\"",
 		"runs-on: [self-hosted, Linux, X64]",
 		"RUNTIME_COVERAGE_RUNNER_LABEL: self-hosted-Linux-X64",

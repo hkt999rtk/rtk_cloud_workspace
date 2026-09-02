@@ -107,6 +107,7 @@ jobs:
         if: env.MULTICLOUD_MODE == 'run'
         env:
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
+          RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: ${{ secrets.RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN }}
           RTK_CLOUD_IMAP_OPERATOR_BUNDLE: ${{ secrets.RTK_CLOUD_IMAP_OPERATOR_BUNDLE }}
         shell: bash
         run: |

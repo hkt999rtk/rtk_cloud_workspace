@@ -355,6 +355,7 @@ jobs:
         if: env.RUNTIME_COVERAGE_MODE == 'run'
         env:
           RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE }}
+          RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: ${{ secrets.RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail

@@ -45,7 +45,7 @@ func TestLKEHandoffRuntimeIsExplicitlyOptIn(t *testing.T) {
 		}
 	}
 	mqttUsage := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400})
-	for _, forbidden := range []string{"VIDEO_CLOUD_BILLING_USAGE_ENDPOINT", "VIDEO_CLOUD_EMQX_API_URL", "mqtt-usage-checkpoint", "type: Recreate"} {
+	for _, forbidden := range []string{"VIDEO_CLOUD_BILLING_USAGE_ENDPOINT", "VIDEO_CLOUD_EMQX_API_URL", "VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN", "mqtt-usage-checkpoint", "type: Recreate"} {
 		if strings.Contains(mqttUsage, forbidden) {
 			t.Fatalf("disabled handoff deployment unexpectedly contains %q", forbidden)
 		}
@@ -55,6 +55,9 @@ func TestLKEHandoffRuntimeIsExplicitlyOptIn(t *testing.T) {
 	}
 	if strings.Contains(lkeEMQXTenantBaseHOCON(env), "bootstrap_file") {
 		t.Fatal("disabled handoff EMQX config unexpectedly enables API-key bootstrap")
+	}
+	if secret := lkeBillingSecretManifest(env); !strings.Contains(secret, `MQTT_USAGE_SETTLEMENT_TOKEN: ""`) {
+		t.Fatalf("disabled settlement collector credential must be empty:\n%s", secret)
 	}
 }
 
@@ -191,6 +194,7 @@ func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 		lkeFactoryEnrollDeploymentManifest(env, material),
 		lkeDeploymentManifest(env, lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Image: env["LKE_VIDEO_CLOUD_IMAGE"]}, nil),
 		lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400}),
+		lkeBillingSettlementCollectorManifest(env),
 	}, "\n---\n")
 	for _, want := range []string{
 		"name: FACTORY_ENROLL_RECOVERY_TOKEN",
@@ -202,6 +206,10 @@ func TestLKEHandoffWorkerAndConsumersUseRuntimeSecrets(t *testing.T) {
 		"key: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN",
 		"name: VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN",
 		"key: VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN",
+		"name: VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN",
+		"key: VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN",
+		`command: ["/rtk-billing-settlement-collector"]`,
+		"name: MQTT_USAGE_SETTLEMENT_BASE_URL",
 		"name: VIDEO_CLOUD_BILLING_USAGE_TOKEN",
 		"name: VIDEO_CLOUD_EMQX_API_KEY",
 		"name: VIDEO_CLOUD_EMQX_API_SECRET",
@@ -255,6 +263,8 @@ func TestLKEHandoffNetworkPoliciesAllowRequiredCallersOnlyOnCoordinatorPorts(t *
 		"values: [video-cloud-api, factoryenroll, video-cloud-mqttusage]",
 		"app.kubernetes.io/name: video-cloud-mqttusage",
 		"name: allow-mqttusage-emqx-management",
+		"name: allow-billing-settlement-checkpoint",
+		"app.kubernetes.io/name: billing-settlement-collector",
 		"port: 8080",
 		"port: 18083",
 		"port: 18443",
@@ -295,7 +305,9 @@ func TestLKEHandoffGeneratedManifestsAreValidYAML(t *testing.T) {
 		"mqtt-usage-deployment": lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{
 			Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400,
 		}),
-		"mqtt-usage-pvc": lkeVideoCloudMQTTUsageCheckpointPVCManifest(env),
+		"mqtt-usage-pvc":               lkeVideoCloudMQTTUsageCheckpointPVCManifest(env),
+		"billing-secret":               lkeBillingSecretManifest(env),
+		"billing-settlement-collector": lkeBillingSettlementCollectorManifest(env),
 	}
 	for index, manifest := range lkeAccountManagerHandoffNetworkPolicyManifests(env) {
 		manifests[fmt.Sprintf("network-policy-%d", index)] = manifest
@@ -305,5 +317,50 @@ func TestLKEHandoffGeneratedManifestsAreValidYAML(t *testing.T) {
 		if err := yaml.Unmarshal([]byte(manifest), &document); err != nil {
 			t.Fatalf("%s manifest is invalid YAML: %v\n%s", name, err, manifest)
 		}
+	}
+}
+
+func TestLKEBillingSettlementCollectorUsesOneIsolatedCredential(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "handoff-test")
+	env := handoffLKETestEnv(true)
+	token := lkeMQTTUsageSettlementToken()
+	if token == lkeMQTTUsageHandoffToken() || token == lkeBillingHandoffToken() || token == lkeBillingInternalToken() {
+		t.Fatal("settlement collector credential must be isolated from handoff and fact-delivery authority")
+	}
+	for name, binding := range map[string]string{
+		"billing":     lkeBillingSecretManifest(env),
+		"video-cloud": lkeVideoCloudWorkersSecretManifest(env),
+	} {
+		if !strings.Contains(binding, fmt.Sprintf("SETTLEMENT_TOKEN: %q", token)) {
+			t.Fatalf("%s secret does not bind the shared settlement credential", name)
+		}
+	}
+	manifest := lkeBillingSettlementCollectorManifest(env)
+	for _, want := range []string{
+		`command: ["/rtk-billing-settlement-collector"]`,
+		`value: "http://video-cloud-mqttusage.video-cloud-staging-video-cloud.svc.cluster.local:19400"`,
+		"name: billing-runtime",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("collector deployment missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestLKEBillingSettlementCredentialRotationRollsBothConsumers(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED", "")
+	env := handoffLKETestEnv(true)
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{"mqtt-usage-settlement": "settlement-token-one-0123456789abcdef"}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	mqttBefore := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400})
+	collectorBefore := lkeBillingSettlementCollectorManifest(env)
+	lkeRuntimeSecretCache["mqtt-usage-settlement"] = "settlement-token-two-0123456789abcdef"
+	if mqttBefore == lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400}) {
+		t.Fatal("settlement credential rotation must roll the MQTT usage producer")
+	}
+	if collectorBefore == lkeBillingSettlementCollectorManifest(env) {
+		t.Fatal("settlement credential rotation must roll the Billing collector")
 	}
 }

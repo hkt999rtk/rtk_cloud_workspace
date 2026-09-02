@@ -1371,8 +1371,37 @@ func lkeAccountManagerHandoffNetworkPolicyManifests(env map[string]string) []str
 	return []string{
 		lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env),
 		lkeAllowAccountManagerHandoffVideoCloudNetworkPolicyManifest(env),
+		lkeAllowBillingSettlementCheckpointNetworkPolicyManifest(env),
 		lkeAllowMQTTUsageEMQXManagementNetworkPolicyManifest(env),
 	}
+}
+
+func lkeAllowBillingSettlementCheckpointNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-billing-settlement-checkpoint
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-mqttusage
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: billing-settlement-collector
+      ports:
+        - { protocol: TCP, port: 19400 }
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "billing"))
 }
 
 func lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env map[string]string) string {
@@ -2202,7 +2231,16 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if err := kubectlApply(lkeBillingPaymentWorkerManifest(env)); err != nil {
 			return err
 		}
-		for _, deployment := range []string{"payment-simulator", "billing-payment-worker"} {
+		deployments := []string{"payment-simulator", "billing-payment-worker"}
+		if lkeAccountManagerHandoffWorkerEnabled(env) {
+			if err := kubectlApply(lkeBillingSettlementCollectorManifest(env)); err != nil {
+				return err
+			}
+			deployments = append(deployments, "billing-settlement-collector")
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "deployment/billing-settlement-collector", "--ignore-not-found=true"); err != nil {
+			return err
+		}
+		for _, deployment := range deployments {
 			if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "rollout", "status", "deployment/"+deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 				return err
 			}
@@ -5764,12 +5802,13 @@ stringData:
   VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: %q
   VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: %q
   VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN: %q
+  VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_TOKEN: %q
   VIDEO_CLOUD_EMQX_API_KEY: %q
   VIDEO_CLOUD_EMQX_API_SECRET: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeBillingInternalToken()), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeHandoffRuntimeValue(env, lkeBillingInternalToken()), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
 }
 
 func lkeCloudLoggerRuntimeSecretManifest(env map[string]string) string {
@@ -5960,6 +5999,11 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN
+            - name: VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN
             - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
               value: "http://billing.%s.svc.cluster.local:80/v1/internal/billing/usage-facts"
             - name: VIDEO_CLOUD_BILLING_USAGE_TOKEN
@@ -7444,6 +7488,10 @@ func lkeMQTTUsageHandoffToken() string {
 	return lkeRuntimeSecretValue("mqtt-usage-handoff")
 }
 
+func lkeMQTTUsageSettlementToken() string {
+	return lkeRuntimeSecretValue("mqtt-usage-settlement")
+}
+
 func lkeAccountManagerHandoffWorkerEnabled(env map[string]string) bool {
 	raw := firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED"), env["LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED"], "false")
 	switch strings.ToLower(strings.TrimSpace(raw)) {
@@ -7477,6 +7525,10 @@ func lkeMQTTUsageHandoffInternalURL(env map[string]string) string {
 	return "http://video-cloud-mqttusage." + lkeNamespaceName(env, "video-cloud") + ".svc.cluster.local:19400"
 }
 
+func lkeMQTTUsageSettlementInternalURL(env map[string]string) string {
+	return lkeMQTTUsageHandoffInternalURL(env)
+}
+
 func lkeBillingDatabaseURL(env map[string]string) string {
 	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
 }
@@ -7501,6 +7553,7 @@ stringData:
   BILLING_DEBIT_TOKEN: %q
   BILLING_CLOUD_CREATION_TOKEN: %q
   BILLING_HANDOFF_TOKEN: %q
+  MQTT_USAGE_SETTLEMENT_TOKEN: %q
   BILLING_DEBIT_SOURCE: "rtk_billing"
   PAYMENT_SIMULATOR_ENABLED: "true"
   PAYMENT_SIMULATOR_RUN_ID: %q
@@ -7523,7 +7576,7 @@ stringData:
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -7778,6 +7831,51 @@ spec:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeRuntimeSecretValue("payment-simulator-shared"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env)), lkeImagePullSecretName(env), lkeBillingImage(env))
+}
+
+func lkeBillingSettlementCollectorManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: billing-settlement-collector
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing-settlement-collector
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: billing-settlement-collector }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: billing-settlement-collector
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+    spec:
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: collector
+          image: %s
+          imagePullPolicy: IfNotPresent
+          command: ["/rtk-billing-settlement-collector"]
+          envFrom:
+            - secretRef: { name: billing-runtime }
+          env:
+            - name: MQTT_USAGE_SETTLEMENT_BASE_URL
+              value: %q
+            - { name: BILLING_SETTLEMENT_COLLECTOR_INTERVAL, value: "10s" }
+            - { name: BILLING_SETTLEMENT_COLLECTOR_BATCH_SIZE, value: "100" }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeMQTTUsageSettlementInternalURL(env), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken())), lkeImagePullSecretName(env), lkeBillingImage(env), lkeMQTTUsageSettlementInternalURL(env))
 }
 
 func lkeVideoCloudLifecycleInternalURL(env map[string]string) string {
@@ -8645,6 +8743,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeRuntimeSecretValue("mqtt-server-password"),
 		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()),
 		lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()),
+		lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()),
 		lkeHandoffRuntimeValue(env, lkeBillingInternalToken()),
 		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")),
 		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")),

@@ -164,7 +164,9 @@ jobs:
             --env-root "$BILLING_STAGING_ENV_ROOT" \
             --owner hkt999rtk \
             --out "$manifest"
-          for key in LKE_BILLING_IMAGE LKE_ACCOUNT_MANAGER_IMAGE LKE_CLOUD_ADMIN_IMAGE; do
+          for key in \
+            LKE_VIDEO_CLOUD_IMAGE LKE_ACCOUNT_MANAGER_IMAGE LKE_BILLING_IMAGE \
+            LKE_CLOUD_ADMIN_IMAGE LKE_FRONTEND_IMAGE LKE_CLOUD_LOGGER_IMAGE; do
             value="$(jq -er --arg key "$key" '.env[$key]' "$manifest")"
             printf '%s=%s\n' "$key" "$value" >> "$GITHUB_ENV"
           done
@@ -196,6 +198,7 @@ jobs:
         if: env.BILLING_QUALIFICATION_MODE == 'run'
         env:
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
+          RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: ${{ secrets.RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -205,6 +208,17 @@ jobs:
           bundle="$RUNNER_TEMP/rtk-cloud-staging-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
           printf '%s' "$RTK_CLOUD_SECRET_BUNDLE" > "$bundle"
           chmod 0600 "$bundle"
+          resolved_bundle="$bundle.resolved-images"
+          jq 'del(
+            .operator.LKE_VIDEO_CLOUD_IMAGE,
+            .operator.LKE_ACCOUNT_MANAGER_IMAGE,
+            .operator.LKE_BILLING_IMAGE,
+            .operator.LKE_CLOUD_ADMIN_IMAGE,
+            .operator.LKE_FRONTEND_IMAGE,
+            .operator.LKE_CLOUD_LOGGER_IMAGE
+          )' "$bundle" > "$resolved_bundle"
+          chmod 0600 "$resolved_bundle"
+          mv "$resolved_bundle" "$bundle"
           scripts/ci/materialize-rtk-cloud-secret-store.sh staging "$bundle" "$KUBECONFIG"
           go run ./scripts/go/rtk-cloud -- provision \
             --workspace "$GITHUB_WORKSPACE" \
@@ -225,6 +239,7 @@ jobs:
           namespace="video-cloud-staging-billing"
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing --timeout=180s
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing-payment-worker --timeout=180s
+          kubectl --request-timeout=15s -n "$namespace" rollout status deployment/billing-settlement-collector --timeout=180s
           kubectl --request-timeout=15s -n "$namespace" rollout status deployment/payment-simulator --timeout=180s
           kubectl --request-timeout=15s -n video-cloud-staging-account-manager \
             rollout status deployment/account-manager --timeout=180s
