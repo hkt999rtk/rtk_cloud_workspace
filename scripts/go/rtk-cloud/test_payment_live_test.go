@@ -159,6 +159,47 @@ func TestPaymentLiveInvoicePeriodRejectsMissingOrImmatureBoundary(t *testing.T) 
 	}
 }
 
+func TestPaymentLiveInvoicePeriodFailsClosedOnBoundaryReads(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		usageStatus      int
+		invoiceStatus    int
+		invoicePeriodEnd string
+		want             string
+	}{
+		{name: "usage read", usageStatus: http.StatusServiceUnavailable, want: "HTTP 503"},
+		{name: "invoice read", invoiceStatus: http.StatusServiceUnavailable, want: "read latest qualification invoice"},
+		{name: "invalid invoice period", invoicePeriodEnd: time.Time{}.Format(time.RFC3339Nano), want: "no valid period end"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(request.URL.Path, "/billing/usage") {
+					if test.usageStatus != 0 {
+						w.WriteHeader(test.usageStatus)
+						return
+					}
+					_, _ = w.Write([]byte(`{"period_start":"2026-09-02T03:31:43Z"}`))
+					return
+				}
+				if test.invoiceStatus != 0 {
+					w.WriteHeader(test.invoiceStatus)
+					return
+				}
+				_, _ = fmt.Fprintf(w, `{"invoices":[{"period_end":%q}]}`, test.invoicePeriodEnd)
+			}))
+			defer server.Close()
+			_, _, err := paymentLiveInvoicePeriod(context.Background(), server.Client(), paymentLiveConfig{
+				BillingBaseURL: server.URL, OrgID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+				OwnerUserID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", OwnershipVersion: 1,
+			}, strings.Repeat("b", 32))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestPaymentLiveScreenshotUsesInstalledChromiumAndExplicitViewport(t *testing.T) {
 	args := strings.Join(paymentLiveScreenshotArgs("390,844", "https://example.test", "mobile.png"), " ")
 	if !strings.Contains(args, "--browser=chromium") || !strings.Contains(args, "--viewport-size=390,844") || strings.Contains(args, "--device=") {
