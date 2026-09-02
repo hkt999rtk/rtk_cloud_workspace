@@ -16,6 +16,7 @@ import (
 var webAssets embed.FS
 
 type dashboardData interface {
+	recordClientActivity()
 	snapshot() Snapshot
 	detail(context.Context, string, string, int64) (RunDetail, error)
 }
@@ -23,9 +24,11 @@ type dashboardData interface {
 func newHandler(data dashboardData) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/snapshot", func(w http.ResponseWriter, _ *http.Request) {
+		data.recordClientActivity()
 		writeJSON(w, http.StatusOK, data.snapshot())
 	})
 	mux.HandleFunc("GET /api/runs/{owner}/{repo}/{runID}", func(w http.ResponseWriter, r *http.Request) {
+		data.recordClientActivity()
 		owner, repo := r.PathValue("owner"), r.PathValue("repo")
 		if !safeSegment(owner) || !safeSegment(repo) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid repository path"})
