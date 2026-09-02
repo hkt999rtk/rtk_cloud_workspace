@@ -720,6 +720,13 @@ cases:
       title: builds devices URLs with supported filters only
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#cloud%20switch%20keeps%20an%20authorized%20feature%20and%20falls%20back%20to%20overview%20otherwise
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: cloud switch keeps an authorized feature and falls back to overview otherwise
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#customer%20nav%20follows%20the%20approved%20Customer%20View%20design%20order
       module: cloud-admin-web
       language: javascript
