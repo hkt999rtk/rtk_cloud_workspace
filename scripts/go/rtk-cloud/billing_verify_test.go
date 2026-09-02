@@ -58,17 +58,17 @@ func TestParseBillingVerifyChecks(t *testing.T) {
 
 func TestQueryBillingUsageLogsFiltersBrandAndSumsMetrics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("stream") != "billing_usage" || r.URL.Query().Get("source") != "billing_usage" {
+		if r.URL.Path != "/v1/billing-usage/events" || r.URL.Query().Get("limit") != "1000" {
 			t.Fatalf("query = %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"events":[
-{"fields":{"usage_event":{"service_code":"mqtt","brand_cloud_id":"other","measurements":[{"metric_code":"publish_bytes","quantity":999} ]}}},
-{"fields":{"usage_event":{"service_code":"mqtt","brand_cloud_id":"brand-1","measurements":[{"metric_code":"publish_bytes","quantity":10},{"metric_code":"delivery_bytes","quantity":20},{"metric_code":"publish_count","quantity":1},{"metric_code":"delivery_count","quantity":2}]}}}
+		_, _ = w.Write([]byte(`{"records":[
+{"event":{"ts":"2026-09-02T12:00:00Z","fields":{"usage_event":{"service_code":"mqtt","brand_cloud_id":"other","measurements":[{"metric_code":"publish_bytes","quantity":999} ]}}}},
+{"event":{"ts":"2026-09-02T12:00:00Z","fields":{"usage_event":{"service_code":"mqtt","brand_cloud_id":"brand-1","measurements":[{"metric_code":"publish_bytes","quantity":10},{"metric_code":"delivery_bytes","quantity":20},{"metric_code":"publish_count","quantity":1},{"metric_code":"delivery_count","quantity":2}]}}}}
 ]}`))
 	}))
 	defer server.Close()
-	result, err := queryBillingUsageLogs(server.URL, "billing-token", "brand-1", time.Now().Add(-time.Hour), time.Now(), billingUsageSummary{})
+	result, err := queryBillingUsageLogs(server.URL, "billing-token", "brand-1", time.Date(2026, 9, 2, 11, 0, 0, 0, time.UTC), time.Date(2026, 9, 2, 13, 0, 0, 0, time.UTC), billingUsageSummary{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +115,8 @@ func TestRunStagingE2EBillingVerifyProducesLogEvidenceSummary(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer billing-token" {
 			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"events": []map[string]any{{
-			"fields": map[string]any{"usage_event": map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{"records": []map[string]any{{
+			"event": map[string]any{"ts": time.Now().UTC(), "fields": map[string]any{"usage_event": map[string]any{
 				"service_code": "mqtt", "brand_cloud_id": "brand-001",
 				"measurements": []map[string]any{
 					{"metric_code": "publish_bytes", "quantity": 100},
@@ -124,7 +124,7 @@ func TestRunStagingE2EBillingVerifyProducesLogEvidenceSummary(t *testing.T) {
 					{"metric_code": "publish_count", "quantity": 1},
 					{"metric_code": "delivery_count", "quantity": 2},
 				},
-			}},
+			}}},
 		}}})
 	}))
 	defer logger.Close()

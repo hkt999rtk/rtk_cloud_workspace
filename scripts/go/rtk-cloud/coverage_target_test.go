@@ -145,7 +145,7 @@ func TestBrandCloudCommandsExerciseLoginListFilterAndCreate(t *testing.T) {
 		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
-			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "platform-token"}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]string{"id": "platform-user"}, "tokens": map[string]string{"access_token": "platform-token"}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
 			listCalls++
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -155,6 +155,13 @@ func TestBrandCloudCommandsExerciseLoginListFilterAndCreate(t *testing.T) {
 				"pagination": map[string]any{"total": 1},
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/brand-clouds":
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload["owner_user_id"] != "platform-user" {
+				t.Fatalf("owner_user_id = %v, want platform-user", payload["owner_user_id"])
+			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"brand_cloud": map[string]any{"id": "brand-new", "name": "New Brand"}})
 		default:
@@ -377,6 +384,9 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
 			var request map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&request)
+			if request["organization_id"] != "brand-001" {
+				t.Fatalf("organization_id = %v, want brand-001", request["organization_id"])
+			}
 			deviceID := request["video_cloud_devid"].(string)
 			createdMu.Lock()
 			created = append(created, deviceID)

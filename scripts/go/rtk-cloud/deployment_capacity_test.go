@@ -68,6 +68,52 @@ func TestSharedCapacityNodeClassBottlenecksAndFit(t *testing.T) {
 	}
 }
 
+func TestSharedCapacityAllowsUnusedNodeClassesToResolveToZero(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := appendMap(cfg.Values, nil)
+	values["NODE_CLASS_GENERAL_MIN_COUNT"] = "1"
+	values["NODE_CLASS_BROKER_MIN_COUNT"] = "0"
+	values["NODE_CLASS_DATABASE_MIN_COUNT"] = "0"
+	values["MQTT_NODE_CLASS"] = "general"
+	values["POSTGRES_NODE_CLASS"] = "general"
+	values["MQTT_MIN_REPLICAS"] = "1"
+	values["VIDEO_CLOUD_API_MIN_REPLICAS"] = "1"
+	plan, _, err := buildSharedCapacityPlan(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.NodeClasses["broker"].EffectiveCount; got != 0 {
+		t.Fatalf("unused broker nodes = %d, want 0", got)
+	}
+	if got := plan.NodeClasses["database"].EffectiveCount; got != 0 {
+		t.Fatalf("unused database nodes = %d, want 0", got)
+	}
+	if got := plan.NodeClasses["general"].EffectiveCount; got < 1 {
+		t.Fatalf("general nodes = %d, want at least 1", got)
+	}
+}
+
+func TestSharedCapacityZeroMinimumStillCreatesNodeForAssignedWorkload(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := appendMap(cfg.Values, nil)
+	values["NODE_CLASS_BROKER_MIN_COUNT"] = "0"
+	plan, _, err := buildSharedCapacityPlan(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.NodeClasses["broker"].EffectiveCount; got < 1 {
+		t.Fatalf("assigned broker nodes = %d, want at least 1", got)
+	}
+}
+
 func TestSharedCapacityPlanIsAdapterIndependent(t *testing.T) {
 	var plans []sharedCapacityPlan
 	for _, adapter := range []string{"lke", "eks", "gke"} {

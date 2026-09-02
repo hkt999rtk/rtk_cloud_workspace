@@ -297,11 +297,19 @@ func removeDNSValues(existing, remove []string) []string {
 	return out
 }
 
-type goDaddyDNSAdapter struct{ client *http.Client }
+type goDaddyDNSAdapter struct {
+	client  *http.Client
+	key     string
+	secret  string
+	apiRoot string
+}
 
 func (*goDaddyDNSAdapter) Name() string { return "godaddy" }
 
 func (a *goDaddyDNSAdapter) credentials(ctx dnsAdapterContext) (string, string) {
+	if a.key != "" || a.secret != "" {
+		return a.key, a.secret
+	}
 	if rtkCloudTestMode() && os.Getenv("RTK_CLOUD_TEST_ALLOW_PROCESS_CREDENTIALS") == "1" {
 		if key, secret := strings.TrimSpace(os.Getenv("GODADDY_KEY")), strings.TrimSpace(os.Getenv("GODADDY_SECRET")); key != "" || secret != "" {
 			return key, secret
@@ -335,7 +343,10 @@ func (*goDaddyDNSAdapter) DiscoverZone(_ context.Context, ctx dnsAdapterContext)
 }
 
 func (a *goDaddyDNSAdapter) endpoint(ctx dnsAdapterContext, path string) string {
-	base := os.Getenv("RTK_CLOUD_GODADDY_API_ROOT")
+	base := a.apiRoot
+	if base == "" {
+		base = os.Getenv("RTK_CLOUD_GODADDY_API_ROOT")
+	}
 	if base == "" {
 		base = "https://api.godaddy.com"
 		if ctx.Values["GODADDY_ENV"] == "ote" {
@@ -343,6 +354,56 @@ func (a *goDaddyDNSAdapter) endpoint(ctx dnsAdapterContext, path string) string 
 		}
 	}
 	return base + path
+}
+
+func validateDNSMutationAccess(ctx context.Context, adapter dnsAdapter, adapterCtx dnsAdapterContext, zone dnsZone, environment string) (err error) {
+	environment = strings.ToLower(strings.TrimSpace(environment))
+	if environment == "" {
+		environment = "deployment"
+	}
+	name := "_rtk-cloud-credential-preflight-" + environment + "." + zone.Name
+	existing, err := adapter.GetRecordSet(ctx, adapterCtx, zone, name, "TXT")
+	if err != nil {
+		return fmt.Errorf("reserved DNS mutation record could not be read: %w", err)
+	}
+	if len(existing.Values) != 0 {
+		return fmt.Errorf("reserved DNS mutation record already exists: %s", name)
+	}
+	record := dnsRecordSet{
+		Name: name, Type: "TXT", Values: []string{"rtk-cloud-credential-preflight"}, TTL: 600, Purpose: "credential-preflight",
+	}
+	created := false
+	defer func() {
+		if !created {
+			return
+		}
+		if cleanupErr := adapter.DeleteRecordValues(context.Background(), adapterCtx, zone, record); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("reserved DNS mutation record cleanup failed: %w", cleanupErr))
+		}
+	}()
+	if err := adapter.UpsertRecordSet(ctx, adapterCtx, zone, record); err != nil {
+		return fmt.Errorf("DNS record mutation permission is required: %w", err)
+	}
+	created = true
+	got, err := adapter.GetRecordSet(ctx, adapterCtx, zone, name, "TXT")
+	if err != nil {
+		return fmt.Errorf("DNS mutation verification read failed: %w", err)
+	}
+	if strings.Join(got.Values, "\x00") != strings.Join(record.Values, "\x00") {
+		return errors.New("DNS mutation verification returned unexpected values")
+	}
+	if err := adapter.DeleteRecordValues(ctx, adapterCtx, zone, record); err != nil {
+		return fmt.Errorf("DNS record delete permission is required: %w", err)
+	}
+	created = false
+	got, err = adapter.GetRecordSet(ctx, adapterCtx, zone, name, "TXT")
+	if err != nil {
+		return fmt.Errorf("DNS mutation cleanup verification failed: %w", err)
+	}
+	if len(got.Values) != 0 {
+		return errors.New("reserved DNS mutation record remained after cleanup")
+	}
+	return nil
 }
 
 func (a *goDaddyDNSAdapter) request(ctx context.Context, adapterCtx dnsAdapterContext, method, path string, body any) ([]byte, error) {
