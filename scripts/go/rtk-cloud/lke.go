@@ -1399,7 +1399,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [account-manager-handoff-worker, account-manager-cloud-deletion-worker]
+                values: [account-manager, account-manager-handoff-worker, account-manager-cloud-deletion-worker]
       ports:
         - { protocol: TCP, port: 8080 }
     - from:
@@ -1440,7 +1440,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [account-manager-handoff-worker, account-manager-cloud-deletion-worker]
+                values: [account-manager, account-manager-handoff-worker, account-manager-cloud-deletion-worker]
       ports:
         - { protocol: TCP, port: 8080 }
         - { protocol: TCP, port: 18443 }
