@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,6 +55,39 @@ func TestRenderK8SNamespaceTemplate(t *testing.T) {
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("namespace manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
+func TestSharedKubernetesPlacementUsesPerWorkloadNodeClasses(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\ncase \"$*\" in *\" get \"*) printf 'present\\n' ;; esac\n")
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	env := map[string]string{
+		"DEPLOYMENT_ARCHITECTURE": "kubernetes", "CLOUD_STACK_NAME": "video-cloud-dev",
+		"DEFAULT_WORKLOAD_NODE_CLASS": "general", "NODE_CLASS_LABEL_KEY": "rtk.io/node-class",
+		"MQTT_NODE_CLASS": "general", "POSTGRES_NODE_CLASS": "general",
+	}
+	if err := applySharedKubernetesNodeClassPlacement(provisionContext{Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"-n video-cloud-dev-billing patch deployment billing",
+		"-n video-cloud-dev-billing patch deployment billing-payment-worker",
+		"-n video-cloud-dev-account-manager patch deployment account-manager-email-worker",
+		"-n video-cloud-dev-platform patch statefulset postgresql",
+		"-n video-cloud-dev-video-cloud patch statefulset mqtt",
+		`rtk.io/node-class":"general`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("placement log missing %q:\n%s", want, log)
 		}
 	}
 }

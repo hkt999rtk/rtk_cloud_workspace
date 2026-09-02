@@ -154,6 +154,41 @@ func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	}
 }
 
+func TestDeploymentProvisionRunsPreflightBeforeCredentialValidation(t *testing.T) {
+	for _, action := range []string{"provision", "test"} {
+		t.Run(action, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "staging", "lke")
+			calls := []string{}
+			ops := deploymentOperations{
+				preflight: func(_ deploymentConfig, operation string) error {
+					calls = append(calls, "preflight:"+operation)
+					return errors.New("preflight rejected deployment")
+				},
+				credentials: func(deploymentConfig, string) error {
+					calls = append(calls, "credentials")
+					return nil
+				},
+			}
+			err := runDeploymentWithOperations([]string{
+				action, "--workspace", workspace, "--environment", "staging", "--confirm", "video-cloud-staging",
+			}, ops)
+			if err == nil || !strings.Contains(err.Error(), "preflight rejected deployment") {
+				t.Fatalf("error = %v", err)
+			}
+			operation := "provision"
+			if action == "test" {
+				operation = "ephemeral-test"
+			}
+			if want := []string{"preflight:" + operation}; !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls = %v, want %v", calls, want)
+			}
+			if _, statErr := os.Stat(filepath.Join(workspace, "cloud_env", "staging", "runtime")); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("runtime was materialized before preflight: %v", statErr)
+			}
+		})
+	}
+}
+
 func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
@@ -677,8 +712,12 @@ func TestResolveDeploymentConfigRejectsUnknownLocationAndUnsatisfiedShape(t *tes
 	}
 }
 
-func TestResolveDeploymentConfigRejectsNonPositiveNodeIntent(t *testing.T) {
+func TestResolveDeploymentConfigAllowsZeroNodeClassCountButRejectsZeroShape(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "architecture.env"), "NODE_CLASS_BROKER_MIN_COUNT=0\n")
+	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err != nil {
+		t.Fatalf("zero node class count should be valid: %v", err)
+	}
 	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "architecture.env"), "NODE_CLASS_BROKER_MIN_VCPU=0\n")
 	if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), "must be a positive integer") {
 		t.Fatalf("got %v", err)

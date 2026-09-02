@@ -293,6 +293,29 @@ func TestDeploymentCredentialCheckerRejectsInvalidGHCRWithoutLeakingSecrets(t *t
 	}
 }
 
+func TestDeploymentCredentialCheckerRejectsReadOnlyLinodeScopes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-OAuth-Scopes", "lke:read_only linodes:read_only object_storage:read_only")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL}
+	check := checker.checkLinode(map[string]string{"LINODE_TOKEN": "redacted"})
+	if check.Passed || !strings.Contains(check.Detail, "firewall:read_write") || !strings.Contains(check.Detail, "lke:read_write") || !strings.Contains(check.Detail, "volumes:read_write") {
+		t.Fatalf("Linode scope check = %#v", check)
+	}
+}
+
+func TestDeploymentCredentialCheckerRejectsGoDaddyWithoutMutationPermission(t *testing.T) {
+	server := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{rejectGoDaddyMutation: true})
+	defer server.Close()
+	checker := deploymentCredentialChecker{client: server.Client(), goDaddyAPIRoot: server.URL}
+	check := checker.checkGoDaddy(testDeploymentCredentialConfig(), map[string]string{"GODADDY_KEY": "godaddy-key", "GODADDY_SECRET": "godaddy-secret"})
+	if check.Passed || !strings.Contains(check.Detail, "mutation permission") || !strings.Contains(check.Detail, "403") {
+		t.Fatalf("GoDaddy mutation check = %#v", check)
+	}
+}
+
 func TestDeploymentCredentialCheckerRejectsInsecureEnvFileBeforeNetwork(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	var requests atomic.Int32
@@ -442,8 +465,9 @@ func TestExchangeGHCRTokenAcceptsAccessTokenAndRejectsMalformedResponses(t *test
 
 func testDeploymentCredentialConfig() deploymentConfig {
 	return deploymentConfig{
-		Adapter:    "lke",
-		DNSAdapter: "godaddy",
+		Environment: "staging",
+		Adapter:     "lke",
+		DNSAdapter:  "godaddy",
 		Values: map[string]string{
 			"CLOUD_DNS_ROOT_DOMAIN":                  "example.test",
 			"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "true",
@@ -481,6 +505,7 @@ LINODE_OBJ_REGION=us-test-1
 
 type deploymentCredentialTestServerOptions struct {
 	rejectGHCR                 bool
+	rejectGoDaddyMutation      bool
 	requests                   *atomic.Int32
 	bucketExists               *atomic.Bool
 	rejectOriginalObjectKey    bool
@@ -489,6 +514,7 @@ type deploymentCredentialTestServerOptions struct {
 
 func newDeploymentCredentialTestServer(t *testing.T, options deploymentCredentialTestServerOptions) *httptest.Server {
 	t.Helper()
+	var dnsRecordExists atomic.Bool
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if options.requests != nil {
 			options.requests.Add(1)
@@ -499,8 +525,10 @@ func newDeploymentCredentialTestServer(t *testing.T, options deploymentCredentia
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
+			w.Header().Set("X-OAuth-Scopes", "*")
 			_, _ = w.Write([]byte(`{"username":"operator"}`))
 		case r.URL.Path == "/v4/lke/clusters":
+			w.Header().Set("X-OAuth-Scopes", "*")
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case r.URL.Path == "/token":
 			username, token, ok := r.BasicAuth()
@@ -515,12 +543,35 @@ func newDeploymentCredentialTestServer(t *testing.T, options deploymentCredentia
 				return
 			}
 			_, _ = w.Write([]byte(`{"name":"test","tags":["sha-test"]}`))
-		case r.URL.Path == "/v1/domains/example.test/records":
+		case r.URL.Path == "/v1/domains/example.test/records/TXT/_rtk-cloud-credential-preflight-staging":
 			if r.Header.Get("Authorization") != "sso-key godaddy-key:godaddy-secret" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			_, _ = w.Write([]byte(`[]`))
+			switch r.Method {
+			case http.MethodGet:
+				if dnsRecordExists.Load() {
+					_, _ = w.Write([]byte(`[{"data":"rtk-cloud-credential-preflight","ttl":600}]`))
+				} else {
+					_, _ = w.Write([]byte(`[]`))
+				}
+			case http.MethodPut:
+				if options.rejectGoDaddyMutation {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				dnsRecordExists.Store(true)
+				w.WriteHeader(http.StatusOK)
+			case http.MethodDelete:
+				if options.rejectGoDaddyMutation {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				dnsRecordExists.Store(false)
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
 		case r.URL.Path == "/v4/object-storage/buckets":
 			if r.Header.Get("Authorization") != "Bearer linode-secret" {
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
