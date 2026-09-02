@@ -964,6 +964,16 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodGet:
 			_, _ = w.Write([]byte(fmt.Sprintf(`{"auto_topup":{"enabled":true,"version":%d}}`, policyVersion)))
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodPut:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode automatic top-up policy: %v", err)
+			}
+			if got := int64Value(body["daily_attempt_limit"]); got != 10 {
+				t.Fatalf("qualification daily attempt limit = %d, want 10 for repeatable staging runs", got)
+			}
+			if got := int64Value(body["daily_amount_limit_minor"]); got != 3000 {
+				t.Fatalf("qualification daily amount limit = %d, want 3000", got)
+			}
 			policyVersion = 2
 			_, _ = w.Write([]byte(`{"auto_topup":{"version":2}}`))
 		case r.URL.Path == "/v1/orgs/org-test/auto-topup" && r.Method == http.MethodDelete:

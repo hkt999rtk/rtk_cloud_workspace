@@ -5068,10 +5068,12 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	videoPort := freeTCPPort(t)
 	factoryPort := freeTCPPort(t)
 	mqttPort := freeTCPPort(t)
+	loggerPort := freeTCPPort(t)
 	t.Setenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT", accountPort)
 	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", videoPort)
 	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT", factoryPort)
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", mqttPort)
+	t.Setenv("LKE_CLOUD_LOGGER_PORT", loggerPort)
 
 	_, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
 	if err != nil {
@@ -5081,7 +5083,7 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 
 	log := readTestFile(t, kubectlLog)
 	lastStart := -1
-	for _, service := range []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll", "svc/mqtt"} {
+	for _, service := range []string{"svc/account-manager", "svc/video-cloud-api", "svc/factoryenroll", "svc/mqtt", "svc/cloud-logger"} {
 		idx := strings.Index(log, "PF_START "+service)
 		if idx < 0 {
 			t.Fatalf("expected port-forward start for %s, got:\n%s", service, log)
