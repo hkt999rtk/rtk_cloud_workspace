@@ -35,10 +35,15 @@ main { max-width: 1800px; margin: 0 auto; padding: 22px 24px 60px; }
 .summary .running-stat strong { color: var(--running); }
 .summary .failed-stat strong { color: var(--failure); }
 .summary .sync-stat { justify-content: flex-end; }
-.fleet-panel { background: rgba(15,22,35,.72); border: 1px solid var(--line); border-radius: 13px; padding: 12px; margin-bottom: 16px; }
-.fleet-panel > header { display: flex; align-items: baseline; justify-content: space-between; margin: 0 2px 9px; color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; }
-.fleet-panel > header small { font-size: 9px; font-weight: 500; letter-spacing: .04em; }
-.repo-fleet { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 7px; }
+.fleet-panel { background: rgba(15,22,35,.72); border: 1px solid var(--line); border-radius: 13px; margin-bottom: 16px; overflow: hidden; }
+.fleet-toggle { display: flex; align-items: center; justify-content: space-between; min-height: 42px; padding: 0 14px; color: var(--muted); cursor: pointer; font-size: 10px; font-weight: 800; letter-spacing: .12em; list-style: none; }
+.fleet-toggle::-webkit-details-marker { display: none; }
+.fleet-toggle:hover, .fleet-toggle:focus-visible { background: rgba(27,39,56,.55); color: var(--text); outline: none; }
+.fleet-meta { display: flex; align-items: center; gap: 10px; }
+.fleet-toggle small { font-size: 9px; font-weight: 500; letter-spacing: .04em; }
+.fleet-chevron { color: var(--running); font-size: 16px; line-height: 1; transition: transform 180ms ease; }
+.fleet-panel[open] .fleet-chevron { transform: rotate(180deg); }
+.repo-fleet { display: grid; grid-template-columns: repeat(5, minmax(150px, 1fr)); gap: 7px; padding: 0 12px 12px; }
 .repo-pill { min-width: 0; min-height: 44px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: #111b29; color: var(--text); cursor: pointer; display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; text-align: left; }
 .repo-pill:hover, .repo-pill:focus-visible, .repo-pill.selected { border-color: var(--running); background: #17263a; outline: none; }
 .repo-pill .repo-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(56,201,118,.08); }
@@ -119,5 +124,5 @@ main { max-width: 1800px; margin: 0 auto; padding: 22px 24px 60px; }
 @keyframes live-pulse { from { box-shadow: 0 0 0 0 rgba(56,201,118,.55); } to { box-shadow: 0 0 0 12px rgba(56,201,118,0); } }
 @keyframes reborn { 0% { box-shadow: 0 0 0 2px var(--failure), 0 0 42px rgba(255,77,103,.5); } 55% { box-shadow: 0 0 0 2px var(--running), 0 0 38px rgba(78,161,255,.4); } 100% { box-shadow: 0 8px 24px rgba(0,0,0,.12); } }
 @media (max-width: 1199px) { .repo-fleet { grid-template-columns: repeat(3, minmax(150px, 1fr)); } .board { grid-template-columns: 1fr 1fr; } .completed-lane { grid-column: 1 / -1; } .completed-lane .card-list { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 767px) { .topbar { padding: 14px 16px; } main { padding: 15px 12px 40px; } .summary { grid-template-columns: 1fr 1fr; } .summary .sync-stat { justify-content: flex-start; } .repo-fleet { grid-template-columns: 1fr 1fr; } .fleet-panel > header small { display: none; } .toolbar { align-items: stretch; flex-wrap: wrap; } .toolbar .search { flex-basis: 100%; } .toolbar label:not(.search) { flex: 1; flex-direction: column; align-items: stretch; } .board { grid-template-columns: 1fr; } .completed-lane { grid-column: auto; } .completed-lane .card-list { grid-template-columns: 1fr; } .drawer { width: 100vw; } }
+@media (max-width: 767px) { .topbar { padding: 14px 16px; } main { padding: 15px 12px 40px; } .summary { grid-template-columns: 1fr 1fr; } .summary .sync-stat { justify-content: flex-start; } .repo-fleet { grid-template-columns: 1fr 1fr; } .fleet-toggle small { display: none; } .toolbar { align-items: stretch; flex-wrap: wrap; } .toolbar .search { flex-basis: 100%; } .toolbar label:not(.search) { flex: 1; flex-direction: column; align-items: stretch; } .board { grid-template-columns: 1fr; } .completed-lane { grid-column: auto; } .completed-lane .card-list { grid-template-columns: 1fr; } .drawer { width: 100vw; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition-duration: 120ms !important; } }
