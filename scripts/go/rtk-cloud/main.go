@@ -10328,6 +10328,7 @@ func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accou
 		claimToken := fmt.Sprintf("loadtest-%s-%s", runID, assignment.DeviceID)
 		activityID := fmt.Sprintf("bulk-bind-%s-%s", runID, assignment.DeviceID)
 		createPayload, err := json.Marshal(map[string]any{
+			"organization_id":   brandCloudID,
 			"claim_token":       claimToken,
 			"category":          assignment.Category,
 			"video_cloud_devid": assignment.DeviceID,

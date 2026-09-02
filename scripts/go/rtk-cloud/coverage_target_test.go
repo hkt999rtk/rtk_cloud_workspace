@@ -417,6 +417,9 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
 			var request map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&request)
+			if request["organization_id"] != "brand-001" {
+				t.Errorf("organization_id = %v, want brand-001", request["organization_id"])
+			}
 			deviceID := request["video_cloud_devid"].(string)
 			createdMu.Lock()
 			created = append(created, deviceID)
@@ -490,6 +493,13 @@ func TestRunBindDevicesQualifiesEveryAssignmentThroughClaimResolve(t *testing.T)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/auth/login"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "user-token", "refresh_token": "user-refresh"}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/device-claim-tokens":
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request["organization_id"] != "brand-001" {
+				t.Errorf("organization_id = %v, want brand-001", request["organization_id"])
+			}
 			requestsMu.Lock()
 			claimCreates++
 			requestsMu.Unlock()
