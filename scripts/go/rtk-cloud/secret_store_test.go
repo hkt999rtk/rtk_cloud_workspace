@@ -178,6 +178,15 @@ func TestTrackedSecretCatalogMatchesRuntimeContract(t *testing.T) {
 	}
 }
 
+func TestCredentialEnvironmentPreservesExplicitImageWhenOperatorBundleOmitsIt(t *testing.T) {
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/video-cloud:new")
+	restore := installAllCredentialEnvironment(map[string]string{"LINODE_TOKEN": "fixture-token"})
+	t.Cleanup(restore)
+	if got := os.Getenv("LKE_VIDEO_CLOUD_IMAGE"); got != "registry.example.test/video-cloud:new" {
+		t.Fatalf("explicit image override = %q, want process value", got)
+	}
+}
+
 func TestSecretMigrationCutsOverAtomicallyAndRemovesLegacySources(t *testing.T) {
 	workspace := t.TempDir()
 	home := t.TempDir()

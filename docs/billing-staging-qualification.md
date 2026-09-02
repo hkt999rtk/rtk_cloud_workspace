@@ -25,6 +25,9 @@ Video Control Plane and MQTT usage participants as one runtime boundary.
 It also deploys the Billing settlement collector and waits for its rollout; the
 collector alone may request the Video Cloud usage checkpoint through the
 dedicated NetworkPolicy and shared settlement credential.
+The run-scoped SecretStore drops legacy service-image pins from its copied
+operator bundle so the remotely verified CI image manifest remains the only
+deployment image source for the coordinated stack.
 The run-scoped runtime is seeded with the tracked, non-secret staging
 `environment.env`, so Account Manager email delivery and other service
 settings use the canonical staging topology instead of an empty CI directory.
