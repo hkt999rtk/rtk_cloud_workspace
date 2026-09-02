@@ -88,16 +88,27 @@ func TestPaymentLiveInvoicePeriodUsesCurrentOwnerResponsibilityBoundary(t *testi
 	owner := "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 	organization := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 	periodStart := time.Date(2026, 9, 2, 3, 31, 43, 243449000, time.UTC)
+	latestInvoiceEnd := periodStart.Add(10 * time.Second)
 	observedAt := periodStart.Add(19 * time.Second)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/v1/orgs/"+organization+"/billing/usage" {
+		if request.Method != http.MethodGet {
 			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
 		}
-		if request.Header.Get("X-Billing-Permissions") != "billing_usage.read" || request.Header.Get("X-Billing-Actor-ID") != owner {
-			t.Fatalf("missing owner-scoped usage authority: headers=%v", request.Header)
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"period_start":%q}`, periodStart.Format(time.RFC3339Nano))
+		switch request.URL.Path {
+		case "/v1/orgs/" + organization + "/billing/usage":
+			if request.Header.Get("X-Billing-Permissions") != "billing_usage.read" || request.Header.Get("X-Billing-Actor-ID") != owner {
+				t.Fatalf("missing owner-scoped usage authority: headers=%v", request.Header)
+			}
+			_, _ = fmt.Fprintf(w, `{"period_start":%q}`, periodStart.Format(time.RFC3339Nano))
+		case "/v1/orgs/" + organization + "/billing/invoices":
+			if request.URL.Query().Get("limit") != "1" || request.URL.Query().Get("offset") != "0" || request.Header.Get("X-Billing-Permissions") != "invoice.read" {
+				t.Fatalf("invalid invoice lookup: query=%v headers=%v", request.URL.Query(), request.Header)
+			}
+			_, _ = fmt.Fprintf(w, `{"invoices":[{"period_end":%q}]}`, latestInvoiceEnd.Format(time.RFC3339Nano))
+		default:
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL.Path)
+		}
 	}))
 	defer server.Close()
 
@@ -110,8 +121,8 @@ func TestPaymentLiveInvoicePeriodUsesCurrentOwnerResponsibilityBoundary(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !start.Equal(periodStart) || !end.Equal(observedAt.Add(-time.Millisecond)) {
-		t.Fatalf("period = %s..%s, want %s..%s", start, end, periodStart, observedAt.Add(-time.Millisecond))
+	if !start.Equal(latestInvoiceEnd) || !end.Equal(observedAt.Add(-time.Millisecond)) {
+		t.Fatalf("period = %s..%s, want %s..%s", start, end, latestInvoiceEnd, observedAt.Add(-time.Millisecond))
 	}
 }
 
@@ -127,9 +138,13 @@ func TestPaymentLiveInvoicePeriodRejectsMissingOrImmatureBoundary(t *testing.T) 
 		{name: "immature", response: `{"period_start":"2026-09-02T03:31:43Z"}`, now: time.Date(2026, 9, 2, 3, 31, 43, 0, time.UTC), want: "not old enough"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(test.response))
+				if strings.HasSuffix(request.URL.Path, "/billing/usage") {
+					_, _ = w.Write([]byte(test.response))
+					return
+				}
+				_, _ = w.Write([]byte(`{"invoices":[]}`))
 			}))
 			defer server.Close()
 			paymentLiveNow = func() time.Time { return test.now }
@@ -1085,6 +1100,11 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 				t.Fatalf("billing usage boundary was not owner-scoped")
 			}
 			_, _ = fmt.Fprintf(w, `{"period_start":%q}`, ownerPeriodStart.Format(time.RFC3339Nano))
+		case r.URL.Path == "/v1/orgs/org-test/billing/invoices" && r.Method == http.MethodGet:
+			if r.Header.Get("X-Billing-Permissions") != "invoice.read" || r.URL.Query().Get("limit") != "1" {
+				t.Fatalf("latest invoice lookup was not owner-scoped and bounded")
+			}
+			_, _ = w.Write([]byte(`{"invoices":[]}`))
 		case r.URL.Path == "/v1/internal/billing/pricing-versions" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification"}}`))
 		case r.URL.Path == "/v1/internal/billing/pricing-versions/pricing-qualification/activate" && r.Method == http.MethodPost:

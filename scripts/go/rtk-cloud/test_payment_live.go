@@ -1211,9 +1211,9 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 }
 
 func paymentLiveInvoicePeriod(ctx context.Context, client *http.Client, cfg paymentLiveConfig, billingToken string) (time.Time, time.Time, error) {
-	endpoint := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID) + "/billing/usage"
+	base := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID) + "/billing"
 	var current map[string]any
-	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodGet, endpoint, billingToken, "billing_usage.read", nil, nil, &current); err != nil {
+	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodGet, base+"/usage", billingToken, "billing_usage.read", nil, nil, &current); err != nil {
 		return time.Time{}, time.Time{}, err
 	}
 	value := stringValue(current["period_start"])
@@ -1222,6 +1222,23 @@ func paymentLiveInvoicePeriod(ctx context.Context, client *http.Client, cfg paym
 		return time.Time{}, time.Time{}, errors.New("current Billing usage has no valid owner responsibility period")
 	}
 	periodStart = periodStart.UTC()
+	var invoicePage struct {
+		Invoices []struct {
+			PeriodEnd time.Time `json:"period_end"`
+		} `json:"invoices"`
+	}
+	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodGet, base+"/invoices?limit=1&offset=0", billingToken, "invoice.read", nil, nil, &invoicePage); err != nil {
+		return time.Time{}, time.Time{}, fmt.Errorf("read latest qualification invoice: %w", err)
+	}
+	if len(invoicePage.Invoices) > 0 {
+		latestEnd := invoicePage.Invoices[0].PeriodEnd.UTC()
+		if latestEnd.IsZero() {
+			return time.Time{}, time.Time{}, errors.New("latest qualification invoice has no valid period end")
+		}
+		if latestEnd.After(periodStart) {
+			periodStart = latestEnd
+		}
+	}
 	periodEnd := paymentLiveNow().UTC().Add(-time.Millisecond)
 	if !periodEnd.After(periodStart) {
 		return time.Time{}, time.Time{}, errors.New("current owner responsibility period is not old enough to close safely")
