@@ -1,10 +1,17 @@
 schema_version: 1
 cases:
-    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#My%20Clouds%20is%20available%20without%20memberships%3B%20scoped%20next%20requires%20membership
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#explicit%20My%20Clouds%20is%20preserved%3B%20scoped%20next%20requires%20membership
       module: cloud-admin-web
       language: javascript
       source: src/auth-routing.test.mjs
-      title: My Clouds is available without memberships; scoped next requires membership
+      title: explicit My Clouds is preserved; scoped next requires membership
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20opens%20a%20valid%20remembered%20cloud%20or%20the%20first%20ordered%20membership
+      module: cloud-admin-web
+      language: javascript
+      source: src/auth-routing.test.mjs
+      title: login opens a valid remembered cloud or the first ordered membership
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20next%20accepts%20only%20admin%20and%20console%20paths
@@ -197,6 +204,27 @@ cases:
       language: javascript
       source: src/cloud-billing.test.mjs
       title: two clouds load independently and inconsistent ownership readbacks fail closed
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-preference.test.mjs#cloud%20preference%20parser%20accepts%20only%20the%20named%20UUID%20cookie
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-preference.test.mjs
+      title: cloud preference parser accepts only the named UUID cookie
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-preference.test.mjs#cookie%20writer%20uses%20one-year%20same-site%20navigation%20storage%20and%20secure%20HTTPS
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-preference.test.mjs
+      title: cookie writer uses one-year same-site navigation storage and secure HTTPS
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-preference.test.mjs#remembered%20membership%20wins%20and%20a%20stale%20preference%20falls%20back%20to%20the%20first%20ordered%20membership
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-preference.test.mjs
+      title: remembered membership wins and a stale preference falls back to the first ordered membership
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#Product%20paths%20bind%20both%20identities%20and%20reject%20path%20injection
@@ -871,6 +899,20 @@ cases:
       language: javascript
       source: src/routes.test.mjs
       title: uses the shared Brand Cloud title for integrated routes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/sdk-catalog.test.mjs#SDK%20artifact%20presentation%20keeps%20the%20five%20package%20formats%20distinct
+      module: cloud-admin-web
+      language: javascript
+      source: src/sdk-catalog.test.mjs
+      title: SDK artifact presentation keeps the five package formats distinct
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/sdk-catalog.test.mjs#SDK%20catalog%20appends%20the%20complete%20bundle%20and%20builds%20same-Portal%20docs%20links
+      module: cloud-admin-web
+      language: javascript
+      source: src/sdk-catalog.test.mjs
+      title: SDK catalog appends the complete bundle and builds same-Portal docs links
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/source-state.test.mjs#sourceAvailable%20only%20treats%20available%20source%20status%20as%20available
