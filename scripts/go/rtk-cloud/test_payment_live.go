@@ -79,6 +79,7 @@ var (
 	paymentLiveEnsureCustomer        = ensurePaymentLiveQualificationCustomer
 	paymentLiveCreateCustomerOrg     = createPaymentLiveQualificationOrganization
 	paymentLiveListCustomerClouds    = listPaymentLiveQualificationClouds
+	paymentLiveNow                   = func() time.Time { return time.Now().UTC() }
 )
 
 type paymentLiveQualificationCustomer struct {
@@ -1159,9 +1160,11 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 	if err := ensurePaymentLiveBillingProfile(ctx, client, cfg, billingToken); err != nil {
 		return "", fmt.Errorf("configure qualification billing profile: %w", err)
 	}
-	now := time.Now().UTC()
-	periodStart := now.Truncate(time.Hour).Add(-2 * time.Hour)
-	periodEnd := periodStart.Add(time.Hour)
+	periodStart, periodEnd, err := paymentLiveInvoicePeriod(ctx, client, cfg, billingToken)
+	if err != nil {
+		return "", fmt.Errorf("resolve qualification owner period: %w", err)
+	}
+	now := paymentLiveNow().UTC()
 	version := now.Unix()
 	internalBase := cfg.BillingBaseURL + "/v1/internal/billing"
 	headers := map[string]string{"X-Request-Id": "invoice-seed-" + cfg.RunID}
@@ -1205,6 +1208,25 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 		return "", errors.New("close qualification period returned no invoice ID")
 	}
 	return invoiceID, nil
+}
+
+func paymentLiveInvoicePeriod(ctx context.Context, client *http.Client, cfg paymentLiveConfig, billingToken string) (time.Time, time.Time, error) {
+	endpoint := cfg.BillingBaseURL + "/v1/orgs/" + url.PathEscape(cfg.OrgID) + "/billing/usage"
+	var current map[string]any
+	if err := paymentLiveBillingJSON(ctx, client, cfg, http.MethodGet, endpoint, billingToken, "billing_usage.read", nil, nil, &current); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	value := stringValue(current["period_start"])
+	periodStart, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil || periodStart.IsZero() {
+		return time.Time{}, time.Time{}, errors.New("current Billing usage has no valid owner responsibility period")
+	}
+	periodStart = periodStart.UTC()
+	periodEnd := paymentLiveNow().UTC().Add(-time.Millisecond)
+	if !periodEnd.After(periodStart) {
+		return time.Time{}, time.Time{}, errors.New("current owner responsibility period is not old enough to close safely")
+	}
+	return periodStart, periodEnd, nil
 }
 
 func ensurePaymentLiveBillingProfile(ctx context.Context, client *http.Client, cfg paymentLiveConfig, billingToken string) error {
