@@ -15,6 +15,8 @@ cloud_env/*
 !cloud_env/secret-catalog.json
 !cloud_env/*/
 cloud_env/*/*
+!cloud_env/dev/local/
+!cloud_env/dev/local/*
 !cloud_env/*/environment.env
 !cloud_env/*/deployment.env
 !cloud_env/*/storage.env

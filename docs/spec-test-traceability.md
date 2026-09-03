@@ -290,6 +290,14 @@
 | `repos/rtk_cloud_logger/docs/spec.md#REQ-LOGGER-DELIVERY-001` | `FEAT-LOGGER-IMPLEMENTATION-001` | `REQ-LOGGER-DELIVERY-001` | `` | `1e965958018f` | `service` | `active` | `INT-LOGGER-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_logger/docs/spec.md#REQ-LOGGER-CARDINALITY-001` | `FEAT-LOGGER-IMPLEMENTATION-001` | `REQ-LOGGER-CARDINALITY-001` | `` | `a38f559eeb96` | `service` | `active` | `INT-LOGGER-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_logger/docs/spec.md#REQ-LOGGER-INTEGRATION-001` | `FEAT-LOGGER-IMPLEMENTATION-001` | `REQ-LOGGER-INTEGRATION-001` | `` | `b30084ec29f8` | `service` | `active` | `INT-LOGGER-CONTRACT-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-LEGACY-001` | `FEAT-P1-LEGACY-001` | `REQ-P1-LEGACY-001` | `workflow` | `9220b029adfd` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-LEGACY-002` | `FEAT-P1-LEGACY-001` | `REQ-P1-LEGACY-002` | `workflow` | `f4985ec33bce` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-OTA-001` | `FEAT-P1-OTA-001` | `REQ-P1-OTA-001` | `workflow` | `5c235ceec56a` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-OTA-002` | `FEAT-P1-OTA-001` | `REQ-P1-OTA-002` | `workflow` | `16293f90a4e7` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-REPORT-001` | `FEAT-P1-REPORT-001` | `REQ-P1-REPORT-001` | `workflow` | `c4dc78c4b035` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-REPORT-002` | `FEAT-P1-REPORT-001` | `REQ-P1-REPORT-002` | `workflow` | `3b286616d894` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-TAGS-001` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `workflow` | `708c859571e1` | `canonical` | `active` | — | — |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md#REQ-P1-TAGS-002` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-002` | `workflow` | `92d6a207fccf` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/provision.md#REQ-CONTRACT-PROV-CLAIM-BOUNDARY-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-CLAIM-BOUNDARY-001` | `workflow` | `e603de105b73` | `canonical` | `active` | `E2E-PROV-ACCOUNT-001` | `test-e2e` |
 | `repos/rtk_cloud_contracts_doc/provision.md#REQ-CONTRACT-PROV-SIGNOFF-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-SIGNOFF-001` | `workflow` | `e9137db40cde` | `canonical` | `active` | `LIVE-STG-ONBOARD-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/provision.md#REQ-CONTRACT-PROV-CHANNEL-001` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-CHANNEL-001` | `independent` | `56eef5eb099d` | `canonical` | `active` | `INT-VC-PROV-CHANNEL-001` | `test-services` |
@@ -463,6 +471,7 @@
 | `SPEC-CONTRACT-OPENAPI#answerWebRtc` | `POST /api/request_webrtc/answer` | `FEAT-VC-WEBRTC-001` | `REQ-E2E-VC-WEBRTC-001` | `b6fc51832611` |
 | `SPEC-CONTRACT-OPENAPI#closeWebRtc` | `POST /api/request_webrtc/close` | `FEAT-VC-WEBRTC-001` | `REQ-E2E-VC-WEBRTC-001` | `995892407060` |
 | `SPEC-CONTRACT-OPENAPI#preflightWebRtcIce` | `GET /api/request_webrtc/ice` | `FEAT-VC-WEBRTC-001` | `REQ-E2E-VC-WEBRTC-001` | `622b16bd99e8` |
+| `SPEC-CONTRACT-OPENAPI#getSDKCatalog` | `GET /api/sdk/catalog` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-CATALOG-001`, `REQ-SDK-CONSOLE-INTEGRATION-001` | `ce586c551843` |
 | `SPEC-CONTRACT-OPENAPI#listNamedDeviceShadows` | `GET /api/things/shadow/ListNamedShadowsForThing/{thingName}` | `FEAT-HOME-SHADOW-001` | `REQ-SHADOW-IDENTITY-001`, `REQ-SHADOW-HTTP-API-001`, `REQ-SHADOW-RESPONSE-001`, `REQ-SHADOW-VALIDATION-001`, `REQ-SHADOW-CONFORMANCE-HTTP-001`, `REQ-E2E-HOME-SHADOW-003` | `04c48166e028` |
 | `SPEC-CONTRACT-OPENAPI#cameraEventLegacy` | `POST /camera_event` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `ae469f760774` |
 | `SPEC-CONTRACT-OPENAPI#cameraReadConfigLegacy` | `POST /camera_read_conf` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `7ff19afe92b1` |
@@ -483,6 +492,7 @@
 | `SPEC-CONTRACT-OPENAPI#getStatistics` | `POST /get_statistics` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `26e457900859` |
 | `SPEC-CONTRACT-OPENAPI#getHealthz` | `GET /healthz` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-002` | `f472d1f85462` |
 | `SPEC-CONTRACT-OPENAPI#downloadLegacyDeviceLogs` | `GET /logs/{devid}` | `FEAT-CA-OBS-001` | `REQ-UI-CA-LOGS-001` | `eafbbcac4a8c` |
+| `SPEC-CONTRACT-OPENAPI#downloadSDKPackage` | `POST /manual/sdk/download` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-PUBLIC-DOWNLOAD-001` | `ea128df8dbee` |
 | `SPEC-CONTRACT-OPENAPI#notifyCameraLegacy` | `POST /notify_camera` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `d1d5d176a3e8` |
 | `SPEC-CONTRACT-OPENAPI#publishFirmware` | `POST /publish_firmware` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `52e3e2b06833` |
 | `SPEC-CONTRACT-OPENAPI#queryCameraActivationLegacy` | `POST /query_camera_activate` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `517fed1df049` |
@@ -722,6 +732,7 @@
 | `SPEC-AM-OPENAPI#checkOrganizationResourceAccess` | `GET /v1/orgs/{orgId}/access/check` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `1bdf03d7191e` |
 | `SPEC-AM-OPENAPI#createDeviceGroup` | `POST /v1/orgs/{orgId}/device-groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `6f927c19fe1f` |
 | `SPEC-AM-OPENAPI#listDeviceGroups` | `GET /v1/orgs/{orgId}/device-groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `bf470bb29434` |
+| `SPEC-AM-OPENAPI#listDeviceGroupAggregates` | `GET /v1/orgs/{orgId}/device-groups/aggregates` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-002` | `8edec29b1361` |
 | `SPEC-AM-OPENAPI#deleteDeviceGroup` | `DELETE /v1/orgs/{orgId}/device-groups/{groupId}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `63cafbde929e` |
 | `SPEC-AM-OPENAPI#getDeviceGroup` | `GET /v1/orgs/{orgId}/device-groups/{groupId}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `5af620eba5dc` |
 | `SPEC-AM-OPENAPI#updateDeviceGroup` | `PATCH /v1/orgs/{orgId}/device-groups/{groupId}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `b59a21dc6bd0` |
@@ -764,7 +775,10 @@
 | `SPEC-AM-OPENAPI#listOrganizationRoleAssignments` | `GET /v1/orgs/{orgId}/role-assignments` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `9e7f3ecb6b0f` |
 | `SPEC-AM-OPENAPI#deleteOrganizationRoleAssignment` | `DELETE /v1/orgs/{orgId}/role-assignments/{assignmentId}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `ea067788e181` |
 | `SPEC-AM-OPENAPI#listOrganizationRoles` | `GET /v1/orgs/{orgId}/roles` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `0351a2af2c07` |
+| `SPEC-AM-OPENAPI#createOrganizationTag` | `POST /v1/orgs/{orgId}/tags` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `49f8997b9fc7` |
 | `SPEC-AM-OPENAPI#listOrganizationTags` | `GET /v1/orgs/{orgId}/tags` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001`, `REQ-CONTRACT-PROV-IDENTITY-MAP-001`, `REQ-CONTRACT-PROV-SIGNOFF-001` | `6cf511e8344c` |
+| `SPEC-AM-OPENAPI#deleteOrganizationTag` | `DELETE /v1/orgs/{orgId}/tags/{tag}` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `9e33018ceecf` |
+| `SPEC-AM-OPENAPI#renameOrganizationTag` | `PATCH /v1/orgs/{orgId}/tags/{tag}` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `d1bab34199e1` |
 | `SPEC-BILLING-OPENAPI#getBillingAccess` | `GET /v1/internal/billing/access/{orgId}` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-ACCESS-001` | `32b2794fb2cf` |
 | `SPEC-BILLING-OPENAPI#putBillingAccess` | `PUT /v1/internal/billing/access/{orgId}` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-ACCESS-001` | `676d0272d636` |
 | `SPEC-BILLING-OPENAPI#bootstrapBillingBrandCloud` | `POST /v1/internal/billing/cloud-creations` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-LIFECYCLE-001` | `18c95941edfb` |
@@ -891,7 +905,8 @@
 | `SPEC-CA-OPENAPI#getApiDeveloperBrandCloudsByBrandCloudIDDeletionPreflight` | `GET /api/developer/brand-clouds/{brandCloudID}/deletion-preflight` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `64f8ba11d106` |
 | `SPEC-CA-OPENAPI#listCloudFleetDevices` | `GET /api/developer/brand-clouds/{brandCloudID}/fleet/devices` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `689916efcc1f` |
 | `SPEC-CA-OPENAPI#getCloudFleetHealthSummary` | `GET /api/developer/brand-clouds/{brandCloudID}/fleet/health-summary` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `04924a5f9a63` |
-| `SPEC-CA-OPENAPI#getCloudFleetStreamStats` | `GET /api/developer/brand-clouds/{brandCloudID}/fleet/stream-stats` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `6d85678c2727` |
+| `SPEC-CA-OPENAPI#getCloudFleetStreamStats` | `GET /api/developer/brand-clouds/{brandCloudID}/fleet/stream-stats` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `6cb40580e8c7` |
+| `SPEC-CA-OPENAPI#listCloudGroupAggregates` | `GET /api/developer/brand-clouds/{brandCloudID}/groups/aggregates` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-002` | `c7dd56023467` |
 | `SPEC-CA-OPENAPI#getCloudBatchJob` | `GET /api/developer/brand-clouds/{brandCloudID}/jobs/{id}` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-STATE-001`, `REQ-CONTRACT-BATCH-RECOVERY-001` | `13608dc64bc5` |
 | `SPEC-CA-OPENAPI#listCloudBatchJobItems` | `GET /api/developer/brand-clouds/{brandCloudID}/jobs/{id}/items` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-RESULT-001` | `ee1e98a5d504` |
 | `SPEC-CA-OPENAPI#downloadCloudBatchJobResult` | `GET /api/developer/brand-clouds/{brandCloudID}/jobs/{id}/result` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-RESULT-001` | `154c618840a9` |
@@ -918,14 +933,19 @@
 | `SPEC-CA-OPENAPI#getScopedProductDevice` | `GET /api/developer/brand-clouds/{brandCloudID}/products/{productID}/devices/{deviceID}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `7ded252a08e1` |
 | `SPEC-CA-OPENAPI#patchScopedProductDevice` | `PATCH /api/developer/brand-clouds/{brandCloudID}/products/{productID}/devices/{deviceID}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `ec99ce6d28d2` |
 | `SPEC-CA-OPENAPI#postApiDeveloperBrandCloudsByBrandCloudIDProductsByProductIDDisable` | `POST /api/developer/brand-clouds/{brandCloudID}/products/{productID}/disable` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `58a2028bf193` |
-| `SPEC-CA-OPENAPI#executeCloudProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudID}/provisioning/jobs` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-005` | `c6baaac85e32` |
-| `SPEC-CA-OPENAPI#uploadCloudProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudID}/provisioning/sources` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002`, `REQ-UI-CA-PROV-004` | `f1d95f8e3c41` |
+| `SPEC-CA-OPENAPI#executeCloudProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudID}/provisioning/jobs` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-005` | `a20a76878614` |
+| `SPEC-CA-OPENAPI#uploadCloudProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudID}/provisioning/sources` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-002`, `REQ-UI-CA-PROV-004` | `38f9120f1527` |
 | `SPEC-CA-OPENAPI#validateCloudProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudID}/provisioning/validate` | `FEAT-CA-PROV-001` | `REQ-UI-CA-PROV-001`, `REQ-UI-CA-PROV-004` | `6bcb6fc2258b` |
 | `SPEC-CA-OPENAPI#createCloudReport` | `POST /api/developer/brand-clouds/{brandCloudID}/reports` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `c096a5acb9f9` |
 | `SPEC-CA-OPENAPI#listCloudReports` | `GET /api/developer/brand-clouds/{brandCloudID}/reports` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `c9ca48883548` |
-| `SPEC-CA-OPENAPI#createCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `8538030aeb95` |
+| `SPEC-CA-OPENAPI#getCloudReport` | `GET /api/developer/brand-clouds/{brandCloudID}/reports/{reportID}` | `FEAT-P1-REPORT-001` | `REQ-P1-REPORT-001`, `REQ-P1-REPORT-002` | `0d1d2eafe404` |
+| `SPEC-CA-OPENAPI#createCloudTag` | `POST /api/developer/brand-clouds/{brandCloudID}/tags` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `8e05254da1ae` |
+| `SPEC-CA-OPENAPI#listCloudTags` | `GET /api/developer/brand-clouds/{brandCloudID}/tags` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `ea17a89b3569` |
+| `SPEC-CA-OPENAPI#deleteCloudTag` | `DELETE /api/developer/brand-clouds/{brandCloudID}/tags/{tag}` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `edf0ecd66d1b` |
+| `SPEC-CA-OPENAPI#renameCloudTag` | `PATCH /api/developer/brand-clouds/{brandCloudID}/tags/{tag}` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `e3600d79b9b8` |
+| `SPEC-CA-OPENAPI#createCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `7aef043e0d7d` |
 | `SPEC-CA-OPENAPI#listCloudUpdatePlans` | `GET /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `9cb2820c76ab` |
-| `SPEC-CA-OPENAPI#previewCloudUpdatePlanScope` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/scope-preview` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `b9c3a73bac33` |
+| `SPEC-CA-OPENAPI#previewCloudUpdatePlanScope` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/scope-preview` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-BFF-SCOPE-001` | `fbd5353b3b60` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsets` | `GET /api/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `c1be29c8622c` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsetsByChipsetId` | `GET /api/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `f67498038c78` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleApp` | `POST /api/developer/pki/test-bundles/app` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `2989935bb81d` |
@@ -1339,6 +1359,13 @@
 | `WF-MULTICLOUD-SHARING-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-SHARING-001` | `deny_revoked_cloud_read` | `SPEC-CONTRACT-OPENAPI#getDeveloperBrandCloud` | `revoke_membership (state)` | `viewer_session`, `cloud_id` → — |  | `rejected` |
 | `WF-MULTICLOUD-SHARING-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-SHARING-001` | `deny_revoked_product_read` | `SPEC-AM-OPENAPI#getOrganizationDeviceItemProfile` | `revoke_membership (state)` | `viewer_session`, `cloud_id`, `readable_product_id` → — |  | `rejected` |
 | `WF-MULTICLOUD-SHARING-001` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-SHARING-001` | `reject_unconsumed_product_invitation` | `SPEC-AM-OPENAPI#acceptProductCollaboratorInvitation` | `revoke_membership (state)` | `viewer_session`, `pending_product_invitation_token` → — |  | `rejected` |
+| `WF-P1-LEGACY-001` | `FEAT-P1-LEGACY-001` | `REQ-P1-LEGACY-001`, `REQ-P1-LEGACY-002` | `resolve_legacy_url` | `SPEC-CA-OPENAPI#listCloudFleetDevices` | — | `developer_session`, `legacy_url` → `scoped_route_or_safe_404` |  | `rejected` |
+| `WF-P1-OTA-001` | `FEAT-P1-OTA-001` | `REQ-P1-OTA-001`, `REQ-P1-OTA-002` | `preview_ota_scope` | `SPEC-CA-OPENAPI#previewCloudUpdatePlanScope` | — | `developer_session`, `cloud_id`, `product_id`, `release_id`, `fleet_filter` → `ota_preview` | absent → valid | `success` |
+| `WF-P1-OTA-001` | `FEAT-P1-OTA-001` | `REQ-P1-OTA-001`, `REQ-P1-OTA-002` | `create_ota_plan` | `SPEC-CA-OPENAPI#createCloudUpdatePlan` | `preview_ota_scope (data)` | `developer_session`, `cloud_id`, `ota_preview` → `ota_plan` | valid → queued | `success` |
+| `WF-P1-REPORT-001` | `FEAT-P1-REPORT-001` | `REQ-P1-REPORT-001`, `REQ-P1-REPORT-002` | `create_report` | `SPEC-CA-OPENAPI#createCloudReport` | — | `developer_session`, `cloud_id`, `immutable_fleet_scope` → `report_job` | absent → queued | `success` |
+| `WF-P1-REPORT-001` | `FEAT-P1-REPORT-001` | `REQ-P1-REPORT-001`, `REQ-P1-REPORT-002` | `download_report` | `SPEC-CA-OPENAPI#getCloudReport` | `create_report (data)` | `developer_session`, `cloud_id`, `report_job` → `signed_download` |  | `success` |
+| `WF-P1-TAGS-001` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001`, `REQ-P1-TAGS-002` | `list_tags` | `SPEC-CA-OPENAPI#listCloudTags` | — | `developer_session`, `cloud_id` → `tag_catalog` |  | `success` |
+| `WF-P1-TAGS-001` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001`, `REQ-P1-TAGS-002` | `create_tag` | `SPEC-CA-OPENAPI#createCloudTag` | `list_tags (data)` | `developer_session`, `cloud_id`, `tag_name` → `tag` | absent → available | `success` |
 | `WF-PROV-ACCOUNT-001` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `issue_app_certificate` | `SPEC-AM-OPENAPI#loginUser` | — | `app_csr` → `account_session`, `app_certificate` | csr_required → certificate_issued | `success` |
 | `WF-PROV-ACCOUNT-001` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `resolve_device_claim` | `SPEC-AM-OPENAPI#resolveDeviceClaim` | `issue_app_certificate (session)` | `organization_id`, `claim_token`, `account_session` → `account_device_id`, `video_cloud_devid`, `claim_id`, `provision_input` | claimable → registered | `success` |
 | `WF-PROV-ACCOUNT-001` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `provision_registry_device` | `SPEC-AM-OPENAPI#provisionDevice` | `resolve_device_claim (data)` | `organization_id`, `account_device_id`, `video_cloud_devid`, `provision_input` → `provision_operation` | registered → provisioning | `success` |
@@ -1397,6 +1424,8 @@
 | `WF-SDK-ADAPTER-WS-001` | `FEAT-SDK-TRANSPORT-ADAPTER-001` | `REQ-SDK-TRANSPORT-SNAPSHOT-WS-001`, `REQ-SDK-TRANSPORT-WS-BEHAVIOR-001` | `disconnect_snapshot_websocket` | `SPEC-SDK-OPERATIONS#adapter_disconnect` | `connect_snapshot_websocket (cleanup)` | `websocket_owner` → — |  | `success` |
 | `WF-SDK-AUTH-001` | `FEAT-SDK-AUTH-001` | `REQ-E2E-SDK-AUTH-001` | `request_sdk_token` | `SPEC-CONTRACT-OPENAPI#requestToken` | — | `device_credential`, `device_id` → `access_token` |  | `success` |
 | `WF-SDK-AUTH-001` | `FEAT-SDK-AUTH-001` | `REQ-E2E-SDK-AUTH-001` | `read_authorized_device` | `SPEC-CONTRACT-OPENAPI#getDeviceInfo` | `request_sdk_token (auth)` | `access_token`, `device_id` → `device_info` |  | `success` |
+| `WF-SDK-CONSOLE-CATALOG-001` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-CONSOLE-INTEGRATION-001` | `read_portal_sdk_projection` | `SPEC-CONTRACT-OPENAPI#getSDKCatalog` | — | `authenticated_developer_session` → `safe_cloud_client_sdk_catalog` |  | `success` |
+| `WF-SDK-CONSOLE-CATALOG-001` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-CONSOLE-INTEGRATION-001` | `read_chipset_provider_catalog` | `SPEC-CONTRACT-OPENAPI#listDeveloperChipsets` | `read_portal_sdk_projection (session)` | `authenticated_developer_session` → `published_chipset_sdk_catalog` |  | `success` |
 | `WF-SDK-CORE-LIFECYCLE-001` | `FEAT-SDK-CORE-001` | `REQ-SDK-CORE-LIFECYCLE-001` | `create_client` | `SPEC-SDK-OPERATIONS#client_create` | — | `client_config` → `client` | absent → created | `success` |
 | `WF-SDK-CORE-LIFECYCLE-001` | `FEAT-SDK-CORE-001` | `REQ-SDK-CORE-LIFECYCLE-001` | `connect_session` | `SPEC-SDK-OPERATIONS#session_connect` | `create_client (state)` | `client`, `session_config` → `session` | created → connected | `success` |
 | `WF-SDK-CORE-LIFECYCLE-001` | `FEAT-SDK-CORE-001` | `REQ-SDK-CORE-LIFECYCLE-001` | `disconnect_session` | `SPEC-SDK-OPERATIONS#session_disconnect` | `connect_session (cleanup)` | `client`, `session` → — | connected → disconnected | `success` |
@@ -1413,6 +1442,8 @@
 | `WF-SDK-NATIVE-WS-001` | `FEAT-SDK-NATIVE-TRANSPORT-001` | `REQ-SDK-NATIVE-WS-BEHAVIOR-001` | `connect_native_websocket` | `SPEC-SDK-OPERATIONS#owner_connect_websocket` | — | `device_session` → `websocket_owner` |  | `success` |
 | `WF-SDK-NATIVE-WS-001` | `FEAT-SDK-NATIVE-TRANSPORT-001` | `REQ-SDK-NATIVE-WS-BEHAVIOR-001` | `send_native_websocket_control` | `SPEC-SDK-OPERATIONS#owner_send_control` | `connect_native_websocket (session)` | `websocket_owner`, `control_message` → `control_result` |  | `success` |
 | `WF-SDK-NATIVE-WS-001` | `FEAT-SDK-NATIVE-TRANSPORT-001` | `REQ-SDK-NATIVE-WS-BEHAVIOR-001` | `disconnect_native_websocket` | `SPEC-SDK-OPERATIONS#owner_disconnect` | `connect_native_websocket (cleanup)` | `websocket_owner` → — |  | `success` |
+| `WF-SDK-PUBLIC-DOWNLOAD-001` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-CATALOG-001`, `REQ-SDK-PUBLIC-DOWNLOAD-001` | `read_public_sdk_catalog` | `SPEC-CONTRACT-OPENAPI#getSDKCatalog` | — | `anonymous_sdk_session` → `release_version`, `terms_version`, `safe_package_metadata` |  | `success` |
+| `WF-SDK-PUBLIC-DOWNLOAD-001` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-CATALOG-001`, `REQ-SDK-PUBLIC-DOWNLOAD-001` | `accept_terms_and_download` | `SPEC-CONTRACT-OPENAPI#downloadSDKPackage` | `read_public_sdk_catalog (data)` | `anonymous_sdk_session`, `package_slug`, `release_version`, `terms_version`, `explicit_terms_acceptance` → `acceptance_record`, `ten_minute_presigned_redirect` |  | `success` |
 | `WF-SDK-RUNTIME-CANCEL-001` | `FEAT-SDK-RUNTIME-CONTROL-001` | `REQ-SDK-RUNTIME-CANCELLATION-001` | `start_cancellable_operation` | `SPEC-SDK-OPERATIONS#cancellable_operation_start` | — | `operation_request` → `operation_handle` | idle → pending | `success` |
 | `WF-SDK-RUNTIME-CANCEL-001` | `FEAT-SDK-RUNTIME-CONTROL-001` | `REQ-SDK-RUNTIME-CANCELLATION-001` | `cancel_pending_operation` | `SPEC-SDK-OPERATIONS#cancellable_operation_cancel` | `start_cancellable_operation (state)` | `operation_handle` → `cancel_result` | pending → cancelled | `success` |
 | `WF-SDK-RUNTIME-CANCEL-001` | `FEAT-SDK-RUNTIME-CONTROL-001` | `REQ-SDK-RUNTIME-CANCELLATION-001` | `observe_cancelled_operation` | `SPEC-SDK-OPERATIONS#runtime_observe_result` | `cancel_pending_operation (state)` | `operation_handle`, `cancel_result` → `stable_cancelled_result` |  | `success` |
@@ -1503,6 +1534,9 @@
 | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Legacy Compatibility@L249` | `proposed` | `planned` | `90db148a3a77` | MUST NOT infer tenant ownership from `model` or create implicit campaigns. |
 | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Implementation Gate@L254` | `proposed` | `planned` | `9a0351b2099f` | This contract, OpenAPI, authorization vocabulary, and migration design must be |
 | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Implementation Gate@L256` | `proposed` | `planned` | `29cf5cdeb098` | Backend implementation must include tenant isolation, immutable release, |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `Tags and group aggregates@L29` | `canonical` | `required` | `f38d9a8f0a5c` | firmware distribution. React MUST NOT calculate totals from a partial page. |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `OTA scope preview@L54` | `canonical` | `required` | `37c7305ea2d4` | OTA plan MUST reference the preview and MUST revalidate the cloud, Product, |
+| `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `Legacy route retirement@L108` | `canonical` | `required` | `94694d3f586f` | request is authorized. Otherwise it remains a safe 404 and must not reveal a |
 | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `SDK Local Onboarding Interface@L89` | `draft` | `planned` | `cf4653717c7e` | The first phase should define public interfaces or documented stubs for native, |
 | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `SDK Local Onboarding Interface@L107` | `draft` | `planned` | `9b06c9e7a44b` | Native and JavaScript/TypeScript must expose consistent concepts or explicit |
 | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `SDK Local Onboarding Interface@L109` | `draft` | `planned` | `53228cfd6237` | SDKs must not own account binding policy, account/video cross-service |
@@ -1579,6 +1613,12 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/pki_device_auth.md` | `Renewal Flow@L270` | `false` | normative clause d1329890f56f requires a stable FEAT-*/REQ-* source mapping: it must fail with `RTKC_STATUS_PKI_NOT_PROVISIONED` rather than creating a CSR |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/pki_device_auth.md` | `Renewal Trigger@L236` | `false` | normative clause 3e4913903392 requires a stable FEAT-*/REQ-* source mapping: The SDK must check certificate validity on each startup and trigger renewal |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_client/docs/pki_device_auth.md` | `Token Issuance After mTLS@L226` | `false` | normative clause 61bf80fd4134 requires a stable FEAT-*/REQ-* source mapping: issued token to that subject. The SDK must request `scope: "camera"` and must |
+| `WORKFLOW_TOO_SHORT` | `repos/rtk_cloud_contracts_doc/feature_workflows.yaml` | `WF-P1-LEGACY-001` | `true` | workflow must contain at least two ordered steps |
+| `UNKNOWN_WORKFLOW_FEATURE` | `repos/rtk_cloud_contracts_doc/feature_workflows.yaml` | `WF-SDK-CONSOLE-CATALOG-001` | `true` | workflow references an unknown feature |
+| `WORKFLOW_REQUIREMENT_FEATURE_MISMATCH` | `repos/rtk_cloud_contracts_doc/feature_workflows.yaml` | `WF-SDK-CONSOLE-CATALOG-001` | `true` | requirement REQ-SDK-CONSOLE-INTEGRATION-001 is not owned by workflow feature FEAT-CONTRACT-SDK-DISTRIBUTION-001 |
+| `UNKNOWN_WORKFLOW_FEATURE` | `repos/rtk_cloud_contracts_doc/feature_workflows.yaml` | `WF-SDK-PUBLIC-DOWNLOAD-001` | `true` | workflow references an unknown feature |
+| `WORKFLOW_REQUIREMENT_FEATURE_MISMATCH` | `repos/rtk_cloud_contracts_doc/feature_workflows.yaml` | `WF-SDK-PUBLIC-DOWNLOAD-001` | `true` | requirement REQ-SDK-CATALOG-001 is not owned by workflow feature FEAT-CONTRACT-SDK-DISTRIBUTION-001 |
+| `WORKFLOW_REQUIREMENT_FEATURE_MISMATCH` | `repos/rtk_cloud_contracts_doc/feature_workflows.yaml` | `WF-SDK-PUBLIC-DOWNLOAD-001` | `true` | requirement REQ-SDK-PUBLIC-DOWNLOAD-001 is not owned by workflow feature FEAT-CONTRACT-SDK-DISTRIBUTION-001 |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `DeviceDeployment And DeploymentEvent@L146` | `false` | normative clause 82d3c8d8ee60 requires a stable FEAT-*/REQ-* source mapping: campaigns MUST NOT overwrite earlier history. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `DeviceDeployment And DeploymentEvent@L167` | `false` | normative clause fff0ca8d8ff3 requires a stable FEAT-*/REQ-* source mapping: The authenticated device MUST provide a non-empty current version on every |
@@ -1602,6 +1642,15 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Ownership Boundary@L49` | `false` | normative clause 15c7a2590c7c requires a stable FEAT-*/REQ-* source mapping: Video Cloud MUST resolve brand, Product, and device identity from trusted |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Ownership Boundary@L51` | `false` | normative clause c8a65c0f4234 requires a stable FEAT-*/REQ-* source mapping: `device_id` MUST NOT override authenticated ownership facts. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Purpose And Current Baseline@L33` | `false` | normative clause 6e5b1d908db1 requires a stable FEAT-*/REQ-* source mapping: `model` is descriptive compatibility metadata and MUST NOT be used as a tenant, |
+| `UNKNOWN_OPERATION_FEATURE` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `downloadSDKPackage` | `true` | OpenAPI operation references an unknown spec feature |
+| `UNKNOWN_OPERATION_REQUIREMENT` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `downloadSDKPackage` | `true` | OpenAPI operation references an unknown spec requirement REQ-SDK-PUBLIC-DOWNLOAD-001 |
+| `UNKNOWN_OPERATION_REQUIREMENT` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getSDKCatalog` | `true` | OpenAPI operation references an unknown spec requirement REQ-SDK-CONSOLE-INTEGRATION-001 |
+| `UNKNOWN_OPERATION_FEATURE` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getSDKCatalog` | `true` | OpenAPI operation references an unknown spec feature |
+| `UNKNOWN_OPERATION_REQUIREMENT` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getSDKCatalog` | `true` | OpenAPI operation references an unknown spec requirement REQ-SDK-CATALOG-001 |
+| `MISSING_DOCUMENT_METADATA` | `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `` | `true` | registered Markdown source has no rtk_spec front matter |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `Legacy route retirement@L108` | `true` | normative clause 94694d3f586f requires a stable FEAT-*/REQ-* source mapping: request is authorized. Otherwise it remains a safe 404 and must not reveal a |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `OTA scope preview@L54` | `true` | normative clause 37c7305ea2d4 requires a stable FEAT-*/REQ-* source mapping: OTA plan MUST reference the preview and MUST revalidate the cloud, Product, |
+| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/p1_service_webui.md` | `Tags and group aggregates@L29` | `true` | normative clause f38d9a8f0a5c requires a stable FEAT-*/REQ-* source mapping: firmware distribution. React MUST NOT calculate totals from a partial page. |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `Account-Manager Claim Resolve Endpoint@L201` | `false` | normative clause 2b38cf3b431b requires a stable FEAT-*/REQ-* source mapping: Failure cases must distinguish invalid token, expired token, already claimed, |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `Account-Manager Claim Resolve Endpoint@L203` | `false` | normative clause 83350a36e143 requires a stable FEAT-*/REQ-* source mapping: and service-unavailable errors. Permission decisions must follow |
