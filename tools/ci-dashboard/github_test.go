@@ -224,3 +224,64 @@ func TestRetryUntilOnlyUsesRateLimitResetForRateLimitResponses(t *testing.T) {
 		t.Fatalf("rate-limit reset = %v, want %v", got, reset)
 	}
 }
+func TestListOpenPullRequestsPaginatesAndMapsFields(t *testing.T) {
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/hkt999rtk/repo/pulls" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("page") != "2" && (r.URL.Query().Get("state") != "open" || r.URL.Query().Get("per_page") != "100") {
+			t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("page") == "2" {
+			fmt.Fprint(w, `[{"number":7,"title":"older second page","html_url":"https://github.test/pr/7","draft":false,"user":{"login":"bob"},"head":{"ref":"feature-7"},"base":{"ref":"main"},"created_at":"2026-09-02T00:00:00Z","updated_at":"2026-09-02T01:00:00Z"}]`)
+			return
+		}
+		w.Header().Set("Link", `<`+server.URL+`/repos/hkt999rtk/repo/pulls?page=2>; rel="next"`)
+		fmt.Fprint(w, `[{"number":8,"title":"oldest","html_url":"https://github.test/pr/8","draft":true,"user":{"login":"amy"},"head":{"ref":"feature-8"},"base":{"ref":"main"},"created_at":"2026-09-01T00:00:00Z","updated_at":"2026-09-01T01:00:00Z"}]`)
+	}))
+	defer server.Close()
+	p := newPoller(&githubClient{baseURL: server.URL, token: "x", http: server.Client()}, nil, time.Second)
+	prs, err := p.listOpenPullRequests(context.Background(), Repository{Owner: "hkt999rtk", Name: "repo"})
+	if err != nil || len(prs) != 2 {
+		t.Fatalf("list open PRs = %#v, err=%v", prs, err)
+	}
+	if prs[0].Number != 8 || !prs[0].Draft || prs[0].Author.Login != "amy" || prs[1].HeadBranch != "feature-7" {
+		t.Fatalf("unexpected PR mapping/order: %#v", prs)
+	}
+}
+
+func TestSnapshotIncludesOpenPRsAndAlwaysUsesEmptySlice(t *testing.T) {
+	p := newPoller(&githubClient{}, []Repository{{Owner: "hkt999rtk", Name: "repo"}}, time.Second)
+	snapshot := p.snapshot()
+	if snapshot.OpenPullRequests == nil {
+		t.Fatal("openPullRequests must be an empty array, not null")
+	}
+	state := p.repos["hkt999rtk/repo"]
+	state.pullLastSync = time.Now()
+	state.openPRs = []OpenPullRequest{{Owner: "hkt999rtk", Repo: "repo", Number: 4, CreatedAt: time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)}, {Owner: "hkt999rtk", Repo: "repo", Number: 3, CreatedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}}
+	snapshot = p.snapshot()
+	if len(snapshot.OpenPullRequests) != 2 || snapshot.OpenPullRequests[0].Number != 3 {
+		t.Fatalf("open PRs were not globally ordered: %#v", snapshot.OpenPullRequests)
+	}
+}
+
+func TestPullRequestRefreshFailurePreservesPreviousList(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	p := newPoller(&githubClient{baseURL: server.URL, token: "x", http: server.Client()}, []Repository{{Owner: "hkt999rtk", Name: "repo"}}, time.Second)
+	state := p.repos["hkt999rtk/repo"]
+	state.openPRs = []OpenPullRequest{{Number: 9, Repo: "repo"}}
+	if err := p.refreshPullRequests(context.Background(), "hkt999rtk/repo"); err == nil {
+		t.Fatal("expected PR refresh failure")
+	} else {
+		p.recordPullFailure("hkt999rtk/repo", err)
+	}
+	snapshot := p.snapshot()
+	if len(snapshot.OpenPullRequests) != 1 || snapshot.OpenPullRequests[0].Number != 9 || !snapshot.Repositories[0].Stale {
+		t.Fatalf("previous PR list was not preserved as stale: %#v", snapshot)
+	}
+}

@@ -71,6 +71,9 @@ func TestRepositoryFleetIsCollapsedToggle(t *testing.T) {
 	if !strings.Contains(html, `<details class="fleet-panel">`) || !strings.Contains(html, `<summary class="fleet-toggle">`) {
 		t.Fatal("repository fleet is not rendered as a collapsed details toggle")
 	}
+	if !strings.Contains(html, `id="open-prs"`) || !strings.Contains(html, `id="pr-card-template"`) || !strings.Contains(html, "OPEN PRS") {
+		t.Fatal("open PR lane is not rendered")
+	}
 }
 
 func TestHandlerRejectsUnsafeRunPathAndDoesNotLeakToken(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,16 +23,22 @@ type githubClient struct {
 }
 
 type repoState struct {
-	repo          Repository
-	etag          string
-	runs          []Card
-	jobs          map[int64]JobSummary
-	lastSync      time.Time
-	lastAttempt   time.Time
-	err           string
-	backoffUntil  time.Time
-	backoff       time.Duration
-	completedJobs map[int64][]Job
+	repo             Repository
+	etag             string
+	runs             []Card
+	openPRs          []OpenPullRequest
+	jobs             map[int64]JobSummary
+	lastSync         time.Time
+	lastAttempt      time.Time
+	err              string
+	backoffUntil     time.Time
+	backoff          time.Duration
+	completedJobs    map[int64][]Job
+	pullLastSync     time.Time
+	pullLastAttempt  time.Time
+	pullErr          string
+	pullBackoffUntil time.Time
+	pullBackoff      time.Duration
 }
 
 type poller struct {
@@ -85,9 +92,20 @@ type apiActor struct {
 }
 
 type pullResponse struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	HTMLURL string `json:"html_url"`
+	Number  int      `json:"number"`
+	State   string   `json:"state"`
+	Title   string   `json:"title"`
+	HTMLURL string   `json:"html_url"`
+	Draft   bool     `json:"draft"`
+	User    apiActor `json:"user"`
+	Head    struct {
+		Ref string `json:"ref"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type jobsResponse struct {
@@ -209,12 +227,22 @@ func (p *poller) refresh(ctx context.Context) {
 		p.mu.RLock()
 		state := p.repos[key]
 		backoffUntil := state.backoffUntil
+		pullBackoffUntil := state.pullBackoffUntil
 		p.mu.RUnlock()
-		if now.Before(backoffUntil) {
+		if !now.Before(backoffUntil) {
+			if err := p.refreshRepo(ctx, key); err != nil {
+				p.recordFailure(key, err)
+			}
+		} else {
+			p.mu.RLock()
+			p.lastSuccessful = maxTime(p.lastSuccessful, state.lastSync)
+			p.mu.RUnlock()
+		}
+		if now.Before(pullBackoffUntil) {
 			continue
 		}
-		if err := p.refreshRepo(ctx, key); err != nil {
-			p.recordFailure(key, err)
+		if err := p.refreshPullRequests(ctx, key); err != nil {
+			p.recordPullFailure(key, err)
 			continue
 		}
 		anySuccess = true
@@ -228,6 +256,91 @@ func (p *poller) refresh(ctx context.Context) {
 		p.mu.Lock()
 		p.nextRefresh = time.Now().Add(p.interval)
 		p.mu.Unlock()
+	}
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}
+
+func (p *poller) refreshPullRequests(ctx context.Context, key string) error {
+	p.mu.RLock()
+	repo := p.repos[key].repo
+	p.mu.RUnlock()
+
+	prs, err := p.listOpenPullRequests(ctx, repo)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	state := p.repos[key]
+	state.openPRs = prs
+	state.pullLastAttempt = time.Now()
+	state.pullLastSync = state.pullLastAttempt
+	state.pullErr = ""
+	state.pullBackoff = 0
+	state.pullBackoffUntil = time.Time{}
+	for _, pr := range prs {
+		p.prCache[fmt.Sprintf("%s/%s/%d", pr.Owner, pr.Repo, pr.Number)] = PullRequest{Number: pr.Number, Title: pr.Title, URL: pr.URL}
+	}
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *poller) listOpenPullRequests(ctx context.Context, repo Repository) ([]OpenPullRequest, error) {
+	path := fmt.Sprintf("/repos/%s/%s/pulls?state=open&sort=created&direction=asc&per_page=100", url.PathEscape(repo.Owner), url.PathEscape(repo.Name))
+	var all []OpenPullRequest
+	for path != "" {
+		var raw []pullResponse
+		next, err := p.client.getJSONPage(ctx, path, &raw)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range raw {
+			if item.State != "" && item.State != "open" {
+				continue
+			}
+			all = append(all, OpenPullRequest{Key: fmt.Sprintf("%s/%s/%d", repo.Owner, repo.Name, item.Number), Owner: repo.Owner, Repo: repo.Name, Number: item.Number, Title: item.Title, URL: item.HTMLURL, Author: Actor{Login: item.User.Login, AvatarURL: item.User.AvatarURL}, Draft: item.Draft, HeadBranch: item.Head.Ref, BaseBranch: item.Base.Ref, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt})
+		}
+		path = next
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
+		}
+		if all[i].Owner != all[j].Owner {
+			return all[i].Owner < all[j].Owner
+		}
+		if all[i].Repo != all[j].Repo {
+			return all[i].Repo < all[j].Repo
+		}
+		return all[i].Number < all[j].Number
+	})
+	return all, nil
+}
+
+func (p *poller) recordPullFailure(key string, err error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.repos[key]
+	state.pullLastAttempt = time.Now()
+	state.pullErr = sanitizeError(err)
+	if state.pullBackoff == 0 {
+		state.pullBackoff = 15 * time.Second
+	} else {
+		state.pullBackoff *= 2
+		if state.pullBackoff > 5*time.Minute {
+			state.pullBackoff = 5 * time.Minute
+		}
+	}
+	var retryErr *retryAfterError
+	if errors.As(err, &retryErr) && retryErr.until.After(time.Now()) {
+		state.pullBackoffUntil = retryErr.until
+	} else {
+		state.pullBackoffUntil = time.Now().Add(state.pullBackoff)
 	}
 }
 
@@ -376,11 +489,21 @@ func (p *poller) snapshot() Snapshot {
 		repo := state.repo
 		repo.LastSync = state.lastSync
 		repo.Error = state.err
-		repo.Stale = state.err != "" || state.lastSync.IsZero()
+		if state.pullErr != "" {
+			if repo.Error != "" {
+				repo.Error += "; "
+			}
+			repo.Error += "open PRs: " + state.pullErr
+		}
+		repo.Stale = state.err != "" || state.pullErr != "" || state.lastSync.IsZero() || state.pullLastSync.IsZero()
 		snapshot.Repositories = append(snapshot.Repositories, repo)
 		for _, card := range state.runs {
 			card.RepoStale = repo.Stale
 			cards = append(cards, card)
+		}
+		for _, pr := range state.openPRs {
+			pr.RepoStale = repo.Stale
+			snapshot.OpenPullRequests = append(snapshot.OpenPullRequests, pr)
 		}
 	}
 	snapshot.Queued, snapshot.Running, snapshot.Completed = arrangeCards(cards, p.completedLimit)
@@ -393,6 +516,22 @@ func (p *poller) snapshot() Snapshot {
 	if snapshot.Completed == nil {
 		snapshot.Completed = []Card{}
 	}
+	if snapshot.OpenPullRequests == nil {
+		snapshot.OpenPullRequests = []OpenPullRequest{}
+	}
+	sort.SliceStable(snapshot.OpenPullRequests, func(i, j int) bool {
+		a, b := snapshot.OpenPullRequests[i], snapshot.OpenPullRequests[j]
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		if a.Owner != b.Owner {
+			return a.Owner < b.Owner
+		}
+		if a.Repo != b.Repo {
+			return a.Repo < b.Repo
+		}
+		return a.Number < b.Number
+	})
 	return snapshot
 }
 
@@ -555,9 +694,23 @@ type retryAfterError struct {
 func (e *retryAfterError) Error() string { return fmt.Sprintf("GitHub API %d: %s", e.status, e.msg) }
 
 func (c *githubClient) getJSON(ctx context.Context, path, etag string, target any) (newETag string, notModified bool, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.baseURL, "/")+path, nil)
+	newETag, _, notModified, err = c.getJSONPageWithETag(ctx, path, etag, target)
+	return newETag, notModified, err
+}
+
+func (c *githubClient) getJSONPage(ctx context.Context, path string, target any) (next string, err error) {
+	_, next, _, err = c.getJSONPageWithETag(ctx, path, "", target)
+	return next, err
+}
+
+func (c *githubClient) getJSONPageWithETag(ctx context.Context, path, etag string, target any) (newETag, next string, notModified bool, err error) {
+	targetURL := path
+	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		targetURL = strings.TrimRight(c.baseURL, "/") + path
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
@@ -570,26 +723,39 @@ func (c *githubClient) getJSON(ctx context.Context, path, etag string, target an
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
 	defer resp.Body.Close()
 	if c.onRate != nil {
 		c.onRate(resp.Header)
 	}
 	if resp.StatusCode == http.StatusNotModified {
-		return etag, true, nil
+		return etag, "", true, nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		until := retryUntil(resp.StatusCode, resp.Header)
-		return "", false, &retryAfterError{status: resp.StatusCode, until: until, msg: strings.TrimSpace(string(body))}
+		return "", "", false, &retryAfterError{status: resp.StatusCode, until: until, msg: strings.TrimSpace(string(body))}
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(target); err != nil {
-		return "", false, err
+		return "", "", false, err
 	}
-	return resp.Header.Get("ETag"), false, nil
+	return resp.Header.Get("ETag"), nextLink(resp.Header.Get("Link")), false, nil
 }
 
+func nextLink(value string) string {
+	for _, part := range strings.Split(value, ",") {
+		pieces := strings.Split(strings.TrimSpace(part), ";")
+		if len(pieces) < 2 || !strings.Contains(pieces[1], `rel="next"`) {
+			continue
+		}
+		link := strings.TrimSpace(pieces[0])
+		if strings.HasPrefix(link, "<") && strings.HasSuffix(link, ">") {
+			return strings.TrimSuffix(strings.TrimPrefix(link, "<"), ">")
+		}
+	}
+	return ""
+}
 func retryUntil(status int, header http.Header) time.Time {
 	if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
 		return time.Now().Add(time.Duration(seconds) * time.Second)
