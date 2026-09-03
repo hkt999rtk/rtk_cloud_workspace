@@ -43,6 +43,7 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 	devices := []generatedDevice{{
 		DeviceID:             "load-device-0001",
 		DeviceType:           "camera",
+		DeviceItemProfileID:  "product-camera-001",
 		MQTTCapability:       "camera",
 		ServiceOptions:       []string{"mqtt", "video_streaming"},
 		Model:                "RTC-CAM-PRO2-SIM",
@@ -73,7 +74,7 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDeviceManifest() error = %v", err)
 	}
-	if len(loadedDevices) != 1 || loadedDevices[0].DeviceID != "load-device-0001" || !reflect.DeepEqual(loadedDevices[0].ServiceOptions, []string{"mqtt", "video_streaming"}) {
+	if len(loadedDevices) != 1 || loadedDevices[0].DeviceID != "load-device-0001" || loadedDevices[0].DeviceItemProfileID != "product-camera-001" || !reflect.DeepEqual(loadedDevices[0].ServiceOptions, []string{"mqtt", "video_streaming"}) {
 		t.Fatalf("loaded devices = %+v", loadedDevices)
 	}
 

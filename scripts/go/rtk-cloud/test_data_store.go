@@ -449,7 +449,7 @@ func (s *testDataStore) ReplaceDevices(brandname, runID string, devices []genera
 }
 
 func (s *testDataStore) ReadDeviceManifest(brandname string) ([]bindDeviceManifest, error) {
-	rows, err := s.DB.Query(`select device_id, device_type, display_name, service_options_json, metadata_json from devices where brandname = ? order by device_id`, brandname)
+	rows, err := s.DB.Query(`select device_id, device_type, display_name, service_options_json, body_json from devices where brandname = ? order by device_id`, brandname)
 	if err != nil {
 		return nil, err
 	}
@@ -457,14 +457,14 @@ func (s *testDataStore) ReadDeviceManifest(brandname string) ([]bindDeviceManife
 	out := []bindDeviceManifest{}
 	for rows.Next() {
 		var item bindDeviceManifest
-		var serviceOptionsJSON, metadataJSON string
-		if err := rows.Scan(&item.DeviceID, &item.DeviceType, &item.DisplayName, &serviceOptionsJSON, &metadataJSON); err != nil {
+		var serviceOptionsJSON, bodyJSON string
+		if err := rows.Scan(&item.DeviceID, &item.DeviceType, &item.DisplayName, &serviceOptionsJSON, &bodyJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
-		var metadata generatedDevice
-		if json.Unmarshal([]byte(metadataJSON), &metadata) == nil {
-			item.DeviceItemProfileID = metadata.DeviceItemProfileID
+		var device generatedDevice
+		if json.Unmarshal([]byte(bodyJSON), &device) == nil {
+			item.DeviceItemProfileID = device.DeviceItemProfileID
 		}
 		out = append(out, item)
 	}
