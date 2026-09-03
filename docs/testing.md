@@ -228,18 +228,27 @@ commit alignment.
 ten-module Go matrix, the two-module JavaScript inventory matrix, Account
 Manager PostgreSQL integration, Video Cloud PostgreSQL/EMQX integration, and
 final cross-language aggregation/redaction into parallel required jobs.
-`Workspace Test Baseline` continues to run `test-matrix`, deterministic
-workspace E2E, full desktop/mobile product UI evidence, Home load-runner
-contracts, Node/V8 coverage, and service suites selected from the diff. Its
-requirement-level aggregate runs as a non-blocking audit while
-`FEATURE_QUALIFICATION_MODE=observe`; changing that variable to `required`
-switches the same PR path to `test-feature-coverage check`. These deterministic
-gates do not depend on shared staging.
+`Workspace Test Baseline` is a manual E2E workflow. It is not triggered by pull
+requests or pushes because it runs `test-matrix`, deterministic workspace E2E,
+full desktop/mobile product UI evidence, Home load-runner contracts, Node/V8
+coverage, and all affected-service qualification suites. Run it when a change
+needs complete cross-service evidence:
 
-Coverage evidence is retained for 30 days on pull requests and 90 days on
-`main`. A gate fails for test failure, required integration SKIP, package or
-module ratchet regression, missing critical permanent ID, unsafe artifact, or
-changed-Go-statement coverage below 80%.
+```sh
+gh workflow run workspace-test-baseline.yml --ref <branch-or-main>
+```
+
+Its requirement-level aggregate runs as a non-blocking audit while
+`FEATURE_QUALIFICATION_MODE=observe`; changing that variable to `required`
+switches the manual run to `test-feature-coverage check`. PRs continue to use
+the separate policy/catalog/inventory and affected coverage gates. These
+deterministic gates do not depend on shared staging.
+
+PR coverage evidence is retained for 30 days; manual workspace baseline and
+`main` evidence are retained for 90 days. A gate fails for test failure,
+required integration SKIP, package or module ratchet regression, missing
+critical permanent ID, unsafe artifact, or changed-Go-statement coverage below
+80%.
 
 `Go Runtime Coverage Nightly` is deliberately separate. It builds
 coverage-only images into the existing staging LKE cluster while deploying only

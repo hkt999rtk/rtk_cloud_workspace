@@ -2055,7 +2055,11 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	t.Setenv("DEVELOPER_PKI_TEST_TOOLS_ENABLED", "true")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/cloud-admin:test")
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+		"FRONTEND_DOMAIN":    "frontend.video-cloud-staging.realtekconnect.com",
+	}
 
 	policies := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, nil), "\n---\n")
 	for _, want := range []string{
@@ -2090,12 +2094,27 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	manifest := lkeDeploymentManifest(env, admin, nil)
 	for _, want := range []string{
 		"name: CLOUD_ADMIN_ENV\n              value: \"staging\"",
+		"name: SDK_PORTAL_BASE_URL\n              value: \"https://frontend.video-cloud-staging.realtekconnect.com\"",
 		"name: DEVELOPER_PKI_TEST_TOOLS_ENABLED\n              value: \"true\"",
 		"name: FACTORY_ENROLL_BASE_URL\n              value: \"http://factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("cloud-admin certificate bundle configuration missing %q:\n%s", want, manifest)
 		}
+	}
+}
+
+func TestLKESDKPortalBaseURLOverride(t *testing.T) {
+	env := map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video.example.test",
+		"FRONTEND_DOMAIN":    "frontend.video.example.test",
+	}
+	if got := lkeSDKPortalBaseURL(env); got != "https://frontend.video.example.test" {
+		t.Fatalf("default SDK Portal base URL = %q", got)
+	}
+	t.Setenv("SDK_PORTAL_BASE_URL", "https://sdk.example.test/")
+	if got := lkeSDKPortalBaseURL(env); got != "https://sdk.example.test" {
+		t.Fatalf("overridden SDK Portal base URL = %q", got)
 	}
 }
 
