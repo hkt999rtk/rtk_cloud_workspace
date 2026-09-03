@@ -327,6 +327,38 @@ func TestCommandValidationCoversOperationalFailureBoundaries(t *testing.T) {
 	if err := runMigrateEnv([]string{"--env-root", "staging"}); err == nil || !strings.Contains(err.Error(), "retired") {
 		t.Fatalf("migrate error = %v", err)
 	}
+	assertPerDeviceFactoryCredentialMapsValidateBeforeGeneration(t)
+}
+
+func assertPerDeviceFactoryCredentialMapsValidateBeforeGeneration(t *testing.T) {
+	keys := []string{
+		"FACTORY_ENROLL_PRODUCTION_JWT_BY_DEVICE_TYPE",
+		"FACTORY_ENROLL_BATCH_ID_BY_DEVICE_TYPE",
+		"FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE",
+	}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			for _, candidate := range keys {
+				t.Setenv(candidate, "")
+			}
+			t.Setenv(key, "not-json")
+			if err := runGenerateLoadDevices(nil); err == nil || !strings.Contains(err.Error(), key+" must be a JSON object") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+
+	t.Setenv("FACTORY_TEST_MAP", `{" camera ":" product-1 "}`)
+	values, err := envJSONTextMap("FACTORY_TEST_MAP")
+	if err != nil || values[" camera "] != "product-1" {
+		t.Fatalf("values=%v err=%v", values, err)
+	}
+	for _, raw := range []string{`{"":"value"}`, `{"camera":""}`} {
+		t.Setenv("FACTORY_TEST_MAP", raw)
+		if _, err := envJSONTextMap("FACTORY_TEST_MAP"); err == nil || !strings.Contains(err.Error(), "empty device type or value") {
+			t.Fatalf("raw=%s error=%v", raw, err)
+		}
+	}
 }
 
 func TestRefreshUserTokensLogsInUsersAndPersistsSessions(t *testing.T) {

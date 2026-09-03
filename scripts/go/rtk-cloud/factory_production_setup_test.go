@@ -185,6 +185,99 @@ func TestPrepareFactoryProductionBundleStepPassesPerTypeCredentialsOnlyToChildEn
 			t.Fatalf("%s leaked a production JWT", path)
 		}
 	}
+	assertFactoryProductionBundleRejectsInvalidBundlesAndPaths(t)
+}
+
+func assertFactoryProductionBundleRejectsInvalidBundlesAndPaths(t *testing.T) {
+	valid := factoryProductionCredentialBundle{
+		"camera": {JWT: "camera-secret", BrandCloudID: "brand", DeviceItemProfileID: "camera-product", ProductionRunID: "camera-run", BatchID: "batch-camera"},
+	}
+	tests := []struct {
+		name      string
+		prepare   factoryProductionBundlePreparer
+		configure func(t *testing.T, root string) (string, string)
+	}{
+		{
+			name: "preparer error",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return nil, http.ErrServerClosed
+			},
+		},
+		{
+			name: "empty bundle",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return factoryProductionCredentialBundle{}, nil
+			},
+		},
+		{
+			name: "incomplete credential",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return factoryProductionCredentialBundle{"camera": {BrandCloudID: "brand"}}, nil
+			},
+		},
+		{
+			name: "unwritable evidence path",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return valid, nil
+			},
+			configure: func(t *testing.T, root string) (string, string) {
+				out := filepath.Join(root, "out-file")
+				if err := os.WriteFile(out, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return out, filepath.Join(root, "logs")
+			},
+		},
+		{
+			name: "unwritable log path",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return valid, nil
+			},
+			configure: func(t *testing.T, root string) (string, string) {
+				logs := filepath.Join(root, "logs-file")
+				if err := os.WriteFile(logs, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return root, logs
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			outDir, logsDir := root, filepath.Join(root, "logs")
+			if tt.configure != nil {
+				outDir, logsDir = tt.configure(t, root)
+			}
+			if err := os.MkdirAll(logsDir, 0o755); err != nil && tt.name != "unwritable log path" {
+				t.Fatal(err)
+			}
+			env, step, err := prepareFactoryProductionBundleStep("workspace", "env", outDir, logsDir, "RTK", "runtime-1", 1, "camera=1", time.Now().UTC(), tt.prepare)
+			if err == nil || len(env) != 0 {
+				t.Fatalf("env=%v step=%+v err=%v", env, step, err)
+			}
+			if (tt.name == "preparer error" || tt.name == "empty bundle") && (step.Status != "FAIL" || step.ExitCode != 1) {
+				t.Fatalf("step=%+v", step)
+			}
+		})
+	}
+}
+
+func assertFactoryProductionCredentialsRejectInvalidInputs(t *testing.T) {
+	for _, test := range []struct {
+		name, runID, mix string
+		quantity         int
+	}{
+		{name: "missing run", quantity: 1, mix: "camera=1"},
+		{name: "non-positive quantity", runID: "run", quantity: 0, mix: "camera=1"},
+		{name: "invalid mix", runID: "run", quantity: 1, mix: "camera=invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := prepareFactoryProductionCredentials(t.TempDir(), t.TempDir(), "RTK", test.runID, test.quantity, test.mix, time.Now().UTC()); err == nil {
+				t.Fatal("invalid factory production input was accepted")
+			}
+		})
+	}
 }
 
 func TestPrepareFactoryProductionCredentialsCreatesProductPerDeviceType(t *testing.T) {
@@ -236,6 +329,7 @@ func TestPrepareFactoryProductionCredentialsCreatesProductPerDeviceType(t *testi
 	if strings.Join(categories, ",") != "ip_camera,mqtt_device" || strings.Join(runBatches, ",") != "runtime-1-camera,runtime-1-light" {
 		t.Fatalf("categories=%v batches=%v", categories, runBatches)
 	}
+	assertFactoryProductionCredentialsRejectInvalidInputs(t)
 }
 
 func TestPrepareFactoryProductionStepStopsOnIssuanceFailure(t *testing.T) {
