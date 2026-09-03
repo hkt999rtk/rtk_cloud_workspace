@@ -213,6 +213,21 @@ cases:
       title: two clouds load independently and inconsistent ownership readbacks fail closed
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-scope.test.mjs#cloudConsolePath%20emits%20canonical%20multi-cloud%20URLs
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-scope.test.mjs
+      title: cloudConsolePath emits canonical multi-cloud URLs
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-MULTICLOUD-001
+    - canonical_key: js://cloud-admin-web/src/cloud-scope.test.mjs#scopedCustomerAPI%20keeps%20functional%20requests%20inside%20the%20URL%20cloud
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-scope.test.mjs
+      title: scopedCustomerAPI keeps functional requests inside the URL cloud
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/cloud-preference.test.mjs#cloud%20preference%20parser%20accepts%20only%20the%20named%20UUID%20cookie
       module: cloud-admin-web
       language: javascript

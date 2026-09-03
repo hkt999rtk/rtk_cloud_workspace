@@ -72,6 +72,13 @@ cloud_env/staging/runtime/adapters/lke/account.env
 
 `LKE_ACTIVE_SERVICE_LIMIT` is the active-service limit allowed for the Linode account. It is neither another API secret nor architecture/default configuration. The Linode API does not currently expose an endpoint that can query this limit with `LINODE_TOKEN`, so the operator must set it manually from Linode's account confirmation. Before creating any billable resource, deployment compares `current active services + planned resources` with this limit. Stop if the value is unknown; do not guess.
 
+Cloud Admin batch-job recovery additionally requires a dedicated Account Manager
+job-authorization service credential in the environment SecretStore. It must not
+reuse login, Billing, Video Cloud, factory, or ownership-handoff credentials and
+must never be written to tracked environment files. Persistent `video-cloud-dev`
+qualification uses in-place `provision` followed by `acceptance`; `test` remains a
+destructive ephemeral flow that cleans up its owned stack.
+
 Create the staging account state:
 
 ```sh
