@@ -235,6 +235,16 @@ func (p *poller) refreshRepo(ctx context.Context, key string) error {
 	p.mu.RLock()
 	state := p.repos[key]
 	etag := state.etag
+	for _, card := range state.runs {
+		// The workflow-runs ETag can remain unchanged while GitHub assigns a
+		// queued job to a runner or advances its status. Keep polling active
+		// jobs until their run-level snapshot is complete. Run-level fallback
+		// cards also need another attempt to load their jobs.
+		if card.Status != "completed" || card.Kind != "job" {
+			etag = ""
+			break
+		}
+	}
 	repo := state.repo
 	p.mu.RUnlock()
 
@@ -571,7 +581,7 @@ func (c *githubClient) getJSON(ctx context.Context, path, etag string, target an
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		until := retryUntil(resp.Header)
+		until := retryUntil(resp.StatusCode, resp.Header)
 		return "", false, &retryAfterError{status: resp.StatusCode, until: until, msg: strings.TrimSpace(string(body))}
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(target); err != nil {
@@ -580,9 +590,15 @@ func (c *githubClient) getJSON(ctx context.Context, path, etag string, target an
 	return resp.Header.Get("ETag"), false, nil
 }
 
-func retryUntil(header http.Header) time.Time {
+func retryUntil(status int, header http.Header) time.Time {
 	if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
 		return time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
+		return time.Time{}
+	}
+	if header.Get("X-RateLimit-Remaining") != "0" {
+		return time.Time{}
 	}
 	if epoch, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil && epoch > 0 {
 		return time.Unix(epoch, 0)
