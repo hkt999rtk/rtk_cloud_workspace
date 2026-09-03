@@ -3126,10 +3126,8 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
 		return err
 	}
-	if lkeAccountManagerHandoffWorkerEnabled(env) {
-		if err := kubectlApply(lkeVideoCloudMQTTUsageCheckpointPVCManifest(env)); err != nil {
-			return err
-		}
+	if err := kubectlApply(lkeVideoCloudMQTTUsageCheckpointPVCManifest(env)); err != nil {
+		return err
 	}
 	rollouts := []lkeRolloutTarget{}
 	for _, service := range lkeVideoCloudAuxiliaryServices() {
@@ -6005,6 +6003,27 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
               value: "5s"
             - name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL
               value: "5s"
+            - name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR
+              value: "/var/lib/video-cloud/mqtt-usage"
+`
+		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
+              mountPath: /var/lib/video-cloud/mqtt-usage
+`
+		mqttUsageVolume = `        - name: mqtt-usage-checkpoint
+          persistentVolumeClaim:
+            claimName: video-cloud-mqttusage-checkpoint
+`
+		mqttUsageStrategy = `  strategy:
+    type: Recreate
+`
+		mqttUsageInitContainers = `      initContainers:
+        - name: prepare-mqtt-usage-checkpoint
+          image: alpine:3.20
+          command: ["/bin/sh", "-c"]
+          args: ["chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage"]
+          volumeMounts:
+            - name: mqtt-usage-checkpoint
+              mountPath: /var/lib/video-cloud/mqtt-usage
 `
 	}
 	if service.Name == "video-cloud-mqttusage" && lkeAccountManagerHandoffWorkerEnabled(env) {
@@ -6039,28 +6058,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_EMQX_API_SECRET
-            - name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR
-              value: "/var/lib/video-cloud/mqtt-usage"
 `, lkeNamespaceName(env, "billing"))
-		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
-              mountPath: /var/lib/video-cloud/mqtt-usage
-`
-		mqttUsageVolume = `        - name: mqtt-usage-checkpoint
-          persistentVolumeClaim:
-            claimName: video-cloud-mqttusage-checkpoint
-`
-		mqttUsageStrategy = `  strategy:
-    type: Recreate
-`
-		mqttUsageInitContainers = `      initContainers:
-        - name: prepare-mqtt-usage-checkpoint
-          image: alpine:3.20
-          command: ["/bin/sh", "-c"]
-          args: ["chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage"]
-          volumeMounts:
-            - name: mqtt-usage-checkpoint
-              mountPath: /var/lib/video-cloud/mqtt-usage
-`
 	}
 	body := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -7392,6 +7390,7 @@ stringData:
   ACCOUNT_MANAGER_USER_CACHE_PREFIX: "account_manager:user"
   ACCOUNT_MANAGER_ENV: %q
   ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: %q
+  CHIPSET_PROVIDER_ALLOWED_HOSTS: %q
   DEVELOPER_PKI_TEST_TOOLS_ENABLED: %q
   ACCOUNT_MANAGER_LOG_LEVEL: %q
   AUTH_TOKEN_BASE_URL: %q
@@ -7426,7 +7425,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
