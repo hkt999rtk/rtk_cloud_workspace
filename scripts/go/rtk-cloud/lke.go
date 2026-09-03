@@ -3126,10 +3126,8 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	if err := kubectlApply(lkeVideoCloudWorkersSecretManifest(env)); err != nil {
 		return err
 	}
-	if lkeAccountManagerHandoffWorkerEnabled(env) {
-		if err := kubectlApply(lkeVideoCloudMQTTUsageCheckpointPVCManifest(env)); err != nil {
-			return err
-		}
+	if err := kubectlApply(lkeVideoCloudMQTTUsageCheckpointPVCManifest(env)); err != nil {
+		return err
 	}
 	rollouts := []lkeRolloutTarget{}
 	for _, service := range lkeVideoCloudAuxiliaryServices() {
@@ -6005,6 +6003,27 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
               value: "5s"
             - name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL
               value: "5s"
+            - name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR
+              value: "/var/lib/video-cloud/mqtt-usage"
+`
+		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
+              mountPath: /var/lib/video-cloud/mqtt-usage
+`
+		mqttUsageVolume = `        - name: mqtt-usage-checkpoint
+          persistentVolumeClaim:
+            claimName: video-cloud-mqttusage-checkpoint
+`
+		mqttUsageStrategy = `  strategy:
+    type: Recreate
+`
+		mqttUsageInitContainers = `      initContainers:
+        - name: prepare-mqtt-usage-checkpoint
+          image: alpine:3.20
+          command: ["/bin/sh", "-c"]
+          args: ["chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage"]
+          volumeMounts:
+            - name: mqtt-usage-checkpoint
+              mountPath: /var/lib/video-cloud/mqtt-usage
 `
 	}
 	if service.Name == "video-cloud-mqttusage" && lkeAccountManagerHandoffWorkerEnabled(env) {
@@ -6039,28 +6058,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_EMQX_API_SECRET
-            - name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR
-              value: "/var/lib/video-cloud/mqtt-usage"
 `, lkeNamespaceName(env, "billing"))
-		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
-              mountPath: /var/lib/video-cloud/mqtt-usage
-`
-		mqttUsageVolume = `        - name: mqtt-usage-checkpoint
-          persistentVolumeClaim:
-            claimName: video-cloud-mqttusage-checkpoint
-`
-		mqttUsageStrategy = `  strategy:
-    type: Recreate
-`
-		mqttUsageInitContainers = `      initContainers:
-        - name: prepare-mqtt-usage-checkpoint
-          image: alpine:3.20
-          command: ["/bin/sh", "-c"]
-          args: ["chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage"]
-          volumeMounts:
-            - name: mqtt-usage-checkpoint
-              mountPath: /var/lib/video-cloud/mqtt-usage
-`
 	}
 	body := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment

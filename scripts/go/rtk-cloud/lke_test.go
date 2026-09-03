@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
@@ -3536,6 +3537,38 @@ func TestLKEVideoCloudAuxiliaryDeploymentManifestHasNoTabOnlyLine(t *testing.T) 
 	}
 }
 
+func TestLKEVideoCloudMQTTUsageCheckpointDoesNotDependOnHandoffWorker(t *testing.T) {
+	for _, handoffEnabled := range []string{"false", "true"} {
+		t.Run("handoff_"+handoffEnabled, func(t *testing.T) {
+			env := map[string]string{
+				"CLOUD_STACK_NAME":                           "video-cloud-staging",
+				"LKE_VIDEO_CLOUD_IMAGE":                      "registry.example.test/video-cloud:test",
+				"LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED": handoffEnabled,
+			}
+			manifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage"})
+			var document map[string]any
+			if err := yaml.Unmarshal([]byte(manifest), &document); err != nil {
+				t.Fatalf("handoff=%s: generated invalid YAML: %v\n%s", handoffEnabled, err, manifest)
+			}
+			for _, want := range []string{
+				"type: Recreate",
+				"name: prepare-mqtt-usage-checkpoint",
+				"chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage",
+				"name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR\n              value: \"/var/lib/video-cloud/mqtt-usage\"",
+				"name: mqtt-usage-checkpoint\n              mountPath: /var/lib/video-cloud/mqtt-usage",
+				"claimName: video-cloud-mqttusage-checkpoint",
+			} {
+				if !strings.Contains(manifest, want) {
+					t.Fatalf("handoff=%s: expected %q in mqttusage manifest, got:\n%s", handoffEnabled, want, manifest)
+				}
+			}
+			if got := strings.Contains(manifest, "VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN"); got != (handoffEnabled == "true") {
+				t.Fatalf("handoff=%s: handoff credentials rendered=%t, got:\n%s", handoffEnabled, got, manifest)
+			}
+		})
+	}
+}
+
 func TestLKEBillingDeploymentManifestHasNoTabIndentedLine(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
 	workload := lkeWorkload{
@@ -3774,6 +3807,7 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: Secret\nmetadata:\n  name: video-cloud-workers-runtime",
+		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-mqttusage-checkpoint",
 		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: \"test-seed-turn-registry-node-auth\"",
 		"VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: \"test-seed-mqtt-usage-ingest\"",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-cleaner",
@@ -3797,6 +3831,9 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"kind: Deployment\nmetadata:\n  name: video-cloud-mqttusage",
 		"command: [\"/app/mqttusage\"]",
 		"containerPort: 19400",
+		"name: prepare-mqtt-usage-checkpoint",
+		"name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR\n              value: \"/var/lib/video-cloud/mqtt-usage\"",
+		"claimName: video-cloud-mqttusage-checkpoint",
 		"kind: Service\nmetadata:\n  name: video-cloud-turnregistry",
 		"kind: Service\nmetadata:\n  name: video-cloud-logingester",
 		"kind: ConfigMap\nmetadata:\n  name: video-cloud-prometheus-config",
