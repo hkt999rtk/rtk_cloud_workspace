@@ -45,6 +45,10 @@
     </section>
 
     <section class="board" aria-label="GitHub Actions runs">
+      <section class="lane prs-lane">
+        <header><span>OPEN PRS</span><b id="open-pr-count">0</b></header>
+        <div id="open-prs" class="card-list"></div>
+      </section>
       <section class="lane queued-lane">
         <header><span>QUEUED</span><b id="queued-count">0</b></header>
         <div id="queued" class="card-list"></div>
@@ -78,6 +82,15 @@
       <div class="meta"><span class="actor"></span><span class="start-time mono"></span></div>
       <div class="card-footer"><strong class="elapsed mono"></strong><span class="jobs"></span></div>
       <div class="attempt-row"></div>
+    </article>
+  </template>
+
+  <template id="pr-card-template">
+    <article class="pr-card" tabindex="0">
+      <div class="pr-card-topline"><span class="pr-repo"></span><span class="pr-state"></span></div>
+      <h2 class="pr-title"></h2>
+      <p class="pr-branches mono"></p>
+      <div class="pr-meta"><span class="pr-author"></span><span class="pr-age"></span></div>
     </article>
   </template>
 

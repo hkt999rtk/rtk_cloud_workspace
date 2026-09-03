@@ -1,5 +1,6 @@
-const state = { snapshot: null, cards: new Map(), previous: new Map(), filters: { search: "", repo: "", trigger: "" } };
+const state = { snapshot: null, cards: new Map(), prCards: new Map(), previous: new Map(), filters: { search: "", repo: "", trigger: "" } };
 const lanes = { queued: document.querySelector("#queued"), running: document.querySelector("#running"), completed: document.querySelector("#completed") };
+const prLane = document.querySelector("#open-prs");
 const template = document.querySelector("#card-template");
 const groupTemplate = document.querySelector("#group-template");
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -39,6 +40,29 @@ function cardElapsed(card) {
 function cardMatches(card) {
   const haystack = [card.repo, card.workflow, card.jobName, card.runnerName, ...(card.runnerLabels || []), card.topic, card.headBranch, card.actor?.login, card.pr?.number, card.pr?.title].join(" ").toLowerCase();
   return (!state.filters.search || haystack.includes(state.filters.search)) && (!state.filters.repo || card.repo === state.filters.repo) && (!state.filters.trigger || card.event === state.filters.trigger);
+}
+
+function prMatches(pr) {
+  const haystack = [pr.repo, pr.number, pr.title, pr.author?.login, pr.headBranch, pr.baseBranch].join(" ").toLowerCase();
+  return (!state.filters.search || haystack.includes(state.filters.search)) && (!state.filters.repo || pr.repo === state.filters.repo);
+}
+
+function makePRCard(pr) {
+  const node = document.querySelector("#pr-card-template").content.firstElementChild.cloneNode(true);
+  node.dataset.key = pr.key;
+  node.addEventListener("click", () => window.open(pr.url, "_blank", "noopener,noreferrer"));
+  node.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); window.open(pr.url, "_blank", "noopener,noreferrer"); } });
+  return node;
+}
+
+function updatePRCard(node, pr) {
+  node.className = `pr-card${pr.draft ? " draft" : ""}${pr.repoStale ? " stale" : ""}`;
+  node.querySelector(".pr-repo").textContent = `${pr.repo} #${pr.number}`;
+  node.querySelector(".pr-title").textContent = pr.title || "Untitled pull request";
+  node.querySelector(".pr-author").textContent = pr.author?.login ? `@${pr.author.login}` : "unknown author";
+  node.querySelector(".pr-branches").textContent = `${pr.headBranch || "?"} → ${pr.baseBranch || "?"}`;
+  node.querySelector(".pr-age").textContent = `${age(pr.createdAt)} · updated ${age(pr.updatedAt)}`;
+  node.querySelector(".pr-state").textContent = pr.draft ? "DRAFT" : "READY";
 }
 
 function makeCard(card) {
@@ -117,7 +141,9 @@ function render(snapshot) {
   }
 
   for (const lane of Object.values(lanes)) lane.replaceChildren();
+  prLane.replaceChildren();
   state.cards = new Map();
+  state.prCards = new Map();
   for (const [laneName, cards] of Object.entries({queued:snapshot.queued, running:snapshot.running, completed:snapshot.completed})) {
     const groups = new Map();
     for (const card of cards) {
@@ -135,6 +161,13 @@ function render(snapshot) {
       state.cards.set(card.key, node);
     }
     for (const group of groups.values()) group.hidden = ![...group.querySelectorAll(".run-card")].some(node => !node.hidden);
+  }
+  for (const pr of snapshot.openPullRequests || []) {
+    const node = makePRCard(pr);
+    updatePRCard(node, pr);
+    node.hidden = !prMatches(pr);
+    prLane.appendChild(node);
+    state.prCards.set(pr.key, node);
   }
 
   if (!reducedMotion) requestAnimationFrame(() => {
@@ -168,10 +201,12 @@ function updateSummary() {
   document.querySelector("#queued-count").textContent = visible(state.snapshot.queued);
   document.querySelector("#running-count").textContent = visible(state.snapshot.running);
   document.querySelector("#completed-count").textContent = `${visible(state.snapshot.completed)} / ${state.snapshot.completedLimit || 20}`;
+  document.querySelector("#open-pr-count").textContent = (state.snapshot.openPullRequests || []).filter(prMatches).length;
 
   const selectedHasCards = [...state.snapshot.queued, ...state.snapshot.running, ...state.snapshot.completed].some(card => !state.filters.repo || card.repo === state.filters.repo);
   const emptyText = state.filters.repo && !selectedHasCards ? `${state.filters.repo} is monitored, but has no run in the current completed window` : "No runs in this lane";
   for (const lane of Object.values(lanes)) lane.dataset.empty = emptyText;
+  prLane.dataset.empty = "No open PRs";
 }
 
 function updateRepositories(repositories, cards) {
@@ -207,6 +242,10 @@ function applyFilters() {
   for (const [key, node] of state.cards) {
     const card = [...state.snapshot.queued, ...state.snapshot.running, ...state.snapshot.completed].find(item => item.key === key);
     node.hidden = !cardMatches(card);
+  }
+  for (const [key, node] of state.prCards) {
+    const pr = (state.snapshot.openPullRequests || []).find(item => item.key === key);
+    if (pr) node.hidden = !prMatches(pr);
   }
   for (const group of document.querySelectorAll(".run-group")) group.hidden = ![...group.querySelectorAll(".run-card")].some(node => !node.hidden);
   updateSummary();

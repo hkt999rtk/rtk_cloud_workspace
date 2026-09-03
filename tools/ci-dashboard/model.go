@@ -26,6 +26,22 @@ type PullRequest struct {
 	URL    string `json:"url,omitempty"`
 }
 
+type OpenPullRequest struct {
+	Key        string    `json:"key"`
+	Owner      string    `json:"owner"`
+	Repo       string    `json:"repo"`
+	Number     int       `json:"number"`
+	Title      string    `json:"title"`
+	URL        string    `json:"url"`
+	Author     Actor     `json:"author"`
+	Draft      bool      `json:"draft"`
+	HeadBranch string    `json:"headBranch"`
+	BaseBranch string    `json:"baseBranch"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+	RepoStale  bool      `json:"repoStale"`
+}
+
 type JobSummary struct {
 	Total     int `json:"total"`
 	Completed int `json:"completed"`
@@ -72,15 +88,16 @@ type RateLimit struct {
 }
 
 type Snapshot struct {
-	GeneratedAt    time.Time    `json:"generatedAt"`
-	LastSuccessful time.Time    `json:"lastSuccessfulSync,omitempty"`
-	NextRefresh    time.Time    `json:"nextRefreshAt,omitempty"`
-	CompletedLimit int          `json:"completedLimit"`
-	RateLimit      RateLimit    `json:"rateLimit"`
-	Repositories   []Repository `json:"repositories"`
-	Queued         []Card       `json:"queued"`
-	Running        []Card       `json:"running"`
-	Completed      []Card       `json:"completed"`
+	GeneratedAt      time.Time         `json:"generatedAt"`
+	LastSuccessful   time.Time         `json:"lastSuccessfulSync,omitempty"`
+	NextRefresh      time.Time         `json:"nextRefreshAt,omitempty"`
+	CompletedLimit   int               `json:"completedLimit"`
+	RateLimit        RateLimit         `json:"rateLimit"`
+	Repositories     []Repository      `json:"repositories"`
+	Queued           []Card            `json:"queued"`
+	Running          []Card            `json:"running"`
+	Completed        []Card            `json:"completed"`
+	OpenPullRequests []OpenPullRequest `json:"openPullRequests"`
 }
 
 type Step struct {
