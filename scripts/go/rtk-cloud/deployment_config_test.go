@@ -155,7 +155,7 @@ func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 }
 
 func TestDeploymentProvisionRunsPreflightBeforeCredentialValidation(t *testing.T) {
-	for _, action := range []string{"provision", "test"} {
+	for _, action := range []string{"create", "upgrade", "provision", "test"} {
 		t.Run(action, func(t *testing.T) {
 			workspace := writeDeploymentFixture(t, "staging", "lke")
 			calls := []string{}
@@ -163,6 +163,10 @@ func TestDeploymentProvisionRunsPreflightBeforeCredentialValidation(t *testing.T
 				preflight: func(_ deploymentConfig, operation string) error {
 					calls = append(calls, "preflight:"+operation)
 					return errors.New("preflight rejected deployment")
+				},
+				validateTarget: func(_ deploymentConfig, targetAction string) error {
+					calls = append(calls, "target:"+targetAction)
+					return nil
 				},
 				credentials: func(deploymentConfig, string) error {
 					calls = append(calls, "credentials")
@@ -187,6 +191,108 @@ func TestDeploymentProvisionRunsPreflightBeforeCredentialValidation(t *testing.T
 			}
 		})
 	}
+}
+
+func TestDeploymentCreateAndUpgradeValidateTargetBeforeCredentials(t *testing.T) {
+	for _, action := range []string{"create", "upgrade"} {
+		t.Run(action, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "staging", "lke")
+			calls := []string{}
+			err := runDeploymentWithOperations([]string{
+				action, "--workspace", workspace, "--environment", "staging", "--confirm", "video-cloud-staging",
+			}, deploymentOperations{
+				preflight: func(deploymentConfig, string) error { calls = append(calls, "preflight"); return nil },
+				validateTarget: func(_ deploymentConfig, got string) error {
+					calls = append(calls, "target:"+got)
+					return errors.New("wrong lifecycle target")
+				},
+				credentials: func(deploymentConfig, string) error { calls = append(calls, "credentials"); return nil },
+			})
+			if err == nil || !strings.Contains(err.Error(), "wrong lifecycle target") {
+				t.Fatalf("error = %v", err)
+			}
+			if want := []string{"preflight", "target:" + action}; !reflect.DeepEqual(calls, want) {
+				t.Fatalf("calls = %v, want %v", calls, want)
+			}
+		})
+	}
+}
+
+func TestValidateDeploymentActionTarget(t *testing.T) {
+	cfg := deploymentConfig{Adapter: "gke"}
+	if err := validateDeploymentActionTarget(cfg, "create"); err == nil || !strings.Contains(err.Error(), "create requires an absent environment") {
+		t.Fatalf("create error = %v", err)
+	}
+	if err := validateDeploymentActionTarget(cfg, "upgrade"); err == nil || !strings.Contains(err.Error(), "not implemented for adapter gke") {
+		t.Fatalf("upgrade error = %v", err)
+	}
+	if err := validateDeploymentActionTarget(cfg, "plan"); err != nil {
+		t.Fatalf("plan validation = %v", err)
+	}
+}
+
+func TestValidateExistingDeploymentEnvironment(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = materializeDeploymentRuntime(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LINODE_TOKEN", "test-token")
+	kubeconfig := filepath.Join(t.TempDir(), "kubeconfig.yaml")
+	writeTestFile(t, kubeconfig, "apiVersion: v1\n")
+	t.Setenv("RTK_CLOUD_KUBECONFIG", kubeconfig)
+
+	t.Run("missing cluster", func(t *testing.T) {
+		fakeLinodeCurl(t, map[string]string{"/lke/clusters?page_size=500": `{"data":[]}`})
+		err := validateExistingDeploymentEnvironment(cfg)
+		if err == nil || !strings.Contains(err.Error(), "use create for a new environment") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("bound postgres pvc", func(t *testing.T) {
+		fakeLinodeCurl(t, map[string]string{"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","status":"ready"}]}`})
+		fakeDeploymentUpgradeKubectl(t, "Bound\tpvc-volume-123", 0)
+		if err := validateExistingDeploymentEnvironment(cfg); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("missing postgres pvc", func(t *testing.T) {
+		fakeLinodeCurl(t, map[string]string{"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke"}]}`})
+		fakeDeploymentUpgradeKubectl(t, "", 1)
+		err := validateExistingDeploymentEnvironment(cfg)
+		if err == nil || !strings.Contains(err.Error(), "existing PostgreSQL PVC") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+
+	t.Run("unbound postgres pvc", func(t *testing.T) {
+		fakeLinodeCurl(t, map[string]string{"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke"}]}`})
+		fakeDeploymentUpgradeKubectl(t, "Pending\t", 0)
+		err := validateExistingDeploymentEnvironment(cfg)
+		if err == nil || !strings.Contains(err.Error(), `current phase is "Pending"`) {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func fakeDeploymentUpgradeKubectl(t *testing.T, output string, exitCode int) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/usr/bin/env bash\n"
+	if output != "" {
+		script += "printf '%s' '" + output + "'\n"
+	}
+	script += fmt.Sprintf("exit %d\n", exitCode)
+	writeTestFile(t, filepath.Join(dir, "kubectl"), script)
+	if err := os.Chmod(filepath.Join(dir, "kubectl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func TestDeploymentProvisionInstallsValidatedStorageCredentials(t *testing.T) {
@@ -676,13 +782,16 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 
 func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
-	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "AUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
+	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CHIPSET_PROVIDER_ALLOWED_HOSTS=admin.dev.example.test\nAUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
 	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := cfg.Values["AUTH_TOKEN_BASE_URL"]; got != "https://admin.dev.example.test" {
 		t.Fatalf("AUTH_TOKEN_BASE_URL = %q", got)
+	}
+	if got := cfg.Values["CHIPSET_PROVIDER_ALLOWED_HOSTS"]; got != "admin.dev.example.test" {
+		t.Fatalf("CHIPSET_PROVIDER_ALLOWED_HOSTS = %q", got)
 	}
 	if _, ok := cfg.Values["SENDMAIL_HTTP_BEARER_TOKEN"]; ok {
 		t.Fatal("secret bearer token was accepted as tracked environment configuration")
