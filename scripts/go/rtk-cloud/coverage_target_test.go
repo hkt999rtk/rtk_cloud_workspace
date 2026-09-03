@@ -327,6 +327,38 @@ func TestCommandValidationCoversOperationalFailureBoundaries(t *testing.T) {
 	if err := runMigrateEnv([]string{"--env-root", "staging"}); err == nil || !strings.Contains(err.Error(), "retired") {
 		t.Fatalf("migrate error = %v", err)
 	}
+	assertPerDeviceFactoryCredentialMapsValidateBeforeGeneration(t)
+}
+
+func assertPerDeviceFactoryCredentialMapsValidateBeforeGeneration(t *testing.T) {
+	keys := []string{
+		"FACTORY_ENROLL_PRODUCTION_JWT_BY_DEVICE_TYPE",
+		"FACTORY_ENROLL_BATCH_ID_BY_DEVICE_TYPE",
+		"FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE",
+	}
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			for _, candidate := range keys {
+				t.Setenv(candidate, "")
+			}
+			t.Setenv(key, "not-json")
+			if err := runGenerateLoadDevices(nil); err == nil || !strings.Contains(err.Error(), key+" must be a JSON object") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+
+	t.Setenv("FACTORY_TEST_MAP", `{" camera ":" product-1 "}`)
+	values, err := envJSONTextMap("FACTORY_TEST_MAP")
+	if err != nil || values[" camera "] != "product-1" {
+		t.Fatalf("values=%v err=%v", values, err)
+	}
+	for _, raw := range []string{`{"":"value"}`, `{"camera":""}`} {
+		t.Setenv("FACTORY_TEST_MAP", raw)
+		if _, err := envJSONTextMap("FACTORY_TEST_MAP"); err == nil || !strings.Contains(err.Error(), "empty device type or value") {
+			t.Fatalf("raw=%s error=%v", raw, err)
+		}
+	}
 }
 
 func TestRefreshUserTokensLogsInUsersAndPersistsSessions(t *testing.T) {
@@ -387,6 +419,9 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 			if request["organization_id"] != "brand-001" {
 				t.Fatalf("organization_id = %v, want brand-001", request["organization_id"])
 			}
+			if request["device_item_profile_id"] != "product-001" {
+				t.Fatalf("device_item_profile_id = %v, want product-001", request["device_item_profile_id"])
+			}
 			deviceID := request["video_cloud_devid"].(string)
 			createdMu.Lock()
 			created = append(created, deviceID)
@@ -411,8 +446,8 @@ func TestClaimResolveFallbackCreatesIndependentDeviceResults(t *testing.T) {
 	}))
 	defer server.Close()
 	assignments := []bindAssignment{
-		{AssignedEmail: "one@example.test", DeviceID: "device-1", DeviceType: "light", Category: "mqtt_device", ServiceOptions: []string{"mqtt"}},
-		{AssignedEmail: "two@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}},
+		{AssignedEmail: "one@example.test", DeviceID: "device-1", DeviceType: "light", Category: "mqtt_device", ServiceOptions: []string{"mqtt"}, ProductID: "product-001"},
+		{AssignedEmail: "two@example.test", DeviceID: "device-2", DeviceType: "camera", Category: "ip_camera", ServiceOptions: []string{"mqtt", "video_streaming"}, ProductID: "product-001"},
 	}
 	userSessions := map[string]*brandCloudUserSession{
 		"one@example.test": {Email: "one@example.test", Session: accountPlatformSession{AccessToken: "user-one"}},

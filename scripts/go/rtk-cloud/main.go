@@ -2121,6 +2121,7 @@ var loadDeviceTypes = []loadDeviceType{
 type generatedDevice struct {
 	DeviceID             string   `json:"device_id"`
 	DeviceType           string   `json:"device_type"`
+	DeviceItemProfileID  string   `json:"device_item_profile_id,omitempty"`
 	MQTTCapability       string   `json:"mqtt_capability"`
 	ServiceOptions       []string `json:"service_options"`
 	Model                string   `json:"model"`
@@ -2168,6 +2169,18 @@ func runGenerateLoadDevices(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	factoryProductionJWTByType, err := envJSONTextMap("FACTORY_ENROLL_PRODUCTION_JWT_BY_DEVICE_TYPE")
+	if err != nil {
+		return err
+	}
+	factoryBatchIDByType, err := envJSONTextMap("FACTORY_ENROLL_BATCH_ID_BY_DEVICE_TYPE")
+	if err != nil {
+		return err
+	}
+	factoryProfileIDByType, err := envJSONTextMap("FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE")
+	if err != nil {
+		return err
+	}
 	if *envRootFlag == "" {
 		return errors.New("--env-root is required; pass the environment directory explicitly, for example --env-root cloud_env/staging")
 	}
@@ -2184,7 +2197,6 @@ func runGenerateLoadDevices(args []string) error {
 		return errors.New("--prefix contains unsupported characters")
 	}
 	workspace := *workspaceFlag
-	var err error
 	if workspace == "" {
 		workspace, err = workspaceRoot()
 		if err != nil {
@@ -2218,13 +2230,13 @@ func runGenerateLoadDevices(args []string) error {
 		if *factoryURL == "" {
 			*factoryURL = envFileValue(videoEnv, "FACTORY_ENROLL_URL")
 		}
-		if factoryProductionJWT == "" && *factoryAuthKey == "" {
+		if factoryProductionJWT == "" && len(factoryProductionJWTByType) == 0 && *factoryAuthKey == "" {
 			*factoryAuthKey = envFileValue(videoEnv, "FACTORY_ENROLL_AUTH_KEY")
 		}
 		if *factoryURL == "" {
 			return errors.New("factory enrollment URL missing; set FACTORY_ENROLL_URL in video-cloud env or pass --factory-url")
 		}
-		if factoryProductionJWT == "" && *factoryAuthKey == "" {
+		if factoryProductionJWT == "" && len(factoryProductionJWTByType) == 0 && *factoryAuthKey == "" {
 			return errors.New("factory enrollment credential missing; set ephemeral FACTORY_ENROLL_PRODUCTION_JWT or FACTORY_ENROLL_AUTH_KEY")
 		}
 		*factoryURL = normalizeFactoryEnrollURLs(*factoryURL)
@@ -2256,6 +2268,22 @@ func runGenerateLoadDevices(args []string) error {
 	alloc, err := allocateDeviceMix(*count, *mix)
 	if err != nil {
 		return err
+	}
+	if !*generateOnly && factoryProductionJWT == "" && len(factoryProductionJWTByType) > 0 {
+		for _, deviceType := range loadDeviceTypes {
+			if alloc[deviceType.Name] == 0 {
+				continue
+			}
+			if factoryProductionJWTByType[deviceType.Name] == "" {
+				return fmt.Errorf("FACTORY_ENROLL_PRODUCTION_JWT_BY_DEVICE_TYPE is missing %s", deviceType.Name)
+			}
+			if factoryBatchIDByType[deviceType.Name] == "" {
+				return fmt.Errorf("FACTORY_ENROLL_BATCH_ID_BY_DEVICE_TYPE is missing %s", deviceType.Name)
+			}
+			if factoryProfileIDByType[deviceType.Name] == "" {
+				return fmt.Errorf("FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE is missing %s", deviceType.Name)
+			}
+		}
 	}
 	var caKey *ecdsa.PrivateKey
 	var caCert []byte
@@ -2308,13 +2336,14 @@ func runGenerateLoadDevices(args []string) error {
 				DeviceDays:     *deviceValidDays,
 				FactoryURL:     *factoryURL,
 				FactoryAuthKey: *factoryAuthKey,
-				ProductionJWT:  factoryProductionJWT,
+				ProductionJWT:  firstNonEmpty(factoryProductionJWTByType[dt.Name], factoryProductionJWT),
+				ProductID:      factoryProfileIDByType[dt.Name],
 				FactoryID:      *factoryID,
 				LineID:         *lineID,
 				StationID:      *stationID,
 				FixtureID:      *fixtureID,
 				OperatorID:     *operatorID,
-				BatchID:        *batchID,
+				BatchID:        firstNonEmpty(factoryBatchIDByType[dt.Name], *batchID),
 				SerialPrefix:   *serialPrefix,
 				RunID:          *runID,
 				Timeout:        time.Duration(*timeoutSeconds) * time.Second,
@@ -3373,7 +3402,7 @@ func runStagingE2EDataSetup(args []string) error {
 		if providedProductionJWT != "" {
 			credentialEnv, step, err = useProvidedFactoryProductionCredential(logsDir, factoryRunID, providedProductionJWT)
 		} else {
-			credentialEnv, step, err = prepareFactoryProductionStep(workspace, envRoot, *outDir, logsDir, *brandname, factoryRunID, *deviceCount, time.Now().UTC(), prepareFactoryProductionCredential)
+			credentialEnv, step, err = prepareFactoryProductionBundleStep(workspace, envRoot, *outDir, logsDir, *brandname, factoryRunID, *deviceCount, *deviceMix, time.Now().UTC(), prepareFactoryProductionCredentials)
 		}
 		steps = append(steps, step)
 		if err != nil {
@@ -3412,7 +3441,7 @@ func runStagingE2EDataSetup(args []string) error {
 		if boolishEnv("CLOUD_STAGING_E2E_SKIP_BOOTSTRAP") {
 			args = append(args, "--skip-bootstrap")
 		}
-		if err := runStep("bind_devices", commandWithArgs(scripts["bind-devices"], args...)...); err != nil {
+		if err := runStepWithEnv("bind_devices", factoryEnv, commandWithArgs(scripts["bind-devices"], args...)...); err != nil {
 			return err
 		}
 		bindFile = testDataDB
@@ -7883,6 +7912,7 @@ type loadDeviceInput struct {
 	FactoryURL     string
 	FactoryAuthKey string
 	ProductionJWT  string
+	ProductID      string
 	FactoryID      string
 	LineID         string
 	StationID      string
@@ -8018,6 +8048,7 @@ func writeLoadDevice(in loadDeviceInput) (generatedDevice, bool, error) {
 	device := generatedDevice{
 		DeviceID:             deviceID,
 		DeviceType:           in.Type.Name,
+		DeviceItemProfileID:  in.ProductID,
 		MQTTCapability:       in.Type.Capability,
 		ServiceOptions:       in.Type.ServiceOptions,
 		Model:                in.Type.Model,
@@ -8056,6 +8087,7 @@ func reusableLocalLoadDevice(in loadDeviceInput, deviceID, display, deviceDir, k
 	}
 	if device.DeviceID != deviceID ||
 		device.DeviceType != in.Type.Name ||
+		device.DeviceItemProfileID != in.ProductID ||
 		device.MQTTCapability != in.Type.Capability ||
 		device.Model != in.Type.Model ||
 		device.DisplayName != display ||
@@ -8594,6 +8626,24 @@ func envInt(key string, fallback int) int {
 	return fallback
 }
 
+func envJSONTextMap(key string) (map[string]string, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return map[string]string{}, nil
+	}
+	values := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &values); err != nil {
+		return nil, fmt.Errorf("%s must be a JSON object with string values: %w", key, err)
+	}
+	for name, value := range values {
+		if strings.TrimSpace(name) == "" || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("%s contains an empty device type or value", key)
+		}
+		values[name] = strings.TrimSpace(value)
+	}
+	return values, nil
+}
+
 func boolishEnv(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
 	case "1", "true", "yes", "on":
@@ -8879,6 +8929,7 @@ type bindAssignment struct {
 	DeviceType      string   `json:"device_type"`
 	Category        string   `json:"category"`
 	ServiceOptions  []string `json:"service_options"`
+	ProductID       string   `json:"product_id,omitempty"`
 	ClaimID         string   `json:"claim_id"`
 	AccountDeviceID string   `json:"account_device_id"`
 	OperationID     string   `json:"operation_id"`
@@ -9574,10 +9625,11 @@ func runUnprovisionDevices(args []string) error {
 }
 
 type bindDeviceManifest struct {
-	DeviceID       string   `json:"device_id"`
-	DeviceType     string   `json:"device_type"`
-	DisplayName    string   `json:"display_name"`
-	ServiceOptions []string `json:"service_options"`
+	DeviceID            string   `json:"device_id"`
+	DeviceType          string   `json:"device_type"`
+	DeviceItemProfileID string   `json:"device_item_profile_id,omitempty"`
+	DisplayName         string   `json:"display_name"`
+	ServiceOptions      []string `json:"service_options"`
 }
 
 func runBindDevices(args []string) error {
@@ -9659,7 +9711,11 @@ func runBindDevices(args []string) error {
 	if *count <= 0 || *count > len(devices) {
 		return fmt.Errorf("--count %d exceeds device manifest count %d", *count, len(devices))
 	}
-	assignments := buildBindAssignments(devices[:*count], usersList)
+	productProfiles, err := envJSONTextMap("FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE")
+	if err != nil {
+		return err
+	}
+	assignments := buildBindAssignmentsWithProductProfiles(devices[:*count], usersList, productProfiles, strings.TrimSpace(os.Getenv("FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID")))
 	if *dryRun {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{"action": "dry_run", "brandname": *brandname, "count": *count, "users_file": usersAbs, "devices_dir": devicesAbs, "assignments": assignments})
 	}
@@ -10053,6 +10109,11 @@ func readDeviceManifest(path string) ([]bindDeviceManifest, error) {
 }
 
 func buildBindAssignments(devices []bindDeviceManifest, users []userCredential) []bindAssignment {
+	profiles, _ := envJSONTextMap("FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE")
+	return buildBindAssignmentsWithProductProfiles(devices, users, profiles, strings.TrimSpace(os.Getenv("FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID")))
+}
+
+func buildBindAssignmentsWithProductProfiles(devices []bindDeviceManifest, users []userCredential, profiles map[string]string, defaultProfile string) []bindAssignment {
 	out := make([]bindAssignment, len(devices))
 	offset := 0
 	for _, typ := range loadDeviceTypes {
@@ -10065,17 +10126,21 @@ func buildBindAssignments(devices []bindDeviceManifest, users []userCredential) 
 		for j, deviceIndex := range indexes {
 			device := devices[deviceIndex]
 			userIndex := (offset + j) % len(users)
-			category := "mqtt_device"
-			if contains(device.ServiceOptions, "video_streaming") || contains(device.ServiceOptions, "video_storage") {
-				category = "ip_camera"
-			}
-			out[deviceIndex] = bindAssignment{AssignmentIndex: deviceIndex, AssignedEmail: users[userIndex].Email, DeviceID: device.DeviceID, DeviceType: device.DeviceType, Category: category, ServiceOptions: device.ServiceOptions}
+			category := loadDeviceCategory(loadDeviceType{Name: device.DeviceType, ServiceOptions: device.ServiceOptions})
+			out[deviceIndex] = bindAssignment{AssignmentIndex: deviceIndex, AssignedEmail: users[userIndex].Email, DeviceID: device.DeviceID, DeviceType: device.DeviceType, Category: category, ServiceOptions: device.ServiceOptions, ProductID: firstNonEmpty(device.DeviceItemProfileID, profiles[device.DeviceType], defaultProfile)}
 		}
 		if len(indexes) > 0 {
 			offset = (offset + len(indexes)) % len(users)
 		}
 	}
 	return out
+}
+
+func loadDeviceCategory(deviceType loadDeviceType) string {
+	if contains(deviceType.ServiceOptions, "video_streaming") || contains(deviceType.ServiceOptions, "video_storage") {
+		return "ip_camera"
+	}
+	return "mqtt_device"
 }
 
 func loadDeviceTypeNames() []string {
@@ -10358,7 +10423,7 @@ func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accou
 		}
 		claimToken := fmt.Sprintf("loadtest-%s-%s", runID, assignment.DeviceID)
 		activityID := fmt.Sprintf("bulk-bind-%s-%s", runID, assignment.DeviceID)
-		createPayload, err := json.Marshal(map[string]any{
+		claimRequest := map[string]any{
 			"organization_id":   brandCloudID,
 			"claim_token":       claimToken,
 			"category":          assignment.Category,
@@ -10372,7 +10437,11 @@ func accountBindDevicesViaClaimResolve(ctx accountManagerContext, session *accou
 				"run_id":      runID,
 				"device_type": assignment.DeviceType,
 			},
-		})
+		}
+		if assignment.ProductID != "" {
+			claimRequest["device_item_profile_id"] = assignment.ProductID
+		}
+		createPayload, err := json.Marshal(claimRequest)
 		if err != nil {
 			return struct{}{}, err
 		}

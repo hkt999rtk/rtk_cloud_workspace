@@ -106,9 +106,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *_): pass
     def do_POST(self):
         if self.path == "/v1/auth/login": return self.respond(200, {"tokens":{"access_token":"test-token"}})
-        if self.path == "/v1/admin/brand-clouds": return self.respond(201, {"brand_cloud":{"id":"org-rtk","name":"RTK","organization_kind":"brand_cloud","status":"active","tier":"commercial","evaluation_device_quota":5,"metadata":{"brandname":"RTK"}}})
+        if self.path == "/v1/admin/brand-clouds":
+            size = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(size))
+            if payload.get("owner_user_id") != "11111111-1111-4111-8111-111111111111": return self.respond(400, {"error":{"code":"invalid_request"}})
+            return self.respond(201, {"brand_cloud":{"id":"org-rtk","name":"RTK","organization_kind":"brand_cloud","status":"active","tier":"commercial","evaluation_device_quota":5,"metadata":{"brandname":"RTK"}}})
         self.respond(404, {})
     def do_GET(self):
+        if self.path == "/v1/me": return self.respond(200, {"user":{"id":"11111111-1111-4111-8111-111111111111"}})
         if self.path == "/v1/admin/brand-clouds?limit=200": return self.respond(200, {"brand_clouds":[],"pagination":{"limit":200,"offset":0,"total":0}})
         self.respond(404, {})
 http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), Handler).serve_forever()

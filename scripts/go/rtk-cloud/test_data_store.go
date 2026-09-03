@@ -449,7 +449,7 @@ func (s *testDataStore) ReplaceDevices(brandname, runID string, devices []genera
 }
 
 func (s *testDataStore) ReadDeviceManifest(brandname string) ([]bindDeviceManifest, error) {
-	rows, err := s.DB.Query(`select device_id, device_type, display_name, service_options_json from devices where brandname = ? order by device_id`, brandname)
+	rows, err := s.DB.Query(`select device_id, device_type, display_name, service_options_json, body_json from devices where brandname = ? order by device_id`, brandname)
 	if err != nil {
 		return nil, err
 	}
@@ -457,11 +457,15 @@ func (s *testDataStore) ReadDeviceManifest(brandname string) ([]bindDeviceManife
 	out := []bindDeviceManifest{}
 	for rows.Next() {
 		var item bindDeviceManifest
-		var serviceOptionsJSON string
-		if err := rows.Scan(&item.DeviceID, &item.DeviceType, &item.DisplayName, &serviceOptionsJSON); err != nil {
+		var serviceOptionsJSON, bodyJSON string
+		if err := rows.Scan(&item.DeviceID, &item.DeviceType, &item.DisplayName, &serviceOptionsJSON, &bodyJSON); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(serviceOptionsJSON), &item.ServiceOptions)
+		var device generatedDevice
+		if json.Unmarshal([]byte(bodyJSON), &device) == nil {
+			item.DeviceItemProfileID = device.DeviceItemProfileID
+		}
 		out = append(out, item)
 	}
 	return out, rows.Err()
@@ -887,10 +891,11 @@ func readGeneratedDevicesFromLegacy(envRoot string) ([]generatedDevice, error) {
 	out := make([]generatedDevice, 0, len(bindDevices))
 	for _, device := range bindDevices {
 		out = append(out, generatedDevice{
-			DeviceID:       device.DeviceID,
-			DeviceType:     device.DeviceType,
-			DisplayName:    device.DisplayName,
-			ServiceOptions: device.ServiceOptions,
+			DeviceID:            device.DeviceID,
+			DeviceType:          device.DeviceType,
+			DeviceItemProfileID: device.DeviceItemProfileID,
+			DisplayName:         device.DisplayName,
+			ServiceOptions:      device.ServiceOptions,
 		})
 	}
 	return out, nil
