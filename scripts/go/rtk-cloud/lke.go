@@ -2761,6 +2761,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
 			return err
 		}
+		if err := kubectlApply(lkeCloudAdminPVCManifest(env)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -2997,6 +3000,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	}
 	if lkeWorkloadSelected(env, opts, "cloud-admin") {
 		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeCloudAdminPVCManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -7347,12 +7353,12 @@ func lkeObjectStorageCredential(env map[string]string, name string) string {
 }
 
 func lkeAccountManagerSecretManifest(env map[string]string) string {
-	accountEnv := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging")
+	accountEnv := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], lkeServiceEnvironment(env))
 	authBaseURL := firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])
 	if authBaseURL == "" && strings.TrimSpace(env["FRONTEND_DOMAIN"]) != "" {
 		authBaseURL = "https://" + strings.TrimSpace(env["FRONTEND_DOMAIN"])
 	}
-	return fmt.Sprintf(`apiVersion: v1
+	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: account-manager-runtime
@@ -7368,6 +7374,7 @@ stringData:
   JWT_ACCESS_SECRET: %q
   JWT_REFRESH_SECRET: %q
   ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN: %q
+  ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN: __JOB_AUTHORIZATION_TOKEN__
   FACTORY_PRODUCTION_JWT_SECRET: %q
   FACTORY_PRODUCTION_JWT_AUDIENCE: %q
   ACCOUNT_MANAGER_FACTORY_ENROLLMENT_TOKEN: %q
@@ -7413,6 +7420,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
+	return strings.Replace(manifest, "__JOB_AUTHORIZATION_TOKEN__", strconv.Quote(lkeJobAuthorizationToken()), 1)
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -7458,6 +7466,20 @@ func lkeNewebPayReturnURL(env map[string]string) string {
 
 func lkeBillingServiceToken() string {
 	return lkeRuntimeSecretValue("billing-service-token")
+}
+
+func lkeJobAuthorizationToken() string {
+	return lkeRuntimeSecretValue("job-authorization-token")
+}
+
+func lkeServiceEnvironment(env map[string]string) string {
+	if value := strings.ToLower(strings.TrimSpace(firstNonEmpty(os.Getenv("SERVICE_ENVIRONMENT"), env["SERVICE_ENVIRONMENT"]))); value != "" {
+		return value
+	}
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(env["CLOUD_STACK_NAME"])), "-dev") {
+		return "dev"
+	}
+	return "staging"
 }
 
 func lkeBillingInternalToken() string {
@@ -7593,7 +7615,26 @@ metadata:
 type: Opaque
 stringData:
   BILLING_SERVICE_TOKEN: %q
-`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken())
+  ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN: %q
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), lkeJobAuthorizationToken())
+}
+
+func lkeCloudAdminPVCManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cloud-admin-data
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: cloud-admin
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/stack: %s
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"])
 }
 
 func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
@@ -8315,6 +8356,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeRuntimeSecretValue("jwt-access"),
 			lkeRuntimeSecretValue("jwt-refresh"),
 			lkeInternalAuthToken(),
+			lkeJobAuthorizationToken(),
 			lkeFactoryProductionJWTSecret(env),
 			lkeFactoryProductionJWTAudience(env),
 			lkePlatformAdminEmail(env),
@@ -8614,10 +8656,19 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "cloud-admin" {
+		templateAnnotations = fmt.Sprintf(`      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+`, lkeConfigChecksum(lkeBillingServiceToken(), lkeJobAuthorizationToken(), "/var/lib/rtk-cloud-admin/admin.db"))
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
             - name: CLOUD_ADMIN_ENV
-              value: "staging"
+              value: %q
+            - name: DATABASE_PATH
+              value: "/var/lib/rtk-cloud-admin/admin.db"
+            - name: BATCH_WORKER_POLL_INTERVAL
+              value: "1s"
+            - name: BATCH_WORKER_LEASE_DURATION
+              value: "30s"
             - name: DEVELOPER_PKI_TEST_TOOLS_ENABLED
               value: %q
             - name: FACTORY_ENROLL_BASE_URL
@@ -8628,10 +8679,19 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeAccountManagerInternalURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+`, lkeAccountManagerInternalURL(env), lkeServiceEnvironment(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
+`
+		volumeMounts = `          volumeMounts:
+            - name: cloud-admin-data
+              mountPath: /var/lib/rtk-cloud-admin
+`
+		volumes = `      volumes:
+        - name: cloud-admin-data
+          persistentVolumeClaim:
+            claimName: cloud-admin-data
 `
 	}
 	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
@@ -8781,6 +8841,9 @@ func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
 }
 
 func lkeDeploymentStrategyManifest(workload lkeWorkload) string {
+	if workload.Key == "cloud-admin" {
+		return "  strategy:\n    type: Recreate\n"
+	}
 	if workload.Key != "video-cloud" {
 		return ""
 	}

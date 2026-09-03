@@ -322,6 +322,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"cloud-logger-billing-usage-token", "video-cloud,cloud-logger", "manual"},
 		{"grafana-admin-password", "grafana", "manual"}, {"clip-private-key-seed", "video-cloud", "manual"},
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
+		{"job-authorization-token", "account-manager,cloud-admin", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
 		{"billing-cloud-creation", "account-manager,billing", "manual"},
 		{"billing-handoff", "account-manager,billing", "manual"},
@@ -366,6 +367,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"cloud-logger-billing-usage-token": {{"-logger", "cloud-logger-runtime", "RTK_CLOUD_LOGGER_BILLING_USAGE_TOKEN"}},
 		"grafana-admin-password":           {{"-observability", "video-cloud-grafana-admin", "admin-password"}},
 		"billing-service-token":            {{"-billing", "billing-runtime", "BILLING_SERVICE_TOKEN"}},
+		"job-authorization-token": {
+			{"-account-manager", "account-manager-runtime", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
+			{"-cloud-admin", "cloud-admin-billing-client", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
+		},
 		"billing-internal-token": {
 			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
 			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_BILLING_USAGE_TOKEN"},

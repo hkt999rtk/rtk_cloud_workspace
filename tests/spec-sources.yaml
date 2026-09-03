@@ -5,6 +5,7 @@ schema_version: 1
 sources:
   - { id: SPEC-CONTRACT-AUTH, path: repos/rtk_cloud_contracts_doc/auth.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
   - { id: SPEC-CONTRACT-AUTHZ, path: repos/rtk_cloud_contracts_doc/authorization.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
+  - { id: SPEC-CONTRACT-BATCH-JOBS, path: repos/rtk_cloud_contracts_doc/batch_jobs.md, parser: markdown, authority: canonical, owner: rtk_cloud_admin }
   - { id: SPEC-CONTRACT-BRAND-CLOUD, path: repos/rtk_cloud_contracts_doc/brand_cloud_admin.md, parser: markdown, authority: canonical, owner: rtk_account_manager }
   - { id: SPEC-CONTRACT-MULTICLOUD, path: repos/rtk_cloud_contracts_doc/multicloud_ownership.md, parser: markdown, authority: canonical, owner: cloud_platform }
   - { id: SPEC-CONTRACT-PROVISION, path: repos/rtk_cloud_contracts_doc/provision.md, parser: markdown, authority: canonical, owner: provisioning }

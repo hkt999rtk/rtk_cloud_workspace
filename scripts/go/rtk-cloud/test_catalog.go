@@ -93,7 +93,7 @@ var catalogOwners = map[string]bool{
 }
 var catalogRunners = map[string]bool{"test-services": true, "test-coverage": true, "test-e2e": true, "test-ui": true, "test-live": true, "test-feature": true, "test-payment": true}
 var catalogTargets = map[string]bool{"desktop": true, "mobile": true, "ios": true, "android": true}
-var catalogEnvironments = map[string]bool{"local": true, "ci": true, "staging": true}
+var catalogEnvironments = map[string]bool{"local": true, "ci": true, "dev": true, "staging": true}
 var catalogProfiles = map[string]bool{"canary": true, "qualification-1k": true, "capacity": true}
 var catalogEvidence = map[string]bool{
 	"screenshot": true, "cloud-evidence": true, "junit": true, "json": true,

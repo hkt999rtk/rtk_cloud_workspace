@@ -1904,6 +1904,59 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	}
 }
 
+func TestLKECloudAdminDurableBatchRuntime(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "durable-batch-test")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}
+
+	accountSecret := lkeAccountManagerSecretManifest(env)
+	adminSecret := lkeCloudAdminBillingSecretManifest(env)
+	for name, manifest := range map[string]string{
+		"account manager": accountSecret,
+		"cloud admin":     adminSecret,
+	} {
+		if !strings.Contains(manifest, "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN:") {
+			t.Fatalf("%s secret is missing the delegated job credential:\n%s", name, manifest)
+		}
+	}
+
+	var admin lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "cloud-admin" {
+			admin = workload
+			break
+		}
+	}
+	if admin.Key == "" {
+		t.Fatal("cloud-admin workload not found")
+	}
+	manifest := lkeDeploymentManifest(env, admin, nil)
+	for _, want := range []string{
+		"type: Recreate",
+		"name: CLOUD_ADMIN_ENV\n              value: \"dev\"",
+		"name: DATABASE_PATH\n              value: \"/var/lib/rtk-cloud-admin/admin.db\"",
+		"name: BATCH_WORKER_POLL_INTERVAL\n              value: \"1s\"",
+		"name: BATCH_WORKER_LEASE_DURATION\n              value: \"30s\"",
+		"mountPath: /var/lib/rtk-cloud-admin",
+		"claimName: cloud-admin-data",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("cloud-admin durable runtime is missing %q:\n%s", want, manifest)
+		}
+	}
+
+	pvc := lkeCloudAdminPVCManifest(env)
+	for _, want := range []string{
+		"name: cloud-admin-data",
+		"namespace: video-cloud-dev-admin",
+		"accessModes: [ReadWriteOnce]",
+		"storage: 1Gi",
+	} {
+		if !strings.Contains(pvc, want) {
+			t.Fatalf("cloud-admin PVC is missing %q:\n%s", want, pvc)
+		}
+	}
+}
+
 func TestLKERedisAndExporterManifestsUsePrivatePlatformServices(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
 

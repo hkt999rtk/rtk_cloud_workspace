@@ -1329,6 +1329,30 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-CA-DASHBOARD-AUTHORITY-001, REQ-CA-DASHBOARD-BFF-001, REQ-CA-DASHBOARD-DATA-001, REQ-CA-DASHBOARD-METRICS-001, REQ-CA-DASHBOARD-STATES-001]
     status: active
+  - id: INT-CA-PROVISIONING-P0-001
+    title: Durable cloud-scoped provisioning preserves immutable validation and idempotency
+    layer: integration
+    owner: rtk_cloud_admin
+    source: repos/rtk_cloud_admin/internal/app/provisioning_test.go
+    selector: ./internal/app#TestScopedProvisioningCSVValidationAndExecution
+    method: In-process Cloud Admin and Account Manager fixtures exercise Product-bound immutable CSV upload, exact replay and conflict handling, restricted job authorization exchange, durable validation and execution, permanent-row rejection, per-item results, deterministic upstream operation identity, terminal grant revocation, and cross-cloud denial.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-UI-CA-PROV-001, REQ-UI-CA-PROV-002, REQ-CONTRACT-BATCH-SCOPE-001, REQ-CONTRACT-BATCH-DELEGATION-001, REQ-CONTRACT-BATCH-RESULT-001]
+    status: active
+  - id: INT-CA-BATCH-P0-001
+    title: SQLite batch scheduler preserves CAS lifecycle lease checkpoint and recovery
+    layer: integration
+    owner: rtk_cloud_admin
+    source: repos/rtk_cloud_admin/internal/store/store_test.go
+    selector: ./internal/store#TestDurableBatchJobCASLeaseCheckpointAndItems,./internal/store#TestRecoverBatchJobLeaseStopsAtItemBoundary,./internal/store#TestProvisioningJobDoesNotOfferRetryForPermanentFailures
+    method: SQLite-backed tests verify idempotent action receipts, one-winner state transitions, cooperative item boundaries, lease recovery after restart, durable checkpoints, filtered item results, pending authorization revocation, and retry visibility derived only from recoverable rows.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-CONTRACT-BATCH-STATE-001, REQ-CONTRACT-BATCH-RECOVERY-001, REQ-CONTRACT-BATCH-RESULT-001]
+    status: active
   - id: INT-LOGGER-CONTRACT-001
     title: Cloud Logger preserves the canonical structured delivery and query contract
     layer: integration
@@ -1702,6 +1726,8 @@ cases:
   - { <<: *ui_local, id: UI-CA-BATCH-001, title: Partial batch failure preserves item results and supports a new retry attempt, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-001]", verifies: [REQ-UI-CA-BATCH-001] }
   - { <<: *ui_local, id: UI-CA-BATCH-002, title: Batch jobs enforce valid pause resume and cancel transitions, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-002]", verifies: [REQ-UI-CA-BATCH-002] }
   - { <<: *ui_local, id: UI-CA-BATCH-003, title: Completed batch results can be downloaded as JSON and CSV, source: repos/rtk_cloud_admin/web/e2e/brand-fleet-lifecycle.spec.mjs, selector: "[UI-CA-BATCH-003]", verifies: [REQ-UI-CA-BATCH-003] }
+  - { <<: *ui_smoke, id: UI-CA-PROV-P0-001, title: Durable provisioning controls and row results follow server state, source: repos/rtk_cloud_admin/web/e2e/provisioning-durable.spec.mjs, selector: "[UI-CA-PROV-P0-001]", verifies: [REQ-UI-CA-PROV-004, REQ-UI-CA-PROV-005, REQ-UI-CA-PROV-006] }
+  - { <<: *ui_smoke, id: UI-CA-PROV-P0-002, title: Provisioning writes stay hidden without capability, source: repos/rtk_cloud_admin/web/e2e/provisioning-durable.spec.mjs, selector: "[UI-CA-PROV-P0-002]", verifies: [REQ-UI-CA-PROV-003] }
   - { <<: *ui_local, id: UI-CA-CHIPSET-001, title: Chipset provider page exposes loading and validation states, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-001]", verifies: [REQ-UI-CA-CHIPSET-001] }
   - { <<: *ui_local, id: UI-CA-CHIPSET-002, title: Read-only provider capability hides mutation controls, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-002]", verifies: [REQ-UI-CA-CHIPSET-002] }
   - { <<: *ui_local, id: UI-CA-CHIPSET-003, title: Provider and developer pages expose safe upstream-unavailable states, source: repos/rtk_cloud_admin/web/e2e/chipset-sdk.spec.mjs, selector: "[UI-CA-CHIPSET-003]", verifies: [REQ-UI-CA-CHIPSET-003] }
