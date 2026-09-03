@@ -7,11 +7,11 @@ cases:
       title: explicit My Clouds is preserved; scoped next requires membership
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20opens%20a%20valid%20remembered%20cloud%20or%20the%20first%20ordered%20membership
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#global%20developer%20resources%20preserve%20a%20safe%20login%20next%20without%20cloud%20context
       module: cloud-admin-web
       language: javascript
       source: src/auth-routing.test.mjs
-      title: login opens a valid remembered cloud or the first ordered membership
+      title: global developer resources preserve a safe login next without cloud context
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20next%20accepts%20only%20admin%20and%20console%20paths
@@ -29,6 +29,13 @@ cases:
       owner: rtk_cloud_admin
       status: active
       test_id: UNIT-CA-AUTH-001
+    - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20opens%20a%20valid%20remembered%20cloud%20or%20the%20first%20ordered%20membership
+      module: cloud-admin-web
+      language: javascript
+      source: src/auth-routing.test.mjs
+      title: login opens a valid remembered cloud or the first ordered membership
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/auth-routing.test.mjs#login%20page%20reads%20safe%20next%20from%20location%20search
       module: cloud-admin-web
       language: javascript
