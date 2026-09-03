@@ -47,6 +47,7 @@ type deploymentStoragePlan struct {
 
 type deploymentOperations struct {
 	preflight                     func(deploymentConfig, string) error
+	validateTarget                func(deploymentConfig, string) error
 	credentials                   func(deploymentConfig, string) error
 	bootstrapCredentials          func(deploymentConfig, string) error
 	grantObjectStorageCredentials func(deploymentConfig, string) error
@@ -76,12 +77,14 @@ var deploymentArchitectureKeys = architectureKeySet()
 
 var deploymentEnvironmentKeys = keySet(
 	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
+	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
 	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
 )
 
 var deploymentEnvironmentServiceKeys = keySet(
+	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
 	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
@@ -122,6 +125,7 @@ func runDeployment(args []string) error {
 func defaultDeploymentOperations() deploymentOperations {
 	return deploymentOperations{
 		preflight:                     runDeploymentPreflight,
+		validateTarget:                validateDeploymentActionTarget,
 		credentials:                   validateDeploymentCredentials,
 		bootstrapCredentials:          validateAndBootstrapDeploymentCredentials,
 		grantObjectStorageCredentials: validateAndGrantDeploymentObjectStorageAccess,
@@ -171,7 +175,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
-	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -209,7 +213,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if cfg.Adapter != "lke" && action != "plan" && action != "credentials-check" {
 		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
 	}
-	if action == "provision" || action == "test" {
+	if action == "create" || action == "upgrade" || action == "provision" || action == "test" {
 		operation := "provision"
 		if action == "test" {
 			operation = "ephemeral-test"
@@ -219,8 +223,13 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 				return err
 			}
 		}
+		if (action == "create" || action == "upgrade") && ops.validateTarget != nil {
+			if err := ops.validateTarget(cfg, action); err != nil {
+				return err
+			}
+		}
 	}
-	if action == "credentials-check" || action == "provision" || action == "test" {
+	if action == "credentials-check" || action == "create" || action == "upgrade" || action == "provision" || action == "test" {
 		credentialCheck := ops.credentials
 		credentialsValidated := false
 		if *createMissingObjectStorageBucket {
@@ -271,7 +280,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 			return err
 		}
 		return ops.normalize(cfg)
-	case "provision":
+	case "create", "upgrade", "provision":
 		err = ops.provision(cfg)
 	case "acceptance":
 		err = ops.acceptance(cfg)
@@ -319,6 +328,56 @@ func provisionDeploymentEnvironment(cfg deploymentConfig) error {
 		}
 	}
 	return runProvision([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--preflight", "--plan", "--apply", "--deploy", "--dns", "--artifacts", "--confirm", cfg.Values["CLOUD_STACK_NAME"]})
+}
+
+func validateDeploymentActionTarget(cfg deploymentConfig, action string) error {
+	switch action {
+	case "create":
+		if err := validateEphemeralDeploymentEnvironmentAbsent(cfg); err != nil {
+			return fmt.Errorf("create requires an absent environment: %w", err)
+		}
+		return nil
+	case "upgrade":
+		return validateExistingDeploymentEnvironment(cfg)
+	default:
+		return nil
+	}
+}
+
+func validateExistingDeploymentEnvironment(cfg deploymentConfig) error {
+	if cfg.Adapter != "lke" {
+		return fmt.Errorf("upgrade target validation is not implemented for adapter %s", cfg.Adapter)
+	}
+	token := resolveLinodeToken(cfg.RuntimeRoot)
+	if token == "" {
+		return errors.New("upgrade requires LKE credentials")
+	}
+	compatInput := appendMap(cfg.Values, cfg.AdapterResolved)
+	compat := appendMap(compatInput, deploymentLegacyLKEValues(compatInput, cfg.Environment))
+	if _, err := discoverLKECluster(token, provisionPaths{EnvRoot: cfg.RuntimeRoot}, compat, false); err != nil {
+		if errors.Is(err, errLKEMissingCluster) {
+			return fmt.Errorf("upgrade requires existing stack %s; use create for a new environment", cfg.Values["CLOUD_STACK_NAME"])
+		}
+		return err
+	}
+	kubeconfig, err := ensureK8SKubeconfig(cfg.Workspace, cfg.RuntimeRoot, cfg.Values["CLOUD_STACK_NAME"])
+	if err != nil {
+		return fmt.Errorf("resolve upgrade kubeconfig: %w", err)
+	}
+	cmd := exec.Command("kubectl", "--kubeconfig", kubeconfig, "-n", cfg.Values["CLOUD_STACK_NAME"]+"-platform", "get", "pvc", "data-postgresql-0", "-o", "jsonpath={.status.phase}{'\\t'}{.spec.volumeName}")
+	body, err := cmd.Output()
+	if err != nil {
+		return errors.New("upgrade requires the existing PostgreSQL PVC data-postgresql-0")
+	}
+	parts := strings.Split(strings.TrimSpace(string(body)), "\t")
+	if len(parts) != 2 || parts[0] != "Bound" || strings.TrimSpace(parts[1]) == "" {
+		phase := ""
+		if len(parts) > 0 {
+			phase = parts[0]
+		}
+		return fmt.Errorf("upgrade requires a bound PostgreSQL PVC; current phase is %q", phase)
+	}
+	return nil
 }
 
 func cleanupDeploymentEnvironment(cfg deploymentConfig) error {
@@ -560,6 +619,8 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
+  rtk-cloud deployment create --environment NAME --confirm STACK
+  rtk-cloud deployment upgrade --environment NAME --confirm STACK
   rtk-cloud deployment provision --environment NAME --confirm STACK
   rtk-cloud deployment acceptance --environment NAME --confirm STACK
   rtk-cloud deployment remove --environment NAME --confirm STACK
