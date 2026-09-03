@@ -56,7 +56,6 @@ func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 		"go-coverage-governance.yml",
 		"lke-image-artifacts.yml",
 		"submodule-pointer-check.yml",
-		"workspace-test-baseline.yml",
 	} {
 		workflow := readWorkflow(name)
 		for _, required := range []string{
@@ -84,6 +83,16 @@ func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 		}
 	}
 	baseline := readWorkflow("workspace-test-baseline.yml")
+	for _, forbidden := range []string{"pull_request:", "push:"} {
+		if strings.Contains(baseline, forbidden) {
+			t.Fatalf("workspace baseline must be manual-only and not contain trigger %q", forbidden)
+		}
+	}
+	for _, required := range []string{"workflow_dispatch:", "group: workspace-test-baseline", "cancel-in-progress: false"} {
+		if !strings.Contains(baseline, required) {
+			t.Fatalf("workspace baseline is missing manual-run control %q", required)
+		}
+	}
 	for _, required := range []string{
 		"git lfs checkout -- \"$fixture\"",
 		"sha256sum \"$fixture\"",
@@ -238,8 +247,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 	if !strings.Contains(string(feature), "group: staging-mutating-tests") {
 		t.Fatal("feature qualification does not share the staging mutation lock")
 	}
-	if !strings.Contains(string(feature), "runs-on: m1-local") {
-		t.Fatal("feature qualification must run on m1.local")
+	if !strings.Contains(string(feature), "runs-on: [self-hosted, macOS, ARM64]") {
+		t.Fatal("feature qualification must select generic macOS ARM64 capabilities")
 	}
 	dockerfiles, err := filepath.Glob(filepath.Join(workspace, "tests", "runtime-coverage", "Dockerfile.*"))
 	if err != nil {

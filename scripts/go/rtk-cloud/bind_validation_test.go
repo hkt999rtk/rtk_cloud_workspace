@@ -411,6 +411,8 @@ func TestBindDeviceBulkChunkSizeIsClamped(t *testing.T) {
 }
 
 func TestValidateDeviceBindWaitsForProvisionedState(t *testing.T) {
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
 	root := t.TempDir()
 	envRoot := filepath.Join(root, "env")
 	if err := os.MkdirAll(filepath.Join(envRoot, "services", "account-manager"), 0o755); err != nil {
@@ -510,6 +512,8 @@ func TestValidateDeviceBindWaitsForProvisionedState(t *testing.T) {
 }
 
 func TestValidateDeviceBindWaitsForProvisionedStateFromSQLiteUsers(t *testing.T) {
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
 	root := t.TempDir()
 	envRoot := filepath.Join(root, "env")
 	if err := os.MkdirAll(filepath.Join(envRoot, "services", "account-manager"), 0o755); err != nil {
@@ -606,6 +610,8 @@ func TestValidateDeviceBindWaitsForProvisionedStateFromSQLiteUsers(t *testing.T)
 }
 
 func TestValidateDeviceBindRetriesProvisioningTransportErrors(t *testing.T) {
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "admin-password")
 	root := t.TempDir()
 	envRoot := filepath.Join(root, "env")
 	if err := os.MkdirAll(filepath.Join(envRoot, "services", "account-manager"), 0o755); err != nil {

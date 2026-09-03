@@ -354,22 +354,25 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/auth/login":
-			var req map[string]string
+			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode login request: %v", err)
 			}
-			if req["email"] != "rtk+001@users.local" {
+			if stringValue(req["email"]) != "rtk+001@users.local" {
 				_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
 				return
 			}
 			brandLoginAttempts++
-			if req["app_csr_pem"] == "" {
+			if stringValue(req["app_csr_pem"]) == "" {
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"user":            map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
 					"tokens":          map[string]string{"access_token": testJWT(time.Now().Add(time.Hour))},
 					"app_certificate": map[string]string{"status": "csr_required"},
 				})
 				return
+			}
+			if req["rotate_app_certificate"] != true {
+				t.Fatalf("rotate_app_certificate = %v, want true", req["rotate_app_certificate"])
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user":   map[string]string{"id": "user-1", "email": "rtk+001@users.local"},
@@ -445,7 +448,7 @@ func TestCreateUsersRotatePasswordBypassesCompleteLocalArtifact(t *testing.T) {
 	if err := runCreateUsers([]string{"--workspace", workspace, "--env-root", envRoot, "--brandname", "RTK", "--count", "1", "--rotate-password"}); err != nil {
 		t.Fatalf("runCreateUsers() error = %v", err)
 	}
-	if createAttempts != 1 || brandLoginAttempts != 2 {
+	if createAttempts != 1 || brandLoginAttempts != 1 {
 		t.Fatalf("createAttempts=%d globalLoginAttempts=%d", createAttempts, brandLoginAttempts)
 	}
 	store, err := openTestDataStore(envRoot, "RTK")
@@ -478,18 +481,18 @@ func TestCreateUsersRunsAdminCreateRequestsConcurrently(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/auth/login":
-			var req map[string]string
+			var req map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode login request: %v", err)
 			}
-			if req["email"] == "admin@example.test" {
+			if stringValue(req["email"]) == "admin@example.test" {
 				_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": testJWT(time.Now().Add(time.Hour)), "refresh_token": testJWT(time.Now().Add(time.Hour))}})
 				return
 			}
-			email := req["email"]
+			email := stringValue(req["email"])
 			userNumber := createUsersTestUserNumber(email)
 			cert := map[string]string{"status": "csr_required"}
-			if strings.TrimSpace(req["app_csr_pem"]) != "" {
+			if strings.TrimSpace(stringValue(req["app_csr_pem"])) != "" {
 				cert = map[string]string{"status": "issued", "certificate_pem": "new-cert", "fingerprint_sha256": "fingerprint-" + userNumber}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -609,7 +612,7 @@ func TestReusableLocalUsersRequireCompleteCertificateMaterial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reusable := loadReusableLocalUsers(envRoot, "rtk")
+	reusable := loadReusableLocalUsers(envRoot, "RTK", "rtk")
 	if reusable["rtk+001@users.local"] == nil {
 		t.Fatal("expected complete local user to be reusable")
 	}
@@ -767,13 +770,13 @@ func TestRepairExistingBoundDeviceCompletesPendingProvisioning(t *testing.T) {
 	}
 	got, repaired, err := repairExistingBoundDeviceProvisioning(
 		accountManagerContext{BaseURL: server.URL},
-		"rtk-test",
 		"brand-1",
 		assignment,
 		map[string]any{"metadata": map[string]any{"video_cloud_activity_id": "activity-4541"}},
 		"20260615T071311Z",
 		stagingProvisionBridge{Enabled: true, AccountBaseURL: server.URL, AccountToken: "account-token", VideoBaseURL: server.URL, VideoToken: "video-token"},
-		&brandCloudUserSession{Email: "rtk+541@users.local", Password: "pass", Session: accountPlatformSession{AccessToken: accessToken}},
+		&accountPlatformSession{AccessToken: accessToken},
+		&sync.Mutex{},
 		func(string, ...any) {},
 	)
 	if err != nil {

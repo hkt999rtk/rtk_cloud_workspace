@@ -45,7 +45,12 @@ type poller struct {
 	lastSuccessful time.Time
 	nextRefresh    time.Time
 	prCache        map[string]PullRequest
+	lastClient     time.Time
+	clientIdle     time.Duration
+	wake           chan struct{}
 }
+
+const defaultClientIdleTimeout = 15 * time.Second
 
 type workflowRunsResponse struct {
 	Runs []workflowRun `json:"workflow_runs"`
@@ -118,7 +123,15 @@ type attemptResponse struct {
 }
 
 func newPoller(client *githubClient, repos []Repository, interval time.Duration) *poller {
-	p := &poller{client: client, repos: make(map[string]*repoState), interval: interval, completedLimit: 20, prCache: make(map[string]PullRequest)}
+	p := &poller{
+		client:         client,
+		repos:          make(map[string]*repoState),
+		interval:       interval,
+		completedLimit: 20,
+		prCache:        make(map[string]PullRequest),
+		clientIdle:     defaultClientIdleTimeout,
+		wake:           make(chan struct{}, 1),
+	}
 	client.onRate = p.captureRate
 	for _, repo := range repos {
 		key := repo.Owner + "/" + repo.Name
@@ -129,18 +142,64 @@ func newPoller(client *githubClient, repos []Repository, interval time.Duration)
 }
 
 func (p *poller) run(ctx context.Context) {
-	p.refresh(ctx)
 	timer := time.NewTimer(p.interval)
+	if !timer.Stop() {
+		<-timer.C
+	}
 	defer timer.Stop()
+	var next <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			p.refresh(ctx)
-			timer.Reset(p.interval)
+		case <-p.wake:
+			if p.clientActiveAt(time.Now()) {
+				p.refresh(ctx)
+				resetTimer(timer, p.interval)
+				next = timer.C
+			}
+		case now := <-next:
+			next = nil
+			if p.clientActiveAt(now) {
+				p.refresh(ctx)
+				timer.Reset(p.interval)
+				next = timer.C
+			}
 		}
 	}
+}
+
+func resetTimer(timer *time.Timer, interval time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(interval)
+}
+
+func (p *poller) recordClientActivity() {
+	p.recordClientActivityAt(time.Now())
+}
+
+func (p *poller) recordClientActivityAt(now time.Time) {
+	p.mu.Lock()
+	wasActive := !p.lastClient.IsZero() && now.Sub(p.lastClient) <= p.clientIdle
+	p.lastClient = now
+	p.mu.Unlock()
+	if !wasActive {
+		select {
+		case p.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (p *poller) clientActiveAt(now time.Time) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return !p.lastClient.IsZero() && now.Sub(p.lastClient) <= p.clientIdle
 }
 
 func (p *poller) refresh(ctx context.Context) {

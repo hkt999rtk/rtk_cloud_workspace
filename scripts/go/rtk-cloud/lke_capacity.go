@@ -177,27 +177,47 @@ func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[stri
 
 func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityPlanResult, error) {
 	_ = opts
-	nodeCount, err := lkeNodeCount(env)
+	brokerCount, err := lkeNodeCount(env)
 	if err != nil {
 		return lkeCapacityPlanResult{}, err
 	}
+	class := strings.ToUpper(firstNonEmpty(env["MQTT_NODE_CLASS"], "broker"))
+	nodeCount := brokerCount
 	nodeType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
-	allocCPU := envIntFrom(env, "NODE_CLASS_BROKER_USABLE_CPU_MILLI", 0)
-	allocMem := envIntFrom(env, "NODE_CLASS_BROKER_USABLE_MEMORY_MIB", 0)
-	totalCPU := envIntFrom(env, "NODE_CLASS_BROKER_TOTAL_REQUEST_CPU_MILLI", 0)
-	totalMem := envIntFrom(env, "NODE_CLASS_BROKER_TOTAL_REQUEST_MEMORY_MIB", 0)
-	required := envIntFrom(env, "NODE_CLASS_BROKER_EFFECTIVE_COUNT", nodeCount)
+	if class == "GENERAL" {
+		nodeCount = envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0)
+		nodeType = firstNonEmpty(env["LKE_GENERAL_NODE_TYPE"], nodeType)
+	} else if class == "DATABASE" {
+		nodeCount = envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 0)
+		nodeType = firstNonEmpty(env["LKE_POSTGRES_NODE_TYPE"], nodeType)
+	}
+	allocCPU := envIntFrom(env, "NODE_CLASS_"+class+"_USABLE_CPU_MILLI", 0)
+	allocMem := envIntFrom(env, "NODE_CLASS_"+class+"_USABLE_MEMORY_MIB", 0)
+	totalCPU := envIntFrom(env, "NODE_CLASS_"+class+"_TOTAL_REQUEST_CPU_MILLI", 0)
+	totalMem := envIntFrom(env, "NODE_CLASS_"+class+"_TOTAL_REQUEST_MEMORY_MIB", 0)
+	required := envIntFrom(env, "NODE_CLASS_"+class+"_EFFECTIVE_COUNT", nodeCount)
 	targetConnects := lkeTargetConnects(env)
 	requiredMQTT := lkeMQTTReplicas(env)
 	mqttCapacity := requiredMQTT * lkeMQTTConnectionsPerPod(env)
 	providerServices := lkeProviderServices(env, nodeCount)
+	requiredCPU := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_CPU", 0)
+	requiredMemory := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_MEMORY", 0)
+	requiredSpread := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_SPREAD", requiredMQTT)
 	return lkeCapacityPlanResult{
 		NodeType: nodeType, NodeCount: nodeCount, TargetConnects: targetConnects, MQTTCapacity: mqttCapacity, RequiredMQTTPods: requiredMQTT, AllocatableCPU: allocCPU, AllocatableMemMi: allocMem,
-		WorkloadCPU: totalCPU, WorkloadMemMi: totalMem, RequiredSpread: requiredMQTT, RequiredNodes: required, ProviderServices: providerServices,
+		SystemCPUPerNode: envIntFrom(env, "CAPACITY_SYSTEM_RESERVED_CPU_MILLI", 0), SystemMemPerNode: envIntFrom(env, "CAPACITY_SYSTEM_RESERVED_MEMORY_MIB", 0),
+		WorkloadCPU: totalCPU, WorkloadMemMi: totalMem, RequiredCPUNode: requiredCPU, RequiredMemNode: requiredMemory, RequiredSpread: requiredSpread, RequiredNodes: required, ProviderServices: providerServices,
 	}, nil
 }
 
 func lkeProviderServices(env map[string]string, nodeCount int) lkeProviderServicePlan {
+	workerNodes := nodeCount
+	if _, hasBroker := env["LKE_NODE_COUNT"]; hasBroker {
+		workerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", 0), 0) + maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+	}
+	if lkePostgresDedicatedNodePoolEnabled(env) {
+		workerNodes += maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
+	}
 	postgresVolumes := 0
 	if lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
@@ -208,9 +228,9 @@ func lkeProviderServices(env map[string]string, nodeCount int) lkeProviderServic
 	}
 	coturnVMs := lkeCoturnVMCount(env)
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
-	required := nodeCount + postgresVolumes + edgeVMs + coturnVMs
+	required := workerNodes + postgresVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
-		NodeServices:     nodeCount,
+		NodeServices:     workerNodes,
 		PostgresVolumes:  postgresVolumes,
 		EdgeVMs:          edgeVMs,
 		CoturnVMs:        coturnVMs,

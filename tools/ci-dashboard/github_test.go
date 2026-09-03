@@ -59,6 +59,56 @@ func TestRefreshRepoEnrichesRunAndUsesETag(t *testing.T) {
 	}
 }
 
+func TestPollerDoesNotCallGitHubWithoutClientActivity(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		fmt.Fprint(w, `{"workflow_runs":[]}`)
+	}))
+	defer server.Close()
+
+	p := newPoller(&githubClient{baseURL: server.URL, token: "x", http: server.Client()}, []Repository{{Owner: "hkt999rtk", Name: "repo"}}, 10*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	p.run(ctx)
+	if requests.Load() != 0 {
+		t.Fatalf("GitHub requests without a client = %d, want 0", requests.Load())
+	}
+}
+
+func TestClientActivityWakesPollerAndExpires(t *testing.T) {
+	requestSeen := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case requestSeen <- struct{}{}:
+		default:
+		}
+		fmt.Fprint(w, `{"workflow_runs":[]}`)
+	}))
+	defer server.Close()
+
+	p := newPoller(&githubClient{baseURL: server.URL, token: "x", http: server.Client()}, []Repository{{Owner: "hkt999rtk", Name: "repo"}}, time.Hour)
+	now := time.Now()
+	p.recordClientActivityAt(now)
+	if !p.clientActiveAt(now.Add(defaultClientIdleTimeout-time.Millisecond)) || p.clientActiveAt(now.Add(defaultClientIdleTimeout+time.Millisecond)) {
+		t.Fatal("client activity did not expire at the idle timeout")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.run(ctx)
+		close(done)
+	}()
+	select {
+	case <-requestSeen:
+	case <-time.After(time.Second):
+		t.Fatal("first client activity did not trigger an immediate refresh")
+	}
+	cancel()
+	<-done
+}
+
 func TestCardFromJobKeepsHierarchyAndSchedulingMetadata(t *testing.T) {
 	started := time.Date(2026, 9, 1, 1, 2, 3, 0, time.UTC)
 	parent := Card{Key: "hkt999rtk/repo/7", Kind: "run", Owner: "hkt999rtk", Repo: "repo", RunID: 7, RunNumber: 8, Attempt: 2, Workflow: "CI", CreatedAt: started.Add(-time.Minute)}

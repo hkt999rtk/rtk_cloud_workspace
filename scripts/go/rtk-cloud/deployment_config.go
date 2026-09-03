@@ -46,6 +46,7 @@ type deploymentStoragePlan struct {
 }
 
 type deploymentOperations struct {
+	preflight                     func(deploymentConfig, string) error
 	credentials                   func(deploymentConfig, string) error
 	bootstrapCredentials          func(deploymentConfig, string) error
 	grantObjectStorageCredentials func(deploymentConfig, string) error
@@ -96,7 +97,7 @@ func architectureKeySet() map[string]bool {
 		"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
 		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
 		"MQTT_HARD_ANTI_AFFINITY", "POSTGRES_LIMIT_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
-		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED", "VIDEO_CLOUD_CLIP_VERIFIER_NODE_CLASS",
 		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM", "CERTIFICATE_APP_CSR_KEY_ALGORITHMS", "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS",
 		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
 	)
@@ -120,6 +121,7 @@ func runDeployment(args []string) error {
 
 func defaultDeploymentOperations() deploymentOperations {
 	return deploymentOperations{
+		preflight:                     runDeploymentPreflight,
 		credentials:                   validateDeploymentCredentials,
 		bootstrapCredentials:          validateAndBootstrapDeploymentCredentials,
 		grantObjectStorageCredentials: validateAndGrantDeploymentObjectStorageAccess,
@@ -129,6 +131,11 @@ func defaultDeploymentOperations() deploymentOperations {
 		prepareTest: validateEphemeralDeploymentEnvironmentAbsent,
 		provision:   provisionDeploymentEnvironment,
 		acceptance: func(cfg deploymentConfig) error {
+			_, restore, err := configureProvisionSecretStore(cfg.Environment)
+			if err != nil {
+				return err
+			}
+			defer restore()
 			return runEnvironmentAcceptance([]string{"--workspace", cfg.Workspace, "--env-root", cfg.RuntimeRoot, "--confirm", cfg.Values["CLOUD_STACK_NAME"], "--no-resume"})
 		},
 		cleanup:   cleanupDeploymentEnvironment,
@@ -201,6 +208,17 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	}
 	if cfg.Adapter != "lke" && action != "plan" && action != "credentials-check" {
 		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
+	}
+	if action == "provision" || action == "test" {
+		operation := "provision"
+		if action == "test" {
+			operation = "ephemeral-test"
+		}
+		if ops.preflight != nil {
+			if err := ops.preflight(cfg, operation); err != nil {
+				return err
+			}
+		}
 	}
 	if action == "credentials-check" || action == "provision" || action == "test" {
 		credentialCheck := ops.credentials
@@ -727,7 +745,6 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 	}
 	for _, key := range []string{
-		"NODE_CLASS_GENERAL_MIN_COUNT", "NODE_CLASS_BROKER_MIN_COUNT", "NODE_CLASS_DATABASE_MIN_COUNT",
 		"NODE_CLASS_GENERAL_MIN_VCPU", "NODE_CLASS_GENERAL_MIN_MEMORY_GIB",
 		"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
 		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
@@ -938,6 +955,14 @@ func positiveIntValue(key, raw string) (int, error) {
 	return n, nil
 }
 
+func nonNegativeIntValue(key, raw string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s must be a non-negative integer", key)
+	}
+	return n, nil
+}
+
 func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), filepath.Join("dns", cfg.DNSAdapter), "services", "secrets", "devices", "artifacts", "backups"} {
 		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
@@ -1058,7 +1083,7 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		"LKE_SYSTEM_RESERVED_CPU_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_CPU_MILLI"] + "m", "LKE_SYSTEM_RESERVED_MEMORY_PER_NODE": v["CAPACITY_SYSTEM_RESERVED_MEMORY_MIB"] + "Mi",
 		"LKE_NODE_COUNT": v["NODE_CLASS_BROKER_EFFECTIVE_COUNT"], "LKE_NODE_TYPE": v["LKE_BROKER_NODE_TYPE"],
 		"LKE_GENERAL_NODE_COUNT": v["NODE_CLASS_GENERAL_EFFECTIVE_COUNT"], "LKE_GENERAL_NODE_TYPE": v["LKE_GENERAL_NODE_TYPE"],
-		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true", "LKE_POSTGRES_NODE_COUNT": v["NODE_CLASS_DATABASE_EFFECTIVE_COUNT"], "LKE_POSTGRES_NODE_TYPE": v["LKE_DATABASE_NODE_TYPE"],
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": strconv.FormatBool(v["POSTGRES_NODE_CLASS"] == "database" && v["NODE_CLASS_DATABASE_EFFECTIVE_COUNT"] != "0"), "LKE_POSTGRES_NODE_COUNT": v["NODE_CLASS_DATABASE_EFFECTIVE_COUNT"], "LKE_POSTGRES_NODE_TYPE": v["LKE_DATABASE_NODE_TYPE"],
 		"LKE_MQTT_REPLICAS": v["MQTT_EFFECTIVE_REPLICAS"], "LKE_VIDEO_CLOUD_REPLICAS": v["VIDEO_CLOUD_API_EFFECTIVE_REPLICAS"],
 		"LKE_POSTGRES_REQUEST_CPU": v["POSTGRES_REQUEST_CPU"], "LKE_POSTGRES_REQUEST_MEMORY": v["POSTGRES_REQUEST_MEMORY"], "LKE_POSTGRES_LIMIT_MEMORY": v["POSTGRES_LIMIT_MEMORY"],
 		"LKE_CLOUD_LOGGER_REQUEST_CPU": v["CLOUD_LOGGER_REQUEST_CPU"], "LKE_CLOUD_LOGGER_REQUEST_MEMORY": v["CLOUD_LOGGER_REQUEST_MEMORY"], "LKE_CLOUD_LOGGER_LIMIT_MEMORY": v["CLOUD_LOGGER_LIMIT_MEMORY"],

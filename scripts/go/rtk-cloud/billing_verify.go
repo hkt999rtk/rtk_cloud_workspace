@@ -79,7 +79,7 @@ type billingVerifyCheck struct {
 }
 
 type billingUsageLogEvent struct {
-	Time   time.Time      `json:"time"`
+	Time   time.Time      `json:"ts"`
 	Fields map[string]any `json:"fields"`
 }
 
@@ -270,12 +270,12 @@ func envValue(values []string, key string) (string, error) {
 }
 
 func queryBillingUsageLogs(endpoint, token, brandCloudID string, since, until time.Time, summary billingUsageSummary) (billingUsageSummary, error) {
-	u, err := url.Parse(endpoint + "/v1/billing-usage/events")
-	if err != nil {
-		return summary, err
-	}
 	cursor := ""
 	for {
+		u, err := url.Parse(endpoint + "/v1/billing-usage/events")
+		if err != nil {
+			return summary, err
+		}
 		query := u.Query()
 		query.Set("limit", "1000")
 		if cursor != "" {
@@ -302,7 +302,7 @@ func queryBillingUsageLogs(endpoint, token, brandCloudID string, since, until ti
 		}
 		for _, record := range body.Records {
 			item := record.Event
-			if (!item.Time.IsZero() && item.Time.Before(since)) || (!item.Time.IsZero() && item.Time.After(until)) {
+			if (!since.IsZero() && item.Time.Before(since)) || (!until.IsZero() && item.Time.After(until)) {
 				continue
 			}
 			raw, ok := item.Fields["usage_event"].(map[string]any)
@@ -332,7 +332,7 @@ func queryBillingUsageLogs(endpoint, token, brandCloudID string, since, until ti
 			break
 		}
 		if body.NextCursor == "" || body.NextCursor == cursor {
-			return summary, errors.New("billing logger returned an invalid pagination cursor")
+			return summary, errors.New("billing logger pagination returned an invalid cursor")
 		}
 		cursor = body.NextCursor
 	}

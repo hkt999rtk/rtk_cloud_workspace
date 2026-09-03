@@ -297,17 +297,58 @@ func (c deploymentCredentialChecker) checkLinode(values map[string]string) deplo
 	if token == "" {
 		return deploymentCredentialCheck{Name: "Linode API", Detail: "LINODE_TOKEN is missing"}
 	}
+	grantedScopes := ""
 	for _, path := range []string{"/profile", "/lke/clusters?page_size=25"} {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, strings.TrimRight(c.linodeAPIRoot, "/")+path, nil)
 		if err != nil {
 			return deploymentCredentialCheck{Name: "Linode API", Detail: "request could not be created"}
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
-		if _, err := c.request(req); err != nil {
+		_, headers, err := c.requestWithHeaders(req)
+		if err != nil {
 			return deploymentCredentialCheck{Name: "Linode API", Detail: err.Error()}
 		}
+		if scopes := strings.TrimSpace(headers.Get("X-OAuth-Scopes")); scopes != "" {
+			grantedScopes = scopes
+		}
 	}
-	return deploymentCredentialCheck{Name: "Linode API", Passed: true, Detail: "authentication, profile, and LKE read access verified"}
+	if err := validateLinodeDeploymentScopes(grantedScopes); err != nil {
+		return deploymentCredentialCheck{Name: "Linode API", Detail: err.Error()}
+	}
+	return deploymentCredentialCheck{Name: "Linode API", Passed: true, Detail: "authentication, LKE read access, and deployment read/write scopes verified"}
+}
+
+func validateLinodeDeploymentScopes(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return errors.New("Linode API response omitted X-OAuth-Scopes; deployment mutation access could not be verified")
+	}
+	granted := map[string]bool{}
+	for _, scope := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ' ' }) {
+		granted[strings.TrimSpace(scope)] = true
+	}
+	if granted["*"] {
+		return nil
+	}
+	required := []string{
+		"firewall:read_write",
+		"linodes:read_write",
+		"lke:read_write",
+		"nodebalancers:read_write",
+		"object_storage:read_write",
+		"volumes:read_write",
+		"vpc:read_write",
+	}
+	missing := []string{}
+	for _, scope := range required {
+		if !granted[scope] {
+			missing = append(missing, scope)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("LINODE_TOKEN lacks deployment read/write scopes: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func (c deploymentCredentialChecker) checkGHCR(values map[string]string) []deploymentCredentialCheck {
@@ -398,16 +439,21 @@ func (c deploymentCredentialChecker) checkGoDaddy(cfg deploymentConfig, values m
 		}
 	}
 	domain := strings.TrimSuffix(cfg.Values["CLOUD_DNS_ROOT_DOMAIN"], ".")
-	endpoint := root + "/v1/domains/" + url.PathEscape(domain) + "/records?limit=1"
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, endpoint, nil)
-	if err != nil {
-		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: "request could not be created"}
+	adapter := &goDaddyDNSAdapter{client: c.client, key: key, secret: secret, apiRoot: root}
+	adapterCtx := dnsAdapterContext{
+		RootDomain: domain,
+		Values: appendMap(cfg.DNSValues, map[string]string{
+			"DNS_RECORD_TTL": "600", "DNS_PROPAGATION_TIMEOUT_SECONDS": "60", "DNS_PROPAGATION_INTERVAL_SECONDS": "2",
+		}),
 	}
-	req.Header.Set("Authorization", "sso-key "+key+":"+secret)
-	if _, err := c.request(req); err != nil {
+	zone, err := adapter.DiscoverZone(context.Background(), adapterCtx)
+	if err != nil {
 		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
 	}
-	return deploymentCredentialCheck{Name: "GoDaddy DNS", Passed: true, Detail: "authentication and read access for " + domain + " verified"}
+	if err := validateDNSMutationAccess(context.Background(), adapter, adapterCtx, zone, cfg.Environment); err != nil {
+		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
+	}
+	return deploymentCredentialCheck{Name: "GoDaddy DNS", Passed: true, Detail: "authentication and reversible record read/write/delete access for " + domain + " verified"}
 }
 
 func (c deploymentCredentialChecker) checkObjectStorage(values map[string]string) deploymentCredentialCheck {
@@ -646,19 +692,24 @@ func updateDeploymentCredentialEnvFile(path string, replacements map[string]stri
 }
 
 func (c deploymentCredentialChecker) request(req *http.Request) ([]byte, error) {
+	body, _, err := c.requestWithHeaders(req)
+	return body, err
+}
+
+func (c deploymentCredentialChecker) requestWithHeaders(req *http.Request) ([]byte, http.Header, error) {
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, errors.New("request failed")
+		return nil, nil, errors.New("request failed")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, errors.New("response could not be read")
+		return nil, resp.Header, errors.New("response could not be read")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, resp.Header, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	return body, nil
+	return body, resp.Header, nil
 }
 
 func (c deploymentCredentialChecker) render(checks []deploymentCredentialCheck) error {

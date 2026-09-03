@@ -51,6 +51,7 @@ var capacityWorkloadRegistry = []capacityWorkloadSpec{
 	{Name: "mqtt", Prefix: "MQTT", Scale: "connections", SpreadReplicas: true},
 	{Name: "video-cloud-api", Prefix: "VIDEO_CLOUD_API", Scale: "active-devices", SpreadReplicas: true},
 	{Name: "account-manager", Prefix: "ACCOUNT_MANAGER", SpreadReplicas: true},
+	{Name: "billing", Prefix: "BILLING"},
 	{Name: "cloud-admin", Prefix: "CLOUD_ADMIN"},
 	{Name: "frontend", Prefix: "FRONTEND"},
 	{Name: "cloud-logger", Prefix: "CLOUD_LOGGER"},
@@ -138,7 +139,7 @@ func buildSharedCapacityPlan(values map[string]string) (sharedCapacityPlan, map[
 
 	for _, class := range []string{"general", "broker", "database"} {
 		prefix := "NODE_CLASS_" + classKey(class)
-		minimum, err := positiveIntValue(prefix+"_MIN_COUNT", values[prefix+"_MIN_COUNT"])
+		minimum, err := nonNegativeIntValue(prefix+"_MIN_COUNT", values[prefix+"_MIN_COUNT"])
 		if err != nil {
 			return plan, nil, err
 		}
@@ -157,7 +158,7 @@ func buildSharedCapacityPlan(values map[string]string) (sharedCapacityPlan, map[
 		if usableCPU <= 0 || usableMemory <= 0 {
 			return plan, nil, fmt.Errorf("node class %s has no resources after system reserve", class)
 		}
-		totalCPU, totalMemory, spread := 0, 0, 1
+		totalCPU, totalMemory, spread := 0, 0, 0
 		for name, workload := range plan.Workloads {
 			if workload.NodeClass != class {
 				continue
@@ -181,6 +182,9 @@ func buildSharedCapacityPlan(values map[string]string) (sharedCapacityPlan, map[
 		effective[prefix+"_TOTAL_REQUEST_MEMORY_MIB"] = strconv.Itoa(totalMemory)
 		effective[prefix+"_USABLE_CPU_MILLI"] = strconv.Itoa(usableCPU)
 		effective[prefix+"_USABLE_MEMORY_MIB"] = strconv.Itoa(usableMemory)
+		effective[prefix+"_REQUIRED_BY_CPU"] = strconv.Itoa(classPlan.RequiredByCPU)
+		effective[prefix+"_REQUIRED_BY_MEMORY"] = strconv.Itoa(classPlan.RequiredByMemory)
+		effective[prefix+"_REQUIRED_BY_SPREAD"] = strconv.Itoa(classPlan.RequiredBySpread)
 	}
 	return plan, effective, nil
 }
