@@ -44,6 +44,8 @@ The dashboard includes the workspace repository and first-level `.gitmodules` en
 ## Behavior
 
 - Runs are grouped into Queued, Running, and Completed lanes.
+- Open pull requests appear in an Open PRs lane before Queued, Running, and Completed. It includes draft PRs, excludes closed PRs, and sorts oldest first by creation time.
+- Open PRs are fetched for every monitored repository, including paginated results. PR polling failures preserve the last successful list and do not block Actions polling.
 - Active jobs are refreshed even when GitHub's workflow-runs ETag is unchanged, so runner assignments and status transitions remain current.
 - Search matches repository, workflow, job, runner name and labels, PR, branch, and actor metadata.
 - Completed is a global window of 20 job cards ordered strictly by job completion time, newest first. Status color remains visible but does not change the order.
@@ -56,7 +58,7 @@ The dashboard includes the workspace repository and first-level `.gitmodules` en
 
 ## Local API
 
-- `GET /api/snapshot` returns repository health, rate-limit information, and the three card lanes.
+- `GET /api/snapshot` returns repository health, rate-limit information, the three Actions card lanes, and an `openPullRequests` array. PR cards include repository, number, title, URL, author, draft state, head/base branches, and creation/update timestamps.
 - `GET /api/runs/{owner}/{repo}/{runID}` loads attempt-specific jobs and steps for the detail drawer.
 - `GET /healthz` returns a local process health response.
 
