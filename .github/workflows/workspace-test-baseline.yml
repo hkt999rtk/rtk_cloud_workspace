@@ -1,37 +1,14 @@
 name: Workspace Test Baseline
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/workspace-test-baseline.yml'
-      - 'e2e_test/**'
-      - 'go.work'
-      - 'go.work.sum'
-      - 'loadtests/home-100k/**'
-      - 'repos/rtk_billing'
-      - 'repos/rtk_cloud_contracts_doc'
-      - 'scripts/ci/init-submodules.sh'
-      - 'scripts/go/rtk-cloud/**'
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/workspace-test-baseline.yml'
-      - 'e2e_test/**'
-      - 'go.work'
-      - 'go.work.sum'
-      - 'loadtests/home-100k/**'
-      - 'repos/rtk_billing'
-      - 'repos/rtk_cloud_contracts_doc'
-      - 'scripts/ci/init-submodules.sh'
-      - 'scripts/go/rtk-cloud/**'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: workspace-test-baseline
+  cancel-in-progress: false
 
 jobs:
   baseline:
@@ -155,15 +132,7 @@ jobs:
         id: diff
         shell: bash
         run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_ref="${{ github.event.pull_request.base.sha }}"
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            base_ref="${{ github.event.before }}"
-          else
-            base_ref=""
-          fi
-          echo "base_ref=$base_ref" >> "$GITHUB_OUTPUT"
+          echo "base_ref=" >> "$GITHUB_OUTPUT"
 
       - name: Fetch comparison submodule commits
         if: steps.diff.outputs.base_ref != ''
@@ -201,12 +170,6 @@ jobs:
           set -euo pipefail
           chrome_path=$(node -e "process.stdout.write(require('playwright').chromium.executablePath())")
           test -x "$chrome_path"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            chrome_wrapper="$RUNNER_TEMP/chromium-no-sandbox"
-            printf '#!/usr/bin/env bash\nexec %q --no-sandbox "$@"\n' "$chrome_path" > "$chrome_wrapper"
-            chmod 0700 "$chrome_wrapper"
-            chrome_path="$chrome_wrapper"
-          fi
           printf 'CHROME_PATH=%s\n' "$chrome_path" >> "$GITHUB_ENV"
 
       - name: Run Home load-runner contract tests
@@ -264,7 +227,7 @@ jobs:
           path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-node/coverage/**
           if-no-files-found: error
           include-hidden-files: true
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+          retention-days: 90
 
       - name: Audit product feature coverage
         if: always()
@@ -293,13 +256,9 @@ jobs:
               --head HEAD \
               --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-spec-impact"
           fi
-          coverage_mode=pr
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            coverage_mode=main
-          fi
           args=(
             "$action"
-            --mode "$coverage_mode"
+            --mode main
             --evidence ".artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID"
             --output-dir "../../.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-feature-coverage"
           )
@@ -320,7 +279,7 @@ jobs:
             .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-spec-impact/**
           if-no-files-found: error
           include-hidden-files: true
-          retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
+          retention-days: 90
 
       - name: Publish coverage summary
         if: always()

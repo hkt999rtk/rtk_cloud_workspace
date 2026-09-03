@@ -134,7 +134,8 @@ exist. If a same-name cluster exists, stop and use the takeover path instead.
 
 1. Create or review tracked configuration according to
    [`../cloud_env/README.md`](../cloud_env/README.md).
-2. Run `preflight --operation provision`.
+2. Run `preflight --operation provision`. `deployment provision` repeats this
+   preflight automatically immediately before credential validation and mutation.
 3. Generate a sanitized plan:
 
    ```sh

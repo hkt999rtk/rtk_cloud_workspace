@@ -37,7 +37,7 @@ function cardElapsed(card) {
 }
 
 function cardMatches(card) {
-  const haystack = [card.repo, card.workflow, card.topic, card.headBranch, card.actor?.login, card.pr?.number, card.pr?.title].join(" ").toLowerCase();
+  const haystack = [card.repo, card.workflow, card.jobName, card.runnerName, ...(card.runnerLabels || []), card.topic, card.headBranch, card.actor?.login, card.pr?.number, card.pr?.title].join(" ").toLowerCase();
   return (!state.filters.search || haystack.includes(state.filters.search)) && (!state.filters.repo || card.repo === state.filters.repo) && (!state.filters.trigger || card.event === state.filters.trigger);
 }
 

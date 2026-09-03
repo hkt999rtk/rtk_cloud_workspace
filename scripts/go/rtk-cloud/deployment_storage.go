@@ -219,6 +219,11 @@ func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfi
 		if err := updateDeploymentCredentialEnvFile(environmentFile, map[string]string{"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": access, "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": secret}); err != nil {
 			return err
 		}
+		values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] = access
+		values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"] = secret
+		if check := c.checkResolvedObjectStorage(cfg, values); !check.Passed {
+			return errors.New(check.Detail)
+		}
 	}
 	return c.bootstrapArtifactStorage(cfg, values)
 }

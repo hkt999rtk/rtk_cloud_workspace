@@ -45,9 +45,14 @@ func TestLKEHandoffRuntimeIsExplicitlyOptIn(t *testing.T) {
 		}
 	}
 	mqttUsage := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage", Port: 19400})
-	for _, forbidden := range []string{"VIDEO_CLOUD_BILLING_USAGE_ENDPOINT", "VIDEO_CLOUD_EMQX_API_URL", "VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN", "mqtt-usage-checkpoint", "type: Recreate"} {
+	for _, forbidden := range []string{"VIDEO_CLOUD_BILLING_USAGE_ENDPOINT", "VIDEO_CLOUD_EMQX_API_URL", "VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN"} {
 		if strings.Contains(mqttUsage, forbidden) {
 			t.Fatalf("disabled handoff deployment unexpectedly contains %q", forbidden)
+		}
+	}
+	for _, required := range []string{"mqtt-usage-checkpoint", "type: Recreate", "prepare-mqtt-usage-checkpoint"} {
+		if !strings.Contains(mqttUsage, required) {
+			t.Fatalf("disabled handoff deployment must retain runtime checkpoint storage %q", required)
 		}
 	}
 	if bootstrap := lkeEMQXHandoffAPIKeyBootstrap(env); bootstrap != "" {

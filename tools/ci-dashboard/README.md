@@ -28,6 +28,7 @@ Useful flags:
 ```
 
 The browser reads a cached snapshot every five seconds. The Go server polls GitHub once per minute by default and updates elapsed counters without querying GitHub every second.
+GitHub polling is demand-driven: the server starts refreshing when a browser reads the snapshot and stops issuing periodic GitHub API requests about 15 seconds after the last dashboard client activity.
 
 ## Authentication and repository scope
 
@@ -43,11 +44,14 @@ The dashboard includes the workspace repository and first-level `.gitmodules` en
 ## Behavior
 
 - Runs are grouped into Queued, Running, and Completed lanes.
+- Active jobs are refreshed even when GitHub's workflow-runs ETag is unchanged, so runner assignments and status transitions remain current.
+- Search matches repository, workflow, job, runner name and labels, PR, branch, and actor metadata.
 - Completed is a global window of 20 job cards ordered strictly by job completion time, newest first. Status color remains visible but does not change the order.
 - A GitHub re-run retains the same card because the key is `owner/repo/run_id`. The drawer shows each `run_attempt` separately.
 - A fresh push or manual dispatch creates a new card because GitHub assigns a new `run_id`.
 - Manual runs use GitHub's `display_title`; the fallback is workflow, actor, branch, and short SHA.
 - A failed repository refresh preserves its last snapshot and marks its cards `STALE`.
+- Transient server errors retry with exponential backoff; only actual GitHub rate-limit responses wait for the API reset time.
 - Failure, timeout, startup failure, and action-required conclusions are red. Long-running active cards keep a blue Running state while their elapsed-time rail heats from green to red.
 
 ## Local API

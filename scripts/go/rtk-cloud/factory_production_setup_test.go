@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -131,7 +132,7 @@ func TestPrepareFactoryProductionStepPassesCredentialOnlyToChildEnv(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if step.Status != "PASS" || step.ExitCode != 0 || envListValue(env, "FACTORY_ENROLL_PRODUCTION_JWT") != secretJWT || envListValue(env, "FACTORY_ENROLL_RUN_ID") != "runtime-1" || envListValue(env, "FACTORY_ENROLL_FACTORY_ID") != runtimeFactoryProductionID {
+	if step.Status != "PASS" || step.ExitCode != 0 || envListValue(env, "FACTORY_ENROLL_PRODUCTION_JWT") != secretJWT || envListValue(env, "FACTORY_ENROLL_RUN_ID") != "runtime-1" || envListValue(env, "FACTORY_ENROLL_FACTORY_ID") != runtimeFactoryProductionID || envListValue(env, "FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID") != "profile" {
 		t.Fatalf("env=%v step=%+v", env, step)
 	}
 	for _, path := range []string{step.LogFile, filepath.Join(root, "factory-production.json")} {
@@ -143,6 +144,192 @@ func TestPrepareFactoryProductionStepPassesCredentialOnlyToChildEnv(t *testing.T
 			t.Fatalf("%s leaked production JWT", path)
 		}
 	}
+}
+
+func TestPrepareFactoryProductionBundleStepPassesPerTypeCredentialsOnlyToChildEnv(t *testing.T) {
+	root := t.TempDir()
+	logsDir := filepath.Join(root, "logs")
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	credentials := factoryProductionCredentialBundle{
+		"camera": {JWT: "camera-secret", BrandCloudID: "brand", DeviceItemProfileID: "camera-product", ProductionRunID: "camera-run", BatchID: "batch-camera"},
+		"light":  {JWT: "light-secret", BrandCloudID: "brand", DeviceItemProfileID: "light-product", ProductionRunID: "light-run", BatchID: "batch-light"},
+	}
+	env, step, err := prepareFactoryProductionBundleStep("workspace", "env", root, logsDir, "RTK", "runtime-1", 2, "camera=1,light=1", time.Now().UTC(), func(_, _, brand, run string, quantity int, mix string, _ time.Time) (factoryProductionCredentialBundle, error) {
+		if brand != "RTK" || run != "runtime-1" || quantity != 2 || mix != "camera=1,light=1" {
+			t.Fatalf("prepare args brand=%s run=%s quantity=%d mix=%s", brand, run, quantity, mix)
+		}
+		return credentials, nil
+	})
+	if err != nil || step.Status != "PASS" {
+		t.Fatalf("env=%v step=%+v err=%v", env, step, err)
+	}
+	jwtByType := map[string]string{}
+	if err := json.Unmarshal([]byte(envListValue(env, "FACTORY_ENROLL_PRODUCTION_JWT_BY_DEVICE_TYPE")), &jwtByType); err != nil {
+		t.Fatal(err)
+	}
+	profileByType := map[string]string{}
+	if err := json.Unmarshal([]byte(envListValue(env, "FACTORY_ENROLL_DEVICE_ITEM_PROFILE_ID_BY_DEVICE_TYPE")), &profileByType); err != nil {
+		t.Fatal(err)
+	}
+	if jwtByType["camera"] != "camera-secret" || jwtByType["light"] != "light-secret" || profileByType["camera"] != "camera-product" || profileByType["light"] != "light-product" {
+		t.Fatalf("jwt=%v profile=%v", jwtByType, profileByType)
+	}
+	for _, path := range []string{step.LogFile, filepath.Join(root, "factory-production.json")} {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.Contains(string(raw), "camera-secret") || strings.Contains(string(raw), "light-secret") {
+			t.Fatalf("%s leaked a production JWT", path)
+		}
+	}
+	assertFactoryProductionBundleRejectsInvalidBundlesAndPaths(t)
+}
+
+func assertFactoryProductionBundleRejectsInvalidBundlesAndPaths(t *testing.T) {
+	valid := factoryProductionCredentialBundle{
+		"camera": {JWT: "camera-secret", BrandCloudID: "brand", DeviceItemProfileID: "camera-product", ProductionRunID: "camera-run", BatchID: "batch-camera"},
+	}
+	tests := []struct {
+		name      string
+		prepare   factoryProductionBundlePreparer
+		configure func(t *testing.T, root string) (string, string)
+	}{
+		{
+			name: "preparer error",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return nil, http.ErrServerClosed
+			},
+		},
+		{
+			name: "empty bundle",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return factoryProductionCredentialBundle{}, nil
+			},
+		},
+		{
+			name: "incomplete credential",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return factoryProductionCredentialBundle{"camera": {BrandCloudID: "brand"}}, nil
+			},
+		},
+		{
+			name: "unwritable evidence path",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return valid, nil
+			},
+			configure: func(t *testing.T, root string) (string, string) {
+				out := filepath.Join(root, "out-file")
+				if err := os.WriteFile(out, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return out, filepath.Join(root, "logs")
+			},
+		},
+		{
+			name: "unwritable log path",
+			prepare: func(string, string, string, string, int, string, time.Time) (factoryProductionCredentialBundle, error) {
+				return valid, nil
+			},
+			configure: func(t *testing.T, root string) (string, string) {
+				logs := filepath.Join(root, "logs-file")
+				if err := os.WriteFile(logs, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return root, logs
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			outDir, logsDir := root, filepath.Join(root, "logs")
+			if tt.configure != nil {
+				outDir, logsDir = tt.configure(t, root)
+			}
+			if err := os.MkdirAll(logsDir, 0o755); err != nil && tt.name != "unwritable log path" {
+				t.Fatal(err)
+			}
+			env, step, err := prepareFactoryProductionBundleStep("workspace", "env", outDir, logsDir, "RTK", "runtime-1", 1, "camera=1", time.Now().UTC(), tt.prepare)
+			if err == nil || len(env) != 0 {
+				t.Fatalf("env=%v step=%+v err=%v", env, step, err)
+			}
+			if (tt.name == "preparer error" || tt.name == "empty bundle") && (step.Status != "FAIL" || step.ExitCode != 1) {
+				t.Fatalf("step=%+v", step)
+			}
+		})
+	}
+}
+
+func assertFactoryProductionCredentialsRejectInvalidInputs(t *testing.T) {
+	for _, test := range []struct {
+		name, runID, mix string
+		quantity         int
+	}{
+		{name: "missing run", quantity: 1, mix: "camera=1"},
+		{name: "non-positive quantity", runID: "run", quantity: 0, mix: "camera=1"},
+		{name: "invalid mix", runID: "run", quantity: 1, mix: "camera=invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := prepareFactoryProductionCredentials(t.TempDir(), t.TempDir(), "RTK", test.runID, test.quantity, test.mix, time.Now().UTC()); err == nil {
+				t.Fatal("invalid factory production input was accepted")
+			}
+		})
+	}
+}
+
+func TestPrepareFactoryProductionCredentialsCreatesProductPerDeviceType(t *testing.T) {
+	profileID := 0
+	categories := []string{}
+	runBatches := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/login":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tokens": map[string]string{"access_token": "admin-token"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/brand-clouds":
+			_ = json.NewEncoder(w).Encode(map[string]any{"brand_clouds": []map[string]any{{"id": "brand-001", "name": "RTK"}}})
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/device-item-profiles"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profiles": []any{}})
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/device-item-profiles"):
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			categories = append(categories, payload["category"].(string))
+			profileID++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profile": map[string]string{"id": fmt.Sprintf("profile-%d", profileID)}})
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/production-runs"):
+			var payload map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			runBatches = append(runBatches, payload["batch_id"].(string))
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"production_run": map[string]string{"id": "run-" + payload["batch_id"].(string)}, "factory_jwt": "jwt-" + payload["batch_id"].(string)})
+		default:
+			http.Error(w, "unexpected request", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "admin@example.test")
+	t.Setenv("ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "test-password")
+	t.Setenv("CLOUD_PROVIDER", "local")
+	credentials, err := prepareFactoryProductionCredentials(t.TempDir(), t.TempDir(), "RTK", "runtime-1", 2, "camera=1,light=1", time.Unix(1000, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 2 || credentials["camera"].BatchID != "runtime-1-camera" || credentials["light"].BatchID != "runtime-1-light" {
+		t.Fatalf("credentials=%+v", credentials)
+	}
+	if strings.Join(categories, ",") != "ip_camera,mqtt_device" || strings.Join(runBatches, ",") != "runtime-1-camera,runtime-1-light" {
+		t.Fatalf("categories=%v batches=%v", categories, runBatches)
+	}
+	assertFactoryProductionCredentialsRejectInvalidInputs(t)
 }
 
 func TestPrepareFactoryProductionStepStopsOnIssuanceFailure(t *testing.T) {

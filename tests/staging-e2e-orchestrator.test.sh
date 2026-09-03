@@ -50,10 +50,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?", 1)[0]
+        oauth_scopes = None
         if path == "/v4/profile":
             body, content_type = json.dumps({"username": "operator"}), "application/json"
+            oauth_scopes = "*"
         elif path == "/v4/lke/clusters":
             body, content_type = json.dumps({"data": []}), "application/json"
+            oauth_scopes = "*"
         elif path in ("/v4/regions/sg-sin-2", "/v4/regions/us-sea"):
             region = path.rsplit("/", 1)[-1]
             body, content_type = json.dumps({"id": region, "status": "ok", "capabilities": ["Kubernetes", "Object Storage"]}), "application/json"
@@ -72,8 +75,9 @@ class Handler(BaseHTTPRequestHandler):
             body, content_type = json.dumps({"token": "registry-token"}), "application/json"
         elif path.startswith("/v2/") and path.endswith("/tags/list"):
             body, content_type = json.dumps({"name": "fixture", "tags": ["sha-test"]}), "application/json"
-        elif path.startswith("/v1/domains/") and path.endswith("/records"):
-            body, content_type = "[]", "application/json"
+        elif path.startswith("/v1/domains/") and "/records/TXT/" in path:
+            body = self.objects.get(path, b"[]").decode()
+            content_type = "application/json"
         elif path in ("/test-bucket", "/rtk-video-staging-sg", "/rtk-cloud-client-artifacts"):
             body, content_type = "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>", "application/xml"
         elif path in self.objects:
@@ -84,6 +88,8 @@ class Handler(BaseHTTPRequestHandler):
         encoded = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
+        if oauth_scopes:
+            self.send_header("X-OAuth-Scopes", oauth_scopes)
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)

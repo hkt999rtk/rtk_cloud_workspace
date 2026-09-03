@@ -25,6 +25,7 @@ sources:
   - { id: SPEC-CONTRACT-PRICING-INVOICE, path: repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md, parser: markdown, authority: canonical, owner: rtk_billing }
   - { id: SPEC-CONTRACT-BILLING-ACTIVITY, path: repos/rtk_cloud_contracts_doc/billing_activity.md, parser: markdown, authority: canonical, owner: rtk_billing }
   - { id: SPEC-CONTRACT-FRONTEND, path: repos/rtk_cloud_contracts_doc/frontend_style.md, parser: markdown, authority: canonical, owner: rtk_cloud_admin }
+  - { id: SPEC-CONTRACT-SDK-DISTRIBUTION, path: repos/rtk_cloud_contracts_doc/sdk_distribution.md, parser: markdown, authority: canonical, owner: rtk_cloud_client }
   - { id: SPEC-CONTRACT-OPENAPI, path: repos/rtk_cloud_contracts_doc/openapi.yaml, parser: openapi, authority: canonical, owner: cloud_platform }
   - { id: SPEC-CONTRACT-WORKFLOWS, path: repos/rtk_cloud_contracts_doc/feature_workflows.yaml, parser: workflow, authority: canonical, owner: cloud_platform }
 

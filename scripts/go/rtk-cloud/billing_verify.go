@@ -79,11 +79,16 @@ type billingVerifyCheck struct {
 }
 
 type billingUsageLogEvent struct {
+	Time   time.Time      `json:"ts"`
 	Fields map[string]any `json:"fields"`
 }
 
 type billingUsageLogResponse struct {
-	Events []billingUsageLogEvent `json:"events"`
+	Records []struct {
+		Event billingUsageLogEvent `json:"event"`
+	} `json:"records"`
+	NextCursor string `json:"next_cursor"`
+	HasMore    bool   `json:"has_more"`
 }
 
 type billingUsageSummary struct {
@@ -265,58 +270,71 @@ func envValue(values []string, key string) (string, error) {
 }
 
 func queryBillingUsageLogs(endpoint, token, brandCloudID string, since, until time.Time, summary billingUsageSummary) (billingUsageSummary, error) {
-	u, err := url.Parse(endpoint + "/v1/logs")
-	if err != nil {
-		return summary, err
-	}
-	query := u.Query()
-	query.Set("stream", "billing_usage")
-	query.Set("source", "billing_usage")
-	query.Set("limit", "1000")
-	query.Set("order", "asc")
-	query.Set("since", since.UTC().Format(time.RFC3339Nano))
-	query.Set("until", until.UTC().Format(time.RFC3339Nano))
-	u.RawQuery = query.Encode()
-	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
-	if err != nil {
-		return summary, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
-	if err != nil {
-		return summary, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return summary, fmt.Errorf("billing logger query returned HTTP %d", resp.StatusCode)
-	}
-	var body billingUsageLogResponse
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return summary, err
-	}
-	for _, item := range body.Events {
-		raw, ok := item.Fields["usage_event"].(map[string]any)
-		if !ok || strings.TrimSpace(stringValue(raw["brand_cloud_id"])) != brandCloudID || stringValue(raw["service_code"]) != "mqtt" {
-			continue
+	cursor := ""
+	for {
+		u, err := url.Parse(endpoint + "/v1/billing-usage/events")
+		if err != nil {
+			return summary, err
 		}
-		summary.UsageEvents++
-		for _, measurement := range anySlice(raw["measurements"]) {
-			m, ok := measurement.(map[string]any)
-			if !ok {
+		query := u.Query()
+		query.Set("limit", "1000")
+		if cursor != "" {
+			query.Set("cursor", cursor)
+		}
+		u.RawQuery = query.Encode()
+		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
+		if err != nil {
+			return summary, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+		if err != nil {
+			return summary, err
+		}
+		var body billingUsageLogResponse
+		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return summary, fmt.Errorf("billing logger query returned HTTP %d", resp.StatusCode)
+		}
+		if decodeErr != nil {
+			return summary, decodeErr
+		}
+		for _, record := range body.Records {
+			item := record.Event
+			if (!since.IsZero() && item.Time.Before(since)) || (!until.IsZero() && item.Time.After(until)) {
 				continue
 			}
-			quantity := uint64Number(m["quantity"])
-			switch stringValue(m["metric_code"]) {
-			case "publish_bytes":
-				summary.PublishBytes += quantity
-			case "delivery_bytes":
-				summary.DeliveryBytes += quantity
-			case "publish_count":
-				summary.PublishCount += quantity
-			case "delivery_count":
-				summary.DeliveryCount += quantity
+			raw, ok := item.Fields["usage_event"].(map[string]any)
+			if !ok || strings.TrimSpace(stringValue(raw["brand_cloud_id"])) != brandCloudID || stringValue(raw["service_code"]) != "mqtt" {
+				continue
+			}
+			summary.UsageEvents++
+			for _, measurement := range anySlice(raw["measurements"]) {
+				m, ok := measurement.(map[string]any)
+				if !ok {
+					continue
+				}
+				quantity := uint64Number(m["quantity"])
+				switch stringValue(m["metric_code"]) {
+				case "publish_bytes":
+					summary.PublishBytes += quantity
+				case "delivery_bytes":
+					summary.DeliveryBytes += quantity
+				case "publish_count":
+					summary.PublishCount += quantity
+				case "delivery_count":
+					summary.DeliveryCount += quantity
+				}
 			}
 		}
+		if !body.HasMore {
+			break
+		}
+		if body.NextCursor == "" || body.NextCursor == cursor {
+			return summary, errors.New("billing logger pagination returned an invalid cursor")
+		}
+		cursor = body.NextCursor
 	}
 	return summary, nil
 }

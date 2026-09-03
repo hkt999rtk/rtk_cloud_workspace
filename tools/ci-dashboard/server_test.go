@@ -9,12 +9,26 @@ import (
 	"testing"
 )
 
-type fakeDashboard struct{ detailCalls int }
+type fakeDashboard struct {
+	detailCalls   int
+	activityCalls int
+}
 
-func (f *fakeDashboard) snapshot() Snapshot { return Snapshot{} }
+func (f *fakeDashboard) recordClientActivity() { f.activityCalls++ }
+func (f *fakeDashboard) snapshot() Snapshot    { return Snapshot{} }
 func (f *fakeDashboard) detail(_ context.Context, _, _ string, _ int64) (RunDetail, error) {
 	f.detailCalls++
 	return RunDetail{Card: Card{RunID: 1}}, nil
+}
+
+func TestSnapshotRecordsClientActivity(t *testing.T) {
+	fake := &fakeDashboard{}
+	request := httptest.NewRequest(http.MethodGet, "/api/snapshot", nil)
+	recorder := httptest.NewRecorder()
+	newHandler(fake).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK || fake.activityCalls != 1 {
+		t.Fatalf("snapshot activity: status=%d calls=%d", recorder.Code, fake.activityCalls)
+	}
 }
 
 func TestHandlerServesAssetsAndJSON(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
 
@@ -175,6 +177,26 @@ func TestRunProvisionLKEApplyFetchesKubeconfigWhenNoContext(t *testing.T) {
 	}
 	if kubeconfigInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("kubeconfig permissions got %o want 600", kubeconfigInfo.Mode().Perm())
+	}
+}
+
+func TestEnsureLKEKubeAccessAllowsMissingConfiguredPathForNewCluster(t *testing.T) {
+	t.Setenv("RTK_CLOUD_LKE_KUBECONFIG", filepath.Join(t.TempDir(), "missing", "kubeconfig.yaml"))
+	t.Setenv("LINODE_TOKEN", "test-token")
+	fakeKubectlWithoutCurrentContext(t)
+	fakeLinodeCurl(t, map[string]string{"/lke/clusters": "not-json"})
+	err := ensureLKEKubeAccess(provisionPaths{EnvRoot: t.TempDir()}, map[string]string{}, true)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing new-cluster kubeconfig must fall through to discovery, got %v", err)
+	}
+}
+
+func TestEnsureLKEKubeAccessRejectsMissingConfiguredPathForExistingCluster(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing", "kubeconfig.yaml")
+	t.Setenv("RTK_CLOUD_LKE_KUBECONFIG", missing)
+	err := ensureLKEKubeAccess(provisionPaths{EnvRoot: t.TempDir()}, map[string]string{}, false)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("error = %v, want missing kubeconfig", err)
 	}
 }
 
@@ -356,6 +378,104 @@ func TestLKENodeCountDefaultsToFiveForLoadTestHeadroom(t *testing.T) {
 	}
 }
 
+func TestLKENodeCountAllowsDisabledBrokerPool(t *testing.T) {
+	got, err := lkeNodeCount(map[string]string{"LKE_NODE_COUNT": "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("node count = %d, want 0", got)
+	}
+}
+
+func TestLKENodeCountRejectsNegativeCount(t *testing.T) {
+	if _, err := lkeNodeCount(map[string]string{"LKE_NODE_COUNT": "-1"}); err == nil {
+		t.Fatal("negative node count must be rejected")
+	}
+}
+
+func TestLKEDesiredNodePoolsCanUseOnlyGeneral(t *testing.T) {
+	pools, err := lkeDesiredNodePoolPayloads(map[string]string{
+		"LKE_NODE_COUNT": "0", "LKE_GENERAL_NODE_COUNT": "1", "LKE_GENERAL_NODE_TYPE": "g6-standard-8",
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "false",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) != 1 {
+		t.Fatalf("pools = %#v, want one general pool", pools)
+	}
+	if got := pools[0]["count"]; got != 1 {
+		t.Fatalf("general count = %v, want 1", got)
+	}
+	labels, _ := pools[0]["labels"].(map[string]string)
+	if labels["rtk.io/node-class"] != "general" {
+		t.Fatalf("general labels = %#v", labels)
+	}
+}
+
+func TestLKEDesiredNodePoolsIncludeEveryEnabledClass(t *testing.T) {
+	t.Setenv("LKE_NODE_TYPE", "")
+	pools, err := lkeDesiredNodePoolPayloads(map[string]string{
+		"LKE_NODE_COUNT": "1", "LKE_NODE_TYPE": "g6-standard-4",
+		"LKE_GENERAL_NODE_COUNT": "1", "LKE_GENERAL_NODE_TYPE": "g6-standard-8",
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true", "LKE_POSTGRES_NODE_COUNT": "1", "LKE_POSTGRES_NODE_TYPE": "g6-standard-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pools) != 3 {
+		t.Fatalf("pools = %#v, want general, broker, and database", pools)
+	}
+	wantClasses := []string{"general", "broker", "database"}
+	for i, want := range wantClasses {
+		labels, _ := pools[i]["labels"].(map[string]string)
+		if got := labels["rtk.io/node-class"]; got != want {
+			t.Fatalf("pool %d class = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestLKEDesiredNodePoolsRejectNegativeGeneralCount(t *testing.T) {
+	_, err := lkeDesiredNodePoolPayloads(map[string]string{
+		"LKE_NODE_COUNT": "0", "LKE_GENERAL_NODE_COUNT": "-1",
+	})
+	if err == nil || !strings.Contains(err.Error(), "LKE_GENERAL_NODE_COUNT") {
+		t.Fatalf("error = %v, want general count validation", err)
+	}
+}
+
+func TestCreateLKEClusterRejectsAllDisabledNodeClasses(t *testing.T) {
+	t.Setenv("LKE_K8S_VERSION", "1.33")
+	_, err := createLKECluster("test-token", map[string]string{
+		"LKE_NODE_COUNT": "0", "LKE_GENERAL_NODE_COUNT": "0", "LKE_POSTGRES_DEDICATED_NODE_POOL": "false",
+	})
+	if err == nil || !strings.Contains(err.Error(), "at least one non-empty node class") {
+		t.Fatalf("error = %v, want empty node class rejection", err)
+	}
+}
+
+func TestLKEPostgresPlacementFollowsConfiguredNodeClass(t *testing.T) {
+	general := lkePostgresPlacementManifest(map[string]string{"POSTGRES_NODE_CLASS": "general"})
+	if !strings.Contains(general, `rtk.io/node-class: "general"`) || strings.Contains(general, "tolerations:") {
+		t.Fatalf("general placement = %q", general)
+	}
+	database := lkePostgresPlacementManifest(map[string]string{"POSTGRES_NODE_CLASS": "database"})
+	if !strings.Contains(database, `rtk.io/node-class: "database"`) || !strings.Contains(database, "tolerations:") {
+		t.Fatalf("database placement = %q", database)
+	}
+}
+
+func TestLKEClusterTagsUseConfiguredEnvironment(t *testing.T) {
+	tags := lkeClusterTags(map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-dev",
+		"CLOUD_ENV_NAME":   "dev",
+	})
+	if got, want := strings.Join(tags, ","), "rtk-cloud,video-cloud-dev,dev"; got != want {
+		t.Fatalf("cluster tags = %q, want %q", got, want)
+	}
+}
+
 func TestEnsureLKENodePoolResizesExistingPoolToDesiredCount(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	curlLog := fakeLinodeCurl(t, map[string]string{
@@ -380,6 +500,82 @@ func TestEnsureLKENodePoolResizesExistingPoolToDesiredCount(t *testing.T) {
 		if !strings.Contains(curlCalls, want) {
 			t.Fatalf("expected %q in curl log, got:\n%s", want, curlCalls)
 		}
+	}
+}
+
+func TestPruneLKEUnusedNodePoolsDeletesOnlyEmptyDisabledClasses(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\n")
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"data":[
+			{"id":101,"type":"g6-standard-8","count":1,"labels":{"rtk.io/node-class":"general"}},
+			{"id":102,"type":"g6-standard-4","count":1,"labels":{"rtk.io/node-class":"broker"}},
+			{"id":103,"type":"g6-standard-4","count":1,"labels":{"rtk.io/node-class":"database"}},
+			{"id":104,"type":"g6-standard-2","count":1,"labels":{"rtk.io/node-class":"future-class"}}
+		]}`,
+		"/lke/clusters/12345/pools/102": `{}`,
+		"/lke/clusters/12345/pools/103": `{}`,
+	})
+	dir := t.TempDir()
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/bin/sh
+case "$*" in
+  *"get nodes"*) printf '%s\n' '{"items":[]}' ;;
+  *) printf '%s\n' '{"items":[]}' ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"LKE_NODE_COUNT": "0", "LKE_GENERAL_NODE_COUNT": "1", "LKE_POSTGRES_NODE_COUNT": "0",
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "false", "NODE_CLASS_LABEL_KEY": "rtk.io/node-class",
+	}
+	if err := pruneLKEUnusedNodePools(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env); err != nil {
+		t.Fatal(err)
+	}
+	calls := readTestFile(t, curlLog)
+	for _, want := range []string{"DELETE /lke/clusters/12345/pools/102", "DELETE /lke/clusters/12345/pools/103"} {
+		if !strings.Contains(calls, want) {
+			t.Fatalf("missing %q in:\n%s", want, calls)
+		}
+	}
+	if strings.Contains(calls, "DELETE /lke/clusters/12345/pools/101") {
+		t.Fatalf("general pool must be retained:\n%s", calls)
+	}
+	if strings.Contains(calls, "DELETE /lke/clusters/12345/pools/104") {
+		t.Fatalf("unknown node classes must be retained:\n%s", calls)
+	}
+}
+
+func TestLKEUserPodsOnNodeClassFiltersSystemAndOtherNodes(t *testing.T) {
+	dir := t.TempDir()
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/bin/sh
+case "$*" in
+  *"get nodes"*) printf '%s\n' '{"items":[{"metadata":{"name":"general-a"}}]}' ;;
+  *"get pods"*) printf '%s\n' '{"items":[
+    {"metadata":{"namespace":"app","name":"zeta"},"spec":{"nodeName":"general-a"}},
+    {"metadata":{"namespace":"kube-system","name":"system"},"spec":{"nodeName":"general-a"}},
+    {"metadata":{"namespace":"app","name":"alpha"},"spec":{"nodeName":"general-a"}},
+    {"metadata":{"namespace":"app","name":"other"},"spec":{"nodeName":"broker-a"}}
+  ]}' ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	pods, err := lkeUserPodsOnNodeClass(map[string]string{"NODE_CLASS_LABEL_KEY": "rtk.io/node-class"}, "general")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(pods, ","), "app/alpha,app/zeta"; got != want {
+		t.Fatalf("pods = %q, want %q", got, want)
 	}
 }
 
@@ -1036,6 +1232,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"ACCOUNT_MANAGER_USER_CACHE_ADDR: \"redis.video-cloud-staging-platform.svc.cluster.local:6379\"",
 		"ACCOUNT_MANAGER_USER_CACHE_PREFIX: \"account_manager:user\"",
 		"ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"true\"",
+		"CHIPSET_PROVIDER_ALLOWED_HOSTS: \"admin.video-cloud-staging.realtekconnect.com\"",
 		"command: [\"/app/rtk-account-manager-migrate\"]",
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
@@ -1860,7 +2057,11 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	t.Setenv("DEVELOPER_PKI_TEST_TOOLS_ENABLED", "true")
 	t.Setenv("LKE_CLOUD_ADMIN_IMAGE", "registry.example.test/cloud-admin:test")
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+		"FRONTEND_DOMAIN":    "frontend.video-cloud-staging.realtekconnect.com",
+	}
 
 	policies := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, nil), "\n---\n")
 	for _, want := range []string{
@@ -1895,6 +2096,7 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	manifest := lkeDeploymentManifest(env, admin, nil)
 	for _, want := range []string{
 		"name: CLOUD_ADMIN_ENV\n              value: \"staging\"",
+		"name: SDK_PORTAL_BASE_URL\n              value: \"https://frontend.video-cloud-staging.realtekconnect.com\"",
 		"name: DEVELOPER_PKI_TEST_TOOLS_ENABLED\n              value: \"true\"",
 		"name: FACTORY_ENROLL_BASE_URL\n              value: \"http://factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"",
 	} {
@@ -1904,56 +2106,17 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	}
 }
 
-func TestLKECloudAdminDurableBatchRuntime(t *testing.T) {
-	t.Setenv("LKE_RUNTIME_SECRET_SEED", "durable-batch-test")
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}
-
-	accountSecret := lkeAccountManagerSecretManifest(env)
-	adminSecret := lkeCloudAdminBillingSecretManifest(env)
-	for name, manifest := range map[string]string{
-		"account manager": accountSecret,
-		"cloud admin":     adminSecret,
-	} {
-		if !strings.Contains(manifest, "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN:") {
-			t.Fatalf("%s secret is missing the delegated job credential:\n%s", name, manifest)
-		}
+func TestLKESDKPortalBaseURLOverride(t *testing.T) {
+	env := map[string]string{
+		"VIDEO_CLOUD_DOMAIN": "video.example.test",
+		"FRONTEND_DOMAIN":    "frontend.video.example.test",
 	}
-
-	var admin lkeWorkload
-	for _, workload := range lkeWorkloads(env) {
-		if workload.Key == "cloud-admin" {
-			admin = workload
-			break
-		}
+	if got := lkeSDKPortalBaseURL(env); got != "https://frontend.video.example.test" {
+		t.Fatalf("default SDK Portal base URL = %q", got)
 	}
-	if admin.Key == "" {
-		t.Fatal("cloud-admin workload not found")
-	}
-	manifest := lkeDeploymentManifest(env, admin, nil)
-	for _, want := range []string{
-		"type: Recreate",
-		"name: CLOUD_ADMIN_ENV\n              value: \"dev\"",
-		"name: DATABASE_PATH\n              value: \"/var/lib/rtk-cloud-admin/admin.db\"",
-		"name: BATCH_WORKER_POLL_INTERVAL\n              value: \"1s\"",
-		"name: BATCH_WORKER_LEASE_DURATION\n              value: \"30s\"",
-		"mountPath: /var/lib/rtk-cloud-admin",
-		"claimName: cloud-admin-data",
-	} {
-		if !strings.Contains(manifest, want) {
-			t.Fatalf("cloud-admin durable runtime is missing %q:\n%s", want, manifest)
-		}
-	}
-
-	pvc := lkeCloudAdminPVCManifest(env)
-	for _, want := range []string{
-		"name: cloud-admin-data",
-		"namespace: video-cloud-dev-admin",
-		"accessModes: [ReadWriteOnce]",
-		"storage: 1Gi",
-	} {
-		if !strings.Contains(pvc, want) {
-			t.Fatalf("cloud-admin PVC is missing %q:\n%s", want, pvc)
-		}
+	t.Setenv("SDK_PORTAL_BASE_URL", "https://sdk.example.test/")
+	if got := lkeSDKPortalBaseURL(env); got != "https://sdk.example.test" {
+		t.Fatalf("overridden SDK Portal base URL = %q", got)
 	}
 }
 
@@ -3374,6 +3537,38 @@ func TestLKEVideoCloudAuxiliaryDeploymentManifestHasNoTabOnlyLine(t *testing.T) 
 	}
 }
 
+func TestLKEVideoCloudMQTTUsageCheckpointDoesNotDependOnHandoffWorker(t *testing.T) {
+	for _, handoffEnabled := range []string{"false", "true"} {
+		t.Run("handoff_"+handoffEnabled, func(t *testing.T) {
+			env := map[string]string{
+				"CLOUD_STACK_NAME":                           "video-cloud-staging",
+				"LKE_VIDEO_CLOUD_IMAGE":                      "registry.example.test/video-cloud:test",
+				"LKE_ACCOUNT_MANAGER_HANDOFF_WORKER_ENABLED": handoffEnabled,
+			}
+			manifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-mqttusage", Binary: "mqttusage"})
+			var document map[string]any
+			if err := yaml.Unmarshal([]byte(manifest), &document); err != nil {
+				t.Fatalf("handoff=%s: generated invalid YAML: %v\n%s", handoffEnabled, err, manifest)
+			}
+			for _, want := range []string{
+				"type: Recreate",
+				"name: prepare-mqtt-usage-checkpoint",
+				"chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage",
+				"name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR\n              value: \"/var/lib/video-cloud/mqtt-usage\"",
+				"name: mqtt-usage-checkpoint\n              mountPath: /var/lib/video-cloud/mqtt-usage",
+				"claimName: video-cloud-mqttusage-checkpoint",
+			} {
+				if !strings.Contains(manifest, want) {
+					t.Fatalf("handoff=%s: expected %q in mqttusage manifest, got:\n%s", handoffEnabled, want, manifest)
+				}
+			}
+			if got := strings.Contains(manifest, "VIDEO_CLOUD_MQTT_USAGE_HANDOFF_TOKEN"); got != (handoffEnabled == "true") {
+				t.Fatalf("handoff=%s: handoff credentials rendered=%t, got:\n%s", handoffEnabled, got, manifest)
+			}
+		})
+	}
+}
+
 func TestLKEBillingDeploymentManifestHasNoTabIndentedLine(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
 	workload := lkeWorkload{
@@ -3612,6 +3807,7 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	log := readTestFile(t, logPath)
 	for _, want := range []string{
 		"kind: Secret\nmetadata:\n  name: video-cloud-workers-runtime",
+		"kind: PersistentVolumeClaim\nmetadata:\n  name: video-cloud-mqttusage-checkpoint",
 		"VIDEO_CLOUD_TURN_REGISTRY_NODE_AUTH_KEY: \"test-seed-turn-registry-node-auth\"",
 		"VIDEO_CLOUD_MQTT_USAGE_INGEST_TOKEN: \"test-seed-mqtt-usage-ingest\"",
 		"kind: Deployment\nmetadata:\n  name: video-cloud-cleaner",
@@ -3635,6 +3831,9 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 		"kind: Deployment\nmetadata:\n  name: video-cloud-mqttusage",
 		"command: [\"/app/mqttusage\"]",
 		"containerPort: 19400",
+		"name: prepare-mqtt-usage-checkpoint",
+		"name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR\n              value: \"/var/lib/video-cloud/mqtt-usage\"",
+		"claimName: video-cloud-mqttusage-checkpoint",
 		"kind: Service\nmetadata:\n  name: video-cloud-turnregistry",
 		"kind: Service\nmetadata:\n  name: video-cloud-logingester",
 		"kind: ConfigMap\nmetadata:\n  name: video-cloud-prometheus-config",
@@ -5445,7 +5644,7 @@ func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testin
 
 func TestBuildBindAssignmentsIncludesHomeDiverseDeviceTypes(t *testing.T) {
 	devices := []bindDeviceManifest{
-		{DeviceID: "dev-light", DeviceType: "light", ServiceOptions: []string{"mqtt"}},
+		{DeviceID: "dev-light", DeviceType: "light", DeviceItemProfileID: "product-light", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "dev-switch", DeviceType: "switch", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "dev-plug", DeviceType: "smart_plug", ServiceOptions: []string{"mqtt"}},
 		{DeviceID: "dev-env", DeviceType: "environment_sensor", ServiceOptions: []string{"mqtt"}},
@@ -5469,6 +5668,9 @@ func TestBuildBindAssignmentsIncludesHomeDiverseDeviceTypes(t *testing.T) {
 		}
 		if assignment.Category != "mqtt_device" {
 			t.Fatalf("%s category = %q, want mqtt_device", device.DeviceType, assignment.Category)
+		}
+		if device.DeviceID == "dev-light" && assignment.ProductID != "product-light" {
+			t.Fatalf("%s product = %q, want product-light", device.DeviceID, assignment.ProductID)
 		}
 		if assignment.AssignedEmail == "" {
 			t.Fatalf("%s missing assigned email", device.DeviceType)

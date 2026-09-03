@@ -45,7 +45,12 @@ type poller struct {
 	lastSuccessful time.Time
 	nextRefresh    time.Time
 	prCache        map[string]PullRequest
+	lastClient     time.Time
+	clientIdle     time.Duration
+	wake           chan struct{}
 }
+
+const defaultClientIdleTimeout = 15 * time.Second
 
 type workflowRunsResponse struct {
 	Runs []workflowRun `json:"workflow_runs"`
@@ -118,7 +123,15 @@ type attemptResponse struct {
 }
 
 func newPoller(client *githubClient, repos []Repository, interval time.Duration) *poller {
-	p := &poller{client: client, repos: make(map[string]*repoState), interval: interval, completedLimit: 20, prCache: make(map[string]PullRequest)}
+	p := &poller{
+		client:         client,
+		repos:          make(map[string]*repoState),
+		interval:       interval,
+		completedLimit: 20,
+		prCache:        make(map[string]PullRequest),
+		clientIdle:     defaultClientIdleTimeout,
+		wake:           make(chan struct{}, 1),
+	}
 	client.onRate = p.captureRate
 	for _, repo := range repos {
 		key := repo.Owner + "/" + repo.Name
@@ -129,18 +142,64 @@ func newPoller(client *githubClient, repos []Repository, interval time.Duration)
 }
 
 func (p *poller) run(ctx context.Context) {
-	p.refresh(ctx)
 	timer := time.NewTimer(p.interval)
+	if !timer.Stop() {
+		<-timer.C
+	}
 	defer timer.Stop()
+	var next <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
-			p.refresh(ctx)
-			timer.Reset(p.interval)
+		case <-p.wake:
+			if p.clientActiveAt(time.Now()) {
+				p.refresh(ctx)
+				resetTimer(timer, p.interval)
+				next = timer.C
+			}
+		case now := <-next:
+			next = nil
+			if p.clientActiveAt(now) {
+				p.refresh(ctx)
+				timer.Reset(p.interval)
+				next = timer.C
+			}
 		}
 	}
+}
+
+func resetTimer(timer *time.Timer, interval time.Duration) {
+	if !timer.Stop() {
+		select {
+		case <-timer.C:
+		default:
+		}
+	}
+	timer.Reset(interval)
+}
+
+func (p *poller) recordClientActivity() {
+	p.recordClientActivityAt(time.Now())
+}
+
+func (p *poller) recordClientActivityAt(now time.Time) {
+	p.mu.Lock()
+	wasActive := !p.lastClient.IsZero() && now.Sub(p.lastClient) <= p.clientIdle
+	p.lastClient = now
+	p.mu.Unlock()
+	if !wasActive {
+		select {
+		case p.wake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (p *poller) clientActiveAt(now time.Time) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return !p.lastClient.IsZero() && now.Sub(p.lastClient) <= p.clientIdle
 }
 
 func (p *poller) refresh(ctx context.Context) {
@@ -176,6 +235,16 @@ func (p *poller) refreshRepo(ctx context.Context, key string) error {
 	p.mu.RLock()
 	state := p.repos[key]
 	etag := state.etag
+	for _, card := range state.runs {
+		// The workflow-runs ETag can remain unchanged while GitHub assigns a
+		// queued job to a runner or advances its status. Keep polling active
+		// jobs until their run-level snapshot is complete. Run-level fallback
+		// cards also need another attempt to load their jobs.
+		if card.Status != "completed" || card.Kind != "job" {
+			etag = ""
+			break
+		}
+	}
 	repo := state.repo
 	p.mu.RUnlock()
 
@@ -512,7 +581,7 @@ func (c *githubClient) getJSON(ctx context.Context, path, etag string, target an
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		until := retryUntil(resp.Header)
+		until := retryUntil(resp.StatusCode, resp.Header)
 		return "", false, &retryAfterError{status: resp.StatusCode, until: until, msg: strings.TrimSpace(string(body))}
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(target); err != nil {
@@ -521,9 +590,15 @@ func (c *githubClient) getJSON(ctx context.Context, path, etag string, target an
 	return resp.Header.Get("ETag"), false, nil
 }
 
-func retryUntil(header http.Header) time.Time {
+func retryUntil(status int, header http.Header) time.Time {
 	if seconds, err := strconv.Atoi(header.Get("Retry-After")); err == nil && seconds > 0 {
 		return time.Now().Add(time.Duration(seconds) * time.Second)
+	}
+	if status != http.StatusForbidden && status != http.StatusTooManyRequests {
+		return time.Time{}
+	}
+	if header.Get("X-RateLimit-Remaining") != "0" {
+		return time.Time{}
 	}
 	if epoch, err := strconv.ParseInt(header.Get("X-RateLimit-Reset"), 10, 64); err == nil && epoch > 0 {
 		return time.Unix(epoch, 0)
