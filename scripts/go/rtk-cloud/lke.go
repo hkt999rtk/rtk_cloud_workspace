@@ -733,6 +733,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.enableHttp=false",
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
+		"--set-json", lkeIngressNoIndexHelmValue(),
 		"--set", "controller.ingressClassResource.default=false",
 		"--set", "controller.replicaCount=" + lkeIngressReplicas(env),
 		"--set", "controller.resources.requests.cpu=" + firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_CPU"), env["LKE_INGRESS_REQUEST_CPU"], "500m"),
@@ -8647,6 +8648,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
+`
+	}
+	if workload.Key == "frontend" {
+		extraEnv += `            - name: DISABLE_SEARCH_INDEXING
+              value: "true"
 `
 	}
 	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
