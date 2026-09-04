@@ -333,6 +333,13 @@ cases:
       title: every published chapter, including overview, remains a global documentation route
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/developer-docs.test.mjs#exact%20title%20precedes%20cross%20references%20and%20code%20searches%20expose%20matching%20text
+      module: cloud-admin-web
+      language: javascript
+      source: src/developer-docs.test.mjs
+      title: exact title precedes cross references and code searches expose matching text
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/device-actions.test.mjs#deviceActionState%20disables%20actions%20when%20telemetry%20source%20is%20unavailable
       module: cloud-admin-web
       language: javascript
