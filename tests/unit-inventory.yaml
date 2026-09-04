@@ -213,21 +213,6 @@ cases:
       title: two clouds load independently and inconsistent ownership readbacks fail closed
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/cloud-scope.test.mjs#cloudConsolePath%20emits%20canonical%20multi-cloud%20URLs
-      module: cloud-admin-web
-      language: javascript
-      source: src/cloud-scope.test.mjs
-      title: cloudConsolePath emits canonical multi-cloud URLs
-      owner: rtk_cloud_admin
-      status: active
-      test_id: UNIT-CA-MULTICLOUD-001
-    - canonical_key: js://cloud-admin-web/src/cloud-scope.test.mjs#scopedCustomerAPI%20keeps%20functional%20requests%20inside%20the%20URL%20cloud
-      module: cloud-admin-web
-      language: javascript
-      source: src/cloud-scope.test.mjs
-      title: scopedCustomerAPI keeps functional requests inside the URL cloud
-      owner: rtk_cloud_admin
-      status: active
     - canonical_key: js://cloud-admin-web/src/cloud-preference.test.mjs#cloud%20preference%20parser%20accepts%20only%20the%20named%20UUID%20cookie
       module: cloud-admin-web
       language: javascript
@@ -284,6 +269,21 @@ cases:
       title: permission failures never display upstream diagnostics
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-scope.test.mjs#cloudConsolePath%20emits%20canonical%20multi-cloud%20URLs
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-scope.test.mjs
+      title: cloudConsolePath emits canonical multi-cloud URLs
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-MULTICLOUD-001
+    - canonical_key: js://cloud-admin-web/src/cloud-scope.test.mjs#scopedCustomerAPI%20keeps%20functional%20requests%20inside%20the%20URL%20cloud
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-scope.test.mjs
+      title: scopedCustomerAPI keeps functional requests inside the URL cloud
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/cloud-sharing.test.mjs#204%20membership%20removal%20does%20not%20try%20decoding%20nonexistent%20JSON
       module: cloud-admin-web
       language: javascript
@@ -310,6 +310,27 @@ cases:
       language: javascript
       source: src/cloud-sharing.test.mjs
       title: sharing defaults require explicit nonempty Product scope; whole cloud needs consent
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/developer-docs.test.mjs#chapter%20navigation%20retains%20Cloud%20context%2C%20and%20sign-in%20returns%20to%20the%20requested%20chapter
+      module: cloud-admin-web
+      language: javascript
+      source: src/developer-docs.test.mjs
+      title: chapter navigation retains Cloud context, and sign-in returns to the requested chapter
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/developer-docs.test.mjs#documentation%20search%20matches%20body%20terms%20together%2C%20without%20a%20model
+      module: cloud-admin-web
+      language: javascript
+      source: src/developer-docs.test.mjs
+      title: documentation search matches body terms together, without a model
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/developer-docs.test.mjs#every%20published%20chapter%2C%20including%20overview%2C%20remains%20a%20global%20documentation%20route
+      module: cloud-admin-web
+      language: javascript
+      source: src/developer-docs.test.mjs
+      title: every published chapter, including overview, remains a global documentation route
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/device-actions.test.mjs#deviceActionState%20disables%20actions%20when%20telemetry%20source%20is%20unavailable
@@ -754,6 +775,13 @@ cases:
       language: javascript
       source: src/routes.test.mjs
       title: Brand Cloud navigation and route access are evaluated independently
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#Developer%20Docs%20is%20a%20global%20peer%20immediately%20below%20ChipSet%20&%20SDK
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: Developer Docs is a global peer immediately below ChipSet & SDK
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#billing%20subpaths%20remain%20addressable%20inside%20the%20tenant%20billing%20section
