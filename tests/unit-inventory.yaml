@@ -135,6 +135,41 @@ cases:
       title: payment method display exposes only safe metadata
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/boards.test.mjs#Board%20model%20assets%20use%20versioned%20same-origin%20paths
+      module: cloud-admin-web
+      language: javascript
+      source: src/boards.test.mjs
+      title: Board model assets use versioned same-origin paths
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/boards.test.mjs#Board%20routes%20preserve%20provider%20IDs%20and%20reject%20malformed%20routes
+      module: cloud-admin-web
+      language: javascript
+      source: src/boards.test.mjs
+      title: Board routes preserve provider IDs and reject malformed routes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/boards.test.mjs#Chipset%20search%20indexes%20IC%20and%20boards%20while%20legacy%20catalogs%20remain%20valid
+      module: cloud-admin-web
+      language: javascript
+      source: src/boards.test.mjs
+      title: Chipset search indexes IC and boards while legacy catalogs remain valid
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/boards.test.mjs#Multiple%20boards%20share%20SDK%20releases%20without%20guessing%20legacy%20supported_models
+      module: cloud-admin-web
+      language: javascript
+      source: src/boards.test.mjs
+      title: Multiple boards share SDK releases without guessing legacy supported_models
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/boards.test.mjs#Published%20GLB%20is%20self-contained%2C%20within%20budget%20and%20includes%20every%20guided%20component
+      module: cloud-admin-web
+      language: javascript
+      source: src/boards.test.mjs
+      title: Published GLB is self-contained, within budget and includes every guided component
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/brand-clouds.test.mjs#Brand%20Clouds%20errors%20are%20stable%20and%20do%20not%20expose%20upstream%20payload%20details
       module: cloud-admin-web
       language: javascript
