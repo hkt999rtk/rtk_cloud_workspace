@@ -161,7 +161,7 @@
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-CHIPSET-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-003` | `` | `46c6996d1d85` | `service` | `active` | `UI-CA-CHIPSET-003` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-CHIPSET-004` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `workflow` | `9147c99f46a9` | `service` | `deprecated` | — | — |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-CHIPSET-005` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-005` | `` | `6bc62b5306f2` | `service` | `deprecated` | — | — |
-| `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-CHIPSET-006` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-006` | `` | `2e2834af6a9b` | `service` | `active` | `UI-CA-CHIPSET-006`, `UI-CA-CHIPSET-007`, `UI-CA-CHIPSET-STG-001` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-CHIPSET-006` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-006` | `` | `2e2834af6a9b` | `service` | `active` | `UI-CA-CHIPSET-006`, `UI-CA-CHIPSET-007`, `UI-CA-CHIPSET-009`, `UI-CA-CHIPSET-010`, `UI-CA-CHIPSET-011`, `UI-CA-CHIPSET-STG-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-DOCS-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-DOCS-001` | `` | `d1be261dc9bc` | `service` | `active` | `UI-CA-DOCS-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-DOCS-002` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-DOCS-002` | `` | `9c9ff5be180b` | `service` | `active` | `UI-CA-DOCS-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-DOCS-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-DOCS-003` | `` | `fc6b24da74c8` | `service` | `active` | `UI-CA-DOCS-003` | `test-ui` |
