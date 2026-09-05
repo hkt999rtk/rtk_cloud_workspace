@@ -335,7 +335,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"payment-simulator-callback", "billing", "manual"}, {"payment-simulator-admin-token", "billing", "manual"},
 		{"payment-reference-encryption", "billing", "manual"}, {"newebpay-hash-key-seed", "billing", "manual"},
 		{"newebpay-hash-iv-seed", "billing", "manual"}, {"email-outbox-encryption", "account-manager", "manual"},
-		{"google-oauth-client-secret", "account-manager", "manual"}, {"social-oauth-state-secret", "account-manager", "manual"},
+		{"github-oauth-client-secret", "account-manager", "manual"}, {"google-oauth-client-secret", "account-manager", "manual"}, {"social-oauth-state-secret", "account-manager", "manual"},
 	}
 	out := make([]secretCatalogEntry, 0, len(ids))
 	for _, item := range ids {
@@ -412,6 +412,7 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"payment-simulator-admin-token": {{"-billing", "billing-runtime", "PAYMENT_SIMULATOR_ADMIN_TOKEN"}},
 		"payment-reference-encryption":  {{"-billing", "billing-runtime", "PAYMENT_REFERENCE_ENCRYPTION_KEY"}},
 		"email-outbox-encryption":       {{"-account-manager", "account-manager-runtime", "EMAIL_OUTBOX_ENCRYPTION_KEY"}},
+		"github-oauth-client-secret":    {{"-account-manager", "account-manager-runtime", "GITHUB_OAUTH_CLIENT_SECRET"}},
 		"google-oauth-client-secret":    {{"-account-manager", "account-manager-runtime", "GOOGLE_OAUTH_CLIENT_SECRET"}},
 		"social-oauth-state-secret":     {{"-account-manager", "account-manager-runtime", "SOCIAL_OAUTH_STATE_SECRET"}},
 	}
