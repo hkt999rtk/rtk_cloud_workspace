@@ -7,6 +7,7 @@
 | `repos/rtk_cloud_contracts_doc/billing_activity.md#REQ-AM-BILLING-ACTIVITY-001` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-001` | `independent` | `48adabe357b6` | `canonical` | `active` | `INT-BILL-API-001`, `UI-CA-BILLING-STG-003` | `test-coverage`, `test-ui` |
 | `repos/rtk_cloud_contracts_doc/billing_activity.md#REQ-AM-BILLING-ACTIVITY-002` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-002` | `independent` | `9bf6f15e3716` | `canonical` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/billing_activity.md#REQ-AM-BILLING-ACTIVITY-003` | `FEAT-AM-BILLING-ACTIVITY-001` | `REQ-AM-BILLING-ACTIVITY-003` | `independent` | `e5bed817097b` | `canonical` | `active` | — | — |
+| `repos/rtk_account_manager/docs/spec.md#REQ-AM-SOCIAL-LOGIN-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-SOCIAL-LOGIN-001` | `independent` | `05e773bbee95` | `service` | `active` | `INT-AM-SOCIAL-LOGIN-001`, `UI-CA-AUTH-SOCIAL-001`, `UI-CA-AUTH-SOCIAL-002` | `test-services`, `test-ui` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-ORG-AUTHORITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ORG-AUTHORITY-001` | `independent` | `e145a7d1d2fe` | `service` | `active` | `INT-AM-IDENTITY-ORG-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-END-USER-ISOLATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-END-USER-ISOLATION-001` | `workflow` | `b0a6a96780fd` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001`, `INT-AM-MULTICLOUD-CLAIM-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-DEVICE-IDENTITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-DEVICE-IDENTITY-001` | `independent` | `f3956f54946c` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
@@ -22,7 +23,7 @@
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-FLEET-DATA-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-FLEET-DATA-001` | `independent` | `572cfef31185` | `service` | `active` | `INT-AM-IDENTITY-REGISTRY-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-ONE-TIME-TOKEN-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-ONE-TIME-TOKEN-001` | `independent` | `26e595123f38` | `service` | `active` | `INT-AM-IDENTITY-TOKEN-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `independent` | `2852d1659641` | `service` | `active` | `INT-AM-IDENTITY-LIFECYCLE-001` | `test-services` |
-| `repos/rtk_account_manager/docs/spec.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `6415e3947d2e` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
+| `repos/rtk_account_manager/docs/spec.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `caafcbda803b` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-APP-AUTHORIZATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `workflow` | `e00e82e1116c` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md#REQ-AM-PRICING-VERSION-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `independent` | `fa34115eb7b9` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UNIT-AM-INVOICE-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md#REQ-AM-INVOICE-ARITHMETIC-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-ARITHMETIC-001` | `independent` | `06ab60b6123e` | `canonical` | `active` | `UNIT-AM-INVOICE-001` | `test-coverage` |
@@ -76,7 +77,7 @@
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-RUNTIME-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-RUNTIME-001` | `` | `f098f425b8ba` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-AUTHORITY-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-AUTHORITY-001` | `` | `f4b595f986d8` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-STORE-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-STORE-001` | `` | `c2a753afbe40` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
-| `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `8791bc5535b5` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003`, `UI-CA-AUTH-ACTIVATE-001`, `UI-CA-AUTH-CLOUD-001`, `UI-CA-AUTH-LOGIN-001`, `UI-CA-AUTH-LOGIN-002`, `UI-CA-AUTH-LOGIN-003`, `UI-CA-AUTH-LOGOUT-001`, `UI-CA-AUTH-VIEW-001` | `test-services`, `test-ui` |
+| `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-LOGIN-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-LOGIN-001` | `workflow` | `8791bc5535b5` | `service` | `active` | `INT-CA-BFF-SERVICE-001`, `UI-CA-AUTH-001`, `UI-CA-AUTH-003`, `UI-CA-AUTH-ACTIVATE-001`, `UI-CA-AUTH-CLOUD-001`, `UI-CA-AUTH-LOGIN-001`, `UI-CA-AUTH-LOGIN-002`, `UI-CA-AUTH-LOGIN-003`, `UI-CA-AUTH-LOGOUT-001`, `UI-CA-AUTH-SOCIAL-001`, `UI-CA-AUTH-SOCIAL-002`, `UI-CA-AUTH-VIEW-001` | `test-services`, `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-ENTITLEMENT-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-ENTITLEMENT-001` | `` | `8fc6d450f519` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-PRODUCTION-SOURCES-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PRODUCTION-SOURCES-001` | `` | `e06e4f5e4f81` | `service` | `active` | `LIVE-CA-BFF-SOURCES-001` | `test-live` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `2f39152c7d67` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
@@ -684,6 +685,9 @@
 | `SPEC-AM-OPENAPI#resetPassword` | `POST /v1/auth/reset-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `13478edc73cd` |
 | `SPEC-AM-OPENAPI#requestEmailSignIn` | `POST /v1/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001`, `REQ-E2E-CA-SIGNUP-EMAIL-001` | `65d248331b40` |
 | `SPEC-AM-OPENAPI#signupUser` | `POST /v1/auth/signup` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6165d2ec578b` |
+| `SPEC-AM-OPENAPI#completeSocialLogin` | `POST /v1/auth/social/callback` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `49b27e185b94` |
+| `SPEC-AM-OPENAPI#listSocialLoginProviders` | `GET /v1/auth/social/providers` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `111631952b41` |
+| `SPEC-AM-OPENAPI#startSocialLogin` | `POST /v1/auth/social/start` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `e23c76dc9596` |
 | `SPEC-AM-OPENAPI#verifyEmail` | `POST /v1/auth/verify-email` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6cf4aae57e32` |
 | `SPEC-AM-OPENAPI#acceptDeveloperBrandCloudMemberInvitation` | `POST /v1/developer/brand-cloud-member-invitations/accept` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-MEMBER-INVITE-001` | `060ff461bf06` |
 | `SPEC-AM-OPENAPI#acceptBrandCloudOwnerTransfer` | `POST /v1/developer/brand-cloud-owner-transfers/accept` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-005` | `51e56bccdaba` |
@@ -877,6 +881,9 @@
 | `SPEC-CA-OPENAPI#postApiAuthLogout` | `POST /api/auth/logout` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6ef87ea3b0d4` |
 | `SPEC-CA-OPENAPI#postApiAuthResetPassword` | `POST /api/auth/reset-password` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `9edd1ace086b` |
 | `SPEC-CA-OPENAPI#postApiAuthSignIn` | `POST /api/auth/sign-in` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `02e7b0bf923e` |
+| `SPEC-CA-OPENAPI#getApiAuthSocialCallback` | `GET /api/auth/social/callback` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `32d02424d516` |
+| `SPEC-CA-OPENAPI#getApiAuthSocialProviders` | `GET /api/auth/social/providers` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `d7b402a8d343` |
+| `SPEC-CA-OPENAPI#postApiAuthSocialStart` | `POST /api/auth/social/start` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `1f28e4d1fae6` |
 | `SPEC-CA-OPENAPI#getApiAuthSsoCallback` | `GET /api/auth/sso/callback` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `41ec4013e531` |
 | `SPEC-CA-OPENAPI#postApiAuthSsoStart` | `POST /api/auth/sso/start` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ACCESS-003` | `f509dc20ffae` |
 | `SPEC-CA-OPENAPI#getApiCustomers` | `GET /api/customers` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `076be6b37100` |
