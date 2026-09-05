@@ -1049,6 +1049,76 @@ cases:
       title: streamWorstDeviceRows sorts worst devices by failure priority
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#ICE%20gathering%20waits%20for%20completion%20and%20releases%20event%20listeners
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: ICE gathering waits for completion and releases event listeners
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#incoming%20MQTT%20topics%20normalize%20only%20the%20selected%20Cloud%20and%20device
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: incoming MQTT topics normalize only the selected Cloud and device
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#lab%20routes%20preserve%20explicit%20cloud%2C%20product%20and%20device%20scope
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: lab routes preserve explicit cloud, product and device scope
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#local%20payload%20validation%20rejects%20oversized%2C%20scalar%20and%20malformed%20JSON
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: local payload validation rejects oversized, scalar and malformed JSON
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#missing%20Shadow%20is%20an%20empty%20state%20without%20discarding%20device%20access
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: missing Shadow is an empty state without discarding device access
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#report%20allowlist%20excludes%20payload%2C%20SDP%2C%20credentials%20and%20raw%20errors
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: report allowlist excludes payload, SDP, credentials and raw errors
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#selector%20scope%20changes%20discard%20late%20pages%20and%20stop%20further%20requests
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: selector scope changes discard late pages and stop further requests
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#selectors%20load%20subsequent%20pages%20without%20navigation%20and%20deduplicate%20IDs
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: selectors load subsequent pages without navigation and deduplicate IDs
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#topics%20reject%20reserved%20namespaces%2C%20wildcards%20and%20shadow%20injection
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: topics reject reserved namespaces, wildcards and shadow injection
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#video%20success%20requires%20decoded%20frames%20and%20bitrate%20requires%20two%20samples
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab.test.mjs
+      title: video success requires decoded frames and bitrate requires two samples
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/verification-replay.test.mjs#verification%20replay%20fails%20closed%20for%20inconsistent%20status%20and%20visible%20password%20forms
       module: cloud-admin-web
       language: javascript

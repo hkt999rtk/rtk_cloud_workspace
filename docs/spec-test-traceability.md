@@ -72,6 +72,7 @@
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-SCOPE-001` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-001` | `independent` | `e717d1eb2099` | `service` | `active` | `UI-CA-SCOPE-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-SCOPE-002` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-SCOPE-002` | `` | `96dc3cabe747` | `service` | `active` | `UI-CA-SCOPE-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-TEAM-001` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TEAM-001` | `workflow` | `9f194d00d72a` | `service` | `active` | `UI-CA-TEAM-001` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-TESTLAB-001` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `independent` | `4fad9d2acd55` | `service` | `active` | `UI-CA-TESTLAB-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-RUNTIME-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-RUNTIME-001` | `` | `f098f425b8ba` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-AUTHORITY-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-AUTHORITY-001` | `` | `f4b595f986d8` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-STORE-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-STORE-001` | `` | `c2a753afbe40` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
@@ -971,6 +972,14 @@
 | `SPEC-CA-OPENAPI#listCloudTags` | `GET /api/developer/brand-clouds/{brandCloudID}/tags` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `ea17a89b3569` |
 | `SPEC-CA-OPENAPI#deleteCloudTag` | `DELETE /api/developer/brand-clouds/{brandCloudID}/tags/{tag}` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `edf0ecd66d1b` |
 | `SPEC-CA-OPENAPI#renameCloudTag` | `PATCH /api/developer/brand-clouds/{brandCloudID}/tags/{tag}` | `FEAT-P1-TAGS-001` | `REQ-P1-TAGS-001` | `e3600d79b9b8` |
+| `SPEC-CA-OPENAPI#getTestLabContext` | `GET /api/developer/brand-clouds/{brandCloudID}/test-lab/context` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `567e6d6711a6` |
+| `SPEC-CA-OPENAPI#consoleTestLabpostaccounts` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/accounts` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `71268cb9c91a` |
+| `SPEC-CA-OPENAPI#consoleTestLabdeleteaccountsaccountId` | `DELETE /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/accounts/{accountId}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `e1917df7cb67` |
+| `SPEC-CA-OPENAPI#consoleTestLabgetdevices` | `GET /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/devices` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `78acb3f0f297` |
+| `SPEC-CA-OPENAPI#consoleTestLabgetdevicesdeviceId` | `GET /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/devices/{deviceId}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `b760d8c561f5` |
+| `SPEC-CA-OPENAPI#consoleTestLabpostdevicesdeviceIdaction` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/devices/{deviceId}/{action}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `2a0747a9fb85` |
+| `SPEC-CA-OPENAPI#createTestLabSession` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/sessions` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `02e43faf091d` |
+| `SPEC-CA-OPENAPI#executeTestLabAction` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/sessions/{labID}/{action}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `996d3acffbaf` |
 | `SPEC-CA-OPENAPI#createScopedBrandCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `2aef693e40a8` |
 | `SPEC-CA-OPENAPI#listScopedBrandCloudUpdatePlans` | `GET /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `42b98537ca47` |
 | `SPEC-CA-OPENAPI#previewScopedBrandCloudUpdatePlanScope` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/scope-preview` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `690f91bb939e` |
@@ -982,6 +991,7 @@
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleDevice` | `POST /api/developer/pki/test-bundles/device` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `40dc8bb97acc` |
 | `SPEC-CA-OPENAPI#postApiDeveloperProductCollaboratorInvitationsAccept` | `POST /api/developer/product-collaborator-invitations/accept` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-PRODUCT-COLLAB-001` | `78492df24537` |
 | `SPEC-CA-OPENAPI#getApiDeveloperSDKReleasesLatest` | `GET /api/developer/sdk-releases/latest` | `FEAT-CONTRACT-SDK-DISTRIBUTION-001` | `REQ-SDK-CATALOG-001`, `REQ-SDK-CONSOLE-INTEGRATION-001` | `bf6509d5f64b` |
+| `SPEC-CA-OPENAPI#connectTestLabMQTT` | `GET /api/developer/test-lab/mqtt` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `a4d8e0b434c9` |
 | `SPEC-CA-OPENAPI#getApiDevices` | `GET /api/devices` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `68483d60a9ad` |
 | `SPEC-CA-OPENAPI#getApiDevicesById` | `GET /api/devices/{id}` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `5efdc1043df0` |
 | `SPEC-CA-OPENAPI#postApiDevicesByIdDeactivate` | `POST /api/devices/{id}/deactivate` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `d0996152c58a` |
