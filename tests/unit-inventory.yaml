@@ -580,7 +580,6 @@ cases:
       title: social callback errors use stable customer-safe copy
       owner: rtk_cloud_admin
       status: active
-      test_id: UNIT-CA-ERROR-002
     - canonical_key: js://cloud-admin-web/src/http.test.mjs#startSSOLogin%20posts%20email%20and%20return%20URL%20to%20SSO%20start%20endpoint
       module: cloud-admin-web
       language: javascript
@@ -595,7 +594,6 @@ cases:
       title: startSocialLogin posts provider and safe destination to the BFF
       owner: rtk_cloud_admin
       status: active
-      test_id: UNIT-CA-AUTH-003
     - canonical_key: js://cloud-admin-web/src/http.test.mjs#userFacingSSOError%20hides%20internal%20SSO%20configuration%20details
       module: cloud-admin-web
       language: javascript
