@@ -506,6 +506,18 @@ cases:
     verifies: [REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
     status: active
   - { id: UNIT-BILL-IDENTITY-001, title: Billing tenant context requires the global human user actor, layer: unit, owner: rtk_billing, source: repos/rtk_billing/internal/api/server_test.go, selector: TestTenantContextRequiresGlobalUserIdentity, method: Go middleware tests accept global user context and reject retired tenant actors app end users and missing actor or correlation fields., runner: test-coverage, environments: [local, ci], evidence: [json, junit], verifies: [REQ-BILL-SERVICE-AUTH-001], status: active }
+  - id: INT-AM-SOCIAL-LOGIN-001
+    title: Verified social login activates eligible accounts but preserves administrative disables
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/social_login_integration_test.go
+    selector: "./internal/api#TestSocialLoginActivatesExistingPendingUser,./internal/api#TestSocialLoginDoesNotReactivateDisabledUser"
+    method: Isolated PostgreSQL and HTTP tests verify provider-email and existing-identity matching activate pending accounts, invalidate verification tokens, and reject administrator-disabled accounts.
+    runner: test-services
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-SOCIAL-LOGIN-001]
+    status: active
   - { <<: *ui_local, id: UI-CA-AUTH-VIEW-001, title: Dual-role account switches views and Brand Cloud in one session, source: repos/rtk_cloud_admin/web/e2e/account-view.spec.mjs, selector: "[UI-CA-AUTH-VIEW-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_local, id: UI-CA-AUTH-CLOUD-001, title: Login selects the first authorized cloud and remembers the last cloud, source: repos/rtk_cloud_admin/web/e2e/account-view.spec.mjs, selector: "[UI-CA-AUTH-CLOUD-001]", verifies: [REQ-CA-BFF-LOGIN-001, REQ-MULTICLOUD-UI-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-ACTIVATE-001, title: Email activation routes to the resolved account view, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-ACTIVATE-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
@@ -513,6 +525,8 @@ cases:
   - { <<: *ui_smoke, id: UI-CA-AUTH-LOGIN-001, title: Shared login branding follows the selected auth mode, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-LOGIN-002, title: Admin destinations use the platform sign-in context, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-002]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_local, id: UI-CA-AUTH-LOGIN-003, title: Invalid destinations keep the shared sign-in context, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-LOGIN-003]", verifies: [REQ-CA-BFF-LOGIN-001] }
+  - { <<: *ui_smoke, id: UI-CA-AUTH-SOCIAL-001, title: Configured social providers appear on sign in, source: repos/rtk_cloud_admin/web/e2e/social-login.spec.mjs, selector: "[UI-CA-AUTH-SOCIAL-001]", verifies: [REQ-AM-SOCIAL-LOGIN-001, REQ-CA-BFF-LOGIN-001] }
+  - { <<: *ui_smoke, id: UI-CA-AUTH-SOCIAL-002, title: Platform sign in offers the same configured social providers, source: repos/rtk_cloud_admin/web/e2e/social-login.spec.mjs, selector: "[UI-CA-AUTH-SOCIAL-002]", verifies: [REQ-AM-SOCIAL-LOGIN-001, REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_local, id: UI-CA-AUTH-003, title: Failed login renders its error once, source: repos/rtk_cloud_admin/web/e2e/auth-errors.spec.mjs, selector: "[UI-CA-AUTH-003]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-001, title: Password reset consumes the URL token without exposing it in the form, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-001]", verifies: [REQ-CA-BFF-LOGIN-001] }
   - { <<: *ui_smoke, id: UI-CA-AUTH-002, title: Shared checkbox control matches the console style across desktop and mobile, source: repos/rtk_cloud_admin/web/e2e/public-auth.spec.mjs, selector: "[UI-CA-AUTH-002]", verifies: [REQ-CA-BFF-UI-001] }
