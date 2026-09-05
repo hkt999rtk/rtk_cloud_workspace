@@ -1365,6 +1365,10 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminBillingNetworkPolicyManifest(env))
+	if lkeTestLabEnabled(env) {
+		manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "mqtt", 8085))
+		manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080))
+	}
 	manifests = append(manifests, lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
@@ -5258,6 +5262,20 @@ func lkeEMQXTenantBaseHOCON(env map[string]string) string {
 	if !lkeMQTTTenantNamespaceEnabled(env) {
 		return "rewrite = []\n" + handoff
 	}
+	if lkeTestLabEnabled(env) {
+		handoff += `listeners.ws.testlab {
+  bind = "0.0.0.0:8085"
+  enable_authn = true
+  max_connections = 100
+  websocket.mqtt_path = "/mqtt"
+  zone = testlab
+}
+zones.testlab.mqtt {
+  max_packet_size = "10KB"
+  max_subscriptions = 32
+}
+`
+	}
 	return `authorization {
   no_match = deny
   deny_action = ignore
@@ -5301,7 +5319,16 @@ func lkeEMQXListenerAuthEnvManifest(env map[string]string) string {
 	if !lkeMQTTTenantNamespaceEnabled(env) {
 		return ""
 	}
-	return `            - name: EMQX_LISTENERS__TCP__DEFAULT__AUTHENTICATION
+	testLab := ""
+	if lkeTestLabEnabled(env) {
+		testLab = `            - name: EMQX_LISTENERS__WS__TESTLAB__AUTHENTICATION
+              valueFrom:
+                secretKeyRef:
+                  name: mqtt-runtime
+                  key: EMQX_HTTP_AUTHENTICATION
+`
+	}
+	return testLab + `            - name: EMQX_LISTENERS__TCP__DEFAULT__AUTHENTICATION
               valueFrom:
                 secretKeyRef:
                   name: mqtt-runtime
@@ -5650,6 +5677,10 @@ func lkeMQTTPlacementManifest(env map[string]string) string {
 }
 
 func lkeMQTTServiceManifest(env map[string]string) string {
+	testLab := ""
+	if lkeTestLabEnabled(env) {
+		testLab = "    - name: testlab-ws\n      port: 8083\n      targetPort: 8085\n"
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -5671,10 +5702,10 @@ spec:
     - name: mqtts
       port: 8883
       targetPort: 8883
-    - name: dashboard
+%s    - name: dashboard
       port: 18083
       targetPort: 18083
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], testLab)
 }
 
 func lkeMQTTHeadlessServiceManifest(env map[string]string) string {
@@ -8676,6 +8707,25 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
             - secretRef:
                 name: frontend-sdk-downloads
 `
+	}
+	if lkeTestLabEnabled(env) {
+		if workload.Key == "account-manager" || workload.Key == "video-cloud" {
+			extraEnv += "            - name: TEST_LAB_ENABLED\n              value: \"true\"\n"
+		}
+		if workload.Key == "cloud-admin" {
+			extraEnv += fmt.Sprintf(`            - name: CLOUD_ADMIN_TEST_LAB_ENABLED
+              value: "true"
+            - name: CLOUD_ADMIN_TEST_LAB_MQTT_URL
+              value: %q
+            - name: CLOUD_ADMIN_TEST_LAB_MQTT_BACKEND
+              value: %q
+            - name: VIDEO_CLOUD_BASE_URL
+              value: %q
+`, "wss://"+workload.Host+"/api/developer/test-lab/mqtt", "http://mqtt."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:8083", "http://video-cloud-api."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80")
+			if env["CLOUD_STACK_NAME"] == "video-cloud-dev" {
+				extraEnv = strings.Replace(extraEnv, "name: CLOUD_ADMIN_ENV\n              value: \"staging\"", "name: CLOUD_ADMIN_ENV\n              value: \"dev\"", 1)
+			}
+		}
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
