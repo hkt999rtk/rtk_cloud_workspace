@@ -573,11 +573,25 @@ cases:
       title: putJSON sends JSON using PUT
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/http.test.mjs#social%20callback%20errors%20use%20stable%20customer-safe%20copy
+      module: cloud-admin-web
+      language: javascript
+      source: src/http.test.mjs
+      title: social callback errors use stable customer-safe copy
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/http.test.mjs#startSSOLogin%20posts%20email%20and%20return%20URL%20to%20SSO%20start%20endpoint
       module: cloud-admin-web
       language: javascript
       source: src/http.test.mjs
       title: startSSOLogin posts email and return URL to SSO start endpoint
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/http.test.mjs#startSocialLogin%20posts%20provider%20and%20safe%20destination%20to%20the%20BFF
+      module: cloud-admin-web
+      language: javascript
+      source: src/http.test.mjs
+      title: startSocialLogin posts provider and safe destination to the BFF
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/http.test.mjs#userFacingSSOError%20hides%20internal%20SSO%20configuration%20details
