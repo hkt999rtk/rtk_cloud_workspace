@@ -782,13 +782,22 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 
 func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
-	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CHIPSET_PROVIDER_ALLOWED_HOSTS=admin.dev.example.test\nAUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
+	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CHIPSET_PROVIDER_ALLOWED_HOSTS=admin.dev.example.test\nAUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSOCIAL_LOGIN_CALLBACK_URL=https://admin.dev.example.test/api/auth/social/callback\nGOOGLE_LOGIN_ENABLED=true\nGOOGLE_OAUTH_CLIENT_ID=client.apps.googleusercontent.com\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
 	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := cfg.Values["AUTH_TOKEN_BASE_URL"]; got != "https://admin.dev.example.test" {
 		t.Fatalf("AUTH_TOKEN_BASE_URL = %q", got)
+	}
+	if got := cfg.Values["SOCIAL_LOGIN_CALLBACK_URL"]; got != "https://admin.dev.example.test/api/auth/social/callback" {
+		t.Fatalf("SOCIAL_LOGIN_CALLBACK_URL = %q", got)
+	}
+	if got := cfg.Values["GOOGLE_LOGIN_ENABLED"]; got != "true" {
+		t.Fatalf("GOOGLE_LOGIN_ENABLED = %q", got)
+	}
+	if got := cfg.Values["GOOGLE_OAUTH_CLIENT_ID"]; got != "client.apps.googleusercontent.com" {
+		t.Fatalf("GOOGLE_OAUTH_CLIENT_ID = %q", got)
 	}
 	if got := cfg.Values["CHIPSET_PROVIDER_ALLOWED_HOSTS"]; got != "admin.dev.example.test" {
 		t.Fatalf("CHIPSET_PROVIDER_ALLOWED_HOSTS = %q", got)

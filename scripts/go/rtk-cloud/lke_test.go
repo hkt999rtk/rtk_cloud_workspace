@@ -1233,6 +1233,11 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"ACCOUNT_MANAGER_USER_CACHE_PREFIX: \"account_manager:user\"",
 		"ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"true\"",
 		"CHIPSET_PROVIDER_ALLOWED_HOSTS: \"admin.video-cloud-staging.realtekconnect.com\"",
+		"SOCIAL_LOGIN_CALLBACK_URL: \"https://admin.example.test/api/auth/social/callback\"",
+		"SOCIAL_OAUTH_STATE_SECRET: \"test-seed-social-oauth-state-secret\"",
+		"GOOGLE_LOGIN_ENABLED: \"true\"",
+		"GOOGLE_OAUTH_CLIENT_ID: \"client.apps.googleusercontent.com\"",
+		"GOOGLE_OAUTH_CLIENT_SECRET: \"test-seed-google-oauth-client-secret\"",
 		"command: [\"/app/rtk-account-manager-migrate\"]",
 		"PGDATA\n              value: /var/lib/postgresql/data/pgdata",
 		"name: postgresql-runtime\n                  key: POSTGRES_PASSWORD",
@@ -5910,6 +5915,9 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	t.Setenv("LKE_BILLING_IMAGE", "registry.example.test/rtk/billing:test")
 	t.Setenv("AUTH_TOKEN_BASE_URL", "https://admin.example.test")
+	t.Setenv("SOCIAL_LOGIN_CALLBACK_URL", "https://admin.example.test/api/auth/social/callback")
+	t.Setenv("GOOGLE_LOGIN_ENABLED", "true")
+	t.Setenv("GOOGLE_OAUTH_CLIENT_ID", "client.apps.googleusercontent.com")
 	t.Setenv("SENDMAIL_HTTP_BASE_URL", "https://sm.realtekconnect.com")
 	t.Setenv("SENDMAIL_HTTP_BEARER_TOKEN", "test-token")
 	t.Setenv("SENDMAIL_HTTP_TIMEOUT", "15s")
