@@ -25,6 +25,7 @@
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001` | `independent` | `2852d1659641` | `service` | `active` | `INT-AM-IDENTITY-LIFECYCLE-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-PASSWORD-SESSION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PASSWORD-SESSION-001` | `workflow` | `caafcbda803b` | `service` | `active` | `INT-AM-IDENTITY-SESSION-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-APP-AUTHORIZATION-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-APP-AUTHORIZATION-001` | `workflow` | `e00e82e1116c` | `service` | `active` | `INT-AM-IDENTITY-ENDUSER-001` | `test-services` |
+| `repos/rtk_account_manager/docs/spec.md#REQ-AM-TEST-LAB-001` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `independent` | `8c967fcfd14b` | `service` | `active` | — | — |
 | `repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md#REQ-AM-PRICING-VERSION-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `independent` | `fa34115eb7b9` | `canonical` | `active` | `INT-AM-INVOICE-001`, `INT-BILL-API-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UNIT-AM-INVOICE-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md#REQ-AM-INVOICE-ARITHMETIC-001` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-ARITHMETIC-001` | `independent` | `06ab60b6123e` | `canonical` | `active` | `UNIT-AM-INVOICE-001` | `test-coverage` |
 | `repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md#REQ-BILL-USAGE-DELIVERY-001` | `FEAT-AM-INVOICE-001` | `REQ-BILL-USAGE-DELIVERY-001` | `independent` | `c593a7a76066` | `canonical` | `active` | `INT-VC-BILLING-HTTP-001`, `INT-VC-BILLING-OUTBOX-001` | `test-services` |
@@ -721,6 +722,14 @@
 | `SPEC-AM-OPENAPI#removeProductCollaborator` | `DELETE /v1/developer/brand-clouds/{brandCloudId}/products/{productId}/collaborators/{userId}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PRODUCT-COLLAB-001` | `7afdf4956139` |
 | `SPEC-AM-OPENAPI#updateProductCollaborator` | `PATCH /v1/developer/brand-clouds/{brandCloudId}/products/{productId}/collaborators/{userId}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PRODUCT-COLLAB-001` | `21d10dde5868` |
 | `SPEC-AM-OPENAPI#transferProductOwnership` | `POST /v1/developer/brand-clouds/{brandCloudId}/products/{productId}/owner-transfer` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PRODUCT-COLLAB-001` | `d8c0428beb65` |
+| `SPEC-AM-OPENAPI#developerTestLabpostaccounts` | `POST /v1/developer/brand-clouds/{brandCloudId}/test-lab/accounts` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `0291d6a04b85` |
+| `SPEC-AM-OPENAPI#developerTestLabdeleteaccountsaccountId` | `DELETE /v1/developer/brand-clouds/{brandCloudId}/test-lab/accounts/{accountId}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `5c251331403c` |
+| `SPEC-AM-OPENAPI#developerTestLabgetdevices` | `GET /v1/developer/brand-clouds/{brandCloudId}/test-lab/devices` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `c9fc0175d242` |
+| `SPEC-AM-OPENAPI#developerTestLabgetdevicesdeviceId` | `GET /v1/developer/brand-clouds/{brandCloudId}/test-lab/devices/{deviceId}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `531f878fec77` |
+| `SPEC-AM-OPENAPI#developerTestLabpostdevicesdeviceIdaction` | `POST /v1/developer/brand-clouds/{brandCloudId}/test-lab/devices/{deviceId}/{action}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `f66ed28c6134` |
+| `SPEC-AM-OPENAPI#createDeveloperTestLabSession` | `POST /v1/developer/brand-clouds/{brandCloudId}/test-lab/sessions` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `87b6ed8d4e24` |
+| `SPEC-AM-OPENAPI#closeDeveloperTestLabSession` | `DELETE /v1/developer/brand-clouds/{brandCloudId}/test-lab/sessions/{sessionId}` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `325ec0ff4402` |
+| `SPEC-AM-OPENAPI#issueDeveloperTestLabCredentials` | `POST /v1/developer/brand-clouds/{brandCloudId}/test-lab/sessions/{sessionId}/credentials` | `FEAT-AM-IDENTITY-001` | `REQ-AM-TEST-LAB-001` | `b07677b64f41` |
 | `SPEC-AM-OPENAPI#listDeveloperChipsets` | `GET /v1/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `a1573dd57b4b` |
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#acceptProductCollaboratorInvitation` | `POST /v1/developer/product-collaborator-invitations/accept` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PRODUCT-COLLAB-001` | `fa861058ecad` |
