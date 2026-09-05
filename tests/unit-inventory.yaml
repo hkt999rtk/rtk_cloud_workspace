@@ -749,6 +749,146 @@ cases:
       title: workload helpers map k8s status to stable labels and tones
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20XMODEM%20cancels%20failed%20blocks%20and%20requires%20an%20acknowledged%20EOT
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 XMODEM cancels failed blocks and requires an acknowledged EOT
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20XMODEM%20mode%20and%20checksum%20packets%20cover%20supported%20bootloader%20variants
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 XMODEM mode and checksum packets cover supported bootloader variants
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20XMODEM%20retains%20CRC%20and%201K%20packet%20framing
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 XMODEM retains CRC and 1K packet framing
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20XMODEM%20retries%20noise%20and%20rejects%20receiver%20cancellation%20and%20timeouts
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 XMODEM retries noise and rejects receiver cancellation and timeouts
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20XMODEM%20transmits%20CRC%20and%20checksum%20sessions%20with%20progress
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 XMODEM transmits CRC and checksum sessions with progress
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20automatic%20download%20mode%20supports%20normal%20and%20mini%20sequences
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 automatic download mode supports normal and mini sequences
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20burn%20completes%20a%20transfer%20and%20records%20protocol%20failures
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 burn completes a transfer and records protocol failures
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20burn%20controller%20validates%20state%2C%20connection%2C%20and%20firmware%20input
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 burn controller validates state, connection, and firmware input
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20burn%20handshake%20retries%20ping%2C%20switches%20baud%2C%20and%20validates%20ucfg
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 burn handshake retries ping, switches baud, and validates ucfg
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20erase%20and%20hash%20verification%20emit%20commands%20and%20reject%20bad%20responses
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 erase and hash verification emit commands and reject bad responses
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20firmware%20offsets%2C%20chunks%2C%20and%20forward%20commands%20retain%20uartfwburn%20behavior
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 firmware offsets, chunks, and forward commands retain uartfwburn behavior
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20local%20firmware%20checksum%20is%20lowercase%20SHA-256
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 local firmware checksum is lowercase SHA-256
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20serial%20pump%20and%20close%20tolerate%20stream%20cleanup%20errors
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 serial pump and close tolerate stream cleanup errors
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20serial%20request%20handles%20unsupported%20browsers%20and%20failed%20opens
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 serial request handles unsupported browsers and failed opens
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20serial%20transport%20opens%2C%20pumps%2C%20reopens%2C%20signals%2C%20and%20closes%20a%20port
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 serial transport opens, pumps, reopens, signals, and closes a port
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20serial%20transport%20reports%20abort%2C%20timeout%2C%20read%20error%2C%20and%20ownership%20changes
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 serial transport reports abort, timeout, read error, and ownership changes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20serial%20transport%20validates%20ownership%2C%20writes%2C%20reads%2C%20and%20subscriptions
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 serial transport validates ownership, writes, reads, and subscriptions
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20sleep%20and%20abort%20helpers%20settle%20predictably
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 sleep and abort helpers settle predictably
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#PRO2%20terminal%20codec%20and%20UART%20ownership%20remain%20isolated
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: PRO2 terminal codec and UART ownership remain isolated
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-firmware-burner.test.mjs#canceling%20a%20PRO2%20burn%20stops%20the%20workflow%20instead%20of%20reporting%20completion
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-firmware-burner.test.mjs
+      title: canceling a PRO2 burn stops the workflow instead of reporting completion
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/product-devices.test.mjs#device%20URLs%20require%20all%20three%20explicit%20identities
       module: cloud-admin-web
       language: javascript
