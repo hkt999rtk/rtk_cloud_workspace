@@ -3018,7 +3018,11 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 		}
 	}
 
-	if adminSecretFound {
+	if adminFound && !adminSecretFound {
+		if err := kubectlApply(lkeCloudAdminBillingSecretManifestWithFleetReadToken(env, desiredToken)); err != nil {
+			return err
+		}
+	} else if adminSecretFound {
 		if err := lkePatchFleetReadSecret(adminNamespace, "cloud-admin-billing-client", desiredToken, ""); err != nil {
 			return err
 		}

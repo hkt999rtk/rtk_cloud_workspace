@@ -1040,6 +1040,39 @@ func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *test
 	}
 }
 
+func TestLKEFleetReadTokenRotationRecreatesMissingCloudAdminSecret(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{
+		"fleet-read-token":      "fleet-token-new",
+		"billing-service-token": "billing-token",
+	}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("FAKE_CLOUD_ADMIN_SECRET_ABSENT", "1")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+	}
+
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old", provisionOptions{workloads: []string{"video-cloud"}}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	secret := strings.Index(log, "kind: Secret\nmetadata:\n  name: cloud-admin-billing-client")
+	adminRoll := strings.Index(log, "patch deployment cloud-admin --type=merge --patch-file=/dev/stdin")
+	if secret < 0 || adminRoll < secret {
+		t.Fatalf("missing Cloud Admin Secret was not recreated before rollout:\n%s", log)
+	}
+	if !strings.Contains(log[secret:adminRoll], `BILLING_SERVICE_TOKEN: "billing-token"`) || !strings.Contains(log[secret:adminRoll], `VIDEO_CLOUD_FLEET_READ_TOKEN: "fleet-token-new"`) {
+		t.Fatalf("recreated Cloud Admin Secret has incomplete managed values:\n%s", log[secret:adminRoll])
+	}
+}
+
 func TestValidateRuntimeCoverageVideoCloudAPIBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -6780,7 +6813,9 @@ if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o name"*
   exit 0
 fi
 if [[ "$*" == *"get secret cloud-admin-billing-client --ignore-not-found=true -o name"* ]]; then
-  printf 'secret/cloud-admin-billing-client\n'
+	if [[ "${FAKE_CLOUD_ADMIN_SECRET_ABSENT:-}" != "1" ]]; then
+		printf 'secret/cloud-admin-billing-client\n'
+	fi
   exit 0
 fi
 if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o name"* ]]; then
