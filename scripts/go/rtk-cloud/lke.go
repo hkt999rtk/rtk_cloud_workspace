@@ -2983,6 +2983,13 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 			return err
 		}
 	}
+	videoWorkload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api"}
+	useTemporarySurge := videoFound && (rotating || opts.fleetReadRolloutPending) && lkeWorkloadReplicas(env, videoWorkload) == "1"
+	if useTemporarySurge {
+		if err := lkeSetVideoCloudTokenRolloutStrategy(env, true); err != nil {
+			return err
+		}
+	}
 
 	if videoFound {
 		primary, grace := desiredToken, ""
@@ -3024,6 +3031,9 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 		if err := lkeRollVideoCloudFleetToken(env, desiredToken, "", false); err != nil {
 			return err
 		}
+	}
+	if useTemporarySurge {
+		return lkeSetVideoCloudTokenRolloutStrategy(env, false)
 	}
 	return nil
 }
@@ -3106,6 +3116,30 @@ func lkeRollFleetTokenConsumer(namespace, deployment, checksum string) error {
 		return fmt.Errorf("roll Fleet token consumer %s/%s: %w: %s", namespace, deployment, err, strings.TrimSpace(string(out)))
 	}
 	return runKubectl("-n", namespace, "rollout", "status", "deployment/"+deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m"))
+}
+
+func lkeSetVideoCloudTokenRolloutStrategy(env map[string]string, temporarySurge bool) error {
+	maxSurge, maxUnavailable := 0, 1
+	if temporarySurge {
+		maxSurge, maxUnavailable = 1, 0
+	}
+	patch, err := json.Marshal(map[string]any{
+		"spec": map[string]any{"strategy": map[string]any{
+			"type": "RollingUpdate",
+			"rollingUpdate": map[string]int{
+				"maxSurge":       maxSurge,
+				"maxUnavailable": maxUnavailable,
+			},
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	out, err := kubectlCombinedOutput(bytes.NewReader(patch), "-n", lkeNamespaceName(env, "video-cloud"), "patch", "deployment", "video-cloud-api", "--type=merge", "--patch-file=/dev/stdin")
+	if err != nil {
+		return fmt.Errorf("set Video Cloud Fleet token rollout strategy: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func lkeImportExistingRuntimeSecret(env map[string]string, namespaceKey, secretName string, mappings map[string]string, required bool) (bool, error) {

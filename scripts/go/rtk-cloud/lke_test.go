@@ -782,8 +782,9 @@ func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
 	})
 	t.Setenv("FAKE_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-old")))
 	env := map[string]string{
-		"CLOUD_STACK_NAME":      "video-cloud-staging",
-		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+		"CLOUD_STACK_NAME":         "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE":    "registry.example.test/video-cloud:new",
+		"LKE_VIDEO_CLOUD_REPLICAS": "1",
 	}
 
 	previous, err := lkeCurrentFleetReadToken(env)
@@ -818,6 +819,12 @@ func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
 	}
 	if got := strings.Count(log, "rollout status deployment/video-cloud-api --timeout"); got != 3 {
 		t.Fatalf("Video Cloud rollout count = %d, want 3", got)
+	}
+	surge := strings.Index(log, `"maxSurge":1,"maxUnavailable":0`)
+	restore := strings.LastIndex(log, `"maxSurge":0,"maxUnavailable":1`)
+	lastVideoReady := strings.LastIndex(log, "rollout status deployment/video-cloud-api --timeout")
+	if surge < 0 || surge > videoFirst || restore < lastVideoReady {
+		t.Fatalf("single-replica token rotation did not use and restore a surge strategy:\n%s", log)
 	}
 }
 
