@@ -3123,8 +3123,10 @@ func lkeApplyRedisRuntime(env map[string]string) error {
 // signaling/shadow Redis path. Targeted Video Cloud rollouts call it too, so a
 // service deploy cannot silently omit the durable fleet store it depends on.
 func lkeApplyFleetAnalyticsRuntime(env map[string]string) error {
+	if err := lkeApplyFleetValkeyStatefulSet(env); err != nil {
+		return err
+	}
 	for _, manifest := range []string{
-		lkeFleetValkeyStatefulSetManifest(env),
 		lkeFleetValkeyServiceManifest(env),
 		lkeFleetValkeyExporterDeploymentManifest(env),
 		lkeFleetValkeyExporterServiceManifest(env),
@@ -3139,6 +3141,26 @@ func lkeApplyFleetAnalyticsRuntime(env map[string]string) error {
 		return err
 	}
 	return runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/fleet-valkey-exporter", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_ROLLOUT_TIMEOUT"), "5m"))
+}
+
+func lkeApplyFleetValkeyStatefulSet(env map[string]string) error {
+	manifest := lkeFleetValkeyStatefulSetManifest(env)
+	err := kubectlApply(manifest)
+	if err == nil {
+		return nil
+	}
+	if !isStatefulSetImmutableUpdateError(err) {
+		return err
+	}
+	namespace := lkeNamespaceName(env, "platform")
+	storagePatch := fmt.Sprintf(`{"spec":{"resources":{"requests":{"storage":%q}}}}`, lkeFleetValkeyStorage(env))
+	if patchErr := runKubectl("-n", namespace, "patch", "pvc/data-fleet-valkey-0", "--type=merge", "-p", storagePatch); patchErr != nil {
+		return patchErr
+	}
+	if deleteErr := runKubectl("-n", namespace, "delete", "statefulset/fleet-valkey", "--cascade=orphan", "--ignore-not-found=true"); deleteErr != nil {
+		return deleteErr
+	}
+	return kubectlApply(manifest)
 }
 
 func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
@@ -3887,7 +3909,11 @@ spec:
         resources:
           requests:
             storage: %q
-`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeFleetPlacementManifest(env, "FLEET_VALKEY"), lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_MAXMEMORY"), env["LKE_FLEET_VALKEY_MAXMEMORY"], "1536mb"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_CPU"), env["LKE_FLEET_VALKEY_REQUEST_CPU"], "250m"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_MEMORY"), env["LKE_FLEET_VALKEY_REQUEST_MEMORY"], "1Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_LIMIT_MEMORY"), env["LKE_FLEET_VALKEY_LIMIT_MEMORY"], "2Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_STORAGE"), env["LKE_FLEET_VALKEY_STORAGE"], "20Gi"))
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeFleetPlacementManifest(env, "FLEET_VALKEY"), lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_MAXMEMORY"), env["LKE_FLEET_VALKEY_MAXMEMORY"], "1536mb"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_CPU"), env["LKE_FLEET_VALKEY_REQUEST_CPU"], "250m"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_MEMORY"), env["LKE_FLEET_VALKEY_REQUEST_MEMORY"], "1Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_LIMIT_MEMORY"), env["LKE_FLEET_VALKEY_LIMIT_MEMORY"], "2Gi"), lkeFleetValkeyStorage(env))
+}
+
+func lkeFleetValkeyStorage(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_STORAGE"), env["LKE_FLEET_VALKEY_STORAGE"], "20Gi")
 }
 
 func lkeFleetValkeyServiceManifest(env map[string]string) string {

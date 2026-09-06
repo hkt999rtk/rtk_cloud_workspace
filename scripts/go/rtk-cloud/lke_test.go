@@ -1450,6 +1450,46 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 	}
 }
 
+func TestLKEApplyFleetValkeyStatefulSetHandlesImmutableStorageUpdate(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	markerPath := filepath.Join(dir, "immutable-returned")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, fmt.Sprintf(`#!/usr/bin/env bash
+set -euo pipefail
+body="$(cat)"
+printf 'ARGS %%s\n' "$*" >> %q
+if [[ "$*" == *"apply -f -"* && "$body" == *"kind: StatefulSet"* && "$body" == *"name: fleet-valkey"* && ! -f %q ]]; then
+  touch %q
+  printf 'The StatefulSet "fleet-valkey" is invalid: spec: Forbidden: updates to statefulset spec are forbidden\n' >&2
+  exit 1
+fi
+`, logPath, markerPath, markerPath))
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+
+	env := map[string]string{
+		"CLOUD_STACK_NAME":         "video-cloud-staging",
+		"LKE_FLEET_VALKEY_STORAGE": "40Gi",
+	}
+	if err := lkeApplyFleetValkeyStatefulSet(env); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		`patch pvc/data-fleet-valkey-0 --type=merge -p {"spec":{"resources":{"requests":{"storage":"40Gi"}}}}`,
+		"delete statefulset/fleet-valkey --cascade=orphan --ignore-not-found=true",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("expected %q in immutable Fleet StatefulSet recovery calls, got:\n%s", want, log)
+		}
+	}
+}
+
 func TestRunProvisionLKEDeployCanExposePublicMQTTNodePort(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
