@@ -255,8 +255,8 @@ func TestLKEProviderServicesSkipsFleetVolumeForUnrelatedTargetedDeploy(t *testin
 	if services.EdgeVMs != 0 || services.CoturnVMs != 0 {
 		t.Fatalf("targeted frontend VMs = edge:%d coturn:%d, want zero", services.EdgeVMs, services.CoturnVMs)
 	}
-	if services.RequiredServices != 2 {
-		t.Fatalf("required services = %d, want only the 2 worker nodes", services.RequiredServices)
+	if services.NodeServices != 0 || services.RequiredServices != 0 {
+		t.Fatalf("targeted frontend node/required services = %d/%d, want zero", services.NodeServices, services.RequiredServices)
 	}
 }
 
@@ -271,6 +271,9 @@ func TestLKEProviderServicesPlansDatabaseNodesForTargetedFleetDeploy(t *testing.
 	fleet := lkeProviderServices(env, 1, provisionOptions{workloads: []string{"video-cloud"}})
 	if fleet.DatabaseNodes != 2 {
 		t.Fatalf("targeted Fleet database nodes = %d, want 2", fleet.DatabaseNodes)
+	}
+	if fleet.NodeServices != 2 {
+		t.Fatalf("targeted Fleet node services = %d, want only 2 database nodes", fleet.NodeServices)
 	}
 	unrelated := lkeProviderServices(env, 1, provisionOptions{workloads: []string{"frontend"}})
 	if unrelated.DatabaseNodes != 0 {

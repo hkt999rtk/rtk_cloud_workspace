@@ -391,30 +391,36 @@ func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityP
 }
 
 func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOptions) lkeProviderServicePlan {
-	workerNodes := nodeCount
-	if _, hasBroker := env["LKE_NODE_COUNT"]; hasBroker {
-		workerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", 0), 0) + maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
-	}
-	if lkePostgresDedicatedNodePoolEnabled(env) {
-		workerNodes += maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
-	}
+	fullDeploy := len(opts.workloads) == 0
 	databaseNodes := 0
-	if lkePostgresDedicatedNodePoolEnabled(env) && (len(opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(env, opts)) {
+	if lkePostgresDedicatedNodePoolEnabled(env) && (fullDeploy || lkeTargetedFleetDatabasePoolRequired(env, opts)) {
 		databaseNodes = maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
+	}
+	workerNodes := 0
+	if fullDeploy {
+		workerNodes = nodeCount
+		if _, hasBroker := env["LKE_NODE_COUNT"]; hasBroker {
+			workerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", 0), 0) + maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+		}
+		if lkePostgresDedicatedNodePoolEnabled(env) {
+			workerNodes += maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
+		}
+	} else {
+		workerNodes = databaseNodes
 	}
 	generalNodes := 0
 	brokerNodes := 0
-	if len(opts.workloads) == 0 {
+	if fullDeploy {
 		generalNodes = maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
 		brokerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", nodeCount), 0)
 	}
 	postgresVolumes := 0
-	if len(opts.workloads) == 0 && lkePostgresUsesPVC(env) {
+	if fullDeploy && lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
 	}
 	edgeVMs := 0
 	coturnVMs := 0
-	if len(opts.workloads) == 0 {
+	if fullDeploy {
 		edgeVMs = envIntFrom(env, "LKE_EDGE_HAPROXY_COUNT", 1)
 		if edgeVMs < 0 {
 			edgeVMs = 0
@@ -423,7 +429,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	}
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
 	fleetVolumes := 0
-	if len(opts.workloads) == 0 || lkeWorkloadSelected(env, opts, "video-cloud") {
+	if fullDeploy || lkeWorkloadSelected(env, opts, "video-cloud") {
 		fleetVolumes = 1
 	}
 	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
@@ -432,7 +438,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 		BrokerNodes:           brokerNodes,
 		GeneralNodes:          generalNodes,
 		DatabaseNodes:         databaseNodes,
-		ReconcileDatabasePool: len(opts.workloads) == 0 && databaseNodes > 0,
+		ReconcileDatabasePool: fullDeploy && databaseNodes > 0,
 		PostgresVolumes:       postgresVolumes,
 		FleetVolumes:          fleetVolumes,
 		EdgeVMs:               edgeVMs,
