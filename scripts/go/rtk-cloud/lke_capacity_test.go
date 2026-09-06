@@ -255,6 +255,54 @@ func TestLKEProviderServicesSkipsFleetVolumeForUnrelatedTargetedDeploy(t *testin
 	}
 }
 
+func TestLKEProviderServicesPlansDatabaseNodesForTargetedFleetDeploy(t *testing.T) {
+	env := map[string]string{
+		"FLEET_VALKEY_NODE_CLASS":          "database",
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true",
+		"LKE_POSTGRES_NODE_COUNT":          "2",
+	}
+
+	fleet := lkeProviderServices(env, 1, provisionOptions{workloads: []string{"video-cloud"}})
+	if fleet.DatabaseNodes != 2 {
+		t.Fatalf("targeted Fleet database nodes = %d, want 2", fleet.DatabaseNodes)
+	}
+	unrelated := lkeProviderServices(env, 1, provisionOptions{workloads: []string{"frontend"}})
+	if unrelated.DatabaseNodes != 0 {
+		t.Fatalf("unrelated targeted database nodes = %d, want 0", unrelated.DatabaseNodes)
+	}
+}
+
+func TestLKELiveProviderServicesCountsMissingDatabasePool(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeLinodeCurl(t, map[string]string{
+		"/volumes?page_size=500":       `{"data":[],"results":0}`,
+		"/nodebalancers?page_size=500": `{"data":[],"results":0}`,
+		"/linode/instances?page_size=500": `{"data":[
+			{"id":1,"label":"lke-node-01"}
+		],"results":1}`,
+		"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
+		"/lke/clusters/12345/pools":   `{"data":[{"id":111,"type":"g6-standard-4","count":1,"labels":{"rtk.io/node-class":"general"}}]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":       "video-cloud-staging",
+		"CLOUD_REGION":           "us-sea",
+		"LKE_NODE_TYPE":          "g6-standard-4",
+		"LKE_POSTGRES_NODE_TYPE": "g6-standard-8",
+	}
+	plan := lkeProviderServicePlan{NodeServices: 1, DatabaseNodes: 1, Limit: 1}
+
+	err := lkeCheckLiveProviderActiveServices(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, plan)
+	if err == nil {
+		t.Fatal("expected missing database pool to exceed live provider quota")
+	}
+	for _, want := range []string{"projected active services=2", "additional_required=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error:\n%s", want, err.Error())
+		}
+	}
+}
+
 func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeLinodeCurl(t, map[string]string{

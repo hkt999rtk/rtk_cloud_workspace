@@ -40,6 +40,7 @@ type lkeCapacityPlanResult struct {
 
 type lkeProviderServicePlan struct {
 	NodeServices     int
+	DatabaseNodes    int
 	PostgresVolumes  int
 	FleetVolumes     int
 	EdgeVMs          int
@@ -152,6 +153,11 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 	if cluster, err := discoverLKECluster(token, paths, env, false); err == nil && cluster.ID > 0 {
 		additional = 0
 		additional += lkeMissingPlannedVolumeServices(paths, env, plan)
+		missingDatabaseNodes, poolErr := lkeMissingPlannedDatabaseNodeServices(token, cluster, env, plan)
+		if poolErr != nil {
+			return poolErr
+		}
+		additional += missingDatabaseNodes
 		if plan.EdgeVMs > 0 && !activeLabels[lkeEdgeHAProxyLabel(env)] {
 			additional++
 		}
@@ -168,6 +174,22 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 	}
 	fmt.Fprintf(os.Stderr, "[lke] provider active services ok: current=%d instances=%d volumes=%d nodebalancers=%d reducible_lke_nodes=%d additional_required=%d projected=%d limit=%d\n", current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, projected, plan.Limit)
 	return nil
+}
+
+func lkeMissingPlannedDatabaseNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
+	if plan.DatabaseNodes <= 0 {
+		return 0, nil
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0, err
+	}
+	for _, pool := range pools {
+		if lkeNodePoolHasPostgresPlacement(pool) {
+			return 0, nil
+		}
+	}
+	return plan.DatabaseNodes, nil
 }
 
 func lkeProviderResourceCount(token, endpoint string) (int, error) {
@@ -297,6 +319,10 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	if lkePostgresDedicatedNodePoolEnabled(env) {
 		workerNodes += maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
 	}
+	databaseNodes := 0
+	if lkePostgresDedicatedNodePoolEnabled(env) && (len(opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(env, opts)) {
+		databaseNodes = maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
+	}
 	postgresVolumes := 0
 	if lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
@@ -314,6 +340,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
 		NodeServices:     workerNodes,
+		DatabaseNodes:    databaseNodes,
 		PostgresVolumes:  postgresVolumes,
 		FleetVolumes:     fleetVolumes,
 		EdgeVMs:          edgeVMs,
