@@ -2882,17 +2882,19 @@ func lkeCurrentFleetReadToken(env map[string]string) (string, error) {
 		if err := json.Unmarshal(raw, &secret); err != nil {
 			return "", fmt.Errorf("decode Fleet token secret %s/%s: %w", target.namespace, target.secret, err)
 		}
-		encoded := strings.TrimSpace(secret.Data["VIDEO_CLOUD_FLEET_READ_TOKEN"])
-		if encoded == "" {
-			continue
-		}
-		decoded, err := base64.StdEncoding.DecodeString(encoded)
-		if err != nil {
-			return "", fmt.Errorf("decode Fleet token value %s/%s: %w", target.namespace, target.secret, err)
-		}
-		token := strings.TrimSpace(string(decoded))
-		if token != "" {
-			currentTokens[token] = struct{}{}
+		for _, key := range []string{"VIDEO_CLOUD_FLEET_READ_TOKEN", "VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN"} {
+			encoded := strings.TrimSpace(secret.Data[key])
+			if encoded == "" {
+				continue
+			}
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return "", fmt.Errorf("decode Fleet token value %s/%s key %s: %w", target.namespace, target.secret, key, err)
+			}
+			token := strings.TrimSpace(string(decoded))
+			if token != "" {
+				currentTokens[token] = struct{}{}
+			}
 		}
 	}
 	if len(currentTokens) == 0 {

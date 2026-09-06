@@ -841,6 +841,16 @@ func TestLKECurrentFleetReadTokenRecoversPartialRotation(t *testing.T) {
 	if previous != "fleet-token-old" {
 		t.Fatalf("partial rotation previous token = %q", previous)
 	}
+
+	t.Setenv("FAKE_VIDEO_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-new")))
+	t.Setenv("FAKE_VIDEO_FLEET_READ_PREVIOUS_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-old")))
+	previous, err = lkeCurrentFleetReadToken(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous != "fleet-token-old" {
+		t.Fatalf("grace-stage previous token = %q", previous)
+	}
 }
 
 func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *testing.T) {
@@ -6572,7 +6582,7 @@ if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o json"*
     token_b64="$FAKE_ADMIN_FLEET_READ_TOKEN_B64"
   fi
   if [[ -n "$token_b64" ]]; then
-    printf '{"data":{"VIDEO_CLOUD_FLEET_READ_TOKEN":"%s"}}\n' "$token_b64"
+    printf '{"data":{"VIDEO_CLOUD_FLEET_READ_TOKEN":"%s","VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN":"%s"}}\n' "$token_b64" "${FAKE_VIDEO_FLEET_READ_PREVIOUS_TOKEN_B64:-}"
   fi
   exit 0
 fi
