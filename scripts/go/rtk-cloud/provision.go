@@ -58,6 +58,7 @@ type provisionOptions struct {
 	loggerOnly           bool
 	videoOnly            bool
 	workloads            []string
+	fleetReadTokenBefore string
 	binaryOnly           bool
 	confirm              string
 	verbose              bool
