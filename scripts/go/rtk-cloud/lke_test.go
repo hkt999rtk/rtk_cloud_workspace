@@ -823,8 +823,8 @@ func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
 	surge := strings.Index(log, `"maxSurge":1,"maxUnavailable":0`)
 	restore := strings.LastIndex(log, `"maxSurge":0,"maxUnavailable":1`)
 	lastVideoReady := strings.LastIndex(log, "rollout status deployment/video-cloud-api --timeout")
-	if surge < 0 || surge > videoFirst || restore < lastVideoReady {
-		t.Fatalf("single-replica token rotation did not use and restore a surge strategy:\n%s", log)
+	if surge < 0 || surge > videoFirst || restore >= 0 || lastVideoReady < videoFirst {
+		t.Fatalf("token synchronization did not retain the single-replica surge strategy for the caller:\n%s", log)
 	}
 }
 
@@ -5268,6 +5268,28 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 		if strings.Contains(log, unwanted) {
 			t.Fatalf("video-only deploy unexpectedly applied non-video workload %q", unwanted)
 		}
+	}
+}
+
+func TestRunDeployLKEFleetTokenRotationRetainsSurgeThroughManifestRollout(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
+	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "1")
+	t.Setenv("FAKE_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-before-deploy")))
+
+	if err := runDeploy([]string{"--workspace", workspace, "--env-root", envRoot, "--video-only"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	surge := strings.Index(log, `"maxSurge":1,"maxUnavailable":0`)
+	manifest := strings.LastIndex(log, "kind: Deployment\nmetadata:\n  name: video-cloud-api")
+	manifestRollout := strings.LastIndex(log, "rollout status deployment/video-cloud-api")
+	restore := strings.LastIndex(log, `"maxSurge":0,"maxUnavailable":1`)
+	if surge < 0 || manifest < surge || manifestRollout < manifest || restore < manifestRollout {
+		t.Fatalf("single-replica deploy did not retain surge through the full manifest rollout:\n%s", log)
 	}
 }
 

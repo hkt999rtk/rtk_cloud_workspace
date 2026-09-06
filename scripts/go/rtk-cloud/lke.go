@@ -2288,6 +2288,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
 		return err
 	}
+	// A one-replica Fleet token rotation temporarily enables a surge. Keep it
+	// through the full workload manifest rollout because that manifest also
+	// updates the broader runtime checksum. Restoring earlier would let that
+	// final rollout remove the sole ready Video Cloud pod first.
+	if err := lkeRestoreVideoCloudTokenRolloutStrategy(env, opts); err != nil {
+		return err
+	}
 	if lkeWorkloadSelected(env, opts, "billing") {
 		if err := kubectlApply(lkePaymentSimulatorServiceManifest(env)); err != nil {
 			return err
@@ -3032,10 +3039,22 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 			return err
 		}
 	}
-	if useTemporarySurge {
-		return lkeSetVideoCloudTokenRolloutStrategy(env, false)
-	}
 	return nil
+}
+
+func lkeRestoreVideoCloudTokenRolloutStrategy(env map[string]string, opts provisionOptions) error {
+	if !lkeWorkloadSelected(env, opts, "video-cloud") && !lkeWorkloadSelected(env, opts, "cloud-admin") {
+		return nil
+	}
+	videoWorkload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api"}
+	if lkeWorkloadReplicas(env, videoWorkload) != "1" {
+		return nil
+	}
+	found, err := lkeKubernetesResourceExists(lkeNamespaceName(env, "video-cloud"), "deployment", "video-cloud-api")
+	if err != nil || !found {
+		return err
+	}
+	return lkeSetVideoCloudTokenRolloutStrategy(env, false)
 }
 
 func lkeKubernetesResourceExists(namespace, kind, name string) (bool, error) {
