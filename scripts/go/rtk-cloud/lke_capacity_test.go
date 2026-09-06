@@ -213,7 +213,7 @@ func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
 		"LKE_LINODE_ACTIVE_SERVICE_LIMIT": "6",
 	}
 
-	services := lkeProviderServices(env, 5)
+	services := lkeProviderServices(env, 5, provisionOptions{})
 	if services.EdgeVMs != 1 {
 		t.Fatalf("edge VMs = %d, want 1", services.EdgeVMs)
 	}
@@ -235,6 +235,23 @@ func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected %q in provider capacity error:\n%s", want, err.Error())
 		}
+	}
+}
+
+func TestLKEProviderServicesSkipsFleetVolumeForUnrelatedTargetedDeploy(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"LKE_POSTGRES_STORAGE_MODE": "emptydir",
+		"LKE_EDGE_HAPROXY_COUNT":    "0",
+		"LKE_COTURN_VM_COUNT":       "0",
+	}
+
+	services := lkeProviderServices(env, 2, provisionOptions{workloads: []string{"frontend"}})
+	if services.FleetVolumes != 0 {
+		t.Fatalf("fleet volumes = %d, want 0 for a targeted frontend deploy", services.FleetVolumes)
+	}
+	if services.RequiredServices != 2 {
+		t.Fatalf("required services = %d, want only the 2 worker nodes", services.RequiredServices)
 	}
 }
 

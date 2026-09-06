@@ -278,7 +278,7 @@ func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityP
 	targetConnects := lkeTargetConnects(env)
 	requiredMQTT := lkeMQTTReplicas(env)
 	mqttCapacity := requiredMQTT * lkeMQTTConnectionsPerPod(env)
-	providerServices := lkeProviderServices(env, nodeCount)
+	providerServices := lkeProviderServices(env, nodeCount, opts)
 	requiredCPU := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_CPU", 0)
 	requiredMemory := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_MEMORY", 0)
 	requiredSpread := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_SPREAD", requiredMQTT)
@@ -289,7 +289,7 @@ func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityP
 	}, nil
 }
 
-func lkeProviderServices(env map[string]string, nodeCount int) lkeProviderServicePlan {
+func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOptions) lkeProviderServicePlan {
 	workerNodes := nodeCount
 	if _, hasBroker := env["LKE_NODE_COUNT"]; hasBroker {
 		workerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", 0), 0) + maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
@@ -307,7 +307,10 @@ func lkeProviderServices(env map[string]string, nodeCount int) lkeProviderServic
 	}
 	coturnVMs := lkeCoturnVMCount(env)
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
-	fleetVolumes := 1
+	fleetVolumes := 0
+	if len(opts.workloads) == 0 || lkeWorkloadSelected(env, opts, "video-cloud") {
+		fleetVolumes = 1
+	}
 	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
 		NodeServices:     workerNodes,
