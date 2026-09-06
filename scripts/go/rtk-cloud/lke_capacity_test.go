@@ -1,9 +1,37 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLKEMissingPlannedVolumeServicesUsesExistingPVCs(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "kubeconfig.yaml")
+	writeTestFile(t, kubeconfig, "test kubeconfig\n")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/bin/sh
+case "$*" in
+  *" get pvc data-fleet-valkey-0 "*) printf 'persistentvolumeclaim/data-fleet-valkey-0\n' ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECONFIG", kubeconfig)
+
+	got := lkeMissingPlannedVolumeServices(
+		provisionPaths{EnvRoot: dir},
+		map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"},
+		lkeProviderServicePlan{PostgresVolumes: 1, FleetVolumes: 1},
+	)
+	if got != 1 {
+		t.Fatalf("missing volume services = %d, want 1 for the absent PostgreSQL PVC", got)
+	}
+}
 
 func TestLKECapacityPlanAcceptsExplicitOneKValidationProfile(t *testing.T) {
 	env := map[string]string{
@@ -165,15 +193,18 @@ func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
 	if services.CoturnVMs != 1 {
 		t.Fatalf("coturn VMs = %d, want 1", services.CoturnVMs)
 	}
-	if services.RequiredServices != 7 {
-		t.Fatalf("required services = %d, want 7", services.RequiredServices)
+	if services.FleetVolumes != 1 {
+		t.Fatalf("fleet volumes = %d, want 1", services.FleetVolumes)
+	}
+	if services.RequiredServices != 8 {
+		t.Fatalf("required services = %d, want 8", services.RequiredServices)
 	}
 
 	err := lkeCheckCapacity(env, provisionOptions{})
 	if err == nil {
 		t.Fatal("expected provider capacity check to include coturn VM and fail")
 	}
-	for _, want := range []string{"required active services=7", "coturn_vms=1", "reduce LKE_COTURN_VM_COUNT"} {
+	for _, want := range []string{"required active services=8", "fleet_volumes=1", "coturn_vms=1", "reduce LKE_COTURN_VM_COUNT"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected %q in provider capacity error:\n%s", want, err.Error())
 		}
@@ -183,6 +214,8 @@ func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
 func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeLinodeCurl(t, map[string]string{
+		"/volumes?page_size=500":       `{"data":[{"id":9001}],"results":1}`,
+		"/nodebalancers?page_size=500": `{"data":[],"results":0}`,
 		"/linode/instances?page_size=500": `{"data":[
 			{"id":1,"label":"lke-node-01"},
 			{"id":2,"label":"lke-node-02"},
@@ -195,7 +228,8 @@ func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 			{"id":9,"label":"lke-node-09"},
 			{"id":10,"label":"lke-node-10"},
 			{"id":11,"label":"lke-postgres-01"},
-			{"id":12,"label":"shared-ci"}
+			{"id":12,"label":"shared-ci"},
+			{"id":13,"label":"shared-ci-02"}
 		]}`,
 		"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
 		"/lke/clusters/12345/pools":   `{"data":[{"id":111,"type":"g6-standard-6","count":10}]}`,
@@ -212,7 +246,7 @@ func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 		"LKE_EDGE_HAPROXY_COUNT":             "1",
 		"LKE_COTURN_VM_COUNT":                "1",
 		"LKE_POSTGRES_STORAGE_MODE":          "emptydir",
-		"LKE_LINODE_ACTIVE_SERVICE_LIMIT":    "13",
+		"LKE_LINODE_ACTIVE_SERVICE_LIMIT":    "14",
 		"LKE_INGRESS_REQUEST_CPU":            "100m",
 		"LKE_ACCOUNT_MANAGER_REQUEST_CPU":    "150m",
 		"LKE_CLOUD_LOGGER_REQUEST_CPU":       "50m",
@@ -226,7 +260,7 @@ func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected live provider active service failure")
 	}
-	for _, want := range []string{"projected active services=14", "current_active=12", "additional_required=2"} {
+	for _, want := range []string{"projected active services=17", "current_active=14", "current_volumes=1", "additional_required=3"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected %q in error:\n%s", want, err.Error())
 		}
@@ -236,6 +270,8 @@ func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 func TestLKELiveProviderServicesAccountsForPlannedNodePoolShrink(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeLinodeCurl(t, map[string]string{
+		"/volumes?page_size=500":       `{"data":[],"results":0}`,
+		"/nodebalancers?page_size=500": `{"data":[],"results":0}`,
 		"/linode/instances?page_size=500": `{"data":[
 			{"id":1,"label":"lke-node-01"},
 			{"id":2,"label":"lke-node-02"},

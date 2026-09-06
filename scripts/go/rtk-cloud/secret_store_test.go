@@ -409,6 +409,68 @@ func TestSecretStoreCommandsAndProvisionIntegration(t *testing.T) {
 	}()
 }
 
+func TestConfigureProvisionSecretStoreAddsOnlyNewCatalogCredentials(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	for _, entry := range rtkSecretCatalog() {
+		if entry.ID == "fleet-read-token" {
+			continue
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("fixture-"+entry.ID+"\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := store.read("inventory.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory secretInventory
+	if err := json.Unmarshal([]byte(raw), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	entries := inventory.Entries[:0]
+	for _, entry := range inventory.Entries {
+		if entry.ID != "fleet-read-token" {
+			entries = append(entries, entry)
+		}
+	}
+	inventory.Entries = entries
+	payload, err := json.MarshalIndent(inventory, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = append(payload, '\n')
+	if err := store.write("inventory.json", payload, true); err != nil {
+		t.Fatal(err)
+	}
+
+	configured, restore, err := configureProvisionSecretStore("staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restore()
+	if value, err := configured.readRuntime("fleet-read-token"); err != nil || value == "" {
+		t.Fatalf("new catalog credential value=%q err=%v", value, err)
+	}
+	if value, err := configured.readRuntime("postgres"); err != nil || value != "fixture-postgres" {
+		t.Fatalf("existing credential was changed: value=%q err=%v", value, err)
+	}
+}
+
+func TestConfigureProvisionSecretStoreDoesNotRepairDeletedRecordedCredential(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	for _, entry := range rtkSecretCatalog() {
+		if entry.ID == "fleet-read-token" {
+			continue
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("fixture\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := configureProvisionSecretStore("staging"); err == nil || !strings.Contains(err.Error(), "fleet-read-token") {
+		t.Fatalf("deleted recorded credential should remain a hard failure, got %v", err)
+	}
+}
+
 func TestSecretStoreMigrationHelpers(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "staging")
 	fixtureRoot := t.TempDir()
@@ -583,6 +645,41 @@ func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
 	}
 	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "postgres") {
 		t.Fatalf("K8s mirror mismatch error = %v", err)
+	}
+}
+
+func TestSecretsEnsureAddsMissingCredentialsWithoutRotation(t *testing.T) {
+	configRoot := filepath.Join(t.TempDir(), "rtk_cloud")
+	workspace := t.TempDir()
+	store, err := newSecretStore(configRoot, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets([]string{"init", "--environment", "dev", "--config-root", configRoot, "--workspace", workspace}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("runtime/postgres", []byte("keep-existing\n"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSecrets([]string{"ensure", "--environment", "dev", "--config-root", configRoot, "--workspace", workspace}); err == nil {
+		t.Fatal("ensure accepted a missing stack confirmation")
+	}
+	if err := runSecrets([]string{"ensure", "--environment", "dev", "--config-root", configRoot, "--workspace", workspace, "--confirm", "video-cloud-dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.readRuntime("postgres"); err != nil || got != "keep-existing" {
+		t.Fatalf("existing credential changed: got=%q err=%v", got, err)
+	}
+	for _, id := range []string{"fleet-read-token", "job-authorization-token"} {
+		if value, err := store.readRuntime(id); err != nil || value == "" {
+			t.Fatalf("missing ensured credential %s: err=%v", id, err)
+		}
+	}
+	if err := runSecrets([]string{"ensure", "--environment", "dev", "--config-root", configRoot, "--workspace", workspace, "--confirm", "video-cloud-dev"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.readRuntime("postgres"); err != nil || got != "keep-existing" {
+		t.Fatalf("idempotent ensure rotated credential: got=%q err=%v", got, err)
 	}
 }
 

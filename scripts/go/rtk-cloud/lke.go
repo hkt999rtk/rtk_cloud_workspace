@@ -1365,9 +1365,11 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminBillingNetworkPolicyManifest(env))
+	// Fleet overview and attention are first-class Cloud Admin features, so the
+	// BFF always needs the internal Video Cloud API even when Test Lab is off.
+	manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080))
 	if lkeTestLabEnabled(env) {
 		manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "mqtt", 8085))
-		manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080))
 	}
 	manifests = append(manifests, lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
@@ -2084,6 +2086,37 @@ spec:
 `, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"), lkeNamespaceName(env, "account-manager"))
 }
 
+func lkeAllowFleetValkeyClientsNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-fleet-valkey-clients
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: fleet-valkey
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-valkey
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: fleet-valkey-exporter
+      ports:
+        - protocol: TCP
+          port: 6379
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
 func lkeAllowPrometheusScrapeNetworkPolicyManifest(env map[string]string) string {
 	type scrapePolicy struct {
 		namespace string
@@ -2091,7 +2124,7 @@ func lkeAllowPrometheusScrapeNetworkPolicyManifest(env map[string]string) string
 		ports     []int
 	}
 	policies := []scrapePolicy{
-		{namespace: lkeNamespaceName(env, "platform"), apps: []string{"redis-exporter"}, ports: []int{9121}},
+		{namespace: lkeNamespaceName(env, "platform"), apps: []string{"redis-exporter", "fleet-valkey-exporter"}, ports: []int{9121}},
 		{namespace: lkeNamespaceName(env, "account-manager"), apps: []string{"account-manager"}, ports: []int{8080}},
 		{namespace: lkeNamespaceName(env, "admin"), apps: []string{"cloud-admin"}, ports: []int{8080}},
 		{namespace: lkeNamespaceName(env, "frontend"), apps: []string{"frontend"}, ports: []int{8080}},
@@ -2763,6 +2796,7 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		for _, manifest := range []string{
 			lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env),
 			lkeAllowCloudAdminBillingNetworkPolicyManifest(env),
+			lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080),
 		} {
 			if err := kubectlApply(manifest); err != nil {
 				return err
@@ -2776,6 +2810,14 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			}
 		}
 		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		if err := lkeApplyFleetAnalyticsRuntime(env); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -2871,6 +2913,12 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		return err
 	}
 	if err := lkeApplyRedisRuntime(env); err != nil {
+		return err
+	}
+	// Fleet overview is available independently of Test Lab and public DNS.
+	// Apply this internal grant during every full deploy so upgrades of existing
+	// default-deny clusters do not require a separate DNS provisioning pass.
+	if err := kubectlApply(lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080)); err != nil {
 		return err
 	}
 	if lkeAccountManagerHandoffWorkerEnabled(env) {
@@ -3065,7 +3113,32 @@ func lkeApplyRedisRuntime(env map[string]string) error {
 	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 		return err
 	}
-	return runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis-exporter", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_ROLLOUT_TIMEOUT"), "5m"))
+	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/redis-exporter", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
+	return lkeApplyFleetAnalyticsRuntime(env)
+}
+
+// lkeApplyFleetAnalyticsRuntime is deliberately separate from the shared
+// signaling/shadow Redis path. Targeted Video Cloud rollouts call it too, so a
+// service deploy cannot silently omit the durable fleet store it depends on.
+func lkeApplyFleetAnalyticsRuntime(env map[string]string) error {
+	for _, manifest := range []string{
+		lkeFleetValkeyStatefulSetManifest(env),
+		lkeFleetValkeyServiceManifest(env),
+		lkeFleetValkeyExporterDeploymentManifest(env),
+		lkeFleetValkeyExporterServiceManifest(env),
+		lkeAllowFleetValkeyClientsNetworkPolicyManifest(env),
+		lkeAllowPrometheusScrapeNetworkPolicyManifest(env),
+	} {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "statefulset/fleet-valkey", "--timeout", firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "platform"), "rollout", "status", "deployment/fleet-valkey-exporter", "--timeout", firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
@@ -3618,8 +3691,7 @@ spec:
         rtk.realtek.com/provider: lke
         rtk.realtek.com/stack: %s
     spec:
-%s
-      containers:
+%s      containers:
         - name: postgres
           image: %s
           args:
@@ -3730,6 +3802,177 @@ func lkeRedisExporterImage() string {
 
 func lkeRedisServiceHost(env map[string]string) string {
 	return "redis." + lkeNamespaceName(env, "platform") + ".svc.cluster.local"
+}
+
+func lkeFleetValkeyServiceHost(env map[string]string) string {
+	return "fleet-valkey." + lkeNamespaceName(env, "platform") + ".svc.cluster.local"
+}
+
+func lkeFleetPlacementManifest(env map[string]string, prefix string) string {
+	labelKey := firstNonEmpty(env["NODE_CLASS_LABEL_KEY"], "rtk.io/node-class")
+	class := firstNonEmpty(env[prefix+"_NODE_CLASS"], env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
+	manifest := fmt.Sprintf("      nodeSelector:\n        %s: %q\n", labelKey, class)
+	if class != "database" {
+		return manifest
+	}
+	return manifest + fmt.Sprintf(`      tolerations:
+        - key: %q
+          operator: "Equal"
+          value: %q
+          effect: "NoSchedule"
+`, labelKey, class)
+}
+
+func lkeFleetValkeyStatefulSetManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: fleet-valkey
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: fleet-valkey
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  serviceName: fleet-valkey
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-valkey
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-valkey
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+%s      terminationGracePeriodSeconds: 30
+      containers:
+        - name: valkey
+          image: %s
+          imagePullPolicy: IfNotPresent
+          args:
+            - --appendonly
+            - "yes"
+            - --appendfsync
+            - everysec
+            - --maxmemory
+            - %q
+            - --maxmemory-policy
+            - noeviction
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["valkey-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: %q
+              memory: %q
+            limits:
+              memory: %q
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: %q
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeFleetPlacementManifest(env, "FLEET_VALKEY"), lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_MAXMEMORY"), env["LKE_FLEET_VALKEY_MAXMEMORY"], "1536mb"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_CPU"), env["LKE_FLEET_VALKEY_REQUEST_CPU"], "250m"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_MEMORY"), env["LKE_FLEET_VALKEY_REQUEST_MEMORY"], "1Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_LIMIT_MEMORY"), env["LKE_FLEET_VALKEY_LIMIT_MEMORY"], "2Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_STORAGE"), env["LKE_FLEET_VALKEY_STORAGE"], "20Gi"))
+}
+
+func lkeFleetValkeyServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-valkey
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: fleet-valkey
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: fleet-valkey
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
+}
+
+func lkeFleetValkeyExporterDeploymentManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fleet-valkey-exporter
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: fleet-valkey-exporter
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fleet-valkey-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fleet-valkey-exporter
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/provider: lke
+        rtk.realtek.com/stack: %s
+    spec:
+%s
+      containers:
+        - name: exporter
+          image: %s
+          ports:
+            - name: metrics
+              containerPort: 9121
+          env:
+            - name: REDIS_ADDR
+              value: %q
+          resources:
+            requests:
+              cpu: %q
+              memory: %q
+            limits: {memory: "256Mi"}
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeFleetPlacementManifest(env, "FLEET_VALKEY_EXPORTER"), lkeRedisExporterImage(), "redis://"+lkeFleetValkeyServiceHost(env)+":6379", firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_EXPORTER_REQUEST_CPU"), env["LKE_FLEET_VALKEY_EXPORTER_REQUEST_CPU"], "50m"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_EXPORTER_REQUEST_MEMORY"), env["LKE_FLEET_VALKEY_EXPORTER_REQUEST_MEMORY"], "64Mi"))
+}
+
+func lkeFleetValkeyExporterServiceManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Service
+metadata:
+  name: fleet-valkey-exporter
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: fleet-valkey-exporter
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  selector:
+    app.kubernetes.io/name: fleet-valkey-exporter
+  ports:
+    - name: metrics
+      port: 9121
+      targetPort: 9121
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"])
 }
 
 func lkeRedisDeploymentManifest(env map[string]string) string {
@@ -5169,6 +5412,7 @@ stringData:
   POSTGRES_PASSWORD: %q
   VIDEO_CLOUD_AUTH_SECRET: %q
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
+  VIDEO_CLOUD_FLEET_READ_TOKEN: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
   VIDEO_CLOUD_TURN_SHARED_SECRET: %q
@@ -5178,7 +5422,7 @@ stringData:
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
   clip-private-key.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("fleet-read-token"), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
 }
 
 func lkeClipPrivateKeyPEM() string {
@@ -7646,7 +7890,8 @@ metadata:
 type: Opaque
 stringData:
   BILLING_SERVICE_TOKEN: %q
-`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken())
+  VIDEO_CLOUD_FLEET_READ_TOKEN: %q
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), lkeRuntimeSecretValue("fleet-read-token"))
 }
 
 func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
@@ -8489,6 +8734,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
                 secretKeyRef:
                   name: video-cloud-runtime
                   key: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
+            - name: VIDEO_CLOUD_FLEET_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_FLEET_READ_TOKEN
             - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL
               value: %q
             - name: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN
@@ -8616,6 +8866,16 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: "video_cloud:webrtc"
             - name: VIDEO_CLOUD_WEBRTC_SIGNALING_STORE_TTL_GRACE
               value: %q
+            - name: VIDEO_CLOUD_FLEET_METRICS_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_FLEET_REDIS_ADDR
+              value: "fleet-valkey.%s.svc.cluster.local:6379"
+            - name: VIDEO_CLOUD_FLEET_REDIS_PREFIX
+              value: "video_cloud:fleet"
+            - name: VIDEO_CLOUD_FLEET_PRESENCE_RETENTION
+              value: "192h"
+            - name: VIDEO_CLOUD_FLEET_HEALTH_STALE_AFTER
+              value: "15m"
 `,
 			lkeVideoCloudAppVersion(env, workload.Image),
 			lkeVideoCloudAPIBaseURL(env),
@@ -8654,6 +8914,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 			lkeNamespaceName(env, "video-cloud"),
 			lkeNamespaceName(env, "platform"),
 			webrtcSignalingStoreTTLGrace,
+			lkeNamespaceName(env, "platform"),
 		)
 		extraEnv += lkeBlobEnvironmentManifest(env, "video-cloud-runtime")
 		volumeMounts = `          volumeMounts:
@@ -8677,6 +8938,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "cloud-admin" {
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
+            - name: VIDEO_CLOUD_BASE_URL
+              value: %q
             - name: SDK_PORTAL_BASE_URL
               value: %q
             - name: CLOUD_ADMIN_ENV
@@ -8691,7 +8954,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeAccountManagerInternalURL(env), lkeSDKPortalBaseURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+`, lkeAccountManagerInternalURL(env), "http://video-cloud-api."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeSDKPortalBaseURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
@@ -8721,9 +8984,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
               value: %q
             - name: CLOUD_ADMIN_TEST_LAB_MQTT_BACKEND
               value: %q
-            - name: VIDEO_CLOUD_BASE_URL
-              value: %q
-`, "wss://"+workload.Host+"/api/developer/test-lab/mqtt", "http://mqtt."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:8083", "http://video-cloud-api."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80")
+`, "wss://"+workload.Host+"/api/developer/test-lab/mqtt", "http://mqtt."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:8083")
 			if env["CLOUD_STACK_NAME"] == "video-cloud-dev" {
 				extraEnv = strings.Replace(extraEnv, "name: CLOUD_ADMIN_ENV\n              value: \"staging\"", "name: CLOUD_ADMIN_ENV\n              value: \"dev\"", 1)
 			}
@@ -9397,8 +9658,11 @@ func ensureLKEGeneralNodePool(env map[string]string, token, clusterID string, po
 	}
 	desiredType := firstNonEmpty(env["LKE_GENERAL_NODE_TYPE"], env["LKE_NODE_TYPE"], "g6-standard-2")
 	var pool *lkeNodePool
+	// Prefer an existing pool that already matches the desired type. Selecting
+	// the first general pool can repeatedly create replacements when an older
+	// differently sized pool is still draining or intentionally retained.
 	for i := range pools {
-		if pools[i].Labels["rtk.io/node-class"] == "general" {
+		if pools[i].Labels["rtk.io/node-class"] == "general" && pools[i].Type == desiredType {
 			pool = &pools[i]
 			break
 		}

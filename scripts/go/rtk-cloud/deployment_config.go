@@ -1152,7 +1152,7 @@ func deploymentLegacyLKEValues(v map[string]string, environment string) map[stri
 		"LKE_EDGE_HAPROXY_COUNT":                 v["EDGE_REPLICAS"], "LKE_EDGE_HAPROXY_MAXCONN": v["EDGE_MAX_CONNECTIONS"],
 		"LKE_COTURN_VM_COUNT": v["TURN_REPLICAS"], "LKE_COTURN_MIN_PORT": v["TURN_MIN_PORT"], "LKE_COTURN_MAX_PORT": v["TURN_MAX_PORT"],
 	}
-	for _, prefix := range []string{"INGRESS", "REDIS", "REDIS_EXPORTER"} {
+	for _, prefix := range []string{"INGRESS", "REDIS", "REDIS_EXPORTER", "FLEET_VALKEY", "FLEET_VALKEY_EXPORTER"} {
 		out["LKE_"+prefix+"_REQUEST_CPU"] = v[prefix+"_REQUEST_CPU"]
 		out["LKE_"+prefix+"_REQUEST_MEMORY"] = v[prefix+"_REQUEST_MEMORY"]
 	}

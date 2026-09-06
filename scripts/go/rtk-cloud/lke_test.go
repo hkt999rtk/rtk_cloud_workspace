@@ -503,6 +503,31 @@ func TestEnsureLKENodePoolResizesExistingPoolToDesiredCount(t *testing.T) {
 	}
 }
 
+func TestEnsureLKEGeneralNodePoolReusesMatchingType(t *testing.T) {
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools/202": `{"id":202,"type":"g6-standard-8","count":2}`,
+	})
+	env := map[string]string{
+		"LKE_GENERAL_NODE_COUNT": "2",
+		"LKE_GENERAL_NODE_TYPE":  "g6-standard-8",
+	}
+	pools := []lkeNodePool{
+		{ID: 101, Type: "g6-standard-4", Count: 2, Labels: map[string]string{"rtk.io/node-class": "general"}},
+		{ID: 202, Type: "g6-standard-8", Count: 1, Labels: map[string]string{"rtk.io/node-class": "general"}},
+	}
+
+	if err := ensureLKEGeneralNodePool(env, "test-token", "12345", pools); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, curlLog)
+	if !strings.Contains(log, "PUT /lke/clusters/12345/pools/202") {
+		t.Fatalf("matching general pool was not reused:\n%s", log)
+	}
+	if strings.Contains(log, "POST /lke/clusters/12345/pools") {
+		t.Fatalf("matching general pool must not create a replacement:\n%s", log)
+	}
+}
+
 func TestPruneLKEUnusedNodePoolsDeletesOnlyEmptyDisabledClasses(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	writeTestFile(t, filepath.Join(envRoot, "adapters", "lke", "state.env"), "LKE_CLUSTER_ID=12345\n")
@@ -1214,6 +1239,10 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"containerPort: 9121",
 		"kind: Service\nmetadata:\n  name: redis-exporter",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-redis-clients",
+		"kind: StatefulSet\nmetadata:\n  name: fleet-valkey",
+		"--appendonly",
+		"--maxmemory-policy",
+		"kind: NetworkPolicy\nmetadata:\n  name: allow-fleet-valkey-clients",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-prometheus-scrape",
 		"kind: Secret\nmetadata:\n  name: openbao-tls",
 		"namespace: video-cloud-staging-secrets",
@@ -1366,6 +1395,8 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	for _, want := range []string{
 		"ARGS -n video-cloud-staging-platform rollout status deployment/redis",
 		"ARGS -n video-cloud-staging-platform rollout status deployment/redis-exporter",
+		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
+		"ARGS -n video-cloud-staging-platform rollout status deployment/fleet-valkey-exporter",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("expected rollout check %q in kubectl calls, got:\n%s", want, log)
@@ -1375,6 +1406,47 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 	certIssuerIndex := strings.Index(log, "name: certissuer-runtime")
 	if openBaoIndex < 0 || certIssuerIndex < 0 || openBaoIndex > certIssuerIndex {
 		t.Fatalf("expected OpenBao resources before certissuer runtime secret, got:\n%s", log)
+	}
+}
+
+func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = true
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-fleet-test-seed")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	opts := provisionOptions{workloads: []string{"video-cloud", "cloud-admin"}}
+
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, opts); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"name: fleet-valkey",
+		"name: fleet-valkey-exporter",
+		"name: allow-fleet-valkey-clients",
+		"name: allow-cloud-admin-video-cloud-api",
+		"name: video-cloud-runtime",
+		"VIDEO_CLOUD_FLEET_READ_TOKEN:",
+		"name: cloud-admin-billing-client",
+		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("targeted fleet dependency apply missing %q:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "name: openbao") || strings.Contains(log, "name: postgresql\n") {
+		t.Fatalf("targeted fleet dependency apply touched unrelated stateful services:\n%s", log)
 	}
 }
 
@@ -2104,6 +2176,7 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	manifest := lkeDeploymentManifest(env, admin, nil)
 	for _, want := range []string{
 		"name: CLOUD_ADMIN_ENV\n              value: \"staging\"",
+		"name: VIDEO_CLOUD_BASE_URL\n              value: \"http://video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local:80\"",
 		"name: SDK_PORTAL_BASE_URL\n              value: \"https://frontend.video-cloud-staging.realtekconnect.com\"",
 		"name: DEVELOPER_PKI_TEST_TOOLS_ENABLED\n              value: \"true\"",
 		"name: FACTORY_ENROLL_BASE_URL\n              value: \"http://factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"",
@@ -2180,6 +2253,51 @@ func TestLKERedisAndExporterManifestsUsePrivatePlatformServices(t *testing.T) {
 	} {
 		if !strings.Contains(exporterService, want) {
 			t.Fatalf("expected %q in Redis exporter service manifest, got:\n%s", want, exporterService)
+		}
+	}
+}
+
+func TestLKEFleetValkeyUsesDurableNoEvictionStorage(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":        "video-cloud-staging",
+		"FLEET_VALKEY_NODE_CLASS": "database",
+	}
+	statefulSet := lkeFleetValkeyStatefulSetManifest(env)
+	for _, want := range []string{
+		"kind: StatefulSet\nmetadata:\n  name: fleet-valkey",
+		"namespace: video-cloud-staging-platform",
+		"--appendonly",
+		"--appendfsync",
+		"everysec",
+		"--maxmemory-policy",
+		"noeviction",
+		"volumeClaimTemplates:",
+		"storage: \"20Gi\"",
+		`rtk.io/node-class: "database"`,
+		`value: "database"`,
+		`effect: "NoSchedule"`,
+	} {
+		if !strings.Contains(statefulSet, want) {
+			t.Fatalf("expected %q in fleet Valkey StatefulSet:\n%s", want, statefulSet)
+		}
+	}
+	service := lkeFleetValkeyServiceManifest(env)
+	if !strings.Contains(service, "name: fleet-valkey") || !strings.Contains(service, "port: 6379") {
+		t.Fatalf("fleet Valkey service is incomplete:\n%s", service)
+	}
+	policy := lkeAllowFleetValkeyClientsNetworkPolicyManifest(env)
+	if !strings.Contains(policy, "video-cloud-staging-video-cloud") || !strings.Contains(policy, "- podSelector:\n            matchLabels:\n              app.kubernetes.io/name: fleet-valkey-exporter") || strings.Contains(policy, "video-cloud-staging-account-manager") {
+		t.Fatalf("fleet Valkey policy must allow only Video Cloud clients:\n%s", policy)
+	}
+	exporter := lkeFleetValkeyExporterDeploymentManifest(map[string]string{
+		"CLOUD_STACK_NAME":                         "video-cloud-staging",
+		"FLEET_VALKEY_EXPORTER_NODE_CLASS":         "observability",
+		"LKE_FLEET_VALKEY_EXPORTER_REQUEST_CPU":    "75m",
+		"LKE_FLEET_VALKEY_EXPORTER_REQUEST_MEMORY": "96Mi",
+	})
+	for _, want := range []string{"name: fleet-valkey-exporter", "cpu: \"75m\"", "memory: \"96Mi\"", `rtk.io/node-class: "observability"`} {
+		if !strings.Contains(exporter, want) {
+			t.Fatalf("fleet Valkey exporter manifest missing %q:\n%s", want, exporter)
 		}
 	}
 }
@@ -4048,6 +4166,8 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 		"targets: [\"factoryenroll.video-cloud-staging-video-cloud.svc.cluster.local:80\"]",
 		"job_name: redis-exporter",
 		"targets: [\"redis-exporter.video-cloud-staging-platform.svc.cluster.local:9121\"]",
+		"job_name: fleet-valkey-exporter",
+		"targets: [\"fleet-valkey-exporter.video-cloud-staging-platform.svc.cluster.local:9121\"]",
 		"job_name: video-cloud-prometheus",
 		"targets: [\"video-cloud-prometheus.video-cloud-staging-observability.svc.cluster.local:9090\"]",
 		"job_name: video-cloud-grafana",
@@ -4062,10 +4182,10 @@ func TestLKEPrometheusConfigIsGeneratedFromMetricsRegistry(t *testing.T) {
 	if got, want := strings.Count(manifest, "metrics_path: /metrics/prometheus"), 10; got != want {
 		t.Fatalf("metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
-	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 12; got != want {
+	if got, want := strings.Count(manifest, "metrics_path: /metrics"), 13; got != want {
 		t.Fatalf("all metrics_path count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
-	if got, want := strings.Count(manifest, "metrics_path:"), 13; got != want {
+	if got, want := strings.Count(manifest, "metrics_path:"), 14; got != want {
 		t.Fatalf("metrics target count = %d, want %d in manifest:\n%s", got, want, manifest)
 	}
 }

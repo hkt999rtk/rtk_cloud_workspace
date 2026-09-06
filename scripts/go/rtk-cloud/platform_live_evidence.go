@@ -24,6 +24,7 @@ var requiredPrometheusJobs = []string{
 	"account-manager",
 	"cloud-admin",
 	"frontend",
+	"fleet-valkey-exporter",
 	"redis-exporter",
 	"video-cloud-api",
 	"video-cloud-clip-verifier",

@@ -114,6 +114,23 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 	}
 }
 
+func TestTargetedDeployDoesNotReconcileNodePools(t *testing.T) {
+	steps := kubernetesProvisionSteps(lkeCloudProvider{})
+	ctx := provisionContext{Opts: provisionOptions{
+		mode:      provisionMode{deploy: true},
+		workloads: []string{"video-cloud", "cloud-admin"},
+	}}
+	for _, step := range steps {
+		if step.Name == "ensure-lke-node-pool" {
+			if step.Enabled == nil || step.Enabled(ctx) {
+				t.Fatal("targeted deploy must not create or resize shared node pools")
+			}
+			return
+		}
+	}
+	t.Fatal("ensure-lke-node-pool step not found")
+}
+
 func TestLKEImagePullSecretApplyDoesNotLogRawToken(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)

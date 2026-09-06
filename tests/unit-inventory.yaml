@@ -1203,6 +1203,20 @@ cases:
       title: SDK catalog appends the complete bundle and builds same-Portal docs links
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/sdk-page.test.mjs#Docs%20and%20My%20Clouds%20share%20navigation%20without%20widening%20sensitive%20routes
+      module: cloud-admin-web
+      language: javascript
+      source: src/sdk-page.test.mjs
+      title: Docs and My Clouds share navigation without widening sensitive routes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/sdk-page.test.mjs#SDK%20bridge%20stays%20within%20normal%20same-origin%20console%20routes
+      module: cloud-admin-web
+      language: javascript
+      source: src/sdk-page.test.mjs
+      title: SDK bridge stays within normal same-origin console routes
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/source-state.test.mjs#sourceAvailable%20only%20treats%20available%20source%20status%20as%20available
       module: cloud-admin-web
       language: javascript

@@ -16,7 +16,9 @@
   "max_archive_bytes": 1073741824,
   "workloads": [
     {"namespace": "video-cloud-staging-platform", "kind": "deployment", "name": "replace-with-api-workload", "role": "application"},
+    {"namespace": "video-cloud-staging-platform", "kind": "deployment", "name": "fleet-valkey-exporter", "role": "application"},
     {"namespace": "video-cloud-staging-platform", "kind": "statefulset", "name": "postgresql", "role": "data"},
+    {"namespace": "video-cloud-staging-platform", "kind": "statefulset", "name": "fleet-valkey", "role": "offline"},
     {"namespace": "video-cloud-staging-platform", "kind": "statefulset", "name": "openbao", "role": "offline"}
   ],
   "components": [
@@ -27,7 +29,9 @@
     {"id": "openbao", "kind": "volume", "namespace": "video-cloud-staging-platform", "pvc": "replace-with-openbao-pvc", "purpose": "openbao-file", "image": "REPLACE_WITH_HELPER_IMAGE@sha256:REPLACE_WITH_REVIEWED_DIGEST"},
     {"id": "runtime-secrets", "kind": "secretstore", "paths": ["runtime", "pki", "openbao/tls.crt", "openbao/tls.key", "openbao/tls-ca.crt"]}
   ],
-  "excluded_pvcs": [],
+  "excluded_pvcs": [
+    {"namespace": "video-cloud-staging-platform", "name": "data-fleet-valkey-0", "reason": "Derived rolling fleet presence, health and session windows expire and are rebuilt from authoritative services and new observations; they are not a system of record."}
+  ],
   "preflight_checks": [{"id": "identity-fence-storage-escrow", "argv": ["/operator/recovery/staging-preflight"]}],
   "startup_checks": [{"id": "fence-before-private-startup", "argv": ["/operator/recovery/staging-startup"]}],
   "quiescence_checks": [{"id": "all-writers-drained", "argv": ["/operator/recovery/staging-quiescence"]}],
