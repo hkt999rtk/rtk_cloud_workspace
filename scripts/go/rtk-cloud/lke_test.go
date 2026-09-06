@@ -1457,11 +1457,15 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 	logPath := fakeKubectl(t)
 	oldCanonical := activeCanonicalSecretStore
 	oldCache := lkeRuntimeSecretCache
+	oldStateDir := lkeRuntimeSecretStateDir
 	activeCanonicalSecretStore = true
 	lkeRuntimeSecretCache = map[string]string{}
+	lkeRuntimeSecretStateDir = t.TempDir()
+	writeTestFile(t, filepath.Join(lkeRuntimeSecretStateDir, lkeSecretFileName("fleet-read-token")), "targeted-fleet-read-token")
 	t.Cleanup(func() {
 		activeCanonicalSecretStore = oldCanonical
 		lkeRuntimeSecretCache = oldCache
+		lkeRuntimeSecretStateDir = oldStateDir
 	})
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-fleet-test-seed")
 	env := map[string]string{
@@ -1489,6 +1493,12 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 		"name: cloud-admin-billing-client",
 		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
 		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-prometheus",
+		"patch secret video-cloud-runtime --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
+		"patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
+		"patch deployment video-cloud-api --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
+		"patch deployment cloud-admin --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
+		"rollout status deployment/video-cloud-api --ignore-not-found=true",
+		"rollout status deployment/cloud-admin --ignore-not-found=true",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted fleet dependency apply missing %q:\n%s", want, log)

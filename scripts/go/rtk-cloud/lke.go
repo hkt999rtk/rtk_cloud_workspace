@@ -2824,6 +2824,55 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
+		return lkeSyncFleetReadTokenConsumers(env)
+	}
+	return nil
+}
+
+func lkeSyncFleetReadTokenConsumers(env map[string]string) error {
+	token := lkeRuntimeSecretValue("fleet-read-token")
+	if token == "" {
+		return errors.New("fleet-read-token is required to synchronize Fleet API consumers")
+	}
+	secretPatch, err := json.Marshal(map[string]any{
+		"stringData": map[string]string{"VIDEO_CLOUD_FLEET_READ_TOKEN": token},
+	})
+	if err != nil {
+		return err
+	}
+	checksum := lkeFleetReadTokenChecksum()
+	deploymentPatch, err := json.Marshal(map[string]any{
+		"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]string{
+			"rtk.realtek.com/fleet-read-token-checksum": checksum,
+		}}}},
+	})
+	if err != nil {
+		return err
+	}
+	targets := []struct {
+		namespace  string
+		secret     string
+		deployment string
+	}{
+		{lkeNamespaceName(env, "video-cloud"), "video-cloud-runtime", "video-cloud-api"},
+		{lkeNamespaceName(env, "admin"), "cloud-admin-billing-client", "cloud-admin"},
+	}
+	for _, target := range targets {
+		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(secretPatch), "-n", target.namespace, "patch", "secret", target.secret, "--type=merge", "--patch-file=/dev/stdin", "--ignore-not-found=true"); patchErr != nil {
+			return fmt.Errorf("synchronize Fleet token secret %s/%s: %w: %s", target.namespace, target.secret, patchErr, strings.TrimSpace(string(out)))
+		}
+	}
+	for _, target := range targets {
+		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(deploymentPatch), "-n", target.namespace, "patch", "deployment", target.deployment, "--type=merge", "--patch-file=/dev/stdin", "--ignore-not-found=true"); patchErr != nil {
+			return fmt.Errorf("roll Fleet token consumer %s/%s: %w: %s", target.namespace, target.deployment, patchErr, strings.TrimSpace(string(out)))
+		}
+	}
+	for _, target := range targets {
+		if err := runKubectl("-n", target.namespace, "rollout", "status", "deployment/"+target.deployment, "--ignore-not-found=true", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -8715,7 +8764,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "video-cloud" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeVideoCloudRuntimeChecksum(env))
+        rtk.realtek.com/fleet-read-token-checksum: %q
+`, lkeVideoCloudRuntimeChecksum(env), lkeFleetReadTokenChecksum())
 		mqttHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_HANDLER_CONCURRENCY"], "64")
 		mqttShadowHandlerConcurrency := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_HANDLER_CONCURRENCY"], "64")
 		mqttShadowQueueSize := firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"), env["LKE_VIDEO_CLOUD_MQTT_SHADOW_QUEUE_SIZE"], "8192")
@@ -8978,7 +9028,8 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	if workload.Key == "cloud-admin" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeCloudAdminRuntimeChecksum())
+        rtk.realtek.com/fleet-read-token-checksum: %q
+`, lkeCloudAdminRuntimeChecksum(), lkeFleetReadTokenChecksum())
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
             - name: VIDEO_CLOUD_BASE_URL
@@ -9158,6 +9209,10 @@ func lkeCloudAdminRuntimeChecksum() string {
 		lkeBillingServiceToken(),
 		lkeRuntimeSecretValue("fleet-read-token"),
 	)
+}
+
+func lkeFleetReadTokenChecksum() string {
+	return lkeConfigChecksum(lkeRuntimeSecretValue("fleet-read-token"))
 }
 
 func lkeDeploymentImagePullSecretsManifest(env map[string]string) string {
