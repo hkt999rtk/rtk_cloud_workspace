@@ -30,6 +30,56 @@ Useful flags:
 The browser reads a cached snapshot every five seconds. The Go server polls GitHub once per minute by default and updates elapsed counters without querying GitHub every second.
 GitHub polling is demand-driven: the server starts refreshing when a browser reads the snapshot and stops issuing periodic GitHub API requests about 15 seconds after the last dashboard client activity.
 
+## Install and run as a host service (macOS)
+
+The dashboard can be installed as a host service using a LaunchAgent so it starts automatically on login/reboot.
+
+### Install (manual one-shot)
+
+```sh
+cd /path/to/rtk_cloud_workspace/tools/ci-dashboard
+./deploy/install-macos.sh
+```
+
+This script:
+
+- Builds a local release binary with `GOWORK=off go build`.
+- Installs `rtk-ci-dashboard` to `$HOME/.local/bin/rtk-ci-dashboard` by default.
+- Set `BINARY_DIR` if you want to install the binary elsewhere.
+- Writes `~/Library/LaunchAgents/com.rtk-ci-dashboard.plist` with:
+  - `com.rtk-ci-dashboard` label
+  - `LimitLoadToSessionType: Aqua`（僅使用者登入 GUI session 啟動）
+  - `RunAtLoad: true`（登入後立即載入）
+  - `KeepAlive: true`
+  - default address `127.0.0.1:8787`
+  - the selected workspace path.
+
+Optional environment:
+
+- `WORKSPACE_DIR` to set a different workspace path.
+- `ADDRESS` to change bind address/port (for example `0.0.0.0:8787` for LAN access).
+- `GITHUB_TOKEN` if you do not want `gh auth token` fallback.
+
+### Launch service lifecycle
+
+```sh
+launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.rtk-ci-dashboard.plist  # stop/unload
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.rtk-ci-dashboard.plist  # start/load
+launchctl print "gui/$(id -u)/com.rtk-ci-dashboard"                                     # status
+```
+
+### Uninstall
+
+```sh
+./deploy/install-macos.sh uninstall
+```
+
+This removes only the LaunchAgent plist and stops the service; remove the binary manually when needed:
+
+```sh
+rm -f "$HOME/.local/bin/rtk-ci-dashboard"
+```
+
 ## Authentication and repository scope
 
 Authentication is resolved in this order:
