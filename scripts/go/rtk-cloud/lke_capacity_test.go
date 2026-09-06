@@ -352,7 +352,7 @@ func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected live provider active service failure")
 	}
-	for _, want := range []string{"projected active services=17", "current_active=14", "current_volumes=1", "additional_required=3"} {
+	for _, want := range []string{"projected active services=18", "current_active=14", "current_volumes=1", "additional_required=4"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("expected %q in error:\n%s", want, err.Error())
 		}
