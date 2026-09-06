@@ -104,6 +104,14 @@ func runProvision(args []string) error {
 	if err := validateK8SWorkloadSelection(env.Values, opts); err != nil {
 		return err
 	}
+	if opts.mode.deploy {
+		if err := validateConsoleRuntimeConfig(envRoot, env.Values, opts); err != nil {
+			return err
+		}
+		if err := validateLKEConsoleDeployInputs(env.Values, opts, lkeRuntimeSecretValue); err != nil {
+			return err
+		}
+	}
 	provider, err := newCloudProvider(env.Values["CLOUD_PROVIDER"])
 	if err != nil {
 		return err

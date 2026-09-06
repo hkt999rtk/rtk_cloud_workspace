@@ -146,6 +146,6 @@ if [[ -f "$skill" ]]; then
 		exit 1
 	fi
 	grep -F 'K8s-only' "$skill" >/dev/null
-	grep -F 'scripts/run-staging-e2e.sh --confirm video-cloud-staging' "$skill" >/dev/null
+	grep -F 'scripts/run-staging-acceptance.sh --confirm video-cloud-staging' "$skill" >/dev/null
 	grep -F 'submodule VM toolkits are retired' "$skill" >/dev/null
 fi

@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-08-11
+Last reviewed: 2026-09-07
 
 Audience: internal deployment operators and new maintainers
 
@@ -19,6 +19,8 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | --- | --- | --- |
 | Check tracked configuration | `deployment preflight --operation plan` | No |
 | Create a new environment | `deployment plan` -> `deployment provision` | Provision does |
+| Upgrade persistent staging | Reviewed plan and CI image provenance -> `deployment upgrade` (or a scoped existing-workload rollout) | Updates selected resources; never implies reset |
+| Check Console release features | `deployment console-check --environment NAME --cloud-id UUID --product-id UUID` | Creates private login sessions; otherwise GET/HEAD only |
 | Take over an existing environment | Transfer matching non-secret controller state and SecretStore -> `deployment preflight --operation acceptance` | Preflight does not |
 | Restore core data after deployment | [Matched backup/restore procedure](backup-restore.md) under a maintenance/write fence | Explicit restore replaces selected datasets after a safety backup |
 | Accept an existing environment | `deployment acceptance` | Creates or updates test data; does not rebuild the deployment |
@@ -89,7 +91,7 @@ issues, chat messages, or test reports.
 
 | Location | Content | May be committed? |
 | --- | --- | --- |
-| `cloud_env/<env>/environment.env` | Stack, DNS root, logical location | Yes |
+| `cloud_env/<env>/environment.env` | Stack, DNS root, logical location, public OAuth settings and explicit Test Lab intent | Yes; never client secrets |
 | `cloud_env/<env>/deployment.env` | Architecture, deployment adapter, DNS adapter | Yes |
 | `cloud_env/<env>/overrides/*.env` | Reviewed environment differences | Yes |
 | `cloud_env/<env>/runtime/` | Kubeconfig, provider state, OpenBao, service secrets, test identities, artifacts | No |
@@ -164,6 +166,123 @@ exist. If a same-name cluster exists, stop and use the takeover path instead.
 
 See [`staging-from-scratch.md`](staging-from-scratch.md) for the complete staging
 + billing + 1K MQTT/Device Shadow sequence.
+
+## Upgrade Persistent Staging: Release Gates
+
+An image rollout, a feature rollout and end-to-end data qualification are three
+different results. Do not report a complete staging release from ready Pods,
+`/health`, a login redirect, or an empty Cloud alone.
+
+1. **Revision and rollback gate.** Record workspace and recursive service SHAs,
+   old/new immutable image references and registry digests, the successful CI
+   publication for each selected revision, migration version and rollback image.
+   Include workers, ingesters and migration Jobs, not only public API Deployments.
+   Main-push publication is supported by the current service workflows; tagging
+   every repository is not a prerequisite. Verify each workflow's actual trigger;
+   reuse successful publication and do not dispatch unrelated CI. Staging accepts
+   CI-published images only; local images are for dev.
+2. **Desired/runtime gate.** Reconcile tracked `environment.env`, canonical
+   environment-local operator settings, restored runtime and effective workload
+   configuration. Restored `stack.env` is old controller state, not the desired
+   release. Save existing image overrides before `deployment plan` materializes
+   runtime; re-resolve and verify intended images afterward. `provision --deploy`
+   rejects declared Console settings that differ from its effective inputs before
+   provider operations. It does not silently repair or overwrite them. Direct
+   image-only Kubernetes updates do not execute this guard: compare configuration
+   and required revision dependencies explicitly before using that narrower path.
+3. **Configuration and credentials gate.** For selected AM/Admin consumers, the
+   renderer binds the same environment-local `job-authorization-token` to both
+   Secrets, using the actual `-account-manager` and `-admin` namespaces. Its
+   checksum rolls both consumers when changed. For selected AM, enabled Google/
+   GitHub require the matching client ID, client secret, state secret and exact
+   selected Admin HTTPS callback before deployment. Do not fix a configuration
+   failure by disabling login or borrowing another environment's secret. Test Lab
+   is explicitly declared in dev/staging and requires tenant MQTT support; validate
+   AM, Admin, VC, WebSocket endpoint and broker listener together when enabling it.
+4. **In-place rollout gate.** Use `deployment upgrade` for an authorized platform
+   upgrade; use a scoped rollout for a service-only request. Preserve PVCs, issuer
+   state and existing data. Run required additive migrations with the intended CI
+   image and valid runtime configuration before dependent applications; retain
+   failed Job evidence. An image-only update does not run migrations. The current
+   targeted dependency helper does not provide a general AM-only migration gate:
+   explicitly run/verify the migration or use the reviewed full-upgrade path when
+   the selected revision requires one. Do not assume a successful API rollout
+   updated every auxiliary workload. This guardrail change does not rewrite that
+   broader migration/worker orchestration.
+5. **Console gate.** Run the maintained check below and inspect its JSON report.
+   Any `FAIL` or `SKIP` produces a nonzero exit. Use an explicitly selected
+   qualification Cloud owned by the selected environment's bootstrap admin and
+   its Product; the checker creates neither. It reads `runtime/platform-admin`
+   and optional `operator/env/ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL`
+   from that environment's SecretStore, holds cookies in memory, refuses redirects
+   and does not print API bodies or secrets.
+
+   ```sh
+   go run ./scripts/go/rtk-cloud -- deployment console-check \
+     --environment staging --cloud-id <qualification-cloud-uuid> \
+     --product-id <qualification-product-uuid>
+   ```
+
+   The checker verifies configured social providers are visible, private admin
+   and developer login, nonempty SDK releases, a published first-party AmebaPRO2
+   provider snapshot matching the SHA-256 of the current same-origin manifest,
+   Board/video metadata and local model availability, Billing read endpoints and
+   consistent Cloud ownership, and the enabled Test Lab read route. It does not
+   contact arbitrary third-party manifest URLs, refresh providers, start sessions,
+   bind devices or make payments. Billing reads passing do **not** mean nonempty
+   metering or invoice generation passed. Model availability does **not** prove
+   WebGL rendering or YouTube playback; check those in the browser too.
+
+   If the first-party snapshot is stale, review the manifest change and refresh
+   the **existing, exact published first-party provider** through the authorized
+   platform management flow. Record provider ID, old/new SHA and refresh result,
+   then rerun the check. Do not create duplicate providers, rewrite third-party
+   snapshots or treat an image rebuild as a catalog refresh.
+
+6. **Data gate.** Separately qualify app and device mTLS, then MQTT -> persisted
+   logs -> Billing facts with fresh run-scoped data. Use the existing acceptance
+   entry point, which sets both skip-reset and skip-provision internally:
+
+   ```sh
+   scripts/run-staging-acceptance.sh --plan
+   CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE="https://device.video-cloud-staging.realtekconnect.com" \
+     scripts/run-staging-acceptance.sh --confirm video-cloud-staging \
+       --no-resume --device-prefix <unique-prefix>
+   ```
+
+   This step intentionally creates/mutates test data and needs that scope of
+   authorization. Do not reuse devices after lifecycle deactivation/unprovision.
+   A device token 200 does not clear an app token 401. Record each unverified
+   stage, lack of nonempty Billing/invoice fixtures and product-semantic defects
+   as release blockers or explicitly accepted exceptions, not as PASS.
+
+The default `run-staging-e2e.sh --confirm ...` includes reset/provision. It is **not**
+the default persistent-staging update command. Use it only for an explicitly
+authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
+test script grants permission to reset an existing environment.
+
+### 2026-09-07 Findings and Remaining Work
+
+- Staging ran the selected CI-built service revisions; missing tags were not the
+  cause. Published chipset snapshots remained older than the new Admin assets.
+- Google enable/client ID existed in tracked staging configuration; the staging
+  SecretStore also contained a nonempty Google client secret. The effective AM
+  configuration was incomplete. Earlier "create another Google credential"
+  advice was incorrect: reconcile bindings first, validate the existing client
+  and its registered callback, and rotate only if independently required.
+- Secret rendering omitted job authorization, and its catalog used the wrong
+  Admin namespace. Reapplying a generated Secret could remove the manual repair.
+  Renderer, namespace, checksum and repeated-render tests now cover this defect.
+- Test Lab UI availability did not imply its live backend gate was enabled.
+  The explicit environment declaration and Console probe make this visible.
+- Fleet's fabricated firmware/signal values, health inconsistency and Analytics
+  empty-data semantics are product defects, not release packaging defects. Track
+  and fix them in Cloud Admin/contracts tests; rebuilding the same code cannot
+  correct them. This change does not claim to repair these product behaviors.
+- AM-only targeted migration/auxiliary version orchestration, automated browser
+  acceptance, and automatic integration of `console-check` into aggregate E2E
+  remain follow-up work. For now Console checking is a required separate operator
+  gate. The new checker has no automatic refresh or repair mode.
 
 ## Take Over an Existing Environment
 

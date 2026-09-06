@@ -2365,6 +2365,9 @@ func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
 }
 
 func validateLKEDeployInputs(env map[string]string, opts provisionOptions) error {
+	if err := validateLKEConsoleDeployInputs(env, opts, lkeRuntimeSecretValue); err != nil {
+		return err
+	}
 	missingWorkloads := lkeMissingDeployImageWorkloads(env, opts)
 	missing := []string{}
 	for _, workload := range missingWorkloads {
@@ -8075,6 +8078,7 @@ stringData:
   JWT_ACCESS_SECRET: %q
   JWT_REFRESH_SECRET: %q
   ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN: %q
+  ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN: %q
   FACTORY_PRODUCTION_JWT_SECRET: %q
   FACTORY_PRODUCTION_JWT_AUDIENCE: %q
   ACCOUNT_MANAGER_FACTORY_ENROLLMENT_TOKEN: %q
@@ -8128,7 +8132,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"), lkeRuntimeSecretValue("social-oauth-state-secret"), firstNonEmpty(lkeEnvValue(env, "GOOGLE_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GOOGLE_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("google-oauth-client-secret"), firstNonEmpty(lkeEnvValue(env, "GITHUB_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GITHUB_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("github-oauth-client-secret"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeRuntimeSecretValue("job-authorization-token"), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, strconv.FormatBool(strings.EqualFold(accountEnv, "staging")), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"), lkeRuntimeSecretValue("social-oauth-state-secret"), firstNonEmpty(lkeEnvValue(env, "GOOGLE_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GOOGLE_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("google-oauth-client-secret"), firstNonEmpty(lkeEnvValue(env, "GITHUB_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GITHUB_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("github-oauth-client-secret"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -8314,7 +8318,8 @@ type: Opaque
 stringData:
   BILLING_SERVICE_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_TOKEN: %q
-`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), fleetReadToken)
+  ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN: %q
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), fleetReadToken, lkeRuntimeSecretValue("job-authorization-token"))
 }
 
 func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
@@ -9037,6 +9042,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	if workload.Key == "account-manager" {
 		checksumValues := []string{
 			lkeAccountManagerDatabaseURL(env),
+			lkeRuntimeSecretValue("job-authorization-token"),
 			lkeRuntimeSecretValue("jwt-access"),
 			lkeRuntimeSecretValue("jwt-refresh"),
 			lkeInternalAuthToken(),
@@ -9551,6 +9557,7 @@ func lkeCloudAdminRuntimeChecksum() string {
 	return lkeConfigChecksum(
 		lkeBillingServiceToken(),
 		lkeRuntimeSecretValue("fleet-read-token"),
+		lkeRuntimeSecretValue("job-authorization-token"),
 	)
 }
 
