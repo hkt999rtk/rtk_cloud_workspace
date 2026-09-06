@@ -1007,8 +1007,6 @@
 | `SPEC-CA-OPENAPI#actOnScopedBrandCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/{planID}/{action}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `4ede0b15eb57` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsets` | `GET /api/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `c1be29c8622c` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsetsByChipsetId` | `GET /api/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `f67498038c78` |
-| `SPEC-CA-OPENAPI#getCloudFleetAttention` | `GET /api/developer/clouds/{brandCloudID}/fleet/attention` | `` | — | `eec0ae89902a` |
-| `SPEC-CA-OPENAPI#getCloudFleetOverview` | `GET /api/developer/clouds/{brandCloudID}/fleet/overview` | `` | — | `596c2e3ddf60` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleApp` | `POST /api/developer/pki/test-bundles/app` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `2989935bb81d` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleDevice` | `POST /api/developer/pki/test-bundles/device` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `40dc8bb97acc` |
 | `SPEC-CA-OPENAPI#postApiDeveloperProductCollaboratorInvitationsAccept` | `POST /api/developer/product-collaborator-invitations/accept` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-PRODUCT-COLLAB-001` | `78492df24537` |
@@ -1019,11 +1017,9 @@
 | `SPEC-CA-OPENAPI#postApiDevicesByIdDeactivate` | `POST /api/devices/{id}/deactivate` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `d0996152c58a` |
 | `SPEC-CA-OPENAPI#postApiDevicesByIdProvision` | `POST /api/devices/{id}/provision` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `4ba5acea1cf7` |
 | `SPEC-CA-OPENAPI#getApiDevicesByIdTelemetry` | `GET /api/devices/{id}/telemetry` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `41e87b2690f0` |
-| `SPEC-CA-OPENAPI#getApiFleetAttention` | `GET /api/fleet/attention` | `` | — | `7f6c7d291ca1` |
 | `SPEC-CA-OPENAPI#getApiFleetDevices` | `GET /api/fleet/devices` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `8ddefb06dd82` |
 | `SPEC-CA-OPENAPI#getApiFleetFirmwareDistribution` | `GET /api/fleet/firmware-distribution` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `87e57fda7b5c` |
 | `SPEC-CA-OPENAPI#getApiFleetHealthSummary` | `GET /api/fleet/health-summary` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `0486965558f1` |
-| `SPEC-CA-OPENAPI#getApiFleetOverview` | `GET /api/fleet/overview` | `` | — | `d5bed943d47b` |
 | `SPEC-CA-OPENAPI#getApiFleetStreamStats` | `GET /api/fleet/stream-stats` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `8c8ca3a0cfd4` |
 | `SPEC-CA-OPENAPI#getApiFleetSummary` | `GET /api/fleet/summary` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `5c342a270c55` |
 | `SPEC-CA-OPENAPI#getApiGroups` | `GET /api/groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `f4a991e1535f` |
@@ -1662,10 +1658,6 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiFleetAttention` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getApiFleetOverview` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getCloudFleetAttention` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getCloudFleetOverview` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_admin/docs/roles.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/roles.md` | `Capability Projection Contract@L280` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/roles.md` | `Field-Level Visibility Rules@L293` | `false` | normative clause 56db3ec9a934 requires a stable FEAT-*/REQ-* source mapping: Backend handlers and frontend components must enforce these rules consistently. |
