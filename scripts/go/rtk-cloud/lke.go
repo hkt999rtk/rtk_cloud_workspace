@@ -2920,18 +2920,33 @@ func lkeCurrentFleetReadToken(env map[string]string) (string, error) {
 }
 
 func lkeFleetReadTokenRolloutPending(env map[string]string) (bool, error) {
-	annotation, err := kubectlCombinedOutput(
+	status, err := kubectlCombinedOutput(
 		nil,
 		"-n", lkeNamespaceName(env, "video-cloud"),
 		"get", "deployment", "video-cloud-api",
 		"--ignore-not-found=true",
-		"-o", `go-template={{ index .spec.template.metadata.annotations "rtk.realtek.com/fleet-read-token-checksum" }}`,
+		"-o", `go-template={{ index .spec.template.metadata.annotations "rtk.realtek.com/fleet-read-token-checksum" }}|{{ .metadata.generation }}|{{ .status.observedGeneration }}|{{ .spec.replicas }}|{{ .status.updatedReplicas }}|{{ .status.readyReplicas }}|{{ .status.availableReplicas }}`,
 	)
 	if err != nil {
 		return false, fmt.Errorf("read Video Cloud Fleet token rollout checksum: %w", err)
 	}
-	current := strings.TrimSpace(string(annotation))
-	return current != "" && current != lkeFleetReadTokenChecksum(), nil
+	fields := strings.Split(strings.TrimSpace(string(status)), "|")
+	if len(fields) == 0 || strings.TrimSpace(fields[0]) == "" {
+		return false, nil
+	}
+	if strings.TrimSpace(fields[0]) != lkeFleetReadTokenChecksum() || len(fields) != 7 {
+		return true, nil
+	}
+	values := make([]int, 0, 6)
+	for _, field := range fields[1:] {
+		value, err := strconv.Atoi(strings.TrimSpace(field))
+		if err != nil {
+			return true, nil
+		}
+		values = append(values, value)
+	}
+	generation, observedGeneration, desired, updated, ready, available := values[0], values[1], values[2], values[3], values[4], values[5]
+	return observedGeneration < generation || updated < desired || ready < desired || available < desired, nil
 }
 
 func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string, opts provisionOptions) error {

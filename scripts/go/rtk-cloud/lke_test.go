@@ -937,6 +937,11 @@ func TestLKEFleetReadTokenRolloutPendingDetection(t *testing.T) {
 	if err != nil || pending {
 		t.Fatalf("steady pending = %t, error = %v", pending, err)
 	}
+	t.Setenv("FAKE_VIDEO_FLEET_ROLLOUT_STATUS", "2|2|1|0|0|0")
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || !pending {
+		t.Fatalf("incomplete steady rollout pending = %t, error = %v", pending, err)
+	}
 }
 
 func TestLKEFleetReadTokenRotationResumesFinalVideoRollout(t *testing.T) {
@@ -6719,7 +6724,9 @@ if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]];
   exit 0
 fi
 if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* ]]; then
-  printf '%s' "${FAKE_VIDEO_FLEET_CHECKSUM:-}"
+  if [[ -n "${FAKE_VIDEO_FLEET_CHECKSUM:-}" ]]; then
+    printf '%s|%s' "$FAKE_VIDEO_FLEET_CHECKSUM" "${FAKE_VIDEO_FLEET_ROLLOUT_STATUS:-1|1|1|1|1|1}"
+  fi
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
