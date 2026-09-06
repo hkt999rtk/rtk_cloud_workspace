@@ -524,6 +524,38 @@ func TestLKEReducibleMainNodeServicesIgnoresSameTypeGeneralPool(t *testing.T) {
 	}
 }
 
+func TestLKELiveProviderServicesChecksPeakBeforeBrokerShrink(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeLinodeCurl(t, map[string]string{
+		"/volumes?page_size=500":       `{"data":[],"results":0}`,
+		"/nodebalancers?page_size=500": `{"data":[],"results":0}`,
+		"/linode/instances?page_size=500": `{"data":[
+			{"id":1,"label":"general-1"},{"id":2,"label":"broker-1"},{"id":3,"label":"broker-2"}
+		],"results":3}`,
+		"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
+		"/lke/clusters/12345/pools": `{"data":[
+			{"id":111,"type":"g6-standard-4","count":1,"labels":{"rtk.io/node-class":"general"}},
+			{"id":222,"type":"g6-standard-4","count":2,"labels":{"rtk.io/node-class":"broker"}}
+		]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging", "CLOUD_REGION": "us-sea",
+		"LKE_NODE_TYPE": "g6-standard-4", "LKE_GENERAL_NODE_TYPE": "g6-standard-4",
+	}
+	plan := lkeProviderServicePlan{NodeServices: 3, BrokerNodes: 1, GeneralNodes: 2, Limit: 3}
+
+	err := lkeCheckLiveProviderActiveServices(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, plan)
+	if err == nil {
+		t.Fatal("expected pre-shrink node peak to exceed live provider quota")
+	}
+	for _, want := range []string{"projected active services=4", "reducible_lke_nodes=1", "additional_required=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("expected %q in error:\n%s", want, err.Error())
+		}
+	}
+}
+
 func TestLKECapacityParsesQuantities(t *testing.T) {
 	cpu, err := parseCPUQuantity("0.25")
 	if err != nil || cpu != 250 {

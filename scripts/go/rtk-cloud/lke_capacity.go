@@ -153,35 +153,36 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 	current := currentInstances + volumeCount + nodeBalancerCount
 	additional := plan.RequiredServices
 	reducible := 0
+	projected := current + additional
 	if cluster, err := discoverLKECluster(token, paths, env, false); err == nil && cluster.ID > 0 {
-		additional = 0
-		additional += lkeMissingPlannedVolumeServices(paths, env, plan)
+		laterAdditional := lkeMissingPlannedVolumeServices(paths, env, plan)
 		missingDatabaseNodes, poolErr := lkeMissingPlannedDatabaseNodeServices(token, cluster, env, plan)
 		if poolErr != nil {
 			return poolErr
 		}
-		additional += missingDatabaseNodes
 		missingGeneralNodes, poolErr := lkeMissingPlannedGeneralNodeServices(token, cluster, env, plan)
 		if poolErr != nil {
 			return poolErr
 		}
-		additional += missingGeneralNodes
 		missingBrokerNodes, poolErr := lkeMissingPlannedBrokerNodeServices(token, cluster, env, plan)
 		if poolErr != nil {
 			return poolErr
 		}
-		additional += missingBrokerNodes
 		if plan.EdgeVMs > 0 && !activeLabels[lkeEdgeHAProxyLabel(env)] {
-			additional++
+			laterAdditional++
 		}
 		for i := 1; i <= plan.CoturnVMs; i++ {
 			if !activeLabels[lkeCoturnVMLabel(lkeCoturnVMEnvForIndex(env, i))] {
-				additional++
+				laterAdditional++
 			}
 		}
 		reducible = lkeReducibleMainNodeServices(token, cluster, env, plan.BrokerNodes)
+		beforeShrinkAdditional := missingGeneralNodes + missingBrokerNodes
+		additional = beforeShrinkAdditional + missingDatabaseNodes + laterAdditional
+		beforeShrinkPeak := current + beforeShrinkAdditional
+		afterReconcile := current - reducible + additional
+		projected = maxInt(beforeShrinkPeak, afterReconcile)
 	}
-	projected := current - reducible + additional
 	if projected > plan.Limit {
 		return fmt.Errorf("LKE live provider capacity check failed: projected active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (current_active=%d current_instances=%d current_volumes=%d current_nodebalancers=%d reducible_lke_nodes=%d additional_required=%d edge_vms=%d coturn_vms=%d); delete unused Linode services or request a Linode quota increase before rerunning staging provision", projected, plan.Limit, current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, plan.EdgeVMs, plan.CoturnVMs)
 	}

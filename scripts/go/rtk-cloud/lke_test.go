@@ -1493,12 +1493,12 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 		"name: cloud-admin-billing-client",
 		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
 		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-prometheus",
-		"patch secret video-cloud-runtime --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
-		"patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
-		"patch deployment video-cloud-api --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
-		"patch deployment cloud-admin --type=merge --patch-file=/dev/stdin --ignore-not-found=true",
-		"rollout status deployment/video-cloud-api --ignore-not-found=true",
-		"rollout status deployment/cloud-admin --ignore-not-found=true",
+		"patch secret video-cloud-runtime --type=merge --patch-file=/dev/stdin",
+		"patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin",
+		"patch deployment video-cloud-api --type=merge --patch-file=/dev/stdin",
+		"patch deployment cloud-admin --type=merge --patch-file=/dev/stdin",
+		"rollout status deployment/video-cloud-api --timeout",
+		"rollout status deployment/cloud-admin --timeout",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted fleet dependency apply missing %q:\n%s", want, log)
@@ -6460,6 +6460,22 @@ if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
 fi
 if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
   printf '{"data":{"VIDEO_CLOUD_AUTH_SECRET":"dGVzdC12aWRlby1hdXRo","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4="}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o name"* ]]; then
+  printf 'secret/video-cloud-runtime\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret cloud-admin-billing-client --ignore-not-found=true -o name"* ]]; then
+  printf 'secret/cloud-admin-billing-client\n'
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o name"* ]]; then
+  printf 'deployment/video-cloud-api\n'
+  exit 0
+fi
+if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]]; then
+  printf 'deployment/cloud-admin\n'
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then

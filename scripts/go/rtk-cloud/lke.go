@@ -2859,17 +2859,37 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string) error {
 		{lkeNamespaceName(env, "admin"), "cloud-admin-billing-client", "cloud-admin"},
 	}
 	for _, target := range targets {
-		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(secretPatch), "-n", target.namespace, "patch", "secret", target.secret, "--type=merge", "--patch-file=/dev/stdin", "--ignore-not-found=true"); patchErr != nil {
+		found, getErr := kubectlCombinedOutput(nil, "-n", target.namespace, "get", "secret", target.secret, "--ignore-not-found=true", "-o", "name")
+		if getErr != nil {
+			return getErr
+		}
+		if strings.TrimSpace(string(found)) == "" {
+			continue
+		}
+		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(secretPatch), "-n", target.namespace, "patch", "secret", target.secret, "--type=merge", "--patch-file=/dev/stdin"); patchErr != nil {
 			return fmt.Errorf("synchronize Fleet token secret %s/%s: %w: %s", target.namespace, target.secret, patchErr, strings.TrimSpace(string(out)))
 		}
 	}
+	activeDeployments := make([]struct {
+		namespace  string
+		secret     string
+		deployment string
+	}, 0, len(targets))
 	for _, target := range targets {
-		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(deploymentPatch), "-n", target.namespace, "patch", "deployment", target.deployment, "--type=merge", "--patch-file=/dev/stdin", "--ignore-not-found=true"); patchErr != nil {
+		found, getErr := kubectlCombinedOutput(nil, "-n", target.namespace, "get", "deployment", target.deployment, "--ignore-not-found=true", "-o", "name")
+		if getErr != nil {
+			return getErr
+		}
+		if strings.TrimSpace(string(found)) == "" {
+			continue
+		}
+		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(deploymentPatch), "-n", target.namespace, "patch", "deployment", target.deployment, "--type=merge", "--patch-file=/dev/stdin"); patchErr != nil {
 			return fmt.Errorf("roll Fleet token consumer %s/%s: %w: %s", target.namespace, target.deployment, patchErr, strings.TrimSpace(string(out)))
 		}
+		activeDeployments = append(activeDeployments, target)
 	}
-	for _, target := range targets {
-		if err := runKubectl("-n", target.namespace, "rollout", "status", "deployment/"+target.deployment, "--ignore-not-found=true", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
+	for _, target := range activeDeployments {
+		if err := runKubectl("-n", target.namespace, "rollout", "status", "deployment/"+target.deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
 			return err
 		}
 	}
