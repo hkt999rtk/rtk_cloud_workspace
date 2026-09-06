@@ -2996,7 +2996,7 @@ func lkePatchFleetReadSecret(namespace, name, token, previousToken string) error
 
 func lkeRollVideoCloudFleetToken(env map[string]string, token, previousToken string, updateImage bool) error {
 	container := map[string]any{
-		"name": "video-cloud-api",
+		"name": "app",
 		"env": []map[string]any{{
 			"name": "VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN",
 			"valueFrom": map[string]any{"secretKeyRef": map[string]string{

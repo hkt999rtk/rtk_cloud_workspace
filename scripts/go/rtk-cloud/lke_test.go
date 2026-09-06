@@ -806,6 +806,7 @@ func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
 		t.Fatalf("Fleet token rotation did not make Video Cloud compatible before switching Cloud Admin:\n%s", log)
 	}
 	for _, want := range []string{
+		`"name":"app"`,
 		`"image":"registry.example.test/video-cloud:new"`,
 		`"VIDEO_CLOUD_FLEET_READ_TOKEN":"fleet-token-old"`,
 		`"VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN":"fleet-token-new"`,
