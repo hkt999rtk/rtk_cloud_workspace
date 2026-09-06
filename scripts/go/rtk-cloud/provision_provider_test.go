@@ -135,7 +135,8 @@ func TestTargetedVideoCloudDeployEnsuresRequiredDatabasePool(t *testing.T) {
 	steps := kubernetesProvisionSteps(lkeCloudProvider{})
 	ctx := provisionContext{
 		Env: map[string]string{
-			"FLEET_VALKEY_NODE_CLASS":          "database",
+			"FLEET_VALKEY_NODE_CLASS":          "general",
+			"FLEET_VALKEY_EXPORTER_NODE_CLASS": "database",
 			"LKE_POSTGRES_DEDICATED_NODE_POOL": "true",
 		},
 		Opts: provisionOptions{

@@ -257,7 +257,8 @@ func TestLKEProviderServicesSkipsFleetVolumeForUnrelatedTargetedDeploy(t *testin
 
 func TestLKEProviderServicesPlansDatabaseNodesForTargetedFleetDeploy(t *testing.T) {
 	env := map[string]string{
-		"FLEET_VALKEY_NODE_CLASS":          "database",
+		"FLEET_VALKEY_NODE_CLASS":          "general",
+		"FLEET_VALKEY_EXPORTER_NODE_CLASS": "database",
 		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true",
 		"LKE_POSTGRES_NODE_COUNT":          "2",
 	}
@@ -269,6 +270,33 @@ func TestLKEProviderServicesPlansDatabaseNodesForTargetedFleetDeploy(t *testing.
 	unrelated := lkeProviderServices(env, 1, provisionOptions{workloads: []string{"frontend"}})
 	if unrelated.DatabaseNodes != 0 {
 		t.Fatalf("unrelated targeted database nodes = %d, want 0", unrelated.DatabaseNodes)
+	}
+}
+
+func TestLKEMissingPlannedDatabaseNodeServicesProjectsOnlyFullReconcileGrowth(t *testing.T) {
+	fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"data":[{"id":222,"type":"g6-standard-8","count":1,"label":"postgres","labels":{"rtk.io/node-class":"database"},"taints":[{"key":"rtk.io/node-class","value":"database","effect":"NoSchedule"}]}]}`,
+	})
+	env := map[string]string{"LKE_POSTGRES_NODE_COUNT": "2"}
+	cluster := lkeCluster{ID: 12345}
+
+	full, err := lkeMissingPlannedDatabaseNodeServices("test-token", cluster, env, lkeProviderServicePlan{
+		DatabaseNodes: 2, ReconcileDatabasePool: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full != 1 {
+		t.Fatalf("full reconcile growth = %d, want 1", full)
+	}
+	targeted, err := lkeMissingPlannedDatabaseNodeServices("test-token", cluster, env, lkeProviderServicePlan{
+		DatabaseNodes: 2, ReconcileDatabasePool: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targeted != 0 {
+		t.Fatalf("targeted create-only growth = %d, want 0", targeted)
 	}
 }
 

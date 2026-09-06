@@ -39,14 +39,15 @@ type lkeCapacityPlanResult struct {
 }
 
 type lkeProviderServicePlan struct {
-	NodeServices     int
-	DatabaseNodes    int
-	PostgresVolumes  int
-	FleetVolumes     int
-	EdgeVMs          int
-	CoturnVMs        int
-	RequiredServices int
-	Limit            int
+	NodeServices          int
+	DatabaseNodes         int
+	ReconcileDatabasePool bool
+	PostgresVolumes       int
+	FleetVolumes          int
+	EdgeVMs               int
+	CoturnVMs             int
+	RequiredServices      int
+	Limit                 int
 }
 
 func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
@@ -186,6 +187,9 @@ func lkeMissingPlannedDatabaseNodeServices(token string, cluster lkeCluster, env
 	}
 	for _, pool := range pools {
 		if lkeNodePoolHasPostgresPlacement(pool) {
+			if plan.ReconcileDatabasePool && plan.DatabaseNodes > pool.Count {
+				return plan.DatabaseNodes - pool.Count, nil
+			}
 			return 0, nil
 		}
 	}
@@ -339,14 +343,15 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	}
 	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
-		NodeServices:     workerNodes,
-		DatabaseNodes:    databaseNodes,
-		PostgresVolumes:  postgresVolumes,
-		FleetVolumes:     fleetVolumes,
-		EdgeVMs:          edgeVMs,
-		CoturnVMs:        coturnVMs,
-		RequiredServices: required,
-		Limit:            limit,
+		NodeServices:          workerNodes,
+		DatabaseNodes:         databaseNodes,
+		ReconcileDatabasePool: len(opts.workloads) == 0 && databaseNodes > 0,
+		PostgresVolumes:       postgresVolumes,
+		FleetVolumes:          fleetVolumes,
+		EdgeVMs:               edgeVMs,
+		CoturnVMs:             coturnVMs,
+		RequiredServices:      required,
+		Limit:                 limit,
 	}
 }
 

@@ -9694,8 +9694,13 @@ func lkeTargetedFleetDatabasePoolRequired(env map[string]string, opts provisionO
 	if !lkeWorkloadSelected(env, opts, "video-cloud") {
 		return false
 	}
-	class := firstNonEmpty(env["FLEET_VALKEY_NODE_CLASS"], env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
-	return class == "database" && lkePostgresDedicatedNodePoolEnabled(env)
+	for _, key := range []string{"FLEET_VALKEY_NODE_CLASS", "FLEET_VALKEY_EXPORTER_NODE_CLASS"} {
+		class := firstNonEmpty(env[key], env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
+		if class == "database" {
+			return lkePostgresDedicatedNodePoolEnabled(env)
+		}
+	}
+	return false
 }
 
 // ensureLKETargetedFleetDatabaseNodePool creates only a missing database pool.
