@@ -2209,6 +2209,25 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
+		previousToken, err := lkeCurrentFleetReadToken(env)
+		if err != nil {
+			return err
+		}
+		opts.fleetReadTokenBefore = previousToken
+		rolloutPending, err := lkeFleetReadTokenRolloutPending(env)
+		if err != nil {
+			return err
+		}
+		opts.fleetReadRolloutPending = rolloutPending
+		liveReplicas, liveTemporarySurge, found, err := lkeVideoCloudDeploymentStrategyState(env)
+		if err != nil {
+			return err
+		}
+		rotating := previousToken != "" && previousToken != lkeRuntimeSecretValue("fleet-read-token")
+		desiredSingleReplica := lkeWorkloadReplicas(env, lkeWorkload{Key: "video-cloud", Name: "video-cloud-api"}) == "1"
+		opts.fleetReadTemporarySurge = found && (rotating || rolloutPending || liveTemporarySurge) && (liveReplicas <= 1 || desiredSingleReplica || liveTemporarySurge)
+	}
 	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
 		manifest, err := lkeFrontendSDKDownloadsSecretManifest(env)
 		if err != nil {
@@ -2228,6 +2247,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := dependencyApply(paths, env, opts); err != nil {
 		return err
 	}
+	if len(opts.workloads) == 0 && (lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin")) {
+		if err := lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore, opts); err != nil {
+			return err
+		}
+	}
 	var certIssuerMaterial *lkeCertIssuerMaterial
 	if lkeWorkloadSelected(env, opts, "account-manager") {
 		material, err := loadOrCreateLKECertIssuerMaterial(paths, env)
@@ -2241,7 +2265,8 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if workload.Key == "cloud-logger" {
 			continue
 		}
-		if err := kubectlApply(lkeDeploymentManifest(env, workload, certIssuerMaterial)); err != nil {
+		manifest := lkeDeploymentManifestWithVideoSurge(env, workload, certIssuerMaterial, workload.Key == "video-cloud" && opts.fleetReadTemporarySurge)
+		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeServiceManifest(env, workload)); err != nil {
@@ -2269,6 +2294,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
+		return err
+	}
+	// A one-replica Fleet token rotation temporarily enables a surge. Keep it
+	// through the full workload manifest rollout because that manifest also
+	// updates the broader runtime checksum. Restoring earlier would let that
+	// final rollout remove the sole ready Video Cloud pod first.
+	if err := lkeRestoreVideoCloudTokenRolloutStrategy(env, opts); err != nil {
 		return err
 	}
 	if lkeWorkloadSelected(env, opts, "billing") {
@@ -2809,7 +2841,7 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 				return err
 			}
 		}
-		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
+		if err := kubectlApply(lkeCloudAdminBillingSecretManifestWithFleetReadToken(env, lkeStagedFleetReadToken(opts))); err != nil {
 			return err
 		}
 	}
@@ -2820,29 +2852,317 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := lkeApplyVideoCloudPrometheus(env, opts); err != nil {
 			return err
 		}
-		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(env)); err != nil {
+		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
 			return err
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
-		return lkeSyncFleetReadTokenConsumers(env)
+		return lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore, opts)
 	}
 	return nil
 }
 
-func lkeSyncFleetReadTokenConsumers(env map[string]string) error {
-	token := lkeRuntimeSecretValue("fleet-read-token")
-	if token == "" {
+func lkeStagedFleetReadToken(opts provisionOptions) string {
+	desired := lkeRuntimeSecretValue("fleet-read-token")
+	if previous := strings.TrimSpace(opts.fleetReadTokenBefore); previous != "" && previous != desired {
+		return previous
+	}
+	return desired
+}
+
+func lkeStagedFleetReadPreviousToken(opts provisionOptions) string {
+	desired := lkeRuntimeSecretValue("fleet-read-token")
+	if previous := strings.TrimSpace(opts.fleetReadTokenBefore); previous != "" && previous != desired {
+		return desired
+	}
+	return ""
+}
+
+func lkeCurrentFleetReadToken(env map[string]string) (string, error) {
+	targets := []struct {
+		namespace string
+		secret    string
+	}{
+		{lkeNamespaceName(env, "video-cloud"), "video-cloud-runtime"},
+		{lkeNamespaceName(env, "admin"), "cloud-admin-billing-client"},
+	}
+	desired := lkeRuntimeSecretValue("fleet-read-token")
+	currentTokens := map[string]struct{}{}
+	for _, target := range targets {
+		raw, err := kubectlCombinedOutput(nil, "-n", target.namespace, "get", "secret", target.secret, "--ignore-not-found=true", "-o", "json")
+		if err != nil {
+			return "", fmt.Errorf("read Fleet token secret %s/%s: %w", target.namespace, target.secret, err)
+		}
+		if len(bytes.TrimSpace(raw)) == 0 {
+			continue
+		}
+		var secret struct {
+			Data map[string]string `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &secret); err != nil {
+			return "", fmt.Errorf("decode Fleet token secret %s/%s: %w", target.namespace, target.secret, err)
+		}
+		for _, key := range []string{"VIDEO_CLOUD_FLEET_READ_TOKEN", "VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN"} {
+			encoded := strings.TrimSpace(secret.Data[key])
+			if encoded == "" {
+				continue
+			}
+			decoded, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return "", fmt.Errorf("decode Fleet token value %s/%s key %s: %w", target.namespace, target.secret, key, err)
+			}
+			token := strings.TrimSpace(string(decoded))
+			if token != "" {
+				currentTokens[token] = struct{}{}
+			}
+		}
+	}
+	if len(currentTokens) == 0 {
+		return "", nil
+	}
+	if len(currentTokens) == 1 {
+		for token := range currentTokens {
+			return token, nil
+		}
+	}
+	delete(currentTokens, desired)
+	if len(currentTokens) == 1 {
+		for token := range currentTokens {
+			return token, nil
+		}
+	}
+	return "", errors.New("Fleet token consumers use multiple non-current tokens; reconcile them before rotating")
+}
+
+func lkeFleetReadTokenRolloutPending(env map[string]string) (bool, error) {
+	status, err := kubectlCombinedOutput(
+		nil,
+		"-n", lkeNamespaceName(env, "video-cloud"),
+		"get", "deployment", "video-cloud-api",
+		"--ignore-not-found=true",
+		"-o", `go-template={{ index .spec.template.metadata.annotations "rtk.realtek.com/fleet-read-token-checksum" }}|{{ .metadata.generation }}|{{ .status.observedGeneration }}|{{ .spec.replicas }}|{{ .status.updatedReplicas }}|{{ .status.readyReplicas }}|{{ .status.availableReplicas }}`,
+	)
+	if err != nil {
+		return false, fmt.Errorf("read Video Cloud Fleet token rollout checksum: %w", err)
+	}
+	raw := strings.TrimSpace(string(status))
+	if raw == "" {
+		return false, nil
+	}
+	// An existing deployment without the annotation still needs synchronization;
+	// only an empty kubectl response proves the deployment is absent.
+	fields := strings.Split(raw, "|")
+	if strings.TrimSpace(fields[0]) != lkeFleetReadTokenChecksum() || len(fields) != 7 {
+		return true, nil
+	}
+	values := make([]int, 0, 6)
+	for _, field := range fields[1:] {
+		value, err := strconv.Atoi(strings.TrimSpace(field))
+		if err != nil {
+			return true, nil
+		}
+		values = append(values, value)
+	}
+	generation, observedGeneration, desired, updated, ready, available := values[0], values[1], values[2], values[3], values[4], values[5]
+	return observedGeneration < generation || updated < desired || ready < desired || available < desired, nil
+}
+
+func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string, opts provisionOptions) error {
+	desiredToken := lkeRuntimeSecretValue("fleet-read-token")
+	if desiredToken == "" {
 		return errors.New("fleet-read-token is required to synchronize Fleet API consumers")
 	}
-	secretPatch, err := json.Marshal(map[string]any{
-		"stringData": map[string]string{"VIDEO_CLOUD_FLEET_READ_TOKEN": token},
+	previousToken = strings.TrimSpace(previousToken)
+	rotating := previousToken != "" && previousToken != desiredToken
+	syncVideo := rotating || opts.fleetReadRolloutPending || lkeWorkloadSelected(env, opts, "video-cloud")
+	syncAdmin := rotating || lkeWorkloadSelected(env, opts, "cloud-admin")
+	videoNamespace := lkeNamespaceName(env, "video-cloud")
+	adminNamespace := lkeNamespaceName(env, "admin")
+
+	var videoFound, videoSecretFound, adminFound, adminSecretFound bool
+	var err error
+	if syncVideo {
+		videoFound, err = lkeKubernetesResourceExists(videoNamespace, "deployment", "video-cloud-api")
+		if err != nil {
+			return err
+		}
+		videoSecretFound, err = lkeKubernetesResourceExists(videoNamespace, "secret", "video-cloud-runtime")
+		if err != nil {
+			return err
+		}
+	}
+	if syncAdmin {
+		adminFound, err = lkeKubernetesResourceExists(adminNamespace, "deployment", "cloud-admin")
+		if err != nil {
+			return err
+		}
+		adminSecretFound, err = lkeKubernetesResourceExists(adminNamespace, "secret", "cloud-admin-billing-client")
+		if err != nil {
+			return err
+		}
+	}
+	useTemporarySurge := videoFound && opts.fleetReadTemporarySurge
+	if useTemporarySurge {
+		if err := lkeSetVideoCloudTokenRolloutStrategy(env, true); err != nil {
+			return err
+		}
+	}
+
+	if videoFound {
+		primary, grace := desiredToken, ""
+		if rotating {
+			primary, grace = previousToken, desiredToken
+		}
+		if !videoSecretFound {
+			if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, primary, grace)); err != nil {
+				return err
+			}
+		} else if err := lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", primary, grace); err != nil {
+			return err
+		}
+		if err := lkeRollVideoCloudFleetToken(env, primary, grace, rotating); err != nil {
+			return err
+		}
+	}
+
+	if adminFound && !adminSecretFound {
+		if err := kubectlApply(lkeCloudAdminBillingSecretManifestWithFleetReadToken(env, desiredToken)); err != nil {
+			return err
+		}
+	} else if adminSecretFound {
+		if err := lkePatchFleetReadSecret(adminNamespace, "cloud-admin-billing-client", desiredToken, ""); err != nil {
+			return err
+		}
+	}
+	if adminFound {
+		if err := lkeRollFleetTokenConsumer(adminNamespace, "cloud-admin", lkeFleetReadTokenChecksum()); err != nil {
+			return err
+		}
+	}
+
+	if !videoFound && videoSecretFound {
+		return lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", desiredToken, "")
+	}
+	if videoFound && rotating {
+		if err := lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", desiredToken, previousToken); err != nil {
+			return err
+		}
+		if err := lkeRollVideoCloudFleetToken(env, desiredToken, previousToken, false); err != nil {
+			return err
+		}
+		if err := lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", desiredToken, ""); err != nil {
+			return err
+		}
+		if err := lkeRollVideoCloudFleetToken(env, desiredToken, "", false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lkeRestoreVideoCloudTokenRolloutStrategy(env map[string]string, opts provisionOptions) error {
+	if !opts.fleetReadTemporarySurge {
+		return nil
+	}
+	found, err := lkeKubernetesResourceExists(lkeNamespaceName(env, "video-cloud"), "deployment", "video-cloud-api")
+	if err != nil || !found {
+		return err
+	}
+	return lkeSetVideoCloudTokenRolloutStrategy(env, false)
+}
+
+func lkeVideoCloudDeploymentStrategyState(env map[string]string) (replicas int, temporarySurge, found bool, err error) {
+	status, err := kubectlCombinedOutput(
+		nil,
+		"-n", lkeNamespaceName(env, "video-cloud"),
+		"get", "deployment", "video-cloud-api",
+		"--ignore-not-found=true",
+		"-o", `go-template={{ .spec.replicas }}|{{ .spec.strategy.rollingUpdate.maxSurge }}|{{ .spec.strategy.rollingUpdate.maxUnavailable }}`,
+	)
+	if err != nil {
+		return 0, false, false, fmt.Errorf("read Video Cloud deployment strategy: %w", err)
+	}
+	raw := strings.TrimSpace(string(status))
+	if raw == "" {
+		return 0, false, false, nil
+	}
+	fields := strings.Split(raw, "|")
+	if len(fields) != 3 {
+		return 0, false, false, fmt.Errorf("read Video Cloud deployment strategy: unexpected response %q", raw)
+	}
+	replicas, err = strconv.Atoi(strings.TrimSpace(fields[0]))
+	if err != nil {
+		return 0, false, false, fmt.Errorf("read Video Cloud deployment replicas: %w", err)
+	}
+	return replicas, strings.TrimSpace(fields[1]) == "1" && strings.TrimSpace(fields[2]) == "0", true, nil
+}
+
+func lkeKubernetesResourceExists(namespace, kind, name string) (bool, error) {
+	found, err := kubectlCombinedOutput(nil, "-n", namespace, "get", kind, name, "--ignore-not-found=true", "-o", "name")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(found)) != "", nil
+}
+
+func lkePatchFleetReadSecret(namespace, name, token, previousToken string) error {
+	values := map[string]string{"VIDEO_CLOUD_FLEET_READ_TOKEN": token}
+	if name == "video-cloud-runtime" {
+		values["VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN"] = previousToken
+	}
+	patch, err := json.Marshal(map[string]any{"stringData": values})
+	if err != nil {
+		return err
+	}
+	out, err := kubectlCombinedOutput(bytes.NewReader(patch), "-n", namespace, "patch", "secret", name, "--type=merge", "--patch-file=/dev/stdin")
+	if err != nil {
+		return fmt.Errorf("synchronize Fleet token secret %s/%s: %w: %s", namespace, name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func lkeRollVideoCloudFleetToken(env map[string]string, token, previousToken string, updateImage bool) error {
+	checksum := lkeConfigChecksum(token)
+	if previousToken != "" {
+		checksum = lkeConfigChecksum(token, previousToken)
+	}
+	container := map[string]any{
+		"name": "app",
+		"env": []map[string]any{{
+			"name": "VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN",
+			"valueFrom": map[string]any{"secretKeyRef": map[string]string{
+				"name": "video-cloud-runtime",
+				"key":  "VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN",
+			}},
+		}},
+	}
+	if updateImage {
+		image := strings.TrimSpace(lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"))
+		if image == "" {
+			return errors.New("LKE_VIDEO_CLOUD_IMAGE is required for a safe Fleet token rotation")
+		}
+		container["image"] = image
+	}
+	patch, err := json.Marshal(map[string]any{
+		"spec": map[string]any{"template": map[string]any{
+			"metadata": map[string]any{"annotations": map[string]string{
+				"rtk.realtek.com/fleet-read-token-checksum": checksum,
+			}},
+			"spec": map[string]any{"containers": []map[string]any{container}},
+		}},
 	})
 	if err != nil {
 		return err
 	}
-	checksum := lkeFleetReadTokenChecksum()
-	deploymentPatch, err := json.Marshal(map[string]any{
+	out, err := kubectlCombinedOutput(bytes.NewReader(patch), "-n", lkeNamespaceName(env, "video-cloud"), "patch", "deployment", "video-cloud-api", "--type=strategic", "--patch-file=/dev/stdin")
+	if err != nil {
+		return fmt.Errorf("roll Fleet token consumer %s/video-cloud-api: %w: %s", lkeNamespaceName(env, "video-cloud"), err, strings.TrimSpace(string(out)))
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-api", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m"))
+}
+
+func lkeRollFleetTokenConsumer(namespace, deployment, checksum string) error {
+	patch, err := json.Marshal(map[string]any{
 		"spec": map[string]any{"template": map[string]any{"metadata": map[string]any{"annotations": map[string]string{
 			"rtk.realtek.com/fleet-read-token-checksum": checksum,
 		}}}},
@@ -2850,48 +3170,33 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string) error {
 	if err != nil {
 		return err
 	}
-	targets := []struct {
-		namespace  string
-		secret     string
-		deployment string
-	}{
-		{lkeNamespaceName(env, "video-cloud"), "video-cloud-runtime", "video-cloud-api"},
-		{lkeNamespaceName(env, "admin"), "cloud-admin-billing-client", "cloud-admin"},
+	out, err := kubectlCombinedOutput(bytes.NewReader(patch), "-n", namespace, "patch", "deployment", deployment, "--type=merge", "--patch-file=/dev/stdin")
+	if err != nil {
+		return fmt.Errorf("roll Fleet token consumer %s/%s: %w: %s", namespace, deployment, err, strings.TrimSpace(string(out)))
 	}
-	for _, target := range targets {
-		found, getErr := kubectlCombinedOutput(nil, "-n", target.namespace, "get", "secret", target.secret, "--ignore-not-found=true", "-o", "name")
-		if getErr != nil {
-			return getErr
-		}
-		if strings.TrimSpace(string(found)) == "" {
-			continue
-		}
-		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(secretPatch), "-n", target.namespace, "patch", "secret", target.secret, "--type=merge", "--patch-file=/dev/stdin"); patchErr != nil {
-			return fmt.Errorf("synchronize Fleet token secret %s/%s: %w: %s", target.namespace, target.secret, patchErr, strings.TrimSpace(string(out)))
-		}
+	return runKubectl("-n", namespace, "rollout", "status", "deployment/"+deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m"))
+}
+
+func lkeSetVideoCloudTokenRolloutStrategy(env map[string]string, temporarySurge bool) error {
+	maxSurge, maxUnavailable := 0, 1
+	if temporarySurge {
+		maxSurge, maxUnavailable = 1, 0
 	}
-	activeDeployments := make([]struct {
-		namespace  string
-		secret     string
-		deployment string
-	}, 0, len(targets))
-	for _, target := range targets {
-		found, getErr := kubectlCombinedOutput(nil, "-n", target.namespace, "get", "deployment", target.deployment, "--ignore-not-found=true", "-o", "name")
-		if getErr != nil {
-			return getErr
-		}
-		if strings.TrimSpace(string(found)) == "" {
-			continue
-		}
-		if out, patchErr := kubectlCombinedOutput(bytes.NewReader(deploymentPatch), "-n", target.namespace, "patch", "deployment", target.deployment, "--type=merge", "--patch-file=/dev/stdin"); patchErr != nil {
-			return fmt.Errorf("roll Fleet token consumer %s/%s: %w: %s", target.namespace, target.deployment, patchErr, strings.TrimSpace(string(out)))
-		}
-		activeDeployments = append(activeDeployments, target)
+	patch, err := json.Marshal(map[string]any{
+		"spec": map[string]any{"strategy": map[string]any{
+			"type": "RollingUpdate",
+			"rollingUpdate": map[string]int{
+				"maxSurge":       maxSurge,
+				"maxUnavailable": maxUnavailable,
+			},
+		}},
+	})
+	if err != nil {
+		return err
 	}
-	for _, target := range activeDeployments {
-		if err := runKubectl("-n", target.namespace, "rollout", "status", "deployment/"+target.deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "10m")); err != nil {
-			return err
-		}
+	out, err := kubectlCombinedOutput(bytes.NewReader(patch), "-n", lkeNamespaceName(env, "video-cloud"), "patch", "deployment", "video-cloud-api", "--type=merge", "--patch-file=/dev/stdin")
+	if err != nil {
+		return fmt.Errorf("set Video Cloud Fleet token rollout strategy: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
@@ -3026,7 +3331,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := writeLKEVideoCloudRuntimeEnv(paths, env); err != nil {
 			return err
 		}
-		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(env)); err != nil {
+		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
 			return err
 		}
 		if err := kubectlDeleteSecret(lkeNamespaceName(env, "video-cloud"), "certissuer-runtime"); err != nil {
@@ -3133,7 +3438,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "cloud-admin") {
-		if err := kubectlApply(lkeCloudAdminBillingSecretManifest(env)); err != nil {
+		if err := kubectlApply(lkeCloudAdminBillingSecretManifestWithFleetReadToken(env, lkeStagedFleetReadToken(opts))); err != nil {
 			return err
 		}
 	}
@@ -5506,6 +5811,10 @@ stringData:
 }
 
 func lkeVideoCloudRuntimeSecretManifest(env map[string]string) string {
+	return lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeRuntimeSecretValue("fleet-read-token"), "")
+}
+
+func lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env map[string]string, fleetReadToken, previousFleetReadToken string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -5522,6 +5831,7 @@ stringData:
   VIDEO_CLOUD_AUTH_SECRET: %q
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_TOKEN: %q
+  VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
   VIDEO_CLOUD_TURN_SHARED_SECRET: %q
@@ -5531,7 +5841,7 @@ stringData:
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
   clip-private-key.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), lkeRuntimeSecretValue("fleet-read-token"), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), fleetReadToken, previousFleetReadToken, lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
 }
 
 func lkeClipPrivateKeyPEM() string {
@@ -7986,6 +8296,10 @@ stringData:
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
+	return lkeCloudAdminBillingSecretManifestWithFleetReadToken(env, lkeRuntimeSecretValue("fleet-read-token"))
+}
+
+func lkeCloudAdminBillingSecretManifestWithFleetReadToken(env map[string]string, fleetReadToken string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
@@ -8000,7 +8314,7 @@ type: Opaque
 stringData:
   BILLING_SERVICE_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_TOKEN: %q
-`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), lkeRuntimeSecretValue("fleet-read-token"))
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), fleetReadToken)
 }
 
 func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
@@ -8706,6 +9020,10 @@ func lkeConfigChecksum(values ...string) string {
 }
 
 func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssuerMaterial *lkeCertIssuerMaterial) string {
+	return lkeDeploymentManifestWithVideoSurge(env, workload, certIssuerMaterial, false)
+}
+
+func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWorkload, certIssuerMaterial *lkeCertIssuerMaterial, temporaryVideoSurge bool) string {
 	envFrom := ""
 	extraEnv := ""
 	templateAnnotations := ""
@@ -8713,7 +9031,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	probes := lkeDeploymentProbeManifest(workload.Name)
 	imagePullSecrets := lkeDeploymentImagePullSecretsManifest(env)
 	replicas := lkeWorkloadReplicas(env, workload)
-	strategy := lkeDeploymentStrategyManifest(workload)
+	strategy := lkeDeploymentStrategyManifest(workload, temporaryVideoSurge)
 	volumeMounts := ""
 	volumes := ""
 	if workload.Key == "account-manager" {
@@ -8849,6 +9167,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
                 secretKeyRef:
                   name: video-cloud-runtime
                   key: VIDEO_CLOUD_FLEET_READ_TOKEN
+            - name: VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN
             - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL
               value: %q
             - name: VIDEO_CLOUD_CONTROL_HANDOFF_TOKEN
@@ -9256,9 +9579,17 @@ func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
 	return "1"
 }
 
-func lkeDeploymentStrategyManifest(workload lkeWorkload) string {
+func lkeDeploymentStrategyManifest(workload lkeWorkload, temporaryVideoSurge bool) string {
 	if workload.Key != "video-cloud" {
 		return ""
+	}
+	if temporaryVideoSurge {
+		return `  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+`
 	}
 	return `  strategy:
     type: RollingUpdate

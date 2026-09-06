@@ -224,6 +224,10 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 		namespace, kind, name, prefix string
 	}
 	targets := []placementTarget{}
+	allWorkloads := len(ctx.Opts.workloads) == 0 && !ctx.Opts.videoOnly && !ctx.Opts.loggerOnly
+	workloadSelected := func(key string) bool {
+		return allWorkloads || lkeWorkloadSelected(ctx.Env, ctx.Opts, key)
+	}
 	for _, workload := range lkeSelectedWorkloads(ctx.Env, ctx.Opts) {
 		prefix := map[string]string{
 			"video-cloud": "VIDEO_CLOUD_API", "account-manager": "ACCOUNT_MANAGER",
@@ -232,36 +236,42 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 		targets = append(targets, placementTarget{workload.Namespace, "deployment", workload.Name, prefix})
 	}
 	videoNS := lkeNamespaceName(ctx.Env, "video-cloud")
-	for name, prefix := range map[string]string{
-		"video-cloud-cleaner": "VIDEO_CLOUD_CLEANER", "video-cloud-clipverifier": "VIDEO_CLOUD_CLIP_VERIFIER", "video-cloud-statistics": "VIDEO_CLOUD_STATISTICS",
-		"video-cloud-metricsexporter": "VIDEO_CLOUD_METRICS_EXPORTER", "video-cloud-turnregistry": "VIDEO_CLOUD_TURN_REGISTRY",
-		"video-cloud-logingester": "VIDEO_CLOUD_LOG_INGESTER", "video-cloud-mqttusage": "VIDEO_CLOUD_MQTT_USAGE",
-		"certissuer": "CERTISSUER", "factoryenroll": "FACTORY_ENROLL",
-	} {
-		targets = append(targets, placementTarget{videoNS, "deployment", name, prefix})
-	}
-	for _, target := range []placementTarget{
-		{lkeNamespaceName(ctx.Env, "account-manager"), "deployment", "account-manager-email-worker", "ACCOUNT_MANAGER_EMAIL_WORKER"},
-		{lkeNamespaceName(ctx.Env, "account-manager"), "deployment", "account-manager-outbox-worker", "ACCOUNT_MANAGER_OUTBOX_WORKER"},
-		{lkeNamespaceName(ctx.Env, "billing"), "deployment", "billing-payment-worker", "BILLING_PAYMENT_WORKER"},
-		{lkeNamespaceName(ctx.Env, "billing"), "deployment", "payment-simulator", "PAYMENT_SIMULATOR"},
-	} {
-		targets = append(targets, target)
-	}
-	targets = append(targets,
-		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "redis", "REDIS"},
-		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "redis-exporter", "REDIS_EXPORTER"},
-		placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-prometheus", "PROMETHEUS"},
-		placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-loki", "LOKI"},
-		placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-grafana", "GRAFANA"},
-		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "statefulset", "postgresql", "POSTGRES"},
-		placementTarget{videoNS, "statefulset", "mqtt", "MQTT"},
-		placementTarget{lkeNamespaceName(ctx.Env, "secrets"), "statefulset", "openbao", "OPENBAO"},
-	)
-	if len(ctx.Opts.workloads) == 0 || lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+	if workloadSelected("video-cloud") {
+		for name, prefix := range map[string]string{
+			"video-cloud-cleaner": "VIDEO_CLOUD_CLEANER", "video-cloud-clipverifier": "VIDEO_CLOUD_CLIP_VERIFIER", "video-cloud-statistics": "VIDEO_CLOUD_STATISTICS",
+			"video-cloud-metricsexporter": "VIDEO_CLOUD_METRICS_EXPORTER", "video-cloud-turnregistry": "VIDEO_CLOUD_TURN_REGISTRY",
+			"video-cloud-logingester": "VIDEO_CLOUD_LOG_INGESTER", "video-cloud-mqttusage": "VIDEO_CLOUD_MQTT_USAGE",
+			"certissuer": "CERTISSUER", "factoryenroll": "FACTORY_ENROLL",
+		} {
+			targets = append(targets, placementTarget{videoNS, "deployment", name, prefix})
+		}
 		targets = append(targets,
+			placementTarget{videoNS, "statefulset", "mqtt", "MQTT"},
 			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "statefulset", "fleet-valkey", "FLEET_VALKEY"},
 			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "fleet-valkey-exporter", "FLEET_VALKEY_EXPORTER"},
+		)
+	}
+	if workloadSelected("account-manager") {
+		targets = append(targets,
+			placementTarget{lkeNamespaceName(ctx.Env, "account-manager"), "deployment", "account-manager-email-worker", "ACCOUNT_MANAGER_EMAIL_WORKER"},
+			placementTarget{lkeNamespaceName(ctx.Env, "account-manager"), "deployment", "account-manager-outbox-worker", "ACCOUNT_MANAGER_OUTBOX_WORKER"},
+		)
+	}
+	if workloadSelected("billing") {
+		targets = append(targets,
+			placementTarget{lkeNamespaceName(ctx.Env, "billing"), "deployment", "billing-payment-worker", "BILLING_PAYMENT_WORKER"},
+			placementTarget{lkeNamespaceName(ctx.Env, "billing"), "deployment", "payment-simulator", "PAYMENT_SIMULATOR"},
+		)
+	}
+	if allWorkloads {
+		targets = append(targets,
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "redis", "REDIS"},
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "redis-exporter", "REDIS_EXPORTER"},
+			placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-prometheus", "PROMETHEUS"},
+			placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-loki", "LOKI"},
+			placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-grafana", "GRAFANA"},
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "statefulset", "postgresql", "POSTGRES"},
+			placementTarget{lkeNamespaceName(ctx.Env, "secrets"), "statefulset", "openbao", "OPENBAO"},
 		)
 	}
 	activeTargets := make([]placementTarget, 0, len(targets))
@@ -293,6 +303,20 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 	for _, target := range activeTargets {
 		if target.kind != "deployment" && target.kind != "statefulset" {
 			continue
+		}
+		if target.kind == "statefulset" {
+			strategy, err := kubectlCombinedOutput(nil, "-n", target.namespace, "get", target.kind, target.name, "-o", "jsonpath={.spec.updateStrategy.type}")
+			if err != nil {
+				return fmt.Errorf("kubectl get %s/%s update strategy: %s", target.namespace, target.name, kubectlErrorSummary(strategy, err))
+			}
+			if strings.TrimSpace(string(strategy)) == "OnDelete" {
+				if err := waitK8SOnDeleteStatefulSetReadyWith(func() ([]byte, error) {
+					return kubectlCombinedOutput(nil, "-n", target.namespace, "get", target.kind, target.name, "-o", "json")
+				}, target.namespace, target.kind+"/"+target.name, "--timeout=5m"); err != nil {
+					return err
+				}
+				continue
+			}
 		}
 		if err := runKubectl("-n", target.namespace, "rollout", "status", target.kind+"/"+target.name, "--timeout", "5m"); err != nil {
 			return err

@@ -119,8 +119,8 @@ func TestTargetedKubernetesPlacementScopesFleetToVideoCloud(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if log := readTestFile(t, logPath); strings.Contains(log, "fleet-valkey") {
-		t.Fatalf("targeted frontend placement touched Fleet resources:\n%s", log)
+	if log := readTestFile(t, logPath); strings.Contains(log, "fleet-valkey") || strings.Contains(log, "openbao") || strings.Contains(log, "postgresql") {
+		t.Fatalf("targeted frontend placement touched unrelated shared resources:\n%s", log)
 	}
 
 	writeTestFile(t, logPath, "")
@@ -134,5 +134,51 @@ func TestTargetedKubernetesPlacementScopesFleetToVideoCloud(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted Video Cloud placement missing %q:\n%s", want, log)
 		}
+	}
+	for _, unwanted := range []string{"openbao", "postgresql", "billing-payment-worker", "account-manager-email-worker"} {
+		if strings.Contains(log, unwanted) {
+			t.Fatalf("targeted Video Cloud placement touched unrelated resource %q:\n%s", unwanted, log)
+		}
+	}
+}
+
+func TestSharedKubernetesPlacementVerifiesOnDeleteStatefulSetWithoutRollout(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "`+logPath+`"
+case "$*" in
+  *"get statefulset openbao --ignore-not-found=true -o name"*) printf 'statefulset/openbao\n' ;;
+  *"get statefulset openbao -o jsonpath="*) printf 'OnDelete' ;;
+  *"get statefulset openbao -o json"*) printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":1},"status":{"observedGeneration":4,"readyReplicas":1,"currentReplicas":1,"currentRevision":"openbao-abc","updateRevision":"openbao-abc"}}' ;;
+  *"rollout status statefulset/openbao"*) exit 91 ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
+	env := map[string]string{
+		"DEPLOYMENT_ARCHITECTURE": "kubernetes", "CLOUD_STACK_NAME": "video-cloud-dev",
+		"DEFAULT_WORKLOAD_NODE_CLASS": "general",
+	}
+	if err := applySharedKubernetesNodeClassPlacement(provisionContext{Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"get statefulset openbao -o jsonpath={.spec.updateStrategy.type}",
+		"get statefulset openbao -o json",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("missing OnDelete readiness check %q in:\n%s", want, log)
+		}
+	}
+	if strings.Contains(log, "rollout status statefulset/openbao") {
+		t.Fatalf("OnDelete StatefulSet must not use kubectl rollout status:\n%s", log)
 	}
 }

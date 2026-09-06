@@ -770,6 +770,361 @@ func TestLKEFleetReadTokenRotationRollsBothServices(t *testing.T) {
 	}
 }
 
+func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("FAKE_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-old")))
+	env := map[string]string{
+		"CLOUD_STACK_NAME":         "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE":    "registry.example.test/video-cloud:new",
+		"LKE_VIDEO_CLOUD_REPLICAS": "1",
+	}
+
+	previous, err := lkeCurrentFleetReadToken(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous != "fleet-token-old" {
+		t.Fatalf("current token = %q", previous)
+	}
+	if err := lkeSyncFleetReadTokenConsumers(env, previous, provisionOptions{
+		workloads:               []string{"video-cloud", "cloud-admin"},
+		fleetReadTemporarySurge: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	videoFirst := strings.Index(log, "patch deployment video-cloud-api --type=strategic --patch-file=/dev/stdin")
+	videoReady := strings.Index(log, "rollout status deployment/video-cloud-api --timeout")
+	adminSecret := strings.Index(log, "patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin")
+	adminRoll := strings.Index(log, "patch deployment cloud-admin --type=merge --patch-file=/dev/stdin")
+	if videoFirst < 0 || videoReady < videoFirst || adminSecret < videoReady || adminRoll < adminSecret {
+		t.Fatalf("Fleet token rotation did not make Video Cloud compatible before switching Cloud Admin:\n%s", log)
+	}
+	for _, want := range []string{
+		`"name":"app"`,
+		`"image":"registry.example.test/video-cloud:new"`,
+		`"VIDEO_CLOUD_FLEET_READ_TOKEN":"fleet-token-old"`,
+		`"VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN":"fleet-token-new"`,
+		`"VIDEO_CLOUD_FLEET_READ_TOKEN":"fleet-token-new"`,
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("Fleet token rotation log missing %q:\n%s", want, log)
+		}
+	}
+	if got := strings.Count(log, "rollout status deployment/video-cloud-api --timeout"); got != 3 {
+		t.Fatalf("Video Cloud rollout count = %d, want 3", got)
+	}
+	surge := strings.Index(log, `"maxSurge":1,"maxUnavailable":0`)
+	restore := strings.LastIndex(log, `"maxSurge":0,"maxUnavailable":1`)
+	lastVideoReady := strings.LastIndex(log, "rollout status deployment/video-cloud-api --timeout")
+	if surge < 0 || surge > videoFirst || restore >= 0 || lastVideoReady < videoFirst {
+		t.Fatalf("token synchronization did not retain the single-replica surge strategy for the caller:\n%s", log)
+	}
+}
+
+func TestLKECurrentFleetReadTokenRecoversPartialRotation(t *testing.T) {
+	fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("FAKE_VIDEO_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-old")))
+	t.Setenv("FAKE_ADMIN_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-new")))
+
+	previous, err := lkeCurrentFleetReadToken(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous != "fleet-token-old" {
+		t.Fatalf("partial rotation previous token = %q", previous)
+	}
+
+	t.Setenv("FAKE_VIDEO_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-new")))
+	t.Setenv("FAKE_VIDEO_FLEET_READ_PREVIOUS_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-old")))
+	previous, err = lkeCurrentFleetReadToken(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous != "fleet-token-old" {
+		t.Fatalf("grace-stage previous token = %q", previous)
+	}
+}
+
+func TestLKECurrentFleetReadTokenValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		videoToken string
+		adminToken string
+		want       string
+		wantErr    string
+	}{
+		{name: "empty", want: ""},
+		{name: "invalid base64", videoToken: "%", adminToken: "%", wantErr: "decode Fleet token value"},
+		{name: "multiple non-current", videoToken: base64.StdEncoding.EncodeToString([]byte("old-a")), adminToken: base64.StdEncoding.EncodeToString([]byte("old-b")), wantErr: "multiple non-current tokens"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeKubectl(t)
+			oldCanonical := activeCanonicalSecretStore
+			oldCache := lkeRuntimeSecretCache
+			activeCanonicalSecretStore = false
+			lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+			t.Cleanup(func() {
+				activeCanonicalSecretStore = oldCanonical
+				lkeRuntimeSecretCache = oldCache
+			})
+			t.Setenv("FAKE_VIDEO_FLEET_READ_TOKEN_B64", tc.videoToken)
+			t.Setenv("FAKE_ADMIN_FLEET_READ_TOKEN_B64", tc.adminToken)
+
+			got, err := lkeCurrentFleetReadToken(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("token = %q, error = %v", got, err)
+			}
+		})
+	}
+}
+
+func TestLKEFleetReadTokenRotationRequiresCompatibleVideoImage(t *testing.T) {
+	fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "")
+
+	err := lkeSyncFleetReadTokenConsumers(
+		map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"},
+		"fleet-token-old",
+		provisionOptions{workloads: []string{"cloud-admin"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "LKE_VIDEO_CLOUD_IMAGE is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLKEFleetReadTokenRolloutPendingDetection(t *testing.T) {
+	fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	t.Setenv("FAKE_VIDEO_FLEET_CHECKSUM", lkeConfigChecksum("fleet-token-old", "fleet-token-new"))
+	pending, err := lkeFleetReadTokenRolloutPending(env)
+	if err != nil || !pending {
+		t.Fatalf("pending = %t, error = %v", pending, err)
+	}
+	t.Setenv("FAKE_VIDEO_FLEET_CHECKSUM", lkeFleetReadTokenChecksum())
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || pending {
+		t.Fatalf("steady pending = %t, error = %v", pending, err)
+	}
+	t.Setenv("FAKE_VIDEO_FLEET_ROLLOUT_STATUS", "2|2|1|0|0|0")
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || !pending {
+		t.Fatalf("incomplete steady rollout pending = %t, error = %v", pending, err)
+	}
+	t.Setenv("FAKE_VIDEO_FLEET_CHECKSUM", "")
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || !pending {
+		t.Fatalf("unannotated deployment pending = %t, error = %v", pending, err)
+	}
+	t.Setenv("FAKE_VIDEO_DEPLOYMENT_ABSENT", "1")
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || pending {
+		t.Fatalf("absent deployment pending = %t, error = %v", pending, err)
+	}
+}
+
+func TestLKEVideoCloudDeploymentStrategyState(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         string
+		wantReplicas  int
+		wantTemporary bool
+		wantFound     bool
+		wantErr       string
+	}{
+		{name: "normal", state: "2|0|1", wantReplicas: 2, wantFound: true},
+		{name: "temporary surge", state: "1|1|0", wantReplicas: 1, wantTemporary: true, wantFound: true},
+		{name: "absent", state: "ABSENT"},
+		{name: "malformed", state: "1|0", wantErr: "unexpected response"},
+		{name: "invalid replicas", state: "many|0|1", wantErr: "deployment replicas"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeKubectl(t)
+			t.Setenv("FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE", tc.state)
+			replicas, temporary, found, err := lkeVideoCloudDeploymentStrategyState(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || replicas != tc.wantReplicas || temporary != tc.wantTemporary || found != tc.wantFound {
+				t.Fatalf("state = (%d, %t, %t), error = %v", replicas, temporary, found, err)
+			}
+		})
+	}
+}
+
+func TestLKEFleetReadTokenRotationResumesFinalVideoRollout(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-new", provisionOptions{
+		workloads:               []string{"cloud-admin"},
+		fleetReadRolloutPending: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	if !strings.Contains(log, "patch deployment video-cloud-api --type=strategic --patch-file=/dev/stdin") || !strings.Contains(log, "rollout status deployment/video-cloud-api --timeout") {
+		t.Fatalf("final Video Cloud rollout was not resumed:\n%s", log)
+	}
+}
+
+func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("FAKE_CLOUD_ADMIN_DEPLOYMENT_ABSENT", "1")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+	}
+
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old", provisionOptions{workloads: []string{"cloud-admin"}}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	if !strings.Contains(log, "patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin") || !strings.Contains(log, `"VIDEO_CLOUD_FLEET_READ_TOKEN":"fleet-token-new"`) {
+		t.Fatalf("missing Cloud Admin secret promotion:\n%s", log)
+	}
+	if strings.Contains(log, "patch deployment cloud-admin") {
+		t.Fatalf("absent Cloud Admin deployment was patched:\n%s", log)
+	}
+}
+
+func TestLKEFleetReadTokenRotationRecreatesMissingCloudAdminSecret(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{
+		"fleet-read-token":      "fleet-token-new",
+		"billing-service-token": "billing-token",
+	}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("FAKE_CLOUD_ADMIN_SECRET_ABSENT", "1")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+	}
+
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old", provisionOptions{workloads: []string{"video-cloud"}}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	secret := strings.Index(log, "kind: Secret\nmetadata:\n  name: cloud-admin-billing-client")
+	adminRoll := strings.Index(log, "patch deployment cloud-admin --type=merge --patch-file=/dev/stdin")
+	if secret < 0 || adminRoll < secret {
+		t.Fatalf("missing Cloud Admin Secret was not recreated before rollout:\n%s", log)
+	}
+	if !strings.Contains(log[secret:adminRoll], `BILLING_SERVICE_TOKEN: "billing-token"`) || !strings.Contains(log[secret:adminRoll], `VIDEO_CLOUD_FLEET_READ_TOKEN: "fleet-token-new"`) {
+		t.Fatalf("recreated Cloud Admin Secret has incomplete managed values:\n%s", log[secret:adminRoll])
+	}
+}
+
+func TestLKEFleetReadTokenRotationRecreatesMissingVideoCloudSecret(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{
+		"fleet-read-token": "fleet-token-new", "postgres": "existing-db-password",
+		"video-auth": "existing-auth-secret", "internal-auth": "existing-internal-token",
+		"cloud-logger-ingest-token": "existing-logger-token", "turn-shared": "existing-turn-secret",
+		"clip-private-key-seed": "existing-clip-key-seed",
+	}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache
+	})
+	t.Setenv("FAKE_VIDEO_SECRET_ABSENT", "1")
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+	}
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old", provisionOptions{workloads: []string{"cloud-admin"}}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	secret := strings.Index(log, "kind: Secret\nmetadata:\n  name: video-cloud-runtime")
+	videoRoll := strings.Index(log, "patch deployment video-cloud-api --type=strategic --patch-file=/dev/stdin")
+	if secret < 0 || videoRoll < secret {
+		t.Fatalf("Video Cloud Secret was not recreated before its rollout:\n%s", log)
+	}
+	for _, want := range []string{
+		`POSTGRES_PASSWORD: "existing-db-password"`, `VIDEO_CLOUD_AUTH_SECRET: "existing-auth-secret"`,
+		`VIDEO_CLOUD_LOGGER_TOKEN: "existing-logger-token"`, `VIDEO_CLOUD_TURN_SHARED_SECRET: "existing-turn-secret"`,
+		`VIDEO_CLOUD_FLEET_READ_TOKEN: "fleet-token-old"`, `VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN: "fleet-token-new"`,
+		`clip-private-key.pem: "-----BEGIN EC PRIVATE KEY-----`,
+	} {
+		if !strings.Contains(log[secret:videoRoll], want) {
+			t.Fatalf("recreated Video Cloud Secret is missing %q", want)
+		}
+	}
+	adminRoll := strings.Index(log, "patch deployment cloud-admin --type=merge --patch-file=/dev/stdin")
+	if adminRoll < videoRoll {
+		t.Fatal("Cloud Admin must switch only after Video Cloud has the grace token")
+	}
+}
+
 func TestValidateRuntimeCoverageVideoCloudAPIBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1490,12 +1845,13 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 		"name: allow-cloud-admin-video-cloud-api",
 		"name: video-cloud-runtime",
 		"VIDEO_CLOUD_FLEET_READ_TOKEN:",
+		"VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN:",
 		"name: cloud-admin-billing-client",
 		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
 		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-prometheus",
 		"patch secret video-cloud-runtime --type=merge --patch-file=/dev/stdin",
 		"patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin",
-		"patch deployment video-cloud-api --type=merge --patch-file=/dev/stdin",
+		"patch deployment video-cloud-api --type=strategic --patch-file=/dev/stdin",
 		"patch deployment cloud-admin --type=merge --patch-file=/dev/stdin",
 		"rollout status deployment/video-cloud-api --timeout",
 		"rollout status deployment/cloud-admin --timeout",
@@ -1506,6 +1862,9 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 	}
 	if strings.Contains(log, "name: openbao") || strings.Contains(log, "name: postgresql\n") {
 		t.Fatalf("targeted fleet dependency apply touched unrelated stateful services:\n%s", log)
+	}
+	if want := `"rtk.realtek.com/fleet-read-token-checksum":"` + lkeFleetReadTokenChecksum() + `"`; !strings.Contains(log, want) {
+		t.Fatalf("steady-state Fleet token checksum mismatch; missing %q:\n%s", want, log)
 	}
 }
 
@@ -5033,6 +5392,33 @@ func TestRunDeployLKEVideoOnlyUsesVideoImage(t *testing.T) {
 	}
 }
 
+func TestRunDeployLKEFleetTokenRotationRetainsSurgeThroughManifestRollout(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
+	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
+	// The live Deployment still has one replica while this rollout scales the
+	// desired state to two; the token handoff must protect the live singleton.
+	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "2")
+	t.Setenv("FAKE_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-before-deploy")))
+
+	if err := runDeploy([]string{"--workspace", workspace, "--env-root", envRoot, "--video-only"}); err != nil {
+		t.Fatal(err)
+	}
+
+	log := readTestFile(t, logPath)
+	surge := strings.Index(log, `"maxSurge":1,"maxUnavailable":0`)
+	manifest := strings.LastIndex(log, "kind: Deployment\nmetadata:\n  name: video-cloud-api")
+	manifestRollout := strings.LastIndex(log, "rollout status deployment/video-cloud-api")
+	restore := strings.LastIndex(log, `"maxSurge":0,"maxUnavailable":1`)
+	if surge < 0 || manifest < surge || manifestRollout < manifest || restore < manifestRollout {
+		t.Fatalf("single-replica deploy did not retain surge through the full manifest rollout:\n%s", log)
+	}
+	if !strings.Contains(log[manifest:manifestRollout], "maxSurge: 1\n      maxUnavailable: 0") {
+		t.Fatalf("full Video Cloud manifest did not retain the temporary surge strategy:\n%s", log[manifest:manifestRollout])
+	}
+}
+
 func TestRunRemoveAllLKEDeletesNamespaces(t *testing.T) {
 	_, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)
@@ -6324,31 +6710,20 @@ esac
 }
 
 func TestWaitK8SOnDeleteStatefulSetReadyPollsUntilReady(t *testing.T) {
-	dir := t.TempDir()
-	countPath := filepath.Join(dir, "count")
-	kubectl := filepath.Join(dir, "kubectl")
-	writeTestFile(t, kubectl, `#!/usr/bin/env bash
-set -euo pipefail
-count=0
-if [[ -f "`+countPath+`" ]]; then count="$(cat "`+countPath+`")"; fi
-count=$((count + 1))
-printf '%s' "$count" > "`+countPath+`"
-if [[ "$count" == "1" ]]; then
-  printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":3,"readyReplicas":1,"currentReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}'
-else
-  printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"currentReplicas":2,"currentRevision":"openbao-new","updateRevision":"openbao-new"}}'
-fi
-`)
-	if err := os.Chmod(kubectl, 0o755); err != nil {
-		t.Fatal(err)
+	count := 0
+	query := func() ([]byte, error) {
+		count++
+		if count == 1 {
+			return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":3,"readyReplicas":1,"currentReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}`), nil
+		}
+		return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"currentReplicas":2,"currentRevision":"openbao-new","updateRevision":"openbao-new"}}`), nil
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
-	if err := waitK8SOnDeleteStatefulSetReady("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {
+	if err := waitK8SOnDeleteStatefulSetReadyWith(query, "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(readTestFile(t, countPath)); got != "2" {
-		t.Fatalf("kubectl poll count = %s, want 2", got)
+	if count != 2 {
+		t.Fatalf("poll count = %d, want 2", count)
 	}
 }
 
@@ -6462,12 +6837,28 @@ if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
   printf '{"data":{"VIDEO_CLOUD_AUTH_SECRET":"dGVzdC12aWRlby1hdXRo","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4="}}\n'
   exit 0
 fi
+if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o json"* || "$*" == *"get secret cloud-admin-billing-client --ignore-not-found=true -o json"* ]]; then
+  token_b64="${FAKE_FLEET_READ_TOKEN_B64:-}"
+  if [[ "$*" == *"get secret video-cloud-runtime"* && -n "${FAKE_VIDEO_FLEET_READ_TOKEN_B64:-}" ]]; then
+    token_b64="$FAKE_VIDEO_FLEET_READ_TOKEN_B64"
+  elif [[ "$*" == *"get secret cloud-admin-billing-client"* && -n "${FAKE_ADMIN_FLEET_READ_TOKEN_B64:-}" ]]; then
+    token_b64="$FAKE_ADMIN_FLEET_READ_TOKEN_B64"
+  fi
+  if [[ -n "$token_b64" ]]; then
+    printf '{"data":{"VIDEO_CLOUD_FLEET_READ_TOKEN":"%s","VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN":"%s"}}\n' "$token_b64" "${FAKE_VIDEO_FLEET_READ_PREVIOUS_TOKEN_B64:-}"
+  fi
+  exit 0
+fi
 if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o name"* ]]; then
-  printf 'secret/video-cloud-runtime\n'
+  if [[ "${FAKE_VIDEO_SECRET_ABSENT:-}" != "1" ]]; then
+    printf 'secret/video-cloud-runtime\n'
+  fi
   exit 0
 fi
 if [[ "$*" == *"get secret cloud-admin-billing-client --ignore-not-found=true -o name"* ]]; then
-  printf 'secret/cloud-admin-billing-client\n'
+	if [[ "${FAKE_CLOUD_ADMIN_SECRET_ABSENT:-}" != "1" ]]; then
+		printf 'secret/cloud-admin-billing-client\n'
+	fi
   exit 0
 fi
 if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o name"* ]]; then
@@ -6475,7 +6866,25 @@ if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o name"*
   exit 0
 fi
 if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]]; then
-  printf 'deployment/cloud-admin\n'
+  if [[ "${FAKE_CLOUD_ADMIN_DEPLOYMENT_ABSENT:-}" != "1" ]]; then
+    printf 'deployment/cloud-admin\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* && "$*" == *"strategy.rollingUpdate.maxSurge"* ]]; then
+	if [[ "${FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE:-}" == "ABSENT" ]]; then
+		exit 0
+	elif [[ -n "${FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE:-}" ]]; then
+		printf '%s' "$FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE"
+	else
+		printf '%s|%s|%s' "${FAKE_VIDEO_LIVE_REPLICAS:-1}" "${FAKE_VIDEO_LIVE_MAX_SURGE:-0}" "${FAKE_VIDEO_LIVE_MAX_UNAVAILABLE:-1}"
+	fi
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* ]]; then
+  if [[ "${FAKE_VIDEO_DEPLOYMENT_ABSENT:-}" != "1" && ( -n "${FAKE_VIDEO_FLEET_CHECKSUM:-}" || -n "${FAKE_VIDEO_FLEET_ROLLOUT_STATUS:-}" ) ]]; then
+    printf '%s|%s' "${FAKE_VIDEO_FLEET_CHECKSUM:-}" "${FAKE_VIDEO_FLEET_ROLLOUT_STATUS:-1|1|1|1|1|1}"
+  fi
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
@@ -6542,6 +6951,9 @@ fi
   done
   printf '\n'
   if [[ "$*" == *"apply -f"* ]]; then
+    cat
+    printf '\n---\n'
+  elif [[ "$*" == *"--patch-file=/dev/stdin"* ]]; then
     cat
     printf '\n---\n'
   fi

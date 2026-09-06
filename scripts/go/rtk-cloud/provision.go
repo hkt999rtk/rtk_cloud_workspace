@@ -41,26 +41,29 @@ type provisionPaths struct {
 }
 
 type provisionOptions struct {
-	mode                 provisionMode
-	workspace            string
-	envRoot              string
-	operatorEnv          string
-	sshKey               string
-	dnsRoot              string
-	dnsRootExplicit      bool
-	artifactDir          string
-	videoRelease         string
-	accountRelease       string
-	accountReleaseBundle string
-	adminRelease         string
-	adminReleaseBundle   string
-	localBuild           bool
-	loggerOnly           bool
-	videoOnly            bool
-	workloads            []string
-	binaryOnly           bool
-	confirm              string
-	verbose              bool
+	mode                    provisionMode
+	workspace               string
+	envRoot                 string
+	operatorEnv             string
+	sshKey                  string
+	dnsRoot                 string
+	dnsRootExplicit         bool
+	artifactDir             string
+	videoRelease            string
+	accountRelease          string
+	accountReleaseBundle    string
+	adminRelease            string
+	adminReleaseBundle      string
+	localBuild              bool
+	loggerOnly              bool
+	videoOnly               bool
+	workloads               []string
+	fleetReadTokenBefore    string
+	fleetReadRolloutPending bool
+	fleetReadTemporarySurge bool
+	binaryOnly              bool
+	confirm                 string
+	verbose                 bool
 }
 
 func runProvision(args []string) error {
