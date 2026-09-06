@@ -114,6 +114,47 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 	}
 }
 
+func TestTargetedDeployDoesNotReconcileNodePools(t *testing.T) {
+	steps := kubernetesProvisionSteps(lkeCloudProvider{})
+	ctx := provisionContext{Opts: provisionOptions{
+		mode:      provisionMode{deploy: true},
+		workloads: []string{"video-cloud", "cloud-admin"},
+	}}
+	for _, step := range steps {
+		if step.Name == "ensure-lke-node-pool" {
+			if step.Enabled == nil || step.Enabled(ctx) {
+				t.Fatal("targeted deploy must not create or resize shared node pools")
+			}
+			return
+		}
+	}
+	t.Fatal("ensure-lke-node-pool step not found")
+}
+
+func TestTargetedVideoCloudDeployEnsuresRequiredDatabasePool(t *testing.T) {
+	steps := kubernetesProvisionSteps(lkeCloudProvider{})
+	ctx := provisionContext{
+		Env: map[string]string{
+			"FLEET_VALKEY_NODE_CLASS":          "general",
+			"FLEET_VALKEY_EXPORTER_NODE_CLASS": "database",
+			"LKE_POSTGRES_DEDICATED_NODE_POOL": "true",
+		},
+		Opts: provisionOptions{
+			mode:      provisionMode{deploy: true},
+			workloads: []string{"video-cloud"},
+		},
+	}
+	for _, step := range steps {
+		if step.Name == "ensure-lke-node-pool" {
+			if step.Enabled == nil || !step.Enabled(ctx) {
+				t.Fatal("targeted Video Cloud deploy must ensure its required database pool")
+			}
+			return
+		}
+	}
+	t.Fatal("ensure-lke-node-pool step not found")
+}
+
 func TestLKEImagePullSecretApplyDoesNotLogRawToken(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	logPath := fakeKubectl(t)

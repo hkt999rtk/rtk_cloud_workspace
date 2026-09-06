@@ -104,6 +104,15 @@ for example `cloud_env/<environment>/backup.json`.
 
 Required preparation:
 
+Existing recovery inventories must be updated before enabling Fleet Analytics:
+classify `fleet-valkey` as an `offline` StatefulSet and
+`fleet-valkey-exporter` as an `application` Deployment. The example explicitly
+excludes `data-fleet-valkey-0` because it contains derived, expiring observation
+windows rather than a source of truth. An environment that chooses to retain
+that rolling window must inventory the PVC as a reviewed volume component
+instead. Recovery preflight intentionally remains fail-closed and does not add
+these classifications automatically.
+
 1. Inventory all Deployments/StatefulSets, PVCs, application databases, durable
    Redis prefixes, SQLite files, runtime Secrets/ConfigMaps and external
    dependencies. Include Billing, OpenBao and worker processes, not only APIs.

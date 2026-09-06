@@ -48,6 +48,8 @@ var capacityWorkloadRegistry = []capacityWorkloadSpec{
 	{Name: "postgresql", Prefix: "POSTGRES"},
 	{Name: "redis", Prefix: "REDIS"},
 	{Name: "redis-exporter", Prefix: "REDIS_EXPORTER"},
+	{Name: "fleet-valkey", Prefix: "FLEET_VALKEY"},
+	{Name: "fleet-valkey-exporter", Prefix: "FLEET_VALKEY_EXPORTER"},
 	{Name: "mqtt", Prefix: "MQTT", Scale: "connections", SpreadReplicas: true},
 	{Name: "video-cloud-api", Prefix: "VIDEO_CLOUD_API", Scale: "active-devices", SpreadReplicas: true},
 	{Name: "account-manager", Prefix: "ACCOUNT_MANAGER", SpreadReplicas: true},

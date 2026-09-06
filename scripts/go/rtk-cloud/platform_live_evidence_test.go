@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,7 +36,8 @@ func TestQualifyPrometheusInventoryRecordsOnlyJobLevelEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "10.0.0.1") || !strings.Contains(string(raw), `"healthy_job_count": 13`) {
+	wantCount := fmt.Sprintf(`"healthy_job_count": %d`, len(requiredPrometheusJobs))
+	if strings.Contains(string(raw), "10.0.0.1") || !strings.Contains(string(raw), wantCount) {
 		t.Fatalf("results = %s", raw)
 	}
 }

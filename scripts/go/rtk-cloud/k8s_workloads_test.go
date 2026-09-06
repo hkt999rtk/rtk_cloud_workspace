@@ -121,6 +121,7 @@ func TestK8SPrometheusTargetsAreDerivedFromWorkloadRegistry(t *testing.T) {
 		"video-cloud-mqttusage":        "video-cloud-mqttusage",
 		"video-cloud-factoryenroll":    "factoryenroll",
 		"redis-exporter":               "redis-exporter",
+		"fleet-valkey-exporter":        "fleet-valkey-exporter",
 		"video-cloud-prometheus":       "video-cloud-prometheus",
 		"video-cloud-grafana":          "video-cloud-grafana",
 	}
