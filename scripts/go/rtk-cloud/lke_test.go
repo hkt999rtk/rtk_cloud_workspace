@@ -6862,6 +6862,38 @@ esac
 	return logPath
 }
 
+func TestLKEFrontendLoginStaysInDeploymentEnvironment(t *testing.T) {
+	for _, test := range []struct {
+		name, environment, stack, dnsRoot, configured, processOverride, want string
+	}{
+		{name: "dev", environment: "dev", stack: "video-cloud-dev", dnsRoot: "realtekconnect.com", want: "https://admin.video-cloud-dev.realtekconnect.com/login"},
+		{name: "staging", environment: "staging", stack: "video-cloud-staging", dnsRoot: "realtekconnect.com", want: "https://admin.video-cloud-staging.realtekconnect.com/login"},
+		{name: "prod", environment: "prod", stack: "video-cloud-prod", dnsRoot: "realtekconnect.com", want: "https://admin.video-cloud-prod.realtekconnect.com/login"},
+		{name: "custom domain", environment: "qa", stack: "video-cloud-qa", dnsRoot: "example.test", want: "https://admin.video-cloud-qa.example.test/login"},
+		{name: "configured URL", environment: "dev", stack: "video-cloud-dev", dnsRoot: "realtekconnect.com", configured: "https://portal.example.test/login?source=website", want: "https://portal.example.test/login?source=website"},
+		{name: "operator override", environment: "dev", stack: "video-cloud-dev", dnsRoot: "realtekconnect.com", configured: "https://config.example.test/login", processOverride: "https://operator.example.test/login", want: "https://operator.example.test/login"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("SERVICE_LOGIN_URL", test.processOverride)
+			env := envroot.Derive(map[string]string{
+				"CLOUD_ENV_NAME": test.environment, "CLOUD_STACK_NAME": test.stack, "CLOUD_DNS_ROOT_DOMAIN": test.dnsRoot,
+				"SERVICE_LOGIN_URL": test.configured, "LKE_FRONTEND_IMAGE": "frontend:test",
+			})
+			var frontend lkeWorkload
+			for _, workload := range lkeWorkloads(env) {
+				if workload.Key == "frontend" {
+					frontend = workload
+				}
+			}
+			manifest := lkeDeploymentManifest(env, frontend, nil)
+			want := "name: SERVICE_LOGIN_URL\n              value: " + strconv.Quote(test.want)
+			if strings.Count(manifest, "name: SERVICE_LOGIN_URL") != 1 || !strings.Contains(manifest, want) {
+				t.Fatalf("frontend login URL missing or incorrect; want %s:\n%s", want, manifest)
+			}
+		})
+	}
+}
+
 func TestLKEFrontendSDKDownloadsSecretAndDeployment(t *testing.T) {
 	t.Setenv("SDK_DOWNLOADS_ENABLED", "true")
 	t.Setenv("SDK_ARTIFACT_BUCKET", "sdk-bucket")
