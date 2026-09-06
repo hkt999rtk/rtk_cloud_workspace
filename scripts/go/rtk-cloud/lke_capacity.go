@@ -40,6 +40,7 @@ type lkeCapacityPlanResult struct {
 
 type lkeProviderServicePlan struct {
 	NodeServices          int
+	BrokerNodes           int
 	GeneralNodes          int
 	DatabaseNodes         int
 	ReconcileDatabasePool bool
@@ -165,6 +166,11 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 			return poolErr
 		}
 		additional += missingGeneralNodes
+		missingBrokerNodes, poolErr := lkeMissingPlannedBrokerNodeServices(token, cluster, env, plan)
+		if poolErr != nil {
+			return poolErr
+		}
+		additional += missingBrokerNodes
 		if plan.EdgeVMs > 0 && !activeLabels[lkeEdgeHAProxyLabel(env)] {
 			additional++
 		}
@@ -173,7 +179,7 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 				additional++
 			}
 		}
-		reducible = lkeReducibleMainNodeServices(token, cluster, env, plan.NodeServices)
+		reducible = lkeReducibleMainNodeServices(token, cluster, env, plan.BrokerNodes)
 	}
 	projected := current - reducible + additional
 	if projected > plan.Limit {
@@ -220,6 +226,27 @@ func lkeMissingPlannedGeneralNodeServices(token string, cluster lkeCluster, env 
 		}
 	}
 	return plan.GeneralNodes, nil
+}
+
+func lkeMissingPlannedBrokerNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
+	if plan.BrokerNodes <= 0 {
+		return 0, nil
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0, err
+	}
+	desiredType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
+	for _, pool := range pools {
+		class := pool.Labels["rtk.io/node-class"]
+		if pool.Type == desiredType && class != "general" && class != "database" {
+			if plan.BrokerNodes > pool.Count {
+				return plan.BrokerNodes - pool.Count, nil
+			}
+			return 0, nil
+		}
+	}
+	return plan.BrokerNodes, nil
 }
 
 func lkeProviderResourceCount(token, endpoint string) (int, error) {
@@ -354,8 +381,10 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 		databaseNodes = maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
 	}
 	generalNodes := 0
+	brokerNodes := 0
 	if len(opts.workloads) == 0 {
 		generalNodes = maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+		brokerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", nodeCount), 0)
 	}
 	postgresVolumes := 0
 	if lkePostgresUsesPVC(env) {
@@ -374,6 +403,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
 		NodeServices:          workerNodes,
+		BrokerNodes:           brokerNodes,
 		GeneralNodes:          generalNodes,
 		DatabaseNodes:         databaseNodes,
 		ReconcileDatabasePool: len(opts.workloads) == 0 && databaseNodes > 0,
