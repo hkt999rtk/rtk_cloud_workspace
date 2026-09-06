@@ -2220,6 +2220,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 		opts.fleetReadRolloutPending = rolloutPending
+		liveReplicas, liveTemporarySurge, found, err := lkeVideoCloudDeploymentStrategyState(env)
+		if err != nil {
+			return err
+		}
+		rotating := previousToken != "" && previousToken != lkeRuntimeSecretValue("fleet-read-token")
+		desiredSingleReplica := lkeWorkloadReplicas(env, lkeWorkload{Key: "video-cloud", Name: "video-cloud-api"}) == "1"
+		opts.fleetReadTemporarySurge = found && (rotating || rolloutPending || liveTemporarySurge) && (liveReplicas <= 1 || desiredSingleReplica || liveTemporarySurge)
 	}
 	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
 		manifest, err := lkeFrontendSDKDownloadsSecretManifest(env)
@@ -2258,7 +2265,8 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if workload.Key == "cloud-logger" {
 			continue
 		}
-		if err := kubectlApply(lkeDeploymentManifest(env, workload, certIssuerMaterial)); err != nil {
+		manifest := lkeDeploymentManifestWithVideoSurge(env, workload, certIssuerMaterial, workload.Key == "video-cloud" && opts.fleetReadTemporarySurge)
+		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeServiceManifest(env, workload)); err != nil {
@@ -2990,8 +2998,7 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 			return err
 		}
 	}
-	videoWorkload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api"}
-	useTemporarySurge := videoFound && (rotating || opts.fleetReadRolloutPending) && lkeWorkloadReplicas(env, videoWorkload) == "1"
+	useTemporarySurge := videoFound && opts.fleetReadTemporarySurge
 	if useTemporarySurge {
 		if err := lkeSetVideoCloudTokenRolloutStrategy(env, true); err != nil {
 			return err
@@ -3043,11 +3050,7 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 }
 
 func lkeRestoreVideoCloudTokenRolloutStrategy(env map[string]string, opts provisionOptions) error {
-	if !lkeWorkloadSelected(env, opts, "video-cloud") && !lkeWorkloadSelected(env, opts, "cloud-admin") {
-		return nil
-	}
-	videoWorkload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api"}
-	if lkeWorkloadReplicas(env, videoWorkload) != "1" {
+	if !opts.fleetReadTemporarySurge {
 		return nil
 	}
 	found, err := lkeKubernetesResourceExists(lkeNamespaceName(env, "video-cloud"), "deployment", "video-cloud-api")
@@ -3055,6 +3058,32 @@ func lkeRestoreVideoCloudTokenRolloutStrategy(env map[string]string, opts provis
 		return err
 	}
 	return lkeSetVideoCloudTokenRolloutStrategy(env, false)
+}
+
+func lkeVideoCloudDeploymentStrategyState(env map[string]string) (replicas int, temporarySurge, found bool, err error) {
+	status, err := kubectlCombinedOutput(
+		nil,
+		"-n", lkeNamespaceName(env, "video-cloud"),
+		"get", "deployment", "video-cloud-api",
+		"--ignore-not-found=true",
+		"-o", `go-template={{ .spec.replicas }}|{{ .spec.strategy.rollingUpdate.maxSurge }}|{{ .spec.strategy.rollingUpdate.maxUnavailable }}`,
+	)
+	if err != nil {
+		return 0, false, false, fmt.Errorf("read Video Cloud deployment strategy: %w", err)
+	}
+	raw := strings.TrimSpace(string(status))
+	if raw == "" {
+		return 0, false, false, nil
+	}
+	fields := strings.Split(raw, "|")
+	if len(fields) != 3 {
+		return 0, false, false, fmt.Errorf("read Video Cloud deployment strategy: unexpected response %q", raw)
+	}
+	replicas, err = strconv.Atoi(strings.TrimSpace(fields[0]))
+	if err != nil {
+		return 0, false, false, fmt.Errorf("read Video Cloud deployment replicas: %w", err)
+	}
+	return replicas, strings.TrimSpace(fields[1]) == "1" && strings.TrimSpace(fields[2]) == "0", true, nil
 }
 
 func lkeKubernetesResourceExists(namespace, kind, name string) (bool, error) {
@@ -8980,6 +9009,10 @@ func lkeConfigChecksum(values ...string) string {
 }
 
 func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssuerMaterial *lkeCertIssuerMaterial) string {
+	return lkeDeploymentManifestWithVideoSurge(env, workload, certIssuerMaterial, false)
+}
+
+func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWorkload, certIssuerMaterial *lkeCertIssuerMaterial, temporaryVideoSurge bool) string {
 	envFrom := ""
 	extraEnv := ""
 	templateAnnotations := ""
@@ -8987,7 +9020,7 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 	probes := lkeDeploymentProbeManifest(workload.Name)
 	imagePullSecrets := lkeDeploymentImagePullSecretsManifest(env)
 	replicas := lkeWorkloadReplicas(env, workload)
-	strategy := lkeDeploymentStrategyManifest(workload)
+	strategy := lkeDeploymentStrategyManifest(workload, temporaryVideoSurge)
 	volumeMounts := ""
 	volumes := ""
 	if workload.Key == "account-manager" {
@@ -9535,9 +9568,17 @@ func lkeWorkloadReplicas(env map[string]string, workload lkeWorkload) string {
 	return "1"
 }
 
-func lkeDeploymentStrategyManifest(workload lkeWorkload) string {
+func lkeDeploymentStrategyManifest(workload lkeWorkload, temporaryVideoSurge bool) string {
 	if workload.Key != "video-cloud" {
 		return ""
+	}
+	if temporaryVideoSurge {
+		return `  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+`
 	}
 	return `  strategy:
     type: RollingUpdate

@@ -794,7 +794,10 @@ func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
 	if previous != "fleet-token-old" {
 		t.Fatalf("current token = %q", previous)
 	}
-	if err := lkeSyncFleetReadTokenConsumers(env, previous, provisionOptions{workloads: []string{"video-cloud", "cloud-admin"}}); err != nil {
+	if err := lkeSyncFleetReadTokenConsumers(env, previous, provisionOptions{
+		workloads:               []string{"video-cloud", "cloud-admin"},
+		fleetReadTemporarySurge: true,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -948,6 +951,39 @@ func TestLKEFleetReadTokenRolloutPendingDetection(t *testing.T) {
 	pending, err = lkeFleetReadTokenRolloutPending(env)
 	if err != nil || !pending {
 		t.Fatalf("incomplete steady rollout pending = %t, error = %v", pending, err)
+	}
+}
+
+func TestLKEVideoCloudDeploymentStrategyState(t *testing.T) {
+	tests := []struct {
+		name          string
+		state         string
+		wantReplicas  int
+		wantTemporary bool
+		wantFound     bool
+		wantErr       string
+	}{
+		{name: "normal", state: "2|0|1", wantReplicas: 2, wantFound: true},
+		{name: "temporary surge", state: "1|1|0", wantReplicas: 1, wantTemporary: true, wantFound: true},
+		{name: "absent", state: "ABSENT"},
+		{name: "malformed", state: "1|0", wantErr: "unexpected response"},
+		{name: "invalid replicas", state: "many|0|1", wantErr: "deployment replicas"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeKubectl(t)
+			t.Setenv("FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE", tc.state)
+			replicas, temporary, found, err := lkeVideoCloudDeploymentStrategyState(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || replicas != tc.wantReplicas || temporary != tc.wantTemporary || found != tc.wantFound {
+				t.Fatalf("state = (%d, %t, %t), error = %v", replicas, temporary, found, err)
+			}
+		})
 	}
 }
 
@@ -5276,7 +5312,9 @@ func TestRunDeployLKEFleetTokenRotationRetainsSurgeThroughManifestRollout(t *tes
 	logPath := fakeKubectl(t)
 	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:test")
 	t.Setenv("LKE_CLOUD_LOGGER_IMAGE", "registry.example.test/rtk/cloud-logger:test")
-	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "1")
+	// The live Deployment still has one replica while this rollout scales the
+	// desired state to two; the token handoff must protect the live singleton.
+	t.Setenv("LKE_VIDEO_CLOUD_REPLICAS", "2")
 	t.Setenv("FAKE_FLEET_READ_TOKEN_B64", base64.StdEncoding.EncodeToString([]byte("fleet-token-before-deploy")))
 
 	if err := runDeploy([]string{"--workspace", workspace, "--env-root", envRoot, "--video-only"}); err != nil {
@@ -5290,6 +5328,9 @@ func TestRunDeployLKEFleetTokenRotationRetainsSurgeThroughManifestRollout(t *tes
 	restore := strings.LastIndex(log, `"maxSurge":0,"maxUnavailable":1`)
 	if surge < 0 || manifest < surge || manifestRollout < manifest || restore < manifestRollout {
 		t.Fatalf("single-replica deploy did not retain surge through the full manifest rollout:\n%s", log)
+	}
+	if !strings.Contains(log[manifest:manifestRollout], "maxSurge: 1\n      maxUnavailable: 0") {
+		t.Fatalf("full Video Cloud manifest did not retain the temporary surge strategy:\n%s", log[manifest:manifestRollout])
 	}
 }
 
@@ -6750,6 +6791,16 @@ if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]];
   if [[ "${FAKE_CLOUD_ADMIN_DEPLOYMENT_ABSENT:-}" != "1" ]]; then
     printf 'deployment/cloud-admin\n'
   fi
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* && "$*" == *"strategy.rollingUpdate.maxSurge"* ]]; then
+	if [[ "${FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE:-}" == "ABSENT" ]]; then
+		exit 0
+	elif [[ -n "${FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE:-}" ]]; then
+		printf '%s' "$FAKE_VIDEO_DEPLOYMENT_STRATEGY_STATE"
+	else
+		printf '%s|%s|%s' "${FAKE_VIDEO_LIVE_REPLICAS:-1}" "${FAKE_VIDEO_LIVE_MAX_SURGE:-0}" "${FAKE_VIDEO_LIVE_MAX_UNAVAILABLE:-1}"
+	fi
   exit 0
 fi
 if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* ]]; then

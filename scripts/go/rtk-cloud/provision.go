@@ -60,6 +60,7 @@ type provisionOptions struct {
 	workloads               []string
 	fleetReadTokenBefore    string
 	fleetReadRolloutPending bool
+	fleetReadTemporarySurge bool
 	binaryOnly              bool
 	confirm                 string
 	verbose                 bool
