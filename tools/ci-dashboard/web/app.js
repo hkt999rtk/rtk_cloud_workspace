@@ -192,12 +192,10 @@ function updateSummary() {
   if (!state.snapshot) return;
   const visible = lane => lane.filter(cardMatches).length;
   document.querySelector("#repo-count").textContent = state.snapshot.repositories.length;
+  document.querySelector("#pr-summary-count").textContent = (state.snapshot.openPullRequests || []).length;
   document.querySelector("#active-count").textContent = state.snapshot.queued.length + state.snapshot.running.length;
   document.querySelector("#running-summary-count").textContent = state.snapshot.running.length;
   document.querySelector("#failed-count").textContent = state.snapshot.completed.filter(card => failed(card.conclusion)).length;
-  document.querySelector("#sync-age").textContent = age(state.snapshot.lastSuccessfulSync);
-  const rate = state.snapshot.rateLimit;
-  document.querySelector("#rate-limit").textContent = rate?.limit ? `API ${rate.remaining}/${rate.limit}` : "Last sync";
   document.querySelector("#queued-count").textContent = visible(state.snapshot.queued);
   document.querySelector("#running-count").textContent = visible(state.snapshot.running);
   document.querySelector("#completed-count").textContent = `${visible(state.snapshot.completed)} / ${state.snapshot.completedLimit || 20}`;
@@ -303,7 +301,6 @@ setInterval(() => {
     for (const cards of [state.snapshot.queued, state.snapshot.running, state.snapshot.completed]) for (const card of cards) {
       const node = state.cards.get(card.key); if (node) updateElapsed(node, card);
     }
-    document.querySelector("#sync-age").textContent = age(state.snapshot.lastSuccessfulSync);
   }
 }, 1000);
 loadSnapshot();
