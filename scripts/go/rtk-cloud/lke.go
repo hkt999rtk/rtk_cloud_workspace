@@ -2236,7 +2236,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		return err
 	}
 	if len(opts.workloads) == 0 && (lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin")) {
-		if err := lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore); err != nil {
+		if err := lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore, opts); err != nil {
 			return err
 		}
 	}
@@ -2837,7 +2837,7 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
-		return lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore)
+		return lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore, opts)
 	}
 	return nil
 }
@@ -2912,31 +2912,39 @@ func lkeCurrentFleetReadToken(env map[string]string) (string, error) {
 	return "", errors.New("Fleet token consumers use multiple non-current tokens; reconcile them before rotating")
 }
 
-func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string) error {
+func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string, opts provisionOptions) error {
 	desiredToken := lkeRuntimeSecretValue("fleet-read-token")
 	if desiredToken == "" {
 		return errors.New("fleet-read-token is required to synchronize Fleet API consumers")
 	}
 	previousToken = strings.TrimSpace(previousToken)
 	rotating := previousToken != "" && previousToken != desiredToken
+	syncVideo := rotating || lkeWorkloadSelected(env, opts, "video-cloud")
+	syncAdmin := rotating || lkeWorkloadSelected(env, opts, "cloud-admin")
 	videoNamespace := lkeNamespaceName(env, "video-cloud")
 	adminNamespace := lkeNamespaceName(env, "admin")
 
-	videoFound, err := lkeKubernetesResourceExists(videoNamespace, "deployment", "video-cloud-api")
-	if err != nil {
-		return err
+	var videoFound, videoSecretFound, adminFound, adminSecretFound bool
+	var err error
+	if syncVideo {
+		videoFound, err = lkeKubernetesResourceExists(videoNamespace, "deployment", "video-cloud-api")
+		if err != nil {
+			return err
+		}
+		videoSecretFound, err = lkeKubernetesResourceExists(videoNamespace, "secret", "video-cloud-runtime")
+		if err != nil {
+			return err
+		}
 	}
-	videoSecretFound, err := lkeKubernetesResourceExists(videoNamespace, "secret", "video-cloud-runtime")
-	if err != nil {
-		return err
-	}
-	adminFound, err := lkeKubernetesResourceExists(adminNamespace, "deployment", "cloud-admin")
-	if err != nil {
-		return err
-	}
-	adminSecretFound, err := lkeKubernetesResourceExists(adminNamespace, "secret", "cloud-admin-billing-client")
-	if err != nil {
-		return err
+	if syncAdmin {
+		adminFound, err = lkeKubernetesResourceExists(adminNamespace, "deployment", "cloud-admin")
+		if err != nil {
+			return err
+		}
+		adminSecretFound, err = lkeKubernetesResourceExists(adminNamespace, "secret", "cloud-admin-billing-client")
+		if err != nil {
+			return err
+		}
 	}
 
 	if videoFound {

@@ -793,7 +793,7 @@ func TestLKEFleetReadTokenRotationKeepsOldAndNewTokensCompatible(t *testing.T) {
 	if previous != "fleet-token-old" {
 		t.Fatalf("current token = %q", previous)
 	}
-	if err := lkeSyncFleetReadTokenConsumers(env, previous); err != nil {
+	if err := lkeSyncFleetReadTokenConsumers(env, previous, provisionOptions{workloads: []string{"video-cloud", "cloud-admin"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -859,7 +859,7 @@ func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *test
 		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
 	}
 
-	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old"); err != nil {
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old", provisionOptions{workloads: []string{"cloud-admin"}}); err != nil {
 		t.Fatal(err)
 	}
 	log := readTestFile(t, logPath)
