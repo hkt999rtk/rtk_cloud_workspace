@@ -81,6 +81,26 @@ func TestRepositoryFleetIsCollapsedToggle(t *testing.T) {
 	}
 }
 
+func TestLandscapeTabletShowsThreePrimaryLanes(t *testing.T) {
+	server := httptest.NewServer(newHandler(&fakeDashboard{}, nil))
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	css := string(body)
+	if !strings.Contains(css, "(min-width: 768px) and (max-width: 1199px) and (orientation: landscape)") ||
+		!strings.Contains(css, ".board { grid-template-columns: repeat(3, minmax(0, 1fr)); }") {
+		t.Fatal("landscape tablet layout does not preserve three primary lanes")
+	}
+}
+
 func TestHandlerRejectsUnsafeRunPathAndDoesNotLeakToken(t *testing.T) {
 	fake := &fakeDashboard{}
 	request := httptest.NewRequest(http.MethodGet, "/api/runs/bad%20owner/repo/1", nil)
