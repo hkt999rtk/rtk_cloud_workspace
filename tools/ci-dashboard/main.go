@@ -17,12 +17,13 @@ import (
 )
 
 func main() {
-	var workspace, address, apiURL string
+	var workspace, address, apiURL, webhookSecretFile string
 	var interval time.Duration
 	flag.StringVar(&workspace, "workspace", "", "workspace root containing .gitmodules (auto-detected by default)")
 	flag.StringVar(&address, "address", "127.0.0.1:8787", "HTTP listen address")
 	flag.StringVar(&apiURL, "github-api", "https://api.github.com", "GitHub API base URL")
-	flag.DurationVar(&interval, "poll-interval", time.Minute, "GitHub polling interval")
+	flag.StringVar(&webhookSecretFile, "webhook-secret-file", defaultWebhookSecretFile(), "file containing the GitHub webhook secret")
+	flag.DurationVar(&interval, "poll-interval", 20*time.Minute, "GitHub polling interval")
 	flag.Parse()
 
 	if interval < time.Second {
@@ -45,12 +46,16 @@ func main() {
 	}
 	client := &githubClient{baseURL: apiURL, token: token, http: &http.Client{Timeout: 20 * time.Second}}
 	poller := newPoller(client, repos, interval)
+	webhookSecret, err := loadWebhookSecret(webhookSecretFile)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go poller.run(ctx)
 
-	server := &http.Server{Addr: address, Handler: newHandler(poller), ReadHeaderTimeout: 5 * time.Second}
+	server := &http.Server{Addr: address, Handler: newHandler(poller, webhookSecret), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -58,9 +63,43 @@ func main() {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 	log.Printf("CI Flight Deck watching %d repositories at http://%s", len(repos), address)
+	if len(webhookSecret) == 0 {
+		log.Printf("GitHub webhook refresh disabled: no secret at %s", webhookSecretFile)
+	} else {
+		log.Printf("GitHub webhook refresh enabled at /webhooks/github")
+	}
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func defaultWebhookSecretFile() string {
+	if path := strings.TrimSpace(os.Getenv("RTK_CI_DASHBOARD_WEBHOOK_SECRET_FILE")); path != "" {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "rtk-ci-dashboard", "webhook-secret")
+}
+
+func loadWebhookSecret(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read webhook secret: %w", err)
+	}
+	secret := []byte(strings.TrimSpace(string(raw)))
+	if len(secret) == 0 {
+		return nil, errors.New("webhook secret file is empty")
+	}
+	return secret, nil
 }
 
 func findWorkspace() (string, error) {

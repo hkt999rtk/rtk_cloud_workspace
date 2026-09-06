@@ -55,6 +55,7 @@ type poller struct {
 	lastClient     time.Time
 	clientIdle     time.Duration
 	wake           chan struct{}
+	webhookWake    chan struct{}
 }
 
 const defaultClientIdleTimeout = 15 * time.Second
@@ -149,6 +150,7 @@ func newPoller(client *githubClient, repos []Repository, interval time.Duration)
 		prCache:        make(map[string]PullRequest),
 		clientIdle:     defaultClientIdleTimeout,
 		wake:           make(chan struct{}, 1),
+		webhookWake:    make(chan struct{}, 1),
 	}
 	client.onRate = p.captureRate
 	for _, repo := range repos {
@@ -176,6 +178,10 @@ func (p *poller) run(ctx context.Context) {
 				resetTimer(timer, p.interval)
 				next = timer.C
 			}
+		case <-p.webhookWake:
+			p.refresh(ctx)
+			resetTimer(timer, p.interval)
+			next = timer.C
 		case now := <-next:
 			next = nil
 			if p.clientActiveAt(now) {
@@ -184,6 +190,13 @@ func (p *poller) run(ctx context.Context) {
 				next = timer.C
 			}
 		}
+	}
+}
+
+func (p *poller) triggerWebhookRefresh() {
+	select {
+	case p.webhookWake <- struct{}{}:
+	default:
 	}
 }
 
