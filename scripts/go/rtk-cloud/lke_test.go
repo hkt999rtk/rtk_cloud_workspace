@@ -952,6 +952,16 @@ func TestLKEFleetReadTokenRolloutPendingDetection(t *testing.T) {
 	if err != nil || !pending {
 		t.Fatalf("incomplete steady rollout pending = %t, error = %v", pending, err)
 	}
+	t.Setenv("FAKE_VIDEO_FLEET_CHECKSUM", "")
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || !pending {
+		t.Fatalf("unannotated deployment pending = %t, error = %v", pending, err)
+	}
+	t.Setenv("FAKE_VIDEO_DEPLOYMENT_ABSENT", "1")
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || pending {
+		t.Fatalf("absent deployment pending = %t, error = %v", pending, err)
+	}
 }
 
 func TestLKEVideoCloudDeploymentStrategyState(t *testing.T) {
@@ -1070,6 +1080,48 @@ func TestLKEFleetReadTokenRotationRecreatesMissingCloudAdminSecret(t *testing.T)
 	}
 	if !strings.Contains(log[secret:adminRoll], `BILLING_SERVICE_TOKEN: "billing-token"`) || !strings.Contains(log[secret:adminRoll], `VIDEO_CLOUD_FLEET_READ_TOKEN: "fleet-token-new"`) {
 		t.Fatalf("recreated Cloud Admin Secret has incomplete managed values:\n%s", log[secret:adminRoll])
+	}
+}
+
+func TestLKEFleetReadTokenRotationRecreatesMissingVideoCloudSecret(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{
+		"fleet-read-token": "fleet-token-new", "postgres": "existing-db-password",
+		"video-auth": "existing-auth-secret", "internal-auth": "existing-internal-token",
+		"cloud-logger-ingest-token": "existing-logger-token", "turn-shared": "existing-turn-secret",
+		"clip-private-key-seed": "existing-clip-key-seed",
+	}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache
+	})
+	t.Setenv("FAKE_VIDEO_SECRET_ABSENT", "1")
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+	}
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old", provisionOptions{workloads: []string{"cloud-admin"}}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	secret := strings.Index(log, "kind: Secret\nmetadata:\n  name: video-cloud-runtime")
+	videoRoll := strings.Index(log, "patch deployment video-cloud-api --type=strategic --patch-file=/dev/stdin")
+	if secret < 0 || videoRoll < secret {
+		t.Fatalf("Video Cloud Secret was not recreated before its rollout:\n%s", log)
+	}
+	for _, want := range []string{
+		`POSTGRES_PASSWORD: "existing-db-password"`, `VIDEO_CLOUD_AUTH_SECRET: "existing-auth-secret"`,
+		`VIDEO_CLOUD_LOGGER_TOKEN: "existing-logger-token"`, `VIDEO_CLOUD_TURN_SHARED_SECRET: "existing-turn-secret"`,
+		`VIDEO_CLOUD_FLEET_READ_TOKEN: "fleet-token-old"`, `VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN: "fleet-token-new"`,
+		`clip-private-key.pem: "-----BEGIN EC PRIVATE KEY-----`,
+	} {
+		if !strings.Contains(log[secret:videoRoll], want) {
+			t.Fatalf("recreated Video Cloud Secret is missing %q", want)
+		}
+	}
+	adminRoll := strings.Index(log, "patch deployment cloud-admin --type=merge --patch-file=/dev/stdin")
+	if adminRoll < videoRoll {
+		t.Fatal("Cloud Admin must switch only after Video Cloud has the grace token")
 	}
 }
 
@@ -6809,7 +6861,9 @@ if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o json"*
   exit 0
 fi
 if [[ "$*" == *"get secret video-cloud-runtime --ignore-not-found=true -o name"* ]]; then
-  printf 'secret/video-cloud-runtime\n'
+  if [[ "${FAKE_VIDEO_SECRET_ABSENT:-}" != "1" ]]; then
+    printf 'secret/video-cloud-runtime\n'
+  fi
   exit 0
 fi
 if [[ "$*" == *"get secret cloud-admin-billing-client --ignore-not-found=true -o name"* ]]; then
@@ -6839,8 +6893,8 @@ if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-tem
   exit 0
 fi
 if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* ]]; then
-  if [[ -n "${FAKE_VIDEO_FLEET_CHECKSUM:-}" ]]; then
-    printf '%s|%s' "$FAKE_VIDEO_FLEET_CHECKSUM" "${FAKE_VIDEO_FLEET_ROLLOUT_STATUS:-1|1|1|1|1|1}"
+  if [[ "${FAKE_VIDEO_DEPLOYMENT_ABSENT:-}" != "1" && ( -n "${FAKE_VIDEO_FLEET_CHECKSUM:-}" || -n "${FAKE_VIDEO_FLEET_ROLLOUT_STATUS:-}" ) ]]; then
+    printf '%s|%s' "${FAKE_VIDEO_FLEET_CHECKSUM:-}" "${FAKE_VIDEO_FLEET_ROLLOUT_STATUS:-1|1|1|1|1|1}"
   fi
   exit 0
 fi

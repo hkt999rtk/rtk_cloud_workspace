@@ -2945,10 +2945,13 @@ func lkeFleetReadTokenRolloutPending(env map[string]string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("read Video Cloud Fleet token rollout checksum: %w", err)
 	}
-	fields := strings.Split(strings.TrimSpace(string(status)), "|")
-	if len(fields) == 0 || strings.TrimSpace(fields[0]) == "" {
+	raw := strings.TrimSpace(string(status))
+	if raw == "" {
 		return false, nil
 	}
+	// An existing deployment without the annotation still needs synchronization;
+	// only an empty kubectl response proves the deployment is absent.
+	fields := strings.Split(raw, "|")
 	if strings.TrimSpace(fields[0]) != lkeFleetReadTokenChecksum() || len(fields) != 7 {
 		return true, nil
 	}
@@ -3010,7 +3013,11 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 		if rotating {
 			primary, grace = previousToken, desiredToken
 		}
-		if err := lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", primary, grace); err != nil {
+		if !videoSecretFound {
+			if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, primary, grace)); err != nil {
+				return err
+			}
+		} else if err := lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", primary, grace); err != nil {
 			return err
 		}
 		if err := lkeRollVideoCloudFleetToken(env, primary, grace, rotating); err != nil {

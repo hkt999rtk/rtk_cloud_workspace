@@ -4137,6 +4137,14 @@ func k8sStatefulSetUpdateStrategy(kubeconfig, namespace, name string) (string, e
 }
 
 func waitK8SOnDeleteStatefulSetReady(kubeconfig, namespace, name, timeoutArg string) error {
+	return waitK8SOnDeleteStatefulSetReadyWith(func() ([]byte, error) {
+		cmd := exec.Command("kubectl", "-n", namespace, "get", name, "-o", "json")
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+		return cmd.CombinedOutput()
+	}, namespace, name, timeoutArg)
+}
+
+func waitK8SOnDeleteStatefulSetReadyWith(query func() ([]byte, error), namespace, name, timeoutArg string) error {
 	timeoutText := strings.TrimPrefix(timeoutArg, "--timeout=")
 	timeout, err := time.ParseDuration(timeoutText)
 	if err != nil || timeout <= 0 {
@@ -4146,9 +4154,7 @@ func waitK8SOnDeleteStatefulSetReady(kubeconfig, namespace, name, timeoutArg str
 	deadline := time.Now().Add(timeout)
 	var last string
 	for {
-		cmd := exec.Command("kubectl", "-n", namespace, "get", name, "-o", "json")
-		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
-		out, commandErr := cmd.CombinedOutput()
+		out, commandErr := query()
 		if commandErr != nil {
 			last = strings.TrimSpace(string(out))
 		} else {
