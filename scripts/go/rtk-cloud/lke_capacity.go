@@ -412,11 +412,15 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	if len(opts.workloads) == 0 && lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
 	}
-	edgeVMs := envIntFrom(env, "LKE_EDGE_HAPROXY_COUNT", 1)
-	if edgeVMs < 0 {
-		edgeVMs = 0
+	edgeVMs := 0
+	coturnVMs := 0
+	if len(opts.workloads) == 0 {
+		edgeVMs = envIntFrom(env, "LKE_EDGE_HAPROXY_COUNT", 1)
+		if edgeVMs < 0 {
+			edgeVMs = 0
+		}
+		coturnVMs = lkeCoturnVMCount(env)
 	}
-	coturnVMs := lkeCoturnVMCount(env)
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
 	fleetVolumes := 0
 	if len(opts.workloads) == 0 || lkeWorkloadSelected(env, opts, "video-cloud") {

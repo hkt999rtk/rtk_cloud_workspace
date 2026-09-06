@@ -241,8 +241,8 @@ func TestLKEProviderServicesCountsCoturnVM(t *testing.T) {
 func TestLKEProviderServicesSkipsFleetVolumeForUnrelatedTargetedDeploy(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME":       "video-cloud-staging",
-		"LKE_EDGE_HAPROXY_COUNT": "0",
-		"LKE_COTURN_VM_COUNT":    "0",
+		"LKE_EDGE_HAPROXY_COUNT": "1",
+		"LKE_COTURN_VM_COUNT":    "1",
 	}
 
 	services := lkeProviderServices(env, 2, provisionOptions{workloads: []string{"frontend"}})
@@ -251,6 +251,9 @@ func TestLKEProviderServicesSkipsFleetVolumeForUnrelatedTargetedDeploy(t *testin
 	}
 	if services.PostgresVolumes != 0 {
 		t.Fatalf("postgres volumes = %d, want 0 for a targeted frontend deploy", services.PostgresVolumes)
+	}
+	if services.EdgeVMs != 0 || services.CoturnVMs != 0 {
+		t.Fatalf("targeted frontend VMs = edge:%d coturn:%d, want zero", services.EdgeVMs, services.CoturnVMs)
 	}
 	if services.RequiredServices != 2 {
 		t.Fatalf("required services = %d, want only the 2 worker nodes", services.RequiredServices)
