@@ -224,6 +224,11 @@
 | `repos/rtk_cloud_contracts_doc/device_transport.md#REQ-CONTRACT-TRANSPORT-UNSUPPORTED-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-UNSUPPORTED-001` | `independent` | `a376a31bf21f` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/device_transport.md#REQ-CONTRACT-TRANSPORT-COMMAND-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-COMMAND-001` | `independent` | `c000ce461d0e` | `canonical` | `active` | `INT-VC-TRANSPORT-CONTRACT-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/device_transport.md#REQ-CONTRACT-TRANSPORT-CLIENT-001` | `FEAT-CONTRACT-DEVICE-TRANSPORT-001` | `REQ-CONTRACT-TRANSPORT-CLIENT-001` | `independent` | `e5f57c71b42a` | `canonical` | `active` | `INT-SDK-TRANSPORT-CONTRACT-001` | `test-services` |
+| `repos/rtk_cloud_contracts_doc/fleet_analytics.md#REQ-FLEET-ANALYTICS-DEFINITIONS-001` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001` | `independent` | `4df69d266757` | `canonical` | `planned` | — | — |
+| `repos/rtk_cloud_contracts_doc/fleet_analytics.md#REQ-FLEET-ANALYTICS-SCOPE-001` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-SCOPE-001` | `independent` | `79a12f7a30f0` | `canonical` | `planned` | — | — |
+| `repos/rtk_cloud_contracts_doc/fleet_analytics.md#REQ-FLEET-ANALYTICS-LIFECYCLE-001` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-LIFECYCLE-001` | `independent` | `54161c2f6901` | `canonical` | `planned` | — | — |
+| `repos/rtk_cloud_contracts_doc/fleet_analytics.md#REQ-FLEET-ANALYTICS-RETENTION-001` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-RETENTION-001` | `independent` | `395b8e275b0f` | `canonical` | `planned` | — | — |
+| `repos/rtk_cloud_contracts_doc/fleet_analytics.md#REQ-FLEET-ANALYTICS-QUALITY-001` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-QUALITY-001` | `independent` | `70f5f739959a` | `canonical` | `planned` | — | — |
 | `repos/rtk_cloud_contracts_doc/frontend_style.md#REQ-CONTRACT-FRONTEND-FOUNDATION-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-FOUNDATION-001` | `` | `8de1434c51b0` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/frontend_style.md#REQ-CONTRACT-FRONTEND-TONE-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-TONE-001` | `` | `deec881b93bc` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/frontend_style.md#REQ-CONTRACT-FRONTEND-COLOR-001` | `FEAT-CONTRACT-FRONTEND-STYLE-001` | `REQ-CONTRACT-FRONTEND-COLOR-001` | `` | `d3df0512b067` | `canonical` | `active` | `INT-FRONTEND-STYLE-001` | `test-services` |
@@ -466,6 +471,8 @@
 | `SPEC-CONTRACT-OPENAPI#executeDeveloperProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudId}/provisioning/jobs` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-SCOPE-001`, `REQ-CONTRACT-BATCH-DELEGATION-001` | `fab6aa513afb` |
 | `SPEC-CONTRACT-OPENAPI#uploadDeveloperProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudId}/provisioning/sources` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-SCOPE-001`, `REQ-CONTRACT-BATCH-RESULT-001` | `154fbdbcc336` |
 | `SPEC-CONTRACT-OPENAPI#validateDeveloperProvisioningSource` | `POST /api/developer/brand-clouds/{brandCloudId}/provisioning/validate` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-SCOPE-001`, `REQ-CONTRACT-BATCH-DELEGATION-001`, `REQ-CONTRACT-BATCH-RESULT-001` | `a6eed8a45706` |
+| `SPEC-CONTRACT-OPENAPI#listDeveloperFleetAttention` | `GET /api/developer/clouds/{cloudId}/fleet/attention` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `b3ad60da7647` |
+| `SPEC-CONTRACT-OPENAPI#getDeveloperFleetOverview` | `GET /api/developer/clouds/{cloudId}/fleet/overview` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `3e3fcbb75d09` |
 | `SPEC-CONTRACT-OPENAPI#createDeveloperAppTestBundle` | `POST /api/developer/pki/test-bundles/app` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `bbe682491354` |
 | `SPEC-CONTRACT-OPENAPI#createDeveloperDeviceTestBundle` | `POST /api/developer/pki/test-bundles/device` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `26a38fbe59ac` |
 | `SPEC-CONTRACT-OPENAPI#renewDeviceCertificate` | `POST /api/device/renew_certificate` | `FEAT-SDK-TRANSPORT-001` | `REQ-E2E-SDK-ERROR-001` | `54828939e284` |
@@ -1007,6 +1014,8 @@
 | `SPEC-CA-OPENAPI#actOnScopedBrandCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/{planID}/{action}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `4ede0b15eb57` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsets` | `GET /api/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `c1be29c8622c` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsetsByChipsetId` | `GET /api/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `f67498038c78` |
+| `SPEC-CA-OPENAPI#getCloudFleetAttention` | `GET /api/developer/clouds/{brandCloudID}/fleet/attention` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `c48ab1479009` |
+| `SPEC-CA-OPENAPI#getCloudFleetOverview` | `GET /api/developer/clouds/{brandCloudID}/fleet/overview` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `912cd87adc62` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleApp` | `POST /api/developer/pki/test-bundles/app` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `2989935bb81d` |
 | `SPEC-CA-OPENAPI#postApiDeveloperPKITestBundleDevice` | `POST /api/developer/pki/test-bundles/device` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `40dc8bb97acc` |
 | `SPEC-CA-OPENAPI#postApiDeveloperProductCollaboratorInvitationsAccept` | `POST /api/developer/product-collaborator-invitations/accept` | `FEAT-CONTRACT-AUTHZ-001` | `REQ-CONTRACT-PRODUCT-COLLAB-001` | `78492df24537` |
@@ -1017,9 +1026,11 @@
 | `SPEC-CA-OPENAPI#postApiDevicesByIdDeactivate` | `POST /api/devices/{id}/deactivate` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `d0996152c58a` |
 | `SPEC-CA-OPENAPI#postApiDevicesByIdProvision` | `POST /api/devices/{id}/provision` | `FEAT-CA-OPS-001` | `REQ-UI-CA-BATCH-002` | `4ba5acea1cf7` |
 | `SPEC-CA-OPENAPI#getApiDevicesByIdTelemetry` | `GET /api/devices/{id}/telemetry` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `41e87b2690f0` |
+| `SPEC-CA-OPENAPI#getApiFleetAttention` | `GET /api/fleet/attention` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `05b9a3c4baaa` |
 | `SPEC-CA-OPENAPI#getApiFleetDevices` | `GET /api/fleet/devices` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `8ddefb06dd82` |
 | `SPEC-CA-OPENAPI#getApiFleetFirmwareDistribution` | `GET /api/fleet/firmware-distribution` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `87e57fda7b5c` |
 | `SPEC-CA-OPENAPI#getApiFleetHealthSummary` | `GET /api/fleet/health-summary` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `0486965558f1` |
+| `SPEC-CA-OPENAPI#getApiFleetOverview` | `GET /api/fleet/overview` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `15b9ef8c56c6` |
 | `SPEC-CA-OPENAPI#getApiFleetStreamStats` | `GET /api/fleet/stream-stats` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `8c8ca3a0cfd4` |
 | `SPEC-CA-OPENAPI#getApiFleetSummary` | `GET /api/fleet/summary` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `5c342a270c55` |
 | `SPEC-CA-OPENAPI#getApiGroups` | `GET /api/groups` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-001` | `f4a991e1535f` |
