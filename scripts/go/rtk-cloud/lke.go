@@ -3261,9 +3261,12 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 }
 
 func lkeApplyVideoCloudPrometheus(env map[string]string, opts provisionOptions) error {
+	// Prometheus is a shared singleton. A targeted Video Cloud rollout must not
+	// replace its ConfigMap with only the selected workload's scrape jobs.
+	sharedOpts := provisionOptions{}
 	for _, manifest := range []string{
-		lkeVideoCloudPrometheusConfigManifest(env, opts),
-		lkeVideoCloudPrometheusDeploymentManifest(env, opts),
+		lkeVideoCloudPrometheusConfigManifest(env, sharedOpts),
+		lkeVideoCloudPrometheusDeploymentManifest(env, sharedOpts),
 		lkeVideoCloudPrometheusServiceManifest(env),
 	} {
 		if err := kubectlApply(manifest); err != nil {
