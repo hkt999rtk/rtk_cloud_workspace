@@ -853,6 +853,68 @@ func TestLKECurrentFleetReadTokenRecoversPartialRotation(t *testing.T) {
 	}
 }
 
+func TestLKECurrentFleetReadTokenValidation(t *testing.T) {
+	tests := []struct {
+		name       string
+		videoToken string
+		adminToken string
+		want       string
+		wantErr    string
+	}{
+		{name: "empty", want: ""},
+		{name: "invalid base64", videoToken: "%", adminToken: "%", wantErr: "decode Fleet token value"},
+		{name: "multiple non-current", videoToken: base64.StdEncoding.EncodeToString([]byte("old-a")), adminToken: base64.StdEncoding.EncodeToString([]byte("old-b")), wantErr: "multiple non-current tokens"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeKubectl(t)
+			oldCanonical := activeCanonicalSecretStore
+			oldCache := lkeRuntimeSecretCache
+			activeCanonicalSecretStore = false
+			lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+			t.Cleanup(func() {
+				activeCanonicalSecretStore = oldCanonical
+				lkeRuntimeSecretCache = oldCache
+			})
+			t.Setenv("FAKE_VIDEO_FLEET_READ_TOKEN_B64", tc.videoToken)
+			t.Setenv("FAKE_ADMIN_FLEET_READ_TOKEN_B64", tc.adminToken)
+
+			got, err := lkeCurrentFleetReadToken(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("token = %q, error = %v", got, err)
+			}
+		})
+	}
+}
+
+func TestLKEFleetReadTokenRotationRequiresCompatibleVideoImage(t *testing.T) {
+	fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "")
+
+	err := lkeSyncFleetReadTokenConsumers(
+		map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"},
+		"fleet-token-old",
+		provisionOptions{workloads: []string{"cloud-admin"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "LKE_VIDEO_CLOUD_IMAGE is required") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *testing.T) {
 	logPath := fakeKubectl(t)
 	oldCanonical := activeCanonicalSecretStore
