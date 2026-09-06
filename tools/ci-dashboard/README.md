@@ -22,13 +22,16 @@ Useful flags:
 
 ```text
 -address 127.0.0.1:8787
--poll-interval 1m
+-poll-interval 20m
 -github-api https://api.github.com
+-webhook-secret-file ~/.config/rtk-ci-dashboard/webhook-secret
 -workspace /path/to/workspace
 ```
 
-The browser reads a cached snapshot every five seconds. The Go server polls GitHub once per minute by default and updates elapsed counters without querying GitHub every second.
+The browser reads a cached snapshot every five seconds. The Go server polls GitHub every 20 minutes by default and updates elapsed counters without querying GitHub every second.
 GitHub polling is demand-driven: the server starts refreshing when a browser reads the snapshot and stops issuing periodic GitHub API requests about 15 seconds after the last dashboard client activity.
+
+GitHub webhooks can trigger an immediate asynchronous refresh through `POST /webhooks/github`. The endpoint accepts `pull_request`, `workflow_run`, and `workflow_job` events and requires an HMAC-SHA256 signature using the secret in `~/.config/rtk-ci-dashboard/webhook-secret`. Periodic polling remains as a fallback for missed webhook deliveries.
 
 ## Install and run as a host service (macOS)
 

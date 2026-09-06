@@ -141,6 +141,34 @@ func TestClientActivityWakesPollerAndExpires(t *testing.T) {
 	<-done
 }
 
+func TestWebhookWakesPollerWithoutClientActivity(t *testing.T) {
+	requestSeen := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case requestSeen <- struct{}{}:
+		default:
+		}
+		fmt.Fprint(w, `{"workflow_runs":[]}`)
+	}))
+	defer server.Close()
+
+	p := newPoller(&githubClient{baseURL: server.URL, token: "x", http: server.Client()}, []Repository{{Owner: "hkt999rtk", Name: "repo"}}, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		p.run(ctx)
+		close(done)
+	}()
+	p.triggerWebhookRefresh()
+	select {
+	case <-requestSeen:
+	case <-time.After(time.Second):
+		t.Fatal("webhook did not trigger an immediate refresh")
+	}
+	cancel()
+	<-done
+}
+
 func TestCardFromJobKeepsHierarchyAndSchedulingMetadata(t *testing.T) {
 	started := time.Date(2026, 9, 1, 1, 2, 3, 0, time.UTC)
 	parent := Card{Key: "hkt999rtk/repo/7", Kind: "run", Owner: "hkt999rtk", Repo: "repo", RunID: 7, RunNumber: 8, Attempt: 2, Workflow: "CI", CreatedAt: started.Add(-time.Minute)}
