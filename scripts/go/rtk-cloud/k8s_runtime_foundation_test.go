@@ -98,3 +98,41 @@ func TestSharedKubernetesPlacementUsesPerWorkloadNodeClasses(t *testing.T) {
 		}
 	}
 }
+
+func TestTargetedKubernetesPlacementScopesFleetToVideoCloud(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kubectl.log")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \""+logPath+"\"\ncase \"$*\" in *\" get \"*) printf 'present\\n' ;; esac\n")
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	env := map[string]string{
+		"DEPLOYMENT_ARCHITECTURE": "kubernetes", "CLOUD_STACK_NAME": "video-cloud-dev",
+		"DEFAULT_WORKLOAD_NODE_CLASS": "general", "FLEET_VALKEY_NODE_CLASS": "database",
+	}
+
+	if err := applySharedKubernetesNodeClassPlacement(provisionContext{
+		Env: env, Opts: provisionOptions{workloads: []string{"frontend"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if log := readTestFile(t, logPath); strings.Contains(log, "fleet-valkey") {
+		t.Fatalf("targeted frontend placement touched Fleet resources:\n%s", log)
+	}
+
+	writeTestFile(t, logPath, "")
+	if err := applySharedKubernetesNodeClassPlacement(provisionContext{
+		Env: env, Opts: provisionOptions{workloads: []string{"video-cloud"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{"patch statefulset fleet-valkey", "patch deployment fleet-valkey-exporter"} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("targeted Video Cloud placement missing %q:\n%s", want, log)
+		}
+	}
+}

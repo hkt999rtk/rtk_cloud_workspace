@@ -251,8 +251,6 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 	targets = append(targets,
 		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "redis", "REDIS"},
 		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "redis-exporter", "REDIS_EXPORTER"},
-		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "statefulset", "fleet-valkey", "FLEET_VALKEY"},
-		placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "fleet-valkey-exporter", "FLEET_VALKEY_EXPORTER"},
 		placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-prometheus", "PROMETHEUS"},
 		placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-loki", "LOKI"},
 		placementTarget{lkeNamespaceName(ctx.Env, "observability"), "deployment", "video-cloud-grafana", "GRAFANA"},
@@ -260,6 +258,12 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 		placementTarget{videoNS, "statefulset", "mqtt", "MQTT"},
 		placementTarget{lkeNamespaceName(ctx.Env, "secrets"), "statefulset", "openbao", "OPENBAO"},
 	)
+	if len(ctx.Opts.workloads) == 0 || lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+		targets = append(targets,
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "statefulset", "fleet-valkey", "FLEET_VALKEY"},
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "fleet-valkey-exporter", "FLEET_VALKEY_EXPORTER"},
+		)
+	}
 	activeTargets := make([]placementTarget, 0, len(targets))
 	for _, target := range targets {
 		found, err := kubectlCombinedOutput(nil, "-n", target.namespace, "get", target.kind, target.name, "--ignore-not-found=true", "-o", "name")
