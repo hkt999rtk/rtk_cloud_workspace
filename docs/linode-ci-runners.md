@@ -160,13 +160,27 @@ fresh tokens and replacement of the old offline registrations.
 
 ## Current Workspace CI Boundary
 
-Pull requests, pushes to `main`, and explicit workflow dispatches use the shared
-Linux X64 capability pool. Linux jobs select
+Pull-request validation, scheduled qualification, and explicit workflow
+dispatches use the shared Linux X64 capability pool. Linux jobs select
 `[self-hosted, Linux, X64]`; workflows must not name an individual runner such
 as `ci-0`. GitHub may assign any online runner that reports all three labels.
 Changed-path selection still limits automatic pull-request work to affected
 workspace, service, catalog, gitlink, and UI jobs. Unrelated coverage modules
 and integration services are skipped.
+
+Workspace validation runs before merge: Go Coverage Governance, OpenAPI Contract
+Validation, Submodule Pointer Check, Cloud Admin E2E, and Local CI Dashboard do
+not run again on a `push` to `main`. Their pull-request filters and checks remain
+in force, including the existing required checks and strict up-to-date branch
+protection. Merge through a validated PR; a direct push to `main` is not a
+substitute for that gate.
+
+Cloud Admin's scheduled and release-triggered E2E, other scheduled qualification,
+and explicit manual workflows retain their existing triggers. Service-repository
+build/release workflows and staging image provenance are unchanged. After merge,
+verify the merge commit and follow any required build/publication or authorized
+deployment verification; do not dispatch the PR suite again merely because the
+PR merged. A release build running after merge is not duplicate PR validation.
 
 The same capability policy applies to service-repository Linux CI. macOS, ARM,
 hardware, deployment, and staging-mutating jobs retain their dedicated labels

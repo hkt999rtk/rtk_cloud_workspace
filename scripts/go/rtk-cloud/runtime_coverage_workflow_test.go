@@ -10,7 +10,47 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, events := range map[string][]string{
+		"go-coverage-governance.yml":  {"pull_request", "workflow_dispatch"},
+		"contracts-openapi.yml":       {"pull_request"},
+		"submodule-pointer-check.yml": {"pull_request", "workflow_dispatch"},
+		"cloud-admin-e2e.yml":         {"pull_request", "workflow_dispatch", "schedule", "release"},
+		"local-ci-dashboard.yml":      {"pull_request", "workflow_dispatch"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var workflow struct {
+				On map[string]yaml.Node `yaml:"on"`
+			}
+			if err := yaml.Unmarshal(raw, &workflow); err != nil {
+				t.Fatal(err)
+			}
+			if _, exists := workflow.On["push"]; exists {
+				t.Fatal("validation must not run again on push after a validated PR merge")
+			}
+			if len(workflow.On) != len(events) {
+				t.Fatalf("unexpected workflow events: got %v, want %v", workflow.On, events)
+			}
+			for _, event := range events {
+				if _, exists := workflow.On[event]; !exists {
+					t.Errorf("missing %s trigger", event)
+				}
+			}
+		})
+	}
+}
 
 func TestCloudAdminE2EInitializesCanonicalRequirementSource(t *testing.T) {
 	workspace, err := workspaceRoot()
