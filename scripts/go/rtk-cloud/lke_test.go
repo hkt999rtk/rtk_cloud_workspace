@@ -726,6 +726,50 @@ func TestLKEVideoCloudRuntimeChecksumTracksAPIBaseURL(t *testing.T) {
 	}
 }
 
+func TestLKEFleetReadTokenRotationRollsBothServices(t *testing.T) {
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-a"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "fleet-rollout-test")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":       "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":     "video.example.test",
+		"ACCOUNT_MANAGER_DOMAIN": "account.example.test",
+		"CLOUD_ADMIN_DOMAIN":     "admin.example.test",
+	}
+
+	videoBefore := lkeVideoCloudRuntimeChecksum(env)
+	adminBefore := lkeCloudAdminRuntimeChecksum()
+	lkeRuntimeSecretCache["fleet-read-token"] = "fleet-token-b"
+	videoAfter := lkeVideoCloudRuntimeChecksum(env)
+	adminAfter := lkeCloudAdminRuntimeChecksum()
+	if videoBefore == videoAfter {
+		t.Fatal("Fleet token rotation must change the Video Cloud runtime checksum")
+	}
+	if adminBefore == adminAfter {
+		t.Fatal("Fleet token rotation must change the Cloud Admin runtime checksum")
+	}
+
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key != "video-cloud" && workload.Key != "cloud-admin" {
+			continue
+		}
+		manifest := lkeDeploymentManifest(env, workload, nil)
+		want := videoAfter
+		if workload.Key == "cloud-admin" {
+			want = adminAfter
+		}
+		if !strings.Contains(manifest, `rtk.realtek.com/runtime-checksum: "`+want+`"`) {
+			t.Fatalf("%s deployment missing rotated runtime checksum:\n%s", workload.Key, manifest)
+		}
+	}
+}
+
 func TestValidateRuntimeCoverageVideoCloudAPIBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -8976,6 +8976,9 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "cloud-admin" {
+		templateAnnotations = fmt.Sprintf(`      annotations:
+        rtk.realtek.com/runtime-checksum: %q
+`, lkeCloudAdminRuntimeChecksum())
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
             - name: VIDEO_CLOUD_BASE_URL
@@ -9129,6 +9132,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 	return lkeConfigChecksum(
 		lkeRuntimeSecretValue("postgres"),
 		lkeRuntimeSecretValue("video-auth"),
+		lkeRuntimeSecretValue("fleet-read-token"),
 		lkeRuntimeSecretValue("mqtt-broker-auth"),
 		lkeRuntimeSecretValue("mqtt-server-password"),
 		lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()),
@@ -9146,6 +9150,13 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"),
 		lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"),
 		strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)),
+	)
+}
+
+func lkeCloudAdminRuntimeChecksum() string {
+	return lkeConfigChecksum(
+		lkeBillingServiceToken(),
+		lkeRuntimeSecretValue("fleet-read-token"),
 	)
 }
 
