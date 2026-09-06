@@ -3509,6 +3509,37 @@ func TestEnsureLKEPostgresNodePoolCreatesReplacementForImmutableTypeChange(t *te
 	}
 }
 
+func TestEnsureLKEDatabaseNodePoolExistsOnlyCreatesWhenMissing(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	curlLog := fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"id":918100,"type":"g6-standard-8","count":1,"label":"postgres","labels":{"rtk.io/node-class":"database"},"taints":[{"key":"rtk.io/node-class","value":"database","effect":"NoSchedule"}]}`,
+	})
+	env := map[string]string{
+		"LKE_POSTGRES_DEDICATED_NODE_POOL": "true",
+		"LKE_POSTGRES_NODE_TYPE":           "g6-standard-8",
+		"LKE_POSTGRES_NODE_COUNT":          "1",
+	}
+	pools := []lkeNodePool{{
+		ID: 917000, Type: "g6-standard-4", Count: 2,
+		Labels: map[string]string{"rtk.io/node-class": "general"},
+	}}
+
+	if err := ensureLKEDatabaseNodePoolExists(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, "test-token", "12345", pools); err != nil {
+		t.Fatal(err)
+	}
+
+	curlCalls := readTestFile(t, curlLog)
+	if !strings.Contains(curlCalls, "POST /lke/clusters/12345/pools") {
+		t.Fatalf("expected missing database pool create, got:\n%s", curlCalls)
+	}
+	if strings.Contains(curlCalls, "PUT ") || strings.Contains(curlCalls, "DELETE ") {
+		t.Fatalf("targeted ensure must not resize or prune pools, got:\n%s", curlCalls)
+	}
+	if got := env["LKE_POSTGRES_NODE_POOL_ID"]; got != "918100" {
+		t.Fatalf("database pool id = %s, want 918100", got)
+	}
+}
+
 func TestEnsureLKEPostgresNodePoolFallsBackFromStaleIDAndPrunesDuplicates(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	curlLog := fakeLinodeCurl(t, map[string]string{

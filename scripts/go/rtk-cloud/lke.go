@@ -9690,6 +9690,69 @@ func ensureLKENodePool(paths provisionPaths, env map[string]string) error {
 	return ensureLKEPostgresNodePool(paths, env, token, clusterID, pools)
 }
 
+func lkeTargetedFleetDatabasePoolRequired(env map[string]string, opts provisionOptions) bool {
+	if !lkeWorkloadSelected(env, opts, "video-cloud") {
+		return false
+	}
+	class := firstNonEmpty(env["FLEET_VALKEY_NODE_CLASS"], env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
+	return class == "database" && lkePostgresDedicatedNodePoolEnabled(env)
+}
+
+// ensureLKETargetedFleetDatabaseNodePool creates only a missing database pool.
+// Targeted workload deploys must not resize or prune shared cluster pools.
+func ensureLKETargetedFleetDatabaseNodePool(paths provisionPaths, env map[string]string) error {
+	token := resolveLinodeToken(paths.EnvRoot)
+	if token == "" {
+		fmt.Fprintln(os.Stderr, "[lke] skipping targeted database node pool ensure: LINODE_TOKEN is not available")
+		return nil
+	}
+	clusterID := lkeClusterID(paths, env)
+	if clusterID == "" {
+		cluster, err := discoverLKECluster(token, paths, env, false)
+		if err != nil {
+			return err
+		}
+		clusterID = strconv.Itoa(cluster.ID)
+	}
+	pools, err := listLKENodePools(token, clusterID)
+	if err != nil {
+		if !isLinodeNotFoundError(err) {
+			return err
+		}
+		cluster, recoverErr := recoverStaleLKECluster(token, paths, env)
+		if recoverErr != nil {
+			return recoverErr
+		}
+		clusterID = strconv.Itoa(cluster.ID)
+		pools, err = listLKENodePools(token, clusterID)
+		if err != nil {
+			return err
+		}
+	}
+	return ensureLKEDatabaseNodePoolExists(paths, env, token, clusterID, pools)
+}
+
+func ensureLKEDatabaseNodePoolExists(paths provisionPaths, env map[string]string, token, clusterID string, pools []lkeNodePool) error {
+	for _, pool := range pools {
+		if lkeNodePoolHasPostgresPlacement(pool) {
+			return nil
+		}
+	}
+	created, err := createLKEPostgresNodePool(token, clusterID, lkePostgresNodePoolPayload(env))
+	if err != nil {
+		return err
+	}
+	desiredType := lkePostgresNodePoolType(env)
+	desiredCount := lkePostgresNodePoolCount(env)
+	fmt.Fprintf(os.Stderr, "[lke] created missing database node pool %d type=%s count=%d for targeted Fleet deployment\n", created.ID, desiredType, desiredCount)
+	lkeSetPostgresNodePoolEnv(env, created.ID, desiredType, desiredCount)
+	return lkePersistStackEnvValues(paths.EnvRoot, map[string]string{
+		"LKE_POSTGRES_NODE_POOL_ID": strconv.Itoa(created.ID),
+		"LKE_POSTGRES_NODE_TYPE":    desiredType,
+		"LKE_POSTGRES_NODE_COUNT":   strconv.Itoa(desiredCount),
+	})
+}
+
 func ensureLKEGeneralNodePool(env map[string]string, token, clusterID string, pools []lkeNodePool) error {
 	rawCount := firstNonEmpty(env["LKE_GENERAL_NODE_COUNT"], "0")
 	desiredCount, err := strconv.Atoi(rawCount)

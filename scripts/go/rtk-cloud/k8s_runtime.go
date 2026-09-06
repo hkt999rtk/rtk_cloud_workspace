@@ -135,10 +135,13 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Enabled: func(ctx provisionContext) bool {
 				return provider.Name() == "lke" &&
 					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy) &&
-					len(ctx.Opts.workloads) == 0 &&
+					(len(ctx.Opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(ctx.Env, ctx.Opts)) &&
 					os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") != "1"
 			},
 			Run: func(ctx provisionContext) error {
+				if len(ctx.Opts.workloads) > 0 {
+					return ensureLKETargetedFleetDatabaseNodePool(ctx.Paths, ctx.Env)
+				}
 				return ensureLKENodePool(ctx.Paths, ctx.Env)
 			},
 		},
