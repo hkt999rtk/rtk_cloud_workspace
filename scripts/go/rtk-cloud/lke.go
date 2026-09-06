@@ -2817,6 +2817,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := lkeApplyFleetAnalyticsRuntime(env); err != nil {
 			return err
 		}
+		if err := lkeApplyVideoCloudPrometheus(env, opts); err != nil {
+			return err
+		}
 		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(env)); err != nil {
 			return err
 		}
@@ -3248,22 +3251,26 @@ func lkeApplyVideoCloudAuxiliaryServices(env map[string]string, opts provisionOp
 	if err := lkeWaitForRollouts(rollouts); err != nil {
 		return err
 	}
-	if err := kubectlApply(lkeVideoCloudPrometheusConfigManifest(env, opts)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeVideoCloudPrometheusDeploymentManifest(env, opts)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeVideoCloudPrometheusServiceManifest(env)); err != nil {
-		return err
-	}
-	if err := runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-prometheus", "--timeout", firstNonEmpty(os.Getenv("LKE_PROMETHEUS_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+	if err := lkeApplyVideoCloudPrometheus(env, opts); err != nil {
 		return err
 	}
 	if !lkeWorkloadSelected(env, opts, "cloud-admin") {
 		return nil
 	}
 	return lkeApplyGrafana(env)
+}
+
+func lkeApplyVideoCloudPrometheus(env map[string]string, opts provisionOptions) error {
+	for _, manifest := range []string{
+		lkeVideoCloudPrometheusConfigManifest(env, opts),
+		lkeVideoCloudPrometheusDeploymentManifest(env, opts),
+		lkeVideoCloudPrometheusServiceManifest(env),
+	} {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "observability"), "rollout", "status", "deployment/video-cloud-prometheus", "--timeout", firstNonEmpty(os.Getenv("LKE_PROMETHEUS_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 func lkeConfigureEMQXBilling(paths provisionPaths, env map[string]string) error {

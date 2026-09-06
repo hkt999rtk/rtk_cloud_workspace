@@ -1435,11 +1435,13 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 		"name: fleet-valkey",
 		"name: fleet-valkey-exporter",
 		"name: allow-fleet-valkey-clients",
+		"name: video-cloud-prometheus-config",
 		"name: allow-cloud-admin-video-cloud-api",
 		"name: video-cloud-runtime",
 		"VIDEO_CLOUD_FLEET_READ_TOKEN:",
 		"name: cloud-admin-billing-client",
 		"ARGS -n video-cloud-staging-platform rollout status statefulset/fleet-valkey",
+		"ARGS -n video-cloud-staging-observability rollout status deployment/video-cloud-prometheus",
 	} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted fleet dependency apply missing %q:\n%s", want, log)

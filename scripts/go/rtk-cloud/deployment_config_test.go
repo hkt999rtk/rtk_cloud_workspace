@@ -32,6 +32,24 @@ func TestDeploymentRuntimeEndpointsPreferExplicitServiceDomains(t *testing.T) {
 	}
 }
 
+func TestDeploymentLegacyLKEValuesEnablesDatabasePoolForFleet(t *testing.T) {
+	values := map[string]string{
+		"DEPLOYMENT_ADAPTER":                  "lke",
+		"POSTGRES_NODE_CLASS":                 "general",
+		"FLEET_VALKEY_NODE_CLASS":             "database",
+		"NODE_CLASS_DATABASE_EFFECTIVE_COUNT": "1",
+		"LKE_DATABASE_NODE_TYPE":              "g6-standard-8",
+	}
+
+	legacy := deploymentLegacyLKEValues(values, "staging")
+	if legacy["LKE_POSTGRES_DEDICATED_NODE_POOL"] != "true" {
+		t.Fatalf("database pool gate = %q, want true for Fleet database placement", legacy["LKE_POSTGRES_DEDICATED_NODE_POOL"])
+	}
+	if legacy["LKE_POSTGRES_NODE_COUNT"] != "1" {
+		t.Fatalf("database node count = %q, want 1", legacy["LKE_POSTGRES_NODE_COUNT"])
+	}
+}
+
 func TestDeploymentRuntimeEndpointsDeriveLegacyDomains(t *testing.T) {
 	endpoints := deploymentRuntimeEndpoints(map[string]string{
 		"CLOUD_STACK_NAME":      "video-cloud-staging",
