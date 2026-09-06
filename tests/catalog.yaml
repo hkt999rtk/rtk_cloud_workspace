@@ -37,7 +37,7 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
-  - { <<: *ui_smoke, id: UI-CA-PROVISIONING-RET-001, title: Retired CSV provisioning console routes remain unavailable, source: repos/rtk_cloud_admin/web/e2e/enterprise-console.spec.mjs, selector: "[UI-CA-PROVISIONING-RET-001]", tags: [smoke, enterprise], verifies: [REQ-UI-CA-ENTERPRISE-PROVISIONING-RETIRED-001] }
+  - { <<: *ui_smoke, id: UI-CA-PROVISIONING-RET-001, title: Retired CSV provisioning console routes remain unavailable, source: repos/rtk_cloud_admin/web/e2e/enterprise-console.spec.mjs, selector: "[UI-CA-PROVISIONING-RET-001]", tags: [smoke, enterprise], verifies: [REQ-UI-CA-CHIPSET-006] }
   - { <<: *ui_smoke, id: UI-CA-CONSOLE-PERF-001, title: Console navigation performance stays within the interactive budget, source: repos/rtk_cloud_admin/web/e2e/console-navigation-performance.spec.mjs, selector: "[UI-CA-CONSOLE-PERF-001]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
   - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-001, title: Console navigation remains available, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-001]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
   - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-002, title: Console navigation preserves the active destination, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-002]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
