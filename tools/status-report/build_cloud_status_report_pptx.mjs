@@ -317,10 +317,10 @@ async function slideMajorTopics(p, payload) {
   await addHeader(slide, payload, "五個面向", "MAJOR TOPICS");
   const topics = [
     ["1", "Why this cloud exists", "先說 Realtek platform cloud, brand cloud, device / user 的關係，以及它怎麼支援 module selling。"],
-    ["2", "Schedule and release path", "5/1 到 8/1 loading test，再到 Alpha, Beta, Public；每個 gate 要看什麼，現在卡在哪裡。"],
+    ["2", "Schedule and release path", "5/1 到 8/1 loading evidence、9 月 internal staging test，再到 10 月中旬 production target；每個 gate 都以 evidence 判定。"],
     ["3", "Portal Web and sales loop", "Portal Web 用來看客戶在找什麼，內容要補什麼，demo / PoC lead 有沒有真的進來。"],
     ["4", "Technical and security design", "WebRTC/video storage, MQTT/shadow, PKI, STRIDE, threat model，說清楚設計與目前缺口。"],
-    ["5", "Deployment, cost, and support", "K8s runtime, initial cost, payment ownership, operation backup, alpha/beta 支援與 ongoing coverage。"],
+    ["5", "Deployment, cost, and support", "K8s runtime, initial cost, payment ownership, operation backup, September tester 支援與 production coverage。"],
   ];
   topics.forEach((t, i) => {
     const x = 110;
@@ -340,9 +340,9 @@ async function slideOperationalTransition(p, payload) {
   await addBackground(slide, payload, "cover");
   await addImage(slide, payload.masterAssets.logo, { x: 72, y: 58, w: 205, h: 42 }, "contain");
   addText(slide, "Topic 2", { x: 88, y: 215, w: 300, h: 34 }, { size: 24, color: C.teal, bold: true, face: FONT_EN });
-  addText(slide, "Operational Cloud 目前進度與 8 月路徑", { x: 88, y: 270, w: 830, h: 58 }, { size: 36, color: C.navy, bold: true });
-  addText(slide, "接下來先看目前狀態、schedule path、loading-test readiness、video gate 與 staging-to-production 架構差距。", { x: 92, y: 365, w: 850, h: 62 }, { size: 18, color: C.black });
-  addText(slide, "重點：Aug.1 先完成 100,000 devices + 5,000 video cameras loading test，接著用一個月 alpha 和一個月 beta 把 SDK、pilot customer 與 public path 接起來。", { x: 92, y: 485, w: 900, h: 58 }, { size: 17, color: C.navy, bold: true, fill: "#FFF6D8CC" });
+  addText(slide, "Operational Cloud 目前進度與 Production 路徑", { x: 88, y: 270, w: 900, h: 58 }, { size: 36, color: C.navy, bold: true });
+  addText(slide, "接下來先看目前狀態、schedule path、loading-test evidence、September internal test 與 staging-to-production 差距。", { x: 92, y: 365, w: 900, h: 62 }, { size: 18, color: C.black });
+  addText(slide, "重點：9 月聚焦 staging 內部測試，部署版本與操作結果需留存證據；production 目標為 2026 年 10 月中旬，promotion 仍須通過 release、backup/restore、security 與 operation readiness gates。", { x: 92, y: 485, w: 930, h: 62 }, { size: 17, color: C.navy, bold: true, fill: "#FFF6D8CC" });
   return slide;
 }
 
@@ -449,7 +449,7 @@ async function slideCustomerUseCaseFit(p, payload) {
 async function slide04(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Schedule Path：May 1 到 Public", "SCHEDULE");
+  await addHeader(slide, payload, "Schedule Path：May 1 到 Production Target", "SCHEDULE");
   const startX = 78;
   const y = 330;
   const step = 130;
@@ -465,14 +465,14 @@ async function slide04(p, payload) {
       addText(slide, "目前位置", { x: x - 38, y: 438, w: 92, h: 22 }, { size: 12, color: C.amber, bold: true, align: "center" });
     }
   });
-  addText(slide, "Aug.1 gate: 100,000 IoT devices + 5,000 video cameras loading test; next: Aug alpha with SDK, Sep beta with SDK + pilot customer, then public.", { x: 90, y: 565, w: 1040, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  addText(slide, "Current: September internal staging test. Production target: mid-October 2026, after release, backup/restore, security, rollback, monitoring, and operation-owner evidence is accepted.", { x: 90, y: 565, w: 1040, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
   return slide;
 }
 
 async function slideReleaseGateDefinition(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Release Gate Definition", "AUG.1 / ALPHA / BETA / PUBLIC");
+  await addHeader(slide, payload, "Release Gate Definition", "LOAD EVIDENCE / INTERNAL TEST / READINESS / PRODUCTION");
   addText(slide, "每個階段都要有明確通過條件；日期只是排程，gate 要靠 evidence 判斷。", { x: 85, y: 154, w: 1110, h: 36 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const gates = payload.releaseGateDefinitions || [];
@@ -1019,6 +1019,51 @@ async function slide14(p, payload) {
   addText(slide, "Main HTTPS path: HAProxy -> NGINX ingress -> public application routes", { x: 84, y: 555, w: 510, h: 22 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleBlue, face: FONT_EN });
   addText(slide, "Main MQTTS path: HAProxy -> MQTT NodePort -> MQTT StatefulSet", { x: 650, y: 555, w: 500, h: 22 }, { size: 10, color: C.navy, bold: true, align: "center", fill: C.paleTeal, face: FONT_EN });
   addText(slide, "Source: cloud_env/staging/lke/env/stack.env, state/video-cloud-staging.state.json, edge-haproxy/upstreams.json. Secrets and kubeconfig contents are redacted.", { x: 74, y: 630, w: 1130, h: 22 }, { size: 9.5, color: C.muted, align: "center", face: FONT_EN });
+  return slide;
+}
+
+async function slideStagingTestAccess(p, payload) {
+  const slide = p.slides.add();
+  const access = payload.stagingTestAccess || {};
+  await addBackground(slide, payload);
+  await addHeader(slide, payload, "September internal staging test access", "TESTER ACCESS / PRODUCTION TARGET");
+
+  addShape(slide, { x: 62, y: 154, w: 1156, h: 58, fill: "#FFF1EB", line: C.red });
+  addText(slide, "INTERNAL TEST ONLY — September 2026", { x: 82, y: 166, w: 390, h: 28 }, { size: 18, color: C.red, bold: true, face: FONT_EN });
+  addText(slide, "This staging environment is not production. Use test accounts/data only; services or data may be updated or reset without production SLA.", { x: 474, y: 164, w: 720, h: 34 }, { size: 12, color: C.black, bold: true, align: "center", face: FONT_EN });
+
+  const endpoints = [
+    ["Tester Portal", access.portalUrl || "https://admin.video-cloud-staging.realtekconnect.com/login", "Start here: sign in and run the Cloud Admin / operator workflows.", C.paleBlue],
+    ["Video Cloud service", access.serviceUrl || "https://video-cloud-staging.realtekconnect.com", "Use as the Video Cloud API base URL for SDK, sample app, and integration tests.", C.paleTeal],
+    ["Account Manager API", access.accountManagerUrl || "https://account-manager.video-cloud-staging.realtekconnect.com", "Supporting identity, tenant, user, device registry, and provisioning API.", C.pale],
+  ];
+  endpoints.forEach((row, i) => {
+    const y = 240 + i * 92;
+    addShape(slide, { x: 76, y, w: 1128, h: 72, fill: row[3], line: C.line });
+    const health = (payload.linodeHealth || []).find((check) =>
+      new URL(check.url).origin === new URL(row[1]).origin && check.check === "health",
+    );
+    addStatusDot(slide, health?.result || "BLOCKED", 98, y + 30);
+    addText(slide, row[0], { x: 122, y: y + 13, w: 210, h: 25 }, { size: 16, color: C.navy, bold: true, face: FONT_EN });
+    addText(slide, row[1], { x: 335, y: y + 10, w: 560, h: 26 }, { size: 13, color: C.active, bold: true, face: FONT_EN });
+    addText(slide, row[2], { x: 335, y: y + 38, w: 820, h: 22 }, { size: 10.5, color: C.black, face: FONT_EN });
+  });
+
+  const steps = [
+    ["September", "Internal hands-on test", C.active],
+    ["Readiness review", "Close release / backup / security / rollback / operation gates", C.teal],
+    [access.productionTarget || "Mid-October 2026", "Controlled production rollout target", C.green],
+  ];
+  steps.forEach((step, i) => {
+    const x = 95 + i * 380;
+    if (i < steps.length - 1) addArrow(slide, x + 295, 581, x + 365, 581, C.sky);
+    addShape(slide, { x, y: 548, w: 295, h: 66, fill: `${step[2]}18`, line: step[2] });
+    addText(slide, step[0], { x: x + 10, y: 557, w: 275, h: 20 }, { size: 13.5, color: step[2], bold: true, align: "center", face: FONT_EN });
+    addText(slide, step[1], { x: x + 12, y: 581, w: 271, h: 24 }, { size: 9.5, color: C.black, bold: true, align: "center", face: FONT_EN });
+  });
+
+  addText(slide, `Health snapshot: ${payload.snapshotTimeUtc}. Dots show endpoint health only; authenticated tester workflows require separate evidence.`, { x: 90, y: 628, w: 1100, h: 22 }, { size: 9.5, color: C.muted, align: "center", face: FONT_EN });
+  addText(slide, "Record test steps, timestamp, expected/actual result, and a screenshot or correlation ID.", { x: 90, y: 652, w: 1100, h: 20 }, { size: 9.5, color: C.muted, align: "center", face: FONT_EN });
   return slide;
 }
 
@@ -1711,8 +1756,8 @@ async function slide18(p, payload) {
 async function slide19(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Decision / Support Needed", "ALPHA READINESS");
-  addText(slide, "Alpha 前要把 Kevin personal-resource dependency 降下來，先補上 company-owned account, market publishing, operation backup, internal tester, beta pilot customer path。", { x: 92, y: 154, w: 1095, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
+  await addHeader(slide, payload, "Decision / Support Needed", "PRODUCTION READINESS");
+  addText(slide, "10 月中旬 production target 前要降低 personal-resource dependency，完成 company-owned account、market publishing、operation backup、internal tester 與 controlled rollout ownership。", { x: 92, y: 154, w: 1095, h: 42 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   const support = payload.alphaSupport || [];
   support.forEach((row, i) => {
@@ -1721,12 +1766,12 @@ async function slide19(p, payload) {
     const fill = i % 2 ? C.paleTeal : C.paleBlue;
     addShape(slide, { x, y, w: 520, h: 92, fill, line: C.line });
     addText(slide, row[0], { x: x + 18, y: y + 10, w: 315, h: 20 }, { size: 13.5, color: C.navy, bold: true, face: FONT_EN });
-    addPill(slide, row[3], x + 392, y + 9, 92, row[3] === "Beta" ? C.teal : C.blue);
+    addPill(slide, row[3], x + 382, y + 9, 105, row[3] === "September" ? C.teal : C.blue);
     addText(slide, row[1], { x: x + 20, y: y + 35, w: 475, h: 20 }, { size: 8.8, color: C.black, bold: true });
     addText(slide, row[2], { x: x + 20, y: y + 58, w: 475, h: 26 }, { size: 8.2, color: C.black });
   });
 
-  const milestones = ["Aug.1 Loading Test", "Alpha", "Beta", "Public"];
+  const milestones = ["Aug.1 Evidence", "Sep Internal Test", "Readiness Review", "Mid-Oct Target"];
   addText(slide, "Milestone impact", { x: 205, y: 565, w: 215, h: 26 }, { size: 18, color: C.navy, bold: true, face: FONT_EN });
   addShape(slide, { x: 470, y: 578, w: 510, h: 4, fill: C.line, line: "none" });
   milestones.forEach((m, i) => {
@@ -1734,15 +1779,15 @@ async function slide19(p, payload) {
     addShape(slide, { x, y: 560, w: 130, h: 36, fill: i === 1 ? C.paleAmber : C.pale, line: C.line });
     addText(slide, m, { x: x + 6, y: 569, w: 118, h: 18 }, { size: 10, color: C.navy, bold: true, align: "center", face: FONT_EN });
   });
-  addText(slide, "Alpha 前先處理帳號歸屬: credit card, Linode billing, DNS/mail service, Google Play Console, Apple Developer Program 都要轉到公司或核准的官方帳號。", { x: 115, y: 625, w: 1050, h: 28 }, { size: 12.5, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
+  addText(slide, "Production 前先處理帳號歸屬：credit card、Linode billing、DNS/mail service、Google Play Console、Apple Developer Program 皆應由公司或核准的官方帳號管理。", { x: 115, y: 625, w: 1050, h: 28 }, { size: 12.5, color: C.navy, bold: true, align: "center", fill: C.paleAmber });
   return slide;
 }
 
 async function slidePostAlphaCoverage(p, payload) {
   const slide = p.slides.add();
   await addBackground(slide, payload);
-  await addHeader(slide, payload, "Ongoing Operation / Development Coverage", "POST-ALPHA BASELINE");
-  addText(slide, "Alpha/Beta 的 tester 是短期參與；Public 前後要有人持續負責修問題, 維運, SDK support 和 release gate。", { x: 90, y: 154, w: 1100, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
+  await addHeader(slide, payload, "Ongoing Operation / Development Coverage", "PRODUCTION BASELINE");
+  addText(slide, "September tester 是短期參與；production rollout 前後要有人持續負責修問題、維運、SDK support 與 release gate。", { x: 90, y: 154, w: 1100, h: 42 }, { size: 16, color: C.navy, bold: true, align: "center", fill: C.pale });
 
   addTable(slide, ["Area", "Coverage", "Why needed"], payload.postAlphaCoverage || [], { x: 58, y: 225, w: 795, h: 330 }, [1.35, 0.7, 2.3], { rowH: 48, fontSize: 10 });
 
@@ -1756,7 +1801,7 @@ async function slidePostAlphaCoverage(p, payload) {
   addText(slide, "管理重點", { x: 920, y: 413, w: 250, h: 26 }, { size: 17, color: C.navy, bold: true, align: "center" });
   addText(slide, "短期 tester 會回報問題；長期 owner 要負責修正, 上線, 維運, SDK support 和 release 判斷。", { x: 925, y: 452, w: 240, h: 48 }, { size: 11, color: C.black, align: "center" });
 
-  addText(slide, "Public 前至少要有人接住: service fix, operation, SDK support, QA/load test, security review, pilot customer support.", { x: 150, y: 610, w: 980, h: 34 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
+  addText(slide, "Production 前至少要有人接住：service fix、operation、SDK support、QA/load test、security review 與 rollout support。", { x: 150, y: 610, w: 980, h: 34 }, { size: 15, color: C.navy, bold: true, align: "center", fill: C.paleTeal });
   return slide;
 }
 
@@ -1786,7 +1831,7 @@ async function slide21(p, payload) {
 const SLIDES = [
   slide01, slideMajorTopics, slide07, slideWhyCloud, slideCustomerUseCaseFit, slide03, slideCloudTypes, slideOperationalTransition, slide02, slide04, slideReleaseGateDefinition, slide05, slideLoadTestCapacityResult, slideLoadTestResourceCharts, slideLoadTestDecisionBasis, slide06, slide08,
   slidePortalTransition, slidePortalIntro, slide09, slideTechnicalTransition, slide10, slide11, slideStrideOverview, slide12, slideHsmSignerDesign, slide13,
-  slideEvidenceTransition, slide14, slideCostView, slideAwsUserLoginFlow, slideAwsDeviceLoginFlow, slideAwsMqttFlow, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsEstimateReviewNotes, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
+  slideEvidenceTransition, slide14, slideStagingTestAccess, slideCostView, slideAwsUserLoginFlow, slideAwsDeviceLoginFlow, slideAwsMqttFlow, slideLinodeScaleEstimate, slideAwsUnitCost, slideAwsCostCalculationBase, slideAwsEstimateReviewNotes, slideAwsCostFormulaBreakdown, slideAwsCostCalculationScenarios, slideAwsCostSourceUrls, slideGcpCostView, slideAzureCostView, slide16, slide17, slide18, slide19, slidePostAlphaCoverage, slide20, slide21,
 ];
 
 async function makeContactSheet(previewPaths, outputPath) {
