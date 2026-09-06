@@ -564,6 +564,23 @@ func ensureSecretStoreCatalogAdditions(out io.Writer, store secretStore) error {
 	return nil
 }
 
+// ensureLegacyMigrationCatalogAdditions seeds credentials introduced after the
+// legacy secret layout was deployed. It deliberately does not repair other
+// missing credentials, so an incomplete legacy source still fails verification.
+func ensureLegacyMigrationCatalogAdditions(store secretStore) error {
+	for _, id := range []string{"fleet-read-token"} {
+		if value, err := store.readRuntime(id); err == nil && value != "" {
+			continue
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := store.write(filepath.Join("runtime", id), []byte(randomSecret()+"\n"), false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func printSecretInventory(out io.Writer, store secretStore) error {
 	if _, err := os.Stat(filepath.Join(store.Root, "inventory.json")); err != nil {
 		return err
@@ -674,6 +691,9 @@ func migrateSecrets(destination secretStore, workspace string) error {
 		return err
 	}
 	if err := copySensitiveArtifacts(staged, workspace, legacyRoot, "test/archive"); err != nil {
+		return err
+	}
+	if err := ensureLegacyMigrationCatalogAdditions(staged); err != nil {
 		return err
 	}
 	if err := verifySecretStoreContents(staged); err != nil {

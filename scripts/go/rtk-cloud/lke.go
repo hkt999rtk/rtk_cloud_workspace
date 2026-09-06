@@ -3818,6 +3818,10 @@ func lkeRedisImage() string {
 	return firstNonEmpty(os.Getenv("LKE_REDIS_IMAGE"), "valkey/valkey:8-alpine")
 }
 
+func lkeFleetValkeyImage(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_IMAGE"), env["LKE_FLEET_VALKEY_IMAGE"], "valkey/valkey:8-alpine")
+}
+
 func lkeRedisExporterImage() string {
 	return firstNonEmpty(os.Getenv("LKE_REDIS_EXPORTER_IMAGE"), "oliver006/redis_exporter:v1.74.0")
 }
@@ -3909,7 +3913,7 @@ spec:
         resources:
           requests:
             storage: %q
-`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeFleetPlacementManifest(env, "FLEET_VALKEY"), lkeRedisImage(), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_MAXMEMORY"), env["LKE_FLEET_VALKEY_MAXMEMORY"], "1536mb"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_CPU"), env["LKE_FLEET_VALKEY_REQUEST_CPU"], "250m"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_MEMORY"), env["LKE_FLEET_VALKEY_REQUEST_MEMORY"], "1Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_LIMIT_MEMORY"), env["LKE_FLEET_VALKEY_LIMIT_MEMORY"], "2Gi"), lkeFleetValkeyStorage(env))
+`, lkeNamespaceName(env, "platform"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeFleetPlacementManifest(env, "FLEET_VALKEY"), lkeFleetValkeyImage(env), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_MAXMEMORY"), env["LKE_FLEET_VALKEY_MAXMEMORY"], "1536mb"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_CPU"), env["LKE_FLEET_VALKEY_REQUEST_CPU"], "250m"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_REQUEST_MEMORY"), env["LKE_FLEET_VALKEY_REQUEST_MEMORY"], "1Gi"), firstNonEmpty(os.Getenv("LKE_FLEET_VALKEY_LIMIT_MEMORY"), env["LKE_FLEET_VALKEY_LIMIT_MEMORY"], "2Gi"), lkeFleetValkeyStorage(env))
 }
 
 func lkeFleetValkeyStorage(env map[string]string) string {

@@ -197,6 +197,9 @@ func TestSecretMigrationCutsOverAtomicallyAndRemovesLegacySources(t *testing.T) 
 		t.Fatal(err)
 	}
 	for _, entry := range rtkSecretCatalog() {
+		if entry.ID == "fleet-read-token" {
+			continue
+		}
 		if err := os.WriteFile(filepath.Join(legacySecrets, entry.ID), []byte("fixture-"+entry.ID+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -222,6 +225,12 @@ func TestSecretMigrationCutsOverAtomicallyAndRemovesLegacySources(t *testing.T) 
 	}
 	if err := verifySecretStoreContents(store); err != nil {
 		t.Fatal(err)
+	}
+	if value, err := store.readRuntime("fleet-read-token"); err != nil || value == "" {
+		t.Fatalf("migration did not seed newly cataloged Fleet credential: value=%q err=%v", value, err)
+	}
+	if value, err := store.readRuntime("postgres"); err != nil || value != "fixture-postgres" {
+		t.Fatalf("migration changed imported credential: value=%q err=%v", value, err)
 	}
 	backups, err := os.ReadDir(filepath.Join(store.Root, "migration-backup"))
 	if err != nil || len(backups) != 1 {

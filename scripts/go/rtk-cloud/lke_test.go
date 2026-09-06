@@ -2298,6 +2298,7 @@ func TestLKERedisAndExporterManifestsUsePrivatePlatformServices(t *testing.T) {
 }
 
 func TestLKEFleetValkeyUsesDurableNoEvictionStorage(t *testing.T) {
+	t.Setenv("LKE_REDIS_IMAGE", "redis:7-alpine")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":        "video-cloud-staging",
 		"FLEET_VALKEY_NODE_CLASS": "database",
@@ -2316,10 +2317,18 @@ func TestLKEFleetValkeyUsesDurableNoEvictionStorage(t *testing.T) {
 		`rtk.io/node-class: "database"`,
 		`value: "database"`,
 		`effect: "NoSchedule"`,
+		"image: valkey/valkey:8-alpine",
 	} {
 		if !strings.Contains(statefulSet, want) {
 			t.Fatalf("expected %q in fleet Valkey StatefulSet:\n%s", want, statefulSet)
 		}
+	}
+	if strings.Contains(statefulSet, "image: redis:7-alpine") {
+		t.Fatalf("Fleet Valkey must not inherit LKE_REDIS_IMAGE:\n%s", statefulSet)
+	}
+	env["LKE_FLEET_VALKEY_IMAGE"] = "registry.example.test/valkey:fleet"
+	if overridden := lkeFleetValkeyStatefulSetManifest(env); !strings.Contains(overridden, "image: registry.example.test/valkey:fleet") {
+		t.Fatalf("Fleet Valkey image override missing:\n%s", overridden)
 	}
 	service := lkeFleetValkeyServiceManifest(env)
 	if !strings.Contains(service, "name: fleet-valkey") || !strings.Contains(service, "port: 6379") {
