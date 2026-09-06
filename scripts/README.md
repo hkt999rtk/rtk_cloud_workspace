@@ -403,6 +403,7 @@ LKE installs metrics-server `v0.8.1` by default (`LKE_METRICS_SERVER_VERSION`) t
 Key settings include:
 
 - `LKE_REDIS_IMAGE` (default `valkey/valkey:8-alpine`) and `LKE_REDIS_EXPORTER_IMAGE` (default `oliver006/redis_exporter:v1.74.0`).
+- `LKE_FLEET_VALKEY_IMAGE` independently selects the persistent Fleet store image (default `valkey/valkey:8-alpine`); it intentionally does not inherit `LKE_REDIS_IMAGE` because the Fleet readiness probe requires `valkey-cli`.
 - Valkey CPU/memory request and limit overrides; defaults `100m`, `128Mi`, `512Mi`.
 - Redis-exporter overrides; defaults `50m`, `64Mi`, `256Mi`.
 - `LKE_GRAFANA_IMAGE` (default `grafana/grafana:13.0.2`), `LKE_GRAFANA_ADMIN_PASSWORD`, `LKE_GRAFANA_PERSISTENCE`, and `LKE_GRAFANA_STORAGE` (default `5Gi`).

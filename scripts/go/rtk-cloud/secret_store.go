@@ -323,6 +323,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"grafana-admin-password", "grafana", "manual"}, {"clip-private-key-seed", "video-cloud", "manual"},
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
 		{"job-authorization-token", "account-manager,cloud-admin", "manual"},
+		{"fleet-read-token", "video-cloud,cloud-admin", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
 		{"billing-cloud-creation", "account-manager,billing", "manual"},
 		{"billing-handoff", "account-manager,billing", "manual"},
@@ -371,6 +372,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"job-authorization-token": {
 			{"-account-manager", "account-manager-runtime", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
 			{"-cloud-admin", "cloud-admin-billing-client", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
+		},
+		"fleet-read-token": {
+			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
+			{"-admin", "cloud-admin-billing-client", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
 		},
 		"billing-internal-token": {
 			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
@@ -421,7 +426,7 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 
 func runSecrets(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|plan|migrate|verify|inventory> --environment NAME [--config-root PATH]")
+		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory> --environment NAME [--config-root PATH]")
 		return nil
 	}
 	action := args[0]
@@ -454,6 +459,12 @@ func runSecrets(args []string) error {
 		}
 		fmt.Fprintf(os.Stdout, "initialized %s secret store\n", store.Environment)
 		return nil
+	case "ensure":
+		expected := "video-cloud-" + store.Environment
+		if *confirm != expected {
+			return fmt.Errorf("--confirm %s is required", expected)
+		}
+		return ensureMissingRuntimeSecrets(os.Stdout, store)
 	case "plan":
 		return planSecretMigration(os.Stdout, store, *workspace)
 	case "migrate":
@@ -469,6 +480,105 @@ func runSecrets(args []string) error {
 	default:
 		return fmt.Errorf("unknown secrets command %q", action)
 	}
+}
+
+// ensureMissingRuntimeSecrets upgrades an existing environment secret store
+// when the catalog gains a new credential. Existing credentials are never
+// rotated or overwritten, and secret values are never printed.
+func ensureMissingRuntimeSecrets(out io.Writer, store secretStore) error {
+	if err := verifySecretStorePermissionsOnly(store); err != nil {
+		return err
+	}
+	created := []string{}
+	for _, entry := range rtkSecretCatalog() {
+		if value, err := store.readRuntime(entry.ID); err == nil && value != "" {
+			continue
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(randomSecret()+"\n"), false); err != nil {
+			return err
+		}
+		created = append(created, entry.ID)
+	}
+	if err := store.writeInventory(); err != nil {
+		return err
+	}
+	if len(created) == 0 {
+		fmt.Fprintf(out, "secret store %s already complete\n", store.Environment)
+		return nil
+	}
+	sort.Strings(created)
+	fmt.Fprintf(out, "created missing runtime credentials for %s: %s\n", store.Environment, strings.Join(created, ", "))
+	return nil
+}
+
+// ensureSecretStoreCatalogAdditions upgrades an initialized store only for
+// credentials that were not present in its recorded inventory. A credential
+// recorded by the old inventory but missing on disk is treated as corruption
+// and remains a hard verification failure rather than being silently rotated.
+func ensureSecretStoreCatalogAdditions(out io.Writer, store secretStore) error {
+	raw, err := store.read("inventory.json")
+	if err != nil {
+		return err
+	}
+	var inventory secretInventory
+	if err := json.Unmarshal([]byte(raw), &inventory); err != nil {
+		return fmt.Errorf("decode secret inventory: %w", err)
+	}
+	if inventory.Environment != store.Environment {
+		return fmt.Errorf("secret inventory environment %q does not match %q", inventory.Environment, store.Environment)
+	}
+	recorded := make(map[string]bool, len(inventory.Entries))
+	for _, entry := range inventory.Entries {
+		recorded[entry.ID] = true
+	}
+	created := []string{}
+	catalogChanged := false
+	for _, entry := range rtkSecretCatalog() {
+		if recorded[entry.ID] {
+			continue
+		}
+		catalogChanged = true
+		if value, readErr := store.readRuntime(entry.ID); readErr == nil && value != "" {
+			continue
+		} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return readErr
+		}
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte(randomSecret()+"\n"), false); err != nil {
+			return err
+		}
+		created = append(created, entry.ID)
+	}
+	if !catalogChanged {
+		return nil
+	}
+	if err := store.writeInventory(); err != nil {
+		return err
+	}
+	if len(created) == 0 {
+		return nil
+	}
+	sort.Strings(created)
+	fmt.Fprintf(out, "created newly cataloged runtime credentials for %s: %s\n", store.Environment, strings.Join(created, ", "))
+	return nil
+}
+
+// ensureLegacyMigrationCatalogAdditions seeds credentials introduced after the
+// legacy secret layout was deployed. It deliberately does not repair other
+// missing credentials, so an incomplete legacy source still fails verification.
+func ensureLegacyMigrationCatalogAdditions(store secretStore) error {
+	for _, id := range []string{"fleet-read-token"} {
+		if value, err := store.readRuntime(id); err == nil && value != "" {
+			continue
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := store.write(filepath.Join("runtime", id), []byte(randomSecret()+"\n"), false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func printSecretInventory(out io.Writer, store secretStore) error {
@@ -581,6 +691,9 @@ func migrateSecrets(destination secretStore, workspace string) error {
 		return err
 	}
 	if err := copySensitiveArtifacts(staged, workspace, legacyRoot, "test/archive"); err != nil {
+		return err
+	}
+	if err := ensureLegacyMigrationCatalogAdditions(staged); err != nil {
 		return err
 	}
 	if err := verifySecretStoreContents(staged); err != nil {
@@ -951,6 +1064,9 @@ func configureProvisionSecretStore(environment string) (secretStore, func(), err
 		return secretStore{}, nil, err
 	}
 	if err := verifySecretStorePermissionsOnly(store); err != nil {
+		return secretStore{}, nil, err
+	}
+	if err := ensureSecretStoreCatalogAdditions(os.Stderr, store); err != nil {
 		return secretStore{}, nil, err
 	}
 	if err := verifySecretStoreContents(store); err != nil {

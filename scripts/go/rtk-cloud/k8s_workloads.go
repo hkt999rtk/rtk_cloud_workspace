@@ -287,6 +287,13 @@ func k8sPrometheusTargets(env map[string]string, opts provisionOptions) []k8sPro
 		Port:      9121,
 		Path:      "/metrics",
 	})
+	targets = append(targets, k8sPrometheusTarget{
+		Job:       "fleet-valkey-exporter",
+		Namespace: lkeNamespaceName(env, "platform"),
+		Service:   "fleet-valkey-exporter",
+		Port:      9121,
+		Path:      "/metrics",
+	})
 	observabilityNS := lkeNamespaceName(env, "observability")
 	targets = append(targets,
 		k8sPrometheusTarget{

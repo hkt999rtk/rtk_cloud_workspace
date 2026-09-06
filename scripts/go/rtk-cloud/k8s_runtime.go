@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -134,9 +135,13 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Enabled: func(ctx provisionContext) bool {
 				return provider.Name() == "lke" &&
 					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy) &&
+					(len(ctx.Opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(ctx.Env, ctx.Opts)) &&
 					os.Getenv("RUNTIME_COVERAGE_SHARED_CLUSTER") != "1"
 			},
 			Run: func(ctx provisionContext) error {
+				if len(ctx.Opts.workloads) > 0 {
+					return ensureLKETargetedFleetDatabaseNodePool(ctx.Paths, ctx.Env)
+				}
 				return ensureLKENodePool(ctx.Paths, ctx.Env)
 			},
 		},
@@ -253,6 +258,12 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 		placementTarget{videoNS, "statefulset", "mqtt", "MQTT"},
 		placementTarget{lkeNamespaceName(ctx.Env, "secrets"), "statefulset", "openbao", "OPENBAO"},
 	)
+	if len(ctx.Opts.workloads) == 0 || lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+		targets = append(targets,
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "statefulset", "fleet-valkey", "FLEET_VALKEY"},
+			placementTarget{lkeNamespaceName(ctx.Env, "platform"), "deployment", "fleet-valkey-exporter", "FLEET_VALKEY_EXPORTER"},
+		)
+	}
 	activeTargets := make([]placementTarget, 0, len(targets))
 	for _, target := range targets {
 		found, err := kubectlCombinedOutput(nil, "-n", target.namespace, "get", target.kind, target.name, "--ignore-not-found=true", "-o", "name")
@@ -263,17 +274,27 @@ func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {
 			continue
 		}
 		class := firstNonEmpty(ctx.Env[target.prefix+"_NODE_CLASS"], ctx.Env["DEFAULT_WORKLOAD_NODE_CLASS"], "general")
-		patch := fmt.Sprintf(`{"spec":{"template":{"spec":{"nodeSelector":{%q:%q}}}}}`, labelKey, class)
+		podSpec := map[string]any{"nodeSelector": map[string]string{labelKey: class}}
+		if class == "database" {
+			podSpec["tolerations"] = []map[string]string{{
+				"key": labelKey, "operator": "Equal", "value": class, "effect": "NoSchedule",
+			}}
+		}
+		patchJSON, err := json.Marshal(map[string]any{"spec": map[string]any{"template": map[string]any{"spec": podSpec}}})
+		if err != nil {
+			return err
+		}
+		patch := string(patchJSON)
 		if err := runKubectl("-n", target.namespace, "patch", target.kind, target.name, "--type=merge", "-p", patch); err != nil {
 			return err
 		}
 		activeTargets = append(activeTargets, target)
 	}
 	for _, target := range activeTargets {
-		if target.kind != "deployment" {
+		if target.kind != "deployment" && target.kind != "statefulset" {
 			continue
 		}
-		if err := runKubectl("-n", target.namespace, "rollout", "status", "deployment/"+target.name, "--timeout", "5m"); err != nil {
+		if err := runKubectl("-n", target.namespace, "rollout", "status", target.kind+"/"+target.name, "--timeout", "5m"); err != nil {
 			return err
 		}
 	}

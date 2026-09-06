@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -38,12 +39,17 @@ type lkeCapacityPlanResult struct {
 }
 
 type lkeProviderServicePlan struct {
-	NodeServices     int
-	PostgresVolumes  int
-	EdgeVMs          int
-	CoturnVMs        int
-	RequiredServices int
-	Limit            int
+	NodeServices          int
+	BrokerNodes           int
+	GeneralNodes          int
+	DatabaseNodes         int
+	ReconcileDatabasePool bool
+	PostgresVolumes       int
+	FleetVolumes          int
+	EdgeVMs               int
+	CoturnVMs             int
+	RequiredServices      int
+	Limit                 int
 }
 
 func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
@@ -68,7 +74,7 @@ func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
 		if plan.ProviderServices.Limit > 0 {
 			limit = strconv.Itoa(plan.ProviderServices.Limit)
 		}
-		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
+		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d fleet_volumes=%d edge_vms=%d coturn_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 	}
 }
 
@@ -86,7 +92,7 @@ func lkeCheckCapacityWithPaths(paths provisionPaths, env map[string]string, opts
 	}
 	if plan.NodeCount >= plan.RequiredNodes {
 		if plan.ProviderServices.Limit > 0 && plan.ProviderServices.RequiredServices > plan.ProviderServices.Limit {
-			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
+			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d fleet_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 		}
 		if err := lkeCheckLiveProviderActiveServices(paths, env, plan.ProviderServices); err != nil {
 			return err
@@ -122,7 +128,8 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 		return err
 	}
 	var listed struct {
-		Data []linodeInstance `json:"data"`
+		Data    []linodeInstance `json:"data"`
+		Results int              `json:"results"`
 	}
 	if err := json.Unmarshal(out, &listed); err != nil {
 		return err
@@ -131,27 +138,200 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 	for _, item := range listed.Data {
 		activeLabels[item.Label] = true
 	}
-	current := len(listed.Data)
+	volumeCount, err := lkeProviderResourceCount(token, "/volumes?page_size=500")
+	if err != nil {
+		return err
+	}
+	nodeBalancerCount, err := lkeProviderResourceCount(token, "/nodebalancers?page_size=500")
+	if err != nil {
+		return err
+	}
+	currentInstances := len(listed.Data)
+	if listed.Results > currentInstances {
+		currentInstances = listed.Results
+	}
+	current := currentInstances + volumeCount + nodeBalancerCount
 	additional := plan.RequiredServices
 	reducible := 0
+	projected := current + additional
 	if cluster, err := discoverLKECluster(token, paths, env, false); err == nil && cluster.ID > 0 {
-		additional = 0
+		laterAdditional := lkeMissingPlannedVolumeServices(paths, env, plan)
+		missingDatabaseNodes, poolErr := lkeMissingPlannedDatabaseNodeServices(token, cluster, env, plan)
+		if poolErr != nil {
+			return poolErr
+		}
+		missingGeneralNodes, poolErr := lkeMissingPlannedGeneralNodeServices(token, cluster, env, plan)
+		if poolErr != nil {
+			return poolErr
+		}
+		missingBrokerNodes, poolErr := lkeMissingPlannedBrokerNodeServices(token, cluster, env, plan)
+		if poolErr != nil {
+			return poolErr
+		}
 		if plan.EdgeVMs > 0 && !activeLabels[lkeEdgeHAProxyLabel(env)] {
-			additional++
+			laterAdditional++
 		}
 		for i := 1; i <= plan.CoturnVMs; i++ {
 			if !activeLabels[lkeCoturnVMLabel(lkeCoturnVMEnvForIndex(env, i))] {
-				additional++
+				laterAdditional++
 			}
 		}
-		reducible = lkeReducibleMainNodeServices(token, cluster, env, plan.NodeServices)
+		reducible = lkeReducibleMainNodeServices(token, cluster, env, plan.BrokerNodes)
+		beforeShrinkAdditional := missingGeneralNodes + missingBrokerNodes
+		additional = beforeShrinkAdditional + missingDatabaseNodes + laterAdditional
+		beforeShrinkPeak := current + beforeShrinkAdditional
+		afterReconcile := current - reducible + additional
+		projected = maxInt(beforeShrinkPeak, afterReconcile)
 	}
-	projected := current - reducible + additional
 	if projected > plan.Limit {
-		return fmt.Errorf("LKE live provider capacity check failed: projected active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (current_active=%d reducible_lke_nodes=%d additional_required=%d edge_vms=%d coturn_vms=%d); delete unused Linode services or request a Linode quota increase before rerunning staging provision", projected, plan.Limit, current, reducible, additional, plan.EdgeVMs, plan.CoturnVMs)
+		return fmt.Errorf("LKE live provider capacity check failed: projected active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (current_active=%d current_instances=%d current_volumes=%d current_nodebalancers=%d reducible_lke_nodes=%d additional_required=%d edge_vms=%d coturn_vms=%d); delete unused Linode services or request a Linode quota increase before rerunning staging provision", projected, plan.Limit, current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, plan.EdgeVMs, plan.CoturnVMs)
 	}
-	fmt.Fprintf(os.Stderr, "[lke] provider active services ok: current=%d reducible_lke_nodes=%d additional_required=%d projected=%d limit=%d\n", current, reducible, additional, projected, plan.Limit)
+	fmt.Fprintf(os.Stderr, "[lke] provider active services ok: current=%d instances=%d volumes=%d nodebalancers=%d reducible_lke_nodes=%d additional_required=%d projected=%d limit=%d\n", current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, projected, plan.Limit)
 	return nil
+}
+
+func lkeMissingPlannedDatabaseNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
+	if plan.DatabaseNodes <= 0 {
+		return 0, nil
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0, err
+	}
+	if !plan.ReconcileDatabasePool {
+		for _, pool := range pools {
+			if lkeNodePoolHasPostgresPlacement(pool) {
+				return 0, nil
+			}
+		}
+		return plan.DatabaseNodes, nil
+	}
+	desiredID := firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"])
+	var selected *lkeNodePool
+	var firstDatabase *lkeNodePool
+	for i := range pools {
+		if desiredID != "" && strconv.Itoa(pools[i].ID) == desiredID {
+			selected = &pools[i]
+			break
+		}
+		if lkeNodePoolHasPostgresPlacement(pools[i]) && firstDatabase == nil {
+			firstDatabase = &pools[i]
+		}
+	}
+	if selected == nil {
+		selected = firstDatabase
+	}
+	if selected == nil || selected.Type != lkePostgresNodePoolType(env) {
+		return plan.DatabaseNodes, nil
+	}
+	if plan.DatabaseNodes > selected.Count {
+		return plan.DatabaseNodes - selected.Count, nil
+	}
+	return 0, nil
+}
+
+func lkeMissingPlannedGeneralNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
+	if plan.GeneralNodes <= 0 {
+		return 0, nil
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0, err
+	}
+	desiredType := firstNonEmpty(env["LKE_GENERAL_NODE_TYPE"], env["LKE_NODE_TYPE"], "g6-standard-2")
+	for _, pool := range pools {
+		if pool.Labels["rtk.io/node-class"] == "general" && pool.Type == desiredType {
+			if plan.GeneralNodes > pool.Count {
+				return plan.GeneralNodes - pool.Count, nil
+			}
+			return 0, nil
+		}
+	}
+	return plan.GeneralNodes, nil
+}
+
+func lkeMissingPlannedBrokerNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
+	if plan.BrokerNodes <= 0 {
+		return 0, nil
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0, err
+	}
+	desiredType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
+	for _, pool := range pools {
+		class := pool.Labels["rtk.io/node-class"]
+		if pool.Type == desiredType && class != "general" && class != "database" {
+			if plan.BrokerNodes > pool.Count {
+				return plan.BrokerNodes - pool.Count, nil
+			}
+			return 0, nil
+		}
+	}
+	return plan.BrokerNodes, nil
+}
+
+func lkeProviderResourceCount(token, endpoint string) (int, error) {
+	out, err := linodeRequestRaw(token, "GET", endpoint, "")
+	if err != nil {
+		return 0, err
+	}
+	var listed struct {
+		Data    []json.RawMessage `json:"data"`
+		Results int               `json:"results"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return 0, err
+	}
+	if listed.Results > len(listed.Data) {
+		return listed.Results, nil
+	}
+	return len(listed.Data), nil
+}
+
+func lkeMissingPlannedVolumeServices(paths provisionPaths, env map[string]string, plan lkeProviderServicePlan) int {
+	type plannedPVC struct {
+		name  string
+		count int
+	}
+	missing := 0
+	for _, pvc := range []plannedPVC{
+		{name: "data-postgresql-0", count: plan.PostgresVolumes},
+		{name: "data-fleet-valkey-0", count: plan.FleetVolumes},
+	} {
+		if pvc.count <= 0 || lkePersistentVolumeClaimBound(paths, env, pvc.name) {
+			continue
+		}
+		missing += pvc.count
+	}
+	return missing
+}
+
+func lkePersistentVolumeClaimBound(paths provisionPaths, env map[string]string, name string) bool {
+	kubeconfig := firstNonEmpty(
+		os.Getenv("RTK_CLOUD_KUBECONFIG"),
+		os.Getenv("KUBECONFIG"),
+		os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"),
+		os.Getenv("LKE_KUBECONFIG"),
+	)
+	if kubeconfig == "" && strings.TrimSpace(paths.EnvRoot) != "" {
+		kubeconfig = sensitiveEnvironmentPath(paths, "kube", "kubeconfig.yaml")
+	}
+	if kubeconfig == "" {
+		return false
+	}
+	if _, err := os.Stat(kubeconfig); err != nil {
+		return false
+	}
+	args := []string{
+		"--kubeconfig", kubeconfig,
+		"--request-timeout=5s",
+		"-n", lkeNamespaceName(env, "platform"),
+		"get", "pvc", name,
+		"--ignore-not-found=true", "-o", "jsonpath={.status.phase}",
+	}
+	out, err := exec.Command(lkeKubectl(), args...).CombinedOutput()
+	return err == nil && strings.TrimSpace(string(out)) == "Bound"
 }
 
 func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[string]string, desiredCount int) int {
@@ -164,7 +344,8 @@ func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[stri
 	}
 	desiredType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
 	for _, pool := range pools {
-		if pool.Type != desiredType || lkeNodePoolHasPostgresPlacement(pool) {
+		class := pool.Labels["rtk.io/node-class"]
+		if pool.Type != desiredType || class == "general" || class == "database" {
 			continue
 		}
 		if pool.Count > desiredCount {
@@ -199,7 +380,7 @@ func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityP
 	targetConnects := lkeTargetConnects(env)
 	requiredMQTT := lkeMQTTReplicas(env)
 	mqttCapacity := requiredMQTT * lkeMQTTConnectionsPerPod(env)
-	providerServices := lkeProviderServices(env, nodeCount)
+	providerServices := lkeProviderServices(env, nodeCount, opts)
 	requiredCPU := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_CPU", 0)
 	requiredMemory := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_MEMORY", 0)
 	requiredSpread := envIntFrom(env, "NODE_CLASS_"+class+"_REQUIRED_BY_SPREAD", requiredMQTT)
@@ -210,32 +391,61 @@ func lkeCapacityPlan(env map[string]string, opts provisionOptions) (lkeCapacityP
 	}, nil
 }
 
-func lkeProviderServices(env map[string]string, nodeCount int) lkeProviderServicePlan {
-	workerNodes := nodeCount
-	if _, hasBroker := env["LKE_NODE_COUNT"]; hasBroker {
-		workerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", 0), 0) + maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOptions) lkeProviderServicePlan {
+	fullDeploy := len(opts.workloads) == 0
+	databaseNodes := 0
+	if lkePostgresDedicatedNodePoolEnabled(env) && (fullDeploy || lkeTargetedFleetDatabasePoolRequired(env, opts)) {
+		databaseNodes = maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
 	}
-	if lkePostgresDedicatedNodePoolEnabled(env) {
-		workerNodes += maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
+	workerNodes := 0
+	if fullDeploy {
+		workerNodes = nodeCount
+		if _, hasBroker := env["LKE_NODE_COUNT"]; hasBroker {
+			workerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", 0), 0) + maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+		}
+		if lkePostgresDedicatedNodePoolEnabled(env) {
+			workerNodes += maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
+		}
+	} else {
+		workerNodes = databaseNodes
+	}
+	generalNodes := 0
+	brokerNodes := 0
+	if fullDeploy {
+		generalNodes = maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+		brokerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", nodeCount), 0)
 	}
 	postgresVolumes := 0
-	if lkePostgresUsesPVC(env) {
+	if fullDeploy && lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
 	}
-	edgeVMs := envIntFrom(env, "LKE_EDGE_HAPROXY_COUNT", 1)
-	if edgeVMs < 0 {
-		edgeVMs = 0
+	edgeVMs := 0
+	coturnVMs := 0
+	if fullDeploy {
+		edgeVMs = envIntFrom(env, "LKE_EDGE_HAPROXY_COUNT", 1)
+		if edgeVMs < 0 {
+			edgeVMs = 0
+		}
+		coturnVMs = lkeCoturnVMCount(env)
 	}
-	coturnVMs := lkeCoturnVMCount(env)
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
-	required := workerNodes + postgresVolumes + edgeVMs + coturnVMs
+	fleetVolumes := 0
+	if fullDeploy || lkeWorkloadSelected(env, opts, "video-cloud") {
+		fleetVolumes = 1
+	}
+	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
-		NodeServices:     workerNodes,
-		PostgresVolumes:  postgresVolumes,
-		EdgeVMs:          edgeVMs,
-		CoturnVMs:        coturnVMs,
-		RequiredServices: required,
-		Limit:            limit,
+		NodeServices:          workerNodes,
+		BrokerNodes:           brokerNodes,
+		GeneralNodes:          generalNodes,
+		DatabaseNodes:         databaseNodes,
+		ReconcileDatabasePool: fullDeploy && databaseNodes > 0,
+		PostgresVolumes:       postgresVolumes,
+		FleetVolumes:          fleetVolumes,
+		EdgeVMs:               edgeVMs,
+		CoturnVMs:             coturnVMs,
+		RequiredServices:      required,
+		Limit:                 limit,
 	}
 }
 
