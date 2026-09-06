@@ -37,6 +37,25 @@ sdk_e2e: &sdk_e2e
   status: active
 
 cases:
+  - { <<: *ui_smoke, id: UI-CA-PROVISIONING-RET-001, title: Retired CSV provisioning console routes remain unavailable, source: repos/rtk_cloud_admin/web/e2e/enterprise-console.spec.mjs, selector: "[UI-CA-PROVISIONING-RET-001]", tags: [smoke, enterprise], verifies: [REQ-UI-CA-ENTERPRISE-PROVISIONING-RETIRED-001] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-PERF-001, title: Console navigation performance stays within the interactive budget, source: repos/rtk_cloud_admin/web/e2e/console-navigation-performance.spec.mjs, selector: "[UI-CA-CONSOLE-PERF-001]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-001, title: Console navigation remains available, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-001]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-002, title: Console navigation preserves the active destination, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-002]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-003, title: Console navigation handles direct routes, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-003]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-004, title: Console navigation handles mobile routes, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-004]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-005, title: Console navigation preserves cloud context, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-005]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-006, title: Console navigation exposes safe fallback states, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-006]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-CONSOLE-NAV-007, title: Console navigation remains keyboard accessible, source: repos/rtk_cloud_admin/web/e2e/console-navigation.spec.mjs, selector: "[UI-CA-CONSOLE-NAV-007]", tags: [smoke, console], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-001, title: SDK loading states render safely, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-001]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-002, title: SDK loading retries safely, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-002]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-003, title: SDK loading preserves context, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-003]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-004, title: SDK loading handles unavailable sources, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-004]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-005, title: SDK loading handles empty sources, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-005]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-006, title: SDK loading avoids duplicate requests, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-006]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-007, title: SDK loading renders a stable release, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-007]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-008, title: SDK loading handles stale data, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-008]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-LOAD-009, title: SDK loading exposes retry controls, source: repos/rtk_cloud_admin/web/e2e/sdk-loading.spec.mjs, selector: "[UI-CA-SDK-LOAD-009]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
+  - { <<: *ui_smoke, id: UI-CA-SDK-PERF-001, title: SDK page loading remains within the interactive budget, source: repos/rtk_cloud_admin/web/e2e/sdk-performance.spec.mjs, selector: "[UI-CA-SDK-PERF-001]", tags: [smoke, sdk], verifies: [REQ-UI-CA-CHIPSET-006] }
   - id: INT-VC-BILLING-HTTP-001
     title: Durable Video Cloud outbox delivers exact facts to real Billing HTTP
     layer: integration
