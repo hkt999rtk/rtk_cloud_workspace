@@ -6,13 +6,6 @@ on:
       - '.gitmodules'
       - '.github/workflows/submodule-pointer-check.yml'
       - 'repos/**'
-  push:
-    branches:
-      - main
-    paths:
-      - '.gitmodules'
-      - '.github/workflows/submodule-pointer-check.yml'
-      - 'repos/**'
   workflow_dispatch:
 
 permissions:

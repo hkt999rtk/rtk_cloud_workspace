@@ -2,8 +2,6 @@ name: Go Coverage Governance
 
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
