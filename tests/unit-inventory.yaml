@@ -234,6 +234,34 @@ cases:
       title: provider dashboard helpers compute and filter design data
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/chipset-videos.test.mjs#Legacy%20and%20non-YouTube%20video%20resources%20retain%20links%20without%20inventing%20metadata
+      module: cloud-admin-web
+      language: javascript
+      source: src/chipset-videos.test.mjs
+      title: Legacy and non-YouTube video resources retain links without inventing metadata
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/chipset-videos.test.mjs#Video%20collection%20preserves%20curated%20order%20and%20scopes%20board%20and%20SDK%20resources
+      module: cloud-admin-web
+      language: javascript
+      source: src/chipset-videos.test.mjs
+      title: Video collection preserves curated order and scopes board and SDK resources
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/chipset-videos.test.mjs#Video%20filters%20combine%20query%2C%20topic%2C%20SDK%20and%20language%20without%20changing%20order
+      module: cloud-admin-web
+      language: javascript
+      source: src/chipset-videos.test.mjs
+      title: Video filters combine query, topic, SDK and language without changing order
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/chipset-videos.test.mjs#YouTube%20links%20normalize%20video%20aliases%20and%20preserve%20distinct%20playlist%20identities
+      module: cloud-admin-web
+      language: javascript
+      source: src/chipset-videos.test.mjs
+      title: YouTube links normalize video aliases and preserve distinct playlist identities
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/cloud-billing.test.mjs#Billing%20routes%20and%20downloads%20are%20cloud-scoped%2C%20never%20active-session%20scoped
       module: cloud-admin-web
       language: javascript

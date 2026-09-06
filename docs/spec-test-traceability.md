@@ -168,6 +168,7 @@
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-BOARDS-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-BOARDS-001` | `` | `34245592c751` | `service` | `active` | `UI-CA-BOARDS-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-BOARDS-002` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-BOARDS-002` | `` | `33d40bec4f34` | `service` | `active` | `UI-CA-BOARDS-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-BOARDS-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-BOARDS-003` | `` | `d5cd83f80924` | `service` | `active` | `UI-CA-BOARDS-003`, `UI-CA-BOARDS-004`, `UI-CA-BOARDS-005`, `UI-CA-BOARDS-006` | `test-ui` |
+| `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-VIDEOS-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-VIDEOS-001` | `` | `de4860044fe2` | `service` | `active` | `UI-CA-VIDEOS-001`, `UI-CA-VIDEOS-002`, `UI-CA-VIDEOS-003`, `UI-CA-VIDEOS-004` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-DOCS-001` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-DOCS-001` | `` | `d1be261dc9bc` | `service` | `active` | `UI-CA-DOCS-001` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-DOCS-002` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-DOCS-002` | `` | `9c9ff5be180b` | `service` | `active` | `UI-CA-DOCS-002` | `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-UI-CA-DOCS-003` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-DOCS-003` | `` | `fc6b24da74c8` | `service` | `active` | `UI-CA-DOCS-003` | `test-ui` |
