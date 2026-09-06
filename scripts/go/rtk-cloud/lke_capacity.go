@@ -409,7 +409,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 		brokerNodes = maxInt(envIntFrom(env, "LKE_NODE_COUNT", nodeCount), 0)
 	}
 	postgresVolumes := 0
-	if lkePostgresUsesPVC(env) {
+	if len(opts.workloads) == 0 && lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
 	}
 	edgeVMs := envIntFrom(env, "LKE_EDGE_HAPROXY_COUNT", 1)
