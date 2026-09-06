@@ -219,14 +219,14 @@ class OpenAPIValidationTests(unittest.TestCase):
                 validate_file(self.write("api.json", spec), self.root)
             fetch.assert_not_called()
 
-    def test_ci_triggers_cover_inventory_implementation_and_module_inputs(self):
+    def test_ci_pr_trigger_covers_inventory_implementation_and_module_inputs(self):
         root = Path(__file__).resolve().parent.parent
         workflow = yaml.load((root / ".github/workflows/contracts-openapi.yml").read_text(), Loader=yaml.BaseLoader)
-        for event in ("pull_request", "push"):
-            with self.subTest(event=event):
-                paths = workflow["on"][event]["paths"]
-                for source in ("scripts/go/rtk-cloud/**", "scripts/go/go.mod", "scripts/go/go.sum", "go.work", "go.work.sum"):
-                    self.assertIn(source, paths)
+        self.assertNotIn("push", workflow["on"], "PR validation must not repeat after merge")
+        paths = workflow["on"]["pull_request"]["paths"]
+        for source in ("scripts/go/rtk-cloud/**", "scripts/go/go.mod", "scripts/go/go.sum", "go.work", "go.work.sum"):
+            with self.subTest(source=source):
+                self.assertIn(source, paths)
 
     def test_missing_reference_is_rejected(self):
         path = self.write("api.json", self.spec(schema={"$ref": "missing.yaml"}))
