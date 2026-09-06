@@ -77,6 +77,7 @@ var deploymentArchitectureKeys = architectureKeySet()
 
 var deploymentEnvironmentKeys = keySet(
 	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
+	"TEST_LAB_ENABLED",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
@@ -84,6 +85,7 @@ var deploymentEnvironmentKeys = keySet(
 )
 
 var deploymentEnvironmentServiceKeys = keySet(
+	"TEST_LAB_ENABLED",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
@@ -148,6 +150,10 @@ func defaultDeploymentOperations() deploymentOperations {
 }
 
 func runDeploymentWithOperations(args []string, ops deploymentOperations) error {
+	if len(args) > 0 && args[0] == "console-check" {
+		// Read-only feature checks must not materialize or normalize a live runtime.
+		return runDeploymentConsoleCheck(args[1:])
+	}
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		printDeploymentUsage()
 		return nil
@@ -619,6 +625,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
+  rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK
   rtk-cloud deployment upgrade --environment NAME --confirm STACK
   rtk-cloud deployment provision --environment NAME --confirm STACK

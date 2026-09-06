@@ -371,7 +371,7 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"billing-service-token":            {{"-billing", "billing-runtime", "BILLING_SERVICE_TOKEN"}},
 		"job-authorization-token": {
 			{"-account-manager", "account-manager-runtime", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
-			{"-cloud-admin", "cloud-admin-billing-client", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
+			{"-admin", "cloud-admin-billing-client", "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"},
 		},
 		"fleet-read-token": {
 			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
