@@ -8698,9 +8698,11 @@ func lkeDeploymentManifest(env map[string]string, workload lkeWorkload, certIssu
 `
 	}
 	if workload.Key == "frontend" {
-		extraEnv += `            - name: DISABLE_SEARCH_INDEXING
+		extraEnv += fmt.Sprintf(`            - name: DISABLE_SEARCH_INDEXING
               value: "true"
-`
+            - name: SERVICE_LOGIN_URL
+              value: %q
+`, firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"))
 	}
 	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
 		envFrom = `          envFrom:

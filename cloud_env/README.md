@@ -43,6 +43,14 @@ DNS_ADAPTER=godaddy
 
 ## Optional Overrides
 
+The LKE frontend deployment sets `SERVICE_LOGIN_URL` to
+`https://<CLOUD_ADMIN_DOMAIN>/login`, using the selected environment's derived
+Cloud Admin domain. Thus dev links to dev and staging links to staging. For a
+custom login destination, set the absolute URL in that environment's
+`~/.config/rtk_cloud/<environment>/operator/env/SERVICE_LOGIN_URL` file (mode
+`0600`). The deployment renderer honors this override. Do not rely on the
+frontend application's standalone staging fallback in a deployed environment.
+
 Do not create an override file when there are no differences. To adjust workload, capacity, or topology, place existing keys from [`cloud_deploy/architectures/kubernetes/`](../cloud_deploy/architectures/kubernetes/) in `overrides/architecture.env`:
 
 ```env
