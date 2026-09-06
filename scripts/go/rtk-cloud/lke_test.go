@@ -843,6 +843,34 @@ func TestLKECurrentFleetReadTokenRecoversPartialRotation(t *testing.T) {
 	}
 }
 
+func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	t.Setenv("FAKE_CLOUD_ADMIN_DEPLOYMENT_ABSENT", "1")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/video-cloud:new",
+	}
+
+	if err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-old"); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	if !strings.Contains(log, "patch secret cloud-admin-billing-client --type=merge --patch-file=/dev/stdin") || !strings.Contains(log, `"VIDEO_CLOUD_FLEET_READ_TOKEN":"fleet-token-new"`) {
+		t.Fatalf("missing Cloud Admin secret promotion:\n%s", log)
+	}
+	if strings.Contains(log, "patch deployment cloud-admin") {
+		t.Fatalf("absent Cloud Admin deployment was patched:\n%s", log)
+	}
+}
+
 func TestValidateRuntimeCoverageVideoCloudAPIBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -6561,7 +6589,9 @@ if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o name"*
   exit 0
 fi
 if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]]; then
-  printf 'deployment/cloud-admin\n'
+  if [[ "${FAKE_CLOUD_ADMIN_DEPLOYMENT_ABSENT:-}" != "1" ]]; then
+    printf 'deployment/cloud-admin\n'
+  fi
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then

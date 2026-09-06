@@ -2926,7 +2926,15 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string)
 	if err != nil {
 		return err
 	}
+	videoSecretFound, err := lkeKubernetesResourceExists(videoNamespace, "secret", "video-cloud-runtime")
+	if err != nil {
+		return err
+	}
 	adminFound, err := lkeKubernetesResourceExists(adminNamespace, "deployment", "cloud-admin")
+	if err != nil {
+		return err
+	}
+	adminSecretFound, err := lkeKubernetesResourceExists(adminNamespace, "secret", "cloud-admin-billing-client")
 	if err != nil {
 		return err
 	}
@@ -2944,15 +2952,20 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string)
 		}
 	}
 
-	if adminFound {
+	if adminSecretFound {
 		if err := lkePatchFleetReadSecret(adminNamespace, "cloud-admin-billing-client", desiredToken, ""); err != nil {
 			return err
 		}
+	}
+	if adminFound {
 		if err := lkeRollFleetTokenConsumer(adminNamespace, "cloud-admin", lkeFleetReadTokenChecksum()); err != nil {
 			return err
 		}
 	}
 
+	if !videoFound && videoSecretFound {
+		return lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", desiredToken, "")
+	}
 	if videoFound && rotating {
 		if err := lkePatchFleetReadSecret(videoNamespace, "video-cloud-runtime", desiredToken, previousToken); err != nil {
 			return err
