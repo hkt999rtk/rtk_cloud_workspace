@@ -2,9 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -17,12 +21,16 @@ var webAssets embed.FS
 
 type dashboardData interface {
 	recordClientActivity()
+	triggerWebhookRefresh()
 	snapshot() Snapshot
 	detail(context.Context, string, string, int64) (RunDetail, error)
 }
 
-func newHandler(data dashboardData) http.Handler {
+func newHandler(data dashboardData, webhookSecret []byte) http.Handler {
 	mux := http.NewServeMux()
+	if len(webhookSecret) > 0 {
+		mux.HandleFunc("POST /webhooks/github", githubWebhookHandler(data, webhookSecret))
+	}
 	mux.HandleFunc("GET /api/snapshot", func(w http.ResponseWriter, _ *http.Request) {
 		data.recordClientActivity()
 		writeJSON(w, http.StatusOK, data.snapshot())
@@ -59,6 +67,42 @@ func newHandler(data dashboardData) http.Handler {
 	content, _ := fs.Sub(webAssets, "web")
 	mux.Handle("GET /", http.FileServer(http.FS(content)))
 	return securityHeaders(mux)
+}
+
+const maxWebhookBody = 1 << 20
+
+func githubWebhookHandler(data dashboardData, secret []byte) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWebhookBody))
+		if err != nil {
+			http.Error(w, "invalid webhook payload", http.StatusBadRequest)
+			return
+		}
+		if !validWebhookSignature(body, r.Header.Get("X-Hub-Signature-256"), secret) {
+			http.Error(w, "invalid webhook signature", http.StatusUnauthorized)
+			return
+		}
+
+		switch r.Header.Get("X-GitHub-Event") {
+		case "pull_request", "workflow_run", "workflow_job":
+			data.triggerWebhookRefresh()
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}
+}
+
+func validWebhookSignature(body []byte, signature string, secret []byte) bool {
+	const prefix = "sha256="
+	if len(secret) == 0 || !strings.HasPrefix(signature, prefix) {
+		return false
+	}
+	provided, err := hex.DecodeString(strings.TrimPrefix(signature, prefix))
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write(body)
+	return hmac.Equal(provided, mac.Sum(nil))
 }
 
 var errRunNotFound = errors.New("run not found")
