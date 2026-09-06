@@ -198,7 +198,7 @@ func lkeMissingPlannedVolumeServices(paths provisionPaths, env map[string]string
 		{name: "data-postgresql-0", count: plan.PostgresVolumes},
 		{name: "data-fleet-valkey-0", count: plan.FleetVolumes},
 	} {
-		if pvc.count <= 0 || lkePersistentVolumeClaimExists(paths, env, pvc.name) {
+		if pvc.count <= 0 || lkePersistentVolumeClaimBound(paths, env, pvc.name) {
 			continue
 		}
 		missing += pvc.count
@@ -206,7 +206,7 @@ func lkeMissingPlannedVolumeServices(paths provisionPaths, env map[string]string
 	return missing
 }
 
-func lkePersistentVolumeClaimExists(paths provisionPaths, env map[string]string, name string) bool {
+func lkePersistentVolumeClaimBound(paths provisionPaths, env map[string]string, name string) bool {
 	kubeconfig := firstNonEmpty(
 		os.Getenv("RTK_CLOUD_KUBECONFIG"),
 		os.Getenv("KUBECONFIG"),
@@ -227,10 +227,10 @@ func lkePersistentVolumeClaimExists(paths provisionPaths, env map[string]string,
 		"--request-timeout=5s",
 		"-n", lkeNamespaceName(env, "platform"),
 		"get", "pvc", name,
-		"--ignore-not-found=true", "-o", "name",
+		"--ignore-not-found=true", "-o", "jsonpath={.status.phase}",
 	}
 	out, err := exec.Command(lkeKubectl(), args...).CombinedOutput()
-	return err == nil && strings.TrimSpace(string(out)) != ""
+	return err == nil && strings.TrimSpace(string(out)) == "Bound"
 }
 
 func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[string]string, desiredCount int) int {

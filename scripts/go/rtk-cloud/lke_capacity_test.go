@@ -14,7 +14,7 @@ func TestLKEMissingPlannedVolumeServicesUsesExistingPVCs(t *testing.T) {
 	kubectl := filepath.Join(dir, "kubectl")
 	writeTestFile(t, kubectl, `#!/bin/sh
 case "$*" in
-  *" get pvc data-fleet-valkey-0 "*) printf 'persistentvolumeclaim/data-fleet-valkey-0\n' ;;
+  *" get pvc data-fleet-valkey-0 "*) printf 'Bound' ;;
 esac
 `)
 	if err := os.Chmod(kubectl, 0o755); err != nil {
@@ -30,6 +30,33 @@ esac
 	)
 	if got != 1 {
 		t.Fatalf("missing volume services = %d, want 1 for the absent PostgreSQL PVC", got)
+	}
+}
+
+func TestLKEMissingPlannedVolumeServicesCountsPendingPVCs(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "kubeconfig.yaml")
+	writeTestFile(t, kubeconfig, "test kubeconfig\n")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/bin/sh
+case "$*" in
+  *" get pvc data-fleet-valkey-0 "*) printf 'Pending' ;;
+  *" get pvc data-postgresql-0 "*) printf 'Bound' ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECONFIG", kubeconfig)
+
+	got := lkeMissingPlannedVolumeServices(
+		provisionPaths{EnvRoot: dir},
+		map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"},
+		lkeProviderServicePlan{PostgresVolumes: 1, FleetVolumes: 1},
+	)
+	if got != 1 {
+		t.Fatalf("missing volume services = %d, want 1 for the pending Fleet PVC", got)
 	}
 }
 
