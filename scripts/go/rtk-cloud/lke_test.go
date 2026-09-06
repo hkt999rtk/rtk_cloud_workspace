@@ -6710,31 +6710,20 @@ esac
 }
 
 func TestWaitK8SOnDeleteStatefulSetReadyPollsUntilReady(t *testing.T) {
-	dir := t.TempDir()
-	countPath := filepath.Join(dir, "count")
-	kubectl := filepath.Join(dir, "kubectl")
-	writeTestFile(t, kubectl, `#!/usr/bin/env bash
-set -euo pipefail
-count=0
-if [[ -f "`+countPath+`" ]]; then count="$(cat "`+countPath+`")"; fi
-count=$((count + 1))
-printf '%s' "$count" > "`+countPath+`"
-if [[ "$count" == "1" ]]; then
-  printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":3,"readyReplicas":1,"currentReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}'
-else
-  printf '%s\n' '{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"currentReplicas":2,"currentRevision":"openbao-new","updateRevision":"openbao-new"}}'
-fi
-`)
-	if err := os.Chmod(kubectl, 0o755); err != nil {
-		t.Fatal(err)
+	count := 0
+	query := func() ([]byte, error) {
+		count++
+		if count == 1 {
+			return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":3,"readyReplicas":1,"currentReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}`), nil
+		}
+		return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"currentReplicas":2,"currentRevision":"openbao-new","updateRevision":"openbao-new"}}`), nil
 	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
-	if err := waitK8SOnDeleteStatefulSetReady("/tmp/test-kubeconfig", "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {
+	if err := waitK8SOnDeleteStatefulSetReadyWith(query, "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(readTestFile(t, countPath)); got != "2" {
-		t.Fatalf("kubectl poll count = %s, want 2", got)
+	if count != 2 {
+		t.Fatalf("poll count = %d, want 2", count)
 	}
 }
 
