@@ -915,6 +915,55 @@ func TestLKEFleetReadTokenRotationRequiresCompatibleVideoImage(t *testing.T) {
 	}
 }
 
+func TestLKEFleetReadTokenRolloutPendingDetection(t *testing.T) {
+	fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	t.Setenv("FAKE_VIDEO_FLEET_CHECKSUM", lkeConfigChecksum("fleet-token-old", "fleet-token-new"))
+	pending, err := lkeFleetReadTokenRolloutPending(env)
+	if err != nil || !pending {
+		t.Fatalf("pending = %t, error = %v", pending, err)
+	}
+	t.Setenv("FAKE_VIDEO_FLEET_CHECKSUM", lkeFleetReadTokenChecksum())
+	pending, err = lkeFleetReadTokenRolloutPending(env)
+	if err != nil || pending {
+		t.Fatalf("steady pending = %t, error = %v", pending, err)
+	}
+}
+
+func TestLKEFleetReadTokenRotationResumesFinalVideoRollout(t *testing.T) {
+	logPath := fakeKubectl(t)
+	oldCanonical := activeCanonicalSecretStore
+	oldCache := lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"fleet-read-token": "fleet-token-new"}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore = oldCanonical
+		lkeRuntimeSecretCache = oldCache
+	})
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+
+	err := lkeSyncFleetReadTokenConsumers(env, "fleet-token-new", provisionOptions{
+		workloads:               []string{"cloud-admin"},
+		fleetReadRolloutPending: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	if !strings.Contains(log, "patch deployment video-cloud-api --type=strategic --patch-file=/dev/stdin") || !strings.Contains(log, "rollout status deployment/video-cloud-api --timeout") {
+		t.Fatalf("final Video Cloud rollout was not resumed:\n%s", log)
+	}
+}
+
 func TestLKEFleetReadTokenRotationPromotesSecretBeforeFirstCloudAdminPod(t *testing.T) {
 	logPath := fakeKubectl(t)
 	oldCanonical := activeCanonicalSecretStore
@@ -6667,6 +6716,10 @@ if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]];
   if [[ "${FAKE_CLOUD_ADMIN_DEPLOYMENT_ABSENT:-}" != "1" ]]; then
     printf 'deployment/cloud-admin\n'
   fi
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o go-template="* ]]; then
+  printf '%s' "${FAKE_VIDEO_FLEET_CHECKSUM:-}"
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then

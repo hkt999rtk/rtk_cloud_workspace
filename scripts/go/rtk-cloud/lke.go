@@ -2215,6 +2215,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 		opts.fleetReadTokenBefore = previousToken
+		rolloutPending, err := lkeFleetReadTokenRolloutPending(env)
+		if err != nil {
+			return err
+		}
+		opts.fleetReadRolloutPending = rolloutPending
 	}
 	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
 		manifest, err := lkeFrontendSDKDownloadsSecretManifest(env)
@@ -2914,6 +2919,21 @@ func lkeCurrentFleetReadToken(env map[string]string) (string, error) {
 	return "", errors.New("Fleet token consumers use multiple non-current tokens; reconcile them before rotating")
 }
 
+func lkeFleetReadTokenRolloutPending(env map[string]string) (bool, error) {
+	annotation, err := kubectlCombinedOutput(
+		nil,
+		"-n", lkeNamespaceName(env, "video-cloud"),
+		"get", "deployment", "video-cloud-api",
+		"--ignore-not-found=true",
+		"-o", `go-template={{ index .spec.template.metadata.annotations "rtk.realtek.com/fleet-read-token-checksum" }}`,
+	)
+	if err != nil {
+		return false, fmt.Errorf("read Video Cloud Fleet token rollout checksum: %w", err)
+	}
+	current := strings.TrimSpace(string(annotation))
+	return current != "" && current != lkeFleetReadTokenChecksum(), nil
+}
+
 func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string, opts provisionOptions) error {
 	desiredToken := lkeRuntimeSecretValue("fleet-read-token")
 	if desiredToken == "" {
@@ -2921,7 +2941,7 @@ func lkeSyncFleetReadTokenConsumers(env map[string]string, previousToken string,
 	}
 	previousToken = strings.TrimSpace(previousToken)
 	rotating := previousToken != "" && previousToken != desiredToken
-	syncVideo := rotating || lkeWorkloadSelected(env, opts, "video-cloud")
+	syncVideo := rotating || opts.fleetReadRolloutPending || lkeWorkloadSelected(env, opts, "video-cloud")
 	syncAdmin := rotating || lkeWorkloadSelected(env, opts, "cloud-admin")
 	videoNamespace := lkeNamespaceName(env, "video-cloud")
 	adminNamespace := lkeNamespaceName(env, "admin")
