@@ -197,15 +197,36 @@ func lkeMissingPlannedDatabaseNodeServices(token string, cluster lkeCluster, env
 	if err != nil {
 		return 0, err
 	}
-	for _, pool := range pools {
-		if lkeNodePoolHasPostgresPlacement(pool) {
-			if plan.ReconcileDatabasePool && plan.DatabaseNodes > pool.Count {
-				return plan.DatabaseNodes - pool.Count, nil
+	if !plan.ReconcileDatabasePool {
+		for _, pool := range pools {
+			if lkeNodePoolHasPostgresPlacement(pool) {
+				return 0, nil
 			}
-			return 0, nil
+		}
+		return plan.DatabaseNodes, nil
+	}
+	desiredID := firstNonEmpty(os.Getenv("LKE_POSTGRES_NODE_POOL_ID"), env["LKE_POSTGRES_NODE_POOL_ID"])
+	var selected *lkeNodePool
+	var firstDatabase *lkeNodePool
+	for i := range pools {
+		if desiredID != "" && strconv.Itoa(pools[i].ID) == desiredID {
+			selected = &pools[i]
+			break
+		}
+		if lkeNodePoolHasPostgresPlacement(pools[i]) && firstDatabase == nil {
+			firstDatabase = &pools[i]
 		}
 	}
-	return plan.DatabaseNodes, nil
+	if selected == nil {
+		selected = firstDatabase
+	}
+	if selected == nil || selected.Type != lkePostgresNodePoolType(env) {
+		return plan.DatabaseNodes, nil
+	}
+	if plan.DatabaseNodes > selected.Count {
+		return plan.DatabaseNodes - selected.Count, nil
+	}
+	return 0, nil
 }
 
 func lkeMissingPlannedGeneralNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
@@ -322,7 +343,8 @@ func lkeReducibleMainNodeServices(token string, cluster lkeCluster, env map[stri
 	}
 	desiredType := firstNonEmpty(os.Getenv("LKE_NODE_TYPE"), env["LKE_NODE_TYPE"], "g6-standard-2")
 	for _, pool := range pools {
-		if pool.Type != desiredType || lkeNodePoolHasPostgresPlacement(pool) {
+		class := pool.Labels["rtk.io/node-class"]
+		if pool.Type != desiredType || class == "general" || class == "database" {
 			continue
 		}
 		if pool.Count > desiredCount {

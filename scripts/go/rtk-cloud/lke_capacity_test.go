@@ -300,6 +300,23 @@ func TestLKEMissingPlannedDatabaseNodeServicesProjectsOnlyFullReconcileGrowth(t 
 	}
 }
 
+func TestLKEMissingPlannedDatabaseNodeServicesCountsTypeReplacement(t *testing.T) {
+	fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"data":[{"id":222,"type":"g6-standard-4","count":2,"label":"postgres","labels":{"rtk.io/node-class":"database"},"taints":[{"key":"rtk.io/node-class","value":"database","effect":"NoSchedule"}]}]}`,
+	})
+	env := map[string]string{"LKE_POSTGRES_NODE_TYPE": "g6-standard-8"}
+
+	growth, err := lkeMissingPlannedDatabaseNodeServices("test-token", lkeCluster{ID: 12345}, env, lkeProviderServicePlan{
+		DatabaseNodes: 2, ReconcileDatabasePool: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if growth != 2 {
+		t.Fatalf("database replacement growth = %d, want 2", growth)
+	}
+}
+
 func TestLKEMissingPlannedGeneralNodeServicesProjectsFullReconcileGrowth(t *testing.T) {
 	fakeLinodeCurl(t, map[string]string{
 		"/lke/clusters/12345/pools": `{"data":[{"id":111,"type":"g6-standard-4","count":1,"label":"general","labels":{"rtk.io/node-class":"general"}}]}`,
@@ -482,6 +499,20 @@ func TestLKELiveProviderServicesAccountsForPlannedNodePoolShrink(t *testing.T) {
 
 	if err := lkeCheckCapacityWithPaths(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, provisionOptions{}); err != nil {
 		t.Fatalf("capacity check should allow scripted shrink before adding edge/coturn: %v", err)
+	}
+}
+
+func TestLKEReducibleMainNodeServicesIgnoresSameTypeGeneralPool(t *testing.T) {
+	fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"data":[
+			{"id":111,"type":"g6-standard-4","count":3,"labels":{"rtk.io/node-class":"general"}},
+			{"id":222,"type":"g6-standard-4","count":2,"labels":{"rtk.io/node-class":"broker"}}
+		]}`,
+	})
+	env := map[string]string{"LKE_NODE_TYPE": "g6-standard-4"}
+
+	if got := lkeReducibleMainNodeServices("test-token", lkeCluster{ID: 12345}, env, 2); got != 0 {
+		t.Fatalf("reducible broker nodes = %d, want 0", got)
 	}
 }
 
