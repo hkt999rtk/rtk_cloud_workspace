@@ -300,6 +300,29 @@ func TestLKEMissingPlannedDatabaseNodeServicesProjectsOnlyFullReconcileGrowth(t 
 	}
 }
 
+func TestLKEMissingPlannedGeneralNodeServicesProjectsFullReconcileGrowth(t *testing.T) {
+	fakeLinodeCurl(t, map[string]string{
+		"/lke/clusters/12345/pools": `{"data":[{"id":111,"type":"g6-standard-4","count":1,"label":"general","labels":{"rtk.io/node-class":"general"}}]}`,
+	})
+	env := map[string]string{"LKE_GENERAL_NODE_TYPE": "g6-standard-4"}
+	cluster := lkeCluster{ID: 12345}
+
+	growth, err := lkeMissingPlannedGeneralNodeServices("test-token", cluster, env, lkeProviderServicePlan{GeneralNodes: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if growth != 1 {
+		t.Fatalf("general pool growth = %d, want 1", growth)
+	}
+	unchanged, err := lkeMissingPlannedGeneralNodeServices("test-token", cluster, env, lkeProviderServicePlan{GeneralNodes: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged != 0 {
+		t.Fatalf("unchanged general pool growth = %d, want 0", unchanged)
+	}
+}
+
 func TestLKELiveProviderServicesCountsMissingDatabasePool(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeLinodeCurl(t, map[string]string{

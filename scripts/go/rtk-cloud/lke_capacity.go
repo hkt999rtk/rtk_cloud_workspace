@@ -40,6 +40,7 @@ type lkeCapacityPlanResult struct {
 
 type lkeProviderServicePlan struct {
 	NodeServices          int
+	GeneralNodes          int
 	DatabaseNodes         int
 	ReconcileDatabasePool bool
 	PostgresVolumes       int
@@ -159,6 +160,11 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 			return poolErr
 		}
 		additional += missingDatabaseNodes
+		missingGeneralNodes, poolErr := lkeMissingPlannedGeneralNodeServices(token, cluster, env, plan)
+		if poolErr != nil {
+			return poolErr
+		}
+		additional += missingGeneralNodes
 		if plan.EdgeVMs > 0 && !activeLabels[lkeEdgeHAProxyLabel(env)] {
 			additional++
 		}
@@ -194,6 +200,26 @@ func lkeMissingPlannedDatabaseNodeServices(token string, cluster lkeCluster, env
 		}
 	}
 	return plan.DatabaseNodes, nil
+}
+
+func lkeMissingPlannedGeneralNodeServices(token string, cluster lkeCluster, env map[string]string, plan lkeProviderServicePlan) (int, error) {
+	if plan.GeneralNodes <= 0 {
+		return 0, nil
+	}
+	pools, err := listLKENodePools(token, strconv.Itoa(cluster.ID))
+	if err != nil {
+		return 0, err
+	}
+	desiredType := firstNonEmpty(env["LKE_GENERAL_NODE_TYPE"], env["LKE_NODE_TYPE"], "g6-standard-2")
+	for _, pool := range pools {
+		if pool.Labels["rtk.io/node-class"] == "general" && pool.Type == desiredType {
+			if plan.GeneralNodes > pool.Count {
+				return plan.GeneralNodes - pool.Count, nil
+			}
+			return 0, nil
+		}
+	}
+	return plan.GeneralNodes, nil
 }
 
 func lkeProviderResourceCount(token, endpoint string) (int, error) {
@@ -327,6 +353,10 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	if lkePostgresDedicatedNodePoolEnabled(env) && (len(opts.workloads) == 0 || lkeTargetedFleetDatabasePoolRequired(env, opts)) {
 		databaseNodes = maxInt(envIntFrom(env, "LKE_POSTGRES_NODE_COUNT", 1), 0)
 	}
+	generalNodes := 0
+	if len(opts.workloads) == 0 {
+		generalNodes = maxInt(envIntFrom(env, "LKE_GENERAL_NODE_COUNT", 0), 0)
+	}
 	postgresVolumes := 0
 	if lkePostgresUsesPVC(env) {
 		postgresVolumes = 1
@@ -344,6 +374,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	required := workerNodes + postgresVolumes + fleetVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
 		NodeServices:          workerNodes,
+		GeneralNodes:          generalNodes,
 		DatabaseNodes:         databaseNodes,
 		ReconcileDatabasePool: len(opts.workloads) == 0 && databaseNodes > 0,
 		PostgresVolumes:       postgresVolumes,
