@@ -1681,6 +1681,9 @@ func TestLKEApplyTargetedFleetDependenciesIsSelfContained(t *testing.T) {
 	if strings.Contains(log, "name: openbao") || strings.Contains(log, "name: postgresql\n") {
 		t.Fatalf("targeted fleet dependency apply touched unrelated stateful services:\n%s", log)
 	}
+	if want := `"rtk.realtek.com/fleet-read-token-checksum":"` + lkeFleetReadTokenChecksum() + `"`; !strings.Contains(log, want) {
+		t.Fatalf("steady-state Fleet token checksum mismatch; missing %q:\n%s", want, log)
+	}
 }
 
 func TestLKEApplyFleetValkeyStatefulSetHandlesImmutableStorageUpdate(t *testing.T) {

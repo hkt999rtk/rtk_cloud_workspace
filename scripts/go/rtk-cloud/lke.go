@@ -3018,6 +3018,10 @@ func lkePatchFleetReadSecret(namespace, name, token, previousToken string) error
 }
 
 func lkeRollVideoCloudFleetToken(env map[string]string, token, previousToken string, updateImage bool) error {
+	checksum := lkeConfigChecksum(token)
+	if previousToken != "" {
+		checksum = lkeConfigChecksum(token, previousToken)
+	}
 	container := map[string]any{
 		"name": "app",
 		"env": []map[string]any{{
@@ -3038,7 +3042,7 @@ func lkeRollVideoCloudFleetToken(env map[string]string, token, previousToken str
 	patch, err := json.Marshal(map[string]any{
 		"spec": map[string]any{"template": map[string]any{
 			"metadata": map[string]any{"annotations": map[string]string{
-				"rtk.realtek.com/fleet-read-token-checksum": lkeConfigChecksum(token, previousToken),
+				"rtk.realtek.com/fleet-read-token-checksum": checksum,
 			}},
 			"spec": map[string]any{"containers": []map[string]any{container}},
 		}},
