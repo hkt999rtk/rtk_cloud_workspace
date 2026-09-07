@@ -1296,3 +1296,20 @@ expiry and renewal status, fixed validity dates, leap days, year boundaries and
 malformed date rejection. The arm64 iOS simulator build passed. Background renewal
 scheduling, production request/ack integration, revocation and physical-device
 qualification remain open. Five top-level milestones remain unfinished.
+
+## Durable iOS renewal preparation
+
+Renewal preparation now retains a deterministic protected key version and a
+bounded ThisDeviceOnly request journal before returning. Retries preserve the
+original CSR, parameters and previous active label; changed parameters or CSR
+identity/key/signature failures are rejected. Preparation does not switch the
+active identity or perform network requests. CSR generation now includes empty
+attributes and omits ECDSA algorithm parameters.
+
+Validation: 60 Swift tests passed on macOS and the arm64 iOS simulator build passed.
+Native Keychain tests cover request reload, parameter changes, corrupted CSR and
+unchanged active selection; additional tests cover signature/key mismatches and
+device/request namespace boundaries. Native OpenSSL issuance still passes.
+Network renewal/response installation/ack integration, scheduling, revocation and
+physical-device restart qualification remain required. Five top-level milestones
+remain open.
