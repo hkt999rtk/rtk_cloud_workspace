@@ -1675,3 +1675,20 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next work includes concrete
 application wiring and equivalent platform/runtime qualification.
+
+## Public Go WebSocket client preserves configured PKI transport
+
+Inspection found Client.Connect ignored the SDK HTTP/TLS client and dialed with
+global defaults. It now uses the configured *http.Client, refuses redirects and
+query-escapes device identity. Unsupported custom Do-only transports fail rather
+than falling back. A public configured-client transport entry point is available.
+
+Validation: the full Go SDK suite and full race suite passed. The public client
+connects to a local mTLS-required WebSocket server using the CRL-guarded TLS config;
+RunRefresh fetches signed revocation and GuardContext terminates the owner/socket.
+Redirect and device-query encoding cases also pass. Actual deployed application/
+media lifecycle and physical-device qualification remain outstanding.
+
+Milestone 2 advanced through public SDK integration. Five broad milestones remain:
+migration/device replacement; remaining trust consumers/live sessions; backup/
+recovery and SDK integration; provider/hardware; staging/custody/recovery.
