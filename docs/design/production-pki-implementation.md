@@ -3456,3 +3456,29 @@ staging/custody/recovery qualification. Next: review remaining host/domain wirin
 and TURN grant/session association, plus cutoff/load/hostile-client qualification.
 No push, PR, remote CI, deployed relay change or custody operation occurred.
 Goal remains active.
+
+
+## Atomic signaling closure checkpoint (2026-09-08)
+
+Video Cloud commit `79260e4` fixes a race found while preparing TURN grant/session
+association: Redis SaveAnswer previously read and rewrote the entire record, so
+an answer could overwrite concurrent closure and restore TURN authorization.
+Answer/close updates now use a bounded optimistic retry with an atomic Lua
+snapshot comparison, preserving the existing remaining TTL. Closed/preflight/
+expired records reject answers; repeated close preserves its original timestamp.
+Deleted keys cannot be recreated by outstanding updates. Memory storage applies
+the same lifecycle checks under its mutex.
+
+Validation: full Go suite and signaling race suite passed. Concurrent answer/close
+checks passed in memory, the Redis protocol fixture and real local Redis 8.6.0.
+The real fixture also verified stale-snapshot rejection after close/deletion and
+no TTL extension. Each race case confirms TURN authorization stays denied after
+closure. The temporary Redis process was shut down and verified terminal.
+Signaling writers now require EVAL/GET/PTTL/SET session-key permissions; controller
+receipt readers do not need the write script. No unsafe write fallback exists.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next remains preflight-to-session grant
+association, now on top of atomic lifecycle updates. No push, PR, remote CI,
+deployment or custody operation occurred. Goal remains active.
