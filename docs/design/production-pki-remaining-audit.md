@@ -115,3 +115,24 @@ ledger entries. This is not an exhaustive claim that all unlisted requirements
 are complete. Completion still requires reviewing every original contract gate,
 including trust adoption, compromise handling, escrow and restored security state.
 The full goal remains active.
+
+
+## Viewer local teardown checkpoint (2026-09-08)
+
+Native WebRTC SDK commit `27ccaef` closes the viewer peer before state callbacks,
+token acquisition and remote cleanup. Failed starts close locally before reporting
+failure. The close callback runs once, blocks reentrant session destruction, and
+retains its error for subsequent explicit cleanup. Peer destroy retains final
+resource ownership; explicit close/destroy still cleans up cloud session records.
+
+Validation: macOS AppleClang core build and all 10 configured CTest tests passed
+in `/private/tmp/rtk-webrtc-pki-core` (POSIX HTTP, Ameba host tests and examples
+disabled). Tests assert local closure before token refresh/cloud cleanup,
+immediate failed-start teardown, once-only close, close failure propagation and
+reentrant close/destroy rejection. No hardware or live relay qualification.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Autonomous viewer authorization/expiry
+checks and existing TURN allocation termination remain open. No push, PR, remote
+CI, deployment or custody operation occurred. Goal remains active.
