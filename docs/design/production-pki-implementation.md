@@ -1909,3 +1909,23 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Remaining work includes other-platform
 trust/lifecycle consumers, host integration and operational backup/recovery,
 physical/provider and staging qualification.
+
+## Android signed/current issuer CRL gate
+
+Production Android identity validation now requires a host CRL provider and checks
+one signed current full/direct CRL for every chain issuer after trust/profile
+validation. It checks issuer CRL-signing permission, AKI/SKI, positive number,
+freshness and non-root serial revocation, rejecting unsupported scoped/delta/
+indirect forms. Installation/migration/active lookup/new mTLS construction use the
+gate. No missing-provider fallback exists outside explicit test-certificate mode.
+
+Validation: full JVM tests and release/test builds passed. Signed fixtures cover
+leaf/intermediate revocation, coverage, signature/authority/number/freshness,
+unsupported forms and trailing data. Eleven API 35 tests passed, including a CRL
+update rejecting new mTLS contexts. The emulator was stopped after testing.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next requires durable CRL
+rollback state, refresh and existing-owner teardown; host and physical/live
+provider qualification remain outstanding.
