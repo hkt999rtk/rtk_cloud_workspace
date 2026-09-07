@@ -32,6 +32,7 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Device WebSocket revalidation, MQTT authentication leases and broker cache/session operator tooling.
 - [x] Cumulative Root distrust, consumer acknowledgment gates, atomic local root state and opt-in API TLS reload.
 - [x] Explicit reconciliation of historical pending Root removals with governance and acknowledgment gates.
+- [x] Administrator reconciliation of uncertain renewal results from stored provider certificates.
 - [ ] Remaining trust-consumer adapters, direct media termination and live trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
@@ -297,3 +298,35 @@ production key was changed. Work remains local with no PR, push or deployment.
 
 Local historical-removal commits: Video Cloud `17cbe09`, Cloud Admin `9a34bdc`,
 following workspace checkpoint `7b7ddc7`.
+
+
+## Uncertain renewal signing recovery continuation
+
+Added administrator recovery for existing replacement claims through an issuer-
+scoped, request-bound controller endpoint and Cloud Admin form. The original
+request ID and provider serial locate a public certificate in the pinned OpenBao
+mount. Recovery performs no signing or claim reset. Missing/revoked/invalid
+provider results preserve the unresolved claim. The original device retrieves
+successful recovery by replaying its existing renewal request.
+
+Completion now independently checks the full client-auth chain, requested key and
+identity, claim-relative backdating, signed validity interval, parent margin, live
+old identity and active entitlement. The binding, result, bounded installation
+overlap and operator/fingerprint audit are atomic. Exact retries are idempotent;
+a different recovered certificate cannot replace a committed result.
+
+Validated locally with isolated PostgreSQL and race tests for concurrent recovery,
+wrong keys/CN/usage/validity, revoked entitlement, stale MFA, wrong role/issuer,
+body-bound API assertions, device-caller denial, result replay and unchanged overlap.
+Provider HTTP tests cover exact read-only lookup, serial mismatch, missing status,
+revocation, redirects, oversized/malformed responses and missing certificates.
+PKI, certissuer, API/HTTP regressions and Cloud Admin tests pass. No live OpenBao
+or production keys were used.
+
+Factory signing claims use a separate journal and remain the next recovery stage.
+Expired-device recovery, automatic provider investigation, remaining trust adapters,
+deployment/backup/migration and live qualification remain unfinished. No PR, push,
+remote CI or deployment was performed.
+
+Local renewal-recovery commits: Video Cloud `c34f7a3`, Cloud Admin `158d232`,
+following workspace checkpoint `165e59d`.
