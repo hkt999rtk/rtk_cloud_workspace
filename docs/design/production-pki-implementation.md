@@ -1121,3 +1121,34 @@ entitlement, altered serial/expiry, binding revocation, expired replacement over
 signed leaf revocation and signed ancestor revocation. The existing strict-token
 and broker-eviction regression passed against the shared verifier. Controller build
 and focused vet passed; the temporary database was removed.
+
+## Native matched provider/registry restore and signing continuation
+
+Added an opt-in native OpenBao 2.5.5 TLS file-store/PostgreSQL recovery drill.
+Fixture Root/Brand keys stay in memory and the Product key is generated internally
+by OpenBao. The drill checks a registered leaf and signed CRLs, captures stopped
+provider storage and a native registry dump, removes the issuer and binding, then
+restores both stores. Restoring only the provider must fail while the registry
+binding is absent. The matched registry restore recovers the existing leaf check;
+a fresh in-memory CSR must then receive a valid signature from the original
+Product issuer. The probe is not registered as a usable device identity.
+
+The test verifies the disposable PostgreSQL container label and cluster identifier
+before applying its unique schema dump. It uses original test unseal material
+separately from the copied provider state and cleans its temporary provider.
+No live provider, production key, production credential or new runtime signing
+bypass is introduced. This is local file-store recovery evidence; live Raft/HSM/
+quorum custody, post-backup security reconciliation, other-service recovery and
+scheduled full PKI rehearsals remain required. Five top-level milestones stay open.
+
+The native drill also uses separate tokens carrying only the generated recovery
+and signer policies. Recovery reads succeed and signing with the recovery token
+must receive HTTP 403 both before and after restore. Fresh signing succeeds with
+the signer token. Privileged fixture credentials are limited to setup/destruction;
+they are not used to satisfy the recovery/read/sign checks.
+
+Validation: the native matched restore/signing drill passed with the Go race
+detector against OpenBao 2.5.5 and PostgreSQL 16. PKI/OpenBao/controller regression
+tests and focused vet passed. The disposable PostgreSQL container was removed;
+the drill removed each temporary provider container and filesystem fixture.
+These results do not measure production RPO/RTO or qualify live custody.
