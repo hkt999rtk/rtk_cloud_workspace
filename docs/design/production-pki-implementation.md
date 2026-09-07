@@ -2920,3 +2920,35 @@ locally implemented. Next: actual application session owners and domain-specific
 issuance/consumer wiring. Protected service-peer CRL distribution, Linux/physical
 providers and operational qualification remain unproven. No push, PR, remote CI or
 deployment was performed. The overall goal remains active.
+
+
+## Native core HTTP/WebSocket guarded TLS ownership
+
+Client `830798f` adds optional `RTKC_OPENSSL_TLS` POSIX platform hooks used directly
+by the existing HTTP and WebSocket transports. The adapter owns the guarded Device
+identity, verifies current protected state around each handshake, validates explicit
+server roots and DNS/IP names, rejects raw plaintext/disabled verification, and
+registers TLS sockets under the close callback's publication mutex. Revocation,
+expiry or cancellation shuts down sockets without freeing in-use transport state.
+The earliest verified server-chain expiry permanently caps the platform guard,
+independently of Device CRL refresh. TLS session reuse/tickets and renegotiation are
+disabled. A compiled WebSocket example wires the platform, periodic refresh and
+correct cancellation/session/client/platform destruction order.
+
+Real mTLS fixtures test core HTTP token acquisition and core WebSocket upgrade,
+wrong roots, wrong-hostname certificates, raw-send/disabled-verification rejection,
+Device revocation and short-lived server certificates. The server observes upgraded
+socket closure before client polling/disconnect; subsequent reconnect/HTTP fails.
+All twelve HTTP/provider tests, twelve HTTP-disabled tests, eleven core-only tests,
+ASan/UBSan, HTTP/TLS ThreadSanitizer, example build and installed C linkage pass on
+macOS arm64. The native README contains full reproducible CMake commands and API
+ownership requirements. No physical/Linux or live deployment qualification is claimed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Core native transport ownership has advanced.
+Remaining native transport work includes bounding the base POSIX TCP DNS/connect
+phase (TLS handshake/I/O are bounded), and application/domain policy integration.
+Server revocation-feed integration is separate from Device issuer CRLs. Next: close
+bounded TCP ownership gaps and audit domain-specific issuance/consumer wiring.
+No push, PR, remote CI or deployment was performed. The overall goal remains active.

@@ -52,8 +52,9 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    Native durable CRL high-water state is now implemented with signed history,
    monotonic updates and atomic POSIX publication. Protected identity installation/
    renewal, scheduling, public HTTPS refresh and a POSIX session guard are locally
-   implemented, including guard-owned periodic refresh. Actual host/session wiring and physical/OpenSSL-provider
-   qualification remain. The
+   implemented, including guard-owned periodic refresh and an optional POSIX TLS
+   platform for core HTTP/WebSocket ownership. Bounded TCP resolution/connect,
+   application policy/domain wiring and physical/OpenSSL-provider qualification remain. The
    original fake callback test remains a plumbing test, not the verifier evidence.
 4. **Other trust domains and host inventory.** The generic issuer `Scope` has a
    domain, but `internal/pki/openbao_policy.go`, replacement and runtime
@@ -70,7 +71,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 - Native protected software key/CSR and immutable verified bundle storage are locally
   implemented (client `d9e44a7`); active selection is implemented in `38694dd`.
   Prepared renewal persistence is implemented in `f23213e`; implement
-  actual owner integration
+  bounded TCP resolution/connect and actual application/domain policy integration
+  (core HTTP/WebSocket TLS owner wiring is implemented in `830798f`)
   (guard-owned periodic refresh is implemented in `8b177cb`)
   (continuous POSIX trust guard is implemented in `683230c`)
   (public HTTPS CRL refresh is implemented in `55188e4`)
