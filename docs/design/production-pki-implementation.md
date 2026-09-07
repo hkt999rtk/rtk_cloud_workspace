@@ -3017,3 +3017,26 @@ staging/custody/recovery qualification. App provision/import is now implemented;
 next work is App runtime registry binding and provider response validation, followed
 by remaining domain adapters and consumer inventory. No push, PR, remote CI,
 deployment or custody operation was performed. The overall goal remains active.
+
+
+## Configured provider response validation (2026-09-08)
+
+Video Cloud `6522c24` validates signed CSR bytes before provider calls and verifies
+returned leaf identity/key, exact SANs/EKU, non-CA profile, validity and chain against
+the configured CA. Provider roots cannot add trust. Responses contain only the
+verified chain; rejected responses return no certificate. This applies to configured
+App/client and Gateway OpenBao signers. Existing RSA key encipherment compatibility
+remains; production P-256 admission and registry authorization are separate checks.
+
+Validation: full `GOWORK=off go test ./...` passed; certissuer/certissuerapp race
+suites passed. Final targeted race tests cover signed malicious profiles, wrong
+roots/keys/subjects, invalid times/PEM, and HTTP-path rejection without certificate
+output or a provider call for inconsistent CSR fields. No live provider operation
+was needed for this checkpoint.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: App registry-selected issuance with
+active status, durable claims/replay handling, and recovery/domain consumer adapters.
+No push, PR, remote CI, deployment or custody operation was performed. The full
+goal remains active.

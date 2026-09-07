@@ -60,7 +60,9 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    domain. App intermediate provisioning/import and restricted provider signing
    are now implemented in Video Cloud `4899d2f`, with local OpenBao/PostgreSQL
    coverage. App runtime signer selection remains configuration-based; registry
-   binding, full provider response validation and App recovery adapters remain.
+   binding and App recovery adapters remain. Configured provider response
+   validation is implemented in Video Cloud `6522c24`; registry status/replay
+   authorization is still separate unfinished App work.
    Replacement and runtime verification also require domain-specific review.
    Gateway/service profiles remain unimplemented. Inventory real issuance and consumer entry
    points for each required domain and identify missing adapters. A generic schema
