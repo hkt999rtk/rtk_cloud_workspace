@@ -1373,3 +1373,24 @@ integration; backup/recovery qualification also remains. Five broad milestones
 remain: legacy migration/device replacement; remaining trust consumers/live
 firmware sessions; backup/recovery and SDK integration; live provider/hardware
 compatibility; staging/key custody/recovery qualification.
+
+## Bounded iOS mTLS response streaming
+
+The built-in transport now uses URLSession data-delegate callbacks, enforcing
+128 KiB before appending each chunk and rejecting declared oversize at headers.
+Unknown or misleading lengths cannot bypass the body cap. Oversize cancels the
+task, preserves the original error and never returns partial data. Per-task
+state is synchronized, removed on completion or timeout, and separate across
+requests. Closing the transport also cancels in-flight streamed responses.
+
+Validation: all 65 Swift tests and the arm64 iOS simulator build passed. Native
+URLSession/URLProtocol fixtures exercise chunk callbacks, exact limit, overflow,
+declared oversize, session reuse and in-flight closure. This is local transport
+evidence, not live mTLS or physical-device qualification.
+
+Milestone 3 advanced: the built-in streaming response bounds substep is complete.
+Remaining SDK work includes scheduling, revocation freshness, application session
+ownership and live integration. Backup/recovery qualification also remains.
+Five broad milestones remain: legacy migration/device replacement; remaining
+trust consumers/live firmware sessions; backup/recovery and SDK integration;
+live provider/hardware compatibility; staging/key custody/recovery qualification.
