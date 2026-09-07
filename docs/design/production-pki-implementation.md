@@ -2380,3 +2380,23 @@ Milestone 2 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next is durable JavaScript CRL high-water
 state and automatic lifecycle gating, then refresh and owner teardown.
+
+## JavaScript durable CRL high-water journal
+
+Added explicitly initialized/opened local CRL state with signed current updates,
+per-issuer number/thisUpdate monotonicity, retained historical issuers, 32-entry/
+32-MiB bounds and revocation persistence. Updates use exclusive writer locks,
+fsynced private temporary files, atomic rename, directory sync and readback.
+Missing/corrupt state is never recreated. Crashed-writer locks fail closed and
+require verified operator recovery; no automatic stale-lock deletion is performed.
+
+Validation: 38 JavaScript tests and TypeScript build passed. Fixtures cover reopen,
+duplicate initialization, missing/empty/corrupt data, lock rejection, signed current
+reads, revocation persistence, rollback/conflicting-number rejection and unchanged
+state after failure. Physical/snapshot rollback and network filesystems are not
+qualified. Existing lifecycle APIs still need automatic CRL gating.
+
+Milestone 2 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next is mandatory JavaScript lifecycle
+trust-provider enforcement, followed by bounded refresh and owner teardown.
