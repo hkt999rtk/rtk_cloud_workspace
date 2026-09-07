@@ -731,3 +731,27 @@ open; this is not production qualification.
 
 Local Video Cloud commit `3e580bd`, following workspace checkpoint `b9a3838`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Device WebSocket certificate lifetime continuation
+
+API CRL middleware now pins the original TLS identity into the request/session
+context. The existing Product PKI socket watcher checks it before and after JWT
+validation every ten seconds. Root distrust, expired/missing CRLs, synchronization
+failure or certificate expiry cancels the lifetime and closes idle reads even
+while the token remains valid. Watcher cleanup remains joined.
+
+The callback re-verifies X.509 client authentication against current roots and
+current time before applying current Root/CRL checks. Old handshakes cannot bypass
+anchor removal or certificate expiry, including on existing HTTP connections.
+Checks use local runtime state; no per-socket network fetch was added.
+
+Real WebSocket tests prove healthy traffic, idle closure with a valid JWT, cleanup
+and trust loss during token validation. Signed historical certificate fixtures
+prove current expiry rejection and current-root removal. HTTP API/API/pkitrust
+race suites, focused vet and API build pass. Broker consumers, other domains and
+transports, platform/recovery integration and live/hardware qualification remain
+open. Production stays disabled.
+
+Local Video Cloud commit `b84e468`, following workspace checkpoint `bf52705`.
+No PR, push, remote CI or deployment occurred.
