@@ -2487,3 +2487,28 @@ staging/custody/recovery qualification. Milestone 3 advanced. Next: mandatory Go
 renewal CRL integration and resumable session-replacement coordination, then native
 provider and domain/host gaps. The audit now distinguishes those remaining gaps
 from the acknowledgment/retirement state implemented here.
+
+## Go mandatory renewal trust and resumable coordination
+
+Added explicit independent-root/CRL policy to renewal lifecycle operations and fresh
+TLS handshakes. Device chain/profile checks and signed current CRL validation gate
+installation, loading, receipt reuse, request/acknowledgment and preparation from
+current identities. Reused the durable CRL journal through renewal-specific update/
+provider adapters. Requests persist validated receipts before returning and reuse
+those receipts after activation. Added an exclusive resumable coordinator requiring
+session replacement before acknowledgment; callback failures remain retryable and
+completed replay recreates host owners without another acknowledgment request.
+
+Validation: full Go suite and race checks passed. Tests include real mTLS lifecycle,
+failed/nested session coordination, lost-response/restart/completed replay, signed
+Device SAN rejection, missing/expired CRLs, provider snapshot isolation, revocation
+blocking current/cached/prepare/ack paths, and durable journal rollback rejection.
+Host providers must return promptly; owner lifetime and low-level serialization
+remain host responsibilities. No deployment, remote CI or custody work was performed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Milestones 2 and 3 advanced. Next concrete
+work is Go expiry-driven durable renewal scheduling, then native provider and
+remaining domain/host integration. The audit reflects the implemented trust and
+coordinator APIs rather than retaining their previous implementation gaps.
