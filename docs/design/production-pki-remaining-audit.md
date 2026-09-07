@@ -27,7 +27,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    originally generated an RSA PEM with default overwrite behavior. The subsequent
    JavaScript provisioning checkpoint fixes this with default P-256, explicit RSA
    compatibility and exclusive publication/reuse. `storeDeviceCert` now requires independent roots, the device profile and key
-   matching before writing; immutable installation and revocation remain pending. `buildMtlsAgent` passes files to
+   matching before writing; immutable installation and initial activation are now implemented; renewal
+   activation and revocation remain pending. `buildMtlsAgent` passes files to
    `https.Agent`; this is not a local device-chain revocation policy.
    `renewDeviceCert` still calls `/api/device/renew_certificate`. Implement a
    protected, retry-safe P-256 identity path, independent trust validation,

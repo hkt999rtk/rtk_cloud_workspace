@@ -2220,3 +2220,25 @@ Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next JavaScript work is durable versioned
 identity installation/activation and revocation/production renewal integration.
+
+## JavaScript immutable installation and initial activation
+
+Validated certificate installation now canonicalizes and exclusively publishes a
+fully fsynced chain, verifies the winning bytes and syncs the parent directory.
+Identical concurrent retries succeed; conflicting versions never overwrite an
+occupied path. Added immutable initial activation with absolute certificate/key
+paths and leaf fingerprint. Restart loading rechecks trust, identity, key and
+fingerprint; it never generates a missing private key. Explicit legacy fixture
+storage remains separate.
+
+Validation: 38 JavaScript tests and TypeScript build passed. Tests cover concurrent
+same/conflicting publication, preserved contents, temporary-file cleanup, unsafe
+file rejection, restart, mismatched identity/root, corrupt certificate, missing
+key and rejection of another initial selection. Physical crash/power loss and
+snapshot rollback are not qualified by these local tests.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Initial activation is not guarded renewal
+activation. Next JavaScript steps remain renewal request/receipt/activation/
+retirement state and revocation/transport integration.
