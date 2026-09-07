@@ -67,7 +67,9 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    App API certificate authentication now requires registry receipts and signed
    intermediate/root CRLs in `15e08ba`. Provider evidence discovery for unknown
    serials, automatic App revocation/CRL publication, backup/restore adapters and
-   bearer-token/live-session enforcement remain. Configured provider response validation was
+   live-session enforcement remain. App bearer-token provenance and current
+   registry/CRL checks at issuance, validation and refresh are implemented in
+   `de8d6cd`; cached broker/media authorization remains to be integrated. Configured provider response validation was
    implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
    rejection of valid leaves without the optional Basic Constraints extension.
    Replacement and runtime verification also require domain-specific review.

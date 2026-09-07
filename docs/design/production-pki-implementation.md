@@ -3146,3 +3146,29 @@ the existing signed-CRL import/publication path. Automatic provider revocation/C
 publication and bearer-token/live-session provenance revalidation remain. Next:
 App bearer-token and live-session enforcement. No push, PR, remote CI, deployment or
 custody operation occurred. The full goal remains active.
+
+
+## App bearer-token provenance and live validation (2026-09-08)
+
+Video Cloud `de8d6cd` signs `app_certificate_sha256` into registry-authenticated
+App tokens and checks original actor/certificate provenance at issuance, validation
+and refresh. Refresh cannot replace the original fingerprint from a new connection.
+The current receipt, App lineage and both mandatory CRLs are resolved in one
+repeatable-read snapshot. Legacy/unbound App tokens and missing/unavailable
+verifiers fail closed when App PKI is enabled. Other token scopes retain their
+policies; admin-created App tokens still require App certificate provenance.
+
+Validation: full Go suite passed. Database-backed auth/pki/apiapp/httpapi race
+suites passed, including actual signed App tokens denied after leaf/intermediate/
+receipt revocation and CRL expiry. Unit tests cover refresh, actor mismatch, nil
+verifiers and scope isolation. The broader run exposed a stale Device HTTP fixture
+that directly inserted an unapproved legacy row; it now uses registered Product
+lineage while retaining its verified-peer/provenance and replacement-cutoff checks.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. App token-service checks are implemented;
+App broker/media sessions that cache authorization still need their own lifetime
+integration. Existing HTTP WebSocket watcher is Device-specific. Next: inventory
+and wire those App live-session owners. No push, PR, remote CI, deployment or custody
+operation occurred. The full goal remains active.
