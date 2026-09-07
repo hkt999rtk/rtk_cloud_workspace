@@ -2015,3 +2015,24 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next needs scheduled CRL
 refresh and remaining owner/host wiring; physical/live qualification remains open.
+
+## Android lifetime-owned CRL refresh loop
+
+The Android CRL worker now fetches immediately, retries transient failures only
+while durable trust is valid, and schedules before the nearest certificate/CRL
+expiry. That signed deadline also bounds the next network attempt. Waiting and
+I/O respond to owner cancellation. Invalid configuration fails before looping;
+revocation or lost trust ends the worker. It complements the existing trust guard
+and does not revive cancelled owners.
+
+Validation: full JVM suite and release/test builds passed. Twelve API 35 tests
+passed, including 503-to-revocation retry, durable update, worker termination and
+concurrent mTLS WebSocket teardown, plus cancelled stalled fetch preserving state.
+The emulator was stopped afterward. Physical background behavior and actual host
+supervision remain unqualified.
+
+Milestone 2 advanced; Android scheduled refresh and bound WebSocket integration
+now have local runtime evidence. Five broad milestones remain: migration/device
+replacement; remaining trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware; staging/custody/recovery. Remaining platform/host
+owner integration and operational/physical qualification are still outstanding.
