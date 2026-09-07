@@ -1953,3 +1953,23 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next work includes Android journal
 commit verification, CRL refresh and existing-owner teardown, followed by host/
 physical/live qualification.
+
+## Verified commits across Android PKI journals
+
+The CRL commit-verification follow-up now covers all Android identity and renewal
+journals through a shared bounded writer: content sync, AtomicFile completion,
+read-back verification and directory sync. Schedule deletion likewise checks all
+atomic-file variants are gone and synchronizes the directory. Existing locks and
+record limits are preserved; repeated write boilerplate has been removed.
+
+Validation: full JVM tests and release/test builds passed. Twelve API 35 tests
+passed, including injected silent replacement/deletion failures preserving prior
+state, bounds and normal writes/deletes, plus all renewal, CRL and JobScheduler
+cases. The emulator was stopped afterward. Physical power-loss and snapshot
+recovery qualification remain outstanding.
+
+Milestone 3 advanced; the Android journal commit-verification substep is complete.
+Five broad milestones remain: migration/device replacement; remaining trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery. Next Android work is CRL refresh and existing-owner
+teardown, with host and operational recovery qualification still required.
