@@ -2684,3 +2684,30 @@ staging/custody/recovery qualification. SDK recovery advanced. Next: validated
 renewal response/overlap persistence, HTTP issuance and acknowledgment/retirement,
 then scheduling, refresh and session-owner integration. This checkpoint does not
 claim those implementations or physical/operational qualification complete.
+
+
+## Native validated renewal response storage
+
+Client `c1e1018` adds immutable response save and replay/install APIs for an
+already-adapted certificate-only bundle and authenticated overlap metadata. They
+validate the prepared request ID, issuer ID, Device, successor key, tenant/environment,
+independent roots and CRLs before storing exact response bytes. Pre-activation
+installation requires an open overlap; post-activation recovery requires the exact
+selected bundle and current trust. Missing/corrupt records are not regenerated.
+
+Validation: all 12 native tests, ASan/UBSan and installed-package C consumer pass
+on macOS arm64. Coverage includes missing response, request mismatch without writes,
+immutable retry/deadline conflict, pre-activation overlap expiry, install/retry and
+post-activation replay after predecessor retirement, plus truncated response state.
+Reproduce with `cmake --build /private/tmp/rtk-native-openssl -j 4` and
+`ctest --test-dir /private/tmp/rtk-native-openssl --output-on-failure`. The native
+README records API ownership, bounds and trust assumptions.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. The server PEM/JSON
+wire adapter is not implemented by this checkpoint: next implement bounded native
+response conversion and authenticated HTTP issuance/acknowledgment, then retirement,
+scheduling, refresh and session coordination. Metadata requires authenticated transport;
+certificate signatures do not independently sign request/issuer/overlap fields.
+No push, PR, remote CI, deployment or physical qualification was performed.
