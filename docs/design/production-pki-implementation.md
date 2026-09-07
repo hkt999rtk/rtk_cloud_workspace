@@ -1460,3 +1460,24 @@ Milestone 3 advanced. Remaining: host background/device-session integration,
 revocation freshness, live SDK and backup/recovery qualification. Five broad
 milestones remain: migration/device replacement; trust consumers/live sessions;
 backup/recovery and SDK integration; provider/hardware; staging/custody/recovery.
+
+## iOS BackgroundTasks renewal adapter
+
+An iOS-only adapter now registers a host-specified processing task, schedules
+network-required requests, runs the coordinator on a serial worker, cancels via
+the expiration token and completes the OS task after the attempt. Success uses
+the certificate's due date; pending work/failure/expiration uses a configurable
+bounded retry delay. Both renewal and scheduler failures are reported. The host
+must supply permitted identifiers, processing mode, launch-time registration,
+foreground checks and its actual device-session callback.
+
+Validation: all 76 Swift tests passed, including shared scheduling/expiration
+logic, and the adapter compiled for the arm64 iOS 13 simulator. These checks do
+not demonstrate actual OS task delivery. No sample user identity was substituted
+for device identity and no application configuration was silently changed.
+
+Milestone 3 advanced: the native background adapter is implemented. Remaining:
+host configuration/device-session wiring, physical wake/expiration validation,
+revocation freshness, live SDK and backup/recovery qualification. Five broad
+milestones remain: migration/device replacement; trust consumers/live sessions;
+backup/recovery and SDK integration; provider/hardware; staging/custody/recovery.
