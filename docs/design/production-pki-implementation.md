@@ -27,7 +27,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Runtime issuer-to-product binding and explicit staging legacy fingerprint checks.
 - [ ] Legacy inventory/import automation and staged migration.
 - [x] Offline CA CRL signing, immutable CRL publication, and exact consumer acknowledgment gates.
-- [ ] Certificate replacement, consumer installation/refresh, Root distrust and outstanding-token revocation.
+- [x] Device replacement with bounded overlap, successor acknowledgment and Go file-based installation helpers.
+- [ ] Trust-consumer installation/refresh, Root distrust and outstanding-token revocation.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [ ] OpenBao Raft deployment, scoped workload policies and database grants.
@@ -127,3 +128,35 @@ execution and single audit/grant behavior. API tests bind the actor to verified
 JWT claims. Console tests cover same-origin/session requirements and controller
 outage recovery. API, auth, user-cache, console and account-client regression
 suites pass. Real IdP/custodian recovery and database disaster drills remain open.
+
+## Certificate replacement continuation
+
+Certissuer now accepts renewal using an existing verified device mTLS identity,
+requires a new P-256 CSR key, derives scope from the authoritative binding and
+entitlement, and pins the active Product CA once. A durable single-attempt claim
+survives retries and rotation. Unknown signing outcomes remain unresolved rather
+than being signed again. Atomic completion records the successor and a fixed
+24-hour maximum overlap, capped by old expiry/legacy deadline. Acknowledgment
+requires successor mTLS and ends old-certificate acceptance immediately. Request,
+completion and acknowledgment are audited. Runtime checks enforce the cutoff.
+
+The Go SDK persists a private software key and CSR before network requests,
+verifies independently provisioned Device roots, installs a complete key/cert
+version through one atomic pointer switch, and supports restart loading and
+successor acknowledgment. POSIX storage is required; automatic scheduling,
+secure-element integration and Ameba firmware support remain separate work.
+
+Validation: isolated PostgreSQL and race tests cover concurrent claims, changed
+requests, same-key rejection, active issuer selection and pinning across rotation,
+fixed overlap, old-identity rejection and successor acknowledgment. Go client
+race tests cover persisted-key reuse, failed installation preservation, trust/key
+validation, atomic switching, and real local TLS renewal/acknowledgment. Existing
+certissuer, certissuerapp, runtime HTTP/API regression suites pass.
+
+Unknown provider outcome reconciliation, live OpenBao/device qualification,
+expired-device recovery, existing-token/session revocation and the remaining
+production deployment/backup/migration stages are still unfinished. No production
+keys, PR, push, remote CI or deployment was performed.
+
+Local replacement milestone commits: Video Cloud `ab966f8`, Go client `c429481`.
+These follow the recovery workspace checkpoint `5831387`.
