@@ -1167,3 +1167,18 @@ qualification. Independently pinned issuer/identity validation, atomic versioned
 installation and production renewal/ack integration remain required. Existing
 Swift concurrency and duplicate-pattern warnings remain outside this change.
 Five top-level milestones remain open.
+
+## iOS provisioning retry key preservation
+
+Keychain generation no longer deletes the selected key. Existing P-256 keys are
+reused with their observed Secure Enclave attribute; only an explicit missing-key
+result permits creation. Unsupported keys and lookup errors fail closed. A shared
+process lock serializes store instances, while cross-process provisioning still
+requires application coordination. Rotation must select a fresh version label.
+The existing hardware fallback policy is unchanged.
+
+Validation: all 45 Swift tests passed on macOS. Native Keychain tests use uniquely
+tagged temporary keys to prove retry preservation and rejection of an existing
+P-384 key without replacement, then delete their own fixtures. This does not prove
+physical iOS Secure Enclave behavior or complete production renewal installation.
+Five top-level milestones remain open.
