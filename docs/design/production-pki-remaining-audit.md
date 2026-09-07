@@ -720,3 +720,37 @@ does not prove a complete inventory or authorize resuming issuance. Next: connec
 App inventory and security-state checks to matched recovery acceptance, then
 remaining trust-domain/runtime adapters. No push, PR, remote CI, deployment or
 custody operation occurred. Goal remains active.
+
+
+## App registry recovery inventory checkpoint (2026-09-08)
+
+Video Cloud `7e0aaf2` adds `recovery-inventory-app` for an explicitly pinned App
+intermediate/root and required consumer set. The bounded read-only check scans
+all issuer receipts in one repeatable-read database snapshot with 128-row pages.
+It detects unresolved claims and invalid original request/certificate/CSR records,
+checks revocation receipt consistency, verifies historical publication digests
+against signed CRLs containing the leaf, and requires current signed CRL coverage
+and root/intermediate acknowledgments. Revoked intermediates are rejected.
+Incomplete or blocked inventories fail; success is registry consistency evidence.
+The verifier role gains only SELECT on revocation and CRL acknowledgment records.
+
+Validation: full server Go suite; full PKI/controller/PostgreSQL race suites with
+a disposable PostgreSQL fixture; focused vet; final inventory race tests after
+avoiding repeated full historical-CRL copies. A 129-receipt test crosses the page
+boundary. Missing acknowledgments, unpublished or false publication receipts,
+request digest mismatch, revoked intermediates and missing revocation records
+are denied; complete published revocations pass. Restricted-role tests verify
+recovery evidence reads without revocation write access. The fixture was removed.
+
+Workspace backup documentation now composes the App issuer/leaf and inventory
+commands through environment-owned recovery_checks, retaining independent root
+pins, consumers and provider/registry credentials. No live configuration changed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. The registry inventory is not proof of
+complete external history or restored-key usability. Independently retained
+post-backup security history, full issuer inventory, real matched restore/custody
+and RPO/RTO evidence remain. Next: review remaining original domain/runtime
+implementation gaps against the fixed acceptance list. No push, PR, remote CI,
+deployment or custody operation occurred. Goal remains active.

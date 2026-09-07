@@ -406,3 +406,32 @@ operational targets remain open as listed in those documents.
 The separate [physical PostgreSQL backup adapter](postgresql-physical-backup.md)
 captures and restores a native verified cluster with included WAL. It does not
 replace this matched maintenance backup or yet establish continuous PITR/RPO.
+
+### App PKI recovery checks
+
+For each App intermediate in independently retained recovery inventory, include
+both commands in the target environment's `recovery_checks`, using its installed
+`pkicontroller` binary and verifier-only registry credentials:
+
+- `recovery-check-app ISSUER_ID EXPECTED_ROOT_SHA256` compares the restored
+  provider's selected App issuer and the registry with the independent root pin.
+  Add `APP_SUBJECT LEAF_PEM` for representative existing-identity verification.
+- `recovery-inventory-app ISSUER_ID EXPECTED_ROOT_SHA256 CONSUMER_IDS_CSV` scans
+  all registry issuance/revocation receipts for that issuer. It requires resolved
+  signing claims, consistent certificate/CSR/request records, historical and current
+  signed revocation coverage, and current root/intermediate CRL acknowledgments
+  from every named consumer. Incomplete or blocked inventories exit unsuccessfully.
+
+The commands require explicitly provisioned environment/registry/provider settings;
+archive contents must never choose the commands, root pins or required consumers.
+They are read-only and do not automatically repair or approve a restore. The
+App controller reconciliation endpoint can recover lost-serial signing outcomes
+from the original CSR, while the revocation publisher and real consumers must
+complete publication and acknowledgment. Rerun checks after resolving failures.
+Keep writers and provider tidying fenced throughout reconciliation.
+
+These checks cover current registry consistency, selected provider lineage and
+representative identities. They cannot detect security changes absent from both
+restored systems without independently retained audit history. Full issuer
+inventory, post-backup security reconciliation, private-key usability, custody
+approval and measured recovery objectives remain separate acceptance evidence.
