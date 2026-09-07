@@ -1580,3 +1580,22 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next revocation work includes durable
 CRL update/freshness integration and equivalent platform verifiers.
+
+## Durable Go CRL version state
+
+A private file store now retains signed per-issuer CRLs with monotonic number/
+thisUpdate checks, exact same-version retry and atomic synchronized replacement.
+Initialization is explicit; missing/corrupt state does not reset the high-water
+marks. Valid revocation of the current identity is persisted before subsequent
+use is rejected. State is reloaded and signatures/freshness rechecked at use.
+In-process instances share locking; cross-process serialization is host-owned.
+
+Validation: the complete Go SDK suite and auth race tests passed. Fixtures cover
+restart, concurrent instances, version conflict/rollback, revocation persistence,
+staleness and missing/corrupt state. Filesystem snapshot rollback still requires
+external monotonic/recovery reconciliation and is not solved by a local file.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next revocation work: fetching/refresh,
+runtime use/session termination and platform integration/qualification.
