@@ -543,3 +543,35 @@ Cloud Client also builds without CGo; the WebRTC SDK builds without CGo for
 macOS/Linux amd64/arm64. Local SDK commits: Cloud Client `73f718d`, Ameba WebRTC
 `5895ca2`, following workspace migration checkpoint `6d7c031`. No PR, push,
 published module release or deployment was performed.
+
+
+## Ameba C owner-to-media lifetime continuation
+
+The composed firmware service now pins each accepted offer to its MQTT connection
+generation. Disconnection, stale broker traffic, missing trusted time and dynamic
+credential refresh/expiry deny that generation. Every successful CONNECT/SUBACK
+creates a distinct owner. Device polling and media submission close the old local
+peer on authorization loss; reconnect alone cannot revive it. Answer creation and
+publication also recheck authority/expiry. Local teardown avoids cloud cleanup
+through credentials belonging to a replacement owner.
+
+MMF frames carry a C11 atomic session epoch sampled at enqueue. Drain releases
+inactive/previous-session frames without sending them, including an old IDR that
+remains queued when a fresh authorized offer creates a new peer. Epochs never
+repeat within a device lifetime; exhaustion denies new sessions. Production
+service wiring supplies the authorization callback automatically; standalone
+orchestrator users must configure it for governed operation. Device-task lifecycle
+serialization and producer shutdown before device destruction remain required.
+
+Validation: the host orchestrator suite passes with MQTT/peer doubles covering
+service wiring, disconnect, unobserved reconnect, answer-time authority loss,
+local cleanup without HTTP, fresh-offer requirements and MMF stale-frame release.
+AddressSanitizer/UndefinedBehaviorSanitizer tests and the actual SDK 9.6e Cortex-M33
+compile check (GCC 10.3/newlib 4.1.0, including MQTT source) pass. This is local
+implementation evidence, not live broker revocation/physical camera qualification.
+The live firmware, consumer installation, non-Device trust domains, custody/IdP,
+HA/PITR/recovery and staging migration qualification gates remain open; production
+remains disabled.
+
+Local Ameba commit: `d31cc34`, following workspace checkpoint `1886896`.
+No PR, push, remote CI or deployment was performed.
