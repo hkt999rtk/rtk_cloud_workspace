@@ -1929,3 +1929,27 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next requires durable CRL
 rollback state, refresh and existing-owner teardown; host and physical/live
 provider qualification remain outstanding.
+
+## Android durable CRL rollback state
+
+Android now explicitly creates/reopens a bounded CRL store outside backup, verifies
+signed current updates and rejects lower numbers, same-number conflicts and older
+issue times. Issuer history binds subject/public key and remains across same-key
+certificate reissuance. Updates persist revocations of the current identity;
+provider reads revalidate signatures/freshness before identity serial checks.
+Missing/corrupt state is never silently recreated by open/read/update.
+
+CRL commits verify read-back and fsync the parent directory after AtomicFile,
+whose source shows that rename failures can be logged without throwing. The
+older identity/renewal journals require the same follow-up commit verification.
+
+Validation: full JVM suite and release build passed. Eleven API 35 tests passed,
+covering reopen, identical updates, rollback/version conflicts, revoked-identity
+persistence, corruption and missing-state rejection. The emulator was stopped
+afterward. No power-loss or snapshot-recovery qualification is claimed.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next work includes Android journal
+commit verification, CRL refresh and existing-owner teardown, followed by host/
+physical/live qualification.
