@@ -3097,3 +3097,27 @@ implemented. Unknown-serial evidence discovery, App revocation publication/consu
 provider backup adapters and remaining domains are not complete. Next: App revocation
 publication and consumer enforcement. No push, PR, remote CI or deployment occurred.
 The full goal remains active.
+
+
+## Restricted App database-role integration (2026-09-08)
+
+Video Cloud `07672e6` closes a prerequisite found while tracing App revocation:
+prior App tests used the database owner, but deployed separated roles lacked App
+claim-table grants and lineage-row locking permission. The role reconciler now
+covers App claims with column-level completion/revocation privileges; verifier
+reads exclude claim tokens and CSR/digest internals. The issuer can lock registered
+lineage through a constant true-only `lock_marker` column without gaining issuer
+identity/status/document write privileges. Rerun the owner-operated grant command
+after migration; workloads still do not migrate/grant during startup.
+
+Validation: full Go suite passed. PostgreSQL race tests exercised HTTP App issuance
+and replay under the issuer group, uncertain-outcome recovery under the controller
+group, repeated grant application and denial of forbidden mutations/token reads.
+The existing Device factory recovery matrix, including restricted roles, passed.
+The disposable PostgreSQL fixture was local; no deployed grant or schema changed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. App database-role integration is now tested;
+App revocation publication/consumers remain next. No push, PR, remote CI, deployment
+or custody operation occurred. The full goal remains active.

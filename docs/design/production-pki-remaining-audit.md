@@ -62,6 +62,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    coverage. App runtime registry selection, durable single-owner claims, response validation
    and status-checked replay are implemented behind an opt-in setting in Video
    Cloud `4532ff8`. Known-serial pending-outcome recovery is implemented in `06a11d2`.
+   Restricted App issuer/controller database grants and lineage locking are
+   implemented and exercised under non-owner roles in `07672e6`.
    Provider evidence discovery for unknown serials, App revocation publication,
    backup/restore adapters and live consumer enforcement remain. Configured provider response validation was
    implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
