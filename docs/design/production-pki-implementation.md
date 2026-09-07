@@ -37,7 +37,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [ ] Remaining trust-consumer adapters, direct media termination and live trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
-- [ ] OpenBao Raft deployment, scoped workload policies and database grants.
+- [x] Explicit controller/certissuer/verifier database grants with restricted-role issuance/recovery tests.
+- [ ] OpenBao Raft deployment and scoped workload policies.
 - [ ] Backup/recovery tooling and SDK installation support.
 - [x] Focused unit, PostgreSQL and race-detector tests for implemented controls.
 - [ ] Live provider end-to-end and hardware compatibility validation.
@@ -367,3 +368,25 @@ Local factory-recovery commits: Video Cloud `4f29909`, Cloud Admin `c9f9a4f`,
 following workspace checkpoint `37b3854`. PKI, certissuer, factory enrollment and
 PostgreSQL regression/race suites, controller compilation, focused vet, console
 application/account-client tests and JavaScript syntax checks passed.
+
+
+## Database privilege separation continuation
+
+Added explicit `pkicontroller grant-runtime-roles` migration-owner tooling and a
+non-secret environment template. Three NOLOGIN groups separate controller writes,
+certissuer claim/result access and verifier reads. Existing administrative/owning/
+inheriting roles are rejected. Reconciliation removes stale table/column grants,
+PUBLIC access on governed tables and PUBLIC schema CREATE; it grants no ownership,
+DDL, deletion, truncation or future-table defaults. Runtime identities remain
+separate from the migration owner and must have no additional privileged grants.
+
+The actual factory issuance/recovery/replay integration now also runs under these
+restricted roles. It verifies denied verifier writes/DDL, issuer governance edits,
+claim-token reset and controller reservation finalization. The signing pin read
+no longer takes an unnecessary update lock. This is database-boundary delivery;
+OpenBao HA/policies, actual workload logins, broader service grants and live
+qualification remain unfinished. No shared database or deployment was changed.
+
+Local database-role commit: Video Cloud `4781830`, following workspace checkpoint
+`731e5f7`. PostgreSQL restricted-role issuance/recovery, PKI/certissuer regression
+and race suites, command compilation, reserved-role validation and vet passed.
