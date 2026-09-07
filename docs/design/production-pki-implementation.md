@@ -1263,3 +1263,23 @@ earlier failing insertion test, identified by its unique fixture issuer.
 Active-version switching, production renewal/ack, revocation and live physical
 iOS sessions remain required. The legacy same-label renewal method does not
 replace immutable installed versions. Five top-level milestones remain open.
+
+## iOS active identity selection
+
+The Keychain store can select a fully validated certificate version using a single
+ThisDeviceOnly selection record. Callers supply the expected previous label to
+reject stale work; retries of the selected version are idempotent. Selection reads
+revalidate the identity and do not fall back to older certificates. Existing
+clients remain pinned to their original label and old versions are retained.
+
+Validation: all 55 Swift tests passed on macOS and the arm64 iOS simulator build
+passed. The native test creates two distinct key/certificate versions, switches
+and reloads selection, retains the previous identity, and rejects missing versions,
+stale expectations and corrupt selection records. This exposed macOS file-Keychain
+certificate indexing behavior missed by single-version testing; reference insertion
+followed by issuer/serial lookup, exact DER matching and version labeling resolves
+it without renaming another version's certificate.
+
+Production renewal/ack and session replacement integration, revocation, and physical
+iOS restart/network qualification remain required. Cross-process writers still
+need external serialization. Five top-level milestones remain open.
