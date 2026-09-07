@@ -1316,3 +1316,34 @@ remain. No push, PR, remote CI, live deployment or custody operation. Goal activ
 Service commit: `d612c1c`. Full Go suite with PostgreSQL, config/consumer/HTTP/API/
 PKI race tests, vet, formatting and diff checks passed. Disposable database removed.
 No production acceptance gate is claimed closed.
+
+
+### Factory certificate-issuer Service transport checkpoint (2026-09-08)
+
+An authoritative workspace search found no production constructor calls for the
+three cross-service workers; each already accepts an HTTP client. Work moved to
+the active factory-enrollment certificate-issuer client instead of inventing a
+worker executable. Opt-in factory Service trust now defers issuer construction
+until application-owned registry setup. Existing client certificate/key material
+is attached to the verified Service transport; a dedicated Service CA/pin controls
+server admission independently of legacy CA settings. Request timeout and refusal
+of issuance/cancellation redirects remain. Enabled mode rejects proxies, externally
+supplied issuer clients and missing registry/environment, and does not auto-migrate.
+Shutdown/bootstrap failure/listener failure close the owned transport and registry.
+
+Local tests cover mTLS through injected HTTP transport, timeout/redirect behavior,
+environment decoding, unsafe bootstrap rejection, schema non-mutation, transport
+ownership and listener-failure cleanup. Bootstrap tests use parseable identity
+fixtures without asserting peer admission; registered-Service admission and exact
+CRL behavior have shared local transport coverage. No live deployment is claimed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next active host gap is
+factory Account Manager admission/recovery transport; Service clientAuth lifecycle,
+other hosts, root/key renewal, external recovery history and live/hardware evidence
+remain. No push, PR, remote CI, deployment or custody action. Goal remains active.
+
+Service commit: `184f422`. Full Go suite with PostgreSQL, factory/client/bootstrap/
+consumer/PKI race tests, vet, formatting and diff checks passed. Disposable database
+removed. No production acceptance gate is claimed closed.
