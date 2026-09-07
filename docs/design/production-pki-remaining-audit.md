@@ -136,3 +136,36 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Autonomous viewer authorization/expiry
 checks and existing TURN allocation termination remain open. No push, PR, remote
 CI, deployment or custody operation occurred. Goal remains active.
+
+
+## Go viewer authorization lifetime checkpoint (2026-09-08)
+
+WebRTC SDK commit `0475139` binds the Go viewer's Pion media lifetime to the
+original owner context, requested duration, mandatory server expiry and original
+token expiry when supplied. Invalid/expired server expiry fails connection and
+cleans up locally and remotely. The effective deadline cannot be extended by
+subsequent token refresh. The example waits for local session termination.
+
+A 10-second watcher rechecks the original session/token through the existing
+answer endpoint, each request bounded by five seconds. Denial, malformed response
+or network failure ends the lifetime. A separate cancellation/deadline watcher
+closes the actual peer independently of network checks and token/remote cleanup;
+Done signals local teardown and further PLI requests are rejected. Custom token
+providers with zero expiry add no token bound; requested/server/owner bounds still
+apply. Production mTLS providers supply JWT expiry. Registry revocation checks
+require the matching registry-aware server implementation.
+
+Validation from `repos/rtk_ameba_webrtc/packages/golang`: `CGO_ENABLED=0 GOWORK=off
+go test ./...`, `GOWORK=off go test -race ./...` and `GOWORK=off go vet ./...` passed.
+A final targeted race test also passed after strengthening the rotating-token
+fixture. Coverage includes original-principal polling, server/token/owner expiry,
+owner cancellation, invalid expiry, blocked token cleanup, and actual Pion
+ICE/DTLS/SRTP H.264 receipt followed by viewer transport closure while the device
+remains live. Evidence is local macOS; live registry propagation, load, platform
+scheduling and relay allocation termination remain unqualified.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Native C viewer autonomous lifetime checks,
+other host/domain wiring, and TURN allocation termination remain open. No push,
+PR, remote CI, deployment or custody operation occurred. Goal remains active.
