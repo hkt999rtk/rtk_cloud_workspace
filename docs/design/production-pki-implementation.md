@@ -1152,3 +1152,18 @@ detector against OpenBao 2.5.5 and PostgreSQL 16. PKI/OpenBao/controller regress
 tests and focused vet passed. The disposable PostgreSQL container was removed;
 the drill removed each temporary provider container and filesystem fixture.
 These results do not measure production RPO/RTO or qualify live custody.
+
+## iOS protected-key certificate matching
+
+The iOS Keychain certificate installer now checks key possession before deleting
+the current certificate. A fresh random challenge is signed using the selected
+Keychain key and verified against the incoming certificate public key. Missing
+keys, unsupported algorithms and mismatches fail before certificate mutation;
+private key material is never exported by this check.
+
+Validation: all 43 Swift package tests passed on macOS, including matching and
+unrelated native Security key proofs. This is not physical Secure Enclave/iOS
+qualification. Independently pinned issuer/identity validation, atomic versioned
+installation and production renewal/ack integration remain required. Existing
+Swift concurrency and duplicate-pattern warnings remain outside this change.
+Five top-level milestones remain open.
