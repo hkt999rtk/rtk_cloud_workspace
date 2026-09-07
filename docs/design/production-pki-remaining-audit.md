@@ -281,3 +281,36 @@ Five broad milestones remain: legacy migration/device replacement; trust consume
 live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
 staging/custody/recovery qualification. No push, PR, remote CI, deployment or
 custody operation occurred. Goal remains active.
+
+
+## Coturn cancellation adapter checkpoint (2026-09-08)
+
+Video Cloud commit `51a6200` adds internal/turncontrol: loopback-only authenticated
+coturn CLI access, bounded session inventory, exact username/ID reread before
+numeric cancellation, and disappearance confirmation. A bounded sweep rechecks
+denied authorization immediately before cancellation and reports only confirmed
+removals. No arbitrary command API is exposed; malformed/truncated inventories
+and unsafe command input are rejected. The sweep assumes a dedicated managed
+relay where unknown users are denied. Each socket operation has a five-second
+bound; scan/check contexts are two minutes/five seconds respectively.
+
+Validation: full Go suite passed; package race tests passed. A disposable cached
+coturn 4.6.3 localhost container created two real UDP allocations, cancelled one
+without affecting the other, preserved allocations on stale username/ID input,
+accepted an idempotent cancellation, demonstrated reallocation, and cancelled
+both remaining allocations with a denying sweep. The pinned source reference is
+coturn 4.6.2; do not conflate that reference with the tested container version.
+The fixture container was removed. Test config and opt-in commands are recorded
+in service docs/turn.md. A final targeted race suite passed after checking that
+late authorization success cannot override an expired check context.
+
+Recurring process/registry-validator wiring, deployment secret delivery, health
+reporting, fleet latency and hostile-client qualification remain outstanding.
+The adapter is not running automatically. Reallocation remains possible with
+unexpired shared-secret credentials, so repeated sweeps and further qualification
+are required; this is not a hard revocation cutoff guarantee.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. No push, PR, remote CI, deployed relay
+change or custody operation occurred. Goal remains active.
