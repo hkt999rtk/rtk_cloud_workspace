@@ -1,6 +1,6 @@
 # Production PKI domain and host inventory
 
-Reviewed 2026-09-08 through Video Cloud `742a768`.
+Reviewed 2026-09-08 through Video Cloud `093bc79`.
 This inventory preserves the existing five acceptance milestones. It identifies
 implementation work; it does not add a sixth milestone or certify production.
 The authoritative trust boundaries remain Platform PKI contract sections 3–5.
@@ -27,7 +27,9 @@ unsupported. The durable registry claim/validation portion of step 3 is implemen
 in `6f5838e`. Server uncertain-outcome recovery is implemented in `a5ad490` plus
 `72df2ef` (persisted timestamp correction). Server revocation publication and exact
 CRL acknowledgment protocol are implemented in `742a768`; step 5 still requires
-TLS enforcement, consumer/host adoption and recovery verification.
+TLS transport/connection-owner wiring, consumer/host adoption and recovery verification.
+`093bc79` adds read-only registry verification and a TLS handshake/resumption hook;
+actual transport wiring and existing-connection enforcement remain.
 
 1. Bind an explicit server leaf policy to the approved immutable issuer operation.
    It must specify the intended private trust domain and exact permitted DNS names;

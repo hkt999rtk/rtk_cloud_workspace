@@ -4069,3 +4069,38 @@ consumers/live sessions; backup/recovery and SDK integration; provider/hardware
 compatibility; staging/custody/recovery qualification. Next: server TLS verification,
 CRL refresh/consumer integration and recovery verification, followed by real host
 adoption. No push, PR, remote CI, live deployment or custody operation. Goal active.
+
+
+## 2026-09-08 — Private server registry verification and TLS admission
+
+Video Cloud `093bc79` adds `Store.VerifyServer` with independently configured
+private domain, exact DNS name and root fingerprint. A read-only repeatable-read
+snapshot checks the successful/unrevoked receipt, original CSR/DNS/TTL/context
+digest, approved issuer operation, exact active/retiring lineage, signed current
+root/intermediate CRLs and metadata, leaf profile/lifetime and hostname. Receipt
+revocation denies admission before publication. The existing verifier role has the
+necessary read access; no new schema/grants are introduced.
+
+`Store.ServerTLSConfig` clones an explicit-root/name client TLS configuration,
+preserves normal Go chain/hostname verification and prior callbacks, and adds a
+bounded registry check to every handshake including resumption. Independently
+reviewed root pins are not discovered from peer/database state. Invalid chains or
+registry failures deny admission. The helper does not yet wire workload transports,
+acknowledge CRLs or terminate existing connections; owners must implement those
+steps before claiming runtime adoption.
+
+Validation: full Go suite, PKI/Postgres/certissuer race suites with disposable
+PostgreSQL, focused vet and actual TLS handshake/resumption tests. New connections
+fail after receipt revocation. Wrong environment/domain/hostname/root pin, incomplete
+lineage, policy drift, request-context tampering and stale CRLs are rejected.
+Restricted verifier-role integration admits then denies the same server after
+revocation. Final focused verification passed after guarding malformed input
+certificate metadata. Disposable fixture removed. No push, PR, remote CI, live
+rollout or custody action.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next: connect concrete
+workload transports to server admission, revalidate/evict existing connections,
+and integrate CRL/policy refresh plus acknowledgment before real host adoption.
+Server recovery verification and live qualification also remain. Goal active.
