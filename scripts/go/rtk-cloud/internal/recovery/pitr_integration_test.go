@@ -200,6 +200,7 @@ func exercisePITR(t *testing.T, ctx context.Context, docker, container, director
 	if err != nil || !strings.Contains(string(log), walID+".age") {
 		t.Fatal("native recovery did not fetch encrypted remote WAL", err)
 	}
+	exercisePITRTimeline(t, ctx, docker, container, directory, encrypted, key, destination, e, plan, env, query)
 	// A fresh recovery with the required ciphertext removed must fail before
 	// reaching the target, rather than silently starting at an earlier point.
 	for objectKey := range objects.objects {

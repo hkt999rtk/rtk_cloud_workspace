@@ -990,3 +990,30 @@ This does not complete the backup/recovery milestone: retention, scheduled resto
 rehearsals, matched provider/registry recovery and SDK protected installation
 remain required. Base-backup cadence does not establish the WAL RPO, and local
 tests do not qualify production RPO/RTO or custody.
+
+## Native cross-timeline recovery rehearsal continuation
+
+The opt-in PostgreSQL PITR integration drill now always exercises one real
+promotion/fork in its disposable, network-isolated PostgreSQL 16 container.
+It promotes the first recovered copy to timeline 2, writes on both sides of a
+new recovery target, and publishes PostgreSQL-generated timeline history and
+completed promoted WAL through the actual Linux `wal-archive` CLI. A fresh copy
+of the original timeline-1 physical backup uses the existing preparation and
+`wal-restore` path to recover onto timeline 2.
+
+Assertions require fetched encrypted history/promoted WAL, paused read-only
+recovery, no TCP listener, the new branch's pre-target row, and exclusion of both
+abandoned-branch writes and post-target writes. Removing the required history
+ciphertext from the fixture object store makes another fresh recovery reject the
+missing timeline and shut down. The existing missing-WAL rejection and standalone
+physical restore checks remain in the same drill.
+
+This is local compatibility evidence across one native timeline fork. It does
+not implement scheduled operator rehearsals, matched OpenBao/registry recovery,
+retention, provider IAM or live RPO/RTO acceptance. No production runtime promotes
+a server automatically; promotion here is limited to the disposable test copy.
+
+Validation: the race-enabled recovery suite passed with physical backup, native
+archive-command and PITR integration enabled (69 seconds total, including the
+cross-timeline and missing-history cases). Recovery `go vet` and the Linux CLI/test
+binary builds passed. Those fixture timings are not production RTO measurements.

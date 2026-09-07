@@ -117,10 +117,23 @@ LSN. Assertions cover the captured row, a post-backup/pre-target row, exclusion 
 a later row, paused/read-only state, disabled TCP and confirmed remote ciphertext
 fetch. A second fresh recovery with required ciphertext removed must fail before
 the target and shut down. The original standalone physical-backup test also runs.
+The drill also promotes the disposable recovered copy to timeline 2, creates
+writes before and after a new recovery target, and archives PostgreSQL's native
+history and completed WAL through the actual `wal-archive` CLI. A fresh copy of
+the original timeline-1 base is restored with the explicit timeline-2 plan. It
+must fetch encrypted history and promoted WAL, pause read-only with TCP disabled,
+include the new branch's pre-target write and exclude both the old branch's later
+writes and the new branch's post-target write. A further fresh restore with the
+required timeline-history ciphertext removed must reject the missing timeline
+and shut down. This exercises the timeline
+ancestry described by [PostgreSQL's timeline documentation](https://www.postgresql.org/docs/16/continuous-archiving.html#BACKUP-TIMELINES).
+Only this disposable test explicitly promotes a restored server; the production
+restore command continues to prepare a paused recovery without starting/promoting.
+
 The fixture does not emulate provider IAM or prove production bucket policy.
 
-This is local single-timeline targeted-replay evidence. Cross-timeline end-to-end
-drills, time-based target selection, scheduled capture/retention, matched
+This is local targeted-replay evidence across one real timeline fork. Multiple
+failovers, time-based target selection, retention and scheduled restore rehearsals, matched
 OpenBao/registry recovery, production failure-domain testing and measured
 RPO <= 15 minutes / RTO <= 4 hours remain. Production PKI stays disabled until all
 required operational acceptance evidence is complete.
