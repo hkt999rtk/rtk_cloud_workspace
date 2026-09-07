@@ -1522,3 +1522,25 @@ Full Go tests, targeted race tests, vet, formatting and diff checks passed. Test
 cover the authenticated route, fixed OpenBao role/mount, replay/conflict behavior,
 CSR profile and coexistence with longer shared TTL settings. No production
 acceptance gate is claimed closed.
+
+### Registry-checked Service client renewal checkpoint (2026-09-08)
+
+Video Cloud `791a323` closes the server-side Service client self-renewal gap. The
+current mTLS chain must correspond to its original successful unrevoked receipt,
+approved identity, independently pinned root and fresh signed CRLs. Only then can
+the same exact Service identity submit a successor CSR through the existing
+durable claim and fixed OpenBao role. Missing root/registry/CRL evidence fails
+unavailable; revoked or altered identity evidence is denied.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Server-side Service client
+lifecycle APIs are locally implemented. The open integration work is private-key
+and certificate storage on real hosts, automatic renewal scheduling, listener and
+outbound-client adoption, exact CRL acknowledgment, restored-inventory checks and
+live qualification. No push, PR, remote CI, deployment or custody action. Goal
+remains active.
+
+Full Go tests, targeted race tests, vet, formatting and diff checks passed. Tests
+exercise renewal admission, successor issuance and registry denial. No production
+acceptance gate is claimed closed.

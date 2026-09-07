@@ -4632,3 +4632,27 @@ action. Goal remains active.
 
 Service commit: `73fdaa2`. Full Go tests, targeted race tests, vet, formatting and
 diff checks passed. No production acceptance gate is claimed closed.
+
+### Registry-checked Service client renewal checkpoint (2026-09-08)
+
+Video Cloud `791a323` adds authenticated Service client self-renewal. The existing
+client certificate must present its complete verified chain and pass the durable
+receipt, exact identity, independent root pin, current issuer policy and signed
+CRL checks before any successor claim is created. The successor CSR cannot change
+the authenticated `service:<name>` subject or add SANs/extensions.
+
+Renewal uses the same registry-pinned OpenBao `service-client` role, 90-day limit,
+single signing owner and exact replay/conflict semantics as initial issuance.
+Initial provisioning remains separately authorized by the dedicated provisioner.
+An optional `CERT_ISSUER_SERVICE_CLIENT_ROOT_SHA256` enables self-renewal; absent
+or unavailable registry/CRL evidence fails closed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next Service work is the
+host-owned private-key/credential store, automatic renewal scheduling and actual
+listener/client adoption. No push, PR, remote CI, deployment or custody action.
+Goal remains active.
+
+Full Go tests, targeted race tests, vet, formatting and diff checks passed. No
+production acceptance gate is claimed closed.
