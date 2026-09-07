@@ -2891,3 +2891,32 @@ staging/custody/recovery qualification. This checkpoint advances native trust an
 SDK integration. Next: periodic CRL refresh and actual host/session/domain wiring.
 No push, PR, remote CI, deployment or physical/custody qualification was performed.
 The overall goal remains active.
+
+
+## Native guard-owned periodic CRL refresh
+
+Client `8b177cb` adds a separately threaded, bounded public HTTPS refresh loop to a
+live guard. Endpoints/server roots are copied, the matching identity is retained,
+and every completion wakes durable trust revalidation. Cached trust survives failed
+fetches until its signed deadline; valid updates can extend a live guard. Terminal
+guards cancel network work and cannot revive. Last-attempt diagnostics are separate
+from session trust. The guard's existing independent watcher remains responsible for
+expiry closure even during stalled HTTP; destruction joins all workers.
+
+Local macOS arm64 validation includes HTTP-enabled/disabled suites, ASan/UBSan,
+HTTP-enabled ThreadSanitizer and an installed C consumer. HTTPS/socket tests cover
+periodic retry with preserved state, signed revocation persistence and owner closure,
+invalid/duplicate starts, endpoint snapshot ownership, refreshed trust surviving its
+original four-second expiry, and independent expiry during an eight-second server
+stall with cancellation during destruction. Tests use a sixty-second normal recheck
+interval to distinguish completion wakeups/expiry from the ordinary polling loop.
+Reproduce with the native README configuration and
+`ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Native refresh/supervision primitives are
+locally implemented. Next: actual application session owners and domain-specific
+issuance/consumer wiring. Protected service-peer CRL distribution, Linux/physical
+providers and operational qualification remain unproven. No push, PR, remote CI or
+deployment was performed. The overall goal remains active.
