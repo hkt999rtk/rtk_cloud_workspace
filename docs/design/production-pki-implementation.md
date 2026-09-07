@@ -1887,3 +1887,25 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next SDK work includes backup/recovery
 reconciliation and remaining trust/lifecycle consumers, with host application and
 physical/live qualification still required.
+
+## Android identity metadata backup boundary
+
+Certificate and device-identity metadata now use bounded synced atomic records
+outside Android backup, with immutable per-alias identity binding. Existing
+SharedPreferences data requires explicit migration through the current key and
+certificate trust/profile policy. Conflicting metadata or missing keys fail;
+generation cannot replace the key behind a saved identity. Legacy data remains
+available for inspection but is never an automatic identity fallback.
+
+Validation: full JVM tests and release/test builds passed. Eleven API 35 tests
+passed, including matching/idempotent migration, certificate mismatch, identity
+rebinding and deleted-key rejection with no key regeneration. The existing PKI
+and background-job suite passes against the new storage. The emulator was stopped
+after testing. Actual backup transport/restore and fleet entitlement/revocation
+reconciliation remain unqualified.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Remaining work includes other-platform
+trust/lifecycle consumers, host integration and operational backup/recovery,
+physical/provider and staging qualification.
