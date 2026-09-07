@@ -48,6 +48,7 @@ type commandSpec struct {
 }
 
 var commands = map[string]commandSpec{
+	"wal-archive":                      {run: runWALArchive},
 	"backup":                           {run: runBackup},
 	"restore":                          {run: runRestore},
 	"bind-devices":                     {run: runBindDevices},

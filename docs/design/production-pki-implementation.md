@@ -806,3 +806,30 @@ live provider/hardware/custody qualification. Production remains disabled.
 
 Local Video Cloud commit `62bd8db`, following workspace checkpoint `e72126b`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Online PostgreSQL WAL segment archive continuation
+
+Added a separate `wal-archive` command and reviewed configuration for online
+PostgreSQL 16 segment upload. It does not enter maintenance or pause writers.
+Segment headers are bound to the configured cluster system identifier, timeline,
+size and address. The adapter streams an identity envelope and WAL bytes into age,
+checks source stability, and atomically fsyncs ciphertext plus receipt into a
+private spool. Retry reuses the exact ciphertext; changed same-name content or
+configuration fails instead of overwriting. Remote immutable publication requires
+full ciphertext readback and a completion marker in a dedicated WAL namespace.
+Existing core-backup encryption/remote primitives and dedicated credentials are
+reused, but the WAL envelope is not a core-backup archive.
+
+Validation includes decrypt/byte equality, retry identity, cluster/layout mismatch,
+ambiguous remote retry and corrupt readback, plus a completed segment captured from
+a disposable PostgreSQL 16 instance. Recovery race tests, focused CLI tests, vet
+and CLI build pass. The container and copied WAL fixture were removed. No remote
+storage, scheduler or database deployment settings were changed.
+
+This is the segment upload path, not complete PITR. Timeline/history files,
+physical base backups, restore_command, scheduling/retention, matched OpenBao and
+registry recovery, and measured RPO/RTO remain required. See
+`docs/postgresql-wal-archive.md` for the exact limits and remaining work. Other
+trust domains/consumers, installation and live custody/hardware qualification stay
+open; production remains disabled. No PR, push or remote CI occurred.

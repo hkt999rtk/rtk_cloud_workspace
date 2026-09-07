@@ -393,3 +393,11 @@ resume. A successful snapshot API response alone does not satisfy these checks.
 The adapter's streaming paths were exercised with a disposable TLS Raft instance
 of the pinned OpenBao 2.5.5 binary, restoring a changed test value. This is local
 single-node protocol verification, not a three-node HA or disaster-recovery drill.
+
+## Online PostgreSQL recovery continuation
+
+The separate [WAL segment archive](postgresql-wal-archive.md) command provides
+cluster-bound encrypted segment upload and immutable retry/readback. It does not
+pause writers, replace the maintenance matched-set format or establish complete
+PITR support. History files, base backups, restore integration, scheduling and
+measured recovery targets remain open as listed in that document.
