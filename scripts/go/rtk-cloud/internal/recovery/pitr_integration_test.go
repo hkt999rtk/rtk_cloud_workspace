@@ -200,6 +200,7 @@ func exercisePITR(t *testing.T, ctx context.Context, docker, container, director
 	if err != nil || !strings.Contains(string(log), walID+".age") {
 		t.Fatal("native recovery did not fetch encrypted remote WAL", err)
 	}
+	assertPITRObservation(t, ctx, docker, container, directory, destination, socket, e, env, true)
 	exercisePITRTimeline(t, ctx, docker, container, directory, encrypted, key, destination, e, plan, env, query)
 	// A fresh recovery with the required ciphertext removed must fail before
 	// reaching the target, rather than silently starting at an earlier point.
@@ -239,4 +240,33 @@ func exercisePITR(t *testing.T, ctx context.Context, docker, container, director
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Log("actual wal-restore CLI fetched TLS ciphertext; PostgreSQL paused at target with later write excluded")
+}
+
+func assertPITRObservation(t *testing.T, ctx context.Context, docker, container, directory, destination, socket string, e BaseBackupEngine, env []string, wantSuccess bool) {
+	t.Helper()
+	config := filepath.Join(directory, "observe-base.json")
+	if err := WriteJSON(config, e.Config); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.CommandContext(ctx, docker, "exec", container, "chown", "postgres:postgres", config).Run(); err != nil {
+		t.Fatal(err)
+	}
+	args := append(append([]string{}, env...), filepath.Join(directory, "rtk-cloud"), "base-backup", "observe", "--config", config, "--confirm-environment", e.Config.WAL.Environment, "--confirm-stack", e.Config.WAL.Stack, "--id", "fixture", "--destination", destination, "--socket-directory", socket, "--user", "postgres")
+	out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+	if !wantSuccess {
+		if err == nil {
+			t.Fatalf("observation accepted promoted server: %s", out)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("native runtime observation: %v %s", err, out)
+	}
+	var observed PITRObservation
+	if err := Decode(strings.NewReader(string(out)), &observed); err != nil {
+		t.Fatal(err, string(out))
+	}
+	if observed.Status != "paused-target-observed" || observed.SystemIdentifier != e.Config.WAL.SystemIdentifier || observed.DataDirectory != filepath.Join(destination, "pgdata") {
+		t.Fatalf("invalid runtime observation: %+v", observed)
+	}
 }

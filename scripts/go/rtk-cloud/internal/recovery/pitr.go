@@ -173,11 +173,7 @@ func (e BaseBackupEngine) preparePITR(ctx context.Context, id, destination, iden
 			return err
 		}
 	}
-	if err = WriteJSON(filepath.Join(destination, "pitr.json"), struct {
-		Status   string   `json:"status"`
-		BackupID string   `json:"backup_id"`
-		Plan     PITRPlan `json:"plan"`
-	}{"prepared-not-replayed", id, p}); err != nil {
+	if err = WriteJSON(filepath.Join(destination, "pitr.json"), pitrPreparation{"prepared-not-replayed", id, p}); err != nil {
 		return err
 	}
 	if err = ctx.Err(); err != nil {

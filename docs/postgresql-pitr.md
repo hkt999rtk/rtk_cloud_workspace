@@ -76,19 +76,49 @@ An interrupted preparation is not ready for use.
 ## Runtime verification
 
 Start only the isolated restored cluster, with the correct OS ownership and secure
-runtime environment. It must remain disconnected from application traffic. Connect
-through its private socket and inspect:
+runtime environment. It must remain disconnected from application traffic.
+Observe it through its private Unix socket:
 
-```sql
-SELECT pg_is_in_recovery(), pg_get_wal_replay_pause_state(), pg_last_wal_replay_lsn();
-SHOW listen_addresses;
+```sh
+rtk-cloud base-backup observe --config /private/recovery/base.json \
+  --confirm-environment staging --confirm-stack video-cloud-staging \
+  --id base-20260907-001 --destination /private/recovery/target-001 \
+  --socket-directory /private/recovery/target-001/socket \
+  --user postgres --database postgres --port 5432
 ```
 
-Require recovery state `true`, pause state `paused`, the expected replay position,
-and no TCP listener. Verify required database contents and that later changes are
-excluded. Check issuer mappings, provider state, CRLs, revocations and other PKI
-invariants before any separate decision to promote or resume writers. Preparation
-alone supplies none of that operational evidence. This command does not promote.
+Use the same reviewed physical backup configuration as preparation. The command
+requires existing private directories with no symlink ancestors and private regular
+`verified.json` and `pitr.json` records. It binds their backup ID, environment,
+stack and configuration to the invocation. It connects only to an explicit local
+socket, with explicit user/database/port, no psql startup file or password prompt,
+and no inherited source service selection. The OS user needs peer-authenticated
+access to a recovery database role allowed to read the server settings and
+`pg_control_system()`; run against the isolated copy with its authorized recovery
+administrator. No age identity or object-store credential is needed for observation.
+
+The fixed query runs in a read-only transaction with a `pg_catalog` search path,
+a 10-second statement timeout and an overall deadline of at most 30 seconds
+(or the configured timeout, if shorter). It requires PostgreSQL 16, the expected
+system identifier and exact restored data directory, recovery state true, replay
+paused, read-only state, the prepared explicit target LSN/timeline with inclusive
+pause action, replay at or beyond the target LSN, no TCP listener and archiving off.
+These checks use [PostgreSQL's recovery and control functions](https://www.postgresql.org/docs/16/functions-admin.html).
+An unavailable or mismatched server exits nonzero without a success observation.
+
+Success emits `paused-target-observed` JSON with observation time, scope, target
+and replay LSN. Preparation records remain unchanged. This is a point-in-time
+observation, not a persistent guarantee against later promotion/configuration
+changes. It does not establish why replay paused, independently verify every
+replayed record, or prove application data correctness. In particular, review
+server logs and expected data boundaries alongside the observation; a manually
+paused server is not by itself proof of a successful target-driven rehearsal.
+
+Verify required database contents and that later changes are excluded. Check issuer
+mappings, matched provider state, CRLs, revocations and other PKI invariants before
+any separate decision to promote or resume writers. Observation does not release a
+maintenance lock, start/promote a server, write qualification records, or mark a
+whole PKI restore as verified.
 
 ## Local integration evidence
 
@@ -127,6 +157,8 @@ writes and the new branch's post-target write. A further fresh restore with the
 required timeline-history ciphertext removed must reject the missing timeline
 and shut down. This exercises the timeline
 ancestry described by [PostgreSQL's timeline documentation](https://www.postgresql.org/docs/16/continuous-archiving.html#BACKUP-TIMELINES).
+The drill invokes the actual `base-backup observe` CLI on both paused timelines
+and requires it to reject the first copy after explicit promotion.
 Only this disposable test explicitly promotes a restored server; the production
 restore command continues to prepare a paused recovery without starting/promoting.
 

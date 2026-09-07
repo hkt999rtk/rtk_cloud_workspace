@@ -1017,3 +1017,31 @@ Validation: the race-enabled recovery suite passed with physical backup, native
 archive-command and PITR integration enabled (69 seconds total, including the
 cross-timeline and missing-history cases). Recovery `go vet` and the Linux CLI/test
 binary builds passed. Those fixture timings are not production RTO measurements.
+
+## Read-only PITR runtime observation continuation
+
+Added `base-backup observe` to make the running-state portion of a recovery drill
+repeatable. It binds private preparation/verification records to the explicit
+backup ID, environment, stack and physical configuration, then runs a fixed,
+bounded read-only SQL query over an explicit private local Unix socket. Source
+service selection, TCP hosts, connection-string database arguments, psql startup
+files and password prompts are excluded. The query fixes its search path to
+`pg_catalog` and uses a 10-second statement timeout; the operation deadline is
+at most 30 seconds or the configured timeout, whichever is shorter.
+
+Success requires the expected PostgreSQL 16 system identifier and restored data
+directory, paused recovery, read-only state, the prepared inclusive LSN/timeline
+pause target, sufficient replay position, TCP disabled and archiving off. Output
+is `paused-target-observed` with timestamp and target/replay metadata. It leaves
+preparation records unchanged and does not start/promote servers, release fences,
+or qualify PKI consistency. A manually paused server and point-in-time settings
+alone are not evidence of correct application data; native logs, expected data
+boundaries and matched provider/registry reconciliation remain required.
+
+Validation: the race-enabled recovery suite passed with native physical backup,
+archiving and cross-timeline PITR enabled. The actual Linux CLI observed both
+paused recovery timelines and rejected the first server after explicit fixture
+promotion. Focused race tests cover wrong identity, incomplete replay, target and
+isolation mismatches, unsafe connection inputs, private-file validation, malformed
+or oversized output and cancellation. Focused CLI tests, recovery vet and the Linux
+CLI build passed. All five top-level unfinished milestones remain open.

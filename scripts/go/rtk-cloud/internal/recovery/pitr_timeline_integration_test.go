@@ -32,6 +32,7 @@ func exercisePITRTimeline(t *testing.T, ctx context.Context, docker, container, 
 	if got := mustQuery("SELECT pg_promote(true, 30)"); got != "t" {
 		t.Fatal("fixture promotion failed", got)
 	}
+	assertPITRObservation(t, ctx, docker, container, directory, source, "/tmp/rtk-pitr-socket", e, env, false)
 	mustQuery("CHECKPOINT")
 	if got := mustQuery("SELECT timeline_id FROM pg_control_checkpoint()"); got != "2" {
 		t.Fatal("expected native timeline 2", got)
@@ -105,6 +106,7 @@ func exercisePITRTimeline(t *testing.T, ctx context.Context, docker, container, 
 	if err != nil || !strings.Contains(string(log), "history-00000002.age") || !strings.Contains(string(log), "wal-"+strings.ToLower(last)+".age") {
 		t.Fatal("native recovery did not fetch encrypted history and promoted WAL", err)
 	}
+	assertPITRObservation(t, ctx, docker, container, directory, destination, socket, e, env, true)
 	run("pg_ctl", "-D", filepath.Join(destination, "pgdata"), "-m", "fast", "-w", "stop")
 	// A fresh base has no descendant history to fall back to. Keep its completion
 	// metadata but remove the ciphertext, so restore must reject the missing link.
