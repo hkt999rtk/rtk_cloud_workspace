@@ -130,3 +130,7 @@ matched OpenBao/registry recovery points and measured
 RPO <= 15 minutes / RTO <= 4 hours. Larger clusters, tablespaces and other PostgreSQL
 versions/layouts require an expanded adapter and qualification. Production remains
 disabled until the complete PKI acceptance evidence exists.
+
+For durable automatic capture and retry, see
+[scheduled physical backups](postgresql-backup-scheduling.md). The schedule uses
+this same capture, verification and publication path.

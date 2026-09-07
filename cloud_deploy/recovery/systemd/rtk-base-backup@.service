@@ -1,0 +1,28 @@
+[Unit]
+Description=RTK verified PostgreSQL physical backup (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=rtk-backup
+Group=rtk-backup
+EnvironmentFile=/etc/rtk/recovery/%i/runtime.env
+ExecStart=/opt/rtk/bin/rtk-cloud base-backup scheduled --config /etc/rtk/recovery/%i/base.json --schedule /etc/rtk/recovery/%i/schedule.json --confirm-environment ${RTK_RECOVERY_ENVIRONMENT} --confirm-stack ${RTK_RECOVERY_STACK}
+StateDirectory=rtk/recovery/%i
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/rtk/recovery/%i
+UMask=0077
+TimeoutStartSec=4h5min
+TimeoutStopSec=30s
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

@@ -960,3 +960,33 @@ Cross-timeline end-to-end drills, scheduled base/snapshot capture, retention,
 matched OpenBao/registry recovery and measured operational RPO/RTO remain. The five
 unfinished top-level ledger items are unchanged. Production stays disabled; no PR,
 push or remote CI occurred.
+
+## Durable physical backup scheduling continuation
+
+Added `base-backup scheduled` with a reviewed interval policy, private durable
+checkpoint and nonblocking single-host lock. Each due slot journals its immutable
+backup ID before capture; failed or interrupted runs retry that same ID, including
+across later slots. Existing staged ciphertext is reused by the physical backup
+engine and only verified remote completion advances the checkpoint. Completed
+slots are skipped. Configuration drift, malformed/private-state violations and
+clock regression fail closed. Missing configuration fields cannot inherit defaults
+from the current invocation when decoding persisted checkpoints.
+
+Linux systemd service/timer templates and an operator guide are available in
+`cloud_deploy/recovery/systemd/` and `docs/postgresql-backup-scheduling.md`.
+The timer checks every minute; the policy determines capture cadence. Templates
+have not been installed or enabled against a live environment.
+
+Validation includes race-enabled recovery tests covering journal-before-capture,
+ambiguous failure retry, stale pending slots, concurrent invocation exclusion,
+cancellation after capture, invalid/private/symlink state, config/policy drift,
+clock regression and native-tool failure through the public scheduled engine.
+Focused CLI argument tests, recovery vet and CLI build passed. Both systemd
+templates passed native `systemd-analyze verify` in a disposable Ubuntu 24.04
+container (with a placeholder executable to validate unit wiring). This validates
+unit syntax, not live service execution or credentials.
+
+This does not complete the backup/recovery milestone: retention, scheduled restore
+rehearsals, matched provider/registry recovery and SDK protected installation
+remain required. Base-backup cadence does not establish the WAL RPO, and local
+tests do not qualify production RPO/RTO or custody.

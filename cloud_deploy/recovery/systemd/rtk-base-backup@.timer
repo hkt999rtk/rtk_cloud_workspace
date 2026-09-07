@@ -1,0 +1,11 @@
+[Unit]
+Description=Check RTK physical backup schedule (%i)
+
+[Timer]
+OnCalendar=minutely
+Persistent=true
+AccuracySec=1s
+RandomizedDelaySec=15s
+
+[Install]
+WantedBy=timers.target
