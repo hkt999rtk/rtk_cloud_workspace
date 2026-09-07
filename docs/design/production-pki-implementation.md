@@ -2361,3 +2361,22 @@ Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next is JavaScript signed CRL validation,
 durable freshness state, refresh and existing-owner teardown integration.
+
+## JavaScript signed full-CRL validation
+
+Added bounded DER full-CRL validation over independently anchored device chains.
+Issuer signature/key algorithm, DN, AKI/SKI, positive CRL number and signed freshness
+are required. Leaf and intermediate revocation fail. Partial/indirect/delta CRLs,
+unsupported critical extensions, duplicate entries and malformed/trailing data
+are rejected. Returns the nearest signed trust expiry for future owner scheduling.
+
+Validation: 38 JavaScript tests and TypeScript build passed. RSA/ECDSA fixtures
+cover both chain revocation levels, missing/duplicate/order-independent CRLs,
+truncated/tampered/trailing DER, CRL-only expiry and partial/critical extensions.
+This is a validation primitive; existing lifecycle calls are not yet automatically
+CRL-gated, and local tests do not prove live distribution or replay prevention.
+
+Milestone 2 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next is durable JavaScript CRL high-water
+state and automatic lifecycle gating, then refresh and owner teardown.
