@@ -30,7 +30,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Device replacement with bounded overlap, successor acknowledgment and Go file-based installation helpers.
 - [x] Certificate-bound device tokens with live API/refresh/MQTT authentication checks.
 - [x] Device WebSocket revalidation, MQTT authentication leases and broker cache/session operator tooling.
-- [ ] Trust-consumer installation/refresh, Root distrust, direct media termination and live session qualification.
+- [x] Cumulative Root distrust, consumer acknowledgment gates, atomic local root state and opt-in API TLS reload.
+- [ ] Remaining trust-consumer adapters, direct media termination and live trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [ ] OpenBao Raft deployment, scoped workload policies and database grants.
@@ -229,3 +230,42 @@ remain unfinished. Closing a control socket is not proof that media stopped.
 
 Local active-session service commit: Video Cloud `5bf3495`, following workspace
 checkpoint `fc66594`. No PR, push, deployment or remote CI run was performed.
+
+## Root distrust continuation
+
+Approved Root revocation/compromise now atomically publishes an immutable,
+environment/trust-domain-scoped removal record. The controller distributes a
+cumulative versioned policy and verifies configured consumer acknowledgments of
+its exact digest and canonical loaded-root bundle. Pending revocations require
+all configured consumers to acknowledge the latest cumulative policy. A Root
+self-CRL cannot complete removal. Same-key reissued certificates are removed too.
+
+Added `pkitrust` atomic on-disk policy/root updates, process advisory locking,
+monotonic cumulative-policy checks and explicit empty trust pools. Its runtime
+reload helper returns acknowledgment evidence only after the consumer's install
+callback succeeds. Policy integrity digests are not signatures; input must come
+from the authenticated controller/console. Cloud Admin now downloads the policy.
+
+The API optionally reloads this state for new TLS handshakes, with resumption
+disabled and rollback/scope/corruption checks. A post-verification chain check
+rejects cross-certificates carrying a removed root key. A separate App root file
+cannot reintroduce that key. Existing connections remain covered by the previous
+session/token revocation work, not by a TLS pool update alone.
+
+Validation: PostgreSQL/race tests cover cumulative policy changes, stale or missing
+consumer evidence, exact bundle digests, immutable history and consumer scope.
+Filesystem tests cover competing writers, failed runtime reload, rollback,
+corruption and explicit empty pools. Real TLS tests reject the removed root and
+its valid cross-certificate while preserving the successor root. PKI, API, HTTP,
+configuration, certissuer and console regression suites pass; vet, CLI build,
+JavaScript syntax and package/install script syntax checks pass.
+
+Explicit PKI migration is required. Pre-migration pending Root operations are not
+automatically backfilled. Other consumer adapters, automatic acknowledgment
+transport, live trust-domain rollout and rollback-resistant recovery remain open.
+Root removal does not solve direct peer-to-peer media termination; device/client
+enforcement and live broker/hardware qualification remain unfinished. No shared
+trust store, production key, deployment, push, PR or remote CI run was changed.
+
+Local Root distrust commits: Video Cloud `eee0ebd`, Cloud Admin `fb44dff`, following
+workspace checkpoint `7019525`.
