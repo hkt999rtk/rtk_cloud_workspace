@@ -791,3 +791,37 @@ and bootstrap integration, then revocation and consuming-host adoption. The lega
 gateway handler still uses its old signer; this checkpoint does not claim complete
 server runtime migration. No push, PR, remote CI, deployment or custody operation
 occurred. Goal remains active.
+
+
+## App recovery end-to-end permission correction (2026-09-08)
+
+Video Cloud `330e2a5` corrects two defects found while preparing server claim
+integration. The verifier previously lacked SELECT on CSR/TTL/request-digest
+columns used by the full App inventory. A real HTTP App issuance also included
+ContextDigest in its request hash without persisting that field, so inventory
+could not reconstruct the original request. Earlier owner-role inventory tests
+and limited verifier SELECT tests did not cover this combined path.
+
+The explicit schema migration now adds context_digest; issuance persists it,
+reconciliation reconstructs and compares the entire request digest before any
+provider access, and inventory includes that context. Verifier grants permit the
+required public/request metadata reads while withholding claim tokens and writes.
+Existing receipts whose original context was not persisted remain blocked when
+their digest cannot be reconstructed; no original digest is rewritten or claim
+released to bypass recovery evidence. Schema migration and grant refresh are
+required before using the updated code; no live migration was performed.
+
+Validation: full server Go suite, full PKI/PostgreSQL/controller race suites with
+local PostgreSQL and focused vet. The restricted-role integration now performs
+the complete inventory over real HTTP issuance, known-serial recovery and a
+published revocation, rather than checking only selected table access. It passes
+while claim-token reads and CSR writes remain denied. Nonempty-context recovery
+passes; changed persisted context is denied before provider discovery. Inventory
+also rejects context tampering. The task PostgreSQL fixture was removed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. This was a prerequisite correction, not a
+new milestone. Next remains durable private server signing claims, gateway runtime
+integration, and domain-specific recovery/revocation and host adoption. No push,
+PR, remote CI, deployment or custody operation occurred. Goal remains active.
