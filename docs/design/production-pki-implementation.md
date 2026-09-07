@@ -4104,3 +4104,29 @@ compatibility; staging/custody/recovery qualification. Next: connect concrete
 workload transports to server admission, revalidate/evict existing connections,
 and integrate CRL/policy refresh plus acknowledgment before real host adoption.
 Server recovery verification and live qualification also remain. Goal active.
+
+
+## 2026-09-08 — Established private server connection enforcement
+
+Video Cloud `243386e` adds `Store.ServerConnections`, an owner for independently
+pinned outbound TLS connections. Dial admission uses normal TLS plus registry
+verification. Normal close removes tracking; owner shutdown stops new admission
+and closes tracked sockets. `Sweep` revalidates established connections and closes
+those denied by registry/CRL policy or whose validation is unavailable/canceled.
+Socket closure precedes TLS cleanup to avoid a blocked close-notify delaying
+eviction. Sweeps use a 20-second context bound; no locks are held across database
+or network work. Active streams are terminated, not only idle pooled sockets.
+
+Validation: full Go suite; PKI/Postgres/certissuer race suites with disposable
+PostgreSQL; focused vet. Live TLS stream tests prove healthy streams survive a
+sweep, while receipt revocation, database failure and canceled validation terminate
+the connection and notify the server. Ordinary close cleans up tracking and owner
+shutdown denies new dials. Local fixture removed. No push/PR/remote CI/deployment.
+
+This is a tested connection lifecycle primitive, not completed process adoption.
+It does not replace existing transports, start a timer or manufacture exact-CRL
+acknowledgments. Concrete HTTP/MQTT/OpenBao host wiring, sweep scheduling, health/
+shutdown ownership and digest-bound policy installation remain next. Five acceptance
+milestones remain: legacy migration/device replacement; trust consumers/live
+sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Goal remains active.
