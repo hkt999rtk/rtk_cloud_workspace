@@ -579,3 +579,35 @@ wiring and App backup/recovery evidence; then the remaining unsupported trust
 domains and original acceptance requirements. Root custody, live fleet cutoff,
 provider retention/pruning and physical-platform qualification remain open.
 No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
+
+
+## App-only API CRL consumer checkpoint (2026-09-08)
+
+Video Cloud `9c47d1b` removes a Device-only prerequisite from the existing API
+CRL consumer. App-only PKI now uses provisioned App CA trust and the existing
+management URL/CA/cert/key settings without requiring Device Root ID/state or
+Product PKI. Product PKI still requires dynamic Device trust; legacy Device mTLS
+without Device trust is rejected. The App-only path does not start a Device root
+policy worker. Static App root policy changes still require reconfiguration/restart.
+
+The existing consumer fetches signed CRLs over independent management mTLS,
+checks monotonic history, persists/activates exact records and then acknowledges
+them. Initial synchronization precedes listening; current CRLs are enforced at
+handshake and on requests over existing TLS connections. Registry-backed App
+certificate/token checks remain additional enforcement, not replaced by the cache.
+
+Validation: full server Go suite and full API/trust/config race suites passed.
+A three-level App root/intermediate/P-256 leaf fixture verifies activation before
+both acknowledgments, live App mTLS success, existing-request/new-handshake denial
+after signed revocation, and rollback denial. Configuration tests prove App-only
+acceptance without weakening Product or legacy Device trust requirements. Existing
+Product CRL consumer tests still pass. Deployment example and config documentation
+were updated; no runtime settings were enabled or deployed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: broker/TURN and other service consumer
+acknowledgment wiring, App backup/recovery evidence and remaining trust domains.
+Dynamic App root-policy replacement and live host/fleet/custody qualification
+remain open. No push, PR, remote CI, deployment or custody operation occurred.
+Goal remains active.
