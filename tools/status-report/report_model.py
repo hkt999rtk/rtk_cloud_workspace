@@ -57,15 +57,15 @@ PORTAL_WEB_SCREENSHOT = FIG_DIR / "portal-webtest-home-hero.png"
 PORTAL_WEB_FALLBACK_IMAGE = ROOT / "repos/rtk_cloud_frontend/static/assets/connectplus-hero-corporate-v2.jpg"
 REPORT_LANGUAGE = "繁體中文"
 CORE_MESSAGE = (
-    "本文件整理 Realtek Video / IoT Control Cloud 目前進度，包含 K8S 部署現況、100K device loading test "
-    "結果、Portal Web 與 demo readiness、AWS/K8S 成本估算、主要風險，以及 Alpha/Beta 前需要決策或"
-    "補強的事項。"
+    "2026 年 9 月以 staging 內部測試為重點，tester 透過 Portal 與 service API 收集功能驗證證據。"
+    "此環境僅供內部測試，不是 production；團隊以 2026 年 10 月中旬 production rollout 為目標，"
+    "並在 promotion 前關閉 release、backup/restore、security 與 operation readiness gates。"
 )
 CURRENT_STATUS_SUMMARY = [
-    ["Deployment", "Linode LKE staging 已完成 100K IoT device capacity validation，並恢復到 7 nodes / 7 MQTT pods baseline。", "仍需補齊 release version、backup/restore 與 production-like sign-off。"],
-    ["Product / demo evidence", "Admin、SDK sample flow、Connect+ architecture 素材已可支撐端到端展示。", "下一步要把 100K loading-test evidence 連到 customer PoC 指標，並補 video camera capacity gate。"],
-    ["Operations readiness", "Account Manager、Video Cloud、Admin 分工已清楚，service health 與 loading-test evidence 可被報告化。", "正式商用後的 SLA、support owner、incident response 與持續維運人力仍需確認。"],
-    ["Next milestone", "IoT 100K capacity 已完成；2026-08-01 gate 應聚焦 5,000 video cameras 與 production-readiness evidence。", "8 月進 alpha test（含 SDK），9 月進 beta test（含 SDK 與 pilot customer），再進 public。"],
+    ["Deployment", "Linode LKE staging 的 Portal、Video Cloud 與 Account Manager 入口列於內測頁；健康狀態以本次探測為準。", "9 月收集 tester evidence，並核對 deployed revision、backup/restore 與 production sign-off。"],
+    ["Product / demo evidence", "內部 tester 可從 Cloud Admin Portal 登入，搭配 Video Cloud API 與 SDK/sample flow 執行 hands-on test。", "聚焦 onboarding、device operation、video/MQTT flow 與問題回報。"],
+    ["Operations readiness", "September staging 是 internal-test environment；不承諾 production SLA，測試資料與服務可能因更新而重置。", "production promotion 前確認 monitoring、incident owner、backup/restore 與 security review。"],
+    ["Next milestone", "2026 年 9 月完成 internal staging test 與問題收斂。", "目標於 2026 年 10 月中旬推向 production，實際 promotion 以 readiness gates 通過為準。"],
 ]
 
 CUSTOMER_USE_CASE_FIT = [
@@ -77,10 +77,25 @@ CUSTOMER_USE_CASE_FIT = [
 
 RELEASE_GATE_DEFINITIONS = [
     ["Aug.1 loading-test pass", "IoT 100K validated; 5,000 video cameras pending", "Success rate、p95/p99、error taxonomy、resource use、recovery behavior、report package。"],
-    ["Alpha test", "SDK + internal developer real use", "4-6 internal testers；至少 3-4 位 developer/firmware/app testers 實際跑 onboarding、SDK sample、debug/report。"],
-    ["Beta test", "SDK + pilot customer", "1-2 pilot customers 或 partner use cases；確認 PoC feedback、support flow、deployment/cost assumptions。"],
-    ["Public path", "operation, account, support, security baseline", "公司/核准第三方帳務、backup operator、release version、backup/restore、security review gate。"],
+    ["September internal test", "staging + internal tester real use", "內部 tester 實際跑 Portal login、onboarding、SDK/sample、device/video/MQTT flow 與 debug/report。"],
+    ["Production readiness review", "promotion evidence and owner sign-off", "確認 open issues、release version、monitoring、backup/restore、security review、rollback 與 incident owner。"],
+    ["Mid-October production target", "controlled production rollout", "readiness gates 通過後再 promotion；若 evidence 未完成，維持 staging 並明確標示 at risk / blocked。"],
 ]
+
+STAGING_TEST_ACCESS = {
+    "window": "September 2026",
+    "scope": "Internal testing only",
+    "portalUrl": "https://admin.video-cloud-staging.realtekconnect.com/login",
+    "serviceUrl": "https://video-cloud-staging.realtekconnect.com",
+    "accountManagerUrl": "https://account-manager.video-cloud-staging.realtekconnect.com",
+    "productionTarget": "Mid-October 2026",
+    "testerGuidance": [
+        "Use test accounts and test data only; do not enter customer or production data.",
+        "Validate login, onboarding, SDK/sample, device, video, MQTT/shadow, and error-reporting flows.",
+        "Record steps, timestamp, expected/actual result, and screenshot or correlation ID for each issue.",
+        "Staging may be updated or reset without production SLA while fixes are being promoted.",
+    ],
+}
 
 FONT_REG = "/System/Library/Fonts/STHeiti Light.ttc"
 FONT_BOLD = "/System/Library/Fonts/STHeiti Medium.ttc"
@@ -103,35 +118,35 @@ COLORS = {
 DESIGN_MATERIALS = [
     {
         "key": "admin_overview",
-        "title": "Admin Fleet Health Overview",
-        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/customer-overview.png",
-        "caption": "圖 7：Admin Customer View - Fleet Health Overview 操作畫面",
-        "source": "rtk_cloud_admin/docs/assets/webui-design/customer-overview.png",
-        "purpose": "管理者與客戶可一眼看到 online rate、attention queue、health distribution。",
+        "title": "K8s Platform Dashboard",
+        "path": ROOT / "repos/rtk_cloud_admin/docs/design-assets/k8s-platform-dashboard-mockup.png",
+        "caption": "圖 7：K8s Platform Dashboard 設計示意",
+        "source": "rtk_cloud_admin/docs/design-assets/k8s-platform-dashboard-mockup.png",
+        "purpose": "展示 platform operator 的 Kubernetes runtime 與 service health 視角。",
     },
     {
         "key": "admin_devices",
-        "title": "Admin Devices + Detail Drawer",
-        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/customer-devices.png",
-        "caption": "圖 8：Admin Devices list 與右側 device detail drawer",
-        "source": "rtk_cloud_admin/docs/assets/webui-design/customer-devices.png",
-        "purpose": "展示 fleet manager 如何搜尋、過濾、查看 health/source facts、stream status 與 provisioning action。",
+        "title": "Platform Brand Clouds List",
+        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-list.png",
+        "caption": "圖 8：Platform Brand Clouds 列表操作畫面",
+        "source": "rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-list.png",
+        "purpose": "展示 platform admin 如何檢視與進入 Brand Cloud 管理流程。",
     },
     {
         "key": "admin_firmware_ota",
-        "title": "Admin Firmware & OTA",
-        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/customer-firmware-ota.png",
-        "caption": "圖 9：Firmware & OTA 操作畫面",
-        "source": "rtk_cloud_admin/docs/assets/webui-design/customer-firmware-ota.png",
-        "purpose": "說明 firmware distribution、rollout progress、risk queue 如何對應售後維運。",
+        "title": "Platform Brand Cloud Detail",
+        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-detail.png",
+        "caption": "圖 9：Platform Brand Cloud detail 操作畫面",
+        "source": "rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-detail.png",
+        "purpose": "展示 Brand Cloud 詳細資料與管理 action 的 operator workflow。",
     },
     {
         "key": "admin_stream_health",
-        "title": "Admin Stream Health",
-        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/customer-stream-health.png",
-        "caption": "圖 10：Stream Health 操作畫面",
-        "source": "rtk_cloud_admin/docs/assets/webui-design/customer-stream-health.png",
-        "purpose": "說明 video stream success rate、request volume、per-device failure risk 的操作視角。",
+        "title": "Platform Brand Cloud Create",
+        "path": ROOT / "repos/rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-create.png",
+        "caption": "圖 10：Platform Brand Cloud create 操作畫面",
+        "source": "rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-create.png",
+        "purpose": "展示建立 Brand Cloud 的欄位、validation 與 operator workflow。",
     },
     {
         "key": "sample_screen_flows",
@@ -1510,12 +1525,12 @@ PPTX_LAYOUT_DIR = OUT_DIR / "pptx-layout"
 PPTX_WORK_DIR = OUT_DIR / "pptx-work"
 
 SCHEDULE_SNAPSHOT = {
-    "current_position": "100K IoT capacity validated",
-    "current_week": "100K evidence sizing guidance",
-    "weekly_goal": "Convert 100K evidence into sizing guidance and close the remaining video-camera capacity gate.",
-    "next_gate": "5,000 video camera validation before alpha",
-    "risk": "At risk if video/WebRTC/TURN/storage evidence and production-readiness ownership are not closed before alpha.",
-    "judgement": "partial pass",
+    "current_position": "September internal staging test",
+    "current_week": "Tester access, hands-on validation, and issue intake",
+    "weekly_goal": "Confirm the latest staging build through Portal and service/API workflows, then prioritize production blockers.",
+    "next_gate": "Production readiness review for the mid-October target",
+    "risk": "At risk if release, backup/restore, security, rollback, monitoring, or operation ownership evidence remains open.",
+    "judgement": "at risk",
 }
 
 SCHEDULE_MILESTONES = [
@@ -1523,11 +1538,11 @@ SCHEDULE_MILESTONES = [
     {"period": "May 11-24", "label": "Foundation", "status": "done", "note": "K8s staging + integration"},
     {"period": "May 25-Jun 7", "label": "Load prep", "status": "done", "note": "runner / metrics / runbook"},
     {"period": "Jun 8-30", "label": "Validation", "status": "done", "note": "MQTT 100K pass"},
-    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "current", "note": "video 5K profile / rehearsal"},
-    {"period": "Aug 1", "label": "Load test pass", "status": "target", "note": "100k devices + 5k cameras"},
-    {"period": "Aug", "label": "Alpha test", "status": "planned", "note": "SDK included"},
-    {"period": "Sep", "label": "Beta test", "status": "planned", "note": "SDK + pilot customer"},
-    {"period": "After beta", "label": "Public", "status": "planned", "note": "public release path"},
+    {"period": "Jul 1-31", "label": "Scale rehearsal", "status": "done", "note": "IoT capacity evidence; video gap tracked"},
+    {"period": "Aug 1", "label": "Load-test gate", "status": "partial", "note": "100k IoT pass; 5k video pending"},
+    {"period": "Aug", "label": "Staging integration", "status": "done", "note": "latest release candidate integration"},
+    {"period": "Sep", "label": "Internal test", "status": "current", "note": "Portal + service/API hands-on"},
+    {"period": "Mid-Oct", "label": "Production target", "status": "target", "note": "promote after readiness review"},
 ]
 
 VIDEO_MILESTONES = [
@@ -1553,20 +1568,20 @@ DECISIONS = [
 ]
 
 ALPHA_SUPPORT = [
-    ["Account / payment ownership", "DNS, Linode billing, credit-card payment, mail/service accounts", "Move from Kevin personal account to company-managed or approved third-party account before alpha.", "Alpha"],
-    ["Official mobile market accounts", "Google Play Console and Apple Developer Program organization accounts", "Need official company-owned accounts to upload Android / iOS apps, manage signing, TestFlight / internal testing, store listing, review, and production release ownership.", "Alpha"],
-    ["Operation backup", "DNS, Linode console, deploy, health check, runbook, incident contact", "Assign backup operator so staging/alpha is not blocked when Kevin is unavailable.", "Alpha"],
-    ["Temporary alpha internal testers", "4-6 real human testers; at least 3-4 developer/firmware/app testers", "Auto test covers quantity; human developers validate SDK onboarding, sample flow, debug/report behavior during alpha.", "Alpha"],
-    ["Temporary beta pilot customer", "1-2 pilot customers or partner use cases", "Beta needs external usage feedback before public scope and production boundary are finalized.", "Beta"],
+    ["Account / payment ownership", "DNS, Linode billing, credit-card payment, mail/service accounts", "Move from Kevin personal account to company-managed or approved third-party ownership before production.", "Production"],
+    ["Official mobile market accounts", "Google Play Console and Apple Developer Program organization accounts", "Use official company-owned accounts for signing, TestFlight/internal testing, store listing, review, and production release ownership.", "Production"],
+    ["Operation backup", "DNS, Linode console, deploy, health check, runbook, incident contact", "Assign a backup operator so staging and production are not blocked when the primary owner is unavailable.", "Production"],
+    ["September internal testers", "4-6 real human testers; at least 3-4 developer/firmware/app testers", "Human testers validate Portal login, SDK onboarding, sample flow, device/video/MQTT behavior, and debug/report evidence.", "September"],
+    ["Controlled rollout feedback", "Selected internal users or approved launch cohort", "Collect actionable feedback before broadening production access or customer scope.", "Mid-Oct"],
 ]
 
 POST_ALPHA_COVERAGE = [
     ["Cloud backend / service owner", "1-2 FTE", "Account Manager, Video Cloud, MQTT/shadow, API, release fixes"],
     ["DevOps / SRE / operation", "1 FTE", "production deploy, monitoring, backup/restore, incident response"],
-    ["SDK / app / developer support", "1 FTE", "SDK onboarding, sample app, developer issues, alpha/beta feedback"],
+    ["SDK / app / developer support", "1 FTE", "SDK onboarding, sample app, developer issues, internal-test and rollout feedback"],
     ["QA / automation / load test", "1 FTE", "regression, auto test, loading-test rerun, release gate"],
     ["Security reviewer", "0.2-0.5 FTE", "PKI, threat model, secret handling, security review gate"],
-    ["FAE / pilot customer support", "0.5-1 FTE", "beta pilot customer, PoC support, sales feedback loop"],
+    ["FAE / rollout support", "0.5-1 FTE", "controlled rollout, PoC support, and sales feedback loop"],
 ]
 
 RISKS = [
@@ -1620,6 +1635,7 @@ def build_report_payload() -> dict[str, object]:
         "currentStatusSummary": CURRENT_STATUS_SUMMARY,
         "customerUseCaseFit": CUSTOMER_USE_CASE_FIT,
         "releaseGateDefinitions": RELEASE_GATE_DEFINITIONS,
+        "stagingTestAccess": STAGING_TEST_ACCESS,
         "scheduleSnapshot": SCHEDULE_SNAPSHOT,
         "scheduleMilestones": SCHEDULE_MILESTONES,
         "videoMilestones": VIDEO_MILESTONES,
