@@ -1618,3 +1618,23 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Runtime refresh scheduling, validation
 at use and session termination remain the next integration steps.
+
+## Go TLS identity selection uses durable revocation state
+
+The durable CRL store now builds a TLS config around a caller-managed signer,
+matching its public key to the leaf and snapshotting public trust inputs.
+New handshakes validate current file-backed CRL/certificate state with no static
+identity fallback or session resumption. Server trust remains distinct and the
+root is omitted from the client chain. Established connections are not closed
+by this handshake-only guard.
+
+Validation: the complete Go SDK suite and auth race tests passed. A local mTLS
+server verifies the client, accepts pre-revocation requests and rejects new
+connections after a persisted CRL update before its application handler. Tests
+also cover signer mismatch and snapshot isolation. Hardware and live service
+qualification remain open.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next: active-session revocation/
+expiry teardown and scheduled refresh integration.
