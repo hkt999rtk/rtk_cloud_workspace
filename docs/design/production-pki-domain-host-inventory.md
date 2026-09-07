@@ -12,7 +12,7 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | Device client identity | Video Cloud `internal/pki` registry and Product claims; `internal/certissuer/product.go` and Product-mode bootstrap; SDK renewal/trust and owner-lifetime adapters recorded in the ledger. | Real legacy cohort replacement, application policy/owner adoption, physical firmware and supported-platform evidence. |
 | App/user client identity | `internal/pki/app_issuance.go`, `app_verification.go`, `app_revocation.go`, `app_crl_worker.go`; API consumer and `internal/pkitrust/registry_app.go` compose broker/TURN acknowledgment after sweeps. Recovery includes `app_reconcile.go`, `recovery_app.go`, and `recovery_app_inventory.go`. | Dynamic App root-policy adoption, remaining application/SDK host wiring and real broker/relay eviction evidence. |
 | Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Remaining server host adoption, root/key renewal, external recovery-history reconciliation and actual host cutover. CRL maintenance, public lineage recovery and restored-registry inventory are implemented locally. |
-| Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | Service serverAuth issuance/receipts/revocation and a reusable HTTP connection owner exist locally. Service clientAuth profile/lifecycle and actual service-host wiring remain; loaded files alone do not prove registry-managed lifecycle. |
+| Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | Service serverAuth issuance/receipts/revocation and a reusable HTTP connection owner exist locally. API Account Manager app-token authorization now supports opt-in Service trust and exact CRL consumer wiring. Service clientAuth profile/lifecycle and other service-host wiring remain; loaded files alone do not prove registry-managed lifecycle. |
 | Dedicated MQTT server TLS | Independent `mqtt` issuer/receipt/CRL verification; `a17c4ff` wires opt-in API subscriber/publisher and log-ingester TLS admission, scheduled sweeps and connection eviction. | Root-policy refresh, broker key renewal and actual host rollout. CRL maintenance is implemented in `7869d5e`, and exact installed-digest MQTT acknowledgments in `57c68f6`. Public-CA MQTT remains a distinct supported contract choice. |
 | OpenBao transport TLS | Dedicated transport CA/files and TLS Raft artifacts; independent server issuance/CRLs/recovery; controller and certificate issuer support opt-in registry-backed provider HTTP with verified login/renewal, periodic connection eviction and optional exact installed-CRL ACKs. | Other provider-client adoption, root-policy/server-key renewal and real host rollout. Transport trust remains independent of Device/App/Service roots; seal/custody and HA qualification remain separate. |
 | Public HTTPS | Contract requires publicly trusted CA/ACME. | Verify deployment/renewal acceptance separately; never route browser/public HTTPS issuance through private Device/App issuers. |
@@ -237,3 +237,32 @@ remote CI, live deployment or custody operation. Goal remains active.
 Service commit: `fc93e2f`. Full Go suite with PostgreSQL, PKI/consumer/config/host
 race tests, final focused startup/order checks, vet, formatting and diff checks
 passed. Disposable PostgreSQL fixture removed. No production acceptance gate closed.
+
+
+### API Account Manager Service transport checkpoint (2026-09-08)
+
+Added opt-in Service-domain trust to API app-token authorization requests to
+Account Manager. Explicit root pin/DNS/CA configuration is validated before runtime
+setup; enabled mode requires the API registry and disables schema auto-initialization.
+The API owns the shared verified HTTP connection lifecycle and closes it before
+the database. The authorizer receives that client, preserves its configured timeout
+and bearer-token contract, and propagates transport denial without fallback.
+Optional exact-CRL management settings reuse installed-digest preparation/sweep/ACK.
+Domain selection remains fixed to `service`, independent of peer input.
+
+Local tests cover config/env mapping, early partial-policy rejection, unmigrated
+registry refusal without mutation, rejection of a CA-file-trusted but unregistered
+server before HTTP, authorization transport denial, and timeout preservation.
+Registered-Service TLS/eviction/ACK behavior is covered by the shared transport
+suite. These are composed local checks, not live Account Manager deployment proof.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Cross-service workers and
+other Service hosts still require adoption; Service clientAuth lifecycle, root/key
+renewal, external recovery history, legacy cohorts and live/hardware qualification
+remain. No push, PR, remote CI, live deployment or custody operation. Goal active.
+
+Service commit: `d612c1c`. Full Go suite with PostgreSQL, config/consumer/HTTP/API/
+PKI race tests, vet, formatting and diff checks passed. Disposable database removed.
+No production acceptance gate is claimed closed.

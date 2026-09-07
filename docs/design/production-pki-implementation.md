@@ -4394,3 +4394,32 @@ remote CI, live deployment or custody operation. Goal remains active.
 Service commit: `fc93e2f`. Full Go suite with PostgreSQL, PKI/consumer/config/host
 race tests, final focused startup/order checks, vet, formatting and diff checks
 passed. Disposable PostgreSQL fixture removed. No production acceptance gate closed.
+
+
+### API Account Manager Service transport checkpoint (2026-09-08)
+
+Added opt-in Service-domain trust to API app-token authorization requests to
+Account Manager. Explicit root pin/DNS/CA configuration is validated before runtime
+setup; enabled mode requires the API registry and disables schema auto-initialization.
+The API owns the shared verified HTTP connection lifecycle and closes it before
+the database. The authorizer receives that client, preserves its configured timeout
+and bearer-token contract, and propagates transport denial without fallback.
+Optional exact-CRL management settings reuse installed-digest preparation/sweep/ACK.
+Domain selection remains fixed to `service`, independent of peer input.
+
+Local tests cover config/env mapping, early partial-policy rejection, unmigrated
+registry refusal without mutation, rejection of a CA-file-trusted but unregistered
+server before HTTP, authorization transport denial, and timeout preservation.
+Registered-Service TLS/eviction/ACK behavior is covered by the shared transport
+suite. These are composed local checks, not live Account Manager deployment proof.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Cross-service workers and
+other Service hosts still require adoption; Service clientAuth lifecycle, root/key
+renewal, external recovery history, legacy cohorts and live/hardware qualification
+remain. No push, PR, remote CI, live deployment or custody operation. Goal active.
+
+Service commit: `d612c1c`. Full Go suite with PostgreSQL, config/consumer/HTTP/API/
+PKI race tests, vet, formatting and diff checks passed. Disposable database removed.
+No production acceptance gate is claimed closed.
