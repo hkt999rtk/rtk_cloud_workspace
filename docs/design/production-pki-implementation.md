@@ -3514,3 +3514,36 @@ staging/custody/recovery qualification. Next: per-session preflight forwarding i
 native and remaining SDK integrations, followed by the outstanding original
 acceptance requirements. No push, PR, remote CI, deployment or custody operation
 occurred. Goal remains active.
+
+
+## Native preflight/session association checkpoint (2026-09-08)
+
+WebRTC SDK `b1cd16d` passes each session's original preflight JSON to the native
+create callback. The POSIX transport extracts the PKI TURN username and sends
+`ice_username`, with legacy omission and rejection of conflicting/oversized
+grants before HTTP creation. No preflight state is stored in the shared transport.
+The callback ABI changed; SONAME is 2. Native consumers and custom transports must
+rebuild and update the signature. Non-POSIX transports must implement forwarding.
+The preflight buffer is borrowed only for the callback duration.
+
+Validation: baseline native build succeeded; updated shared libdatachannel/POSIX/
+Ameba host build and core build succeeded. All 22 full native CTests and all 10
+core CTests passed. The expanded POSIX HTTP contract test additionally passed
+after rebuilding its executable: exact PKI forwarding, duplicate matching grants,
+legacy omission, conflicting/oversized rejection and two outstanding grants on
+one shared transport. The native core test verifies the callback receives the
+original preflight response. The full suite includes direct and local TURN H264,
+authorization lease expiry and repeated connect/close. These are local host
+fixtures, not physical-device or live staging qualification.
+
+Reproducible local checks: `cmake --build /private/tmp/rtk-webrtc-pki-peer -j 4`
+and `ctest --test-dir /private/tmp/rtk-webrtc-pki-peer --output-on-failure`;
+corresponding core build/test directory is `/private/tmp/rtk-webrtc-pki-core`.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: cloud-client typed signaling methods
+in Go/JavaScript/iOS/Android/native still need grant-reference plumbing and host
+integration review. Their source entry points were located during this checkpoint;
+no completion is claimed for them. No push, PR, remote CI, deployment or custody
+operation occurred. Goal remains active.
