@@ -2737,3 +2737,37 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. SDK integration advanced. Next: authenticated
 native HTTP renewal and acknowledgment, retirement/session coordinator, scheduling
 and refresh. No push, PR, remote CI, deployment or physical qualification occurred.
+
+
+## Authenticated native HTTPS renewal
+
+Client `48c600f` adds optional `RTKC_OPENSSL_HTTP` libcurl/OpenSSL transport on
+POSIX. It sends the saved CSR/request/TTL over a fresh verified mTLS connection,
+with separately configured server roots, active-identity checks before TLS and
+persistence, no redirect/proxy/netrc/session reuse, bounded headers/body and network
+timeout, cancellation and trust-expiry abort. Existing valid response state is
+revalidated without another POST or installation; corrupt state does not regenerate.
+Default native/provider builds remain independent of curl. Also corrected an older
+Windows unsupported-status constant in the shared private-file stub.
+
+Validation: all 12 tests pass with HTTP enabled and disabled. ASan/UBSan and an
+installed C package consumer calling the HTTP symbol pass. A local HTTPS server
+requires the predecessor certificate and verifies the transmitted CSR. Tests cover
+malformed and valid-wrong server roots, cancellation, redirects, oversized responses,
+a 50 ms timeout with elapsed-time assertion, durable save and exactly one successful
+POST across retries. Fixture reverse-DNS lookup was removed after timing isolated a
+36-second server-bind delay; current provider/HTTP tests complete in about two seconds.
+
+Reproduce using the native README's `RTKC_OPENSSL_HTTP=ON` configure command, then
+`cmake --build /private/tmp/rtk-native-http -j4` and
+`ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`. Platform evidence:
+macOS arm64, local curl 8.21.0/OpenSSL 3.6.3/cJSON 1.7.19; curl was installed locally
+for this build. Host callbacks/filesystem/crypto must return promptly; arbitrary
+host blocking is not covered by the network timeout.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. Next native work:
+authenticated acknowledgment, durable retirement/session coordinator, scheduling,
+refresh and host ownership. No push, PR, remote CI, deployment or physical/custody
+qualification was performed.
