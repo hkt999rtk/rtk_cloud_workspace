@@ -3121,3 +3121,28 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. App database-role integration is now tested;
 App revocation publication/consumers remain next. No push, PR, remote CI, deployment
 or custody operation occurred. The full goal remains active.
+
+
+## App certificate consumer verification (2026-09-08)
+
+Video Cloud `15e08ba` adds opt-in API App certificate authentication using registered
+receipts and mandatory current signed CRLs. A repeatable-read snapshot checks the
+exact P-256 client leaf, receipt, environment, independent registered App root and
+intermediate, active/retiring states and both full CRLs. Leaf and intermediate
+revocation, stale/missing evidence, revoked receipts and registry failures deny
+access. `VIDEO_CLOUD_AUTH_APP_PKI_ENABLED` cannot fall back to legacy certificate
+headers and requires direct mTLS/trust, ACL enforcement and explicit migrations.
+
+Validation: full Go suite passed. Focused race tests prove missing/root CRL denial,
+valid receipt acceptance, leaf/intermediate/receipt revocation, and CRL expiry while
+the leaf remains valid. The restricted database-role integration authenticates a
+registered App leaf with imported CRLs under verifier grants; the HTTP regression
+rejects static/header fallback without a registry. Local PostgreSQL only was used.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. App certificate authentication now consumes
+the existing signed-CRL import/publication path. Automatic provider revocation/CRL
+publication and bearer-token/live-session provenance revalidation remain. Next:
+App bearer-token and live-session enforcement. No push, PR, remote CI, deployment or
+custody operation occurred. The full goal remains active.

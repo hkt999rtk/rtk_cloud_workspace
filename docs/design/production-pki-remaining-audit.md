@@ -64,8 +64,10 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    Cloud `4532ff8`. Known-serial pending-outcome recovery is implemented in `06a11d2`.
    Restricted App issuer/controller database grants and lineage locking are
    implemented and exercised under non-owner roles in `07672e6`.
-   Provider evidence discovery for unknown serials, App revocation publication,
-   backup/restore adapters and live consumer enforcement remain. Configured provider response validation was
+   App API certificate authentication now requires registry receipts and signed
+   intermediate/root CRLs in `15e08ba`. Provider evidence discovery for unknown
+   serials, automatic App revocation/CRL publication, backup/restore adapters and
+   bearer-token/live-session enforcement remain. Configured provider response validation was
    implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
    rejection of valid leaves without the optional Basic Constraints extension.
    Replacement and runtime verification also require domain-specific review.
