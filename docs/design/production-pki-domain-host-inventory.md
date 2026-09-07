@@ -14,7 +14,7 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Remaining server host adoption, root/key renewal, external recovery-history reconciliation and actual host cutover. CRL maintenance, public lineage recovery and restored-registry inventory are implemented locally. |
 | Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | Service serverAuth issuance/receipts/revocation and a reusable HTTP connection owner exist locally. Service clientAuth profile/lifecycle and actual service-host wiring remain; loaded files alone do not prove registry-managed lifecycle. |
 | Dedicated MQTT server TLS | Independent `mqtt` issuer/receipt/CRL verification; `a17c4ff` wires opt-in API subscriber/publisher and log-ingester TLS admission, scheduled sweeps and connection eviction. | Root-policy refresh, broker key renewal and actual host rollout. CRL maintenance is implemented in `7869d5e`, and exact installed-digest MQTT acknowledgments in `57c68f6`. Public-CA MQTT remains a distinct supported contract choice. |
-| OpenBao transport TLS | Dedicated transport CA/files and TLS Raft artifacts; independent server issuance/CRLs/recovery; controller and certificate issuer support opt-in registry-backed provider HTTP with verified login/renewal and periodic connection eviction. | Other provider-client adoption, exact installed-CRL ACKs, root-policy/server-key renewal and real host rollout. Transport trust remains independent of Device/App/Service roots; seal/custody and HA qualification remain separate. |
+| OpenBao transport TLS | Dedicated transport CA/files and TLS Raft artifacts; independent server issuance/CRLs/recovery; controller and certificate issuer support opt-in registry-backed provider HTTP with verified login/renewal, periodic connection eviction and optional exact installed-CRL ACKs. | Other provider-client adoption, root-policy/server-key renewal and real host rollout. Transport trust remains independent of Device/App/Service roots; seal/custody and HA qualification remain separate. |
 | Public HTTPS | Contract requires publicly trusted CA/ACME. | Verify deployment/renewal acceptance separately; never route browser/public HTTPS issuance through private Device/App issuers. |
 
 ## Next implementation sequence: independent server-domain issuance
@@ -206,3 +206,34 @@ No push, PR, remote CI, live deployment or custody operation. Goal remains activ
 Service commit: `58f8e47`. Full Go suite with PostgreSQL, config/certificate-issuer/
 bootstrap/PKI race tests, vet, formatting and diff checks passed. Disposable database
 removed. No production acceptance gate is claimed closed.
+
+
+### HTTP consumer exact-CRL acknowledgment checkpoint (2026-09-08)
+
+Controller and certificate-issuer provider transports now optionally load the
+existing registry server CRL consumer using an explicit manifest and separate
+management mTLS identity. Configuration rejects partial policy. Startup prepares,
+sweeps and acknowledges before returning the provider transport; the management
+endpoint must already be reachable independently of the starting controller.
+Each timer cycle prepares installed CRLs, sweeps connections with exact digest
+bounds, then acknowledges only the prepared evidence. Failed preparation still
+sweeps; failed sweeps withhold ACKs. ACK failure clears consumer readiness and
+immediately sweeps again so pooled HTTP connections cannot bypass that denial.
+Consumer management resources close with the transport lifecycle.
+
+HTTP tests use actual registry CRLs/ACK rows with a test adapter and assert stream
+eviction before new-digest ACK, plus preparation/ACK-failure eviction and startup
+rejection. Existing production consumer tests separately cover management mTLS,
+persistence, rollback rejection and exact prepared-digest acknowledgment. This is
+composed local coverage; no live HTTP fleet/latency qualification is claimed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Remaining work includes
+other Service host adoption, root-policy/key renewal, external recovery history,
+legacy cohorts, hardware/platform evidence and live qualification. No push, PR,
+remote CI, live deployment or custody operation. Goal remains active.
+
+Service commit: `fc93e2f`. Full Go suite with PostgreSQL, PKI/consumer/config/host
+race tests, final focused startup/order checks, vet, formatting and diff checks
+passed. Disposable PostgreSQL fixture removed. No production acceptance gate closed.

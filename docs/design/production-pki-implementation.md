@@ -4363,3 +4363,34 @@ No push, PR, remote CI, live deployment or custody operation. Goal remains activ
 Service commit: `58f8e47`. Full Go suite with PostgreSQL, config/certificate-issuer/
 bootstrap/PKI race tests, vet, formatting and diff checks passed. Disposable database
 removed. No production acceptance gate is claimed closed.
+
+
+### HTTP consumer exact-CRL acknowledgment checkpoint (2026-09-08)
+
+Controller and certificate-issuer provider transports now optionally load the
+existing registry server CRL consumer using an explicit manifest and separate
+management mTLS identity. Configuration rejects partial policy. Startup prepares,
+sweeps and acknowledges before returning the provider transport; the management
+endpoint must already be reachable independently of the starting controller.
+Each timer cycle prepares installed CRLs, sweeps connections with exact digest
+bounds, then acknowledges only the prepared evidence. Failed preparation still
+sweeps; failed sweeps withhold ACKs. ACK failure clears consumer readiness and
+immediately sweeps again so pooled HTTP connections cannot bypass that denial.
+Consumer management resources close with the transport lifecycle.
+
+HTTP tests use actual registry CRLs/ACK rows with a test adapter and assert stream
+eviction before new-digest ACK, plus preparation/ACK-failure eviction and startup
+rejection. Existing production consumer tests separately cover management mTLS,
+persistence, rollback rejection and exact prepared-digest acknowledgment. This is
+composed local coverage; no live HTTP fleet/latency qualification is claimed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Remaining work includes
+other Service host adoption, root-policy/key renewal, external recovery history,
+legacy cohorts, hardware/platform evidence and live qualification. No push, PR,
+remote CI, live deployment or custody operation. Goal remains active.
+
+Service commit: `fc93e2f`. Full Go suite with PostgreSQL, PKI/consumer/config/host
+race tests, final focused startup/order checks, vet, formatting and diff checks
+passed. Disposable PostgreSQL fixture removed. No production acceptance gate closed.
