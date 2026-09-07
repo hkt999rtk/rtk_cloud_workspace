@@ -2606,3 +2606,29 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. SDK integration advanced. Native active
 version selection, renewal/acknowledgment, refresh and live-session ownership remain
 implementation work; physical/hardware and operational acceptance remain unqualified.
+
+
+## Native durable active identity selection
+
+Client `38694dd` adds native activation and active loading with strict version
+names, expected-predecessor comparison and pinned bundle SHA-256. A private bounded
+binary history prevents reactivation of previously selected names or identical
+bundle bytes; retries supply the original predecessor. Activation checks the saved
+successor key, Device identity, independent roots and durable CRLs before atomic
+fsynced publication. Active loading revalidates policy and the pinned bundle.
+Corrupt/missing recovery state never triggers initialization or key generation.
+
+Validation: all 12 native tests, ASan/UBSan and installed C package consumer pass
+on macOS arm64. Tests exercise first activation/retry, successor/retry, stale
+predecessors, rollback to a selected version, bundle replacement, wrong Device and
+truncated history. Reproduce with `cmake --build /private/tmp/rtk-native-openssl -j 4`
+and `ctest --test-dir /private/tmp/rtk-native-openssl --output-on-failure`; native
+README documents configuration, API ownership and storage limits. Also removed
+local shadow-variable warnings in software key serialization cleanup.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. Native prepared
+renewal binding, acknowledgment/retirement, refresh and session replacement remain
+implementation work. Selection alone is not renewal authorization or proof of
+physical storage, snapshot rollback resistance, hardware or operational acceptance.
