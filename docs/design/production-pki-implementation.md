@@ -3788,3 +3788,42 @@ backup/revocation inventory. Writers must remain fenced during comparison.
 Next: matched App backup/restore inventory and reconciliation of uncertain signing
 and revocation outcomes, followed by remaining trust-domain/runtime adapters.
 No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
+
+
+## App lost-serial recovery checkpoint (2026-09-08)
+
+Video Cloud `937acc7` closes the known-serial prerequisite for an unresolved
+App signing outcome. The existing authenticated reconciliation endpoint accepts
+an omitted serial and derives discovery inputs only from the original persisted
+claim. OpenBao discovery scans exact-mount public certificate inventory in pages
+of 64, requires a complete unique match to the original CSR key, and re-reads that
+unrevoked leaf before the existing transactional completion checks. It never
+signs again or releases the original signing claim after failure.
+
+Duplicate-key outcomes, revoked matching certificates, absent outcomes, invalid
+or repeated pages, and cancellation leave recovery unresolved. Unrelated revoked
+certificates do not block a valid match. The operation is bounded to 30 seconds;
+large or pruned inventories require independently obtained evidence rather than
+a partial-success claim. The exact App controller policy adds certs:list; signer
+and issuer-lineage-only recovery identities retain their narrower permissions.
+Provider writers and tidying must be fenced during reconstruction because listing
+is not a provider snapshot. API/configuration documentation describes these limits.
+
+Validation: full server Go suite; full PKI/OpenBao/controller race suites with
+PostgreSQL; focused vet; a 65-certificate paginated HTTP fixture including
+ambiguity, revoked matches, unrelated revocations, incomplete/repeated pages and
+cancellation. Real OpenBao 2.5.5 recovery with more than 64 stored certificates
+returns the original signed leaf through the restricted controller identity;
+the signer cannot list the inventory. Original-owner completion remains idempotent,
+failed discovery preserves the pending claim, and recovery uses the persisted CSR.
+Task PostgreSQL/OpenBao fixtures were stopped/removed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Full database/provider capture already
+includes App tables and keys, but matched restore inventory, post-backup security
+reconciliation and real custody/RPO/RTO qualification remain. A recovered outcome
+does not prove a complete inventory or authorize resuming issuance. Next: connect
+App inventory and security-state checks to matched recovery acceptance, then
+remaining trust-domain/runtime adapters. No push, PR, remote CI, deployment or
+custody operation occurred. Goal remains active.
