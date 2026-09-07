@@ -3612,3 +3612,39 @@ Five broad milestones remain: legacy migration/device replacement; trust consume
 live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
 staging/custody/recovery qualification. No push, PR, remote CI, deployment or
 custody operation occurred. Goal remains active.
+
+
+## App provider publication checkpoint (2026-09-08)
+
+Video Cloud `7c62649` implements a bounded OpenBao App revocation adapter and
+`publish-app-revocation` controller endpoint. Only an existing revoked receipt can
+request publication. The persisted certificate/issuer determines the serial and
+exact provider mount. The adapter revokes, rotates the full CRL and retrieves PEM;
+the controller verifies signature, freshness, target serial and monotonic history
+before importing it. Provider outcomes do not manufacture consumer acknowledgments.
+A valid current imported CRL is reused so retries preserve the digest while
+consumers acknowledge it. Failure leaves the original denial/pending receipt intact.
+
+App controller ACLs now include exact-mount revoke update and CRL rotate/PEM read;
+the App signer has no revocation rights. Re-render/application is an explicit
+operational step. Other domains are unchanged. The adapter has a 15-second total
+context, redirect denial, bounded responses and explicit mutation confirmations.
+
+Validation: full server Go suite; full PostgreSQL PKI race suite; OpenBao adapter
+race suite (malformed/missing confirmations, redirects, oversized responses and
+timeouts); real local OpenBao 2.5.5 plus PostgreSQL integration using restricted
+controller/signer tokens. The real fixture verifies revocation/rotation/import,
+repeated provider revocation after a possible uncertain outcome, stable imported
+retry digest, and mandatory consumer acknowledgment before finalization. HTTP
+publication assertion/identity/environment tests pass. Both disposable containers
+were stopped and removed. An initial timeout-test fixture teardown bug was fixed;
+all final suites passed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: recurring pending-publication retries,
+initial/ongoing App CRL freshness and health/scheduling integration. Provider pruning
+that removes historical entries is still rejected by monotonic import and requires
+retention compatibility qualification. Other trust domains, backup/recovery host
+wiring and live/hardware/custody acceptance remain open. No push, PR, remote CI,
+deployment or custody operation occurred. Goal remains active.
