@@ -1215,3 +1215,17 @@ certificates, malformed/oversized PEM and installer rejection before key lookup.
 Only public synthetic certificates are committed. Strict device identity/profile
 checks, revocation, atomic version activation, intermediate persistence and physical
 iOS qualification remain required. Five top-level milestones remain open.
+
+## iOS configured device identity checks
+
+The Keychain store now takes an independently configured device identity. CSR
+requests must match it; incoming certificate Common Names must match before
+installation mutation. Stored identity reads and mTLS lookup also check the
+configured name using the native Common Name API rather than display summaries.
+
+Validation: all 53 Swift tests passed on macOS. Tests cover correct/wrong/missing
+identity configuration, installation rejection before key lookup and native
+Keychain CSR identity enforcement. Duplicate subject fields, SAN restrictions,
+revocation, atomic activation, intermediate persistence and production renewal/ack
+remain unfinished, as does physical iOS validation. Five top-level milestones
+remain open.
