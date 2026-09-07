@@ -29,7 +29,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
 | [backup-restore.md](backup-restore.md) | Source | Environment-scoped maintenance backup/restore, matched core data, escrow, safety backups, exclusions and qualification gates. |
 | [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Canonical contract | Platform Root of Trust, Platform Admin bootstrap, CA hierarchy, certificate lifecycle, rollover, revocation, custody, and recovery. |
-| [lke-migration-inventory.md](lke-migration-inventory.md) | Source | Documentation-first LKE migration inventory, current architecture review, target summary, and implementation gates. |
+| [lke-migration-inventory.md](lke-migration-inventory.md) | Supporting note | Historical LKE migration inventory and original gates; current deployment authority is the Deployment Operations Guide and provider-neutral architecture. |
 | [cost/README.md](cost/README.md) | Index | AWS cost estimation materials, including service mapping, sizing worksheet, pricing sources, and support-plan assumptions. |
 | [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |
 | [postgres-capacity-expansion-runbook.md](postgres-capacity-expansion-runbook.md) | Source | PostgreSQL storage-pressure classification, LKE PVC expansion, Linode fallback, HA, cache/API boundaries, and validation evidence. |

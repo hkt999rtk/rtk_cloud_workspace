@@ -1,0 +1,3241 @@
+{
+  "scope": "Workspace docs, canonical contracts and first-party service docs/root Markdown; excludes mirrored contract trees, third-party files, generated binary exports and website content. Topic scanning is not a line-by-line semantic certification.",
+  "workspace_commit": "39c016afa05e3b424209cbed831d865868831e69",
+  "contracts_commit": "6b29fa71e436cb75b5f4809cfd5d4d087151aecf",
+  "files": [
+    {
+      "path": "docs/README.md",
+      "lines": 135,
+      "status": "not declared",
+      "sha256": "0ac74ed78645e92ba55c6c6a7f0c5e70f9e42691c76575a2d5940d1d737bab6d",
+      "topic_matches": {
+        "settlement": 4,
+        "storage": 1,
+        "authority": 4
+      },
+      "post_fix_sha256": "b5f80fe0827ac1a0c41bf795fd4ddd097ab6f0e89cc22c78bf1ed3e05c2c862e",
+      "post_fix_lines": 135
+    },
+    {
+      "path": "docs/account-manager-admin-boundary.md",
+      "lines": 227,
+      "status": "source-of-truth note.",
+      "sha256": "b641c8a41ac0e8fddc5c100643fc886a4ab9f52dd7f9f1a278eb1e2442bf076c",
+      "topic_matches": {
+        "settlement": 11,
+        "authority": 3
+      }
+    },
+    {
+      "path": "docs/admin-dashboard-redesign.md",
+      "lines": 585,
+      "status": "historical cross-repository baseline. The current Customer View",
+      "sha256": "156740ce924dd6b079499f0b4f84485898715ab3581fd7e271d837570dea7dd0",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/adr/0001-commercial-settlement-ownership.md",
+      "lines": 106,
+      "status": "accepted",
+      "sha256": "880b1d3120c6ee20df0f4cc52f36096a7dd69e9a01ecd9117945a8e5f902f44a",
+      "topic_matches": {
+        "settlement": 5,
+        "storage": 1,
+        "authority": 4
+      }
+    },
+    {
+      "path": "docs/adr/README.md",
+      "lines": 40,
+      "status": "active index.",
+      "sha256": "a55dcad11438f379d18794d15d884a7155f0ff0779072abe8cd0636e44892308",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/amb82-board-integration-20260906.md",
+      "lines": 59,
+      "status": "not declared",
+      "sha256": "be52ada7ee66d04538c057be97574da0ec3362c2f0d7831bfc955ca78c2a9811",
+      "topic_matches": {
+        "settlement": 4
+      }
+    },
+    {
+      "path": "docs/architecture.md",
+      "lines": 65,
+      "status": "not declared",
+      "sha256": "6eac7c422a3c66990c7a3c673e75e2839813e88a486a4e70a98b2d094fefd9b7",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 3
+      }
+    },
+    {
+      "path": "docs/artifact-release-governance.md",
+      "lines": 134,
+      "status": "active workspace policy.",
+      "sha256": "0b4d050d8dae0056bfb2badae59b1f75349e059485d59396cc0bdbf2b82db61d",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/aws-iot-device-shadow-api-gap-analysis.md",
+      "lines": 403,
+      "status": "implementation review and alignment recommendation",
+      "sha256": "6645552038296399c1e93b86af283a00a8029aa2362eb9c2ec2b0cbe76744362",
+      "topic_matches": {
+        "coordination": 2,
+        "storage": 6,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/aws-service-mapping.md",
+      "lines": 439,
+      "status": "supporting-note.",
+      "sha256": "494be06a7807a10dec1184847fb4af4c8b5c945434c0d25aae4179f39cf38f40",
+      "topic_matches": {
+        "settlement": 8,
+        "coordination": 11,
+        "storage": 24,
+        "authority": 2
+      },
+      "post_fix_sha256": "64c51cb134a51b573140ad2a9ec959be5b4c08d895064083ea4329f4e2151a31",
+      "post_fix_lines": 12
+    },
+    {
+      "path": "docs/backend-release-readiness.md",
+      "lines": 78,
+      "status": "release-readiness snapshot.",
+      "sha256": "7aef2ea92f1f387b4a8fdf0e08fbb023548831662d350900b0d12006eea73be0",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/backup-restore.md",
+      "lines": 325,
+      "status": "active procedure; live environment qualification required before production use.",
+      "sha256": "e5f4f54888c3c4ee863d9410498874a0c82596214204bab17d00e9b04bad1fb9",
+      "topic_matches": {
+        "settlement": 2,
+        "coordination": 8,
+        "storage": 20,
+        "credentials": 4,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/billing-staging-qualification.md",
+      "lines": 246,
+      "status": "active",
+      "sha256": "a1870bd4952c6fdc87adb6e485ac063fb03856ec305e4096b53be862aea569c5",
+      "topic_matches": {
+        "settlement": 5,
+        "coordination": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/business-model.md",
+      "lines": 172,
+      "status": "source-of-truth note.",
+      "sha256": "f7541836e9b47fd0acff732ce30e58b82141f6327318cc7ff7afc161036d1d0e",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/cloud-deployment-architecture.md",
+      "lines": 82,
+      "status": "not declared",
+      "sha256": "c4fe66c602a6a7f48a47839bbb234d12ae9192be83ecad0ab0d0cb57611322d4",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/cloud-env-layout.md",
+      "lines": 113,
+      "status": "not declared",
+      "sha256": "91939657eb5cf5b06cd71c43ab1d730f6a1f418d32f50be11ec5fb2ff740ac4a",
+      "topic_matches": {
+        "credentials": 2
+      },
+      "post_fix_sha256": "dc3395aed626d382fb7519422bf05d899a32e2b04a1cf93e28d79c6c390bf074",
+      "post_fix_lines": 119
+    },
+    {
+      "path": "docs/contracts-submodule-governance.md",
+      "lines": 139,
+      "status": "active workspace policy.",
+      "sha256": "1982b4366d11e0fa2d2ecb5784f7da56baea8f923922a72d253c354722fa8d12",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/core-platform-gap-roadmap.md",
+      "lines": 91,
+      "status": "supporting-note.",
+      "sha256": "3d49393fabddcb795b36849f23ffca82c1a933127a53bf17add2a68de6f6acb0",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 1,
+        "storage": 1,
+        "authority": 4
+      },
+      "post_fix_sha256": "199814c1680fa4419564b7340182b48e5ae023fac66d7f020df19b9d03334c23",
+      "post_fix_lines": 91
+    },
+    {
+      "path": "docs/cost/README.md",
+      "lines": 78,
+      "status": "Index",
+      "sha256": "e69e0a4e59f75d719d74a752e3830f2443d034524d8df8fb5b974b93aa94edc4",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/cost/aws-pricing-sources.md",
+      "lines": 439,
+      "status": "Supporting note",
+      "sha256": "0cd8609204482234a85f865e5d793d70c87150db39b780caed2fc6150419ae4d",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/cost/aws-review-adjustments.md",
+      "lines": 77,
+      "status": "Derived planning note",
+      "sha256": "0e0aca6fea669eb0343464034e6ef69f19f9f45498c0ec7ed31b5280f4776860",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/cost/aws-service-mapping.md",
+      "lines": 454,
+      "status": "supporting-note.",
+      "sha256": "8e0684d99c3e25b7b218ea59ee749843671a56fe3207475fb47ad7ea4eae2c64",
+      "topic_matches": {
+        "settlement": 8,
+        "coordination": 11,
+        "storage": 23,
+        "authority": 2
+      },
+      "post_fix_sha256": "b074ae494c5129c9ea6680a541bb54ca63f845900e1cba128261425b421dfaec",
+      "post_fix_lines": 458
+    },
+    {
+      "path": "docs/cost/linode-100k-estimate.md",
+      "lines": 76,
+      "status": "Planning estimate",
+      "sha256": "a45820e21ec9dc9a2016fac5b293622cc09851faf0d412a4468f4e72ff307306",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 1
+      },
+      "post_fix_sha256": "1e529054858e9e366b0b9de47be467828a3560fee7e4390ca3924c3b7728997d",
+      "post_fix_lines": 81
+    },
+    {
+      "path": "docs/cross-service-broker-packaging.md",
+      "lines": 37,
+      "status": "retired.",
+      "sha256": "9d43603b9fa2007b67828a2ab1a521f37aeeac3c88a689f944dcdcc57e566149",
+      "topic_matches": {
+        "settlement": 1,
+        "coordination": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/dependency-failure-policy.md",
+      "lines": 132,
+      "status": "source.",
+      "sha256": "cceb7a9c5bb79cce917673ff7256e2d7279e6ed47461e4e71a1bbed892fcf2e4",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/deployment-operations.md",
+      "lines": 368,
+      "status": "active",
+      "sha256": "863f89c9c6795668a8b51a70a53e0a772c172570f8f7972cde8f06d5bc4e65d3",
+      "topic_matches": {
+        "coordination": 1,
+        "storage": 1,
+        "credentials": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/deployment-secrets-governance.md",
+      "lines": 297,
+      "status": "active workspace source document for deployment secret handling.",
+      "sha256": "36a0075ee195153c6643bd9014031791bdb35ebdb322a7c5277c7d025f982889",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 1,
+        "credentials": 3,
+        "authority": 4
+      },
+      "post_fix_sha256": "8ab3b0c667251028348ddd7df50807108eb4a59915c72e446d402e01cb60cd39",
+      "post_fix_lines": 314
+    },
+    {
+      "path": "docs/design/tenant-billing-ux.md",
+      "lines": 120,
+      "status": "design proposal",
+      "sha256": "9d88eec30d4b2a994ef986136ded0bee4330c0ac2a107080bd97d50a00f4e8bf",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/dns-adapter-architecture.md",
+      "lines": 103,
+      "status": "not declared",
+      "sha256": "5a277c8b0e2f6de8ae7b73fa60be1b2adfa3239e6ebf06aff8aba9081ab7c27f",
+      "topic_matches": {
+        "credentials": 1
+      }
+    },
+    {
+      "path": "docs/documentation-governance.md",
+      "lines": 110,
+      "status": "active workspace policy.",
+      "sha256": "3a05f6c2d30f1ba884510760d992bd62ad4c07831a00e51a418064e95f3b0a47",
+      "topic_matches": {
+        "authority": 4
+      },
+      "post_fix_sha256": "033978950a729ff5ba2a2bba293166d4c43714ba4af42643e31de20f963cdbef",
+      "post_fix_lines": 119
+    },
+    {
+      "path": "docs/feature-coverage-governance.md",
+      "lines": 148,
+      "status": "not declared",
+      "sha256": "bb79059f9570ca3288bab14eebc72a4375c525be60298603c72a5d35ed5d7b3b",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/firmware-ota-virtual-device-load-test-design.md",
+      "lines": 382,
+      "status": "implemented and integrated with Home load orchestration",
+      "sha256": "5123dec0efb5f154908414d2d9dd516b2e64c54c29de9c511a8c276ee27fede4",
+      "topic_matches": {
+        "authority": 1
+      },
+      "post_fix_sha256": "9515b68aeb64971eb5a72f4f679169642858c97d95578046229b5081132e2885",
+      "post_fix_lines": 388
+    },
+    {
+      "path": "docs/home-mqtt-loadtest-simulation.md",
+      "lines": 11,
+      "status": "not declared",
+      "sha256": "32bb7279869ce1affe618af9905c7c9f6aefe726425df200e9b6e7cc5c278e1b",
+      "topic_matches": {}
+    },
+    {
+      "path": "docs/implementation-gap-backlog.md",
+      "lines": 290,
+      "status": "supporting-note.",
+      "sha256": "0c7ff45244ff9233d64f43de72a61b54ad577e6523ccb7be9f5a69e9626d9bb8",
+      "topic_matches": {
+        "settlement": 9,
+        "coordination": 2,
+        "storage": 1,
+        "authority": 9
+      }
+    },
+    {
+      "path": "docs/linode-100k-home-iot-shadow-loadtest.md",
+      "lines": 11,
+      "status": "not declared",
+      "sha256": "93d95774f19e0f277254fccffbba87582791079afdc390b693aff35eff254ad1",
+      "topic_matches": {}
+    },
+    {
+      "path": "docs/linode-ci-runners.md",
+      "lines": 325,
+      "status": "workspace source document for RTK Cloud self-hosted CI runner VMs.",
+      "sha256": "de74861c24003b20f31dc832e6ad072a66b5561c2281be6226a9725d6d031b2f",
+      "topic_matches": {
+        "settlement": 1,
+        "credentials": 8,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/linode-staging-deployment-snapshot.md",
+      "lines": 107,
+      "status": "historical-note.",
+      "sha256": "59f442161725af958c8cd582d868434fd53d4a05ddbb6d7e27a495f481d02413",
+      "topic_matches": {
+        "settlement": 10,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/lke-capacity-sizing.md",
+      "lines": 625,
+      "status": "not declared",
+      "sha256": "6523b63001f026e6ecc78920b1f4eaac09eaa1ee066d5fdec40fb8d9870e24c6",
+      "topic_matches": {
+        "settlement": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/lke-external-haproxy-edge.md",
+      "lines": 159,
+      "status": "implemented for LKE staging in PR #181. This document is the current",
+      "sha256": "3199a2ca5a18e42d91a12be3d0fae7e94bd2192358e3ec48fd4e5fa7fe65e064",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/lke-migration-inventory.md",
+      "lines": 206,
+      "status": "current K8s/LKE staging runtime with production hardening gates.",
+      "sha256": "190300f3f16d429a23c6badee3d39075744dde7f58795865a03aa523af5c2b76",
+      "topic_matches": {
+        "settlement": 7,
+        "storage": 6,
+        "credentials": 1,
+        "authority": 3
+      },
+      "post_fix_sha256": "af29be084da2bce9351321ffcddbd252155890a4c53cc607a390fd65a1955e80",
+      "post_fix_lines": 213
+    },
+    {
+      "path": "docs/load_test_report.md",
+      "lines": 95,
+      "status": "not declared",
+      "sha256": "826c20f319e9049ef56d5ad106af70cdcd8a8e2ff95f488ca67a575469cf3a9b",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/ota-issue-roadmap.md",
+      "lines": 185,
+      "status": "supporting-note.",
+      "sha256": "f408ca7765949af20adb1559b00049d785b9986c3119d9523feff654644ad273",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/payment-abstraction-rollout-plan.md",
+      "lines": 476,
+      "status": "phase-one hosted payment and simulator qualification implemented;",
+      "sha256": "3a97c7ebd2a7773944870016939ba4835a0d1cabf021dd4b65ccd33d0033c143",
+      "topic_matches": {
+        "settlement": 5,
+        "storage": 6,
+        "authority": 3
+      }
+    },
+    {
+      "path": "docs/payment-simulator.md",
+      "lines": 304,
+      "status": "active for local, CI, and shared staging qualification only.",
+      "sha256": "52b1537901ca687a60f491efd45b50cafc74a543972b0f9b2accfaf7988d0cf2",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 1,
+        "storage": 3,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/persistence-cache-refactor-roadmap.md",
+      "lines": 92,
+      "status": "implementation planning source.",
+      "sha256": "144a4aa977b10bc6b0be597dbc21a360c87a81f7d9ca431d5e6ae8cc29fc6b0b",
+      "topic_matches": {
+        "settlement": 2,
+        "coordination": 1,
+        "storage": 12,
+        "authority": 3
+      }
+    },
+    {
+      "path": "docs/postgres-capacity-expansion-runbook.md",
+      "lines": 203,
+      "status": "operational design and validation contract.",
+      "sha256": "b4863b9fe0327ba45ea86231f3dc65e4f00f89fb808e2b9a7078bfc13160dc99",
+      "topic_matches": {
+        "settlement": 1,
+        "coordination": 1,
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/private-cloud-deployment.md",
+      "lines": 517,
+      "status": "supporting-note.",
+      "sha256": "4fb523037264cd83621afaf7874665d0b1673740dd4a17613647cb49d2c117fb",
+      "topic_matches": {
+        "settlement": 21,
+        "coordination": 5,
+        "storage": 5,
+        "credentials": 1,
+        "authority": 3
+      },
+      "post_fix_sha256": "4cee02b7ef59121ceddd849a742fa4f402e9c9312f105e433c466cb99d48b9ef",
+      "post_fix_lines": 518
+    },
+    {
+      "path": "docs/product-level-evidence.md",
+      "lines": 244,
+      "status": "supporting-note.",
+      "sha256": "dc650772c74f7d53b5bb2872f8ce115aec8472e5aa0dd280d5515bbbe4e3b170",
+      "topic_matches": {
+        "settlement": 2,
+        "storage": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/provisioning-issue-roadmap.md",
+      "lines": 212,
+      "status": "supporting-note.",
+      "sha256": "dce779d7adc8d005cfd65dc09045f8a90c9bea74a183f86a3812ce0d7af36ae0",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/realtek-connect-plus-gap-analysis.md",
+      "lines": 94,
+      "status": "discussion note.",
+      "sha256": "a89cf63191ebd47340aedb0e6abb45997ad57cce5dcb0f8ee09b1662fd1fba27",
+      "topic_matches": {
+        "settlement": 4,
+        "coordination": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/search-indexing-policy.md",
+      "lines": 88,
+      "status": "not declared",
+      "sha256": "4fa04e028d2090d473bed3e81e3b30ba85aff25eb403e238fb50dd65264229d5",
+      "topic_matches": {
+        "settlement": 1
+      }
+    },
+    {
+      "path": "docs/secret-store.md",
+      "lines": 99,
+      "status": "not declared",
+      "sha256": "9c81f9e368f84dc89a1b402a56bbadd37e0a1ae9292d075e5523e9b8c8b8fa6e",
+      "topic_matches": {
+        "credentials": 1
+      }
+    },
+    {
+      "path": "docs/service-logging-architecture.md",
+      "lines": 274,
+      "status": "implementation handoff.",
+      "sha256": "4a04000292b6647f35268a57f93526c40024965981d04a3b9da7bb0689031a9b",
+      "topic_matches": {
+        "settlement": 3,
+        "storage": 4,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/spec-test-traceability.md",
+      "lines": 1770,
+      "status": "not declared",
+      "sha256": "cf2fc1fd02a66229893dff0a7dd23ffb07c7a862d0073f9314033d0cab13f727",
+      "topic_matches": {
+        "coordination": 2,
+        "storage": 4,
+        "auth": 11
+      }
+    },
+    {
+      "path": "docs/staging-from-scratch.md",
+      "lines": 227,
+      "status": "not declared",
+      "sha256": "752800c2e145d7c0233bbcb8f41eea0d066593a85338d336e5ce6c0848ae02cb",
+      "topic_matches": {
+        "credentials": 3,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/staging-runtime-bootstrap.md",
+      "lines": 232,
+      "status": "not declared",
+      "sha256": "17e70dc8e3c24ea698c8da199255242bceb4623e035648a7dd2eb124d560a52f",
+      "topic_matches": {
+        "settlement": 2,
+        "credentials": 2
+      }
+    },
+    {
+      "path": "docs/status-reports/README.md",
+      "lines": 277,
+      "status": "source.",
+      "sha256": "a20a6d3b3b4afcc5a5b44d9bb43507b5232b093050b59027fbb63242d6b11ec6",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/status-reports/guidelines.md",
+      "lines": 555,
+      "status": "source.",
+      "sha256": "2272052d2fcb9ffbe0a2fa449e5bbc897eae71d021e922a3480507dc75d46ba6",
+      "topic_matches": {
+        "settlement": 3,
+        "storage": 3,
+        "authority": 8
+      }
+    },
+    {
+      "path": "docs/status-reports/master_slide/README.md",
+      "lines": 27,
+      "status": "source.",
+      "sha256": "23f6b82baf259bce17657086748aac881b884c65e53caa1f122d8ee1aa0a4f7c",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/status-reports/master_slide/SKILL.md",
+      "lines": 132,
+      "status": "not declared",
+      "sha256": "94cb9379eb71bd3d4a0d7fd19d09297c353b50f1002a91afe37eeb2b787a5a56",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/status-reports/master_slide/design-guidelines.md",
+      "lines": 225,
+      "status": "source.",
+      "sha256": "7f5a614bd703c56f01bcc262ef287ffab3b43452d7961fe0c77ec34a8d9f7551",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/status-reports/materials.md",
+      "lines": 108,
+      "status": "source.",
+      "sha256": "50fadc1674136001799b6ec5d24925d8d055d0d4245db6012299eff464ebdf24",
+      "topic_matches": {
+        "settlement": 3,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/status-reports/templates/cloud-status-report-outline.md",
+      "lines": 156,
+      "status": "template.",
+      "sha256": "84b48c9c6a15e4139554bd932b7ce8fc6b313a8c6a37c15898e7896f49149885",
+      "topic_matches": {
+        "settlement": 2,
+        "storage": 3,
+        "authority": 4
+      }
+    },
+    {
+      "path": "docs/status-reports/templates/cloud-status-report-pptx-layout.md",
+      "lines": 171,
+      "status": "template.",
+      "sha256": "4596912d3c11a2b4ae25b3fa35adfaf67e75833d2c1f5253fb37ea7379a516dd",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "docs/storage-credential-lifecycle.md",
+      "lines": 42,
+      "status": "not declared",
+      "sha256": "885b01891c9f2f88ca8e34936931ba7555fa2895252e8935a8296a588c713a1b",
+      "topic_matches": {
+        "credentials": 1
+      },
+      "post_fix_sha256": "2d44d98f31c95815e7e450873f8d59afce7734788bc33f50bea900e9ac404d36",
+      "post_fix_lines": 48
+    },
+    {
+      "path": "docs/superpowers/plans/2026-06-02-structured-prometheus-targets.md",
+      "lines": 542,
+      "status": "not declared",
+      "sha256": "e837b7c66d79f71c250af6bdc543698d2bedd8cbe1a71cfade0b0e592e74075b",
+      "topic_matches": {
+        "settlement": 6,
+        "coordination": 1
+      }
+    },
+    {
+      "path": "docs/test-catalog.md",
+      "lines": 794,
+      "status": "not declared",
+      "sha256": "97701ffde9c7b4dd0c024277e385f2b80902353ec87c284f05e73ccb60406c41",
+      "topic_matches": {
+        "settlement": 72,
+        "coordination": 12,
+        "storage": 8,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/testing-operations.md",
+      "lines": 232,
+      "status": "active",
+      "sha256": "0c1b24621756d8251777cfd6bd48a8968af7ab2fb88587445fd5477b6ac5cc68",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "docs/testing.md",
+      "lines": 456,
+      "status": "not declared",
+      "sha256": "ac0ad177d32f46b32b9b72832b2059c1220e4b707ae3f2aed0dd8cdccb77fef4",
+      "topic_matches": {
+        "settlement": 3,
+        "authority": 3
+      }
+    },
+    {
+      "path": "docs/ui-quality-integration-20260905.md",
+      "lines": 88,
+      "status": "not declared",
+      "sha256": "24c01e396473951c3bb33f742bced11774aad7a984d2b2d77a788161a7401ee5",
+      "topic_matches": {
+        "settlement": 1
+      }
+    },
+    {
+      "path": "docs/unit-test-inventory.md",
+      "lines": 236,
+      "status": "not declared",
+      "sha256": "22d17df56dc6a3f614ce0ff61a34cef114809e87b0f4e8db8b031140ce9546bb",
+      "topic_matches": {}
+    },
+    {
+      "path": "docs/video-cloud-load-test-roadmap.md",
+      "lines": 216,
+      "status": "implemented video runner and Home MQTT/WebRTC orchestration",
+      "sha256": "63247b769e7355aec59ff438f19713d636b8d14ccd05c8675331840aff627eb0",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 3
+      }
+    },
+    {
+      "path": "docs/webrtc-only-streaming-migration.md",
+      "lines": 69,
+      "status": "validated-closeout",
+      "sha256": "b2959c86a0660585643afff81cd06453dce87037e6dd0f308fcef13b312e272a",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/README.md",
+      "lines": 206,
+      "status": "not declared",
+      "sha256": "1861e8b7cbd36258c6484a51b8947fdb444571c503110b821b05359067d34a56",
+      "topic_matches": {
+        "settlement": 1,
+        "coordination": 4,
+        "storage": 6,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/billing_integration.md",
+      "lines": 18,
+      "status": "not declared",
+      "sha256": "1d946cda37c7fa6dfaa0a992cf006341065056ee574537f73db34c0153214469",
+      "topic_matches": {
+        "settlement": 5
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/cloud_deletion_recovery_worker.md",
+      "lines": 79,
+      "status": "not declared",
+      "sha256": "da9308d9a72b760ce883ea52609e58cfe42222658b9025996edc54e152f9c8e5",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/developer-pki-test-bundles.md",
+      "lines": 43,
+      "status": "not declared",
+      "sha256": "fb3e3cc2ed87cafb01224c261825598ede63be00528791db42be75b615829267",
+      "topic_matches": {
+        "identity": 1,
+        "settlement": 4
+      },
+      "post_fix_sha256": "0676356f901e322dabed6a54c25e72992a2648be26278d4343bcd2c84fab0c1c",
+      "post_fix_lines": 45
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/factory_production_runs.md",
+      "lines": 203,
+      "status": "not declared",
+      "sha256": "80079a37b672a905bf255073089c832c43df6a6a8662d74620829c233edc9c96",
+      "topic_matches": {
+        "settlement": 5
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/identity_correction_runbook.md",
+      "lines": 152,
+      "status": "not declared",
+      "sha256": "da82ad3ada2be073faca7cc8cae191484a247048ef16ea26724316092001ff66",
+      "topic_matches": {
+        "settlement": 2
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/identity_migration_correction.md",
+      "lines": 242,
+      "status": "not declared",
+      "sha256": "eea49828597e8823c23333081409e24b58c0e5f4043be7d406c7e16e59c22886",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/job_authorization.md",
+      "lines": 36,
+      "status": "implementation design constrained by the canonical",
+      "sha256": "83872d20098a816083b405c536f920da2176d8f6e26c891577bdd05c42399c36",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/keycloak_local_runbook.md",
+      "lines": 252,
+      "status": "not declared",
+      "sha256": "cdc0609438135d07cc5e2e41ac17b68fb55c91aad2c634739c1438d09418abab",
+      "topic_matches": {
+        "settlement": 15
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/keycloak_oidc_sso.md",
+      "lines": 256,
+      "status": "not declared",
+      "sha256": "7bceedbbb14e18109f13e498fcb84c334966d04b44e8b333752e78e980407675",
+      "topic_matches": {
+        "settlement": 4,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/linode-staging-k8s.md",
+      "lines": 41,
+      "status": "not declared",
+      "sha256": "2b2c05c180f2c9bc3de4b365c8ba941939f043c1598a2331762038ff104a64e1",
+      "topic_matches": {
+        "settlement": 5,
+        "storage": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/multicloud_implementation.md",
+      "lines": 324,
+      "status": "implementation and deployment contract. Canonical behavior is",
+      "sha256": "8f77bf9490eab93076de835a281298daffe30992388b7f9986928251dbc2b634",
+      "topic_matches": {
+        "settlement": 1,
+        "coordination": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/multicloud_implementation_progress.md",
+      "lines": 1255,
+      "status": "not declared",
+      "sha256": "be9e1ae01d9fab3a769a78f7ce047ec8b1a4ee3b532ca64e21ae39b613f35a17",
+      "topic_matches": {
+        "settlement": 8,
+        "coordination": 10
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/private_cloud_deployment_runbook.md",
+      "lines": 742,
+      "status": "not declared",
+      "sha256": "561bd4f6028dcf4da894db87d7e93ae887ccc7cfd4834ffbbd5a1043ffabbcf3",
+      "topic_matches": {
+        "settlement": 7,
+        "coordination": 21,
+        "storage": 12,
+        "auth": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/provisioning_and_event_channel_plan.md",
+      "lines": 591,
+      "status": "not declared",
+      "sha256": "516fa9605cf78e45f51a87535d20c7655d9111a8295c0604f75bf0cbc376b19e",
+      "topic_matches": {
+        "settlement": 8,
+        "coordination": 23,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/provisioning_event_workers_runbook.md",
+      "lines": 329,
+      "status": "not declared",
+      "sha256": "987715e6f4aea73609631d9ea8f62cd21b1818a6e5be68253a16bb207e575307",
+      "topic_matches": {
+        "coordination": 15
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/readiness_test_report.md",
+      "lines": 7,
+      "status": "not declared",
+      "sha256": "8dc744edd81fc4b19ff8812f432dd33af5ec84c6f3fc5bf7fe8ef8159f7f7a04",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/release_test_report.md",
+      "lines": 7,
+      "status": "not declared",
+      "sha256": "c8b0a55576f405f5038e7e0332f16a674d6df5333d3dfc57e146eeded583b656",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/service_logging_migration.md",
+      "lines": 50,
+      "status": "implementation handoff.",
+      "sha256": "71b52ee5448be11b8261a486c79a810279dae6fa80c69604132df34ef3281079",
+      "topic_matches": {
+        "settlement": 2,
+        "coordination": 3,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/social_login.md",
+      "lines": 76,
+      "status": "not declared",
+      "sha256": "29bbccef9e192a94eeb0f51e796984d978594217c0bc2447bbf035bcb93d674c",
+      "topic_matches": {
+        "settlement": 5
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/spec.md",
+      "lines": 2756,
+      "status": "not declared",
+      "sha256": "d930526eda9c9e07d37d629c1429024ed238c83fc19bb06f68e127848d53152d",
+      "topic_matches": {
+        "identity": 2,
+        "settlement": 42,
+        "coordination": 37,
+        "storage": 7,
+        "auth": 12,
+        "authority": 7
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/test-lab.md",
+      "lines": 63,
+      "status": "not declared",
+      "sha256": "f22fc62c09096c1210fe11089db47b8952ac509c5b2cdd5729bdf59391a95302",
+      "topic_matches": {
+        "coordination": 2
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/test_report.md",
+      "lines": 1698,
+      "status": "not declared",
+      "sha256": "a8e2fd8d3ff4d5b8ae78db16d186f63111c28e44b28f2a85844b3d0ebf9ab195",
+      "topic_matches": {
+        "settlement": 1,
+        "coordination": 56,
+        "storage": 8
+      }
+    },
+    {
+      "path": "repos/rtk_account_manager/docs/testing.md",
+      "lines": 229,
+      "status": "not declared",
+      "sha256": "c5d78c18a72cc0840646b7099f82af0af15e277fe7156fe95a3fd9869c3dbb7c",
+      "topic_matches": {
+        "settlement": 2,
+        "coordination": 7
+      }
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/README.md",
+      "lines": 172,
+      "status": "not declared",
+      "sha256": "d623b279cbad221d52fab931eea16ecf2112f6f160a8326c680ac300a6058616",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/THIRD_PARTY_NOTICES.md",
+      "lines": 44,
+      "status": "not declared",
+      "sha256": "754931e9a6950f50651811826a09a4e8206d7c9f60c2d6c8c46cbdaf50aab609",
+      "topic_matches": {
+        "storage": 1
+      }
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/amebapro2_webrtc_source_porting.md",
+      "lines": 172,
+      "status": "initial planning draft",
+      "sha256": "2405a1f040101aafe623b2d015ccc65110cae12cb2e6eb9717cfa27f71829ab1",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/credential_package_review.md",
+      "lines": 133,
+      "status": "not declared",
+      "sha256": "08bff445c12b4a6e38c5be6f6d9668edb6dda4b545920839c0bde9381e93b7c7",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/amebapro2_integration.md",
+      "lines": 151,
+      "status": "not declared",
+      "sha256": "b9935ff0402263a893d0f09eff6debd23cfb06a1e214afc326e8fbe5a9d04841",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/amebapro2_resource_baseline.md",
+      "lines": 97,
+      "status": "not declared",
+      "sha256": "53b0e660235190cc85c6b8029a34e305163fbe2f6cb9bb7e3779640d2c308d71",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/api.md",
+      "lines": 128,
+      "status": "not declared",
+      "sha256": "4e8502fab664763110a6698612a8cd9f4929cd5356d10702bfa710a06cf8de0d",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/customer_release_readiness.md",
+      "lines": 101,
+      "status": "not declared",
+      "sha256": "da55ca85d68f5f433a9205e30206a40514a2ad960bcff0a69fbcb211087fdf5d",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/release.md",
+      "lines": 175,
+      "status": "not declared",
+      "sha256": "87417c65df77f0af01c6bc329da539612e7a2b702551281c2d99364a00fa185e",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/security.md",
+      "lines": 31,
+      "status": "not declared",
+      "sha256": "a85ec12bbb6e07886c1ddc4af7e75a44a26065aac8ae0263c326579fa2584a3b",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/docs/validation_status.md",
+      "lines": 683,
+      "status": "not declared",
+      "sha256": "6ce0aaa7c0a9b485ef777a73c267f6e99675dcd3c55358ae34dd49241d3dcf20",
+      "topic_matches": {
+        "identity": 1,
+        "settlement": 6
+      }
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/webrtc_cloud_sdk_plan.md",
+      "lines": 71,
+      "status": "not declared",
+      "sha256": "90b96e9f2ffbfb3d19d9db777dc49e1cf781e2e0e40fa1d756533a421d0a7e11",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_ameba_webrtc/webrtc_engine_decision.md",
+      "lines": 46,
+      "status": "not declared",
+      "sha256": "3b25ed5e1687f124dff8a8cebe06b164a377260c20c4445ef5b56302029c1c2a",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_billing/README.md",
+      "lines": 91,
+      "status": "not declared",
+      "sha256": "2f0d4465a66396f6eda8c7b57a9634629b56332eb0ee488ecda71ab6abaef5c9",
+      "topic_matches": {
+        "settlement": 8,
+        "coordination": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_billing/docs/cloud_ownership_handoff.md",
+      "lines": 314,
+      "status": "design-first target, not deployed acceptance. Follow canonical",
+      "sha256": "aa2f15e042782a772822309b8b428dbd34e23f8eb698185d1aaf9d5526c6ff3c",
+      "topic_matches": {
+        "settlement": 7,
+        "coordination": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_billing/docs/multicloud_implementation_progress.md",
+      "lines": 788,
+      "status": "not declared",
+      "sha256": "f099cf00966cd85151936d045624cee4e5697a655ab96709e555ef7899bcfce2",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 3
+      }
+    },
+    {
+      "path": "repos/rtk_billing/docs/payment_abstraction_and_auto_topup.md",
+      "lines": 669,
+      "status": "implemented foundation with guarded rollout. Provider-neutral money,",
+      "sha256": "ad58a89c19ffebd28e47593f6bc21dfd77973378330dd79210599fb1a1b0e726",
+      "topic_matches": {
+        "settlement": 13,
+        "coordination": 2,
+        "storage": 3,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_billing/docs/postgres-schema.md",
+      "lines": 106,
+      "status": "not declared",
+      "sha256": "1ff647063560a1e6f347883cf8d0333055a6cf7a36a3df9daf6e4a812c2e1f01",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/README.md",
+      "lines": 373,
+      "status": "not declared",
+      "sha256": "796ea2ba5eec168df34dd5a0df7e4b31df0d19c8e422747624a0f0776deba748",
+      "topic_matches": {
+        "settlement": 17,
+        "storage": 1,
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/admin-dashboard-redesign.md",
+      "lines": 842,
+      "status": "approved direction for the Brand Fleet Management refresh.",
+      "sha256": "65a2f862ee984a8f974f417da9f5afd220f0d54942b61b2b4beaa4c715b992df",
+      "topic_matches": {
+        "settlement": 9,
+        "storage": 1,
+        "authority": 5
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/amb82-mini-model.md",
+      "lines": 166,
+      "status": "not declared",
+      "sha256": "a9ef3906dddc8bb80aeb827e0599c963526a7e92fef832648323c206a64be19e",
+      "topic_matches": {
+        "settlement": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/backend-api-gap-audit.md",
+      "lines": 331,
+      "status": "implemented legacy baseline; the multi-cloud route/request contract",
+      "sha256": "d3ce3c23dde90b607e0ea3bfa91947fa99f6146232a3318f3781595a321db81a",
+      "topic_matches": {
+        "settlement": 12,
+        "authority": 11
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/batch_job_scheduler.md",
+      "lines": 32,
+      "status": "implementation design constrained by",
+      "sha256": "61a1f0daef8c28eb94dc8de30d99a7f884b0873bcc84b0daca94381110755251",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/ci-runner.md",
+      "lines": 51,
+      "status": "not declared",
+      "sha256": "77924685c8d91a64ca8601dc89df344f4877bb742ecaa62e7fe30c2ea729e690",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/cloud-admin-e2e.md",
+      "lines": 113,
+      "status": "not declared",
+      "sha256": "32088fe31625f151d8d232f0016c554fedaf69e17f6a53708b179f3a44116aa1",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/console-navigation.md",
+      "lines": 31,
+      "status": "not declared",
+      "sha256": "ca8eedc43a6188ded5cac8040054243293b6b8290d1f09f1e9c2ceacf5849ea6",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/customer-view-visual-qa-checklist.md",
+      "lines": 230,
+      "status": "not declared",
+      "sha256": "62bdf6ae7fa9593e4239508e8d6e142a3b3d9738e0d9e9b92ffda91d0dd0faae",
+      "topic_matches": {
+        "settlement": 3,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/developer-pki-test-bundles.md",
+      "lines": 177,
+      "status": "accepted design, updated 2026-09-04; implementation pending. This section",
+      "sha256": "dd8550873abdfead50d6a999e1a3a6c7647d94288e63ea1b7ec26b3a13e08023",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/linode-staging-k8s.md",
+      "lines": 15,
+      "status": "not declared",
+      "sha256": "4f1934745d5c4bb5bd875b0f3256d7a176388d0149efef246eb2acdc7f084410",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/multicloud_implementation_progress.md",
+      "lines": 576,
+      "status": "not declared",
+      "sha256": "d6ef7a1517e7c787d8a8d7eeb780fa9b6874bc4ab3f542c6ff04c45476726938",
+      "topic_matches": {
+        "settlement": 11,
+        "coordination": 1,
+        "storage": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/multicloud_webui.md",
+      "lines": 285,
+      "status": "design-first target. Canonical [multicloud_ownership.md](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/blob/main/multicloud_ownership.md) governs ownership,",
+      "sha256": "cf1cd1edbfe886d9c9dc8f11b03a2bcc97f86935c05df3c7fc3b5f5a48560e27",
+      "topic_matches": {
+        "settlement": 3,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/platform-admin-implementation-plan.md",
+      "lines": 252,
+      "status": "implementation plan based on the current `rtk_cloud_admin` checkout",
+      "sha256": "fdfc4ef2e96d0ff7ce49ccb835d9fb5066a8da085886f36c49cc04c6963a34cb",
+      "topic_matches": {
+        "settlement": 11,
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/platform-brand-cloud-management-design.md",
+      "lines": 742,
+      "status": "implemented baseline; design-parity and upstream-contract follow-up is",
+      "sha256": "8afece07cf74a6347c419397ed9ba9d1442559554a8efc0034eff383574359a1",
+      "topic_matches": {
+        "settlement": 66,
+        "authority": 6
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/platform-view-dashboard-design.md",
+      "lines": 555,
+      "status": "implemented baseline; design-parity follow-up is tracked in",
+      "sha256": "4fad9010c4c6ea02182160f1a58267a942120ef847dfd94bfa5ec05edd728e3f",
+      "topic_matches": {
+        "settlement": 12,
+        "storage": 2,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/private-cloud-deployment.md",
+      "lines": 170,
+      "status": "draft.",
+      "sha256": "d545cecae295fbf7ac671fd832e6539229a3abab9b40a6eb2d0ee14bc705393b",
+      "topic_matches": {
+        "settlement": 5,
+        "storage": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/roles.md",
+      "lines": 339,
+      "status": "implementation-aligned draft.",
+      "sha256": "b925d8f82eb0fa40307c3057f0d5cd441f2647621641bb897df030464506dca2",
+      "topic_matches": {
+        "settlement": 11,
+        "authority": 3
+      },
+      "post_fix_sha256": "654a16bef3be1c3ba793a2078d6a94ebe0b160efffc733e7077ec932dcc3504e",
+      "post_fix_lines": 348
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/sdk-loading.md",
+      "lines": 46,
+      "status": "not declared",
+      "sha256": "12890766e99dd23b48a21778efcbb770809b4b143aeece012b66ba6fa7620b67",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/service-pricing-research.md",
+      "lines": 117,
+      "status": "not declared",
+      "sha256": "a98cb115923b33fb21cd4848dff530417235acbd49a4a2dac8ac83f5e540811e",
+      "topic_matches": {
+        "storage": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/service_logging_migration.md",
+      "lines": 33,
+      "status": "implementation handoff.",
+      "sha256": "3c05270876994be61b3274d5dc17e7ccc057819fd63847f7f2452d811e4892bf",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/spec.md",
+      "lines": 1211,
+      "status": "not declared",
+      "sha256": "9b1234880c96030c09bcbd8d822d62d0aedfce0eeabed30588e42c187b826a94",
+      "topic_matches": {
+        "settlement": 41,
+        "storage": 3,
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/sso-oidc-design.md",
+      "lines": 168,
+      "status": "proposed source of truth.",
+      "sha256": "f0dca7276fbd1387dd85a4529b0755246e51644442d5d7a58517656d15a33599",
+      "topic_matches": {
+        "settlement": 21,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/test-lab.md",
+      "lines": 118,
+      "status": "not declared",
+      "sha256": "be6fe9577c6b22dcc1b4d25b94ad3e4eb0ba89559da83d0f4d7121ba802402a0",
+      "topic_matches": {
+        "settlement": 2,
+        "storage": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/test_report.md",
+      "lines": 54,
+      "status": "not declared",
+      "sha256": "7d2a0b44abe6dc50428cb0b67e5ed08eadbe872c7c6ce39f1f53b9a90b42f990",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/video-cloud-staging-e2e.md",
+      "lines": 148,
+      "status": "not declared",
+      "sha256": "d3aa77b348fad26b43078908830e2f09f0803830db252425ea843a6bd95b8ac2",
+      "topic_matches": {
+        "settlement": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/web-ui-implementation-report.md",
+      "lines": 98,
+      "status": "not declared",
+      "sha256": "643185e2ea6bcbc0d7f44e627700a809d1e25201a28931a86e80b3958f67cdc1",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/web-ui-style-guideline.md",
+      "lines": 273,
+      "status": "implementation guideline for the developer/enterprise console refresh,",
+      "sha256": "43f423312299031a45c91b20f0278c7b949a9cd16515656279ff8c2f698f2ab1",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/webui-browser-qa.md",
+      "lines": 88,
+      "status": "not declared",
+      "sha256": "5cc8dedec286f98c72f0f630af550a5d7bdf676fcf2d5c3ce3fce1ca338c0175",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/webui-customer-view-design.md",
+      "lines": 935,
+      "status": "Brand Fleet layout reference. The design-first",
+      "sha256": "b0fc15526a895c9f13a86cc8bb52fd0bc707f170fc9abb2e17ce8e62a01f6833",
+      "topic_matches": {
+        "settlement": 13,
+        "storage": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_admin/docs/webui-implementation-roadmap.md",
+      "lines": 688,
+      "status": "historical first-batch roadmap plus current Platform Admin and Brand",
+      "sha256": "b1c832bd92e1475bf383dc5fd817eb5ccf1d2fe2b1ac83a608e0abc0b1e0992e",
+      "topic_matches": {
+        "settlement": 8,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/README.md",
+      "lines": 435,
+      "status": "not declared",
+      "sha256": "4bea7902ba7a31072e6f15d7c56c1af0ec89baf2be3c78aac6954a09b834775f",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/api.md",
+      "lines": 479,
+      "status": "native C/C++ v1 API design contract that refines `spec.md` for C core",
+      "sha256": "35baa6f72f4434a1a15d3d534ec454777b32c6fed1afb657ea58a294b6e45f4f",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/README.md",
+      "lines": 190,
+      "status": "not declared",
+      "sha256": "2f182cc81fe75d8c1222f9c98a11616a2f3cd1499c99613aacb9f4665669ce75",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/account_provisioning_sdk.md",
+      "lines": 160,
+      "status": "app-platform SDK contract for the first Claim Token provisioning wave.",
+      "sha256": "9204baa0db1e7ec7848ffb33df02752611427baebe77d9222fb5269e07e91dda",
+      "topic_matches": {
+        "settlement": 5,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/app_delivery_scope.md",
+      "lines": 167,
+      "status": "SDK ownership boundary for mobile app delivery, push notification,",
+      "sha256": "50e4e73de8eba893ea6a6c45452cc7ec00c1ff2c9cb88f0d8d0f84b42a1528b6",
+      "topic_matches": {
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/auth.md",
+      "lines": 168,
+      "status": "repo-local auth contract reference for `rtk_cloud_client` and client",
+      "sha256": "920a1de57b6db1e79bdacd519479f2c82262310f78d82c1e34590f5b0529a1a5",
+      "topic_matches": {
+        "auth": 7,
+        "authority": 1
+      },
+      "post_fix_sha256": "5720342f4fceb68fb4b70ec17ffdcea499321f11a69b4d6c353550fd945b3132",
+      "post_fix_lines": 175
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/ci.md",
+      "lines": 206,
+      "status": "GitHub Actions flow for deterministic package validation.",
+      "sha256": "19b621da8fc399d3d4f98abc4758e1cdb2d8f6268a676c65306c0dc2ee4c3c34",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/client-integration.md",
+      "lines": 319,
+      "status": "source-of-truth entry document for client developers integrating with",
+      "sha256": "99b4de61ba221acc2d7020faf3bf44cc596d0ae7005984f458c8f9ce5272dfef",
+      "topic_matches": {
+        "auth": 2,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/core_sdk_mvp.md",
+      "lines": 385,
+      "status": "cross-language Core SDK MVP public API contract.",
+      "sha256": "d6579e73c3ea8efc7ab15a0e2523dfae7f0c901b318217fa9c0804b6b6efb0ec",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/deliverables_and_test_programs.md",
+      "lines": 239,
+      "status": "release-deliverable roadmap and test-program gap list.",
+      "sha256": "153dbc516c9c3d3463be3f322f210fafc63f18d7f3596994c14b3f2bca077509",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/device-transport-spec.md",
+      "lines": 428,
+      "status": "draft source of truth for device transport ownership and routing.",
+      "sha256": "e0983b57ae6110b36737ffe4de966b6eaacc9863b8573a5b510d8e90ddf30978",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/firmware_campaign_sdk.md",
+      "lines": 101,
+      "status": "not declared",
+      "sha256": "059be085b4c69761ebf1af7b97815a3638737542ff9eccd946e758030bca14d2",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/go_sdk.md",
+      "lines": 228,
+      "status": "draft scope contract.",
+      "sha256": "ab0a80cef62ef2537d1aa5654bf47d608d70138397146867ee6f798613dc664f",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/hardware_test_report.md",
+      "lines": 95,
+      "status": "not declared",
+      "sha256": "1cff0ba7986722301e303cabbecdbe776f7db2c7831d5a0a736e74e015b6d786",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/http_streaming_core_api.md",
+      "lines": 389,
+      "status": "additive cross-language public API contract for the HTTP + Streaming",
+      "sha256": "2206b35730de1bb24eb52f5f5ee104706f551ae0c08c10ae421b8e596136acd2",
+      "topic_matches": {
+        "authority": 5
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/local_onboarding_sdk.md",
+      "lines": 183,
+      "status": "interface contract with Android and iOS BLE and SoftAP adapter support.",
+      "sha256": "438b5973252fa3b9c459e97a50083299b1ff0f44ff7112bbec18bb9d7d59cc9c",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/pki_device_auth.md",
+      "lines": 355,
+      "status": "draft implementation contract.",
+      "sha256": "e35682b267d837e5b23bae4711a3c4a5bec4226f7a07f2a2605b11755d39fcd9",
+      "topic_matches": {
+        "auth": 3,
+        "authority": 2
+      },
+      "post_fix_sha256": "d3862154c0fa401b4d544cfe63141a2ee7264cacfc0ba703cd3d66703f2fd6f4",
+      "post_fix_lines": 353
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/platform_hal.md",
+      "lines": 385,
+      "status": "v1 Platform HAL design contract that refines `spec.md` for issue `#3`.",
+      "sha256": "0d4d9a5cadac42e8d86aa1abbb04c6006d034308763c209b3ad5b1bc866e27cf",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/pro2_vendor_webrtc_baseline.md",
+      "lines": 311,
+      "status": "issue #223 vendor `kvs_webrtc_mmf` build/readiness baseline.",
+      "sha256": "7716b07a6228867bba2b53d5febbceb82aae06b0f8d2c7278f69ab77c0e2183b",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/production_runtime_contract.md",
+      "lines": 276,
+      "status": "cross-language production SDK runtime contract for timeouts, retry",
+      "sha256": "a4b00016b23b7561b5b23a90096b68b7905154741f7e92afd110fb9ea6305c13",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/release_manifest_policy.md",
+      "lines": 202,
+      "status": "shared release artifact metadata policy for the first package release",
+      "sha256": "504bd2a43d20a634aed860ae89021d7d67e6e433eb60aaa2552769e8ebd0a9e2",
+      "topic_matches": {
+        "authority": 6
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/release_readiness.md",
+      "lines": 309,
+      "status": "production hardening handoff checklist for the multi-language SDK",
+      "sha256": "10c3c00db68c2f66d2a4675f5b5c3568f8e08cd5a55cad678716d2bb1f611369",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/release_test_report.md",
+      "lines": 95,
+      "status": "not declared",
+      "sha256": "2ffb80390cfbd5c325786a984e7fb9c665ff440bac37be4086b4856e931c783e",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/release_validation_report.md",
+      "lines": 260,
+      "status": "copyable release-candidate report and live-lab coverage matrix for the",
+      "sha256": "464d41a036fe3ac5822e1f142a0690475b27e7a862c57921a5a86e4f3d3a8548",
+      "topic_matches": {
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/rtk_video_cloud_manual_integration.md",
+      "lines": 478,
+      "status": "manual validation guide for `rtk_cloud_client` against a",
+      "sha256": "1b67a1ab86c7f47dc55188fba12cc114f493227d5b29f74a05782edec6bab1a2",
+      "topic_matches": {
+        "auth": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_android_ios_app_screen_inventory.md",
+      "lines": 164,
+      "status": "implementation-ready screen and component inventory.",
+      "sha256": "1f118def1851eec41954d348827ccbbf0e3607484037ab14caf1d3b12c3bf246",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_app_validation.md",
+      "lines": 162,
+      "status": "reference-sample validation plan.",
+      "sha256": "19a108c2aeee2714d11979a6c63191e47c72f12b2491de82d6bf24617787c9cb",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_applications.md",
+      "lines": 155,
+      "status": "reference-sample specification.",
+      "sha256": "03edf118f65de5efdfedc33c222ac7c71c8995075337f747520717d6070cb8fd",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_device_app_spec.md",
+      "lines": 118,
+      "status": "reference-sample specification.",
+      "sha256": "054df94a418ac396f5a8b7cbe1381bfa5430f6bf24901faa6869233c775c7de5",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_device_console_ui_spec.md",
+      "lines": 134,
+      "status": "reference-sample UI design contract.",
+      "sha256": "a3c24ad32416519fa6d80b16f2a88faa36490109bdb9c9e11c24a233f4c4b227",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_device_mqtt_payloads.md",
+      "lines": 420,
+      "status": "reference-sample payload design.",
+      "sha256": "2a029afc8b78acbfce68a69e01e6f8442be1754c95e4d477f156bfcd5c85a01b",
+      "topic_matches": {
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_home_app_spec.md",
+      "lines": 112,
+      "status": "reference-sample specification.",
+      "sha256": "923a218efacdb0928ebbcf04c6c4d6af38234a50a3454fd79765d38faf2db3f1",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_home_app_ui_spec.md",
+      "lines": 762,
+      "status": "reference-sample UI design contract.",
+      "sha256": "4dbc39a7e169fb4a7162fad12b36a6063d9a33e83d9ed667aa3348b43234edd3",
+      "topic_matches": {
+        "settlement": 6,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_home_app_user_manual.md",
+      "lines": 433,
+      "status": "reference sample user manual.",
+      "sha256": "8c7150c64d1c3897fb830bd1f96f71fe7319361ebfa8bb70a5359f9db1ad1750",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_ops_lab_ui_spec.md",
+      "lines": 679,
+      "status": "reference-sample UI design contract.",
+      "sha256": "b6ae3916d04bd5c1772678983bb45bd96b595687f3e4e81ae202cf3eb7ab04bb",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sample_ui_design_system.md",
+      "lines": 127,
+      "status": "reference-sample UI design contract.",
+      "sha256": "968a444369fe4d6a69a506d1233b6d15b18e1beb3e02aa6c312f4117f4a2ee86",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sdk_conformance.md",
+      "lines": 64,
+      "status": "not declared",
+      "sha256": "e6111ec29dce49756c502eef4d1acf2c052ad6a95638b7a2c5c25d4a71b7161f",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/sdk_user_delivery.md",
+      "lines": 263,
+      "status": "active internal handoff and public-evaluation release contract.",
+      "sha256": "27039827224392f2820bbca76fb40a7e6ae3f835ea6638f284c8be079b23d70e",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/service_logging_correlation.md",
+      "lines": 49,
+      "status": "implementation handoff.",
+      "sha256": "c713e1c14d10431b0e2638babfc4997df9297a273a4bbd06bb3ce4646879ef16",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/shadow_adapter.md",
+      "lines": 56,
+      "status": "not declared",
+      "sha256": "49a519fe377db0fc0bb9699897630cb0ed46f952c377b5dc35da552eb0d56ece",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/spec.md",
+      "lines": 753,
+      "status": "v1 source of truth for SDK product and architecture decisions.",
+      "sha256": "0e0a93305af42db2145a757fa3a8b46751b3ee34fda2718ce6e5952809a6a65b",
+      "topic_matches": {
+        "auth": 3,
+        "authority": 9
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/telemetry_sdk.md",
+      "lines": 218,
+      "status": "draft interface contract.",
+      "sha256": "c83eb0d85df0d0a326e48bc002c2be7fdc6b1a110e28e556392d8c837a907d71",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/test_report.md",
+      "lines": 95,
+      "status": "not declared",
+      "sha256": "6fb10bbe1e400fe114ce5da9ddcbd29fd1c510753ac3ac5558cf1e7c90710c56",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/test_report_template.md",
+      "lines": 215,
+      "status": "required report format for deterministic validation, package release",
+      "sha256": "5ca3ecf34f031736a2db61779ef917c5ac243fbee932dcf2a0c62da54305a4cc",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/testing.md",
+      "lines": 804,
+      "status": "repository-wide testing and acceptance contract for local validation,",
+      "sha256": "04dba0b3cb953edcfbd27df9836aa313d4615d0e633af13767fe2230457902b9",
+      "topic_matches": {
+        "auth": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/transports.md",
+      "lines": 505,
+      "status": "v1 transport design contract that refines `spec.md` for issues `#6`",
+      "sha256": "9b1756213549fdc68de6a1f5ccb3b98076d1d5cde27d3e3a7d7f6e927ce97a43",
+      "topic_matches": {
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/video_cloud_load_testing.md",
+      "lines": 32,
+      "status": "moved out of `rtk_cloud_client`.",
+      "sha256": "bcb55ebda8528856d1fec4e893f4eeb1e2f2c2e06e07c914d8a11671974a3286",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/docs/webrtc_client_media_boundary.md",
+      "lines": 156,
+      "status": "current SDK ownership boundary for WebRTC signaling and client media",
+      "sha256": "504939d03b685ae356718116d174fc1d732fa9a5e0dbd62087db721deddb219a",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_client/testing.md",
+      "lines": 275,
+      "status": "native C/C++ v1 testing and acceptance contract that refines `spec.md`",
+      "sha256": "aed3d440869774cd0e5adc888bbf9dd5671846744130013050a4825e068ae025",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/README.md",
+      "lines": 173,
+      "status": "draft contract repository for cross-repository client and SDK work.",
+      "sha256": "f3c85757f20ef4489f89596ab9252a3a1e0176d98be934c519664c07ece42035",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 2,
+        "authority": 4
+      },
+      "post_fix_sha256": "2a582261ee7160e04fd7536ea09c0f0646c900a895cd832a34d39c1e5abad800",
+      "post_fix_lines": 177
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/api_usage.md",
+      "lines": 988,
+      "status": "normative usage companion.",
+      "sha256": "620896e30d4c68e9c37b8a02dbd464caf784033a839e89daf307d677fd2ddf25",
+      "topic_matches": {
+        "identity": 2,
+        "settlement": 7,
+        "storage": 4,
+        "auth": 7,
+        "authority": 2
+      },
+      "post_fix_sha256": "b807e5abad14425c332325b33752b43fae92633de233d3288d269d004db94dc7",
+      "post_fix_lines": 987
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/auth.md",
+      "lines": 645,
+      "status": "normative.",
+      "sha256": "2c920f9d181e56bbc520b8f946db766bc9816ae9a09dd7598a3336e6d25619d5",
+      "topic_matches": {
+        "identity": 2,
+        "settlement": 14,
+        "coordination": 1,
+        "storage": 4,
+        "auth": 11,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/authorization.md",
+      "lines": 478,
+      "status": "normative.",
+      "sha256": "0b97ec7e514532b1727d682587d4be4d4bb9a1f54de5a1d937e4fd357b730738",
+      "topic_matches": {
+        "settlement": 13,
+        "authority": 9
+      },
+      "post_fix_sha256": "fe58d05ff99a3942dd6d766afcf12235f3a3d6dcbf722c60031573ba4b445d65",
+      "post_fix_lines": 478
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/batch_jobs.md",
+      "lines": 117,
+      "status": "normative.",
+      "sha256": "d03f4ba81de20dc3633815daaf121effe92f4d8e21d83d468f8c6705ef8b701d",
+      "topic_matches": {
+        "settlement": 6,
+        "coordination": 1,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/billing_activity.md",
+      "lines": 125,
+      "status": "active phase-one contract.",
+      "sha256": "cfb818d7462c6b9a96c8aa427f62295455944b1796be1f1f1f237a966681f615",
+      "topic_matches": {
+        "settlement": 2,
+        "storage": 3,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/billing_service.md",
+      "lines": 150,
+      "status": "active canonical contract.",
+      "sha256": "f5186fee86615bfccb841a076e8e1d1dba1c71a972153600490684f5cc132161",
+      "topic_matches": {
+        "settlement": 14,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/billing_usage.md",
+      "lines": 110,
+      "status": "normative foundation for metered services.",
+      "sha256": "2427b02b337757b1d041fd1dccc53d7bde07ef4cc2115ea120e5e1f5d6ca9936",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/brand_cloud_admin.md",
+      "lines": 470,
+      "status": "normative.",
+      "sha256": "c92ea2dbe8f65ea62ef6da2356446d4ca70c4d9e5188b861d363bd8f1ebfba39",
+      "topic_matches": {
+        "identity": 2,
+        "settlement": 20,
+        "coordination": 1,
+        "authority": 5
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/certificate_bundle.md",
+      "lines": 300,
+      "status": "normative.",
+      "sha256": "0abdd3170eb79aa74ce051f939307c804e460d0c5208151502e2914aab2d1ed7",
+      "topic_matches": {
+        "settlement": 6,
+        "auth": 1,
+        "authority": 1
+      },
+      "post_fix_sha256": "d8df9bd805fc0c1068d358ecb1f42eaca470705690fcae5c477ea251a1b6743a",
+      "post_fix_lines": 305
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/chipset_sdk_information_provider.md",
+      "lines": 313,
+      "status": "normative.",
+      "sha256": "097af50fd2b4d95e046f99214d76dc6183f838d56c16a5627acd3d794ee97b6d",
+      "topic_matches": {
+        "settlement": 6,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/client_patterns.md",
+      "lines": 131,
+      "status": "guidance for SDK and client implementers.",
+      "sha256": "290ca5ca8185f88f88c61cbad2c6d3b7f0f6cfbd3d2dc95a599512c60a885dc9",
+      "topic_matches": {
+        "auth": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/contract_overview.md",
+      "lines": 368,
+      "status": "normative overview.",
+      "sha256": "d9467ef3918f8b097e4acc24181c956bb7e52ea3caa28a090aa784fb0a3499d3",
+      "topic_matches": {
+        "settlement": 9,
+        "coordination": 1,
+        "storage": 1,
+        "auth": 3,
+        "authority": 3
+      },
+      "post_fix_sha256": "412843cbbfbd0eb70147a748acccedc92a4de95649fec3fde57b53f245d91a02",
+      "post_fix_lines": 371
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/cross_service_channel.md",
+      "lines": 437,
+      "status": "normative integration contract for account/video service-group",
+      "sha256": "442c24aa8f4bf978a0f3999c816685f7dafe675813a9f494b827e30764a02216",
+      "topic_matches": {
+        "settlement": 4,
+        "coordination": 5,
+        "authority": 1
+      },
+      "post_fix_sha256": "d649860c5b15ef6ec2e21ff44fcc7ee19f89fff0eeff1ddc7a82554a367c97a4",
+      "post_fix_lines": 464
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/device_runtime_logs.md",
+      "lines": 231,
+      "status": "draft normative contract.",
+      "sha256": "8595306e6ab51a8c8033a20c6c1c9f2cba7f5870b4262538d7e516e3fb8a83a3",
+      "topic_matches": {
+        "storage": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/device_shadow.md",
+      "lines": 376,
+      "status": "canonical client-facing contract.",
+      "sha256": "4f24ac5745ad5911802d28646e0b41b2985b4fbdbd05fcd3c47ddddb71ac5809",
+      "topic_matches": {
+        "coordination": 3,
+        "storage": 3,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/device_transport.md",
+      "lines": 440,
+      "status": "normative.",
+      "sha256": "c8388987db5fabfe79f6c8c3298815b5dce391fe8b8ee03c0bacfdb775b83b08",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/errors.md",
+      "lines": 214,
+      "status": "normative summary.",
+      "sha256": "1a2f1cb3e14c00343156e485ca5b212cccca2fa41e1a178fcdb76f3c65df1d93",
+      "topic_matches": {
+        "settlement": 1,
+        "auth": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/firmware_campaign.md",
+      "lines": 258,
+      "status": "proposed contract; backend implementation is gated on contract review.",
+      "sha256": "45cfc3a907e5e126f7dfbf4d1e72dc66068c65908819c9b61b9195a6b40f556b",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 5
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/fixtures/certificate-bundle/README.md",
+      "lines": 16,
+      "status": "not declared",
+      "sha256": "bba64f848d939fa3927e4b8ed9400f6fe95c64ccf1aed174cf33ca8de9f85a02",
+      "topic_matches": {
+        "settlement": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/fixtures/chipset-sdk-provider/README.md",
+      "lines": 37,
+      "status": "not declared",
+      "sha256": "0c48640dbdad8afde9c2dab406de29052c3d3cff69d576b212de78495ef7afc9",
+      "topic_matches": {
+        "settlement": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/fixtures/chipset-sdk-provider/amebapro2-video-review.md",
+      "lines": 84,
+      "status": "not declared",
+      "sha256": "453c7be16648f6345b8de0c14e501fa03f47d1f0806ba387ca014c7f2ae7bdc6",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/fleet_analytics.md",
+      "lines": 159,
+      "status": "normative target contract. Implementation and deployment evidence are",
+      "sha256": "96c614a455c78ed1bb64b30871a8a9a209af6f25a68d62f8e4d6ba83839ac042",
+      "topic_matches": {
+        "settlement": 4,
+        "storage": 5,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/frontend_style.md",
+      "lines": 435,
+      "status": "canonical interface contract.",
+      "sha256": "b113ca0161f29e169af88dfe1db70caba65d53ee3054f83b889fd5786ff8eeda",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/http_api.md",
+      "lines": 522,
+      "status": "normative summary.",
+      "sha256": "491f1427a2abc01ec207438c502dde992c1464ddcef4362f8d335a7c55a9235f",
+      "topic_matches": {
+        "settlement": 4,
+        "storage": 2,
+        "auth": 5,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/metrics_export.md",
+      "lines": 241,
+      "status": "normative dashboard and operations contract.",
+      "sha256": "093b688a0eaace39d23fc30582f5e94ae6eef283ba78ad1b68c6b329cc3760be",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/multicloud_ownership.md",
+      "lines": 471,
+      "status": "normative target contract; implementation and release evidence are pending.",
+      "sha256": "3e280e8161c2b661bd2290c0205b515279ae24d81c09bccd083279e750614c15",
+      "topic_matches": {
+        "settlement": 7,
+        "coordination": 4,
+        "credentials": 1,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/p1_service_webui.md",
+      "lines": 134,
+      "status": "not declared",
+      "sha256": "98a27999f0aaadffe7e17177f65d99cbe9971b7509758aa10b5e00326b00d34a",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/payments_and_balance.md",
+      "lines": 540,
+      "status": "active guarded contract. Production automatic charging may not be",
+      "sha256": "4ae941294f81b77b9e34f1d34189924cdfa5f9cab1ae7cd11aaff9b9c68d9641",
+      "topic_matches": {
+        "settlement": 5,
+        "storage": 5,
+        "authority": 5
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/platform_pki.md",
+      "lines": 518,
+      "status": "proposed normative cross-repository design. The trust model and target",
+      "sha256": "3e67f7ec9924f223f1c4ae87eeebbaf901a87ac82379fadd3c4f037c517934f0",
+      "topic_matches": {
+        "settlement": 15,
+        "storage": 1,
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md",
+      "lines": 281,
+      "status": "active phase-one contract.",
+      "sha256": "7d64549f1cb72a85565fe8e04e0fae9ac0b871ed1e7f3d3e7ca340dc4afcc414",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 4,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/product_onboarding.md",
+      "lines": 351,
+      "status": "draft interface contract.",
+      "sha256": "0f89440260b5143292a375902bd16bf4132425d05419a928fd34ebd8f24715ad",
+      "topic_matches": {
+        "settlement": 4,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/product_ota_migration.md",
+      "lines": 69,
+      "status": "proposed migration contract; no backend migration is authorized by this document alone.",
+      "sha256": "9cd113eaedb0ef6fd1ee7475b8011182da96de04a8aec5a034ca5fd012d60e4d",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/product_readiness.md",
+      "lines": 240,
+      "status": "draft cross-service integration contract.",
+      "sha256": "a22959b48528cc12dc285c904fd6061e58c00abcb34be90e6735c73fb69ef748",
+      "topic_matches": {
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/provision.md",
+      "lines": 1038,
+      "status": "normative integration contract for cross-service device bootstrap.",
+      "sha256": "5dd340337d46387d017c9487bde856b753699808c4b68d6712feeeefe0b17f4d",
+      "topic_matches": {
+        "identity": 2,
+        "settlement": 40,
+        "coordination": 16,
+        "storage": 1,
+        "auth": 1,
+        "authority": 5
+      },
+      "post_fix_sha256": "83f9abef48319899171c43fc2c7f681c4782589c5d36885ae783a2a1adb5d9bc",
+      "post_fix_lines": 1037
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sdk_distribution.md",
+      "lines": 148,
+      "status": "normative target contract; the first public-evaluation release is not",
+      "sha256": "21fc2e0c94e6f5fa82db8cceb2cbad8838d3093dfe56a17d2746b162b60880ce",
+      "topic_matches": {
+        "settlement": 2,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/01-onboarding-readiness.md",
+      "lines": 319,
+      "status": "draft",
+      "sha256": "c317b790663a9274ad75050bffebc46f7e40f776038ad32721db51195a210a19",
+      "topic_matches": {
+        "settlement": 8,
+        "coordination": 3,
+        "authority": 11
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/02-connectivity-state.md",
+      "lines": 197,
+      "status": "draft",
+      "sha256": "e8db673fe4ab65ab0a2c77ee8332b2a41c652cde2a0140b83a9d4f380b85d99f",
+      "topic_matches": {
+        "authority": 7
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/03-command-control.md",
+      "lines": 199,
+      "status": "draft",
+      "sha256": "3c60cf12c0692ee8ad5734e35137ae85cc36ca0bfbd9cc9bdc9af60dd3267179",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 7
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/04-telemetry-events.md",
+      "lines": 222,
+      "status": "draft",
+      "sha256": "b0fbc26963eba9d9b223ee0e970ef3c228c4b0adc425dabb3f903b88c5747028",
+      "topic_matches": {
+        "storage": 3,
+        "authority": 8
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/05-streaming-media.md",
+      "lines": 284,
+      "status": "draft",
+      "sha256": "13b413839c0110da508e7b9d3410ac42b5b74e147fa462c009c6bd63e17285df",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 10
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/06-firmware-ota.md",
+      "lines": 224,
+      "status": "draft",
+      "sha256": "5c2c8701b2846a3d6628f3bc329ef4016df8fb4bacd428f51b9d4bd0f2483650",
+      "topic_matches": {
+        "authority": 8
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence-diagrams/07-lifecycle-ownership.md",
+      "lines": 178,
+      "status": "draft",
+      "sha256": "4df1c85bbc08a87b0cf6e979ce3170f63571499845acd34d7a2dd92101db35b8",
+      "topic_matches": {
+        "settlement": 5,
+        "coordination": 3,
+        "storage": 7,
+        "authority": 6
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/sequence_diagrams.md",
+      "lines": 154,
+      "status": "draft",
+      "sha256": "21ecd6b5571b8a62ca87fe47088c490328b4b563d7565469e081edd55d3f28da",
+      "topic_matches": {
+        "settlement": 2,
+        "coordination": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/service_logging.md",
+      "lines": 229,
+      "status": "canonical normative contract.",
+      "sha256": "e8f3863d51cabc27c330fb20c40fe47863a4bca6eec69157d2144ebb974cb408",
+      "topic_matches": {
+        "settlement": 1,
+        "auth": 1,
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/service_logging_adoption.md",
+      "lines": 93,
+      "status": "tracking contract for implementation rollout.",
+      "sha256": "93ae772fabc8b34217d3fd9d88a51db5d902f0656fec71af8d8101fdb0784b49",
+      "topic_matches": {
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/smart_home_ecosystem.md",
+      "lines": 192,
+      "status": "draft boundary contract.",
+      "sha256": "476c82546f5b989072021b0345e606e76e643f18adc3fe6cac42e34e83657446",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/snapshot_and_media.md",
+      "lines": 280,
+      "status": "normative summary.",
+      "sha256": "1a6c5efdf5cad8be5ddcf809b3d1e6e59228fac3e0ee3f3a6da06a017d642166",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 2
+      },
+      "post_fix_sha256": "a45ff849e5fbeb48a2660e11aab243e91201c4c143dc8dc3b88c9a2c0d5ac149",
+      "post_fix_lines": 336
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/streaming.md",
+      "lines": 472,
+      "status": "normative.",
+      "sha256": "3032e843c24263fe9af22a9b35a497885cf9cc6b3512c5a9202af3fca10c33af",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/telemetry_insights.md",
+      "lines": 437,
+      "status": "draft interface contract.",
+      "sha256": "62b3e47c2af9b23fb20a454ff2df589fbef7447dcabc8356cdf545e17b49f257",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 9,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/test_report.md",
+      "lines": 495,
+      "status": "normative cross-repository test evidence format.",
+      "sha256": "8144380f314b62330b5f554c126a99977d4271cd5a9c3362ff1fb16386d00cd5",
+      "topic_matches": {
+        "auth": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_contracts_doc/webrtc_only_streaming_migration.md",
+      "lines": 73,
+      "status": "archived, non-normative",
+      "sha256": "092932c40d51e2611e696aa88c54186ae7848f55a7d0a83c291fab2a46ab544d",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/README.md",
+      "lines": 262,
+      "status": "not declared",
+      "sha256": "bf19157eca73df5105412abc52084c104eedc720817e53968d8b5e2dd3977969",
+      "topic_matches": {
+        "storage": 5,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/analytics.md",
+      "lines": 378,
+      "status": "not declared",
+      "sha256": "9d090dda55b97077690196f0e392423fab8a40135a7da9dfcc5270a25451b82e",
+      "topic_matches": {
+        "storage": 7
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/api_reference.md",
+      "lines": 194,
+      "status": "not declared",
+      "sha256": "25169d171f6bccbb3c44226c249ded25fa71c28103f240b401f30a35c62d6bb2",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/deployment-k8s.md",
+      "lines": 116,
+      "status": "not declared",
+      "sha256": "75758e85d4d02edef7209411082841d93f03841c3ef5e2bdb5a3f14050e2da6f",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/deployment-promotion-rollback.md",
+      "lines": 114,
+      "status": "not declared",
+      "sha256": "b2283554e3e5adbaa7fc7f35ee33ec0e922036ebe3d18d2941a6aefd6b58d138",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/design/video-cloud/content-map.md",
+      "lines": 62,
+      "status": "implemented responsive design source for `/features/video-cloud`.",
+      "sha256": "2e6a1849c64ab5f1549fe33d7b2fa90b432780a1c5f4a6f30ae08e09fa7f4cb7",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/manual_content_system.md",
+      "lines": 228,
+      "status": "not declared",
+      "sha256": "be41299693886feeed575adb021ace64bceb4a65a5d3b71268b091f97c96a0a7",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/persistence_cache_boundaries.md",
+      "lines": 65,
+      "status": "not declared",
+      "sha256": "9868a1c2eaa823982bcaec1f7480af057874d688ee0dc73783b16c9242eb6d7a",
+      "topic_matches": {
+        "storage": 5
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/portal-design-implementation.md",
+      "lines": 61,
+      "status": "not declared",
+      "sha256": "825946dbaeb6b4ea1d2c1b2833113e86d43af8c42e69e5cdfecf07eaef998217",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/portal-ui-style-guideline.md",
+      "lines": 95,
+      "status": "implemented public-Portal baseline, 2026-09-05. This is a product UI guideline, not an official Realtek corporate identity manual.",
+      "sha256": "29bb0bda332f2ff58b1893bc0c59aec30884c5792430e88ba7ad41a18350a3af",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/sdk_documentation.md",
+      "lines": 94,
+      "status": "active",
+      "sha256": "39a51993aed638f0f7a918269a4328c061bfce1f03b5349d09b4060ef57fcf52",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/service_logging_migration.md",
+      "lines": 62,
+      "status": "implemented.",
+      "sha256": "a866e003a4bb7205a6deef9cb4b0005e5b017e004bc61def09579a79ab963685",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/spec.md",
+      "lines": 832,
+      "status": "not declared",
+      "sha256": "4c6e52ee94b5c76017d588c387bcb47b6ef8bdef5952d5317c12feb2d9962965",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 6,
+        "authority": 6
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/sqlite-backup-linode.md",
+      "lines": 126,
+      "status": "active service-local procedure.",
+      "sha256": "0e8a4878d8f65dd18e41338fd61048944f4a524f61169d3bc3510d937238bc72",
+      "topic_matches": {
+        "storage": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_frontend/docs/test_report.md",
+      "lines": 109,
+      "status": "not declared",
+      "sha256": "17ffdf00d09ba43456e572e9c7e17cdb32596cf6843426f2320461f576bea1d7",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_logger/README.md",
+      "lines": 248,
+      "status": "not declared",
+      "sha256": "378aef7dd6a5ed6e69c82fb89d528fe680ad9e4e313975dec27309b386b69941",
+      "topic_matches": {
+        "auth": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_logger/docs/billing_inbox_qualification.md",
+      "lines": 41,
+      "status": "not declared",
+      "sha256": "83727117bc2e8dde01c3d8bdd174d44b84e6cd24c297daae82ead7a2cdc5462d",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_cloud_logger/docs/central_logging_architecture.md",
+      "lines": 186,
+      "status": "implementation handoff.",
+      "sha256": "05f95434eee684cb4276da8f4fe88ed099a1800d727945b290efbaefaffdb27d",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_cloud_logger/docs/spec.md",
+      "lines": 540,
+      "status": "not declared",
+      "sha256": "69ab6e3845589d84c0ab4bf12f137ba769b8fa335e32a226f88c835a429b706a",
+      "topic_matches": {
+        "storage": 2,
+        "auth": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/AGENTS.md",
+      "lines": 28,
+      "status": "not declared",
+      "sha256": "811492544b70f21950117f0174ddd85af07d3d10a67ee0071c98617a2be3bfb9",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/README.md",
+      "lines": 300,
+      "status": "not declared",
+      "sha256": "6285d1ffc3674466b3088e6c05898f4860b51fd28de240f81c7656581ab3ccc9",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/architecture.md",
+      "lines": 178,
+      "status": "not declared",
+      "sha256": "94c35087029191d2e83706a4d7c7e55c40bc3dddf6214821192e7110eb488df7",
+      "topic_matches": {
+        "coordination": 1,
+        "storage": 5,
+        "auth": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/auth.md",
+      "lines": 390,
+      "status": "not declared",
+      "sha256": "cf3623f9163de36a7a7c9d6327595c7a29b2e9e4622cba764274d44a16d11ef5",
+      "topic_matches": {
+        "identity": 2,
+        "settlement": 14,
+        "storage": 6,
+        "auth": 14,
+        "authority": 1
+      },
+      "post_fix_sha256": "6395f499ac806b28ccc2bba3b62b56217c4fb39737ebe487cbd65e9908716f33",
+      "post_fix_lines": 390
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/automation.md",
+      "lines": 359,
+      "status": "not declared",
+      "sha256": "ce203bcfc95b515f551e6895345672a8878d12963083e294063de7e36d444917",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/cache-ready-persistence.md",
+      "lines": 118,
+      "status": "implementation note for future cache decorators around existing domain",
+      "sha256": "3a4242a2fd952f73625f9ffc9fa42ec0e6e26772f12121b3fae89e124cc746b6",
+      "topic_matches": {
+        "storage": 8,
+        "auth": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/cert-issuer-server-design.md",
+      "lines": 701,
+      "status": "not declared",
+      "sha256": "42692cf96b3bf313926de8b9f2515f490cea13672926a9366363cac330d6feea",
+      "topic_matches": {
+        "identity": 3,
+        "settlement": 8,
+        "storage": 2,
+        "auth": 3,
+        "authority": 1
+      },
+      "post_fix_sha256": "59f3889073b4a2e764157d3344e2287344a255cbfdcccac7bcbe47c93c9a8a65",
+      "post_fix_lines": 714
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/client-integration.md",
+      "lines": 368,
+      "status": "source-of-truth entry document for client developers integrating with",
+      "sha256": "cdfe0b2cf7cd2206f75088040b0ef3318f660066d9e33b4d24b844e4537a9a27",
+      "topic_matches": {
+        "storage": 1,
+        "auth": 2,
+        "authority": 3
+      },
+      "post_fix_sha256": "d7dac07c77bb8005bbbdfaa82d36bb24e3f86ce8783f0aa2440fb28058ec4306",
+      "post_fix_lines": 370
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/clip-direct-upload-design.md",
+      "lines": 435,
+      "status": "normative; root of fact for clip upload behavior.",
+      "sha256": "2f59f90168196f3e9d38a12f9ca0c2af1528e5dd02d35426829d06fdf10694bc",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 3
+      },
+      "post_fix_sha256": "db600c18f59be2dbc160ea64f9ecd7c0986b3ceeb36e9d2944d78b905b00e361",
+      "post_fix_lines": 436
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/cloud-deletion-observer.md",
+      "lines": 44,
+      "status": "not declared",
+      "sha256": "bcc946203bf908e035eb25700d30c5bc15cc0ddeebd6e99b7ae8152079def7c2",
+      "topic_matches": {
+        "settlement": 3
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/compatibility.md",
+      "lines": 46,
+      "status": "not declared",
+      "sha256": "b386103fdbfce98ab3153a99ef7f674964e79e061770707ce16b91fca4eb10a3",
+      "topic_matches": {
+        "auth": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/config-map.md",
+      "lines": 575,
+      "status": "not declared",
+      "sha256": "8edb683e6ebe0755c66e8a224793828d873b688fcd89c8cd4ca5bc3e740209c8",
+      "topic_matches": {
+        "settlement": 4,
+        "coordination": 3,
+        "storage": 24,
+        "auth": 1,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/coturn-setup.md",
+      "lines": 150,
+      "status": "not declared",
+      "sha256": "64f04eb164b1a0776fa5b7007ad442c042c9afdedd31e3133b666750606fa2a7",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/cross-service-lifecycle-runbook.md",
+      "lines": 15,
+      "status": "not declared",
+      "sha256": "0c6d3588d0f5aa693ff9b333d9390cc07154bcad69c07e396b9daff96663afce",
+      "topic_matches": {
+        "coordination": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/cutover-checklist.md",
+      "lines": 431,
+      "status": "not declared",
+      "sha256": "269bce32412e797d1336ba43bfba1998032aac9fc7c21a50bca43885809ff894",
+      "topic_matches": {
+        "storage": 1,
+        "auth": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/cutover.md",
+      "lines": 133,
+      "status": "not declared",
+      "sha256": "75685b8027563bfb0836b42795d397d82cfc2248a037575b1502d7565bdf7856",
+      "topic_matches": {
+        "auth": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/deployment-gateway.md",
+      "lines": 196,
+      "status": "draft source of truth for implementation issues.",
+      "sha256": "e4afd2300955a1adeef18828c8cf8cf6642d587fe9c9ca48aef848a062054365",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/deployment-instance-setup.md",
+      "lines": 545,
+      "status": "not declared",
+      "sha256": "fedf0a3a58bfe54d2c64e0b49a0201a74d83a013f9a25c92c804dab0fe81d829",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/deployment-promotion-rollback.md",
+      "lines": 272,
+      "status": "not declared",
+      "sha256": "df8be79c57fdd9b7acbd1c93526a077b4099420f0a27f916af6d71ba8ca6914e",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/deployment-quickstart.md",
+      "lines": 182,
+      "status": "not declared",
+      "sha256": "225c03fd57725ca70fa7ad671fb690a2324e685ac04df252373db324125bcf97",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/device-shadow-hot-state.md",
+      "lines": 70,
+      "status": "not declared",
+      "sha256": "622be2937e074d2cdc7fbf28d9fbd678d6d42c1310235d00c4c0a3cd281d639e",
+      "topic_matches": {
+        "coordination": 6,
+        "storage": 15
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/device-shadow-spec.md",
+      "lines": 584,
+      "status": "implemented source of truth for the `$vc` device shadow protocol.",
+      "sha256": "c1113cb0ab951e34f8206821824f684017459de1243c1f44c7487fa614ac0ccc",
+      "topic_matches": {
+        "coordination": 3,
+        "storage": 21,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/device-transport-spec.md",
+      "lines": 458,
+      "status": "draft source of truth for device transport ownership and routing.",
+      "sha256": "e587fb5530e74a8cb43436741b42d4d871a8c11ab1294aec71b8f6a915d80f20",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/factory-enrollment-server.md",
+      "lines": 751,
+      "status": "not declared",
+      "sha256": "9e1b5727f83b0f1dce97403f9ae5f27ddf315a17da9df1b9b2f0a35b4bc5335b",
+      "topic_matches": {
+        "settlement": 5,
+        "auth": 2,
+        "authority": 4
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/firmware-campaign-alignment.md",
+      "lines": 121,
+      "status": "not declared",
+      "sha256": "8ca7f0f3ed703e6f9c9980b677227f60041a0c740815164a6f7b32969c21f4c6",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/fleet-metrics-data-lifecycle.md",
+      "lines": 208,
+      "status": "implementation design for the canonical cross-service contract in",
+      "sha256": "b8232173a10744b504996b80477f7c067b8b8e891b075b693e4b4025c7dc6803",
+      "topic_matches": {
+        "settlement": 3,
+        "storage": 18,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/godaddy-dns-toolkit.md",
+      "lines": 227,
+      "status": "not declared",
+      "sha256": "3b0796378f5d1705398b4fad21e6795102a57d4b73baa8f8bd87e499cebf2413",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/linode-staging-k8s.md",
+      "lines": 15,
+      "status": "not declared",
+      "sha256": "df842ff9bd1a77cd95c6c16a559b788981131734558902a7fa661291b8f6f443",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/load-testing.md",
+      "lines": 277,
+      "status": "server-side prerequisite contract for the workspace-owned video cloud load runner.",
+      "sha256": "32170343745af1a171b618f9d0fd5e2114cde432d8354c1c79a80d61967de444",
+      "topic_matches": {
+        "storage": 1,
+        "auth": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/load_test_report.md",
+      "lines": 94,
+      "status": "not declared",
+      "sha256": "fdb63419ee29874941f5a064b22f4e773a9f1706acfd97999f74aa46fe96c716",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/log-billing-runbook.md",
+      "lines": 169,
+      "status": "operator runbook.",
+      "sha256": "b6969272e926d89d43ae63a5162bdd17de47dd0216579973b925015fd78c1842",
+      "topic_matches": {
+        "storage": 5,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/metrics-exporter.md",
+      "lines": 241,
+      "status": "proposed implementation design.",
+      "sha256": "655a1712966a1b10e8ab388a1d56126e65ce89430625d25205a4e9f5f135a749",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/migration.md",
+      "lines": 16,
+      "status": "not declared",
+      "sha256": "37807e9c766ce43be419962dd7eb162c3639e282228fc4493e0b065b83aa2fa7",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/mqtt-billing-runbook.md",
+      "lines": 436,
+      "status": "operator runbook.",
+      "sha256": "0947ca8469c1cf7f757c90234391574b46d50cc4ee14e753349ad396ab2b3898",
+      "topic_matches": {
+        "settlement": 1,
+        "coordination": 5,
+        "storage": 1,
+        "authority": 3
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/mqtt-broker.md",
+      "lines": 552,
+      "status": "operational guidance for the packaged EMQX MQTT broker used by",
+      "sha256": "466ced97826b2b375487bf9e135621506b18495504f7e14ecfda6db9d9b468a4",
+      "topic_matches": {
+        "settlement": 1,
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/object-model.md",
+      "lines": 67,
+      "status": "not declared",
+      "sha256": "09b9d108217d8e7e6edae06191c560dac6f8cf6061213a1d3b097fdf4c7bb1f6",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/observability-baseline.md",
+      "lines": 186,
+      "status": "not declared",
+      "sha256": "c81fc106ec2b073573f98c2fc6d31cda0894f3e776ddc43373d178e93398ac9f",
+      "topic_matches": {
+        "auth": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/ownership-handoff.md",
+      "lines": 90,
+      "status": "not declared",
+      "sha256": "f89335f0724dfc58c8eb971d9131353fcfd59c937c7f9ec012eaa61d9eab2348",
+      "topic_matches": {
+        "settlement": 3,
+        "coordination": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/parity-matrix.md",
+      "lines": 148,
+      "status": "not declared",
+      "sha256": "f3319df942b93153eb0302504a792c2edd7dab5762afdc5b71565c12d7ba3f96",
+      "topic_matches": {
+        "settlement": 2,
+        "storage": 2,
+        "auth": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/platform-ci-matrix.md",
+      "lines": 147,
+      "status": "not declared",
+      "sha256": "0847ed097dee5151738fe19b3400fbb5072eba925ce9b26550613c529b001163",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/postgres-schema.md",
+      "lines": 137,
+      "status": "not declared",
+      "sha256": "9cdc0999a841bf3b79970eb52343a5ddceaf6bd4ea11c537959b543691a4e9a0",
+      "topic_matches": {
+        "settlement": 1,
+        "storage": 19,
+        "auth": 2,
+        "authority": 1
+      },
+      "post_fix_sha256": "1fa8577da54caffef637f38b0f016cbd20d37afb27a88d7f8b6a071085c560b4",
+      "post_fix_lines": 137
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/product-readiness-source-facts.md",
+      "lines": 131,
+      "status": "video-cloud source-fact alignment for product readiness.",
+      "sha256": "d6b58dd968761ffaa56947f64a31ea86832f6147a2dcd8f2b4dfae1170049385",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/prometheus-metrics-inventory.md",
+      "lines": 18,
+      "status": "K8s staging ownership note.",
+      "sha256": "4d73960c3c668119f957828e9b5e9a49353d49d11342bf910826711875a88bd3",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/prometheus.md",
+      "lines": 118,
+      "status": "deployment configuration guide.",
+      "sha256": "632c792fd9d2103767ea47b529223b6884b11e333ff22324503a79a31fc6fa8f",
+      "topic_matches": {
+        "storage": 4,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/readiness_test_report.md",
+      "lines": 103,
+      "status": "not declared",
+      "sha256": "2be1a5e661768bee7f7d545c4125fa662bc725a580ba8c9d718a1933ece31dfd",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/release.md",
+      "lines": 82,
+      "status": "not declared",
+      "sha256": "cb5dc92ae4f7cfa155b720d0baf536a932e93c501a102879656943ebbf288407",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/release_test_report.md",
+      "lines": 103,
+      "status": "not declared",
+      "sha256": "0d7548327dc18a708fac3d388ed195eceb7214494bd8515147652d17b1808ed1",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/replacement-gap.md",
+      "lines": 36,
+      "status": "not declared",
+      "sha256": "dc14fb56dd256afcf00585667a8b8f040f3892b26ee2940ec19cc6c4c7968bac",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/replacement-readiness-summary-2026-04.md",
+      "lines": 95,
+      "status": "not declared",
+      "sha256": "8f7cea7cdb94cfb422f5407f581fb683b8096ab76e74b200b26f3269dd71f464",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/runtime-inventory.md",
+      "lines": 190,
+      "status": "not declared",
+      "sha256": "653346ea1e36dc9d8c3f3737ce8db8df545a12482edfdc55e0b4422653a9b81d",
+      "topic_matches": {
+        "coordination": 1,
+        "storage": 9
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/service_logging_migration.md",
+      "lines": 63,
+      "status": "implemented.",
+      "sha256": "83eb698227ff922965b575f0359a8081e00c70aa03db2bf478d4c1ddb57c48f3",
+      "topic_matches": {
+        "storage": 1,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/shadow-load-test-1k-2026-07-22.md",
+      "lines": 59,
+      "status": "not declared",
+      "sha256": "a2954ffcf87813eb59252388a142e9de6d802f403b0bd6b8ee36e07996b9c6b9",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/staging-readiness-evidence.md",
+      "lines": 191,
+      "status": "not declared",
+      "sha256": "2aa58e511c05ceb475f0719d45c1c48f511e5613fd9a61ea4d2ae9e2f4ea9abe",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/stream-adapter-design.md",
+      "lines": 89,
+      "status": "current architecture note after the WebRTC-only migration.",
+      "sha256": "d0911e9c6e7d7a30b5632f85e5b6ad9c7e9b115654c3cc79d70113c46124aa5f",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/test-lab.md",
+      "lines": 20,
+      "status": "not declared",
+      "sha256": "098faee7a0f8e3a1172138b35c35ef0633535f4a074615e48a722f51a076e4a1",
+      "topic_matches": {
+        "settlement": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/test_report.md",
+      "lines": 610,
+      "status": "not declared",
+      "sha256": "82f9d3b236a8de53882d82d466a3d9c93cee744a9e5a31a54fd7bfae1c18db58",
+      "topic_matches": {
+        "settlement": 2,
+        "coordination": 2,
+        "storage": 5,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/tooling.md",
+      "lines": 37,
+      "status": "not declared",
+      "sha256": "2d9ce7fbb6c6716371243fc7cf6139ce56f89e3ad4104442ca7697a08721eab7",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/transport-refactor-plan.md",
+      "lines": 528,
+      "status": "not declared",
+      "sha256": "20a2387cbb0923dd1f7d6ae042195b7354e1ee9ad66889b15296d386bbad8d5a",
+      "topic_matches": {
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/turn-registry-design.md",
+      "lines": 218,
+      "status": "not declared",
+      "sha256": "796b660386e718574d8fcfbaf8759623688d5d1203405f2c092a9c38ff87a725",
+      "topic_matches": {
+        "authority": 2
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/turn.md",
+      "lines": 341,
+      "status": "proposed implementation specification.",
+      "sha256": "860f09c29a091236a74df9c490e725f735f59ef4d76698bbab629528aeda3939",
+      "topic_matches": {
+        "storage": 2,
+        "authority": 1
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/usage-integrity.md",
+      "lines": 157,
+      "status": "not declared",
+      "sha256": "b0004e1437db818a9783d98eafe70d9c4dc6b35deed48bbbb002247b779f2ff6",
+      "topic_matches": {
+        "coordination": 2,
+        "storage": 3
+      }
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/vocabulary.md",
+      "lines": 16,
+      "status": "not declared",
+      "sha256": "f5fec01d1091b3aa04514361551f7dacddbece9247855aa7ffb3db05834fe6d2",
+      "topic_matches": {}
+    },
+    {
+      "path": "repos/rtk_video_cloud/docs/webrtc-stream-contract.md",
+      "lines": 352,
+      "status": "source of truth for the WebRTC HTTP signaling contract.",
+      "sha256": "d52a0f7af129f9b572d4c795b34d74a87270560cf80cc89c002a914345e3ac8c",
+      "topic_matches": {
+        "authority": 2
+      }
+    }
+  ],
+  "resolution_date": "2026-09-07",
+  "hash_scope": "sha256 and lines preserve the pre-fix audit; post_fix fields record local documentation corrections."
+}

@@ -25,7 +25,7 @@ customer deployment before opening service-specific work.
 | Workspace gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Tracks public-copy versus implementation gaps. |
 | Core platform roadmap | `docs/core-platform-gap-roadmap.md` | Routes private-cloud work to owner repositories. |
 | Product-level evidence wrapper | `docs/product-level-evidence.md` | Defines the workspace evidence artifact, redaction rules, and wrapper command. |
-| LKE migration inventory and gates | `docs/lke-migration-inventory.md` | Source-of-truth current architecture review, service inventory, LKE target summary, and implementation gates. |
+| LKE migration inventory and gates | `docs/lke-migration-inventory.md` | Historical migration decisions and original gates; current instructions are in deployment-operations.md and cloud-deployment-architecture.md. |
 | Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Records that shared broker packaging is retired for the current runtime. |
 | Video cloud runtime deploy | `repos/rtk_video_cloud/docs/automation.md` | Release, deploy, staging evidence, and runner model. |
 | Video cloud release bundle | `repos/rtk_video_cloud/docs/release.md` | Release artifact contents and intended handoff shape. |
@@ -161,11 +161,11 @@ Production-like acceptance bar:
 - EMQX operations are included in runbooks when enabled
 - frontend private-cloud wording matches the actually deployed package, not a
   roadmap superset
-- the migration inventory and gates in `docs/lke-migration-inventory.md` are
-  complete and human-approved before production implementation
-- production Kubernetes YAML, Helm charts, Kustomize overlays, CI/CD deployment
-  pipelines, DNS changes, secret changes, and data movement remain blocked until
-  those gates are approved
+- production rollout satisfies the active deployment, secret-management, HA,
+  and recovery qualification requirements in `docs/deployment-operations.md`,
+  `docs/deployment-secrets-governance.md`, and `docs/backup-restore.md`
+- the historical LKE inventory records original design gates; it does not
+  redefine the authority or availability of current deployment tooling
 
 ### Legacy Linode VM Reference
 
@@ -442,8 +442,9 @@ are operator overrides, not the normal path.
 `reset-staging-k8s` preserves PV/PVC/provider storage by default; use
 `--purge-storage` only for an intentional data-layer wipe. The default full
 E2E run still clears Kubernetes runtime resources and rebuilds pods before
-provisioning. A future in-cluster LKE smoke Job still requires the gates in
-`docs/lke-migration-inventory.md`.
+provisioning. A future in-cluster LKE smoke Job needs an explicit runtime and validation
+design under the active deployment/testing guides; the old migration inventory
+is historical context.
 The public edge design contract is documented in
 `docs/lke-external-haproxy-edge.md`; NodeBalancer is no longer the target public
 edge path.

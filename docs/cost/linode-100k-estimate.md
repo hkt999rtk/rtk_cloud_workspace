@@ -1,6 +1,11 @@
 # AWS Self-Operated K8s 100K Device Reference Estimate
 
-Status: Planning estimate
+Status: dated planning estimate; historical cost evidence.
+
+The quantities and prices below preserve the collected scenario. In particular,
+the NATS line is an old assumption, not a current deployment requirement. Use
+[aws-service-mapping.md](aws-service-mapping.md) for current API/outbox and
+durable Shadow boundaries. Re-costing requires a separate dated pricing update.
 Region: `ap-southeast-1`
 Currency: USD
 Collected: 2026-06-23T00:00:00Z
