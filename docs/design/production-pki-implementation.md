@@ -1692,3 +1692,24 @@ media lifecycle and physical-device qualification remain outstanding.
 Milestone 2 advanced through public SDK integration. Five broad milestones remain:
 migration/device replacement; remaining trust consumers/live sessions; backup/
 recovery and SDK integration; provider/hardware; staging/custody/recovery.
+
+## Android key preservation and verified hardware policy
+
+Android generation now reuses existing EC P-256 aliases and preserves certificate
+and device metadata, with an in-process creation lock. It explicitly selects
+P-256 and verifies actual Android Keystore protection instead of reporting the
+requested setting. Hardware is the default; software acceptance requires an
+explicit development/test option. Explicit StrongBox requires Android 12+ actual
+security-level verification and never falls back. Failed verification preserves
+the key for recovery rather than deleting an identity.
+
+Validation: Android JVM tests, release AAR and instrumentation APK builds passed.
+JVM tests cover curve and protection policy; instrumentation adds retry/reopen
+SPKI and metadata preservation. No connected Android device was available, so
+native execution and physical TEE/StrongBox qualification remain unverified.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Concrete SDK substeps still include
+Android production certificate installation, durable renewal/session replacement,
+and native runtime/provider qualification.
