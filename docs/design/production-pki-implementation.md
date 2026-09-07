@@ -1599,3 +1599,22 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next revocation work: fetching/refresh,
 runtime use/session termination and platform integration/qualification.
+
+## Bounded HTTPS refresh for durable Go CRLs
+
+The file store now fetches a complete issuer set from configured HTTPS endpoints,
+refuses redirects/cookies, bounds response sizes and operation time, and accepts
+DER/PEM or the controller JSON envelope with signed-metadata agreement. Only a
+complete validated set reaches atomic update. Revoking updates are persisted
+before the final identity check returns failure. Controller service-peer scope
+is unchanged; caller configuration supplies authorized endpoints and TLS.
+
+Validation: the full Go SDK suite and auth race tests passed with local HTTPS
+fixtures for valid formats, metadata errors, redirects, cancellation, declared/
+streamed limits, preserved state, revocation and rollback. No live deployment
+qualification was performed.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Runtime refresh scheduling, validation
+at use and session termination remain the next integration steps.
