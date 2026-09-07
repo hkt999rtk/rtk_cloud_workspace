@@ -25,7 +25,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Offline encrypted Root/Brand key and CA signing CLI.
 - [x] Dynamic certissuer selection, signed factory context and exact reservation validation.
 - [x] Runtime issuer-to-product binding and explicit staging legacy fingerprint checks.
-- [ ] Legacy inventory/import automation and staged migration.
+- [x] Read-only legacy inventory, independently approved imports and bounded CRL refresh.
+- [ ] Live staged legacy migration and device replacement qualification.
 - [x] Offline CA CRL signing, immutable CRL publication, and exact consumer acknowledgment gates.
 - [x] Device replacement with bounded overlap, successor acknowledgment and Go file-based installation helpers.
 - [x] Certificate-bound device tokens with live API/refresh/MQTT authentication checks.
@@ -469,3 +470,41 @@ result. The internal recovery, envroot and runner packages passed in that run.
 The targeted CLI recovery tests (`go test ./rtk-cloud -run '^TestRecovery'
 -count=1`) also passed. The disposable OpenBao container and test key material
 were removed after verification.
+
+
+## Governed legacy staging migration continuation
+
+Added read-only, paginated `pkicontroller legacy-inventory` based on persisted
+issuance records, exact DER fingerprints, current entitlements, the target Product
+lineage and existing public legacy CA/CRLs. It rejects registered Root public-key
+aliases and reports incomplete evidence; it never signs, mutates or contacts the
+provider. The controller and console now request/review/approve/execute immutable
+legacy manifests through the existing request-bound MFA proxy. Root-scoped
+operations require distinct PKI Administrator and Security Custodian approvals;
+the requester cannot approve.
+
+A single immutable staging epoch begins with the first successful request and
+ends 2,160 hours later. Each binding is additionally bounded by chain expiry and
+reviewed full-CRL freshness, using the existing strict seven-day CRL validator.
+Approved refresh can update that shorter evidence cutoff within the same epoch,
+without rolling back accepted CRLs, changing the target Root/anchor, overwriting
+Product bindings or reopening revoked/replaced credentials. Runtime verification
+requires exact identity/fingerprint/cutoff membership in a completed approved
+manifest; hand-written legacy bindings no longer authorize devices. Imports
+revalidate source records and entitlements and commit atomically, with audited
+idempotent replay. Explicit schema migration and dedicated runtime-role updates
+include the new provenance tables; production legacy admission remains denied.
+
+Validation: isolated PostgreSQL and race tests cover two-person approval, request
+replay/rebinding, stale entitlements and whole-batch rollback, closed/immutable
+epochs, CRL refresh/rollback/equivocation, shorter evidence expiry, intermediate
+revocation, Root-key aliases, forged manifest membership, concurrency, authenticated
+HTTP routes and execution-body rejection. PKI, PostgreSQL and certissuer suites,
+controller compilation, focused vet, Cloud Admin app/account-client tests and
+JavaScript syntax checks passed. No deployed database, production CA or live
+migration was changed. Actual staged consumer trust installation, device renewal,
+legacy trust removal and hardware/live qualification remain required.
+
+Local migration service commits: Video Cloud `3f76113` and Cloud Admin
+`452d0e2`, following native Raft recovery workspace checkpoint `2622e61`.
+All commits remain local; no PR, push or deployment has occurred.
