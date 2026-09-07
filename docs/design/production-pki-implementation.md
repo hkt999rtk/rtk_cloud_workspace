@@ -1973,3 +1973,24 @@ Five broad milestones remain: migration/device replacement; remaining trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery. Next Android work is CRL refresh and existing-owner
 teardown, with host and operational recovery qualification still required.
+
+## Android authenticated CRL refresh transport
+
+The Android CRL store now fetches a configured HTTPS issuer set with a shared
+network deadline, cancellation and bounded responses. It disables redirects,
+cookies/cache and transparent retries while preserving caller-provided TLS/auth
+configuration. DER, PEM and controller JSON are decoded; envelope metadata must
+match signed content. All fetches finish before durable update, and a revoking
+update persists before refresh reports revocation. Owned HTTP resources close.
+
+Validation: full JVM suite and release/test builds passed. Twelve API 35 tests
+passed, including redirect refusal, controller metadata mismatch/acceptance,
+revocation persistence and stalled-fetch cancellation preserving state. JVM tests
+also cover DER/PEM and bounds. The emulator was stopped after the run. No live
+controller/distribution authorization or owner lifecycle qualification is claimed.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next needs scheduled CRL
+refresh and existing-owner teardown, with host and physical/live qualification
+still outstanding.
