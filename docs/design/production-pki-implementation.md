@@ -19,7 +19,7 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Account Manager PKI authorization/API with request-bound RS256 assertions.
 - [x] Sealed one-time bootstrap, including existing installations and concurrent starts.
 - [x] Last-administrator protection, including concurrent account/role removals.
-- [ ] Independently approved administrative recovery.
+- [x] Independently approved administrator recovery to a verified active account.
 - [x] OIDC assurance and recent-authentication enforcement; refresh grants no new MFA.
 - [x] Cloud Admin lifecycle UI, same-account OIDC MFA callback and public artifact export.
 - [x] Offline encrypted Root/Brand key and CA signing CLI.
@@ -67,7 +67,7 @@ Validated against an isolated PostgreSQL 16 container, not any shared environmen
 - Go SDK certificate-bundle authentication package.
 
 The full proposed plan is not complete. Immediate next delivery stages are
-administrative recovery, real custody/escrow evidence, remaining
+real recovery/custody/escrow evidence, remaining
 trust domains, replacement and CRL publication, least-privilege deployment,
 backup/restore, migration tooling, and live qualification. Production OIDC MFA
 assurance and real approver/custodian account identifiers have been requested;
@@ -107,7 +107,23 @@ actual consumer installation remain separate work.
 Added sealed last-administrator protection at the database boundary, including
 user disablement/demotion, assignment removal and canonical system-role changes.
 Concurrent removals preserve one administrator under read-committed and
-repeatable-read isolation. Two-person administrative recovery remains pending.
+repeatable-read isolation. Two-person administrative recovery is implemented in the following stage; live qualification remains pending.
 
 No PRs have been created and nothing has been pushed. Work remains local on
 `codex/production-pki-hierarchy` as requested.
+
+## Administrator recovery continuation
+
+Migration 077 and the Account Manager API now implement a one-hour recovery
+request with immutable target/reason digest, independent PKI Administrator and
+Security Custodian approvals, live role revalidation and atomic administrator
+grant. The requester and target cannot approve. Passwords and bootstrap sealing
+are preserved. Cloud Admin exposes the workflow and can obtain recovery MFA
+authority directly from Account Manager during a PKI controller outage.
+
+Validated with PostgreSQL and the race detector: independent approvals, changed
+digests, stale MFA, expiration, disabled targets, revoked approver roles, concurrent
+execution and single audit/grant behavior. API tests bind the actor to verified
+JWT claims. Console tests cover same-origin/session requirements and controller
+outage recovery. API, auth, user-cache, console and account-client regression
+suites pass. Real IdP/custodian recovery and database disaster drills remain open.
