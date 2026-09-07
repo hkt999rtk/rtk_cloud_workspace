@@ -1562,3 +1562,21 @@ explicit. Five broad milestones remain: migration/device replacement; remaining
 trust consumers/live sessions; backup/recovery and SDK integration; provider/
 hardware; staging/custody/recovery. Native provider implementation/qualification
 and verifier revocation freshness are still outstanding.
+
+## Explicit current-CRL validation for Go bundles
+
+The Go bundle API now offers mandatory-CRL validation and TLS construction modes.
+They require independent trust plus one signed, current, full direct CRL for each
+chain issuer, reject revoked leaves/intermediates and unsupported CRL scopes, and
+reparse bounded signed DER instead of trusting mutable object fields. Path-only
+APIs remain distinct and must not be treated as revocation evidence.
+
+Validation: the complete Go SDK suite passed. Signed fixtures exercise valid
+bundle/CRL combinations, freshness/signature/coverage failures, scoped rejection,
+leaf/intermediate revocation and TLS failure without CRLs. Live publication,
+refresh and persisted anti-rollback state remain outstanding.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next revocation work includes durable
+CRL update/freshness integration and equivalent platform verifiers.
