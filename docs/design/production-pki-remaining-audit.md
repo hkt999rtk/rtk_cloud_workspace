@@ -825,3 +825,41 @@ staging/custody/recovery qualification. This was a prerequisite correction, not 
 new milestone. Next remains durable private server signing claims, gateway runtime
 integration, and domain-specific recovery/revocation and host adoption. No push,
 PR, remote CI, deployment or custody operation occurred. Goal remains active.
+
+
+## Durable private server signing claims checkpoint (2026-09-08)
+
+Video Cloud `f304ec1` adds pki_server_issuances with environment/domain/caller/
+request identity, original CSR and DNS set, context digest, pinned issuer,
+single-owner claim token and persisted result. Only the first committed claim
+receives signing ownership; pending retry never releases it. Completion and replay
+check the original request, approved server DNS policy, exact P-256 server leaf
+profile/key/SANs, bounded original-claim lifetime, current signed root/intermediate
+CRLs and registry lifecycle status. Claim tokens are not serialized.
+
+Scope and issuer/root row locks coordinate signing completion with lifecycle
+changes. Pending server work and unexpired leaves block CA retirement; locally
+revoked unexpired leaves conservatively remain blockers until server publication/
+consumer evidence is implemented. Exact database grants permit issuer claim/result
+writes and public CRL reads while withholding request/policy/context/revocation
+updates. Verifiers cannot read server claim tokens. Schema/grant migration is
+explicit; no runtime mode is enabled by this change.
+
+Validation: full Go suite; full PKI/PostgreSQL/controller/certissuer race suites
+with local PostgreSQL; focused vet. Concurrent requests yield one owner; timeout
+retry, changed context, wrong owner, incorrect SAN/EKU/lifetime, changed policy,
+wrong domain and disabled roots are denied. CRL revocation blocks replay and
+completion. Pending/live retirement checks pass. A restricted-role integration
+creates/completes/replays a real signed server certificate and denies immutable
+metadata/revocation writes and verifier token reads. App regression coverage also
+passes after sharing only the online lineage-lock helper. The local fixture was
+stopped/removed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: provider/HTTP gateway composition
+with the approved server issuer and durable claims, followed by uncertain-outcome
+recovery, revocation publication and host adoption. The legacy gateway handler is
+not yet switched; this checkpoint supplies registry primitives and does not claim
+end-to-end server issuance migration. No push, PR, remote CI, deployment or custody
+operation occurred. Goal remains active.
