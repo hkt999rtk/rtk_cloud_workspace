@@ -33,6 +33,7 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Cumulative Root distrust, consumer acknowledgment gates, atomic local root state and opt-in API TLS reload.
 - [x] Explicit reconciliation of historical pending Root removals with governance and acknowledgment gates.
 - [x] Administrator reconciliation of uncertain renewal results from stored provider certificates.
+- [x] Factory outcome reconciliation and atomic Product-mode signing journal/binding completion.
 - [ ] Remaining trust-consumer adapters, direct media termination and live trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
@@ -330,3 +331,39 @@ remote CI or deployment was performed.
 
 Local renewal-recovery commits: Video Cloud `c34f7a3`, Cloud Admin `158d232`,
 following workspace checkpoint `165e59d`.
+
+
+## Uncertain factory signing recovery continuation
+
+Added a recent-MFA administrator endpoint and Cloud Admin form for existing
+Product-mode factory signing claims. Recovery checks the original public CSR DER
+hash against the durable journal, exact issuer pin/request fingerprint/device,
+reservation scope and cancellation state, then reads the existing certificate
+from the pinned OpenBao mount. Shared result validation checks the requested key,
+identity, full chain, current lineage, validity and parent margin.
+
+Normal Product-mode completion now atomically commits the runtime certificate
+binding, signing journal result and audit using the original claim token. Recovery
+uses the same transaction. Concurrent completions converge without another
+signature; conflicting certificates and revoked/replaced bindings are rejected.
+Identical unrevoked bindings stranded by the former two-write flow can be adopted.
+The factory service retrieves recovery through its original authorized request
+and retains ownership of enrollment evidence/projection/reservation completion.
+
+Validation uses actual runtime/PKI migrations, PostgreSQL repositories, the factory
+HTTP handler and a simulated OpenBao HTTP server. Tests cover lost signing replies,
+normal issuance, exact replay without re-signing, concurrent normal/recovery
+completion, injected journal-write rollback, canceled reservations, compromised
+issuers, stranded/revoked bindings, wrong CSR/issuer/token, request-bound admin
+assertions and factory-caller denial. Regression/race and console checks are run
+locally; provider transport is simulated, not live qualification.
+
+No schema additions, production keys, deployment, push, PR or remote CI were
+introduced. Unknown serial investigation, cancellation after uncertain signing,
+remaining trust consumers, least-privilege deployment, backup/restore, legacy
+migration and live qualification remain open.
+
+Local factory-recovery commits: Video Cloud `4f29909`, Cloud Admin `c9f9a4f`,
+following workspace checkpoint `37b3854`. PKI, certissuer, factory enrollment and
+PostgreSQL regression/race suites, controller compilation, focused vet, console
+application/account-client tests and JavaScript syntax checks passed.
