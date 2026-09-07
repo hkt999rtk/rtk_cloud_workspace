@@ -4033,3 +4033,39 @@ receipts/publication/consumer acknowledgment and recovery verification, followed
 by actual host adoption. Read-only discovery requires writers/tidying fenced and
 does not establish complete external history, live RPO/RTO or restored-key use.
 Goal remains active. No push, PR or remote CI.
+
+
+## 2026-09-08 — Private server revocation publication protocol
+
+Video Cloud `742a768` adds durable server revocation work plus authenticated
+`revoke-server`, `publish-server-revocation`, and `finalize-server-revocation`
+controller routes. The original receipt is denied before provider work, including
+replay and recovery. Idempotent revocation returns the persisted timestamp;
+conflicting reasons are rejected. The publisher uses only the pinned independent
+server mount, validates the full signed CRL and target serial, and reuses fresh
+current evidence while consumers acknowledge it. The provider cannot create ACKs.
+Finalization checks signed current CRL metadata and every required consumer's exact
+digest; prior finalization does not bypass a new CRL or changed consumer policy.
+
+Explicit schema/grant refresh is required for `pki_server_revocations`; controllers
+can manage receipts and verifiers can read them, while issuer/verifier mutation
+is denied. Regenerate exact-mount OpenBao controller policies for revoke/rotate/read
+permissions. Signing tokens remain unable to revoke/list. No runtime mode enabled.
+Server retirement conservatively remains blocked by unexpired leaves until actual
+TLS consumer enforcement and session handling are integrated; publication receipts
+alone do not prove a host consumed the evidence or terminated existing connections.
+
+Validation passed: full Go suite; PKI/Postgres/OpenBao/controller/certissuer race
+suites with local PostgreSQL; focused vet; real OpenBao 2.5.5 revoke/rotate/read,
+restricted token boundaries and revoked-result recovery denial. Tests exercise
+failure-before-publication, retry/digest stability, missing serial in CRL, new and
+missing consumer ACKs, CRL advancement, corrupted restored metadata, HTTP assertion
+binding and restricted database roles. The later-CRL fixture preserves the original
+revocation timestamp, and metadata-corruption simulation disables the immutable
+trigger only inside its disposable SQL schema. Local fixtures removed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next: server TLS verification,
+CRL refresh/consumer integration and recovery verification, followed by real host
+adoption. No push, PR, remote CI, live deployment or custody operation. Goal active.
