@@ -2302,3 +2302,22 @@ Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next is durable acknowledgment-attempt and
 predecessor retirement, plus session replacement orchestration and trust freshness.
+
+## JavaScript durable acknowledgment and retirement
+
+Added active-successor/saved-transition checks, retirement-before-network intent,
+fresh successor mTLS acknowledgment and immutable success records. Uncertain
+responses leave predecessor use blocked. Protected key/CSR/provisioning and mTLS
+agent helpers now reject retirement markers; completed retries avoid HTTP work.
+Already-loaded sessions still require host teardown, and keys remain in custody.
+
+Validation: 38 JavaScript tests and TypeScript build passed. A local mTLS server
+verifies the successor identity and pre-existing retirement marker, then drops its
+first response. Tests cover persistent predecessor denial, retained key bytes,
+failed rollback by removing the transition alone, successful retry and no-network
+completed retry. Physical/snapshot anti-rollback and live operation remain unqualified.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next is resumable JavaScript lifecycle
+orchestration with required session replacement, then trust freshness integration.
