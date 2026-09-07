@@ -36,7 +36,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Administrator reconciliation of uncertain renewal results from stored provider certificates.
 - [x] Factory outcome reconciliation and atomic Product-mode signing journal/binding completion.
 - [x] Go owner lifetime cancellation, bounded WebSocket heartbeat and direct Pion device-peer teardown.
-- [ ] Remaining trust-consumer adapters, production firmware media termination and live trust/session qualification.
+- [x] C firmware MQTT-owner teardown and session-bound MMF frame queues (host/ARM validation).
+- [ ] Remaining trust-consumer adapters and live firmware/trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [x] Explicit controller/certissuer/verifier database grants with restricted-role issuance/recovery tests.
@@ -575,3 +576,26 @@ remains disabled.
 
 Local Ameba commit: `d31cc34`, following workspace checkpoint `1886896`.
 No PR, push, remote CI or deployment was performed.
+
+
+## Authenticated trust consumer synchronization continuation
+
+Video Cloud `internal/pkitrust.Consumer` now composes bounded authenticated policy
+fetch, expected environment/domain verification, monotonic disk installation,
+runtime reload and exact controller acknowledgment. Management mTLS uses explicit
+independent server roots and a workload client identity. Redirects, insecure TLS,
+malformed/oversized responses and scope substitution fail before installation.
+The callback must install both the root pool and cross-certificate distrust check;
+failed reloads produce no acknowledgment. Failed or uncertain acknowledgments
+preserve removed trust and are retried safely after restart without restoring
+bootstrap roots. A newer controller policy requires another synchronization.
+
+Local real-mTLS tests cover consumer identity, runtime failure, exact evidence,
+acknowledgment retry/restart, cancellation, rollback and hostile responses. Race
+tests for pkitrust and apiapp and focused vet pass. This is a shared consumer
+primitive: automatic API/broker worker composition, scheduling, CRL installation,
+other trust domains and live/hardware qualification remain incomplete. No disk-only
+command claims runtime installation; production remains disabled.
+
+Local Video Cloud commit `72fd90a`, following workspace checkpoint `525a5e7`.
+No PR, push, deployment or remote CI was performed.
