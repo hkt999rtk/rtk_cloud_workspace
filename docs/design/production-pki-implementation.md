@@ -2140,3 +2140,26 @@ Milestone 2 advanced. Five broad milestones remain: legacy migration/device
 replacement; remaining trust consumers/live sessions; backup/recovery and SDK
 integration; provider/hardware compatibility; staging/custody/recovery
 qualification. Next is periodic iOS CRL refresh bounded by signed trust expiry.
+
+## iOS periodic CRL refresh worker
+
+Added a blocking host-owned refresh loop with immediate fetch, bounded interval,
+retry only while durable trust remains valid, signed-expiry network deadlines and
+cancellation of waiting/I/O. Revocation or lost trust terminates the worker;
+existing trust guards independently close owners. Missing journals are never
+recreated. Hosts must supervise workers; physical background delivery remains
+unqualified.
+
+Validation: 85 host Swift tests and the simulator build passed. Integrated fixture
+coverage is 503-to-revocation retry, persistence, termination and real local
+WebSocket teardown. Focused tests cover expiry preventing another fetch, long-wait
+cancellation, missing trust and invalid configuration. Shared downloader tests
+cover timeout and cancellation of I/O.
+
+Milestone 2 advanced. Five broad milestones remain: legacy migration/device
+replacement; remaining trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware compatibility; staging/custody/recovery
+qualification. The local iOS CRL validation, durable storage, download, refresh and
+owner sequence is implemented. Next is a requirement-by-requirement audit of the
+remaining implementation versus operational/physical qualification gates; this
+commit does not claim those broader milestones are finished.
