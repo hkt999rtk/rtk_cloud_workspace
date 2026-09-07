@@ -38,7 +38,7 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [x] Explicit controller/certissuer/verifier database grants with restricted-role issuance/recovery tests.
-- [ ] OpenBao Raft deployment and scoped workload policies.
+- [x] OpenBao three-node TLS Raft deployment profile and exact-issuer workload ACL rendering.
 - [ ] Backup/recovery tooling and SDK installation support.
 - [x] Focused unit, PostgreSQL and race-detector tests for implemented controls.
 - [ ] Live provider end-to-end and hardware compatibility validation.
@@ -390,3 +390,44 @@ qualification remain unfinished. No shared database or deployment was changed.
 Local database-role commit: Video Cloud `4781830`, following workspace checkpoint
 `731e5f7`. PostgreSQL restricted-role issuance/recovery, PKI/certissuer regression
 and race suites, command compilation, reserved-role validation and vet passed.
+
+
+## OpenBao HA and workload policy artifact continuation
+
+Added a separate official-chart-based three-node TLS Raft profile with persistent
+Raft/audit volumes, node anti-affinity, one-unavailable disruption budget, non-root
+containers and restricted API ingress. A required local Kustomize post-renderer
+replaces the pinned chart's TLS-skipping readiness probe and removes its unsuitable
+test pod. The API address references a pod variable defined before expansion.
+No existing file-storage installation or PVC is converted by this profile.
+
+Added registry-backed `render-openbao-policy` output with exact Product mount paths:
+controller provisioning/public recovery is separate from leaf-signing authority.
+No Root/Brand generation, private-key export, KV, cross-mount wildcard or deletion
+permission is granted. The runbook binds reviewed policy lists to exact Kubernetes
+service accounts/namespaces and audience-bound projected tokens. Image provenance,
+transport certificates, quorum custody and credential provisioning remain real
+operator inputs rather than fabricated artifacts.
+
+Validation: rendered official Helm chart 0.28.3 with upstream server baseline
+2.5.5, passed structured manifest checks and post-renderer shell syntax, PKI ACL
+scope tests, controller compilation and vet. No Helm install, Kubernetes apply,
+provider login, initialization or key generation occurred. Real HA, token-rotation,
+ACL-denial, audit and restore drills remain in the live qualification checklist.
+The next implementation work includes backup/restore and legacy migration tooling,
+remaining trust adapters/domains and hardware/client integration.
+
+
+The HA baseline image is pinned to OCI digest
+`sha256:6150c4a6b62067db6141c8da7a6a6b5763f4f47c315343d0c848b40fecdfd452`.
+The actual v2.5.5 binary accepted the HCL in verify-only mode with network disabled
+and disposable local transport/Kubernetes fixtures; no cluster initialization or
+unseal occurred. Its unsupported legacy `disable_mlock` field was removed.
+Controller provisioning/inventory/recovery now share signing's bounded projected-
+token reauthentication after definite 403 responses. Tests cover exact body
+replay, a one-connection transport, and preserved no-retry behavior for uncertain
+mutations. PKI, OpenBao, PostgreSQL and certissuer race/regression suites passed.
+
+Local HA/policy service commit: Video Cloud `4156f45`, following database-role
+workspace checkpoint `15e4d84`. Full implementation and live qualification remain
+unfinished; the active goal is not marked complete.
