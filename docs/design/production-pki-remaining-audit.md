@@ -314,3 +314,38 @@ Five broad milestones remain: legacy migration/device replacement; trust consume
 live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
 staging/custody/recovery qualification. No push, PR, remote CI, deployed relay
 change or custody operation occurred. Goal remains active.
+
+
+## Recurring TURN controller checkpoint (2026-09-08)
+
+Video Cloud commit `c8b115d` adds the separate `pkiturn` operator workload with
+sweep/watch/health commands. It composes persisted TURN grant validation, current
+App registry/CRL verification and confirmed coturn cancellation. Watch waits ten
+seconds after each scan. It requires explicit dedicated-relay configuration,
+shared signaling Redis, verifier-only database access, numeric loopback CLI and
+a private password file. Production remains gated. No schema migrations or
+coturn configuration mutations occur. Optional env/systemd assets and binary
+packaging are included; they are not enabled or deployed.
+
+Atomic health state records scan start/completion and aggregate counts. Failed,
+stale/future results and stalled scans are unhealthy; last completion older than
+30 seconds fails health. Dependency failures degrade health while unverifiable
+grants remain denied where coturn is reachable. Monitors must invoke the health
+command; process liveness alone does not establish scan freshness. Scan/socket/
+verification contexts remain bounded; no hard fleet cutoff is claimed.
+
+Validation: full Go suite, targeted race suites, script checks and release bundle
+verification passed. An opt-in race integration used disposable PostgreSQL 16,
+Redis 8.6.0 and coturn 4.6.3: the assembled one-shot process preserved a recorded
+admin grant, cancelled an unknown grant, cancelled the recorded grant after close,
+and failed health after a broken registry query. Watch failure/recovery/shutdown
+are unit-tested. App certificate/CRL decisions remain separately tested; this
+runtime fixture used the explicit admin policy. Both task containers and the
+local Redis process were shut down and verified terminal afterward.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: review remaining host/domain wiring
+and TURN grant/session association, plus cutoff/load/hostile-client qualification.
+No push, PR, remote CI, deployed relay change or custody operation occurred.
+Goal remains active.
