@@ -29,7 +29,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Offline CA CRL signing, immutable CRL publication, and exact consumer acknowledgment gates.
 - [x] Device replacement with bounded overlap, successor acknowledgment and Go file-based installation helpers.
 - [x] Certificate-bound device tokens with live API/refresh/MQTT authentication checks.
-- [ ] Trust-consumer installation/refresh, Root distrust and active-session eviction.
+- [x] Device WebSocket revalidation, MQTT authentication leases and broker cache/session operator tooling.
+- [ ] Trust-consumer installation/refresh, Root distrust, direct media termination and live session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [ ] OpenBao Raft deployment, scoped workload policies and database grants.
@@ -190,3 +191,41 @@ next work alongside the other unfinished production milestones.
 
 Local token-revocation service commit: Video Cloud `5039ecd`, following workspace
 checkpoint `7754f9a`. No PR, push, deployment or remote CI run was performed.
+
+## Active device session continuation
+
+Product PKI device WebSockets now revalidate their original token immediately
+and every ten seconds with a five-second check deadline, closing idle rejected
+connections and canceling session work. Closure targets the original connection
+so a successor remains connected. Device/camera MQTT HTTP authentication now
+returns a maximum 60-second absolute session lease and trusted certificate/token
+provenance attributes for broker inspection.
+
+The separate `pkibroker prepare|sweep|watch` operator command verifies disabled
+node authentication caching, resets authentication/authorization caches, inventories
+sessions before mutations, rechecks rejected identities and disconnects exact
+rejected device client IDs. Old device sessions without provenance are removed;
+valid successor, app and internal-server identities are preserved. Broker errors
+and unsupported/unknown policy are not reported as successful revocation. Watch
+retries failures, and lease expiry is the fallback for new admissions. Reserved
+device client-ID prefixes and broker-owned provenance attributes are documented.
+
+Added build/release inclusion, optional systemd unit, separate operator environment
+example and EMQX policy fragment. No production enablement is introduced. The
+broker credential is isolated from the public API; deployment is explicit.
+
+Validation: race tests cover real local WebSocket idle closure, successor survival,
+expired/invalid checks and cancellation. Simulated EMQX API tests cover cache policy,
+reset failure, missing inventory, multi-page inventory before deletion, exact
+eviction, vanished sessions and changed identities. MQTT response tests verify
+lease caps and provenance. HTTP/API, WebSocket/coordinator and cloud-handoff
+regressions, vet, command build and package-script syntax checks pass.
+
+EMQX API behavior was checked against e5.9.0 source. No actual broker, cluster,
+cache reset, shared service or device was changed. Live broker expiry/cache/
+reconnect-load qualification, direct peer-to-peer WebRTC media termination,
+presigned URL/offline-consumer revocation and broader PKI production milestones
+remain unfinished. Closing a control socket is not proof that media stopped.
+
+Local active-session service commit: Video Cloud `5bf3495`, following workspace
+checkpoint `fc66594`. No PR, push, deployment or remote CI run was performed.
