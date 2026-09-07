@@ -2262,3 +2262,24 @@ Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next JavaScript work is production renewal
 transport and durable response validation before guarded activation.
+
+## JavaScript production renewal transport and receipt
+
+Added fresh predecessor mTLS submission of saved production renewal requests.
+HTTPS-only endpoints, disabled reuse/session cache, 30-second maximum total timeout,
+128-KiB response bound and AbortSignal cancellation constrain the native transport.
+Responses require exact request/successor-key/leaf-chain/profile binding, issuer UUID
+and live overlap before immutable receipt persistence. Saved receipts revalidate
+without another network request. Active identity and predecessor are unchanged.
+
+Validation: 38 JavaScript tests and TypeScript build passed. Local mTLS server
+fixtures verify client authentication/request body, valid successor receipt,
+wrong-key/redirect/oversize rejection, timeout, server-triggered cancellation after
+request arrival and receipt reuse without new HTTP work. This is local mTLS evidence,
+not live deployment or complete JavaScript revocation qualification.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next JavaScript work is guarded successor
+installation/activation and durable acknowledgment/retirement, followed by trust
+freshness and owner integration.
