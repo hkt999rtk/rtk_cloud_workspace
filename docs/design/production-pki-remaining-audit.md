@@ -24,8 +24,9 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 
 1. **JavaScript key and identity lifecycle.** In
    `repos/rtk_cloud_client/packages/javascript/src/index.ts`, `generateDeviceKey`
-   generates an RSA PEM and calls `writePemFile`, whose `writeFile` uses default
-   overwrite behavior. `storeDeviceCert` parses PEM then writes it without an
+   originally generated an RSA PEM with default overwrite behavior. The subsequent
+   JavaScript provisioning checkpoint fixes this with default P-256, explicit RSA
+   compatibility and exclusive publication/reuse. `storeDeviceCert` parses PEM then writes it without an
    independently anchored chain/profile check. `buildMtlsAgent` passes files to
    `https.Agent`; this is not a local device-chain revocation policy.
    `renewDeviceCert` still calls `/api/device/renew_certificate`. Implement a

@@ -2179,3 +2179,24 @@ unproven other-domain coverage separately from live/physical evidence. Corrected
 the stale introductory next-work summary; no broad milestone was marked done.
 See production-pki-remaining-audit.md for paths, limits and next implementation
 order. This was source/document inspection, not a new runtime qualification run.
+
+## JavaScript retry-safe P-256 key provisioning
+
+Replaced default overwriting RSA generation with P-256 initial provisioning and
+explicit legacy RSA selection. Existing keys are privately read, ownership/type/
+size/permissions checked and preserved; mismatched algorithms and symlinks fail.
+Concurrent creation publishes a fully fsynced key through an exclusive hard link,
+then syncs the parent directory. CSR creation uses the same protected key reader.
+POSIX storage is required; Windows ACL and hardware providers are not implemented.
+
+Validation: 36 JavaScript tests passed, including twelve concurrent provisioners,
+exact retry preservation, legacy RSA selection, corrupt/exposed/symlinked key
+rejection, and external OpenSSL CSR signature/public-key verification. TypeScript
+build passed after import cleanup. No production CA keys or deployment changed.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next JavaScript work is independently
+anchored certificate installation and durable identity/renewal state. This helper
+alone cannot detect a missing key belonging to an installed identity; it must not
+be used as automatic identity repair.
