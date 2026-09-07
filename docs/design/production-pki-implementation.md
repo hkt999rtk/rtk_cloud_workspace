@@ -1994,3 +1994,24 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next needs scheduled CRL
 refresh and existing-owner teardown, with host and physical/live qualification
 still outstanding.
+
+## Android trust-bound WebSocket owners
+
+A closeable Android trust guard now revalidates durable CRL/chain state and cancels
+its owner token on revocation, expiry or unavailable state. Checks run at the
+configured interval or nearest signed expiry; cancellation is permanent and
+closes its worker. The public OkHttp WebSocket factory binds that token for the
+connection lifetime, handles pre-attachment cancellation, rejects late reopening
+and post-close sends, and removes its handler at terminal close/failure.
+
+Validation: full JVM suite and release/test builds passed. Guard tests cover
+expiry-before-poll, failure, non-resurrection and close. Twelve API 35 tests passed,
+including public-factory mTLS WebSocket establishment, HTTPS CRL revocation,
+automatic cancellation and rejected later sends. The emulator was stopped after
+testing. Physical suspension, root-policy replacement and other owners still
+require host lifecycle qualification.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next needs scheduled CRL
+refresh and remaining owner/host wiring; physical/live qualification remains open.
