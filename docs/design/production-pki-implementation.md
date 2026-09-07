@@ -2036,3 +2036,21 @@ now have local runtime evidence. Five broad milestones remain: migration/device
 replacement; remaining trust consumers/live sessions; backup/recovery and SDK
 integration; provider/hardware; staging/custody/recovery. Remaining platform/host
 owner integration and operational/physical qualification are still outstanding.
+
+## iOS malformed test-key import handling
+
+Replaced unchecked PKCS#8 inner indexing with bounded canonical DER parsing.
+Version, supported RSA/P-256 identifiers, nonempty payload and complete envelope
+consumption are required. Optional attributes are not supported. Malformed input
+now throws before native import rather than risking an out-of-bounds crash.
+
+Validation: 79 host Swift tests and the iOS simulator build passed. Regression
+coverage includes every truncated prefix of short/long envelopes, oversized and
+noncanonical lengths, wrong fields and trailing bytes. These are envelope parser
+tests, not hardware key-import qualification.
+
+Milestone 3 advanced; no broad milestone closed. Five remain: legacy migration/
+device replacement; remaining trust consumers/live sessions; backup/recovery and
+SDK integration; provider/hardware compatibility; staging/custody/recovery
+qualification. Next substantive SDK gap is iOS revocation freshness and existing
+owner lifecycle integration; physical and operational evidence remains open.
