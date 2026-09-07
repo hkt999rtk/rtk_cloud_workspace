@@ -1501,3 +1501,22 @@ independent anchors. Five broad milestones remain: migration/device replacement;
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Revocation freshness, live session
 validation and other-platform consumer audits remain unfinished.
+
+## Go certificate-bundle path validation
+
+The Go bundle consumer previously checked adjacent signatures without establishing
+independent root trust or full path validity. Parse/validate/TLS construction now
+require caller-configured roots, perform ClientAuth x509 path verification and
+match the exact supplied chain. JSON/chain bounds are enforced, and TLS identity
+construction revalidates production key policy. Existing callers without root
+configuration must migrate; roots must not be derived from the received bundle.
+
+Validation: the full Go SDK suite passed with `GOWORK=off go test ./...`. Tests
+cover independently rooted ECDSA/Ed25519/RSA bundles, missing/unrelated/nil roots,
+expired issuers with valid leaves, size bounds and direct TLS policy bypass.
+No live service or revocation freshness qualification was performed.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android/native bundle trust and
+revocation freshness remain among the next consumer gaps.
