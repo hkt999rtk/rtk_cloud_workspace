@@ -1074,3 +1074,27 @@ Validation: race-enabled recovery suite passed with native physical backup,
 archive-command, cross-timeline replay and automated rehearsal enabled (73 seconds).
 Focused CLI tests, recovery vet and Linux CLI build passed. Five top-level
 milestones remain open; these local fixture results do not qualify production.
+
+## Provider/registry recovery lineage check continuation
+
+Added `pkicontroller recovery-check ISSUER_ID EXPECTED_ROOT_SHA256` for one
+reviewed Product issuer. The independent Root pin prevents replacing both stores
+with a new trust domain and treating their agreement as recovery. A bounded,
+read-only repeatable-read database transaction checks indexed/document state,
+Product/Brand/Root scope and ancestry, CSR key bindings, certificate metadata,
+constraints and signatures. Active/retiring members are permitted; revoked or
+inconsistent state fails before provider access.
+
+OpenBao lookup follows the device role's actual issuer reference, reads public
+issuer metadata and compares its full chain with the registry. A separate rendered
+recovery ACL permits only exact-mount role/issuer metadata reads. The command does
+not modify PKI data, sign certificates, export keys or release recovery fences.
+Its `issuer-lineage-matched` result is not private-key usability, leaf/CRL or
+whole-inventory qualification. Controlled issuance, post-backup reconciliation,
+matched snapshot acceptance and live custody checks remain unfinished.
+
+Validation: race-enabled PKI, OpenBao adapter and controller-app tests passed.
+A disposable PostgreSQL 16 instance exercised matching state, independent Root-pin
+rejection, provider mismatch and indexed/document disagreement. Recovery ACL and
+argument tests passed, along with controller build and focused vet. The temporary
+database was removed. Live OpenBao restore/key usability remains unqualified.
