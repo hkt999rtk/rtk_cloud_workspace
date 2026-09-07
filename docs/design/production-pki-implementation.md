@@ -3070,3 +3070,30 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Next: pending App signing reconciliation,
 App revocation publication/consumers and remaining domain adapters. No push, PR,
 remote CI, deployment or custody operation was performed. The full goal remains active.
+
+
+## App uncertain-outcome reconciliation (2026-09-08)
+
+Video Cloud `06a11d2` adds the authenticated `reconcile-app` controller endpoint.
+A fresh MFA PKI administrator supplies the original caller/request and provider
+serial; the controller loads the original CSR/subject/TTL/digest from durable state.
+It reads an explicitly unrevoked stored certificate through the exact provider
+mount and commits through the normal App completion transaction. Recovery never
+signs, resets a claim, or accepts a caller-supplied replacement CSR. Repeated recovery
+and original-owner completion preserve an identical result; different certificates
+conflict. Internal signing tokens cannot serialize to JSON.
+
+Validation: full Go suite and focused pki/certissuer/pkicontrollerapp race suites
+passed. PostgreSQL tests cover delayed and repeated recovery, original-owner races,
+wrong caller/issuer, failed provider reads and body/environment/mTLS-bound HTTP
+authorization. Real OpenBao 2.5.5 lookup/recovery/replay passed with the rendered
+controller ACL; the same credential was denied signing. Disposable containers
+were used, without live provider or custody operations.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Known-serial App outcome recovery is
+implemented. Unknown-serial evidence discovery, App revocation publication/consumers,
+provider backup adapters and remaining domains are not complete. Next: App revocation
+publication and consumer enforcement. No push, PR, remote CI or deployment occurred.
+The full goal remains active.

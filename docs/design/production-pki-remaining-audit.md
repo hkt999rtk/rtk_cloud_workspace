@@ -61,8 +61,9 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    are now implemented in Video Cloud `4899d2f`, with local OpenBao/PostgreSQL
    coverage. App runtime registry selection, durable single-owner claims, response validation
    and status-checked replay are implemented behind an opt-in setting in Video
-   Cloud `4532ff8`. Pending-outcome recovery, App revocation publication and live
-   consumer enforcement remain. Configured provider response validation was
+   Cloud `4532ff8`. Known-serial pending-outcome recovery is implemented in `06a11d2`.
+   Provider evidence discovery for unknown serials, App revocation publication,
+   backup/restore adapters and live consumer enforcement remain. Configured provider response validation was
    implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
    rejection of valid leaves without the optional Basic Constraints extension.
    Replacement and runtime verification also require domain-specific review.
