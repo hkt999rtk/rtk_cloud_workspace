@@ -2463,3 +2463,27 @@ compatibility; staging/custody/recovery qualification. JavaScript host supervisi
 policy replacement and deployment qualification still need evidence. Next concrete
 implementation work: Go durable acknowledgment-attempt and predecessor retirement,
 followed by native provider integration and domain/host coverage.
+
+## Go durable acknowledgment and predecessor retirement
+
+Bound saved P-256 renewals to predecessor version/fingerprint and validated saved
+CSR/key material. Installation now checks the expected predecessor and persists
+response/transition records before publishing current. Added durable acknowledgment
+attempt and predecessor retirement before HTTP, confirmed acknowledgment afterward,
+and fresh native successor mTLS with bounded transport. SDK file loaders reject
+retired identities and symlink aliases; current state requires a matching transition.
+Retries repeat directory syncs and completed acknowledgment avoids another HTTP call.
+
+Validation: full Go suite and race checks passed. Native mTLS fixtures cover lost
+acknowledgment response, retirement present before HTTP, conflict/cancellation before
+HTTP, restart/replay, stale competing installation, overlap-expired current retry,
+old-key reuse/rollback/alias denial, and missing/corrupt CSR/key/transition data.
+Private POSIX parent storage and host lifecycle serialization remain required; no
+physical recovery, remote services or production custody were exercised.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Milestone 3 advanced. Next: mandatory Go
+renewal CRL integration and resumable session-replacement coordination, then native
+provider and domain/host gaps. The audit now distinguishes those remaining gaps
+from the acknowledgment/retirement state implemented here.

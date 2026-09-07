@@ -16,7 +16,7 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 | --- | --- | --- |
 | 1. Legacy migration/device replacement | `repos/rtk_video_cloud/internal/pkicontrollerapp/legacy.go`, `internal/pki/legacy.go`, `internal/pki/replacement.go` implement staged inventory/import and device replacement; the ledger records local tests. | Actual staging cohort inventory, approved import, measured replacement/overlap and residual legacy population. Local fixtures do not establish cohort adoption. |
 | 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; JavaScript durable CRLs, bounded refresh, guard and mTLS/WebSocket lifetime cancellation; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK uses a host trust callback. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
-| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go renewal has low-level helpers but no durable acknowledgment-attempt/retirement orchestration equivalent to the mobile stores. Native provider integration remains host-supplied. These are implementation gaps, not merely physical test gates. |
+| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go now persists acknowledgment attempts and predecessor retirement; uniform renewal CRL gating and enforced session-replacement orchestration remain. Native provider integration remains host-supplied. These are implementation gaps, not merely physical test gates. |
 | 4. Provider/hardware compatibility | OpenBao policy/workload/Raft artifacts and local provider tests exist. Host Swift, API 35 emulator and native host checks are recorded. | Supported-provider/version and physical Secure Enclave, Android TEE/StrongBox, firmware/ARM and HSM matrix results. Local tests must not be substituted for this evidence. |
 | 5. Staging/custody/recovery qualification | Offline ceremony CLI, recovery tools and runbooks exist. | Real MFA identities and independent custodians, escrow/restore ceremony, failure-domain/seal approval, live matched recovery and post-backup security reconciliation, measured RPO ≤15 min and RTO ≤4 h. Production remains disabled. |
 
@@ -33,14 +33,14 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    identified legacy-helper gap; real application host wiring, root-policy replacement,
    supported runtime/filesystem behavior and operational qualification remain gates.
    The old renewal endpoint remains an explicitly separate compatibility helper.
-2. **Go renewal recovery invariants.** In
-   `repos/rtk_cloud_client/packages/golang/rtkc/auth/renewal.go`, `Acknowledge`
-   directly invokes `renewalPOST`; the caller is told to use fresh successor mTLS
-   and never roll back, but the method does not persist acknowledgment-attempt or
-   predecessor-retirement state. `LoadCurrentRenewal` reads the current symlink,
-   request and TLS key pair. Review the full lifecycle against the mobile durable
-   invariants before claiming uniform SDK recovery. Existing Go CRL/TLS lifetime
-   support does not close this separate gap.
+2. **Go renewal recovery invariants.** Saved requests now bind predecessor version
+   and fingerprint; CSR/key checks, response/transition persistence, durable
+   acknowledgment attempts and retirement precede owned fresh successor mTLS.
+   Local tests prove lost-response recovery and SDK file-loader rollback denial.
+   The remaining gap is uniform mandatory CRL validation across renewal entry points
+   and a resumable coordinator that enforces session replacement, including saved
+   receipt recovery and scheduling. Existing bundle CRL/TLS lifetime support alone
+   does not close that separate integration gap.
 3. **Native trust implementation boundary.**
    `repos/rtk_cloud_client/packages/native/src/rtkc_certificate_bundle.c` calls
    `validate_with_trust`; the public header requires the host to implement strict
@@ -60,7 +60,7 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 
 - JavaScript production lifecycle and trust primitives are now locally implemented;
   verify application host ownership and policy replacement with the domain inventory.
-- Close Go durable acknowledgment/retirement gaps and native provider integration.
+- Finish Go renewal CRL/coordinator integration, then native provider integration.
 - Audit and implement domain-specific issuance/consumer and host wiring gaps.
 - Run the corresponding local integration checks; keep qualification evidence
   separate and attributable to the platform/environment actually exercised.
