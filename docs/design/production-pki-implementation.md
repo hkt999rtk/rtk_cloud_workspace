@@ -1416,3 +1416,26 @@ application session owners, live SDK integration and backup/recovery qualificati
 Five broad milestones remain: migration/device replacement; trust consumers/live
 firmware sessions; backup/recovery and SDK integration; provider/hardware;
 staging/key custody/recovery qualification.
+
+## Durable iOS expiry-based renewal scheduling
+
+The SDK now determines the renewal due date from validated installed validity,
+using the configured lead (default 30 days) capped at one third of the lifetime.
+A ThisDeviceOnly schedule persists a device/predecessor-scoped request ID before
+preparation and network work. `resumeIfDue` prioritizes that pending request
+across restarts and active-version changes, and clears it only after successor
+acknowledgement. The next check uses successor validity, preventing immediate
+repeat renewal of short-lived replacements. Corrupt records, changed pending
+TTL and unrelated active identities fail closed.
+
+Validation: all 68 Swift tests and the arm64 iOS simulator build passed. Tests
+cover timing boundaries and native Keychain persistence/recovery/cleanup. This
+implements SDK due checks and durable pending scheduling, not OS wake delivery.
+The host must wire its permitted background task, foreground checks, expiration
+cancellation and error backoff. Physical-device background behavior is unproven.
+
+Milestone 3 advanced. Remaining SDK work: host background integration, actual
+application session owners, revocation freshness and live qualification. Backup/
+recovery qualification also remains. Five broad milestones remain: migration/
+device replacement; trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware; staging/key custody/recovery qualification.
