@@ -2659,3 +2659,28 @@ validated renewal-response persistence and post-activation recovery, followed by
 HTTP issuance, acknowledgment/retirement, scheduling, refresh and host session
 coordination. No production custody, physical-platform or operational acceptance is
 claimed by these local tests. No push, PR, remote CI or deployment was performed.
+
+
+## Native renewal recovery after activation
+
+Client `7be4f12` adds read-only prepared-request loading. It validates the saved
+canonical header, CSR signature/Device profile and successor key against current
+active trust. Before activation the predecessor bundle hash must match; afterward
+the immediate predecessor and hash in activation history must match. Recovery no
+longer requires the retired predecessor key. Missing/corrupt state and a different
+active version fail without provisioning or writes.
+
+Validation: all 12 native tests, ASan/UBSan and installed-package C consumer pass on
+macOS arm64. The fixture issues a distinct successor certificate and covers request
+preparation, pre-activation recovery, installation, activation, old-key retirement,
+post-activation recovery, predecessor-hash corruption and expired current CRLs.
+Reproduce with `cmake --build /private/tmp/rtk-native-openssl -j 4` and
+`ctest --test-dir /private/tmp/rtk-native-openssl --output-on-failure`; configuration
+and API ownership are recorded in the native README. No remote CI or deployment.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK recovery advanced. Next: validated
+renewal response/overlap persistence, HTTP issuance and acknowledgment/retirement,
+then scheduling, refresh and session-owner integration. This checkpoint does not
+claim those implementations or physical/operational qualification complete.
