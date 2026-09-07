@@ -1333,3 +1333,19 @@ Progress reporting clarification: these SDK changes advance milestone 3; they
 do not complete a top-level milestone. Five broad milestones remain. Reports
 should identify the milestone advanced and concrete unfinished substeps rather
 than repeating the count as if it measured implementation progress.
+
+## iOS acknowledgement and uncertain-result recovery
+
+The active successor client can acknowledge renewal over a fresh built-in mTLS
+transport. A durable local retirement record is written before sending, so an
+uncertain server result cannot re-enable the previous identity. New identity/
+transport lookups and activation reject retired versions. Acknowledgement state
+progresses from attempted to acknowledged without downgrade on later failures.
+
+Validation: all 61 Swift tests and the arm64 iOS simulator build passed. The
+native Keychain/injected-transport test covers lost response, state reload, retry,
+old-version blocking and monotonic completed state. No live endpoint was called.
+Already-created sessions require explicit application closure. Durable response
+recovery, scheduling, streaming response bounds, revocation and physical/live
+qualification remain required. This advances milestone 3; five broad milestones
+remain open.
