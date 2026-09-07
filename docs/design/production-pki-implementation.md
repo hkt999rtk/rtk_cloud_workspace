@@ -2054,3 +2054,26 @@ device replacement; remaining trust consumers/live sessions; backup/recovery and
 SDK integration; provider/hardware compatibility; staging/custody/recovery
 qualification. Next substantive SDK gap is iOS revocation freshness and existing
 owner lifecycle integration; physical and operational evidence remains open.
+
+## iOS signed full-CRL validation and identity gate
+
+Added bounded signed full-CRL validation across the independently anchored device
+chain. Issuer CA/cRLSign, AKI/SKI, positive CRL number, freshness and signatures are
+required; leaf/intermediate revocation fails closed. Partial/indirect/delta CRLs,
+unknown critical extensions, duplicate entries and malformed DER are rejected.
+The Keychain identity store now requires a CRL provider for installation, renewal
+response validation and identity loading. Software fallback does not bypass it.
+A public point-in-time validator returns the nearest signed expiry.
+
+Validation: 80 host Swift tests and the iOS simulator build passed. Fixtures cover
+RSA and ECDSA issuers, both leaf/intermediate revocation, missing/untrusted roots,
+missing/duplicate CRLs, expired/tampered/truncated data, delta/scoped/critical
+extensions, and missing/empty providers on installed Keychain identities.
+
+Milestone 2 advanced. Five broad milestones remain: legacy migration/device
+replacement; remaining trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware compatibility; staging/custody/recovery
+qualification. iOS still needs durable CRL high-water state, bounded refresh and
+existing-session owner teardown. This commit establishes point-in-time validation,
+not replay prevention or lifetime session revocation. Physical/live evidence
+remains outstanding.
