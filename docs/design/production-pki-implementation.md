@@ -1481,3 +1481,23 @@ host configuration/device-session wiring, physical wake/expiration validation,
 revocation freshness, live SDK and backup/recovery qualification. Five broad
 milestones remain: migration/device replacement; trust consumers/live sessions;
 backup/recovery and SDK integration; provider/hardware; staging/custody/recovery.
+
+## Independent roots for the iOS certificate-bundle consumer
+
+Inspection of remaining iOS trust consumers found that the certificate-bundle
+validator anchored at the root carried by the bundle. It now requires caller-
+configured independent roots, restricts native trust to those anchors, disables
+network completion of the chain and requires exact path order. Parse/validate/
+test-import calls without configured roots fail closed. Signed leaf validity
+must match metadata, and JSON/chain bounds are enforced.
+
+Validation: all 76 Swift tests and the arm64 iOS simulator build passed. Native
+bundle fixtures exercise independent-root acceptance, missing/unrelated roots,
+validity mismatch, size limits and validation before test import. These checks
+do not establish revocation freshness or production root distribution.
+
+Milestone 2 advanced: one remaining certificate-bundle trust consumer now enforces
+independent anchors. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Revocation freshness, live session
+validation and other-platform consumer audits remain unfinished.
