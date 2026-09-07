@@ -13,6 +13,14 @@ enterprise discounts, Savings Plans, Reserved Instances, and AWS Marketplace
 charges. Support-plan adders are listed separately because AWS Support is billed
 as a monthly plan fee, not as a per-ticket unit price.
 
+> Architecture qualification: the recorded worksheet quantities and derived
+> totals retain shared Account Manager/Video Cloud database assumptions and omit
+> Billing database capacity. They are historical planning evidence, not a priced
+> implementation of the current service-isolated Profile C. See the
+> [cost index qualification gap](README.md#architecture-qualification-gap).
+> Rebaseline service sizing and regenerate derived reports before using a
+> current architecture total; no prices or totals are refreshed here.
+
 ## Retrieval Method
 
 Prices were collected from the AWS Bulk Price List API regional CSV files for

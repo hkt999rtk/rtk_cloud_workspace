@@ -139,9 +139,17 @@ Likely AWS line items:
 - Camera/WebRTC/TURN and ACM Private CA remain excluded unless a later profile
   explicitly enables them.
 
-Use this profile for a first robust-production cost comparison after the
-baseline. It improves resilience inside one region, but it is not a multi-region
-disaster-recovery estimate.
+This is a target sizing checklist, not a completed or priced comparison. The
+existing `commercial_pilot_robust` rows in
+[aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) still assume
+one shared Account Manager/Video Cloud RDS instance, zero separate Video Cloud
+instance-hours, and no Billing database. Those quantities and their derived
+totals are historical and cannot be used as the cost of this Profile C design.
+Before using a robust-production total, rebaseline each service-owned database
+with reviewed instance size, redundant capacity, storage, I/O, backup, and
+current unit prices, then regenerate the derived report. This document does not
+supply replacement sizing or a new total. The target covers resilience inside
+one region, not multi-region disaster recovery.
 
 This profile is not a blanket 2x cost multiplier. Usage-priced managed services
 such as AWS IoT Core, CloudWatch Logs, CloudFront, S3, Secrets Manager, and KMS

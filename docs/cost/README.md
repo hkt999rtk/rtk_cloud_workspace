@@ -10,10 +10,22 @@ can be reviewed as one package.
 | Document | Classification | Purpose |
 | --- | --- | --- |
 | [aws-service-mapping.md](aws-service-mapping.md) | Supporting note | Maps current RTK Cloud private-cloud components to AWS service candidates and cost drivers. |
-| [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) | Supporting artifact | Quantity-first worksheet for the 100,000-device `ap-southeast-1` commercial pilot and robust profile. |
+| [aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) | Historical planning artifact | Original pilot/robust quantities; shared database assumptions omit current service isolation and Billing capacity. Not a current architecture estimate. |
 | [aws-pricing-sources.md](aws-pricing-sources.md) | Source pricing snapshot | Public AWS pricing snapshot, support-plan references, original rough monthly estimate, and scenario totals. Keep this as the collected source snapshot unless public pricing is refreshed. |
-| [aws-review-adjustments.md](aws-review-adjustments.md) | Derived review model | Applies AWS review feedback and Realtek architecture clarifications on top of the pricing snapshot. This is the current source for review-adjusted AWS totals used by the status-report PPTX. |
+| [aws-review-adjustments.md](aws-review-adjustments.md) | Derived review model | Applies AWS review feedback and Realtek architecture clarifications on top of the pricing snapshot. Source of the dated review-adjusted totals used by the existing status-report PPTX; not requalified for the current service-isolated design. |
 | [linode-100k-estimate.md](linode-100k-estimate.md) | Supporting note | K8S self-managed cluster estimate for 5,000 users and 100,000 usually-online MQTT devices. |
+
+## Architecture Qualification Gap
+
+The worksheet and existing derived totals have not been rebaselined for the
+current service-isolated Account Manager, Video Cloud, and Billing databases.
+In particular, `commercial_pilot_robust` prices shared account/video RDS, sets
+separate Video Cloud instance-hours to zero, and omits Billing database rows.
+Do not use these historical totals or the existing PPTX as a current Profile C
+quote or budget. Obtain reviewed per-service sizing and current pricing, update
+the worksheet and derived adjustment model, and regenerate the report before
+presenting a current cost comparison. This documentation reconciliation leaves
+the dated numerical evidence unchanged.
 
 ## Document Relationship
 
@@ -34,7 +46,7 @@ Use this order when reading or updating the cost model:
    Generated PPTX files under `.artifacts/status-reports/` are outputs, not
    source-of-truth documents.
 
-Current AWS review-adjusted headline:
+Historical AWS review-adjusted headline (2026-06-30 assumptions):
 
 - `2,676.12 USD/month` revised infra base.
 - `3,109.12 USD/month` with ACM PCA / hybrid CA.
@@ -45,7 +57,7 @@ If these numbers change, update the derived model and regenerate the PPTX from
 the builder. Do not hand-edit generated PPTX text as the only record of the
 change.
 
-## Current Estimate Scope
+## Recorded Estimate Scope
 
 - AWS region: `ap-southeast-1` (Asia Pacific, Singapore).
 - Linode/Akamai Cloud region: `us-sea` planning profile.
