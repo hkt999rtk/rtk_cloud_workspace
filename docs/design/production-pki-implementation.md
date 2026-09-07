@@ -3358,3 +3358,33 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Next: remote TURN allocation termination
 and remaining host/domain wiring. No push, PR, remote CI, deployment or custody
 operation occurred. Goal remains active.
+
+
+## TURN grant authorization checkpoint (2026-09-08)
+
+Video Cloud commit `e9bbab5` persists TURN-bearing preflight grant receipts in App
+PKI mode before returning credentials. Save failure denies issuance. Original
+principal, exact issued ICE entries and expiry survive service reconstruction;
+PKI preflight/session IDs use separate random UUID namespaces. Preflight records
+cannot be consumed as signaling sessions. Memory store copies ICE slices and
+principals to prevent returned-object mutation of authoritative receipts.
+
+AuthorizeTURNUsername is the relay controller's policy prerequisite: it requires
+canonical PKI usernames, exact persisted issuance, live credential/record/token
+expiry, open state and current original-principal registry/CRL authorization.
+Unknown, altered, unbound and legacy grants are denied. Legacy API behavior stays
+unchanged. Full Go suite and signaling race suite passed, including memory/Redis
+protocol persistence, revocation, expiry boundary, close, failed-save and alias
+checks. Real coturn cancellation has not yet been implemented or qualified.
+
+Upstream coturn 4.6.2 source confirms administrative exact-user session listing
+and numeric allocation cancellation commands. Next is restricted CLI/controller
+wiring, cancellation confirmation and repeat-allocation handling. A preflight
+grant remains independent of its subsequent signaling session; closing that
+session alone does not identify/close the preflight grant. Principal revocation
+and expiry still apply to both. See service docs/turn.md for precise limits.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. No push, PR, remote CI, deployment or
+custody operation occurred. Goal remains active.
