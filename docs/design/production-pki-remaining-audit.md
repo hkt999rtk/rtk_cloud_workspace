@@ -755,3 +755,39 @@ post-backup security history, full issuer inventory, real matched restore/custod
 and RPO/RTO evidence remain. Next: review remaining original domain/runtime
 implementation gaps against the fixed acceptance list. No push, PR, remote CI,
 deployment or custody operation occurred. Goal remains active.
+
+
+## Approved private server issuer policy checkpoint (2026-09-08)
+
+Video Cloud `893ff9a` implements canonical server_dns_names in approved issuer
+requests and public issuer records. Only service/mqtt/openbao_tls intermediates
+can carry the policy. Exact lowercase sorted unique DNS names are required;
+wildcards, IPs, URI syntax, invalid labels and client-domain reuse are rejected.
+The policy participates in the request digest. Controller/store provisioning,
+CSR persistence, import and activation recheck the original approved request,
+preventing policy removal or changes from bypassing approval.
+
+OpenBao provisioning now supports these explicit private server intermediates,
+generates private keys in the provider and configures exact-name P-256 server-only
+roles after importing the independently signed chain. CSR names are ignored as
+policy, and wildcard/subdomain/IP/URI alternatives are disabled. ACL rendering
+separates server signing from controller and recovery metadata access. Device/App
+profiles remain separate; server reservations without policy remain unsupported.
+Public HTTPS continues to require public CA/ACME.
+
+Validation: full Go suite; full PKI/OpenBao/controller/PostgreSQL race suites with
+local PostgreSQL; focused vet; real OpenBao 2.5.5 server CA provisioning/import,
+restricted server signing, injected CSR-name exclusion and rejection of unapproved
+CN/SAN, wildcard, subdomain and alternate-role issuance. Existing App provider/
+revocation/recovery integration still passes. Registry tests prove policy persistence,
+idempotency conflict on changed names and rejection after approved-policy drift
+or removal. Both local fixtures were stopped/removed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Domain-inventory steps 1–2 are implemented;
+next are durable server leaf claims and validated replay/recovery, gateway handler
+and bootstrap integration, then revocation and consuming-host adoption. The legacy
+gateway handler still uses its old signer; this checkpoint does not claim complete
+server runtime migration. No push, PR, remote CI, deployment or custody operation
+occurred. Goal remains active.

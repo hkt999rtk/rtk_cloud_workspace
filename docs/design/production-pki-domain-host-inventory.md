@@ -19,6 +19,11 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 
 ## Next implementation sequence: independent server-domain issuance
 
+Steps 1–2 are locally implemented in Video Cloud `893ff9a`: approved canonical
+DNS policy, digest revalidation, independent private server-domain provisioning
+and server-only OpenBao roles. Existing reservations without a policy remain
+unsupported. Next work starts with step 3; gateway runtime adoption is unfinished.
+
 1. Bind an explicit server leaf policy to the approved immutable issuer operation.
    It must specify the intended private trust domain and exact permitted DNS names;
    CSR fields and mutable gateway display names cannot select the CA. Policy changes
