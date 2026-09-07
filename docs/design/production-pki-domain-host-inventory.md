@@ -358,3 +358,44 @@ PKI/provider/controller race tests and vet passed. After tightening the client
 role maximum TTL to the design's 90-day target, affected policy/provider tests
 were rerun under race detection and passed. Disposable fixtures were removed.
 No production acceptance gate is claimed closed.
+
+### Durable Service client issuance and verification checkpoint (2026-09-08)
+
+Implemented independent `pki_service_client_issuances` receipts with a single
+signing owner, immutable environment/caller/request/CSR/context binding, approved
+exact Service identity policy and a 1–90 day requested lifetime. Pending or
+uncertain outcomes cannot obtain a second signing claim. Completion/replay checks
+current issuer lineage, original CSR/key/profile and fresh signed root/intermediate
+CRLs. Both client-only and dual-profile Service issuers are supported; Device,
+App and server receipt paths remain separate. Stored PostgreSQL issuance precision
+is returned on completion/replay. Pending and unexpired client leaves, even locally
+revoked leaves, now conservatively block Service issuer retirement.
+
+Read-only repeatable-read verification requires an original successful unrevoked
+receipt, recomputed request digest, approved Service policy, exact stored lineage,
+independently supplied root pin, expected service identity and fresh signed CRLs.
+The installed-CRL variant additionally requires both exact current issuer digests.
+The verifier alone does not prove possession; callers must require authenticated
+TLS. Schema migration and database-role refresh are explicit prerequisites. The
+actual restricted issuer/controller/verifier roles preserve receipt/token/mutation
+boundaries in local tests.
+
+Local coverage includes concurrency, unknown outcomes, invalid CSR/leaf profiles,
+wrong identity/environment/root, unrecorded certificates, policy/context tampering,
+CRL advance/expiry/revocation, retirement accounting and real OpenBao sign/complete/
+verify/replay. OpenBao non-CA leaves omit optional Basic Constraints; validation
+accepts that standard encoding while rejecting CA=true, CA signing usage, non-client
+EKUs and every SAN extension. A root-disable fixture was corrected to update both
+indexed status and the canonical issuer document, as lifecycle writes do.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next Service client work is
+authenticated issuance integration, operational uncertain-outcome reconciliation
+and revocation, TLS listener/consumer adoption and renewal/recovery qualification.
+No push, PR, remote CI, deployment or real custody action. Goal remains active.
+
+Service commit: `992e15d`. Full Go suite with PostgreSQL/OpenBao, targeted
+PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
+Disposable database/provider fixtures were removed. No production acceptance
+gate is claimed closed.
