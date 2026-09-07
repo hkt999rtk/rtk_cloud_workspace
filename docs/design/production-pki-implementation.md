@@ -2632,3 +2632,30 @@ staging/custody/recovery qualification. SDK integration advanced. Native prepare
 renewal binding, acknowledgment/retirement, refresh and session replacement remain
 implementation work. Selection alone is not renewal authorization or proof of
 physical storage, snapshot rollback resistance, hardware or operational acceptance.
+
+
+## Native prepared renewal persistence
+
+Client `f23213e` implements native renewal preparation with a durable private record
+binding the successor version/request ID, Device ID, TTL, predecessor version and
+predecessor bundle SHA-256 to a saved signed CSR. Initial preparation requires a
+valid active predecessor and a fresh successor key. Retries check current trust and
+reuse the exact saved CSR after key/signature/subject/profile verification. Missing,
+retired or substituted saved keys fail without regeneration; changed parameters,
+changed predecessors and malformed records fail. No request is transmitted here.
+
+Validation: all 12 native tests, ASan/UBSan and installed-package C consumer pass on
+macOS arm64/OpenSSL 3.6.3/cJSON 1.7.19. Tests cover CSR replay, changed TTL or active
+predecessor, missing/substituted key, incomplete records and legal PEM whitespace.
+Build and sanitizer logs have no compiler warnings. Reproduce with
+`cmake --build /private/tmp/rtk-native-openssl -j 4` and
+`ctest --test-dir /private/tmp/rtk-native-openssl --output-on-failure`; configuration,
+ownership and storage limits are documented in the native README.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. Next native work:
+validated renewal-response persistence and post-activation recovery, followed by
+HTTP issuance, acknowledgment/retirement, scheduling, refresh and host session
+coordination. No production custody, physical-platform or operational acceptance is
+claimed by these local tests. No push, PR, remote CI or deployment was performed.

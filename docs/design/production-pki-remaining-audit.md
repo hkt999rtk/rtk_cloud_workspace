@@ -68,7 +68,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
   verify application host ownership and policy replacement with the domain inventory.
 - Native protected software key/CSR and immutable verified bundle storage are locally
   implemented (client `d9e44a7`); active selection is implemented in `38694dd`.
-  Implement prepared renewal/acknowledgment and refresh/owner integration, then verify SDK host ownership with the domain inventory.
+  Prepared renewal persistence is implemented in `f23213e`; implement response
+  persistence, post-activation recovery, HTTP issuance/acknowledgment and refresh/owner integration, then verify SDK host ownership with the domain inventory.
 - Audit and implement domain-specific issuance/consumer and host wiring gaps.
 - Run the corresponding local integration checks; keep qualification evidence
   separate and attributable to the platform/environment actually exercised.
