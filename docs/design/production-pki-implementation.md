@@ -879,3 +879,31 @@ backup-history handling, PostgreSQL restore integration, scheduling/retention,
 matched OpenBao/registry recovery and measured RPO/RTO remain. Other trust domains,
 consumers, platform installation and live custody/hardware qualification remain
 open. Production stays disabled; no PR, push, remote CI or deployment occurred.
+
+
+## Verified physical PostgreSQL backup continuation
+
+Added `base-backup create|restore` with reviewed libpq service/tool configuration,
+explicit environment/stack/ID binding, bounded PostgreSQL 16 tar capture with included
+WAL, and native manifest/WAL verification. It reuses scoped encryption and immutable
+remote completion primitives in a separate `postgres-physical` / `base-v1` namespace.
+Private durable ciphertext retries never recapture newer state under the same ID.
+Restore authenticates scope/content before extracting into a newly reserved private
+recovery directory, reruns native verification and compares evidence. Existing
+destinations, unsafe tar members and external tablespaces fail closed. No database
+is started automatically. Exact configuration and native tool paths are required.
+
+A disposable network-isolated PostgreSQL 16 integration captures a real row/role,
+round-trips encrypted storage through the local object adapter, starts an independent
+cluster from restored data and proves captured state plus completed consistency
+recovery. It rejects missing required WAL and cluster/layout mismatches. Full
+recovery race tests, focused CLI tests, vet and CLI build pass. Native capture's
+empty tablespace map is supported; nonempty mappings are refused. No live database,
+object store or deployment configuration is changed. See
+`docs/postgresql-physical-backup.md` for exact limits and cleanup requirements.
+
+Standalone consistency is not yet point-in-time recovery. Later archived WAL replay,
+backup-history handling, continuous scheduling/retention, matched OpenBao/registry
+recovery points and measured RPO/RTO remain. Other trust consumers/domains, SDK
+installation and live custody/hardware qualification remain open. Production remains
+disabled; no PR, push or remote CI occurred.

@@ -401,3 +401,7 @@ cluster-bound encrypted segment upload and immutable retry/readback. It does not
 pause writers, replace the maintenance matched-set format or establish complete
 PITR support. History files, base backups, restore integration, scheduling and
 measured recovery targets remain open as listed in that document.
+
+The separate [physical PostgreSQL backup adapter](postgresql-physical-backup.md)
+captures and restores a native verified cluster with included WAL. It does not
+replace this matched maintenance backup or yet establish continuous PITR/RPO.

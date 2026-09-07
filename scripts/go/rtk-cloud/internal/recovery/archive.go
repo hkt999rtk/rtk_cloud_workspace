@@ -60,7 +60,11 @@ func WriteJSON(path string, v any) error {
 // Pack only accepts regular files created inside the private capture directory.
 // It never follows a symlink or imports a caller-provided archive path.
 func Pack(dir, destination string, m Manifest, recipients []string) error {
-	if m.Version != Version || m.Scope != "core" || !Name.MatchString(m.ID) {
+	return packScoped(dir, destination, m, recipients, "core")
+}
+
+func packScoped(dir, destination string, m Manifest, recipients []string, scope string) error {
+	if m.Version != Version || m.Scope != scope || !Name.MatchString(m.ID) {
 		return errors.New("invalid backup manifest")
 	}
 	var rs []age.Recipient
@@ -157,6 +161,10 @@ func Pack(dir, destination string, m Manifest, recipients []string) error {
 // Unpack authenticates the entire age stream, validates all members and hashes,
 // and writes only to a new private staging directory. No target is mutated here.
 func Unpack(source, identityFile, dir string, limit int64) (Manifest, error) {
+	return unpackScoped(source, identityFile, dir, limit, "core")
+}
+
+func unpackScoped(source, identityFile, dir string, limit int64, scope string) (Manifest, error) {
 	var m Manifest
 	if limit < 1 {
 		return m, errors.New("archive limit required")
@@ -232,7 +240,7 @@ func Unpack(source, identityFile, dir string, limit int64) (Manifest, error) {
 	if err != nil {
 		return m, err
 	}
-	if m.Version != Version || m.Scope != "core" || !Name.MatchString(m.ID) || !Name.MatchString(m.Environment) || !Name.MatchString(m.Stack) || len(m.Artifacts) == 0 {
+	if m.Version != Version || m.Scope != scope || !Name.MatchString(m.ID) || !Name.MatchString(m.Environment) || !Name.MatchString(m.Stack) || len(m.Artifacts) == 0 {
 		return m, errors.New("invalid manifest")
 	}
 	if len(seen) != len(m.Artifacts)+1 {

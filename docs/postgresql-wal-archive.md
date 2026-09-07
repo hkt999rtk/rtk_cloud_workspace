@@ -3,8 +3,9 @@
 `wal-archive` is the first online PostgreSQL recovery adapter. It does not stop
 writers or enter maintenance mode. Existing matched-set `backup create` remains a
 separate maintenance operation; scheduling that command does not provide continuous
-backup. This implementation does **not** yet provide physical base-backup capture,
-automated replay, failover qualification or a PITR/RPO
+backup. The separate [physical backup adapter](postgresql-physical-backup.md) captures and
+verifies a standalone base backup. These commands do **not** yet provide automated
+replay, failover qualification or a PITR/RPO
 claim. Do not enable it as a complete production archive_command until those
 remaining paths and an actual restore drill are complete.
 
@@ -158,6 +159,6 @@ byte-for-byte equality. Tests also reject unrelated ancestry/fork intervals, mis
 or symlinked history, malformed histories and changed history on retry.
 
 Remaining implementation: restore_command integration, backup-history handling,
-physical base backups with coverage manifests,
+replay integration with verified physical base backups,
 continuous WAL/snapshot scheduling, retention, matched OpenBao/registry recovery,
 and measured recovery drills demonstrating RPO <= 15 minutes and RTO <= 4 hours.
