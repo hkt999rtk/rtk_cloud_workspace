@@ -19,9 +19,18 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = exec.Command(docker, "image", "inspect", "postgres:16-alpine").Run(); err != nil {
-		t.Fatal("cached PostgreSQL 16 image required")
+	// Resolve the local image ID instead of relying on Docker Desktop's
+	// occasionally stale multi-platform tag descriptor. Never pull in a test.
+	cached, err := exec.Command(docker, "image", "ls", "--filter", "reference=postgres:16-alpine", "--no-trunc", "--format", "{{.ID}}").Output()
+	images := strings.Fields(string(cached))
+	if err != nil || len(images) != 1 || !strings.HasPrefix(images[0], "sha256:") {
+		t.Fatal("one cached PostgreSQL 16 image required")
 	}
+	imageID := images[0]
+	if err = exec.Command(docker, "image", "inspect", imageID).Run(); err != nil {
+		t.Fatal("cached PostgreSQL 16 image unavailable")
+	}
+
 	directory, err := os.MkdirTemp("/private/tmp", "rtk-physical-test-")
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +39,14 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	name := "rtk-physical-" + NewID()
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, docker, "run", "--detach", "--pull", "never", "--network", "none", "--name", name, "--mount", "type=bind,source="+directory+",target="+directory, "--env", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:16-alpine").CombinedOutput(); err != nil {
+	runArgs := []string{"run", "--detach", "--pull", "never", "--network", "none", "--name", name, "--mount", "type=bind,source=" + directory + ",target=" + directory, "--env", "POSTGRES_HOST_AUTH_METHOD=trust"}
+	archiveCommandTest := os.Getenv("RTK_ARCHIVE_COMMAND_INTEGRATION") == "1"
+	if archiveCommandTest {
+		runArgs = append(runArgs, "--env", "RTK_BACKUP_ACCESS_KEY_ID=fixture", "--env", "RTK_BACKUP_SECRET_ACCESS_KEY=fixture", "--env", "SSL_CERT_FILE="+filepath.Join(directory, "object-ca.pem"), imageID, "postgres", "-c", "archive_mode=on", "-c", "archive_timeout=60")
+	} else {
+		runArgs = append(runArgs, imageID)
+	}
+	if out, err := exec.CommandContext(ctx, docker, runArgs...).CombinedOutput(); err != nil {
 		t.Fatalf("start isolated primary: %s %v", out, err)
 	}
 	t.Cleanup(func() { exec.Command(docker, "rm", "-fv", name).Run() })
@@ -61,13 +77,16 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	if err = os.WriteFile(serviceFile, []byte("[physical]\nhost=/var/run/postgresql\nuser=postgres\ndbname=postgres\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if os.Getenv("RTK_PITR_INTEGRATION") == "1" {
+	if os.Getenv("RTK_PITR_INTEGRATION") == "1" || archiveCommandTest {
 		wal.Remote.Endpoint = startPITRFixture(t, ctx, docker, name, directory)
 	}
 	cfg := BaseBackupConfig{WAL: wal, BinaryDirectory: "/usr/local/bin", ServiceFile: serviceFile, Service: "physical", TimeoutSeconds: 120, MaxArchiveBytes: 128 << 20}
 	e := BaseBackupEngine{Config: cfg, Exec: func(ctx context.Context, argv []string, in io.Reader, out io.Writer) error {
 		return QuietExec(ctx, append([]string{docker, "exec", "--env", "PGSERVICEFILE=" + serviceFile, "--env", "LC_ALL=C", name}, argv...), in, out)
 	}}
+	if archiveCommandTest {
+		configureArchiveFixture(t, ctx, docker, name, directory, wal, query)
+	}
 	path, err := e.Stage(ctx, "fixture")
 	if err != nil {
 		t.Fatal("physical capture", err)
@@ -125,6 +144,9 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	key := filepath.Join(directory, "identity")
 	if err = os.WriteFile(key, []byte(identity.String()), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if archiveCommandTest {
+		checkArchiveFixture(t, ctx, directory, wal, key, query)
 	}
 	if target != "" {
 		exercisePITR(t, ctx, docker, name, directory, downloaded, key, target, e, objects, walID)

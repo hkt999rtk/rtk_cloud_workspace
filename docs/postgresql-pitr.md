@@ -101,6 +101,7 @@ GOWORK=off GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
 GOWORK=off GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c \
   -o /private/tmp/rtk-pki-recovery-linux.test ./rtk-cloud/internal/recovery
 RTK_PHYSICAL_BACKUP_INTEGRATION=1 RTK_PITR_INTEGRATION=1 \
+  RTK_ARCHIVE_COMMAND_INTEGRATION=1 \
   RTK_PITR_CLI_BINARY=/private/tmp/rtk-pki-linux-cli \
   RTK_PITR_HELPER_BINARY=/private/tmp/rtk-pki-recovery-linux.test \
   GOWORK=off go test -race ./rtk-cloud/internal/recovery \
@@ -109,7 +110,8 @@ RTK_PHYSICAL_BACKUP_INTEGRATION=1 RTK_PITR_INTEGRATION=1 \
 
 Use the matching architecture if the cached container image differs. Tests never
 pull an image automatically. The disposable container is network-isolated and the
-TLS object fixture runs inside it. Native PostgreSQL calls the actual `wal-restore`
+TLS object fixture runs inside it. With `RTK_ARCHIVE_COMMAND_INTEGRATION`, the
+primary also uses the real archiver and verifies native backup-history publication. Native PostgreSQL calls the actual `wal-restore`
 binary, downloads completed encrypted WAL, decrypts it and reaches the requested
 LSN. Assertions cover the captured row, a post-backup/pre-target row, exclusion of
 a later row, paused/read-only state, disabled TCP and confirmed remote ciphertext

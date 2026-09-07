@@ -16,8 +16,9 @@ filename timeline and starting address (or authenticated ancestor history for a
 promotion segment). These checks follow the
 [PostgreSQL 16 WAL header definitions](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/include/access/xlog_internal.h).
 They identify the segment; they do not replace PostgreSQL record CRC validation or
-prove replay coverage. Partial files, backup-history files, other layouts
-and mismatched cluster data fail closed. Continuous recovery needs a base backup
+prove replay coverage. Full-size `.partial` files and bounded PostgreSQL backup
+histories are also preserved as described below. Short partials, other layouts and
+mismatched cluster data fail closed. Continuous recovery needs a base backup
 and the required WAL sequence, as described in
 [PostgreSQL continuous archiving](https://www.postgresql.org/docs/16/continuous-archiving.html).
 
@@ -108,7 +109,7 @@ and recovery destination. Context deadlines do not forcibly interrupt OS disk I/
 This provides the fetch/decrypt primitive used by the optional PITR adapter
 `restore_command`; the WAL command alone does not configure PostgreSQL or establish
 replay eligibility.
-Unsupported partial/backup-history files return failure. Base-backup selection
+Unsupported names, malformed histories and short partial files return failure. Base-backup selection
 and an actual PostgreSQL replay drill remain unqualified.
 
 ## Timeline history and promoted segments
@@ -141,6 +142,64 @@ ancestor envelope; upgrade recovery tooling before using it.
 These are header/ancestry checks, not record CRC validation or proof that an entire
 WAL sequence is replayable. PostgreSQL remains responsible for replay validation.
 
+## Backup history and partial segments
+
+Native primary backups emit names such as
+`000000010000000000000001.00000028.backup`. The adapter checks the structured start,
+stop and checkpoint LSNs, their segment filenames, equal positive start/stop
+timelines and the filename's start offset. Histories are at most 64 KiB; labels
+remain opaque (including embedded newlines) up to PostgreSQL's 1024-byte limit.
+NUL/CR and malformed metadata fail closed. Times are informational text, not
+recovery-point evidence. History contains no intrinsic system identifier, so it
+has the same explicitly configured source-provenance limit as timeline history.
+Its distinct object ID is `backup-history-<segment>-<offset>`.
+
+Full-size native `<segment>.partial` files are validated against their original
+segment header and preserved under `partial-<segment>`. They can never collide
+with or be restored under a complete segment's identity. Short partials are not
+supported. Normal PostgreSQL archive recovery does not request `.partial` files;
+this adapter never strips that suffix or automatically substitutes a partial file.
+These formats follow the PostgreSQL 16
+[backup metadata writer](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/backend/access/transam/xlogbackup.c)
+and [end-of-recovery archiving logic](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/backend/access/transam/xlog.c).
+
+## Render an archive configuration
+
+```sh
+rtk-cloud wal-archive-config --config /private/recovery/wal.json \
+  --executable /opt/rtk/bin/rtk-cloud --output /private/recovery/archive.conf \
+  --confirm-environment staging --confirm-stack video-cloud-staging \
+  --archive-timeout-seconds 60
+```
+
+This writes a new 0600 PostgreSQL fragment and refuses to overwrite any existing
+file. It sets `archive_mode=on`, an empty `archive_library`, the scoped WAL archive
+command, and a native segment-switch timeout (default 60 seconds; allowed 30–300).
+It does not apply settings or restart a server. Existing `wal_level` must be
+`replica` or `logical`; the renderer does not downgrade a logical-replication server.
+Review the fragment against the target's existing archive setup before installation.
+Tool/config paths are target-host paths; rendering does not prove their runtime
+availability. Shell arguments and PostgreSQL configuration/percent escapes are
+handled separately, retaining `%f`/`%p` only as PostgreSQL-owned placeholders.
+
+The PostgreSQL OS user needs the executable, reviewed WAL JSON, private durable
+spool and dedicated object credentials in its runtime environment. Archive access
+requires conditional create plus readback/completion access. Private keys are not
+needed for archiving: only public encryption recipients. No passwords or access-key
+values are written into the fragment. Monitor `pg_stat_archiver`, spool/disk growth,
+object completion and actual archive age; a configured switch interval alone does
+not establish the required RPO during transfer failures or backlog.
+
+A disposable native archive test enables archive mode on a network-isolated
+PostgreSQL 16 instance. Its real archiver invokes the actual Linux CLI against the
+TLS object fixture, uploads normal segments and the backup's generated history,
+then acknowledges the following segment with zero failures. The history decrypts
+successfully. Enable `RTK_ARCHIVE_COMMAND_INTEGRATION=1` alongside the physical
+backup integration variables/binaries documented in
+[the PITR test instructions](postgresql-pitr.md). The combined test also exercises
+targeted recovery and failure on missing required WAL. Tests use the cached image
+ID to avoid intermittent Docker Desktop tag-descriptor lookup failures.
+
 ## Local evidence and remaining work
 
 Tests exercise age decrypt/byte equality, durable ciphertext reuse, same-name
@@ -159,6 +218,6 @@ and completed segment (first-page timeline 1) passed encrypted round trips with
 byte-for-byte equality. Tests also reject unrelated ancestry/fork intervals, missing
 or symlinked history, malformed histories and changed history on retry.
 
-Remaining implementation: cross-timeline replay drills, backup-history handling,
+Remaining implementation: cross-timeline replay drills,
 continuous WAL/snapshot scheduling, retention, matched OpenBao/registry recovery,
 and measured recovery drills demonstrating RPO <= 15 minutes and RTO <= 4 hours.

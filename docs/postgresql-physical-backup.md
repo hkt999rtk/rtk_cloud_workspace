@@ -125,7 +125,7 @@ or database is contacted.
 
 The base test proves standalone consistency; the optional PITR test described
 above additionally exercises later archived WAL to an explicit LSN. Remaining work
-includes cross-timeline recovery drills, backup-history files, scheduling/retention,
+includes cross-timeline recovery drills, scheduling/retention,
 matched OpenBao/registry recovery points and measured
 RPO <= 15 minutes / RTO <= 4 hours. Larger clusters, tablespaces and other PostgreSQL
 versions/layouts require an expanded adapter and qualification. Production remains

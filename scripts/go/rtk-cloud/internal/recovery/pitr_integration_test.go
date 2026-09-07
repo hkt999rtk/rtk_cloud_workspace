@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ import (
 )
 
 // Runs only inside the disposable network-isolated test container. This fixture
-// exercises S3 GET transport, not provider authentication or bucket policy.
+// exercises immutable S3 PUT/GET transport, not provider authentication or bucket policy.
 func TestPITRObjectServerHelper(t *testing.T) {
 	root := os.Getenv("RTK_PITR_OBJECT_HELPER")
 	if root == "" {
@@ -23,8 +24,44 @@ func TestPITRObjectServerHelper(t *testing.T) {
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := strings.TrimPrefix(r.URL.Path, "/private/")
-		if r.Method != "GET" || !strings.HasPrefix(r.URL.Path, "/private/") || !SafeRelative(key) {
+		if !strings.HasPrefix(r.URL.Path, "/private/") || !SafeRelative(key) {
 			http.Error(w, "missing", 404)
+			return
+		}
+		if r.Method == "PUT" {
+			if r.Header.Get("If-None-Match") != "*" {
+				http.Error(w, "conditional create required", 400)
+				return
+			}
+			path := filepath.Join(root, "objects", filepath.FromSlash(key))
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				http.Error(w, "storage failure", 500)
+				return
+			}
+			f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if err != nil {
+				w.WriteHeader(412)
+				io.WriteString(w, "<Error><Code>PreconditionFailed</Code></Error>")
+				return
+			}
+			n, err := io.Copy(f, io.LimitReader(r.Body, (256<<20)+1))
+			if n > 256<<20 {
+				err = errors.New("fixture object too large")
+			}
+			if err == nil {
+				err = f.Sync()
+			}
+			closeErr := f.Close()
+			if err != nil || closeErr != nil {
+				os.Remove(path)
+				http.Error(w, "storage failure", 500)
+				return
+			}
+			w.WriteHeader(200)
+			return
+		}
+		if r.Method != "GET" {
+			http.Error(w, "unsupported", 405)
 			return
 		}
 		data, err := os.Open(filepath.Join(root, "objects", filepath.FromSlash(key)))

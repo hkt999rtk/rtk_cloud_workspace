@@ -134,14 +134,14 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 		return "", "", errors.New("WAL source changed")
 	}
 	var history []byte
-	if walName.MatchString(name) {
+	if segment, valid := walSegmentName(name); valid {
 		h := make([]byte, 40)
 		if _, err = io.ReadFull(input, h); err != nil {
 			return "", "", err
 		}
-		target, _ := strconv.ParseUint(name[:8], 16, 32)
+		target, _ := strconv.ParseUint(segment[:8], 16, 32)
 		if binary.LittleEndian.Uint32(h[4:]) != uint32(target) {
-			history, err = readWALHistoryFile(filepath.Join(filepath.Dir(source), name[:8]+".history"))
+			history, err = readWALHistoryFile(filepath.Join(filepath.Dir(source), segment[:8]+".history"))
 			if err != nil {
 				return "", "", err
 			}

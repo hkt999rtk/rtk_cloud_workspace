@@ -22,7 +22,7 @@ func TestWALHistoryValidation(t *testing.T) {
 			t.Fatalf("invalid history accepted: %.80q", raw)
 		}
 	}
-	for _, name := range []string{"00000000.history", "00000001.history", "../00000002.history", "00000002.HISTORY", "000000010000000000000001.partial", "000000010000000000000001.00000028.backup"} {
+	for _, name := range []string{"00000000.history", "00000001.history", "../00000002.history", "00000002.HISTORY", "000000010000000000000001.partial.extra", "000000010000000000000001.0000002.backup"} {
 		if _, err := walObjectID(name); err == nil {
 			t.Fatal("unsupported object name", name)
 		}

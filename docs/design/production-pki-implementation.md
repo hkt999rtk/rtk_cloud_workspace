@@ -933,3 +933,30 @@ Cross-timeline drills, backup-history handling, scheduling/retention, matched
 OpenBao/registry recovery and measured operational RPO/RTO remain. Remaining trust
 consumers/domains, SDK installation and live custody/provider/hardware acceptance
 are still open. Production remains disabled. No PR, push or remote CI occurred.
+
+
+## Native archive-command and auxiliary WAL files continuation
+
+Added bounded validation and encrypted immutable preservation of PostgreSQL 16
+backup-history files plus full-size `.partial` segments under distinct object IDs.
+Backup metadata is checked against its start/stop/checkpoint locations, timelines,
+segment names and filename offset. Opaque multiline labels cannot override the
+trailing identity fields. Partial files never replace complete WAL segments.
+
+`wal-archive-config` renders a new reviewed PostgreSQL fragment with archive mode,
+scoped command and 30–300 second native switch interval; it neither applies nor
+restarts a server. Explicit scope, no-overwrite publication and shell/config/percent
+escaping are enforced. Operational archive age/backlog monitoring is still required.
+
+A disposable native archiver uses the actual Linux CLI and TLS conditional-create/
+readback fixture. A physical backup's real history archives and decrypts correctly,
+then subsequent WAL archives with zero reported failures. The combined recovery
+race suite includes explicit-target replay and missing-WAL failure. Focused CLI
+checks, vet and builds pass. Docker tests now resolve the cached image ID because
+its tag descriptor intermittently failed lookup; tests never pull automatically.
+No deployed PostgreSQL settings, external object store or production provider changed.
+
+Cross-timeline end-to-end drills, scheduled base/snapshot capture, retention,
+matched OpenBao/registry recovery and measured operational RPO/RTO remain. The five
+unfinished top-level ledger items are unchanged. Production stays disabled; no PR,
+push or remote CI occurred.

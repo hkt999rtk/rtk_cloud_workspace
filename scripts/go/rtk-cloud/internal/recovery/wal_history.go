@@ -74,25 +74,32 @@ func walObjectID(name string) (string, error) {
 	if walName.MatchString(name) {
 		return "wal-" + strings.ToLower(name), nil
 	}
+	if walPartialName.MatchString(name) {
+		return "partial-" + strings.ToLower(name[:24]), nil
+	}
+	if walBackupHistoryName.MatchString(name) {
+		return "backup-history-" + strings.ToLower(name[:24]) + "-" + strings.ToLower(name[25:33]), nil
+	}
 	if walHistoryName.MatchString(name) {
 		tli, _ := strconv.ParseUint(name[:8], 16, 32)
 		if tli > 1 {
 			return "history-" + strings.ToLower(name[:8]), nil
 		}
 	}
-	return "", errors.New("complete WAL segment or timeline history name required")
+	return "", errors.New("WAL segment, partial segment or PostgreSQL history name required")
 }
 func validWALSize(c WALConfig, name string, size int64) bool {
-	if walHistoryName.MatchString(name) {
+	if walHistoryName.MatchString(name) || walBackupHistoryName.MatchString(name) {
 		return size > 0 && size <= maxWALHistoryBytes
 	}
-	return walName.MatchString(name) && size == c.SegmentBytes
+	_, valid := walSegmentName(name)
+	return valid && size == c.SegmentBytes
 }
 
 // Read exactly the content which is validated, so hashing/encryption can replay
 // these bytes even if the source is modified after this read.
 func readWALPrefix(r io.Reader, name string, c WALConfig, history []byte) ([]byte, error) {
-	if walHistoryName.MatchString(name) {
+	if walHistoryName.MatchString(name) || walBackupHistoryName.MatchString(name) {
 		if len(history) != 0 {
 			return nil, errors.New("history cannot contain a nested history envelope")
 		}
@@ -100,9 +107,17 @@ func readWALPrefix(r io.Reader, name string, c WALConfig, history []byte) ([]byt
 		if err != nil {
 			return nil, err
 		}
+		if walBackupHistoryName.MatchString(name) {
+			return raw, validateBackupHistory(name, raw, c)
+		}
 		_, err = parseWALHistory(name, raw)
 		return raw, err
 	}
+	segment, valid := walSegmentName(name)
+	if !valid {
+		return nil, errors.New("invalid WAL segment name")
+	}
+	name = segment
 	h := make([]byte, 40)
 	if _, err := io.ReadFull(r, h); err != nil {
 		return nil, err

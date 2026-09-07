@@ -17,3 +17,11 @@ func TestWALRestoreArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestWALArchiveConfigArguments(t *testing.T) {
+	for _, args := range [][]string{{"--config", "missing"}, {"--unknown"}, {"--output", "/tmp/test", "extra"}} {
+		if runWALArchiveConfig(args) == nil {
+			t.Fatal("invalid archive config arguments accepted", args)
+		}
+	}
+}
