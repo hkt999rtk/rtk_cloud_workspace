@@ -1376,3 +1376,35 @@ lifecycle, remaining host adoption, root/key renewal, external recovery history,
 and real hardware/staging/custody evidence remain. Next implementation focus is
 the Service clientAuth lifecycle, grounded in the original domain design.
 No push, PR, remote CI, deployment or custody action. Goal remains active.
+
+### Approved Service client identity policy checkpoint (2026-09-08)
+
+Service intermediate requests now persist an exact `service_client_ids` policy
+bound to independent approval alongside optional server DNS policy. Canonical
+`service:<name>` identities are sorted/unique; other domains and issuer kinds
+reject the field. Empty existing policy grants no new rights. Policy tampering,
+removal and request reuse are rejected. Unsupported provider adapters cannot
+consume provisioning claims or import provider material for the new profile.
+
+A separate OpenBao `service-client` role uses P-256, digitalSignature and
+clientAuth only, a 90-day maximum TTL, exact common names, no alternative SANs
+and stored certificates. Its constrained signer ACL is emitted separately from
+server signing on dual-profile Service issuers. Controller/recovery permissions
+remain separate from signing. Local provider evidence checks certificate profile,
+unapproved names/extra SAN rejection and reciprocal server/client signer denial.
+This implements policy governance and provider provisioning, not completed
+Service client leaf lifecycle or production host qualification.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next is durable Service
+client issuance with strict CSR/provider validation and current receipt-based
+verification, followed by revocation/recovery, renewal and listener adoption.
+The original goal remains active. No push, PR, remote CI, deployment or real
+custody action is authorized or performed by this checkpoint.
+
+Service commit: `51709bb`. Full Go suite with local PostgreSQL/OpenBao,
+PKI/provider/controller race tests and vet passed. After tightening the client
+role maximum TTL to the design's 90-day target, affected policy/provider tests
+were rerun under race detection and passed. Disposable fixtures were removed.
+No production acceptance gate is claimed closed.
