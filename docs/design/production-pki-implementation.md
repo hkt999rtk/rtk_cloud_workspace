@@ -2242,3 +2242,23 @@ consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Initial activation is not guarded renewal
 activation. Next JavaScript steps remain renewal request/receipt/activation/
 retirement state and revocation/transport integration.
+
+## JavaScript durable renewal preparation
+
+Added request-derived P-256 successor key and immutable CSR/parameter/predecessor
+records. Preparation validates current active trust and key binding. Saved retries
+verify exact CSR identity, public key, attributes and ECDSA signature; missing
+saved keys never trigger regeneration. Concurrent requests reuse the winning CSR,
+and identical publication is fsynced on conflict recovery. Predecessor selection
+and key material remain intact.
+
+Validation: 38 JavaScript tests and TypeScript build passed. Fixture coverage
+includes six concurrent preparations, exact restart/retry result, distinct key,
+changed TTL, tampered CSR and lost-key failure without replacement generation.
+The local preparation API does not yet submit, install a renewal response, switch
+active identity or acknowledge/retire the predecessor.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next JavaScript work is production renewal
+transport and durable response validation before guarded activation.
