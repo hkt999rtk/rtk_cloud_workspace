@@ -1394,3 +1394,25 @@ ownership and live integration. Backup/recovery qualification also remains.
 Five broad milestones remain: legacy migration/device replacement; remaining
 trust consumers/live firmware sessions; backup/recovery and SDK integration;
 live provider/hardware compatibility; staging/key custody/recovery qualification.
+
+## Resumable iOS renewal orchestration
+
+The coordinator now resumes one persisted request through receipt recovery,
+installation, activation, an explicit application session-replacement callback,
+and acknowledgement. A callback failure stops acknowledgement while preserving
+active selection. A reconstructed coordinator retries uncertain acknowledgement
+with the successor and skips already-completed HTTP work. Missing receipts and
+unrelated active versions fail closed. Request ID/TTL retention and cross-instance
+serialization remain application responsibilities.
+
+Validation: all 65 Swift tests passed, including expanded native Keychain tests
+for saved-receipt activation, session-owner failure, reentrancy rejection, missing
+receipt, lost acknowledgement, reconstruction and completed retry. The arm64 iOS
+simulator build passed. No live endpoint or physical device was used.
+
+Milestone 3 advanced: the resumable SDK orchestration substep is implemented.
+Remaining work includes background scheduling, revocation freshness, wiring real
+application session owners, live SDK integration and backup/recovery qualification.
+Five broad milestones remain: migration/device replacement; trust consumers/live
+firmware sessions; backup/recovery and SDK integration; provider/hardware;
+staging/key custody/recovery qualification.
