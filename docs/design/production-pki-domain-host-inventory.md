@@ -11,10 +11,10 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | --- | --- | --- |
 | Device client identity | Video Cloud `internal/pki` registry and Product claims; `internal/certissuer/product.go` and Product-mode bootstrap; SDK renewal/trust and owner-lifetime adapters recorded in the ledger. | Real legacy cohort replacement, application policy/owner adoption, physical firmware and supported-platform evidence. |
 | App/user client identity | `internal/pki/app_issuance.go`, `app_verification.go`, `app_revocation.go`, `app_crl_worker.go`; API consumer and `internal/pkitrust/registry_app.go` compose broker/TURN acknowledgment after sweeps. Recovery includes `app_reconcile.go`, `recovery_app.go`, and `recovery_app_inventory.go`. | Dynamic App root-policy adoption, remaining application/SDK host wiring and real broker/relay eviction evidence. |
-| Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Server TLS enforcement/consumer adoption, CRL refresh, recovery verification and actual host cutover. |
-| Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | An approved Service leaf profile, online issuance/selection and registry-backed service identity lifetime/revocation. Existing loaded files do not prove registry-managed lifecycle. |
+| Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Remaining server host adoption, root/key renewal, external recovery-history reconciliation and actual host cutover. CRL maintenance, public lineage recovery and restored-registry inventory are implemented locally. |
+| Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | Service serverAuth issuance/receipts/revocation and a reusable HTTP connection owner exist locally. Service clientAuth profile/lifecycle and actual service-host wiring remain; loaded files alone do not prove registry-managed lifecycle. |
 | Dedicated MQTT server TLS | Independent `mqtt` issuer/receipt/CRL verification; `a17c4ff` wires opt-in API subscriber/publisher and log-ingester TLS admission, scheduled sweeps and connection eviction. | Root-policy refresh, broker key renewal and actual host rollout. CRL maintenance is implemented in `7869d5e`, and exact installed-digest MQTT acknowledgments in `57c68f6`. Public-CA MQTT remains a distinct supported contract choice. |
-| OpenBao transport TLS | Dedicated transport CA/files and TLS Raft deployment artifacts exist. | Dedicated server-only issuance/renewal policy and host adoption; transport trust must remain independent of Device, App and Service roots. Seal/custody and real HA qualification are separate. |
+| OpenBao transport TLS | Dedicated transport CA/files and TLS Raft artifacts; independent server issuance/CRLs/recovery; controller now supports opt-in registry-backed provider HTTP with verified login/renewal and periodic connection eviction. | Certificate-issuer and other provider-client adoption, exact installed-CRL ACKs, root-policy/server-key renewal and real host rollout. Transport trust remains independent of Device/App/Service roots; seal/custody and HA qualification remain separate. |
 | Public HTTPS | Contract requires publicly trusted CA/ACME. | Verify deployment/renewal acceptance separately; never route browser/public HTTPS issuance through private Device/App issuers. |
 
 ## Next implementation sequence: independent server-domain issuance
@@ -144,3 +144,35 @@ race tests, restricted SQL-role checks, vet, formatting and diff checks passed.
 Fixture corrections used a valid-but-wrong server domain and observation times
 after reconciliation; final checks passed before commit. Disposable PostgreSQL
 fixture removed. No production acceptance gate is claimed closed.
+
+
+### Controller OpenBao transport integration checkpoint (2026-09-08)
+
+Added an origin-bound registry-backed HTTP/1.1 connection owner and wired it into
+controller workload OpenBao construction before authentication. Opt-in requires
+an independently pinned OpenBao TLS root, reviewed server DNS name and dedicated
+CA file; optional sweep interval defaults to 10s (1s–1m). Startup validates registry
+schema access. Normal TLS and registry receipt/DNS/CRL checks gate handshakes;
+periodic sweeps evict active/idle connections on revocation or unavailable evidence.
+Shutdown stops admission. Alternate origins, plaintext, redirects and environment
+proxies cannot carry provider authentication through this configured transport.
+
+Local TLS/PostgreSQL tests cover Service and OpenBao TLS domains, real client
+Kubernetes login and definite-403 token renewal against a fixture provider,
+verified HTTP keep-alive, wrong pins/origins and active response eviction after
+revocation, database loss and cancellation. Controller partial-policy configuration
+fails closed. Default configuration remains unchanged. No actual OpenBao host
+rollout or production qualification is claimed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Certificate-issuer provider
+clients and other Service hosts still require adoption. Exact installed-CRL ACKs,
+root-policy and server key renewal, external recovery history and live qualification
+remain. Recovery commands retain independent recovery trust. No push, PR, remote
+CI, live deployment or custody operation. Goal remains active.
+
+Service commit: `43eb2ee`. Full Go suite with PostgreSQL, PKI/controller/OpenBao
+race tests, final focused authentication/eviction race checks, vet, formatting
+and diff checks passed. Disposable database removed. Host inventory updated to
+distinguish completed controller wiring from remaining client/renewal adoption.

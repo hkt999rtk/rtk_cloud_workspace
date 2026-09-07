@@ -1194,3 +1194,35 @@ race tests, restricted SQL-role checks, vet, formatting and diff checks passed.
 Fixture corrections used a valid-but-wrong server domain and observation times
 after reconciliation; final checks passed before commit. Disposable PostgreSQL
 fixture removed. No production acceptance gate is claimed closed.
+
+
+### Controller OpenBao transport integration checkpoint (2026-09-08)
+
+Added an origin-bound registry-backed HTTP/1.1 connection owner and wired it into
+controller workload OpenBao construction before authentication. Opt-in requires
+an independently pinned OpenBao TLS root, reviewed server DNS name and dedicated
+CA file; optional sweep interval defaults to 10s (1s–1m). Startup validates registry
+schema access. Normal TLS and registry receipt/DNS/CRL checks gate handshakes;
+periodic sweeps evict active/idle connections on revocation or unavailable evidence.
+Shutdown stops admission. Alternate origins, plaintext, redirects and environment
+proxies cannot carry provider authentication through this configured transport.
+
+Local TLS/PostgreSQL tests cover Service and OpenBao TLS domains, real client
+Kubernetes login and definite-403 token renewal against a fixture provider,
+verified HTTP keep-alive, wrong pins/origins and active response eviction after
+revocation, database loss and cancellation. Controller partial-policy configuration
+fails closed. Default configuration remains unchanged. No actual OpenBao host
+rollout or production qualification is claimed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Certificate-issuer provider
+clients and other Service hosts still require adoption. Exact installed-CRL ACKs,
+root-policy and server key renewal, external recovery history and live qualification
+remain. Recovery commands retain independent recovery trust. No push, PR, remote
+CI, live deployment or custody operation. Goal remains active.
+
+Service commit: `43eb2ee`. Full Go suite with PostgreSQL, PKI/controller/OpenBao
+race tests, final focused authentication/eviction race checks, vet, formatting
+and diff checks passed. Disposable database removed. Host inventory updated to
+distinguish completed controller wiring from remaining client/renewal adoption.
