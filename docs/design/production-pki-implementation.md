@@ -3,6 +3,11 @@
 This change implements the Platform PKI contract in dependency order. This file
 records actual delivery status; unchecked items are not production capabilities.
 
+See [remaining-work evidence audit](production-pki-remaining-audit.md) for the
+current distinction between implementation gaps and live/physical qualification.
+Historical continuation entries below describe their checkpoint, not current
+remaining work.
+
 ## Accepted decisions
 
 - Full production lifecycle, including bootstrap governance and recovery.
@@ -12,7 +17,7 @@ records actual delivery status; unchecked items are not production capabilities.
 - Preserve staging identities through a bounded 90-day migration window.
 - Recovery targets: RPO <= 15 minutes; RTO <= 4 hours, demonstrated by drills.
 
-## Delivery checklist (implementation, not production qualification)
+## Delivery checklist (implementation and outstanding qualification gates)
 
 - [x] Durable issuer registry, independent approvals, atomic activation and public chains.
 - [x] CSR/certificate exchange and existing-key Product provisioning reconciliation.
@@ -77,12 +82,13 @@ Validated against an isolated PostgreSQL 16 container, not any shared environmen
 - Account Manager authentication/API regression suites and PKI-role integration.
 - Go SDK certificate-bundle authentication package.
 
-The full proposed plan is not complete. Immediate next delivery stages are
-real recovery/custody/escrow evidence, remaining
-trust domains, replacement and CRL publication, least-privilege deployment,
-backup/restore, migration tooling, and live qualification. Production OIDC MFA
-assurance and real approver/custodian account identifiers have been requested;
-they are operational inputs and must not be invented.
+The full proposed plan is not complete. The current audit identifies JavaScript
+production identity/lifecycle support, Go durable acknowledgment/retirement,
+native provider integration, and other trust-domain/host coverage as remaining
+implementation work. Backup and mobile SDK controls described below are already
+implemented locally; live adoption, real custody/MFA inputs, hardware compatibility
+and measured recovery qualification remain separate acceptance gates. Nothing
+in a local fixture substitutes for those operational inputs.
 
 ## Continuation delivery
 
@@ -2163,3 +2169,13 @@ qualification. The local iOS CRL validation, durable storage, download, refresh 
 owner sequence is implemented. Next is a requirement-by-requirement audit of the
 remaining implementation versus operational/physical qualification gates; this
 commit does not claim those broader milestones are finished.
+
+## Remaining-work evidence audit
+
+Reconciled the original five open milestones against the current SDK source,
+recovery entry points, controller restrictions and contract acceptance gates.
+The audit records concrete JavaScript, Go renewal and native provider gaps and
+unproven other-domain coverage separately from live/physical evidence. Corrected
+the stale introductory next-work summary; no broad milestone was marked done.
+See production-pki-remaining-audit.md for paths, limits and next implementation
+order. This was source/document inspection, not a new runtime qualification run.
