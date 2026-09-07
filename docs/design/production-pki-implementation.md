@@ -4267,3 +4267,37 @@ Service commit: `d8a0e50`. Full Go suite with PostgreSQL, focused PKI/OpenBao/
 controller race tests, `go vet`, formatting and diff checks passed. An initially
 malformed policy-tampering fixture was corrected to use a valid-format incorrect
 digest before final validation and commit. Disposable database removed.
+
+
+### Private server restored-registry inventory checkpoint (2026-09-08)
+
+Implemented `recovery-inventory-server DOMAIN ISSUER_ID EXPECTED_ROOT_SHA256
+CONSUMER_IDS_CSV`. Explicit Service/MQTT/OpenBao TLS scope, independent root pin,
+approved DNS-policy digest, full public lineage, signed root/intermediate CRLs and
+exact current consumer ACKs are checked in one read-only repeatable-read snapshot.
+Every receipt attached to the issuer is scanned in 128-row keyset pages; scope
+mismatches remain visible. Original request/CSR/DNS/issuance metadata, pending
+claims, revocation records, historical publication and current CRL coverage are
+checked. Unexpired unrevoked leaves also pass current server admission. Reports
+contain public counts; no provider calls, signing, acknowledgments or repair occur.
+
+Tests cover all three domains, 129-row pending inventories and 385-row mixed-domain
+inventories with repeated caller/request keys; malformed context/DNS/digest/scope,
+missing ACKs, missing/unpublished/mismatched revocations and revoked intermediates.
+The restricted verifier SQL role runs the inventory and detects unresolved
+revocation. This proves restored-registry consistency only: provider completeness,
+post-backup external history, private-key usability and live recovery qualification
+remain separate evidence requirements.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next server work is remaining
+Service/OpenBao transport integration and root-policy/key renewal adoption, with
+external-history reconciliation and live qualification still required. Local only;
+no push, PR, remote CI, deployment or custody operation. Goal remains active.
+
+Service commit: `340aed2`. Full Go suite with PostgreSQL, PKI/controller/Postgres
+race tests, restricted SQL-role checks, vet, formatting and diff checks passed.
+Fixture corrections used a valid-but-wrong server domain and observation times
+after reconciliation; final checks passed before commit. Disposable PostgreSQL
+fixture removed. No production acceptance gate is claimed closed.
