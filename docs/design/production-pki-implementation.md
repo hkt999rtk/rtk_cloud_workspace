@@ -627,3 +627,31 @@ qualification remain required. Defaults leave production synchronization disable
 
 Local Video Cloud commit `1b6963c`, following workspace checkpoint `4615e66`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Initial trust policy continuation
+
+Active/retiring Root IDs now expose their environment/domain's authenticated
+cumulative removal policy before the first revocation. A fresh scope publishes a
+digested version-zero policy with no removals; configured mTLS consumers can
+acknowledge it after runtime installation. Independently provisioned root-only
+bundles can be installed using the existing atomic pkitrust workflow, then the API
+worker fetches current policy before listening. No artificial revocation or new
+private key generation is needed. Removed Root IDs continue to require publication.
+
+Positive versions require removal records and version zero cannot restore trust
+after removal. Initial acknowledgments cannot complete later revocations. Policy
+reads/acknowledgments now also reject scopes containing historical removed Roots
+without publication; governed reconciliation must repair those omissions. Empty
+trust pools validate every removal record instead of bypassing digest-field checks.
+
+PostgreSQL-backed PKI and local pkitrust/API race suites and focused vet pass.
+Tests cover consumer bootstrap routes, first compromise, stale acknowledgment
+rejection, missing historical publication, old persisted reconciliation evidence,
+state rollback and real synchronized API TLS rejection/acceptance. The disposable
+PostgreSQL fixture was stopped. Initial anchor/custody provisioning, broker/CRL
+consumers, non-Device domains, platform installation, recovery and live/hardware
+qualification remain required; production is not enabled.
+
+Local Video Cloud commit `756d591`, following workspace checkpoint `53fda6a`.
+No PR, push, remote CI or deployment occurred.
