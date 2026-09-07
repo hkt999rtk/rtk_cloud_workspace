@@ -98,3 +98,14 @@ func TestRunDocsCheckReportsObsoleteDesignSource(t *testing.T) {
 		t.Fatalf("docs-check did not report the design conflict: %s%s", stdout, stderr)
 	}
 }
+
+func TestDesignConsistencyResumesAfterHistoricalSection(t *testing.T) {
+	text := "## Historical Evidence\napp-brand-cloud-user:archived\n### Old example\napp-brand-cloud-user:also-archived\n## Current Flow\napp-brand-cloud-user:active"
+	active := activeDesignText(text)
+	if strings.Contains(active, "archived") || !strings.Contains(active, "app-brand-cloud-user:active") {
+		t.Fatalf("historical section boundary was lost: %s", active)
+	}
+	if !regexp.MustCompile(docsConsistencyRules[0].pattern).MatchString(active) {
+		t.Fatal("obsolete guidance after historical evidence was accepted")
+	}
+}

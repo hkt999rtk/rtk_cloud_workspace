@@ -204,7 +204,9 @@
       "sha256": "e69e0a4e59f75d719d74a752e3830f2443d034524d8df8fb5b974b93aa94edc4",
       "topic_matches": {
         "authority": 2
-      }
+      },
+      "post_fix_sha256": "c72ae90a938a146bd99ccf06789b94768e67286e83b331d73a74a129bf28dec7",
+      "post_fix_lines": 90
     },
     {
       "path": "docs/cost/aws-pricing-sources.md",
@@ -215,7 +217,9 @@
         "settlement": 1,
         "storage": 4,
         "authority": 1
-      }
+      },
+      "post_fix_sha256": "d5455b186bc4a9e9fe6c6b6fc6c1e27dbe9a36a099cfd0a35f7c721bd7caa221",
+      "post_fix_lines": 447
     },
     {
       "path": "docs/cost/aws-review-adjustments.md",
@@ -225,7 +229,9 @@
       "topic_matches": {
         "storage": 2,
         "authority": 1
-      }
+      },
+      "post_fix_sha256": "9989daafee2194354b080b8f8814cd0f7264197e5fe4c250f4b090ece3f421c6",
+      "post_fix_lines": 85
     },
     {
       "path": "docs/cost/aws-service-mapping.md",
@@ -238,8 +244,8 @@
         "storage": 23,
         "authority": 2
       },
-      "post_fix_sha256": "b074ae494c5129c9ea6680a541bb54ca63f845900e1cba128261425b421dfaec",
-      "post_fix_lines": 458
+      "post_fix_sha256": "0d7577dd75eb4c9d131f9a7341055eb5dccfe19fa8be0c45f87778446e8f60cb",
+      "post_fix_lines": 469
     },
     {
       "path": "docs/cost/linode-100k-estimate.md",
@@ -298,8 +304,8 @@
         "credentials": 3,
         "authority": 4
       },
-      "post_fix_sha256": "8ab3b0c667251028348ddd7df50807108eb4a59915c72e446d402e01cb60cd39",
-      "post_fix_lines": 314
+      "post_fix_sha256": "2cee6dee267954b2319a5842408515326c2b80057e139907a4f6b2f0a38f94d3",
+      "post_fix_lines": 316
     },
     {
       "path": "docs/design/tenant-billing-ux.md",

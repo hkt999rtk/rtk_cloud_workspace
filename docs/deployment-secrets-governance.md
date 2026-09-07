@@ -174,8 +174,9 @@ boundary is:
   references needed by Pods, but those values must be generated or injected at
   deploy time and never committed.
 - External Secrets-style sync, CSI secret injection, or init-container rendering
-  are acceptable implementation options only after the LKE migration gates are
-  approved.
+  require reviewed workload identity, rotation, rollback, and recovery
+  qualification under this policy and
+  [deployment-operations.md](deployment-operations.md).
 - OpenBao root tokens, unseal keys, recovery keys, HSM PINs, production signing
   keys, and raw private key PEM values must never be committed, embedded in
   images, placed in public documentation, or stored in readiness artifacts.
@@ -298,8 +299,9 @@ identities are escrowed independently. See [backup-restore.md](backup-restore.md
 5. Keep runtime injection and local recovery material aligned with the
    SecretStore catalog; preserve reviewed legacy bridges only where necessary.
 6. Switch `cmd/certissuer` staging config to the OpenBao PKI signer provider.
-7. Complete the LKE secret-management gate before writing production
-   Kubernetes manifests, Helm values, or CI/CD deployment pipelines.
+7. Qualify workload identity, secret injection, rotation, rollback, and recovery
+   under this policy and [deployment-operations.md](deployment-operations.md)
+   before approving production manifests, Helm values, or deployment pipelines.
 8. Run staging validation, including `scripts/run-staging-e2e.sh`.
 9. Rehearse matched core backup/restore with separately retrieved escrow before
    production approval. Restore original PKI, then reconcile external
