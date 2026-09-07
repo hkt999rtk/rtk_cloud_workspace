@@ -2556,3 +2556,26 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Milestones 2 and 4 advanced. Native crypto
 verification is now concrete; next are durable CRL high-water state and protected
 identity lifecycle integration, followed by host/domain and physical qualification.
+
+## Native durable CRL history and stored verification
+
+Added explicit POSIX CRL journal create/open/update and a stored-verifier callback.
+Signed public issuer/CRL history is retained with number/thisUpdate monotonicity and
+same-number DER conflict rejection. Revoking updates persist before use is rejected.
+Publication uses a private exclusive temporary inode, fsync, atomic rename, parent
+sync and readback under an exclusive writer lock. Missing/corrupt state is never
+recreated by update or validation. Historical expiry is isolated from current-chain
+freshness. The journal does not contain private keys.
+
+Validation: 12 native tests and ASan/UBSan provider/store tests passed. Fixtures
+cover initial/reopened/empty state, retained issuer history, current shorter-chain
+validation after unrelated history expires, revocation persistence, rollback and
+conflict/tampering rejection with unchanged bytes, lock/permission/symlink failures,
+missing/corrupt state and malformed/truncated/trailing binary records. Package exports
+include the new store APIs. No remote CI, deployment or physical custody was used.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Milestone 2 advanced. Next: native protected
+identity/key lifecycle and refresh/owner integration. Snapshot rollback, physical
+storage/provider behavior and operational qualification remain separate gates.
