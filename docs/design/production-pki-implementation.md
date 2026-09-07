@@ -1283,3 +1283,16 @@ it without renaming another version's certificate.
 Production renewal/ack and session replacement integration, revocation, and physical
 iOS restart/network qualification remain required. Cross-process writers still
 need external serialization. Five top-level milestones remain open.
+
+## Portable iOS certificate validity
+
+Keychain installation and expiry reporting now parse certificate validity with
+the bounded DER reader on both Apple platforms. iOS no longer lacks expiry
+metadata due to the macOS-only certificate-values API. UTC/GeneralizedTime formats,
+year boundaries and calendar values are checked explicitly.
+
+Validation: all 58 Swift tests passed on macOS, including installed-certificate
+expiry and renewal status, fixed validity dates, leap days, year boundaries and
+malformed date rejection. The arm64 iOS simulator build passed. Background renewal
+scheduling, production request/ack integration, revocation and physical-device
+qualification remain open. Five top-level milestones remain unfinished.
