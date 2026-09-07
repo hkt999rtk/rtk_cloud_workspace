@@ -3547,3 +3547,35 @@ in Go/JavaScript/iOS/Android/native still need grant-reference plumbing and host
 integration review. Their source entry points were located during this checkpoint;
 no completion is claimed for them. No push, PR, remote CI, deployment or custody
 operation occurred. Goal remains active.
+
+
+## Cloud-client preflight reference checkpoint (2026-09-08)
+
+Cloud-client `c250789` adds optional grant references to Go, JavaScript, Swift,
+Kotlin and native C/C++ WebRTC create requests. Nonempty values are transmitted
+unchanged as `ice_username`; absent/empty values retain legacy omission. Native
+uses a struct_size-gated trailing extension and accepts the previous layout,
+without reading the extension from older requests. Kotlin consumers must rebuild.
+The common PKI create fixture exercises the same wire representation across
+JavaScript, Swift, Kotlin and native; Go tests exercise forwarding and omission.
+
+Validation: full Go race suite; JavaScript 42-test suite plus rebuilt 35-test
+package suite after field-order normalization; all 85 Swift host tests; Android
+Gradle unit tests; native build and all 12 CTests. The native error-path fixture
+uses the old struct_size with nonzero trailing storage and verifies that the grant
+is omitted. These are local host checks, not physical-device qualification.
+
+These cloud-client methods perform signaling only. Hosts still obtain preflight
+and pass the reference for the original device/token; they do not gain automatic
+peer lifetime ownership from the optional field. WebRTC viewer forwarding was
+implemented separately in the prior Go/native checkpoints. Omission remains
+supported by the server; this is not proof that every deployed caller binds grants.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next implementation priority returns to
+App certificate revocation/publication and other issuance-domain gaps in the
+original audit, together with host adoption. Current App verification checks
+revoked_at and signed CRLs, but tests still inject receipt revocation directly;
+automatic revocation/controller publication is not complete. No push, PR, remote
+CI, deployment or custody operation occurred. Goal remains active.
