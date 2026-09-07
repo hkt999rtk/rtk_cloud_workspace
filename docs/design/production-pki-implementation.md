@@ -1243,3 +1243,23 @@ P-384. The arm64 iOS simulator package build also passed. Existing unrelated Swi
 concurrency warnings remain. Revocation, atomic version activation, intermediate
 persistence, production renewal/ack and physical iOS qualification are still open.
 Five top-level milestones remain unfinished.
+
+## iOS immutable installation and intermediate persistence
+
+Certificate version labels are now immutable. The public chain is persisted in
+a ThisDeviceOnly Keychain record before the leaf is added; identical retries
+complete interrupted installation while conflicting replacements fail without
+deleting the old certificate. mTLS lookup validates the persisted chain, profile,
+leaf and key, and its credential includes leaf/intermediates without the root.
+
+Validation: 55 Swift tests passed on macOS. A native Keychain/OpenSSL test covers
+four-level issuance from an SDK CSR, installation/restart, identical/conflicting
+retries, incomplete-write rejection/recovery and client credential chain contents.
+The arm64 iOS simulator build passed. The test exposed and fixed a missing CSR PEM
+footer newline and macOS certificate-reference insertion losing the version label.
+Temporary fixture material was cleaned, including one certificate left by the
+earlier failing insertion test, identified by its unique fixture issuer.
+
+Active-version switching, production renewal/ack, revocation and live physical
+iOS sessions remain required. The legacy same-label renewal method does not
+replace immutable installed versions. Five top-level milestones remain open.
