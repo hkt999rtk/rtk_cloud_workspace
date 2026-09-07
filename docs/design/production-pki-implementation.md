@@ -853,3 +853,29 @@ PITR: timeline/history support, physical base backups, restore_command integrati
 scheduling/retention, matched registry/OpenBao recovery and measured RPO/RTO remain.
 Other trust domains/consumers and live custody/hardware qualification remain open;
 production stays disabled. No PR, push or remote CI occurred.
+
+
+## Timeline history and promoted WAL continuation
+
+The existing archive/restore commands now transport bounded PostgreSQL timeline
+history files through the same encrypted immutable completion protocol. History
+parsing validates ancestor ordering and switch-point syntax/order. Promoted
+segments may retain an ancestor page header: archive validates the sibling history
+against the page interval/fork segment and authenticates those bytes inside the
+segment envelope. Restore verifies embedded ancestry before publication. Existing
+segment envelopes remain readable. Retry rejects changed history as well as WAL
+content. Source hashing now replays the exact bytes validated as the header/history,
+closing a source-change window between validation and the first hash.
+
+A disposable PostgreSQL 16 primary/standby pair produced a real promotion history
+and completed timeline-2 segment whose first page has timeline 1. Encryption and
+restoration reproduced both byte-for-byte. Full recovery race tests (including that
+fixture), focused CLI tests, vet and CLI build pass. Tests cover invalid ancestry,
+malformed history, missing/symlinked history and immutable retry conflicts. See
+`docs/postgresql-wal-archive.md` for source-provenance and size limits.
+
+This does not prove replay eligibility or full PITR. Physical base backups,
+backup-history handling, PostgreSQL restore integration, scheduling/retention,
+matched OpenBao/registry recovery and measured RPO/RTO remain. Other trust domains,
+consumers, platform installation and live custody/hardware qualification remain
+open. Production stays disabled; no PR, push, remote CI or deployment occurred.

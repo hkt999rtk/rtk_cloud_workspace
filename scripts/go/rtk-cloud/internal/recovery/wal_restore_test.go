@@ -137,7 +137,7 @@ func TestWALRestoreAuthenticatedEnvelopeFailures(t *testing.T) {
 				b.Write(raw[offset:])
 				raw = b.Bytes()
 			case "oversized-metadata":
-				binary.BigEndian.PutUint32(raw, 16385)
+				binary.BigEndian.PutUint32(raw, maxWALMetadataBytes+1)
 			}
 			recipient := identity.Recipient()
 			if mode == "wrong-key" {

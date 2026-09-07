@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -32,6 +33,7 @@ type WALConfig struct {
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 }
 type walReceipt struct {
+	TimelineHistory     []byte   `json:"timeline_history,omitempty"`
 	Version             int      `json:"version"`
 	Name                string   `json:"wal_name"`
 	ConfigurationSHA256 string   `json:"configuration_sha256"`
@@ -102,13 +104,13 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 	if err := c.Validate(); err != nil {
 		return "", "", err
 	}
-	if !walName.MatchString(name) {
-		return "", "", errors.New("only complete WAL segments supported")
+	id, err := walObjectID(name)
+	if err != nil {
+		return "", "", err
 	}
 	if err := PrivateDirectory(c.Directory); err != nil {
 		return "", "", err
 	}
-	id := "wal-" + strings.ToLower(name)
 	lock, err := os.OpenFile(filepath.Join(c.Directory, id+".lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return "", "", err
@@ -119,7 +121,7 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 	info, err := os.Lstat(source)
-	if err != nil || !info.Mode().IsRegular() || info.Size() != c.SegmentBytes {
+	if err != nil || !info.Mode().IsRegular() || !validWALSize(c, name, info.Size()) {
 		return "", "", errors.New("complete regular WAL segment required")
 	}
 	input, err := os.Open(source)
@@ -131,19 +133,30 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 	if err != nil || !os.SameFile(info, opened) {
 		return "", "", errors.New("WAL source changed")
 	}
-	h := make([]byte, 40)
-	if _, err = io.ReadFull(input, h); err != nil {
-		return "", "", err
+	var history []byte
+	if walName.MatchString(name) {
+		h := make([]byte, 40)
+		if _, err = io.ReadFull(input, h); err != nil {
+			return "", "", err
+		}
+		target, _ := strconv.ParseUint(name[:8], 16, 32)
+		if binary.LittleEndian.Uint32(h[4:]) != uint32(target) {
+			history, err = readWALHistoryFile(filepath.Join(filepath.Dir(source), name[:8]+".history"))
+			if err != nil {
+				return "", "", err
+			}
+		}
+		if _, err = input.Seek(0, io.SeekStart); err != nil {
+			return "", "", err
+		}
 	}
-	if err = validateWALHeader(h, name, c); err != nil {
-		return "", "", err
-	}
-	if _, err = input.Seek(0, io.SeekStart); err != nil {
+	prefix, err := readWALPrefix(input, name, c, history)
+	if err != nil {
 		return "", "", err
 	}
 	hash := sha256.New()
-	n, err := io.Copy(hash, &walContextReader{ctx, io.LimitReader(input, c.SegmentBytes+1)})
-	if err != nil || n != c.SegmentBytes {
+	n, err := io.Copy(hash, &walContextReader{ctx, io.LimitReader(io.MultiReader(bytes.NewReader(prefix), input), info.Size()+1)})
+	if err != nil || n != info.Size() {
 		return "", "", errors.New("WAL source read failed")
 	}
 	plain := Artifact{Path: name, Size: n, SHA256: hex.EncodeToString(hash.Sum(nil))}
@@ -159,7 +172,7 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 		}
 		defer f.Close()
 		var receipt walReceipt
-		if err = Decode(io.LimitReader(f, 16384), &receipt); err != nil {
+		if err = Decode(io.LimitReader(f, maxWALMetadataBytes), &receipt); err != nil {
 			return "", "", err
 		}
 		ci, err := os.Lstat(cipherPath)
@@ -167,7 +180,7 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 			return "", "", errors.New("invalid WAL retry ciphertext")
 		}
 		encrypted, err := DigestFile(cipherPath)
-		if err != nil || receipt.Version != 1 || receipt.Name != name || receipt.SystemIdentifier != c.SystemIdentifier || receipt.ConfigurationSHA256 != Digest(c) || receipt.Plaintext != plain || receipt.Encrypted.Path != id+".age" || receipt.Encrypted.Size != encrypted.Size || receipt.Encrypted.SHA256 != encrypted.SHA256 {
+		if err != nil || !bytes.Equal(receipt.TimelineHistory, history) || receipt.Version != 1 || receipt.Name != name || receipt.SystemIdentifier != c.SystemIdentifier || receipt.ConfigurationSHA256 != Digest(c) || receipt.Plaintext != plain || receipt.Encrypted.Path != id+".age" || receipt.Encrypted.Size != encrypted.Size || receipt.Encrypted.SHA256 != encrypted.SHA256 {
 			return "", "", errors.New("WAL retry identity/content mismatch")
 		}
 		return cipherPath, id, nil
@@ -194,7 +207,7 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 	if err != nil {
 		return "", "", err
 	}
-	receipt := walReceipt{Version: 1, Name: name, SystemIdentifier: c.SystemIdentifier, ConfigurationSHA256: Digest(c), Plaintext: plain}
+	receipt := walReceipt{TimelineHistory: history, Version: 1, Name: name, SystemIdentifier: c.SystemIdentifier, ConfigurationSHA256: Digest(c), Plaintext: plain}
 	metadata, _ := json.Marshal(receipt)
 	if err = binary.Write(writer, binary.BigEndian, uint32(len(metadata))); err != nil {
 		return "", "", err
@@ -206,7 +219,7 @@ func stageWAL(ctx context.Context, c WALConfig, name, source string) (string, st
 		return "", "", err
 	}
 	hash.Reset()
-	n, err = io.Copy(writer, io.TeeReader(&walContextReader{ctx, io.LimitReader(input, c.SegmentBytes+1)}, hash))
+	n, err = io.Copy(writer, io.TeeReader(&walContextReader{ctx, io.LimitReader(input, plain.Size+1)}, hash))
 	if err != nil || n != plain.Size || hex.EncodeToString(hash.Sum(nil)) != plain.SHA256 {
 		return "", "", errors.New("WAL changed during encryption")
 	}

@@ -4,17 +4,18 @@
 writers or enter maintenance mode. Existing matched-set `backup create` remains a
 separate maintenance operation; scheduling that command does not provide continuous
 backup. This implementation does **not** yet provide physical base-backup capture,
-timeline-history archival, failover qualification or a PITR/RPO
+automated replay, failover qualification or a PITR/RPO
 claim. Do not enable it as a complete production archive_command until those
 remaining paths and an actual restore drill are complete.
 
 The supported input is a complete PostgreSQL 16 WAL segment from a little-endian,
 8-byte-aligned installation using standard 8192-byte WAL pages. The first long
 page header is checked against the configured system identifier, segment size,
-filename timeline and starting address. These checks follow the
+filename timeline and starting address (or authenticated ancestor history for a
+promotion segment). These checks follow the
 [PostgreSQL 16 WAL header definitions](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/include/access/xlog_internal.h).
 They identify the segment; they do not replace PostgreSQL record CRC validation or
-prove replay coverage. Partial files, history/backup-history files, other layouts
+prove replay coverage. Partial files, backup-history files, other layouts
 and mismatched cluster data fail closed. Continuous recovery needs a base backup
 and the required WAL sequence, as described in
 [PostgreSQL continuous archiving](https://www.postgresql.org/docs/16/continuous-archiving.html).
@@ -105,8 +106,38 @@ and recovery destination. Context deadlines do not forcibly interrupt OS disk I/
 
 This provides the full-segment fetch/decrypt primitive for a future
 `restore_command`; it does not configure PostgreSQL or establish replay eligibility.
-Unsupported history/partial files return failure. Timeline transitions, base-backup
-selection and an actual PostgreSQL replay drill remain unqualified.
+Unsupported partial/backup-history files return failure. Base-backup selection
+and an actual PostgreSQL replay drill remain unqualified.
+
+## Timeline history and promoted segments
+
+Both commands now accept names such as `00000002.history`. These use immutable
+`history-00000002.age` objects in the same cluster namespace, with the same
+completion, encryption, checksum, retry and no-clobber guarantees as segments.
+Their plaintext names remain the original PostgreSQL history filenames.
+
+History validation follows the [PostgreSQL 16 history format](https://raw.githubusercontent.com/postgres/postgres/REL_16_STABLE/src/backend/access/transam/timeline.c):
+ancestor timeline numbers are decimal, switch points are hexadecimal LSNs, and
+comments/blank lines are supported. This adapter requires nonempty history, positive
+and increasing ancestor IDs below the child ID, nonzero nondecreasing switch points,
+no NUL bytes, lines shorter than 1024 bytes and a total size at most 64 KiB.
+Timeline 1 has no history file. Unsupported or oversized history fails closed.
+History has no intrinsic cluster identifier: operators must source it from the
+configured cluster's `pg_wal`; the encryption envelope binds that asserted scope.
+
+A promoted segment can retain an ancestor's first-page timeline. For this case,
+archive reads the regular, bounded `<child-timeline>.history` beside the source,
+verifies that the page address belongs to that ancestor's interval and the segment
+contains the child's fork point, then includes those history bytes in its encrypted
+envelope. Retry requires identical history bytes. Restore validates the embedded
+history and needs no sibling file. The complete history file must also be archived
+for PostgreSQL's own timeline selection. Own-timeline segments keep the original
+envelope without an added history field; earlier segments remain readable. Metadata
+is now bounded to 128 KiB to accommodate history. Older binaries reject the new
+ancestor envelope; upgrade recovery tooling before using it.
+
+These are header/ancestry checks, not record CRC validation or proof that an entire
+WAL sequence is replayable. PostgreSQL remains responsible for replay validation.
 
 ## Local evidence and remaining work
 
@@ -121,7 +152,12 @@ Restore tests additionally prove exact bytes, missing completion/corrupt remote
 rejection, wrong configuration/key, truncated or tampered authentication, extra or
 short plaintext, header/hash mismatch, cancellation and no-clobber behavior.
 
-Remaining implementation: history files/timeline transitions, restore_command
-integration, physical base backups with coverage manifests,
+A disposable PostgreSQL 16 standby was promoted to timeline 2. Its actual history
+and completed segment (first-page timeline 1) passed encrypted round trips with
+byte-for-byte equality. Tests also reject unrelated ancestry/fork intervals, missing
+or symlinked history, malformed histories and changed history on retry.
+
+Remaining implementation: restore_command integration, backup-history handling,
+physical base backups with coverage manifests,
 continuous WAL/snapshot scheduling, retention, matched OpenBao/registry recovery,
 and measured recovery drills demonstrating RPO <= 15 minutes and RTO <= 4 hours.

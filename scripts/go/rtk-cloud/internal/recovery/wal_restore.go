@@ -10,7 +10,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"filippo.io/age"
@@ -23,8 +22,8 @@ func RestoreWAL(ctx context.Context, c WALConfig, name, destination, identityFil
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if !walName.MatchString(name) {
-		return errors.New("only complete WAL segments supported")
+	if _, err := walObjectID(name); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(c.TimeoutSeconds)*time.Second)
 	defer cancel()
@@ -39,8 +38,9 @@ func restoreWAL(ctx context.Context, client objectStore, c WALConfig, name, dest
 	if err := c.Validate(); err != nil {
 		return err
 	}
-	if !walName.MatchString(name) {
-		return errors.New("only complete WAL segments supported")
+	id, err := walObjectID(name)
+	if err != nil {
+		return err
 	}
 	if err := PrivateDirectory(c.Directory); err != nil {
 		return err
@@ -53,7 +53,7 @@ func restoreWAL(ctx context.Context, client objectStore, c WALConfig, name, dest
 	remote := c.Remote
 	remote.Prefix += "/wal-v1/" + c.SystemIdentifier
 	config := Config{Environment: c.Environment, Stack: c.Stack, Remote: remote, MaxArchiveBytes: c.SegmentBytes + (1 << 20)}
-	encrypted, err := download(ctx, client, config, "wal-"+strings.ToLower(name), temp)
+	encrypted, err := download(ctx, client, config, id, temp)
 	if err != nil {
 		return err
 	}
@@ -91,7 +91,7 @@ func decryptWAL(ctx context.Context, c WALConfig, name, encrypted, destination, 
 	if err = binary.Read(decrypted, binary.BigEndian, &size); err != nil {
 		return err
 	}
-	if size == 0 || size > 16384 {
+	if size == 0 || size > maxWALMetadataBytes {
 		return errors.New("invalid WAL envelope size")
 	}
 	metadata := make([]byte, size)
@@ -102,7 +102,7 @@ func decryptWAL(ctx context.Context, c WALConfig, name, encrypted, destination, 
 	if err = Decode(bytes.NewReader(metadata), &receipt); err != nil {
 		return err
 	}
-	if receipt.Version != 1 || receipt.Name != name || receipt.SystemIdentifier != c.SystemIdentifier || receipt.ConfigurationSHA256 != Digest(c) || receipt.Plaintext.Path != name || receipt.Plaintext.Size != c.SegmentBytes || receipt.Encrypted != (Artifact{}) {
+	if receipt.Version != 1 || receipt.Name != name || receipt.SystemIdentifier != c.SystemIdentifier || receipt.ConfigurationSHA256 != Digest(c) || receipt.Plaintext.Path != name || !validWALSize(c, name, receipt.Plaintext.Size) || receipt.Encrypted != (Artifact{}) {
 		return errors.New("WAL envelope scope mismatch")
 	}
 	// Resolve the existing parent once so relative PostgreSQL %p paths work too.
@@ -125,21 +125,19 @@ func decryptWAL(ctx context.Context, c WALConfig, name, encrypted, destination, 
 	defer os.Remove(output.Name())
 	defer output.Close()
 	hash := sha256.New()
-	header := make([]byte, 40)
-	if _, err = io.ReadFull(decrypted, header); err != nil {
-		return err
-	}
-	if err = validateWALHeader(header, name, c); err != nil {
-		return err
-	}
-	reader := io.MultiReader(bytes.NewReader(header), decrypted)
-	n, err := io.Copy(io.MultiWriter(output, hash), &walContextReader{ctx, io.LimitReader(reader, c.SegmentBytes+1)})
+	n, err := io.Copy(io.MultiWriter(output, hash), &walContextReader{ctx, io.LimitReader(decrypted, receipt.Plaintext.Size+1)})
 	// Reading beyond the expected segment forces age's final authentication/EOF.
 	if err != nil {
 		return err
 	}
-	if n != c.SegmentBytes || hex.EncodeToString(hash.Sum(nil)) != receipt.Plaintext.SHA256 {
+	if n != receipt.Plaintext.Size || hex.EncodeToString(hash.Sum(nil)) != receipt.Plaintext.SHA256 {
 		return errors.New("WAL plaintext size/checksum mismatch")
+	}
+	if _, err = output.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err = readWALPrefix(output, name, c, receipt.TimelineHistory); err != nil {
+		return err
 	}
 	if err = output.Sync(); err != nil {
 		return err
