@@ -4333,3 +4333,33 @@ Service commit: `43eb2ee`. Full Go suite with PostgreSQL, PKI/controller/OpenBao
 race tests, final focused authentication/eviction race checks, vet, formatting
 and diff checks passed. Disposable database removed. Host inventory updated to
 distinguish completed controller wiring from remaining client/renewal adoption.
+
+
+### Certificate-issuer OpenBao transport adoption checkpoint (2026-09-08)
+
+Certificate-issuer configuration now loads and validates the independent OpenBao
+transport pin, DNS name and bounded sweep interval. Enabled mode creates one
+application-owned verified HTTP transport before signer setup and passes it to
+Product/App/server registry clients plus both legacy OpenBao signer adapters.
+Partial policy fails before database setup. Startup does not auto-migrate in this
+mode; shutdown and bootstrap failure close the transport before its registry DB.
+Defaults preserve existing transport behavior; secret/environment preparation
+retains independent bootstrap trust.
+
+Tests cover environment loading and invalid pins/DNS/origins/intervals, application
+bootstrap in legacy and combined registry modes, unmigrated-schema refusal without
+schema mutation, cleanup ordering and post-shutdown denial. Legacy signer tests
+prove custom transport rejection reaches both adapters. Existing provider TLS,
+authentication, renewal and stream-eviction tests remain part of the full suite.
+No deployed host or production qualification evidence is claimed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Remaining work includes
+other Service clients, exact installed-CRL ACKs for HTTP consumers, root-policy/key
+renewal, external recovery-history reconciliation and actual host qualification.
+No push, PR, remote CI, live deployment or custody operation. Goal remains active.
+
+Service commit: `58f8e47`. Full Go suite with PostgreSQL, config/certificate-issuer/
+bootstrap/PKI race tests, vet, formatting and diff checks passed. Disposable database
+removed. No production acceptance gate is claimed closed.
