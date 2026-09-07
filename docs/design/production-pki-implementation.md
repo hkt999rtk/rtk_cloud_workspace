@@ -1229,3 +1229,17 @@ Keychain CSR identity enforcement. Duplicate subject fields, SAN restrictions,
 revocation, atomic activation, intermediate persistence and production renewal/ack
 remain unfinished, as does physical iOS validation. Five top-level milestones
 remain open.
+
+## iOS strict leaf profile
+
+Device identity checks now require a v3 leaf with one matching Common Name,
+P-256, non-CA basic constraints, digitalSignature-only key usage, clientAuth-only
+EKU and no SAN extension. Duplicate extensions are rejected. A bounded DER reader
+checks these profile fields in addition to native cryptographic trust validation.
+
+Validation: 54 Swift tests passed on macOS, with public negative fixtures covering
+duplicate/missing CN, SAN, CA status, extra usages, missing profile extensions and
+P-384. The arm64 iOS simulator package build also passed. Existing unrelated Swift
+concurrency warnings remain. Revocation, atomic version activation, intermediate
+persistence, production renewal/ack and physical iOS qualification are still open.
+Five top-level milestones remain unfinished.
