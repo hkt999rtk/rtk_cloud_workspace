@@ -69,7 +69,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 - Native protected software key/CSR and immutable verified bundle storage are locally
   implemented (client `d9e44a7`); active selection is implemented in `38694dd`.
   Prepared renewal persistence is implemented in `f23213e`; implement response
-  scheduling and refresh/owner integration
+  refresh/owner integration
+  (durable scheduling/resume is implemented in `bc80e26`)
   (acknowledgment/retirement and finish coordination are implemented in `6346159`)
   (authenticated HTTP renewal is implemented in `48c600f`)
   (wire conversion is implemented in `8d33454`)

@@ -2802,3 +2802,34 @@ staging/custody/recovery qualification. SDK integration advanced. Next native wo
 durable renewal scheduling, CRL refresh and continuous owner trust supervision, then
 verify actual application host integration. No push, PR, remote CI, deployment or
 physical/custody qualification was performed.
+
+
+## Native durable renewal scheduling and resume worker
+
+Client `bc80e26` implements due-time selection and stable pending-request persistence
+before key generation or HTTP. Due time uses the smaller of threshold days and one
+third of certificate lifetime; zero TTL/threshold default to 90/30. An injected
+decision timestamp never substitutes for the real clock in trust validation. Pending
+state binds Device, TTL, predecessor and bundle hash and derives a stable request ID.
+
+The HTTP worker holds the shared coordinator lock across scheduling, preparation,
+request, activation, replacement and acknowledgment. Pending state survives activation
+and callback failure. Verified completion allows only exact-byte pending deletion
+and directory fsync; changed state is retained. The acknowledgment helper now supports
+read-only completion verification for cleanup. No background timer is created.
+
+Validation: 12 tests pass with HTTP enabled and disabled, plus ASan/UBSan and an
+installed-package consumer calling the worker symbol. Tests cover waiting without
+key/network work, stable pending state before keys, TTL conflicts/truncation, real
+scheduled issuance, post-activation failure/restart, acknowledgment cleanup, changed
+pending bytes during callback, completed recovery and no-op subsequent scheduling.
+Reproduce with `cmake --build /private/tmp/rtk-native-http -j4` and
+`ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`; configuration and
+ownership details remain in the native README. Compiler logs have no warnings.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. Next: native CRL
+refresh and continuous owner trust supervision, then actual host/domain integration.
+The overall goal remains active. No push, PR, remote CI, deployment or physical
+qualification was performed.
