@@ -13,20 +13,37 @@ import (
 	"syscall"
 )
 
-func runWALArchive(args []string) error {
+func runWALArchive(args []string) error { return runWALCommand(args, false) }
+func runWALRestore(args []string) error { return runWALCommand(args, true) }
+
+func runWALCommand(args []string, restore bool) error {
+	command := "wal-archive"
+	if restore {
+		command = "wal-restore"
+	}
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Println("wal-archive --config FILE --confirm-environment ENV --confirm-stack STACK --name WAL_NAME --source WAL_PATH")
+		if restore {
+			fmt.Println("wal-restore --config FILE --confirm-environment ENV --confirm-stack STACK --name WAL_NAME --destination WAL_PATH --identity FILE")
+		} else {
+			fmt.Println("wal-archive --config FILE --confirm-environment ENV --confirm-stack STACK --name WAL_NAME --source WAL_PATH")
+		}
 		return nil
 	}
-	fs := flag.NewFlagSet("wal-archive", flag.ContinueOnError)
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	path := fs.String("config", "", "reviewed WAL configuration")
 	environment := fs.String("confirm-environment", "", "confirmed target")
 	stack := fs.String("confirm-stack", "", "confirmed target")
 	name := fs.String("name", "", "PostgreSQL archive %f")
-	source := fs.String("source", "", "PostgreSQL archive %p")
-	if fs.Parse(args) != nil || fs.NArg() != 0 || *path == "" || *source == "" || *name == "" {
-		return errors.New("invalid wal-archive arguments; use --help")
+	var source, destination, identity string
+	if restore {
+		fs.StringVar(&destination, "destination", "", "PostgreSQL restore %p")
+		fs.StringVar(&identity, "identity", "", "private age identity file")
+	} else {
+		fs.StringVar(&source, "source", "", "PostgreSQL archive %p")
+	}
+	if fs.Parse(args) != nil || fs.NArg() != 0 || *path == "" || (restore && (destination == "" || identity == "")) || (!restore && source == "") || *name == "" {
+		return fmt.Errorf("invalid %s arguments; use --help", command)
 	}
 	f, err := os.Open(*path)
 	if err != nil {
@@ -45,8 +62,15 @@ func runWALArchive(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err = recovery.ArchiveWAL(ctx, cfg, *name, *source); err != nil {
+	status := "archived"
+	if restore {
+		status = "restored"
+		err = recovery.RestoreWAL(ctx, cfg, *name, destination, identity)
+	} else {
+		err = recovery.ArchiveWAL(ctx, cfg, *name, source)
+	}
+	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "archived", "wal_name": *name})
+	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": status, "wal_name": *name})
 }

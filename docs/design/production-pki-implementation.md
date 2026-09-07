@@ -833,3 +833,23 @@ registry recovery, and measured RPO/RTO remain required. See
 `docs/postgresql-wal-archive.md` for the exact limits and remaining work. Other
 trust domains/consumers, installation and live custody/hardware qualification stay
 open; production remains disabled. No PR, push or remote CI occurred.
+
+
+## Verified WAL segment restore continuation
+
+Added `wal-restore` using completed remote objects and the original archive
+configuration. It verifies ciphertext checksum, age authentication, envelope scope,
+plaintext size/hash and PostgreSQL 16 header before atomically publishing a 0600
+segment without replacing any destination. Protected identity files, bounded
+metadata/read sizes, shared cancellation deadline, fsync and normal-error cleanup
+are enforced. Existing targets (even identical ones) fail closed. Restore requires
+the original configuration/spool path; configuration migration is not implemented.
+
+Recovery race tests cover completed-object round trip and malformed/tampered
+payloads, missing completion, corrupt download, wrong key/configuration, cancelled
+restore, symlinks and existing files. Focused CLI tests, recovery vet and CLI build
+pass. No live storage or database settings were changed. This is not yet complete
+PITR: timeline/history support, physical base backups, restore_command integration,
+scheduling/retention, matched registry/OpenBao recovery and measured RPO/RTO remain.
+Other trust domains/consumers and live custody/hardware qualification remain open;
+production stays disabled. No PR, push or remote CI occurred.

@@ -4,7 +4,7 @@
 writers or enter maintenance mode. Existing matched-set `backup create` remains a
 separate maintenance operation; scheduling that command does not provide continuous
 backup. This implementation does **not** yet provide physical base-backup capture,
-restore_command, timeline-history archival, failover qualification or a PITR/RPO
+timeline-history archival, failover qualification or a PITR/RPO
 claim. Do not enable it as a complete production archive_command until those
 remaining paths and an actual restore drill are complete.
 
@@ -70,6 +70,44 @@ and SHA-256, and a completion marker. Ambiguous uploads are reconciled by exact
 readback; existing names are never overwritten. This namespace contains the WAL
 age envelope, not a core-backup tar archive. Core restore cannot consume it.
 
+## Restore a completed segment
+
+`wal-restore` fetches the completion marker and ciphertext, verifies the remote
+size/checksum, decrypts the envelope, and checks the original configuration digest,
+cluster, name, plaintext hash/size and PostgreSQL header. It consumes the final age
+authentication tag before publishing any destination. Supply the **exact original
+archive configuration**, including spool path and recipients; changing configuration
+fails closed. The original private spool path must be available on the recovery
+host. Configuration migration is not supported by this envelope version.
+
+```sh
+rtk-cloud wal-restore --config /private/recovery/wal.json \
+  --confirm-environment staging --confirm-stack video-cloud-staging \
+  --name 000000010000000000000001 --destination /postgres/pg_wal/RECOVERYXLOG \
+  --identity /private/recovery/age-identity.txt
+```
+
+The identity argument is a file path, never the private key itself. The identity
+must be a regular file of at most 1 MiB with no group/other permissions. Use a
+read-only object-store credential for recovery. The destination parent must already
+exist and be controlled by the recovery operator. Relative destinations resolve
+against the process working directory, matching PostgreSQL's `%p` convention.
+
+Plaintext is streamed to a 0600 temporary file in that parent, fsynced, then
+published by an atomic no-clobber hard link and parent-directory fsync. **Every
+existing destination is rejected**, including identical files and symlinks; this
+command never replaces a file. The destination filesystem must support hard links
+and directory fsync. A sync failure returns failure even if publication occurred;
+inspect the target before retrying. Temporary plaintext and downloaded ciphertext
+are removed on normal success/failure; abrupt process termination can leave
+`.wal-restore-*` files for reviewed cleanup. Use encrypted storage for both spool
+and recovery destination. Context deadlines do not forcibly interrupt OS disk I/O.
+
+This provides the full-segment fetch/decrypt primitive for a future
+`restore_command`; it does not configure PostgreSQL or establish replay eligibility.
+Unsupported history/partial files return failure. Timeline transitions, base-backup
+selection and an actual PostgreSQL replay drill remain unqualified.
+
 ## Local evidence and remaining work
 
 Tests exercise age decrypt/byte equality, durable ciphertext reuse, same-name
@@ -79,7 +117,11 @@ passed real-header/encryption validation. Recovery race tests, focused CLI argum
 tests, vet and CLI build pass. The object-store tests use a local adapter fixture;
 no remote production storage was accessed.
 
-Remaining implementation: history files/timeline transitions, authenticated fetch
-and decryption into restore_command, physical base backups with coverage manifests,
+Restore tests additionally prove exact bytes, missing completion/corrupt remote
+rejection, wrong configuration/key, truncated or tampered authentication, extra or
+short plaintext, header/hash mismatch, cancellation and no-clobber behavior.
+
+Remaining implementation: history files/timeline transitions, restore_command
+integration, physical base backups with coverage manifests,
 continuous WAL/snapshot scheduling, retention, matched OpenBao/registry recovery,
 and measured recovery drills demonstrating RPO <= 15 minutes and RTO <= 4 hours.

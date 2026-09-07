@@ -26,7 +26,7 @@ func recoveryMutationGuard(args []string) error {
 		return nil
 	}
 	switch args[0] {
-	case "wal-archive", "backup", "restore", "docs-check", "contracts-check", "status-all", "test-catalog", "test-inventory", "test-spec-inventory", "test-spec-impact", "test-coverage", "test-coverage-aggregate", "test-feature-coverage":
+	case "wal-restore", "wal-archive", "backup", "restore", "docs-check", "contracts-check", "status-all", "test-catalog", "test-inventory", "test-spec-inventory", "test-spec-impact", "test-coverage", "test-coverage-aggregate", "test-feature-coverage":
 		return nil
 	}
 	if len(args) > 1 && args[0] == "secrets" && (args[1] == "verify" || args[1] == "inventory" || args[1] == "plan") {

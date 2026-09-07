@@ -9,3 +9,11 @@ func TestWALArchiveArguments(t *testing.T) {
 		}
 	}
 }
+
+func TestWALRestoreArguments(t *testing.T) {
+	for _, args := range [][]string{{"--name", "segment"}, {"--unknown"}, {"--source", "/tmp/source"}, {"--destination", "/tmp/dest", "extra"}, {"--config", "missing", "--name", "segment", "--destination", "/tmp/dest"}} {
+		if runWALRestore(args) == nil {
+			t.Fatal("invalid restore invocation accepted", args)
+		}
+	}
+}
