@@ -1,12 +1,12 @@
 # Design document conflict audit and repair proposal
 
-Status: supporting-note; documentation corrections applied locally on 2026-09-07.
+Status: supporting-note; documentation corrections implemented on 2026-09-07.
 
 Owner: rtk_cloud_workspace.
 
 Last reviewed: 2026-09-07.
 
-All nine documented findings are corrected in the local workspace. The original
+All nine documented findings are corrected in this integration snapshot. The original
 findings below preserve the pre-fix rationale; their line references refer to
 the audited snapshot and may have moved in the corrected files. No service
 runtime, database migration, deployment, credential, or payment behavior changed.
@@ -43,8 +43,16 @@ Validation after corrections:
 - Existing Video Cloud app certificate issuance, missing-mTLS rejection and CSR mismatch tests: PASS.
 - Newly added Markdown file links and whitespace checks across changed repositories: PASS.
 
-Changes are delivered through five service/contracts PRs and their dependent
-workspace PR. No deployment is included. Generated sequence-diagram
+Changes are delivered through service/contracts PRs and their dependent
+workspace PR. The merged leaf changes are [contracts #155](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/155),
+[Account Manager #325](https://github.com/hkt999rtk/rtk_account_manager/pull/325),
+[Cloud Admin #388](https://github.com/hkt999rtk/rtk_cloud_admin/pull/388),
+[SDK #560](https://github.com/hkt999rtk/rtk_cloud_client/pull/560), and
+[Video Cloud #654](https://github.com/hkt999rtk/rtk_video_cloud/pull/654) plus
+[review corrections #655](https://github.com/hkt999rtk/rtk_video_cloud/pull/655).
+Review corrections encode clip authority in front matter, distinguish fleet
+health routing from root telemetry cleanup, and document the SDK recovery
+helper's unexercised signed-token reissue step. No deployment is included. Generated sequence-diagram
 sources and binary exports were not edited; the corrected documents are not
 inputs to that diagram PDF builder. The inventory retains pre-fix hashes and
 adds post-fix hashes for changed audited files.

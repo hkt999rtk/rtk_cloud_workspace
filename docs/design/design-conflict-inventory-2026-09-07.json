@@ -1614,8 +1614,8 @@
         "auth": 3,
         "authority": 2
       },
-      "post_fix_sha256": "d3862154c0fa401b4d544cfe63141a2ee7264cacfc0ba703cd3d66703f2fd6f4",
-      "post_fix_lines": 353
+      "post_fix_sha256": "724ac39fb8e683d9cd7bbf87f05ac659798249d11ae5a261e9eefbaa80dacbd6",
+      "post_fix_lines": 358
     },
     {
       "path": "repos/rtk_cloud_client/docs/platform_hal.md",
@@ -2724,8 +2724,8 @@
         "auth": 2,
         "authority": 3
       },
-      "post_fix_sha256": "d7dac07c77bb8005bbbdfaa82d36bb24e3f86ce8783f0aa2440fb28058ec4306",
-      "post_fix_lines": 370
+      "post_fix_sha256": "90bd47aaebe57e618c50340e0b078b7bcf719c2691b9f8c900be17efa81b2bcc",
+      "post_fix_lines": 374
     },
     {
       "path": "repos/rtk_video_cloud/docs/clip-direct-upload-design.md",
@@ -2736,8 +2736,8 @@
         "storage": 1,
         "authority": 3
       },
-      "post_fix_sha256": "db600c18f59be2dbc160ea64f9ecd7c0986b3ceeb36e9d2944d78b905b00e361",
-      "post_fix_lines": 436
+      "post_fix_sha256": "fa930f7320a93748b33aa1100084602df02277d17329a007cc58979b9b0b8d1b",
+      "post_fix_lines": 440
     },
     {
       "path": "repos/rtk_video_cloud/docs/cloud-deletion-observer.md",
