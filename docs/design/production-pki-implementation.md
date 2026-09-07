@@ -4679,3 +4679,21 @@ remote CI, deployment or custody action. Goal remains active.
 
 Full Go tests, the targeted race test, vet, formatting and diff checks passed. No
 production acceptance gate is claimed closed.
+# Service credential trust correction (2026-09-08)
+
+Service commit `bdd1070` corrects the host store introduced in `835d50d`.
+The previous installer verified against the response's own root and reload checked
+only subject/expiry. Opening now requires an independently configured root SHA-256
+pin. Installation and reload both enforce the pin, ordered chain signatures,
+P-256, exact CN-only clientAuth profile, validity, issuer margin and 90-day ceiling.
+Invalid installation retains the current credential and pending request.
+
+Full Go tests, targeted race tests and vet passed. Regression coverage rejects
+an untrusted response root, changed reload pin, expired leaf and incomplete saved
+chain. This is a prerequisite correction; host network orchestration, scheduling,
+runtime receipt/CRL checks and listener adoption remain unfinished.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. No live qualification gate
+is closed. Local commits only.
