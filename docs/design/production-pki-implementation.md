@@ -1843,3 +1843,24 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next requires durable due-time
 scheduling/lifecycle wiring, backup/recovery reconciliation and CRL/live session
 integration, with physical/provider qualification still outstanding.
+
+## Android durable renewal schedule
+
+Android now calculates renewal due time from certificate lifetime and persists a
+deterministic pending request before preparation/network activity. Bounded atomic
+records outside backup preserve the predecessor/TTL through activation and retry;
+conflicting parameters or corrupted records fail. The due-only coordinator clears
+the matching schedule only after the successor is active and acknowledged, then
+returns its next due time. No OS job is registered by these APIs.
+
+Validation: JVM date tests cover short/normal/long lifetimes and invalid inputs;
+the full JVM suite and release/test builds passed. Eight API 35 PKI tests passed,
+including schedule reopen, TTL conflict, corruption, completed retirement clearing
+the schedule and successor waiting state. Emulator user storage was verified
+unlocked before instrumentation and the emulator was stopped after testing.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next needs native background
+job/lifecycle wiring and backup/recovery reconciliation; CRL/live session and
+physical/provider qualification remain outstanding.
