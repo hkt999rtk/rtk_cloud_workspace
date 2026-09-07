@@ -2771,3 +2771,34 @@ staging/custody/recovery qualification. SDK integration advanced. Next native wo
 authenticated acknowledgment, durable retirement/session coordinator, scheduling,
 refresh and host ownership. No push, PR, remote CI, deployment or physical/custody
 qualification was performed.
+
+
+## Native acknowledgment, retirement and finish coordinator
+
+Client `6346159` adds successor mTLS acknowledgment with matching durable attempt,
+predecessor retirement and completion records bound to both versions and bundle
+hashes. Attempt/retirement precede HTTP; confirmed 2xx response precedes completion.
+Lost replies retry using the successor, and completed replay requires all matching
+history without another POST or implicit reconstruction.
+
+The finish coordinator serializes installation/activation, invokes a mandatory host
+session-replacement callback, then acknowledges. Callback failure stops retirement
+and HTTP; recovery repeats replacement even after completed acknowledgment. Options
+and cancellation are checked before mutation. Low-level callers retain explicit
+responsibility to replace owners before directly acknowledging.
+
+Validation: 12 tests pass with HTTP enabled and disabled, plus ASan/UBSan and an
+installed C consumer calling the coordinator symbol. Live HTTPS verifies the
+successor certificate, retirement-before-POST, lost first acknowledgment, successful
+retry and no POST on completed replay. Tests also cover coordinator activation,
+callback failure/repetition, writer contention, missing retirement history and
+corrupt completion. Reproduce with `cmake --build /private/tmp/rtk-native-http -j4`
+and `ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`; optional
+configuration and API ownership are in the native README.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. Next native work:
+durable renewal scheduling, CRL refresh and continuous owner trust supervision, then
+verify actual application host integration. No push, PR, remote CI, deployment or
+physical/custody qualification was performed.
