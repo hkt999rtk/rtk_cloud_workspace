@@ -28,7 +28,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [ ] Legacy inventory/import automation and staged migration.
 - [x] Offline CA CRL signing, immutable CRL publication, and exact consumer acknowledgment gates.
 - [x] Device replacement with bounded overlap, successor acknowledgment and Go file-based installation helpers.
-- [ ] Trust-consumer installation/refresh, Root distrust and outstanding-token revocation.
+- [x] Certificate-bound device tokens with live API/refresh/MQTT authentication checks.
+- [ ] Trust-consumer installation/refresh, Root distrust and active-session eviction.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [ ] OpenBao Raft deployment, scoped workload policies and database grants.
@@ -160,3 +161,32 @@ keys, PR, push, remote CI or deployment was performed.
 
 Local replacement milestone commits: Video Cloud `ab966f8`, Go client `c429481`.
 These follow the recovery workspace checkpoint `5831387`.
+
+## Device token revocation continuation
+
+Device/camera JWT issuance now records the verified mTLS certificate fingerprint.
+The API's token service checks live certificate binding, entitlement, cloud and
+issuer-lineage state on issuance, validation and refresh. Refresh preserves its
+original certificate provenance. Old-certificate acknowledgment or deadline,
+leaf revocation and ancestor compromise deny outstanding associated tokens on
+subsequent validation. Missing provenance and registry failures fail closed.
+Cloud identity is checked against the authoritative entitlement even when cached
+device projections supply issuance metadata. MQTT HTTP authentication uses the
+same verifier. App, subscriber and administrator token policies are unchanged.
+
+Tests cover persisted replacement with old/new tokens, revoked leaf/entitlement/
+ancestor, staging deadlines, cross-cloud/environment rejection, refresh provenance,
+missing verifier and direct-TLS provenance attachment. The MQTT endpoint is tested
+before/after revocation. Affected authentication, PKI, HTTP, API, workflow and
+certissuer regression/race suites and focused vet checks pass.
+
+Rollout requires existing device clients to reacquire certificate-bound tokens;
+old device/camera JWTs lacking provenance are rejected in Product PKI mode.
+The environment example remains disabled. Uncached registry reads need load
+qualification. Broker authentication caches, already-open MQTT/WebSocket/WebRTC
+sessions, presigned URLs and separate offline JWT consumers are outside this
+validation boundary. Active-session eviction and live propagation drills remain
+next work alongside the other unfinished production milestones.
+
+Local token-revocation service commit: Video Cloud `5039ecd`, following workspace
+checkpoint `7754f9a`. No PR, push, deployment or remote CI run was performed.
