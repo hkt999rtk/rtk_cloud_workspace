@@ -1754,3 +1754,25 @@ provider/hardware; staging/custody/recovery. Android next requires production
 submission and durable response receipts, activation/session replacement and
 acknowledgement, plus revocation/lifecycle integration. Prepared state alone does
 not replace the existing legacy renewal endpoint.
+
+## Android production renewal transport and durable receipts
+
+Prepared Android requests now submit through the predecessor mTLS identity to
+the production renewal endpoint with HTTPS/redirect/response-size/deadline gates.
+Verified matching responses persist as immutable atomic receipts outside backup
+before returning. Retry reuses a saved receipt without a network call; installation
+requires the saved response and a live overlap and preserves the predecessor.
+Temporary HTTP resources are closed. Conflicting saved responses fail closed.
+
+Validation: full JVM tests and release build passed. Eight API 35 emulator PKI
+tests passed, covering predecessor mTLS, production request fields, redirects,
+leaf mismatch, streamed oversize, expired overlap, offline receipt reuse and
+predecessor preservation. Test transport certificates are explicit fixtures;
+independent signed-profile installation also runs in the same suite. The emulator
+was stopped afterward; physical hardware/live controller integration is unproven.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next needs activation,
+session replacement, acknowledgement/retirement and in-flight cancellation,
+followed by revocation/lifecycle and live provider qualification.
