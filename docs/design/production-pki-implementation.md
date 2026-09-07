@@ -1313,3 +1313,23 @@ device/request namespace boundaries. Native OpenSSL issuance still passes.
 Network renewal/response installation/ack integration, scheduling, revocation and
 physical-device restart qualification remain required. Five top-level milestones
 remain open.
+
+## iOS renewal submission and response installation
+
+The SDK submits the persisted CSR and request parameters to the production renewal
+path using the previous identity. HTTPS and redirect refusal are enforced by the
+built-in path. Responses are checked for request/overlap metadata, trusted chain,
+device profile, leaf/chain agreement and pending key possession before immutable
+installation. Active selection remains unchanged.
+
+Validation: 61 Swift tests and the arm64 iOS simulator build passed. Native
+Keychain/OpenSSL issuance with an injected HTTP transport covers valid submission/
+installation and negative response, client, URL and redirect cases. No live
+endpoint was called. JSON decoding is bounded; streaming response limits, durable
+response/ack recovery, acknowledgement, scheduling, revocation and live device/
+network validation remain open.
+
+Progress reporting clarification: these SDK changes advance milestone 3; they
+do not complete a top-level milestone. Five broad milestones remain. Reports
+should identify the milestone advanced and concrete unfinished substeps rather
+than repeating the count as if it measured implementation progress.
