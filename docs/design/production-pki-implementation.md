@@ -683,3 +683,26 @@ external services were changed.
 
 Local Video Cloud commit `4e4416c`, following workspace checkpoint `01e25ee`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Authenticated CRL synchronization continuation
+
+Added a scoped CRL consumer that reuses verified management mTLS, canonical issuer
+URLs, redirect rejection, bounded responses and request deadlines. It fetches,
+validates and persists a signed CRL, reloads it under the cache lock, and acknowledges
+only the exact runtime record. Freshness is rechecked after installation. Expected
+environment/domain and independently provisioned authority fingerprint are required;
+private keys are neither fetched nor regenerated.
+
+Reload failure produces no acknowledgment. Failed/uncertain acknowledgment leaves
+the stricter cache intact for restart retry. Real local mTLS tests cover workload
+identity, exact runtime digest, reload failure, acknowledgment retry, restart,
+expiry during installation, wrong issuer, cancellation and scope mismatch.
+pkitrust/API race suites and focused vet pass.
+
+Actual API/broker CRL worker composition and long-lived runtime revalidation remain
+next integration work. Other trust domains, platform installation, recovery and
+live/hardware qualification remain open; production remains disabled. No PR, push,
+remote CI or deployment occurred.
+
+Local Video Cloud commit `d3874fd`, following workspace checkpoint `538c032`.
