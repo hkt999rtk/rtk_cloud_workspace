@@ -2283,3 +2283,22 @@ consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next JavaScript work is guarded successor
 installation/activation and durable acknowledgment/retirement, followed by trust
 freshness and owner integration.
+
+## JavaScript guarded successor activation
+
+Added saved-request/CSR/key/receipt validation before immutable successor
+installation and compare-and-publish activation. Each predecessor has one immutable
+transition slot; competing successors cannot overwrite it. New transitions require
+live overlap; already-active retries remain idempotent after overlap. Loading walks
+bounded/cycle-checked history and validates the final identity rather than requiring
+old keys to remain usable. A concurrent later activation is detected before return.
+
+Validation: 38 JavaScript tests and TypeScript build passed. Tests cover missing
+receipt, expired overlap, six concurrent identical activations, competing successor,
+restart, expired-overlap retry, removed old key and missing successor key. This
+is not hardware anti-rollback or live operational qualification.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next is durable acknowledgment-attempt and
+predecessor retirement, plus session replacement orchestration and trust freshness.
