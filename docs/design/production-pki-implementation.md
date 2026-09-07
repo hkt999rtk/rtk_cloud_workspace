@@ -1520,3 +1520,23 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android/native bundle trust and
 revocation freshness remain among the next consumer gaps.
+
+## Android certificate-bundle trust validation
+
+Android bundle parse/validate/test-import now require independently provisioned
+roots and validate the PKIX path. Root validity, signing/path-length constraints,
+chain order and ClientAuth-compatible EKUs are enforced explicitly. Input bounds
+and trailing-DER rejection apply. The bundle no longer establishes its own trust.
+Revocation lookup is explicitly disabled in this path-only validator until a
+responder/freshness policy is configured; no revocation qualification is claimed.
+
+Validation: 39 Android JVM unit tests passed, one live integration test skipped,
+and the release build passed with Gradle 8.10.2/JDK 17. New path fixtures reject
+untrusted roots, expired roots, non-CA issuers, path-length violations and a
+server-only issuer. Native Android KeyStore/provider/device behavior remains
+unqualified.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Native C bundle trust and verifier
+revocation freshness remain among the next gaps.
