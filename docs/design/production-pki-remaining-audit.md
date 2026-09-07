@@ -15,8 +15,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 | Milestone | Current implementation evidence | What still prevents completion |
 | --- | --- | --- |
 | 1. Legacy migration/device replacement | `repos/rtk_video_cloud/internal/pkicontrollerapp/legacy.go`, `internal/pki/legacy.go`, `internal/pki/replacement.go` implement staged inventory/import and device replacement; the ledger records local tests. | Actual staging cohort inventory, approved import, measured replacement/overlap and residual legacy population. Local fixtures do not establish cohort adoption. |
-| 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; JavaScript durable CRLs, bounded refresh, guard and mTLS/WebSocket lifetime cancellation; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK now has an optional OpenSSL Device verifier; durable CRL state is implemented; protected provider and owner integration remain. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
-| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go now has durable acknowledgment/retirement, mandatory renewal CRLs and resumable session-replacement coordination; durable expiry-driven scheduling is now implemented; host integration remains. Native OpenSSL verification is implemented; protected installation/renewal and live-owner integration remain. These are implementation gaps, not merely physical test gates. |
+| 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; JavaScript durable CRLs, bounded refresh, guard and mTLS/WebSocket lifetime cancellation; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK now implements protected Device identity/renewal, durable CRLs, periodic refresh, guarded core HTTP/WebSocket mTLS and bounded DNS/TCP/TLS setup. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
+| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go now has durable acknowledgment/retirement, mandatory renewal CRLs and resumable session-replacement coordination; durable expiry-driven scheduling is now implemented; host integration remains. Native protected installation/renewal, durable scheduling and core HTTP/WebSocket owner integration are implemented. Application/domain policy adoption remains an implementation gap, not merely a physical test gate. |
 | 4. Provider/hardware compatibility | OpenBao policy/workload/Raft artifacts and local provider tests exist. Host Swift, API 35 emulator and native host checks are recorded. | Supported-provider/version and physical Secure Enclave, Android TEE/StrongBox, firmware/ARM and HSM matrix results. Local tests must not be substituted for this evidence. |
 | 5. Staging/custody/recovery qualification | Offline ceremony CLI, recovery tools and runbooks exist. | Real MFA identities and independent custodians, escrow/restore ceremony, failure-domain/seal approval, live matched recovery and post-backup security reconciliation, measured RPO ≤15 min and RTO ≤4 h. Production remains disabled. |
 
@@ -53,8 +53,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    monotonic updates and atomic POSIX publication. Protected identity installation/
    renewal, scheduling, public HTTPS refresh and a POSIX session guard are locally
    implemented, including guard-owned periodic refresh and an optional POSIX TLS
-   platform for core HTTP/WebSocket ownership. Bounded TCP resolution/connect,
-   application policy/domain wiring and physical/OpenSSL-provider qualification remain. The
+   platform for core HTTP/WebSocket ownership with bounded DNS/TCP/TLS setup
+   and owner-independent resolver cleanup. Application policy/domain wiring and physical/OpenSSL-provider qualification remain. The
    original fake callback test remains a plumbing test, not the verifier evidence.
 4. **Other trust domains and host inventory.** The generic issuer `Scope` has a
    domain, but `internal/pki/openbao_policy.go`, replacement and runtime
@@ -71,7 +71,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 - Native protected software key/CSR and immutable verified bundle storage are locally
   implemented (client `d9e44a7`); active selection is implemented in `38694dd`.
   Prepared renewal persistence is implemented in `f23213e`; implement
-  bounded TCP resolution/connect and actual application/domain policy integration
+  actual application/domain policy integration
+  (bounded DNS/TCP/TLS and deferred resolver cleanup are implemented in `34bccfa`)
   (core HTTP/WebSocket TLS owner wiring is implemented in `830798f`)
   (guard-owned periodic refresh is implemented in `8b177cb`)
   (continuous POSIX trust guard is implemented in `683230c`)

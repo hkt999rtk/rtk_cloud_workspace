@@ -2952,3 +2952,42 @@ phase (TLS handshake/I/O are bounded), and application/domain policy integration
 Server revocation-feed integration is separate from Device issuer CRLs. Next: close
 bounded TCP ownership gaps and audit domain-specific issuance/consumer wiring.
 No push, PR, remote CI or deployment was performed. The overall goal remains active.
+
+
+## Native bounded DNS/TCP/TLS setup
+
+Client `34bccfa` replaces the guarded platform's blocking base-POSIX connector
+with libcurl asynchronous DNS/connect-only TCP, followed by OpenSSL mTLS under one
+monotonic setup deadline. Proxy/netrc/application transfer are disabled during TCP
+setup; no application bytes precede TLS. Numeric ports and pinned DNS/IP names are
+validated. Both optional TLS and HTTP now require the shared async-DNS/OpenSSL-3
+curl backend; TLS remains independently selectable from the renewal HTTP API.
+
+A fault test showed threaded resolver cleanup could block after timeout. Socket/curl
+cleanup now transfers to a process-lifetime worker holding no platform/guard/key or
+caller-buffer references. Existing sockets shut down immediately on close. Admission
+of new connections stops while sixteen setup/cleanup jobs are outstanding; closing
+already-established sockets can transiently exceed that threshold while releasing
+previous allocations. Live sockets do not consume admission slots. This prevents
+unlimited new resolver work without waiting for an uninterruptible OS resolver on
+the calling thread. Filesystem trust validation is not made interruptible.
+
+Validation: all twelve HTTP/TLS and twelve HTTP-disabled tests pass, including a
+test-only resolver interposition library that delays OS resolution three seconds,
+checks 100-ms timeout and cancellation return/destruction under one second, waits for
+late completion after owner destruction, and verifies rejection at admission
+saturation. A transport test confirms delayed TLS does not reset the TCP deadline.
+Real HTTP/WebSocket mTLS, revocation and peer-expiry tests, ASan/UBSan and
+ThreadSanitizer pass. Installed C consumers link/run with and without the renewal
+HTTP option. Evidence is macOS arm64 with the documented OpenSSL/curl toolchain;
+Linux and other resolver/provider qualification remain. Reproduce through native
+README CMake commands and `ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. The native bounded setup gap is addressed.
+Next: domain-specific issuer policy and consumers. Read-only inspection confirms
+`internal/pki/types.go` accepts App/service domains but `openbao_policy.go` still
+restricts online policy to Device Product issuers; schema support alone is not domain
+integration. No push, PR, remote CI, deployment or custody operation was performed.
+The overall goal remains active.
