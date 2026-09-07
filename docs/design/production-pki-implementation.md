@@ -1540,3 +1540,25 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Native C bundle trust and verifier
 revocation freshness remain among the next gaps.
+
+## Native C trust-aware import gate
+
+The native bundle path had a validation bypass: import directly invoked its
+provider import callback. It now requires a trust-aware provider callback and
+explicit independent root input, then revalidates before every import. Legacy
+callback-only/old-sized interfaces fail closed. Embedded hosts have an explicit
+validation-time import API; the existing wrapper requires a working wall clock.
+Input size, embedded-NUL and allocator-pair checks were added, and truncated
+field extraction no longer advances past a missing delimiter.
+
+Validation: all 11 native tests passed on macOS arm64/Clang. The bundle test also
+passed ASan/UBSan across all truncated fixture prefixes. Callback tests establish
+dispatch/error behavior only: actual X.509 path validation, revocation freshness
+and hardware/firmware provider integration remain unqualified. The native SDK
+still delegates those responsibilities to the host cryptographic provider.
+
+Milestone 2 advanced by closing import's validation bypass and making trust input
+explicit. Five broad milestones remain: migration/device replacement; remaining
+trust consumers/live sessions; backup/recovery and SDK integration; provider/
+hardware; staging/custody/recovery. Native provider implementation/qualification
+and verifier revocation freshness are still outstanding.
