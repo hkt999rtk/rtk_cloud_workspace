@@ -210,3 +210,44 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Next: native live authorization rechecks
 and remote TURN allocation termination. No push, PR, remote CI, deployment or
 custody operation occurred. Goal remains active.
+
+
+## Native authorization recheck and lease checkpoint (2026-09-08)
+
+WebRTC SDK commit `113b53f` adds `rtk_session_poll` / C++ Session::poll, wired to
+the native example's serialized 200ms loop. Every 10 seconds the SDK rechecks the
+original session/token through Wait Answer with a five-second request budget.
+It neither refreshes the original identity nor reapplies returned SDP. Failure,
+empty response, expiry or clock rollback closes locally before reporting failure.
+Original-token memory is explicitly cleared on failure/close/destruction. The
+symbol is exported by the shared library and both export manifests.
+
+The developing native ABI 1 backend now also requires refresh_authorization: a
+30-second monotonic lease, renewable only while alive and bounded by the fixed
+hard session expiry. Successful checks renew it; missing polls, blocked signaling
+or prolonged setup expire it. The independent backend watchdog closes the actual
+peer even if the C host loop is stuck. The POSIX adapter caps total Wait Answer
+request timeout by the supplied budget using a per-call config copy. Custom
+backends/consumers must rebuild and implement the same lease contract. Effective
+certificate revocation checking requires the registry-aware server endpoint.
+
+Validation: the full native shared build passed all 22 CTests, including direct
+and local TURN H.264 paths. The core test verifies original-token successful
+recheck followed by denial/local closure. A real backend test renews at 15 seconds,
+remains alive beyond the original 30-second lease, then stops renewal and observes
+closure near 45 seconds; expired renewal cannot revive it. This 45-second lease
+test also passed ThreadSanitizer with halt_on_error. A subsequent targeted HTTP
+test passed a short-budget timeout followed by a longer-budget successful call,
+verifying transport config is not permanently shortened.
+
+Reproduce: `cmake --build /private/tmp/rtk-webrtc-pki-peer -j6` then
+`ctest --test-dir /private/tmp/rtk-webrtc-pki-peer --output-on-failure -j4`.
+TSan: `TSAN_OPTIONS=halt_on_error=1 /private/tmp/rtk-webrtc-pki-tsan/rtk_libdatachannel_peer_test --lease`.
+All evidence is local macOS; scheduling, physical hosts, deployment load and
+registry/CRL propagation require independent qualification.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: remote TURN allocation termination
+and remaining host/domain wiring. No push, PR, remote CI, deployment or custody
+operation occurred. Goal remains active.
