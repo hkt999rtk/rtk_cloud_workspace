@@ -3579,3 +3579,36 @@ original audit, together with host adoption. Current App verification checks
 revoked_at and signed CRLs, but tests still inject receipt revocation directly;
 automatic revocation/controller publication is not complete. No push, PR, remote
 CI, deployment or custody operation occurred. Goal remains active.
+
+
+## App leaf revocation checkpoint (2026-09-08)
+
+Video Cloud `583c943` adds durable App revocation receipts and authenticated
+`revoke-app` / `finalize-app-revocation` issuer endpoints. The initial transaction
+marks the issued receipt revoked and records original operator/reason/time;
+same-reason retries preserve that record. Existing App identity/token checks and
+issuance replay/completion deny afterward. Publication remains pending until a
+current signed full issuer CRL contains the leaf serial and every configured
+consumer acknowledges its exact digest. Empty consumer policy is rejected;
+finalization rechecks freshness/policy and avoids duplicate audits. Controller-only
+SQL grants cover the new table; migration and explicit grant refresh are required.
+
+Review also found that issuer retirement omitted App leaves. Retirement now blocks
+pending App signing outcomes, live unrevoked leaves and unpublished revocations.
+It cannot discard the signer before those descendants settle.
+
+Validation: full server Go suite; full PKI race suite against disposable PostgreSQL
+16; restricted controller/issuer/verifier role integration; signed HTTP assertion,
+service identity and environment tests; retirement before/after publication.
+App token verification/refresh tests now invoke RevokeApp instead of directly
+mutating revoked_at, and pass. The task PostgreSQL container was stopped and
+removed through its --rm lifecycle. No live environment or provider was mutated.
+
+This is durable denial and verified publication receipt handling, not automatic
+OpenBao revocation. Provider revoke/CRL retrieval, bounded retries/recovery and
+worker scheduling remain the next implementation step. Disconnected-client/fleet
+cutoff and real consumer acknowledgments remain qualification requirements.
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. No push, PR, remote CI, deployment or
+custody operation occurred. Goal remains active.
