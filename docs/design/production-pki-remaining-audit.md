@@ -1495,3 +1495,30 @@ Service commit: `9897894`. The full Go suite with PostgreSQL/OpenBao, the target
 PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
 Disposable PostgreSQL and OpenBao fixtures were removed. No production acceptance
 gate is claimed closed.
+
+### Authenticated Service client issuance checkpoint (2026-09-08)
+
+Video Cloud `73fdaa2` closes the cert-issuer integration gap for new Service client
+credentials. A dedicated direct-mTLS provisioner route creates a durable registry
+claim before the pinned OpenBao Service issuer is called. Exact replay returns the
+recorded certificate without a second signature; changed caller/subject/CSR/TTL/
+metadata conflicts. The route rejects forwarded identities, unauthorized callers,
+non-approved subjects, SANs, requested extensions and lifetimes above 90 days.
+
+Configuration is explicit and fail closed: the feature is disabled by default,
+requires the Service issuance migration and OpenBao, has a separate provisioner CN
+policy, and prevents automatic schema mutation. Its 90-day leaf ceiling remains
+independent from the shared maximum needed by Device/App issuance.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Service client issuance is
+no longer a local implementation gap. Remaining work includes Service listener and
+client-host adoption, renewal ownership, periodic CRL consumption/publication and
+restore qualification. No push, PR, remote CI, deployment or custody action. Goal
+remains active.
+
+Full Go tests, targeted race tests, vet, formatting and diff checks passed. Tests
+cover the authenticated route, fixed OpenBao role/mount, replay/conflict behavior,
+CSR profile and coexistence with longer shared TTL settings. No production
+acceptance gate is claimed closed.

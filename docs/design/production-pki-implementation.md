@@ -4602,3 +4602,33 @@ Service commit: `9897894`. The full Go suite with PostgreSQL/OpenBao, the target
 PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
 Disposable PostgreSQL and OpenBao fixtures were removed. No production acceptance
 gate is claimed closed.
+
+### Authenticated Service client issuance checkpoint (2026-09-08)
+
+Video Cloud `73fdaa2` connects the durable Service client registry to a new
+`POST /v1/certificates/service-client/issue` endpoint. Only a directly verified
+mTLS caller matching the dedicated provisioner pattern is admitted; trusted
+forwarded identity headers cannot authorize this route. The registry remains the
+authority for exact approved Service identities and pinned issuer lineage.
+
+The request binds caller, request ID, exact subject, signed CSR DER, TTL and
+metadata. Only a CN-only `service:<name>` CSR without SANs or requested extensions
+can reach OpenBao. Signing uses the registry-selected Service mount and fixed
+`service-client` role. Durable replay does not sign again, and changed input under
+the same request ID conflicts. The endpoint enforces a 90-day Service lifetime
+without lowering the shared maximum used by other certificate profiles.
+
+Bootstrap adds an opt-in feature flag, explicit migration preflight and a separate
+provisioner CN policy. Enabling it disables automatic schema mutation and requires
+direct mTLS plus OpenBao configuration. Configuration and endpoint behavior are
+documented in the service repository.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Remaining Service client
+work is listener/consumer adoption, renewal ownership, periodic CRL operation and
+restored-inventory qualification. No push, PR, remote CI, deployment or custody
+action. Goal remains active.
+
+Service commit: `73fdaa2`. Full Go tests, targeted race tests, vet, formatting and
+diff checks passed. No production acceptance gate is claimed closed.
