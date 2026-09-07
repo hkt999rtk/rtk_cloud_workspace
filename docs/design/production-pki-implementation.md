@@ -4556,3 +4556,49 @@ Service commit: `992e15d`. Full Go suite with PostgreSQL/OpenBao, targeted
 PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
 Disposable database/provider fixtures were removed. No production acceptance
 gate is claimed closed.
+
+### Service client reconciliation and revocation checkpoint (2026-09-08)
+
+Added issuer-scoped controller operations for Service client reconciliation,
+revocation, provider publication and finalization. They use the existing Account
+Manager mTLS/request-bound assertion boundary and require fresh MFA `pki_admin`.
+Recovery takes only caller/request/optional serial, revalidates durable request
+context and recovers a unique provider certificate without re-signing. Missing
+serial recovery uses bounded complete inventory; writers must be fenced. Owner
+completion and recovery share the same immutable completion transaction.
+
+Revocation commits receipt denial and a durable Service client revocation row
+atomically. Provider failure cannot restore access. Publication is scoped to the
+Service issuer mount and imports only a signed CRL covering the recorded serial;
+fresh covering evidence is reused. Finalization requires all configured consumers
+on the exact current digest and rechecks policy/CRL changes. No acknowledgment is
+manufactured by recovery or publication. Unexpired leaves still conservatively
+block issuer retirement until consumer/host acceptance exists.
+
+Tests cover request assertion binding, authorization, concurrent/uncertain recovery,
+missing serials and original-context tampering, publication failures, wrong domains,
+current-digest/consumer expansion gates, restricted SQL roles and local OpenBao
+lost-serial recovery plus revoke/publish/finalize. Real-provider fixture comparison
+allows equivalent surrounding PEM whitespace; acknowledgment time is sampled after
+provider publication, so a newly issued CRL is not tested against an older clock.
+Local fixture acknowledgments are not live listener-eviction evidence.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Remaining Service client work
+includes authenticated issuance integration, periodic CRL publication/consumer work,
+TLS listener adoption, renewal and restored-inventory qualification. Explicit schema
+migration and refreshed role grants are required for the new revocation table.
+No push, PR, remote CI, deployment or custody action. Goal remains active.
+
+The expanded real-provider flow exposed a shared current-CRL query bug: selecting
+`number::text` and ordering by its unqualified output name used lexical ordering,
+so CRL 9 could outrank CRL 10. Current selection now orders the numeric table column
+explicitly. A regression imports 9, 10, 99 and 100 and checks current selection and
+rejection of stale-digest acknowledgments. This fixes CRL selection across domains;
+the earlier timestamp-fixture adjustment alone did not resolve the failure.
+
+Service commit: `9897894`. The full Go suite with PostgreSQL/OpenBao, the targeted
+PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
+Disposable PostgreSQL and OpenBao fixtures were removed. No production acceptance
+gate is claimed closed.
