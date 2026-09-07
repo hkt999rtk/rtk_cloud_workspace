@@ -3754,3 +3754,37 @@ evidence; it does not attest broker/coturn TLS-store installation or real cluste
 eviction timing. Next: App backup/recovery reconciliation and remaining trust-domain
 adapters; dynamic App root policy and live host/fleet/custody qualification remain.
 No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
+
+
+## App issuer and certificate recovery checkpoint (2026-09-08)
+
+Video Cloud `a05c6a8` adds the read-only `pkicontroller recovery-check-app`
+command. It compares the registry's independent App intermediate/root lineage
+with the key-bound issuer selected by OpenBao's App role and an independently
+supplied Root fingerprint. Optional App subject/public leaf inputs also require
+the exact successful issuance receipt and fresh signed intermediate/root CRLs;
+revoked, expired, mismatched and unregistered identities cannot pass. Issuer-only
+and existing-certificate evidence have distinct report statuses.
+
+The bounded check uses a read-only repeatable-read registry snapshot, checks
+indexed/document identity, CSR/key and certificate metadata, and performs only
+provider metadata GETs. The existing exact-mount App recovery ACL suffices.
+Device recovery retains its three-authority profile through shared validation;
+App recovery uses its independent two-authority chain. Public leaf file bounds
+and regular-file checks cover both commands. No new configuration is enabled.
+
+Validation: full server Go suite; full PKI/OpenBao/controller race suites with
+local PostgreSQL; recovery negative cases; focused vet; real OpenBao 2.5.5 App
+recovery ACL/role-selected chain retrieval. The restricted identity is denied
+signing, revocation and key-generation writes. Existing App provisioning/signing/
+revocation integration still passes. Final focused recovery race tests passed
+after simplifying the shared validator. Both task fixtures were stopped/removed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. This proves public lineage and selected
+existing identity checks, not private-key usability after restore or complete
+backup/revocation inventory. Writers must remain fenced during comparison.
+Next: matched App backup/restore inventory and reconciliation of uncertain signing
+and revocation outcomes, followed by remaining trust-domain/runtime adapters.
+No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
