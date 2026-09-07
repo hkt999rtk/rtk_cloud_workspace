@@ -655,3 +655,31 @@ qualification remain required; production is not enabled.
 
 Local Video Cloud commit `756d591`, following workspace checkpoint `53fda6a`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Durable CRL consumer cache continuation
+
+Added signed public CRL cache installation and complete-chain revocation checking
+in Video Cloud pkitrust. Installation binds the independently trusted authority
+fingerprint and exact signed metadata, validates full/direct CRLs and freshness,
+serializes writers and fsyncs atomic replacement. New CRLs cannot roll back their
+number/time, equivocate at an existing number or remove/change prior revocations.
+Expired state can refresh without discarding signature/monotonicity checks;
+corrupt or changed-authority state cannot silently reset. Load fails on missing,
+corrupt or expired data.
+
+The chain verifier supplements ordinary X.509 and Root distrust checks. Every
+non-root certificate needs current CRL coverage from its exact parent, including
+intermediates. Tests use real signed chains and cover leaf/ancestor revocation,
+missing coverage, expiry, wrong authority, metadata mismatch, restart, corruption,
+rollback/equivocation and concurrent writers retaining the highest version.
+pkitrust/API race suites and focused vet pass.
+
+This is a consumer foundation, not a running CRL distribution worker. Authenticated
+retrieval, runtime activation/acknowledgment, API/broker wiring, long-lived consumer
+revalidation, remaining domains/platform installation, recovery and live/hardware
+qualification remain open. Production stays disabled. No production keys or
+external services were changed.
+
+Local Video Cloud commit `4e4416c`, following workspace checkpoint `01e25ee`.
+No PR, push, remote CI or deployment occurred.
