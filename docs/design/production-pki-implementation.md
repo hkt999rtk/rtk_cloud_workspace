@@ -2833,3 +2833,31 @@ staging/custody/recovery qualification. SDK integration advanced. Next: native C
 refresh and continuous owner trust supervision, then actual host/domain integration.
 The overall goal remains active. No push, PR, remote CI, deployment or physical
 qualification was performed.
+
+
+## Native bounded HTTPS CRL refresh
+
+Client `55188e4` adds full-issuer public HTTPS refresh using explicit endpoints,
+independent server roots, no device credentials and one bounded network deadline.
+DER/PEM/strict JSON responses are bounded, normalized and checked against signed
+metadata. The complete set passes bundle/key/root and monotonic journal validation
+before publication; valid revocations persist before final identity rejection.
+Expired signed history permits fetch/recovery. Fetch, metadata, signature or rollback
+failures preserve prior state. Host inputs remain stable during the call.
+
+Validation: all 12 tests with HTTP enabled and disabled pass, plus ASan/UBSan and an
+installed C consumer referencing refresh. A separate public HTTPS fixture asserts
+no client certificate/authorization/cookie. Tests cover mixed DER/PEM/JSON, expired
+history recovery, signed revocation persistence, rollback rejection, bad metadata,
+tampered signatures, HTTP errors, redirects and oversized data. Reproduce with
+`cmake --build /private/tmp/rtk-native-http -j4` and
+`ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`; native README
+records configuration, bounds and host authorization limits.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Trust-consumer and SDK integration advanced.
+Next: native continuous owner trust supervision and host periodic refresh/wiring.
+Service-peer-protected CRL endpoints need the appropriate host authorization adapter;
+this public-distribution API does not claim that integration. No push, PR, remote CI,
+deployment or physical/custody qualification was performed.
