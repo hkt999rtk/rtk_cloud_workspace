@@ -1,6 +1,14 @@
 # LKE Deployment Adapter Inventory
 
-Status: current K8s/LKE staging runtime with production hardening gates.
+Status: historical supporting note; migration inventory and original gate decisions.
+
+Superseded for current operator instructions by
+[deployment-operations.md](deployment-operations.md),
+[cloud-deployment-architecture.md](cloud-deployment-architecture.md), and
+[lke-external-haproxy-edge.md](lke-external-haproxy-edge.md).
+The dated checklist below does not impose a new approval gate on already
+implemented deployment tooling. Open production requirements must be verified
+against current guides and release evidence.
 
 Owner: `rtk_cloud_workspace`.
 
@@ -8,22 +16,21 @@ Last reviewed: 2026-06-14.
 
 ## Purpose
 
-This document is the source-of-truth inventory and gate checklist for the
+This document records the historical inventory and gate checklist for the
 reusable Linode Kubernetes Engine (LKE) deployment adapter and the remaining
 production hardening work. Provider-neutral architecture and environment
 contracts live in `docs/cloud-deployment-architecture.md`. The old Linode VM deployment model is retained only
 as legacy migration context. This document does not define production
 Kubernetes manifests, Helm charts, Dockerfiles, or CI/CD deployment pipelines.
-Those implementation artifacts are blocked until the gates in this document are
-reviewed and approved.
+At the time of this migration plan, those artifacts were gated on design
+review. Current implementation and qualification are governed by the guides above.
 
 Existing service behavior should be preserved unless the Kubernetes runtime
 requires a documented change. When this document cannot confirm a detail from
 the repository, it marks the gap as `TODO:`.
 
-This is the only workspace LKE runtime inventory and gate checklist. Do
-not create a parallel LKE architecture document unless this file explicitly
-routes a service-owned detail there.
+Keep this inventory as dated migration evidence. Maintain current architecture
+and operating instructions in the active guides linked above.
 
 ## Architecture Review
 

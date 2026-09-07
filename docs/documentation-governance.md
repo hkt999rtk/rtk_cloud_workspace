@@ -61,6 +61,15 @@ Use these status values for contracts, policies, and ADRs:
 | `deprecated` | Still valid for compatibility, but not recommended for new work. |
 | `superseded` | Replaced by another document or decision. |
 
+## Applicability and Evidence
+
+Document status and runtime availability are separate. An active index must
+list each source as normative, proposed/target, or historical without implying
+that a target is deployed. Target designs should state `Applies to` and link
+implementation and dated release evidence separately. Superseded documents
+identify their replacement; historical sections do not impose active release
+gates. Service design summaries cannot override canonical wire contracts.
+
 ## Review Rules
 
 - Review workspace governance docs when submodules are added, removed, or

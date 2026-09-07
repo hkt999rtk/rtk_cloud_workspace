@@ -2,7 +2,13 @@
 
 Date: 2026-08-28
 
-Status: implemented and integrated with Home load orchestration
+Status: simulator implemented and integrated with Home load orchestration.
+
+Applies to: load-tool implementation against `/v1/device/ota/*`. This status
+does not promote the proposed [Product OTA contract](../repos/rtk_cloud_contracts_doc/firmware_campaign.md)
+or certify backend rollout. Qualification must record the pinned backend and
+simulator commits, exercised routes, profile, and final report in the shared
+[test report envelope](../repos/rtk_cloud_contracts_doc/test_report.md).
 
 Audience: Video Cloud, firmware, OTA operations, QA, and staging load-test
 owners.

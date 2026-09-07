@@ -4,7 +4,7 @@ Status: supporting-note.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-06-06.
+Last reviewed: 2026-09-07 (runtime boundary reconciliation; pricing unchanged).
 
 ## Purpose
 
@@ -26,11 +26,11 @@ codebase.
 | Account manager | `../../repos/rtk_account_manager/docs/spec.md` | Account, organization, RBAC, device registry, provisioning, and Postgres persistence scope. |
 | Admin console | `../../repos/rtk_cloud_admin/docs/spec.md` | Go BFF, React SPA, SQLite-local console state, upstream proxy boundaries. |
 | Public website | `../../repos/rtk_cloud_frontend/README.md` | Go website, SQLite lead/analytics/search persistence, container deployment shape. |
-| Video cloud runtime | `../../repos/rtk_video_cloud/docs/architecture.md` | API and worker entrypoints, WebRTC/TURN, MQTT, blob storage, telemetry, NATS, Postgres. |
-| Video cloud config | `../../repos/rtk_video_cloud/docs/config-map.md` | Concrete env-backed infrastructure knobs for blob, MQTT, TURN, Redis-compatible cache, NATS, and log ingestion. |
+| Video cloud runtime | `../../repos/rtk_video_cloud/docs/architecture.md` | API and worker entrypoints, WebRTC/TURN, MQTT, blob storage, telemetry, API/outbox lifecycle delivery, Postgres. |
+| Video cloud config | `../../repos/rtk_video_cloud/docs/config-map.md` | Concrete env-backed infrastructure knobs for blob, MQTT, TURN, Redis-compatible storage, lifecycle APIs, and log ingestion. |
 | Video cloud database | `../../repos/rtk_video_cloud/docs/postgres-schema.md` | Database split, table inventory, log DB option, retention notes. |
 | Video cloud PKI and enrollment | `../../repos/rtk_video_cloud/docs/factory-enrollment-server.md`, `../../repos/rtk_cloud_contracts_doc/auth.md` | Factory enrollment, certissuer, device/app certificates, mTLS, revocation, and signing boundaries. |
-| Cross-service broker | `../cross-service-broker-packaging.md` | NATS JetStream default, acceptable equivalent requirements, broker ownership split. |
+| Cross-service broker | `../cross-service-broker-packaging.md` | Broker retirement, API/outbox delivery, and any future broker reintroduction requirements. |
 | Contract overview | `../../repos/rtk_cloud_contracts_doc/contract_overview.md` | Device transport, product telemetry, metrics, and runtime log surfaces. |
 
 ## Mapping Principles
@@ -57,12 +57,12 @@ codebase.
 | Account manager API (`rtk_account_manager`) | Authoritative identity, tenants, RBAC, registry, provisioning intent, outbox/inbox. | ECS on Fargate plus Amazon RDS for PostgreSQL. | EC2/systemd plus RDS, EKS plus RDS, Lambda/API Gateway only after substantial handler and migration redesign. | API requests, task count, DB instance class, DB storage/IOPS, read/write rate, backup retention, NAT/VPC costs. |
 | Account manager workers | Outbox/inbox, lifecycle publication/consumption, cleanup jobs. | ECS Fargate service or scheduled ECS tasks. | EC2/systemd workers, Lambda consumers if broker is changed to SQS/EventBridge. | Always-on worker count, message throughput, retry/dead-letter volume, schedule frequency. |
 | Video cloud API (`rtk_video_cloud cmd/api`) | Device/app HTTP API, auth, activation, WebRTC signaling, firmware/media routes, MQTT adapter wiring. | ECS on Fargate or EC2 Auto Scaling behind ALB/NLB depending on long-lived connection needs. | EKS, EC2/systemd release bundle. Lambda is not a good first-cost default for websocket/MQTT-adjacent and long-lived runtime behavior. | Device count, connected sessions, HTTP/WebSocket request rate, vCPU/memory, egress, ALB/NLB, autoscaling headroom. |
-| Video cloud workers (`cleaner`, `statistics`, `metricsexporter`, `logingester`, `turnregistry`, `crossservice`, `certissuer`) | Background cleanup, metrics, runtime log ingestion to central logger, TURN registry, cross-service gateway, certificate issuance. | ECS Fargate services for always-on workers; scheduled ECS tasks for batch cleanup. | EC2/systemd, EKS jobs/deployments, Lambda for narrow scheduled cleanup only after proving runtime fit. | Worker count, schedule frequency, MQTT/log volume, logger ingest volume, DB writes for metadata/billing, metrics scrape frequency, certificate issuance rate. |
-| PostgreSQL for account manager and video cloud | Persistent account, registry, runtime metadata, firmware metadata, lifecycle records, selected offline sync, outbox/inbox, shadow snapshots, and billing ledgers. Raw telemetry/runtime logs are not primary PostgreSQL ingestion. | Amazon RDS or Aurora PostgreSQL for operational metadata only. | Self-managed PostgreSQL on EC2/EKS for lowest managed-service spend but higher ops burden. | Instance class, storage GB, IOPS, backup retention, read/write rate, offline sync volume, connection count. |
+| Video cloud workers (`cleaner`, `statistics`, `metricsexporter`, `logingester`, `turnregistry`, `certissuer`, `clipverifier`) | Background cleanup, metrics, runtime log ingestion to central logger, TURN registry, certificate issuance, direct-upload verification. | ECS Fargate services for always-on workers; scheduled ECS tasks for batch cleanup. | EC2/systemd, EKS jobs/deployments, Lambda for narrow scheduled cleanup only after proving runtime fit. | Worker count, schedule frequency, MQTT/log volume, logger ingest volume, DB writes for metadata/billing, metrics scrape frequency, certificate issuance rate. |
+| PostgreSQL for Account Manager, Video Cloud, and Billing | Separate service databases for identity/registry, runtime and media metadata, normalized product telemetry, outbox/inbox, usage facts, and monetary state. No Device Shadow documents; raw runtime logs use the logger. | Amazon RDS or Aurora PostgreSQL with service ownership and isolation preserved. | Self-managed PostgreSQL on EC2/EKS. | Instance class, storage, IOPS, backup retention, read/write rate, connections, replication/HA. |
 | Object/blob storage | Clips, snapshots, firmware binaries, backups, release artifacts. | Amazon S3 with lifecycle policies. | S3 Intelligent-Tiering, Glacier classes for archive, EFS only for filesystem semantics. | Stored GB by object type, PUT/GET/list requests, lifecycle transitions, retrievals, cross-region replication, egress. |
 | EMQX MQTT broker | Device transport when MQTT is enabled; MQTT shadows/logs/snapshots/control. | AWS IoT Core with Basic Ingest for telemetry topics that do not require app-side MQTT subscription; IoT Rules route selected events to queues, CloudWatch Logs, S3/Athena, or workers. | Self-managed EMQX on ECS/EC2/EKS, or AWS Marketplace EMQX, when protocol compatibility and current ACL behavior matter. | Connected devices, Basic Ingest eligibility, message count, payload size, rules/actions, retained/shadow traffic, TLS auth model, broker node count. |
-| Device shadow hot-state cache | Planned Redis-compatible/Valkey hot path for shadow desired/reported state with Postgres flush. | Amazon ElastiCache for Redis/Valkey. | MemoryDB for Redis if durable Redis-compatible semantics are required; self-managed Redis/Valkey on EC2. | Node class/count, memory used, write rate, replication/Multi-AZ, data transfer, backup retention. |
-| Cross-service broker | Account-to-video lifecycle commands and video-to-account events. Current default is NATS JetStream or equivalent. | Amazon SQS plus DLQs for a conservative cost model if ordering/partitioning semantics are redesigned around queues. | Amazon MSK, Amazon MQ, EventBridge, or self-managed NATS JetStream on ECS/EC2/EKS. | Messages/month, payload size, consumers, retention, ordering/partitioning need, DLQ volume, broker node count. |
+| Durable Device Shadow storage | Redis/Valkey owns documents, indexes, versions, tombstones, and notification outbox with no TTL and no PostgreSQL hydration/flush. | A Redis-compatible service only after validating the durability, transaction, outbox and recovery contract. | Self-managed Redis/Valkey with AOF; managed alternatives require explicit qualification. | Durable capacity, write rate, AOF/replication, no-eviction headroom, backup and restore costs. |
+| Account/video lifecycle delivery | Direct authenticated APIs with service-owned database outbox/retry and inbox projection; no packaged shared broker. | Existing API/worker compute and PostgreSQL. | A future broker is a separate design/cost scenario only after an approved multi-consumer requirement. | Lifecycle calls, worker capacity, durable retries and dead-letter volume. |
 | Reverse proxy / TLS / routing | Public and internal HTTP routing, TLS termination, access logs, request size/security headers. | Application Load Balancer with ACM certificates and Route 53 DNS. | Network Load Balancer for TURN or TCP-heavy surfaces; CloudFront for public website/static caching; API Gateway only after route model review. | ALB/NLB hours, LCUs, TLS cert count, request rate, bandwidth, hosted zones, DNS queries. |
 | WebRTC TURN data plane | coturn relay for WebRTC media when direct connectivity fails or strict relay is required. | EC2 or ECS on EC2 with public IP/NLB; AWS Global Accelerator optional for global latency. | Managed third-party TURN provider; EKS DaemonSet/Deployment. | Relay minutes, media bandwidth, public IPs, cross-AZ/data egress, instance/network size, regional distribution. |
 | Metrics and alerting | Prometheus-compatible metrics, service health, dashboard queries, readiness evidence. | Amazon Managed Service for Prometheus plus Amazon Managed Grafana and CloudWatch alarms. | Self-managed Prometheus/Grafana on ECS/EC2; CloudWatch custom metrics for smaller deployments. | Samples/sec, metric cardinality, retention, dashboard users, alert evaluations, custom metric count. |
@@ -89,8 +89,8 @@ Likely AWS line items:
   database.
 - S3 for media, firmware, release artifacts, and backups.
 - Self-managed EMQX on ECS/EC2/EKS unless AWS IoT Core compatibility is proven.
-- Self-managed NATS JetStream, Amazon MSK, Amazon MQ, SQS, or EventBridge for
-  the cross-service broker after message-semantics review.
+- Existing service compute and PostgreSQL for durable lifecycle API delivery;
+  no additional cross-service broker line item in the current-runtime profile.
 - ALB/NLB, Route 53, ACM, NAT Gateway, CloudWatch Logs, metrics, secrets, and
   backup storage.
 
@@ -109,9 +109,9 @@ Likely AWS line items:
 - AWS IoT Core for MQTT/device messaging after validating topic namespaces,
   ACLs, retained/shadow behavior, device credential provisioning, and Basic
   Ingest eligibility for high-volume telemetry topics.
-- SQS/EventBridge for cross-service lifecycle events only after confirming
-  ordering, redelivery, dead-letter, idempotency, and stream naming contracts.
-- ElastiCache/Valkey for planned shadow hot-state cache.
+- Keep API/outbox lifecycle coordination. SQS/EventBridge is a separate future
+  scenario requiring an approved requirement and delivery/recovery design.
+- Durable Redis/Valkey for Device Shadow after backend qualification.
 - CloudWatch Logs, S3/Athena-style telemetry storage, Managed Prometheus,
   Managed Grafana, Secrets Manager, RDS/Aurora for operational metadata, and S3.
 
@@ -127,7 +127,9 @@ avoids single-failure protection.
 Likely AWS line items:
 
 - Two CloudHSMs instead of one HSM.
-- Multi-AZ-style RDS PostgreSQL estimate for the shared account/video database.
+- Separate Multi-AZ-style RDS PostgreSQL estimates for the service-owned
+  Account Manager, Video Cloud, and Billing databases; preserve each service
+  isolation boundary and price its redundant capacity independently.
 - Two ElastiCache/Valkey cache nodes instead of one node.
 - Two NAT Gateways for two-AZ private subnet routing. NAT Gateway is managed by
   AWS, but it is AZ-scoped, so one NAT Gateway per AZ avoids routing all private
@@ -137,9 +139,17 @@ Likely AWS line items:
 - Camera/WebRTC/TURN and ACM Private CA remain excluded unless a later profile
   explicitly enables them.
 
-Use this profile for a first robust-production cost comparison after the
-baseline. It improves resilience inside one region, but it is not a multi-region
-disaster-recovery estimate.
+This is a target sizing checklist, not a completed or priced comparison. The
+existing `commercial_pilot_robust` rows in
+[aws-cost-estimate-worksheet.csv](aws-cost-estimate-worksheet.csv) still assume
+one shared Account Manager/Video Cloud RDS instance, zero separate Video Cloud
+instance-hours, and no Billing database. Those quantities and their derived
+totals are historical and cannot be used as the cost of this Profile C design.
+Before using a robust-production total, rebaseline each service-owned database
+with reviewed instance size, redundant capacity, storage, I/O, backup, and
+current unit prices, then regenerate the derived report. This document does not
+supply replacement sizing or a new total. The target covers resilience inside
+one region, not multi-region disaster recovery.
 
 This profile is not a blanket 2x cost multiplier. Usage-priced managed services
 such as AWS IoT Core, CloudWatch Logs, CloudFront, S3, Secrets Manager, and KMS
@@ -222,8 +232,9 @@ Current shape:
 - Go REST API using Gin.
 - Postgres-backed identity, organization, RBAC, registry, device groups/tags,
   provisioning operations, outbox/inbox, retry, and dead-letter state.
-- Cross-service stream names are `account.video.commands` and
-  `video.account.events`.
+- Cross-service provisioning uses authenticated APIs, with durable outbox/inbox
+  records for retries, idempotency, and reconciliation. The current deployment
+  does not require a broker or named message streams.
 
 AWS costing choices:
 
@@ -231,8 +242,8 @@ AWS costing choices:
 - Lambda/API Gateway should be priced only as a future refactor because the
   current system assumes a long-running Go API and workers with database-backed
   lifecycle state.
-- SQS/EventBridge can be considered for lifecycle messages, but only after
-  replacing or adapting the broker contract.
+- SQS/EventBridge would be a separately reviewed future transport change to the
+  current API/outbox flow. Do not include a broker or queue in this baseline.
 
 Sizing inputs:
 
@@ -240,7 +251,7 @@ Sizing inputs:
 - Login/token refresh rate.
 - Device registry reads/writes.
 - Provision/deactivate operations/day.
-- Cross-service message throughput and dead-letter retention.
+- Cross-service API request throughput, outbox retry rate, and dead-letter retention.
 - RDS storage, IOPS, connection count, and backup retention.
 
 ### Video Cloud
@@ -263,9 +274,11 @@ AWS costing choices:
 - ECS/Fargate or EC2 for API and workers, depending on long-lived connection and
   network behavior.
 - RDS/Aurora for operational metadata, registry/lifecycle, billing ledgers, and
-  selected offline sync. High-volume telemetry/runtime logs go through
-  CloudWatch Logs and/or S3/Athena-style storage, matching the K8S Loki pattern
-  rather than primary database ingestion.
+  selected offline sync. Normalized product telemetry currently has a Video
+  Cloud PostgreSQL owner.
+  Raw runtime logs use the central logger. Moving product telemetry to
+  CloudWatch or S3/Athena is a separate managed-service scenario requiring
+  contract and migration validation.
 - S3 for clips, snapshots, and firmware objects.
 - EC2/ECS-on-EC2 for coturn/TURN due to public UDP/TCP relay behavior.
 - AWS IoT Core is a candidate for MQTT costing, but self-managed EMQX may be
@@ -318,31 +331,32 @@ Sizing inputs:
 - Rules/actions, if messages are routed to Lambda, SQS, Timestream, or other AWS
   services.
 
-### Cross-Service Broker
+### Account/Video Lifecycle Delivery
 
-Current shape:
+Current coordination uses authenticated receiver APIs, a producing database
+outbox with retry/lease state, and an Account Manager inbox projection. Cost the
+existing API/worker compute and PostgreSQL, lifecycle request volume, retained
+retry/dead-letter state, and recovery operations. NATS JetStream is retired from
+the supported workspace runtime; no shared broker is required.
 
-- Workspace default is NATS JetStream, with durable streams, redelivery,
-  dead-letter handling, and observable publish/consume outcomes.
-- Logical streams are account-to-video commands and video-to-account events.
+A future multi-consumer broker design must independently specify ordering,
+authentication, idempotency, replay, retention, dead letters and recovery before
+adding a broker cost. AWS queue/event services are alternatives for that future
+scenario, not drop-in components of the current design.
 
-AWS costing choices:
+### Durable Shadow Storage
 
-- Self-managed NATS JetStream is the most direct semantic mapping.
-- SQS plus DLQs may be the lowest-friction AWS managed estimate if stream
-  semantics can be adapted.
-- EventBridge can model event routing but may not directly replace durable
-  command stream behavior.
-- Amazon MSK or Amazon MQ may be considered if operations prefer a managed broker
-  family with stronger stream/broker semantics.
+[Device Shadow persistence](../../repos/rtk_video_cloud/docs/device-shadow-hot-state.md)
+requires Redis/Valkey with no document/index TTL, no eviction, and atomic
+state/index/outbox writes. A backend outage fails Shadow operations closed;
+PostgreSQL cannot hydrate or reconstruct the documents. The current AOF
+`appendfsync everysec` boundary accepts up to the last second of lost accepted
+writes after a crash. Stronger durability needs a separately qualified profile.
 
-Sizing inputs:
-
-- Lifecycle messages/day.
-- Required retention window.
-- Ordering or partitioning requirement by account device id.
-- Retry count, dead-letter volume, and consumer count.
-- Whether broker state must be backed up/restored.
+Cost durable capacity and matched backup/restore of documents, indexes,
+tombstones and pending notifications; do not treat all Redis keys as disposable
+cache. See [backup-restore.md](../backup-restore.md). Managed AWS Redis-compatible
+products require validation of these semantics before being called equivalent.
 
 ### Key And Certificate Management
 
@@ -429,8 +443,9 @@ Use these columns in the later spreadsheet or AWS Pricing Calculator export:
    mixed model.
 2. Decide whether AWS IoT Core is only a comparison point or the target MQTT
    service to validate.
-3. Decide whether cross-service lifecycle messages remain on NATS JetStream or
-   are redesigned for SQS/EventBridge/MSK/Amazon MQ.
+3. Keep current API/outbox lifecycle delivery; decide separately whether a future
+   multi-consumer requirement justifies a broker, rather than treating
+   SQS/EventBridge/MSK/Amazon MQ as current dependencies.
 4. Decide whether Admin and Frontend SQLite state is lifted to EFS/volumes or
    migrated to managed database storage.
 5. Decide the managed backend for central logger storage/query

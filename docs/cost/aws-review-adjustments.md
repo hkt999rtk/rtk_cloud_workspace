@@ -9,6 +9,14 @@ This note records the adjusted AWS managed-service estimate after reviewing AWS
 feedback and Realtek architecture clarification. It does not replace the source
 pricing snapshot. It is the derived cost model used by the status-report PPTX.
 
+> Architecture qualification: the recorded worksheet quantities and derived
+> totals retain shared Account Manager/Video Cloud database assumptions and omit
+> Billing database capacity. They are historical planning evidence, not a priced
+> implementation of the current service-isolated Profile C. See the
+> [cost index qualification gap](README.md#architecture-qualification-gap).
+> Rebaseline service sizing and regenerate derived reports before using a
+> current architecture total; no prices or totals are refreshed here.
+
 ## Authority And Update Flow
 
 - Public unit prices and the original first-pass estimate live in

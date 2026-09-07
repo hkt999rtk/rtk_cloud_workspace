@@ -45,7 +45,21 @@ reference-only migration input, not the current deployment or recovery source.
 Only `secrets migrate` may read legacy secret paths; normal deployment and
 backup commands do not fall back to them.
 
-## OpenBao Source Of Truth
+## Current Ownership and OpenBao Target
+
+| Material | Current writable authority | Consumer/recovery copy |
+| --- | --- | --- |
+| Provider/operator credentials and kubeconfig | Environment-local SecretStore | Job-local CI material or operator access only. |
+| Catalogued runtime values injected by deployment | Environment-local SecretStore through the current CLI | Kubernetes Secrets are verified synchronized copies. |
+| Issuer keys, PKI state, policy and revocation in OpenBao | OpenBao for deployments using that issuer | Matched offline backup and independent seal escrow; local PKI files do not replace issuer state. |
+| Runtime KV after a reviewed secret-manager cutover | OpenBao or approved customer manager | One-way synchronized workload material; record recovery/rotation authority in the cutover manifest. |
+
+Do not enable independent writes to both local runtime files and OpenBao KV for
+the same secret. The target below does not claim that every runtime value has
+already migrated. Retain the current SecretStore path until its selected
+injection and recovery procedure is explicitly implemented and qualified.
+
+## OpenBao Target Responsibilities
 
 OpenBao is the target secret manager for staging and production. The local
 environment-specific SecretStore remains the operator bootstrap and recovery
@@ -113,7 +127,7 @@ Both files must be root-owned, mode `0600`, and excluded from readiness
 reports when inspecting legacy hosts. Current K8s runtime should use Kubernetes
 auth or an approved External Secrets-style injection path instead of AppRole.
 
-Runtime services should continue to consume env files initially. A deployment
+Legacy VM transition only: services consume env files. A deployment
 render step reads OpenBao KV entries and writes root-owned files under
 `/run/video_cloud/*.env` or another tmpfs runtime directory before systemd
 starts the service. This preserves the current process config boundary while
@@ -160,8 +174,9 @@ boundary is:
   references needed by Pods, but those values must be generated or injected at
   deploy time and never committed.
 - External Secrets-style sync, CSI secret injection, or init-container rendering
-  are acceptable implementation options only after the LKE migration gates are
-  approved.
+  require reviewed workload identity, rotation, rollback, and recovery
+  qualification under this policy and
+  [deployment-operations.md](deployment-operations.md).
 - OpenBao root tokens, unseal keys, recovery keys, HSM PINs, production signing
   keys, and raw private key PEM values must never be committed, embedded in
   images, placed in public documentation, or stored in readiness artifacts.
@@ -264,9 +279,10 @@ identities are escrowed independently. See [backup-restore.md](backup-restore.md
 - Treat OpenBao availability as a deployment prerequisite. If OpenBao is
   unreachable during startup, services must fail closed unless an operator has
   explicitly selected the rollback env-file path.
-- Kubernetes manifests, Helm values, and CI/CD deployment pipelines must not be
-  produced until the LKE secret-management gate in
-  `docs/lke-migration-inventory.md` is complete and human-approved.
+- New secret-injection designs require explicit workload identity, rotation,
+  rollback and recovery qualification under this policy and
+  [deployment-operations.md](deployment-operations.md). The historical LKE
+  migration checklist does not block already implemented tooling.
 
 ## Current Deployment and Recovery Order
 
@@ -276,13 +292,16 @@ identities are escrowed independently. See [backup-restore.md](backup-restore.md
    command for legacy inputs; do not create new `.secrets/` deployment trees.
 3. Stand up OpenBao with TLS, audit logging, `kv-v2`, and PKI mounts for
    device/factory, app/user, and gateway/server certificates.
-4. Move operator-local Account Manager, Admin, Video Cloud, and E2E secret
-   material into OpenBao without committing values.
+4. For a reviewed runtime-KV cutover, migrate only the selected service runtime
+   values to OpenBao and record its write/sync authority. Provider/operator,
+   kubeconfig and test credentials stay in their environment-local SecretStore
+   paths. Until cutover, deployment continues to use the local runtime catalog.
 5. Keep runtime injection and local recovery material aligned with the
    SecretStore catalog; preserve reviewed legacy bridges only where necessary.
 6. Switch `cmd/certissuer` staging config to the OpenBao PKI signer provider.
-7. Complete the LKE secret-management gate before writing production
-   Kubernetes manifests, Helm values, or CI/CD deployment pipelines.
+7. Qualify workload identity, secret injection, rotation, rollback, and recovery
+   under this policy and [deployment-operations.md](deployment-operations.md)
+   before approving production manifests, Helm values, or deployment pipelines.
 8. Run staging validation, including `scripts/run-staging-e2e.sh`.
 9. Rehearse matched core backup/restore with separately retrieved escrow before
    production approval. Restore original PKI, then reconcile external

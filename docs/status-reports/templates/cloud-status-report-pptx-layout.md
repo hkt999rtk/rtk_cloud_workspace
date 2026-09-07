@@ -48,7 +48,7 @@ presentation. When recreating the deck, keep this story spine:
 5. Define who the cloud is for and what each release gate means before going
    deep into implementation details.
 6. Show where the project is on the May 1 to Aug.1 loading-test milestone path,
-   then the alpha, beta, and public release path before going deep into
+   then September internal testing and the mid-October production target before going deep into
    implementation details.
 7. Use transition slides when changing topics: operational progress, portal
    web, technical/security design, deployment/evidence.
@@ -76,10 +76,10 @@ appendix source index unless the report owner explicitly changes the framework.
 | 5 | Customer / Use Case Fit | Target-customer cards linking customer need, cloud proof, and IoT module sales path. |
 | 6 | Cloud Is the Module Product Path | Executive summary claims plus product-to-KPI flow. |
 | 7 | Two Cloud Types in This Report | Difference between Operational IoT/Video Cloud and Portal Web / Marketing Cloud. |
-| 8 | Transition: Operational Cloud Progress and August Path | Topic break before status, schedule, loading test, video gate, and current-vs-production target. |
+| 8 | Transition: Operational Cloud Progress and Production Path | Topic break before status, schedule, loading evidence, September internal test, and current-vs-production target. |
 | 9 | Current Status Summary | Status summary table plus schedule snapshot. |
-| 10 | Schedule Path: May 1 to Public | Timeline / milestone lane with `Current Position`, Aug.1 loading pass, August alpha, September beta, and public path. |
-| 11 | Release Gate Definition | Visual gate definition for Aug.1 loading pass, alpha, beta, and public path. |
+| 10 | Schedule Path: May 1 to Production Target | Timeline / milestone lane with `Current Position`, Aug.1 loading evidence, September internal test, and mid-October production target. |
+| 11 | Release Gate Definition | Visual gate definition for Aug.1 loading evidence, September internal test, production-readiness review, and controlled production rollout. |
 | 12 | Loading Test Readiness | IoT 100K validated / video gate pending readiness matrix. |
 | 13 | 100K Loading Test Result | 8/8, 7/7, and 6/6 result table with connect, ACK, CPU, memory, and baseline recommendation. |
 | 14 | Resource Utilization History | CPU max and memory max history charts, p95 comparison bars, and current payload-throughput bandwidth evidence. |
@@ -98,25 +98,27 @@ appendix source index unless the report owner explicitly changes the framework.
 | 27 | Threat Model / Cyber Security Review | STRIDE risk matrix and next review focus. |
 | 28 | Transition: Deployment, Operational Flow, and Evidence | Topic break before Linode/LKE runtime, cost comparison, operation screenshots, and SDK flow. |
 | 29 | Linode Staging Runtime Shape | Runtime topology plus component responsibility table. |
-| 30 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
-| 31 | AWS User Login / Auth Flow | Cognito, API Gateway, service auth, and app token path. |
-| 32 | AWS Device Login / Provisioning Flow | Device provisioning, IoT policy/cert, and bootstrap handoff path. |
-| 33 | AWS MQTT / Shadow Data Flow | IoT Core topics, rules, persistence, and observability path. |
-| 34 | Linode 100k Device Cost View | Self-managed Linode/Akamai cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
-| 35 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
-| 36 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
-| 37 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |
-| 38 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
-| 39 | AWS Pricing Source URLs | Source URL index for the AWS cost assumptions. |
-| 40 | GCP Cost View | GCP comparison with managed-service gaps and self-hosted substitutions. |
-| 41 | Azure Cost View | Azure comparison with managed-service gaps and self-hosted substitutions. |
-| 42 | Operation Flow Overview | Demo journey flow. |
-| 43 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
-| 44 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
-| 45 | Decision / Support Needed | Alpha-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, alpha internal testers, beta pilot customer, and milestone impact. |
-| 46 | Ongoing Operation / Development Coverage | Ongoing baseline estimate separate from temporary alpha/beta testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and FAE/pilot support. |
-| 47 | Appendix: Materials and Source Index | Dense material/source/status table. |
-| 48 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
+| 30 | September Internal Staging Test Access | Tester Portal, Video Cloud service URL, supporting Account Manager URL, internal-only boundary, evidence guidance, and mid-October production target. |
+| 31 | Initial Operation Cost View | Current Linode monthly run-rate estimate plus AWS commercial-scale difference view from `docs/cost`, focused on CloudHSM on/off and Robust Design on/off. |
+| 32 | AWS User Login / Auth Flow | Cognito, API Gateway, service auth, and app token path. |
+| 33 | AWS Device Login / Provisioning Flow | Device provisioning, IoT policy/cert, and bootstrap handoff path. |
+| 34 | AWS MQTT / Shadow Data Flow | IoT Core topics, rules, persistence, and observability path. |
+| 35 | Linode 100k Device Cost View | Self-managed Linode/Akamai cluster estimate for 10,000 users and 100,000 usually-online MQTT devices, including per-unit cost and caveats. |
+| 36 | AWS Unit Cost Per Month | Raw monthly total divided by users/devices plus weighted 10% user / 90% device unit-cost view. |
+| 37 | AWS Cost Calculation Detail 1/3 | Base-service line-item math from `docs/cost`: ECS, Cognito, RDS, IoT Core, NAT, CloudWatch Logs, Secrets, S3, KMS, and subtotal. |
+| 38 | AWS Estimate Review Notes | Architecture corrections and pricing-model assumptions used before the detailed formulas. |
+| 39 | AWS Cost Calculation Detail 2/3 | Explicit quantity * unit-price formulas for major items, e.g. RDS DB-hours plus storage GB-month and Cognito MAU free-tier calculation. |
+| 40 | AWS Cost Calculation Detail 3/3 | Scenario equations, CloudHSM/robust deltas, optional support-plan calculation, and per-user/per-device formulas. |
+| 41 | AWS Pricing Source URLs | Source URL index for the AWS cost assumptions. |
+| 42 | GCP Cost View | GCP comparison with managed-service gaps and self-hosted substitutions. |
+| 43 | Azure Cost View | Azure comparison with managed-service gaps and self-hosted substitutions. |
+| 44 | Operation Flow Overview | Demo journey flow. |
+| 45 | Admin Operation Screenshots | 2x2 Admin screenshot grid. |
+| 46 | SDK / Sample App Flow | Sample app flow screenshot plus evidence-purpose table. |
+| 47 | Decision / Support Needed | Production-readiness support board: account/payment ownership, official Android/iOS market publishing accounts, operation backup, September internal testers, controlled rollout ownership, and milestone impact. |
+| 48 | Ongoing Operation / Development Coverage | Ongoing production baseline estimate separate from temporary September testers: backend/service owner, DevOps/SRE, SDK support, QA/load test, security review, and rollout support. |
+| 49 | Appendix: Materials and Source Index | Dense material/source/status table. |
+| 50 | Thank You / Review Gate | Master-style closing slide and checklist summary. |
 
 ## Layout Rules
 
@@ -133,7 +135,7 @@ appendix source index unless the report owner explicitly changes the framework.
   likely customer types, what each one needs from the cloud, and how that links
   back to module selling, PoC, and design-in.
 - Put one release-gate definition page after the schedule timeline. It should
-  define Aug.1 loading-test pass, alpha, beta, and public path using evidence
+  define Aug.1 loading evidence, September internal test, readiness review, and production rollout using evidence
   criteria, not only dates.
 - Use transition slides between different topics so the audience can tell when
   the narrative changes from business context, to schedule, to portal marketing,

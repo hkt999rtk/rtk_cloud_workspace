@@ -11,10 +11,10 @@ status reports.
 
 | Material | Source | Use in report |
 | --- | --- | --- |
-| Admin Fleet Health Overview | `repos/rtk_cloud_admin/docs/assets/webui-design/customer-overview.png` | Show customer/operator fleet health, online rate, attention queue, and health distribution. |
-| Admin Devices + Detail Drawer | `repos/rtk_cloud_admin/docs/assets/webui-design/customer-devices.png` | Show device search/filter, health facts, source facts, active stream status, provisioning, and deactivation. |
-| Admin Firmware & OTA | `repos/rtk_cloud_admin/docs/assets/webui-design/customer-firmware-ota.png` | Show firmware distribution, rollout progress, failed rollout, and device firmware risk. |
-| Admin Stream Health | `repos/rtk_cloud_admin/docs/assets/webui-design/customer-stream-health.png` | Show WebRTC stream success, request volume, device failure risk, and stream attention workflow. |
+| K8s Platform Dashboard | `repos/rtk_cloud_admin/docs/design-assets/k8s-platform-dashboard-mockup.png` | Show platform operator Kubernetes runtime and service-health view. |
+| Platform Brand Clouds List | `repos/rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-list.png` | Show Platform Admin Brand Cloud inventory and navigation workflow. |
+| Platform Brand Cloud Detail | `repos/rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-detail.png` | Show Brand Cloud detail and management actions. |
+| Platform Brand Cloud Create | `repos/rtk_cloud_admin/docs/assets/webui-design/platform-brand-clouds-create.png` | Show Brand Cloud creation fields, validation, and operator workflow. |
 | Sample Ops Lab Screen Flows | `repos/rtk_cloud_client/docs/mockups/sample-ops-lab-screen-flows.png` | Show SDK/sample operation flow: environment setup, provisioning, device config, camera monitor, debug report. |
 | Sample Ops Lab UI Mockup | `repos/rtk_cloud_client/docs/mockups/sample-ops-lab-ui-mockup.png` | Optional appendix or deeper SDK/demo section. |
 
@@ -93,3 +93,16 @@ The builder currently probes these public endpoints when generating a report:
 Record public status, versions, and high-level runtime shape only. Do not record
 raw secrets, DSNs, tokens, private app ports as direct evidence targets, or
 customer data.
+
+## September 2026 Internal Test Access
+
+| Purpose | URL | Boundary |
+| --- | --- | --- |
+| Tester Portal | `https://admin.video-cloud-staging.realtekconnect.com/login` | Internal testers start here for Cloud Admin and operator workflows. |
+| Video Cloud service | `https://video-cloud-staging.realtekconnect.com` | SDK, sample-app, and service/API test base URL. |
+| Account Manager API | `https://account-manager.video-cloud-staging.realtekconnect.com` | Supporting identity, tenant, registry-device, and provisioning API. |
+
+These staging endpoints are for internal testing during September 2026 only.
+Use test accounts and test data. The target production rollout is mid-October
+2026 and remains conditional on release, backup/restore, security, rollback,
+monitoring, and operation-owner readiness evidence.

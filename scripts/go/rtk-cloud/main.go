@@ -1065,6 +1065,8 @@ func runDocsCheck(args []string) error {
 	}
 
 	fmt.Fprintln(os.Stdout)
+	checkDocsConsistency(check, workspace)
+	fmt.Fprintln(os.Stdout)
 	checkContractsPolicy(check, workspace, collectContractsCommits(workspace))
 	if check.failures == 0 {
 		fmt.Fprintln(os.Stdout)

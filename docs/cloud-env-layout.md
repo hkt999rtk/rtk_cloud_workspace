@@ -60,15 +60,21 @@ All of `cloud_env/<environment>/runtime/` is Git-ignored:
 ```text
 runtime/
   resolved/{deployment.env,deployment-plan.json}
-  state/{kubeconfig.yaml,topology.json}
+  state/topology.json
   adapters/<adapter>/{state.env,resources.json}
   dns/<dns-adapter>/state.json
   services/
-  secrets/
   devices/
   artifacts/
   backups/
 ```
+
+This tree contains non-secret generated state only. Credentials and kubeconfig
+live in [SecretStore](secret-store.md) under
+`~/.config/rtk_cloud/<environment>/{operator,runtime,pki,kube}/`; do not copy
+them into workspace runtime, even though that tree is ignored. Device
+artifacts here must be redacted; private test credentials belong in SecretStore
+`test/`. Encrypted backup artifacts follow [backup-restore.md](backup-restore.md).
 
 Shared Kubernetes runtime and load tests read only normalized `runtime/state`,
 `runtime/services`, `runtime/devices`, and `runtime/artifacts`. Provider state such

@@ -13,7 +13,13 @@ Runtime intent is tracked in `cloud_env/<environment>/storage.env`. Shared relea
 
 All credentials live as individual `0600` files below `~/.config/rtk_cloud/<environment>/operator/env/`. Each environment is self-contained and has no shared credential fallback.
 
-The shared profile normally contains `LINODE_TOKEN`, `GHCR_PULL_USERNAME`, `GHCR_PULL_TOKEN`, DNS credentials, and `LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID` / `LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY`. The environment profile contains `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` / `LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`.
+Each environment stores its own `LINODE_TOKEN`, `GHCR_PULL_USERNAME`,
+`GHCR_PULL_TOKEN`, DNS credentials, and release-artifact credentials
+`LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID` / `LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY`,
+alongside scoped media credentials `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` /
+`LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`. Release infrastructure may be shared;
+credential discovery is always environment-local with no shared profile fallback.
+[SecretStore](secret-store.md) owns the paths and migration procedure.
 
 Missing environment credentials fail closed. Scoped media credentials are mapped to `LINODE_OBJ_*` only while deployment child operations run; storage policy, bucket-region checks, endpoint inventory, and the read/write canary remain mandatory.
 
@@ -28,7 +34,7 @@ rtk-cloud deployment storage-retire --environment staging --key-id 12345 --confi
 ```
 
 - `storage-plan` resolves compute/storage intent and discovers regional S3 endpoints through Linode.
-- `storage-bootstrap` creates a missing destination bucket, issues a bucket-limited `read_write` key, validates it, and atomically updates the environment profile.
+- `storage-bootstrap` creates a missing destination bucket, issues a bucket-limited `read_write` key, validates it, and atomically updates the environment-local SecretStore.
 - `storage-migrate` copies only `clips/`, `brands/`, and `firmware/` beneath the environment prefix. It records per-object SHA-256 and resumable byte/object totals in `runtime/state/storage-migration.json`.
 - `storage-cutover` revalidates the destination, runs a clip-path upload/read/delete smoke test, updates the runtime Secret, rolls the API and clip verifier, waits for readiness, and retains rollback credentials.
 - `storage-retire` requires cutover state plus `runtime/state/storage-consumers.json` containing `"generic_key_in_use": false`. It revokes only `--key-id`; it never deletes a bucket.

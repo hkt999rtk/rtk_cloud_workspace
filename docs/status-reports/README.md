@@ -78,8 +78,9 @@ changes it:
   deployment/operation/evidence, and review gate.
 - Schedule context: project start is 2026-05-01; the early-August milestone is
   the 100,000-device IoT loading test plus 5,000-video-camera loading test.
-  August alpha includes SDK/internal developer use, September beta includes SDK
-  and pilot customer feedback, then the public path follows after gate evidence.
+  September 2026 focuses on internal staging testing with deployed-version
+  and workflow evidence. Production rollout targets mid-October 2026 after release,
+  backup/restore, security, rollback, monitoring, and operation-owner evidence.
 - Scaling context: scaling architecture is designed in, but autoscaling/dynamic
   scaling implementation is deferred until after loading-test evidence.
 - Security context: frame PKI as identity, entitlement, audit, revocation,
@@ -89,6 +90,11 @@ changes it:
   surface. Keep it separate from operational cloud runtime.
 
 Generated PPTX and QA images remain under `.artifacts/status-reports/YYYY-MM-DD/`.
+The September schedule above supersedes the older alpha/beta dates in the
+general guidelines and master notes for this report. Mid-October is a planning
+target, not release approval. Refresh deployment evidence for every report;
+endpoint health alone does not verify the deployed revision or tester workflows.
+
 If a fresh portal screenshot is needed, capture `https://webtest.mgmeet.io`,
 crop the first viewport to a 16:9 image, and save it as
 `.artifacts/status-reports/YYYY-MM-DD/figures/portal-webtest-home-hero.png`

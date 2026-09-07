@@ -25,7 +25,7 @@ artifact credentials are unavailable.
 | Cross-repo contracts | `repos/rtk_cloud_contracts_doc` | This roadmap only maps owner issues. |
 | Private-cloud BOM | `docs/private-cloud-deployment.md` | Product-level deployment package, runbook, and follow-up routing. |
 | Product-level evidence | `docs/product-level-evidence.md` | Workspace wrapper command, redaction rules, and artifact layout. |
-| Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Broker ownership decision, profiles, streams, retention, and evidence expectations. |
+| Cross-service broker packaging | `docs/cross-service-broker-packaging.md` | Shared broker retirement, API/outbox direction, and future reintroduction criteria. |
 | Gap evidence | `docs/realtek-connect-plus-gap-analysis.md` | Workspace-level comparison note. |
 | Issue backlog | `docs/implementation-gap-backlog.md` | Concrete foundation issue bodies and ordering. |
 | Account/user/device registry | `repos/rtk_account_manager/docs/spec.md` | Account manager owns org, user, auth, RBAC, registry, signup, quota, and account-side readiness behavior. |

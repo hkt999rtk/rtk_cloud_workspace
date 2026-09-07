@@ -1,5 +1,19 @@
 schema_version: 1
 cases:
+    - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#sample%20invoice%20balances%20at%205%20percent%20tax%20without%20an%20issued%20identity%20or%20payment%20document
+      module: cloud-admin-web
+      language: javascript
+      source: src/invoice-document.test.mjs
+      title: sample invoice balances at 5 percent tax without an issued identity or payment document
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#invoice%20usage%20respects%20the%20stored%20quantity%20scale%20and%20missing%20data
+      module: cloud-admin-web
+      language: javascript
+      source: src/invoice-document.test.mjs
+      title: invoice usage respects the stored quantity scale and missing data
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/sdk-page.test.mjs#SDK%20bridge%20stays%20within%20normal%20same-origin%20console%20routes
       module: cloud-admin-web
       language: javascript
