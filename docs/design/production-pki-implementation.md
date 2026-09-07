@@ -2439,3 +2439,27 @@ replacement; trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware compatibility; staging/custody/recovery qualification. This is a
 substep of trust consumers, not an additional milestone. Next: periodic refresh and
 existing-owner cancellation at revocation or signed expiry.
+
+## JavaScript continuous trust and owner cancellation
+
+Added immediate periodic CRL refresh with retries bounded by durable signed trust,
+cancellable waiting and I/O, and persisted revocation followed by worker termination.
+Added identity trust guards with independent signed-expiry cancellation, bounded
+asynchronous provider calls, terminal failure and explicit host closure. WebSocket
+signals now cover the full connection lifetime; closed generations ignore late
+callbacks. Production mTLS agents own guards, recheck key retirement/change, cancel
+pooled and upgraded sockets, and reject reconnection after failure or destruction.
+
+Validation: 42 JavaScript tests and TypeScript build passed. Coverage includes a
+real local HTTPS 503-to-signed-revocation refresh, durable revocation, already-upgraded
+native mTLS connection teardown and denied agent reuse; adapter session cancellation
+and stale callbacks; expiry while a provider never resolves; parent cancellation,
+late provider results and guard shutdown. No remote service or CI was invoked.
+
+Updated the remaining-work audit to remove the now-addressed JavaScript legacy-helper
+gap. Five broad milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. JavaScript host supervision,
+policy replacement and deployment qualification still need evidence. Next concrete
+implementation work: Go durable acknowledgment-attempt and predecessor retirement,
+followed by native provider integration and domain/host coverage.

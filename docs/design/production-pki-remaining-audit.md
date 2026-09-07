@@ -15,25 +15,24 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 | Milestone | Current implementation evidence | What still prevents completion |
 | --- | --- | --- |
 | 1. Legacy migration/device replacement | `repos/rtk_video_cloud/internal/pkicontrollerapp/legacy.go`, `internal/pki/legacy.go`, `internal/pki/replacement.go` implement staged inventory/import and device replacement; the ledger records local tests. | Actual staging cohort inventory, approved import, measured replacement/overlap and residual legacy population. Local fixtures do not establish cohort adoption. |
-| 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK uses a host trust callback. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
-| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile renewal and trust support exists. | JavaScript remains on legacy PKI helpers; Go renewal has low-level helpers but no durable acknowledgment-attempt/retirement orchestration equivalent to the mobile stores. Native provider integration remains host-supplied. These are implementation gaps, not merely physical test gates. |
+| 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; JavaScript durable CRLs, bounded refresh, guard and mTLS/WebSocket lifetime cancellation; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK uses a host trust callback. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
+| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go renewal has low-level helpers but no durable acknowledgment-attempt/retirement orchestration equivalent to the mobile stores. Native provider integration remains host-supplied. These are implementation gaps, not merely physical test gates. |
 | 4. Provider/hardware compatibility | OpenBao policy/workload/Raft artifacts and local provider tests exist. Host Swift, API 35 emulator and native host checks are recorded. | Supported-provider/version and physical Secure Enclave, Android TEE/StrongBox, firmware/ARM and HSM matrix results. Local tests must not be substituted for this evidence. |
 | 5. Staging/custody/recovery qualification | Offline ceremony CLI, recovery tools and runbooks exist. | Real MFA identities and independent custodians, escrow/restore ceremony, failure-domain/seal approval, live matched recovery and post-backup security reconciliation, measured RPO ≤15 min and RTO ≤4 h. Production remains disabled. |
 
 ## Concrete implementation gaps found
 
-1. **JavaScript key and identity lifecycle.** In
-   `repos/rtk_cloud_client/packages/javascript/src/index.ts`, `generateDeviceKey`
-   originally generated an RSA PEM with default overwrite behavior. The subsequent
-   JavaScript provisioning checkpoint fixes this with default P-256, explicit RSA
-   compatibility and exclusive publication/reuse. `storeDeviceCert` now requires independent roots, the device profile and key
-   matching before writing; immutable installation and initial activation are now implemented; renewal
-   activation and revocation remain pending. `buildMtlsAgent` passes files to
-   `https.Agent`; this is not a local device-chain revocation policy.
-   `renewDeviceCert` still calls `/api/device/renew_certificate`. Implement a
-   protected, retry-safe P-256 identity path, independent trust validation,
-   production renewal/receipt/activation/acknowledgment state, and owner lifetime
-   integration. Preserve an explicitly documented legacy compatibility boundary.
+1. **JavaScript implementation gap addressed locally.** P-256 provisioning,
+   independent path/profile validation, immutable identity versions, durable prepared
+   renewal/receipt/activation/acknowledgment, predecessor retirement and scheduled
+   orchestration are now implemented. Signed full CRLs, a durable monotonic journal,
+   bounded HTTPS refresh, periodic refresh, expiry/revocation guards and production
+   mTLS owner cancellation are implemented. WebSocket session cancellation now lasts
+   until closure. Local tests include a signed revocation closing an upgraded native
+   mTLS connection and rejecting reuse of the agent. This addresses the previously
+   identified legacy-helper gap; real application host wiring, root-policy replacement,
+   supported runtime/filesystem behavior and operational qualification remain gates.
+   The old renewal endpoint remains an explicitly separate compatibility helper.
 2. **Go renewal recovery invariants.** In
    `repos/rtk_cloud_client/packages/golang/rtkc/auth/renewal.go`, `Acknowledge`
    directly invokes `renewalPOST`; the caller is told to use fresh successor mTLS
@@ -59,8 +58,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 
 ## Next execution order
 
-- Address the JavaScript identity overwrite/provisioning boundary, then its
-  production lifecycle and trust integration.
+- JavaScript production lifecycle and trust primitives are now locally implemented;
+  verify application host ownership and policy replacement with the domain inventory.
 - Close Go durable acknowledgment/retirement gaps and native provider integration.
 - Audit and implement domain-specific issuance/consumer and host wiring gaps.
 - Run the corresponding local integration checks; keep qualification evidence
