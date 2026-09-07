@@ -2077,3 +2077,24 @@ qualification. iOS still needs durable CRL high-water state, bounded refresh and
 existing-session owner teardown. This commit establishes point-in-time validation,
 not replay prevention or lifetime session revocation. Physical/live evidence
 remains outstanding.
+
+## iOS durable CRL high-water journal
+
+Added an explicitly created/opened device-only Keychain CRL store. Independently
+anchored signed updates retain per-issuer CRL numbers and bytes, including across
+rollover. Lower numbers, same-number conflicts and older thisUpdate values fail.
+Revoking updates persist before identity validation rejects their subjects.
+Missing/corrupt state is never implicitly recreated. App-container process/file
+locks serialize updates, with Keychain write readback; bounds are 32 issuers and
+32 MiB encoded state. Every provider read reauthenticates signature and freshness.
+
+Validation: 80 host Swift tests and the iOS simulator build passed. Native Keychain
+fixtures cover reopen, duplicate initialization, empty/expired/missing/corrupt
+state, revocation persistence, rollback/conflict rejection and unchanged data
+after failure. Physical power loss, snapshot rollback and cross-container sharing
+are not qualified by these tests.
+
+Milestone 2 advanced. Five broad milestones remain: legacy migration/device
+replacement; remaining trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware compatibility; staging/custody/recovery
+qualification. Next iOS work is bounded CRL refresh and owner/session teardown.
