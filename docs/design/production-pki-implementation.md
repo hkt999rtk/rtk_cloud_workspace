@@ -1349,3 +1349,27 @@ Already-created sessions require explicit application closure. Durable response
 recovery, scheduling, streaming response bounds, revocation and physical/live
 qualification remain required. This advances milestone 3; five broad milestones
 remain open.
+
+## iOS durable renewal receipts and explicit transport closure
+
+Validated renewal responses are persisted as immutable, bounded ThisDeviceOnly
+Keychain receipts before return or installation. Restart recovery can reload a
+receipt without reissuing; conflicts and corrupt records fail closed. Loading
+revalidates trust, device identity and key possession. Expired overlap permits
+inspection only, while installation retains its overlap gate.
+
+The concrete mTLS transport now supports idempotent closure, cancels its session
+and rejects new requests. Applications still own replacement and closure of
+retained predecessor sessions; there is no global session registry.
+
+Validation: all 61 Swift tests passed, including expanded native Keychain tests
+for receipt recovery, corruption/conflict rejection, overlap gates and closed
+transport rejection. The arm64 iOS simulator build passed. No live service or
+physical-device qualification was performed.
+
+This advances milestone 3. Its remaining SDK substeps include renewal scheduling,
+streaming response limits, revocation freshness and application session ownership
+integration; backup/recovery qualification also remains. Five broad milestones
+remain: legacy migration/device replacement; remaining trust consumers/live
+firmware sessions; backup/recovery and SDK integration; live provider/hardware
+compatibility; staging/key custody/recovery qualification.
