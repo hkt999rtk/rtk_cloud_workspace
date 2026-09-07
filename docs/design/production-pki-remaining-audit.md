@@ -1347,3 +1347,32 @@ remain. No push, PR, remote CI, deployment or custody action. Goal remains activ
 Service commit: `184f422`. Full Go suite with PostgreSQL, factory/client/bootstrap/
 consumer/PKI race tests, vet, formatting and diff checks passed. Disposable database
 removed. No production acceptance gate is claimed closed.
+
+### Factory Account Manager Service transport checkpoint (2026-09-08)
+
+Factory enrollment now loads optional Account Manager Service trust under
+`FACTORY_ENROLL_ACCOUNT_MANAGER_` and injects the application-owned verified
+HTTP client into its existing admission adapter. Reservation, lookup, cancellation
+and result publication, including recovery coordination, share this transport.
+Dedicated bearer credentials, redirect refusal and uncertain-outcome semantics
+are preserved. Partial trust configuration, missing registry/environment/token
+and unmigrated PKI schemas fail startup. Either factory Service trust mode disables
+automatic schema creation. Owned connections close before the registry database.
+Optional exact CRL consumers use the existing prepare/sweep/ACK lifecycle.
+
+Service commit: `ea00d9e`. Full Go suite, targeted factory/PKI/consumer race suite,
+vet, formatting and diff checks passed. The disposable PostgreSQL fixture was
+removed. Bootstrap tests cover both issuer and admission ownership and schema
+non-mutation. Admission requests to an unregistered TLS peer remain unavailable
+for all four operations and never become non-issuance evidence. Positive registry
+TLS admission, eviction and exact CRL acknowledgement rely on shared transport
+coverage; this checkpoint does not claim live Account Manager qualification.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Factory admission transport
+is no longer an implementation gap. Service clientAuth issuance/verification and
+lifecycle, remaining host adoption, root/key renewal, external recovery history,
+and real hardware/staging/custody evidence remain. Next implementation focus is
+the Service clientAuth lifecycle, grounded in the original domain design.
+No push, PR, remote CI, deployment or custody action. Goal remains active.
