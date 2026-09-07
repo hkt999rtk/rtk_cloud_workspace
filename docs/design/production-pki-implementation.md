@@ -2098,3 +2098,25 @@ Milestone 2 advanced. Five broad milestones remain: legacy migration/device
 replacement; remaining trust consumers/live sessions; backup/recovery and SDK
 integration; provider/hardware compatibility; staging/custody/recovery
 qualification. Next iOS work is bounded CRL refresh and owner/session teardown.
+
+## iOS trust-bound WebSocket lifetime
+
+Added a closeable trust guard that revalidates the independently anchored chain
+and durable issuer CRLs at each poll or nearest signed expiry. Failure permanently
+cancels an owner token. The public session forwards its token through WebSocketRequest;
+the native URLSession factory retains the binding for the connection lifetime,
+closes on cancellation, rejects post-close sends and prevents cancelled reopening.
+Callback serialization prevents late open/message callbacks after terminal close.
+
+Validation: 82 host Swift tests and the simulator build passed. A native loopback
+WebSocket receives an actual frame, then a signed revoking CRL is persisted and
+triggers client teardown and failed later sends/reconnection. Tests also cover
+expiry before a long polling interval, validation failure, explicit/external close
+and public-session token forwarding. The fixture is plaintext loopback, not live
+mTLS/physical iOS qualification. Custom factories and actual host ownership still
+need integration/qualification; root-policy changes require a new guard.
+
+Milestone 2 advanced. Five broad milestones remain: legacy migration/device
+replacement; remaining trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware compatibility; staging/custody/recovery
+qualification. Next iOS work is bounded CRL refresh and refresh scheduling.
