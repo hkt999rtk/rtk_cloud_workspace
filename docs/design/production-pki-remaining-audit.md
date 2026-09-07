@@ -169,3 +169,44 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Native C viewer autonomous lifetime checks,
 other host/domain wiring, and TURN allocation termination remain open. No push,
 PR, remote CI, deployment or custody operation occurred. Goal remains active.
+
+
+## Native viewer expiry watchdog checkpoint (2026-09-08)
+
+WebRTC SDK commit `edfc170` requires native viewer backends to implement
+`set_expiry`. The SDK arms the earlier requested-duration/original-token deadline
+before ICE/offer work, validates server RFC3339 expiry after creation, and only
+tightens lifetime. Invalid clock/expiry or backend rejection fails admission.
+The existing device RFC3339 parser is shared unchanged with the viewer. Custom
+backends and consumers must rebuild for the changed struct layout; native shared
+ABI/SONAME is now 1, confirmed via macOS install-name inspection. No release was
+published. Zero token expiry adds no token-specific bound; duration/server bounds
+remain required.
+
+The libdatachannel backend owns an independent 100ms wall/steady-clock watchdog.
+It closes/deletes the PeerConnection and its C API track, serializes deletion
+against offer/answer/stats operations, wakes gathering on expiry, and rejects
+reactivation or lifetime extension. It drops new RTP callbacks after observing
+expiry. Backend media/state callbacks must signal the host rather than reenter
+session/backend operations. Stats failure lets the native example leave its
+200ms loop and perform cloud cleanup. Host scheduling and native close latency
+still affect observed shutdown time. Native registry revocation polling and
+forced removal of remote TURN allocations are not implemented by this checkpoint.
+
+Validation: core build/10 tests passed; final shared libdatachannel build with
+POSIX HTTP and Ameba host tests passed all 21 CTests. Actual H.264 over direct
+Pion and local TURN fixture paths now verifies native peer expiry after media
+receipt; adapter tests verify shortening, no extension/reactivation, and required
+admission. Missing backend support and malformed server expiry are rejected.
+A separately instrumented ThreadSanitizer adapter test passed with halt_on_error.
+All evidence is local macOS, not physical firmware or deployment qualification.
+
+Reproduce the full suite with `cmake --build /private/tmp/rtk-webrtc-pki-peer -j6`
+and `ctest --test-dir /private/tmp/rtk-webrtc-pki-peer --output-on-failure`.
+ThreadSanitizer executable: `/private/tmp/rtk-webrtc-pki-tsan/rtk_libdatachannel_peer_test`.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: native live authorization rechecks
+and remote TURN allocation termination. No push, PR, remote CI, deployment or
+custody operation occurred. Goal remains active.
