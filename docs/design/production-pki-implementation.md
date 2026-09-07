@@ -4236,3 +4236,34 @@ OpenBao transport integration, server recovery verification and root-policy/key
 renewal adoption, followed by real rollout/qualification. MQTT acknowledgment
 protocol is implemented locally; no live fleet evidence is claimed. No push, PR,
 remote CI, live deployment or custody operation. Goal remains active.
+
+
+### Private server recovery verification checkpoint (2026-09-08)
+
+Implemented `recovery-check-server DOMAIN ISSUER_ID EXPECTED_ROOT_SHA256
+[DNS_NAME LEAF_PEM]` for independent Service, MQTT and OpenBao TLS domains.
+The check validates restored public issuer indexes/CSR/certificate lineage,
+independent root pin and approved DNS-policy digest, and reads the provider's
+fixed server-role selection and public key binding. Optional leaf verification
+uses the same read-only repeatable-read snapshot for the original receipt,
+identity/profile and signed CRLs. Provider access is GET-only and rejects other
+domains. Writers must remain fenced across database/provider verification.
+
+Local PostgreSQL tests cover all three domains, pin/provider/policy/index/domain
+mismatches, revoked receipts/leaves, expired certificates and stale CRLs. HTTP
+provider tests cover role selection, key binding, malformed/oversized responses,
+redirects and mount isolation; CLI tests cover explicit domains and unsafe files.
+This is public recovery evidence, not private-key usability, complete issuance
+inventory, external-history reconciliation, or live RPO/RTO qualification.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Remaining server work
+includes complete recovery inventory, Service/OpenBao transport integration,
+root-policy/key renewal adoption, and live rollout qualification. No push, PR,
+remote CI, live deployment or custody operation. Goal remains active.
+
+Service commit: `d8a0e50`. Full Go suite with PostgreSQL, focused PKI/OpenBao/
+controller race tests, `go vet`, formatting and diff checks passed. An initially
+malformed policy-tampering fixture was corrected to use a valid-format incorrect
+digest before final validation and commit. Disposable database removed.
