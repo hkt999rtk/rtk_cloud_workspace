@@ -35,7 +35,8 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Explicit reconciliation of historical pending Root removals with governance and acknowledgment gates.
 - [x] Administrator reconciliation of uncertain renewal results from stored provider certificates.
 - [x] Factory outcome reconciliation and atomic Product-mode signing journal/binding completion.
-- [ ] Remaining trust-consumer adapters, direct media termination and live trust/session qualification.
+- [x] Go owner lifetime cancellation, bounded WebSocket heartbeat and direct Pion device-peer teardown.
+- [ ] Remaining trust-consumer adapters, production firmware media termination and live trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [x] Explicit controller/certissuer/verifier database grants with restricted-role issuance/recovery tests.
@@ -508,3 +509,37 @@ legacy trust removal and hardware/live qualification remain required.
 Local migration service commits: Video Cloud `3f76113` and Cloud Admin
 `452d0e2`, following native Raft recovery workspace checkpoint `2622e61`.
 All commits remain local; no PR, push or deployment has occurred.
+
+
+## Go owner-to-media lifetime continuation
+
+Cloud Client WebSocket sessions now retain the caller's lifetime context and
+expose `Context()` for authorized media/command work. Remote closure, parent/local
+cancellation, message backlog or heartbeat failure ends the lifetime. The reader
+fails closed on its bounded queue instead of blocking behind unread commands;
+10-second pings with a 5-second reply timeout bound stalled transport detection.
+Close cancels dependents immediately and waits for reader/heartbeat cleanup.
+Reconnects create a fresh lifetime and cannot revive old peers.
+
+The pure-Go Ameba WebRTC device/simulator peer now keeps that context after answer
+creation, closes Pion on cancellation and rejects subsequent media samples. Its
+Done signal denotes completed local teardown. The WebRTC Go module previously
+collided with the Cloud Client module name; its canonical module/import path is
+now `github.com/hkt999rtk/rtk_ameba_webrtc/packages/golang`, with its commands and
+examples updated. This is a documented import migration for the next release,
+not a modification to published artifacts.
+
+Added `tests/pki-session-lifetime`, which composes both checked-out SDKs under
+separate canonical paths. It creates an actual local WebSocket owner and real
+ICE/DTLS/SRTP peers, receives H.264, then proves media teardown on remote close,
+backlog and parent cancellation. Package tests separately cover heartbeat failure,
+healthy control traffic, canceled creation, worker cleanup and idempotent closure.
+Both SDK race suites, the combined race test and vet passed. The authority decision
+in the combined test is a fixture; existing server PKI tests cover authorization.
+Production C/libdatachannel firmware, live IdP/registry/transport qualification,
+other trust domains and the remaining recovery/installation gates stay open.
+
+Cloud Client also builds without CGo; the WebRTC SDK builds without CGo for
+macOS/Linux amd64/arm64. Local SDK commits: Cloud Client `73f718d`, Ameba WebRTC
+`5895ca2`, following workspace migration checkpoint `6d7c031`. No PR, push,
+published module release or deployment was performed.
