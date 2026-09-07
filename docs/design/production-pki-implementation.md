@@ -755,3 +755,34 @@ open. Production stays disabled.
 
 Local Video Cloud commit `b84e468`, following workspace checkpoint `bf52705`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Strict device JWT and broker CRL continuation
+
+Added mandatory signed CRL verification for Product device tokens using a read-only
+repeatable-read snapshot of entitlement, fingerprint binding, serial, registered
+lineage and current CRLs. Existing token/binding/replacement and ancestor-status
+checks remain. Missing/stale/invalid CRLs, leaf or ancestor revocation, wrong-cloud
+provenance, hierarchy/signature mismatch and legacy bindings fail strict mode.
+Broker attributes never supply certificate serials or chains.
+
+The API exposes an explicit Product-PKI-required CRL setting for its token
+provenance callback. The separate broker sweep/watch workload exposes an explicit
+strict-CRL flag and uses the same verifier before session eviction; malformed
+broker flag values fail startup. Enable both after publishing full coverage to
+deny reconnect as well as evict existing sessions. Defaults remain off. This
+operator verification does not fabricate broker TLS trust-install acknowledgments.
+
+Also corrected command startup validation that still demanded a legacy Device
+CA file despite dynamic trust mode; valid dynamic Product-PKI/direct-mTLS/server-TLS
+configuration now passes, while mixed trust modes fail.
+
+PostgreSQL tests compose signed CRLs, JWT validation and the EMQX HTTP adapter:
+revoked sessions disconnect and healthy sessions remain, with missing/expired CRL
+and Brand-revocation cases. PKI/broker/cloudhandoff/API/config race suites, focused
+vet and both binaries' builds pass. The disposable PostgreSQL fixture was stopped.
+Live broker scale, remaining TLS consumers/domains, installation, recovery and
+hardware qualification remain open; production stays disabled.
+
+Local Video Cloud commit `059cce0`, following workspace checkpoint `27126bb`.
+No PR, push, remote CI or deployment occurred.
