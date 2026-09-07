@@ -399,8 +399,9 @@ single-node protocol verification, not a three-node HA or disaster-recovery dril
 The separate [WAL segment archive](postgresql-wal-archive.md) command provides
 cluster-bound encrypted segment upload and immutable retry/readback. It does not
 pause writers, replace the maintenance matched-set format or establish complete
-PITR support. History files, base backups, restore integration, scheduling and
-measured recovery targets remain open as listed in that document.
+PITR qualification. History files, physical backups and explicit-LSN restore
+integration now have local test evidence; scheduling, matched recovery and measured
+operational targets remain open as listed in those documents.
 
 The separate [physical PostgreSQL backup adapter](postgresql-physical-backup.md)
 captures and restores a native verified cluster with included WAL. It does not

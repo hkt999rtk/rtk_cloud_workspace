@@ -278,6 +278,9 @@ func (e BaseBackupEngine) verify(ctx context.Context, directory string) (map[str
 	if err = e.run(ctx, "pg_controldata", &boundedWriter{writer: &control, remaining: 64 << 10}, directory); err != nil {
 		return nil, err
 	}
+	if strings.Contains(control.String(), "WARNING:") {
+		return nil, errors.New("PostgreSQL control data is untrustworthy")
+	}
 	match := controlIdentifier.FindStringSubmatch(control.String())
 	if len(match) != 2 || match[1] != e.Config.WAL.SystemIdentifier {
 		return nil, errors.New("base backup cluster identifier mismatch")

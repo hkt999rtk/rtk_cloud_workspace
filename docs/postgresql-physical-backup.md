@@ -98,6 +98,13 @@ ciphertext, unpacked tar and extracted data during restore. Size limits prevent
 unbounded capture but do not reserve disk space. Context deadlines cancel native
 tools and context-aware reads; OS disk I/O is not forcibly interrupted.
 
+## Targeted replay
+
+The optional `--pitr-plan FILE` prepares the restored cluster for an explicit LSN
+and timeline, authenticated WAL fetch and a paused isolated recovery server. See
+[targeted PostgreSQL recovery](postgresql-pitr.md). Without that option, the
+standalone restore behavior above is unchanged.
+
 ## Evidence and remaining work
 
 Run the disposable test using a cached `postgres:16-alpine` image:
@@ -116,9 +123,10 @@ recovery, immutable capture retry, missing-WAL rejection and cluster/layout mism
 Containers and copied fixtures are removed by test cleanup. No production storage
 or database is contacted.
 
-This proves standalone backup consistency, not replay of later archived WAL to a
-chosen time. Remaining work includes restore_command/PITR integration, backup-history
-files, scheduling/retention, matched OpenBao/registry recovery points and measured
+The base test proves standalone consistency; the optional PITR test described
+above additionally exercises later archived WAL to an explicit LSN. Remaining work
+includes cross-timeline recovery drills, backup-history files, scheduling/retention,
+matched OpenBao/registry recovery points and measured
 RPO <= 15 minutes / RTO <= 4 hours. Larger clusters, tablespaces and other PostgreSQL
 versions/layouts require an expanded adapter and qualification. Production remains
 disabled until the complete PKI acceptance evidence exists.

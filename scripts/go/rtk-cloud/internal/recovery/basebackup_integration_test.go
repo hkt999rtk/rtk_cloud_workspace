@@ -61,6 +61,9 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	if err = os.WriteFile(serviceFile, []byte("[physical]\nhost=/var/run/postgresql\nuser=postgres\ndbname=postgres\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if os.Getenv("RTK_PITR_INTEGRATION") == "1" {
+		wal.Remote.Endpoint = startPITRFixture(t, ctx, docker, name, directory)
+	}
 	cfg := BaseBackupConfig{WAL: wal, BinaryDirectory: "/usr/local/bin", ServiceFile: serviceFile, Service: "physical", TimeoutSeconds: 120, MaxArchiveBytes: 128 << 20}
 	e := BaseBackupEngine{Config: cfg, Exec: func(ctx context.Context, argv []string, in io.Reader, out io.Writer) error {
 		return QuietExec(ctx, append([]string{docker, "exec", "--env", "PGSERVICEFILE=" + serviceFile, "--env", "LC_ALL=C", name}, argv...), in, out)
@@ -75,6 +78,13 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	}
 	// A retry must not recapture newer database contents.
 	query("5432", "INSERT INTO physical_fixture VALUES(2,'after-backup')")
+	var target, walFile string
+	if os.Getenv("RTK_PITR_INTEGRATION") == "1" {
+		target = query("5432", "SELECT pg_create_restore_point('pki-fixture-target')")
+		query("5432", "INSERT INTO physical_fixture VALUES(3,'after-target')")
+		walFile = query("5432", "SELECT pg_walfile_name(pg_current_wal_lsn())")
+		query("5432", "SELECT pg_switch_wal()")
+	}
 	if _, err = e.Stage(ctx, "fixture"); err != nil {
 		t.Fatal("durable retry", err)
 	}
@@ -85,6 +95,24 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	objects := &memoryObjects{objects: map[string][]byte{}, ambiguous: true}
 	if err = upload(ctx, objects, cfg.remoteConfig(), "fixture", path); err != nil {
 		t.Fatal(err)
+	}
+	var walID string
+	if target != "" {
+		source := filepath.Join(directory, walFile)
+		if err = exec.CommandContext(ctx, docker, "cp", name+":/var/lib/postgresql/data/pg_wal/"+walFile, source).Run(); err != nil {
+			t.Fatal(err)
+		}
+		encrypted, id, err := stageWAL(ctx, wal, walFile, source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		walID = id
+		remote := wal.Remote
+		remote.Prefix += "/wal-v1/" + wal.SystemIdentifier
+		wc := Config{Environment: wal.Environment, Stack: wal.Stack, Remote: remote, MaxArchiveBytes: wal.SegmentBytes + (1 << 20)}
+		if err = upload(ctx, objects, wc, id, encrypted); err != nil {
+			t.Fatal(err)
+		}
 	}
 	downloadDir := filepath.Join(directory, "download")
 	if err = PrivateDirectory(downloadDir); err != nil {
@@ -97,6 +125,9 @@ func TestPostgresPhysicalEncryptedRoundTrip(t *testing.T) {
 	key := filepath.Join(directory, "identity")
 	if err = os.WriteFile(key, []byte(identity.String()), 0600); err != nil {
 		t.Fatal(err)
+	}
+	if target != "" {
+		exercisePITR(t, ctx, docker, name, directory, downloaded, key, target, e, objects, walID)
 	}
 	destination := filepath.Join(directory, "restored")
 	if err = e.restoreFile(ctx, "fixture", downloaded, destination, key); err != nil {

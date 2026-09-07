@@ -16,7 +16,7 @@ import (
 
 func runBaseBackup(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Println("base-backup create|restore --config FILE --confirm-environment ENV --confirm-stack STACK --id ID [--destination NEW_DIRECTORY --identity FILE]")
+		fmt.Println("base-backup create|restore --config FILE --confirm-environment ENV --confirm-stack STACK --id ID [--destination NEW_DIRECTORY --identity FILE [--pitr-plan FILE]]")
 		return nil
 	}
 	action := args[0]
@@ -29,8 +29,9 @@ func runBaseBackup(args []string) error {
 	environment := fs.String("confirm-environment", "", "confirmed environment")
 	stack := fs.String("confirm-stack", "", "confirmed stack")
 	id := fs.String("id", "", "immutable backup id")
-	var destination, identity string
+	var destination, identity, pitrPlan string
 	if action == "restore" {
+		fs.StringVar(&pitrPlan, "pitr-plan", "", "reviewed explicit WAL recovery target")
 		fs.StringVar(&destination, "destination", "", "new private recovery directory")
 		fs.StringVar(&identity, "identity", "", "private age identity file")
 	}
@@ -58,10 +59,27 @@ func runBaseBackup(args []string) error {
 	if action == "create" {
 		err = e.Create(ctx, *id)
 	} else {
-		err = e.Restore(ctx, *id, destination, identity)
+		if pitrPlan == "" {
+			err = e.Restore(ctx, *id, destination, identity)
+		} else {
+			pf, openErr := os.Open(pitrPlan)
+			if openErr != nil {
+				return openErr
+			}
+			defer pf.Close()
+			var plan recovery.PITRPlan
+			if err = recovery.Decode(io.LimitReader(pf, 1<<20), &plan); err != nil {
+				return err
+			}
+			err = e.RestorePITR(ctx, *id, destination, identity, plan)
+		}
 	}
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": action + "-complete", "backup_id": *id})
+	status := action + "-complete"
+	if pitrPlan != "" {
+		status = "pitr-prepared-not-replayed"
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]string{"status": status, "backup_id": *id})
 }

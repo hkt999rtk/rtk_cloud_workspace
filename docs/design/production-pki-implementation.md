@@ -907,3 +907,29 @@ backup-history handling, continuous scheduling/retention, matched OpenBao/regist
 recovery points and measured RPO/RTO remain. Other trust consumers/domains, SDK
 installation and live custody/hardware qualification remain open. Production remains
 disabled; no PR, push or remote CI occurred.
+
+
+## Explicit-target PostgreSQL replay continuation
+
+Added `base-backup restore --pitr-plan FILE` for a reviewed LSN and numeric timeline.
+It binds the actual WAL restore binary/config/identity to the physical backup,
+refuses targets before consistency, preserves source configuration outside PGDATA,
+and writes isolated local-socket settings without inherited ALTER SYSTEM/preload/
+network/archive behavior. Recovery pauses at the target; it never auto-promotes.
+Metadata says prepared-not-replayed and the recovery signal is written last.
+Native control warnings now fail closed. Shell/config/percent escaping is covered.
+
+The disposable PostgreSQL 16 test invokes the actual Linux WAL restore CLI against
+a TLS object fixture inside a network-isolated container. It fetches completed age
+ciphertext, reaches the explicit target, retains the pre-target write, excludes the
+later write, stays read-only and exposes no TCP listener. A second fresh restore
+with required ciphertext missing must fail and shut down before reaching the target.
+Recovery race tests, focused CLI tests, vet and host/Linux builds pass. Docker
+Desktop needs a container-local private Unix socket for this test. No live provider,
+production database or deployment was touched. See `docs/postgresql-pitr.md`.
+
+This proves a local single-timeline replay path, not full recovery qualification.
+Cross-timeline drills, backup-history handling, scheduling/retention, matched
+OpenBao/registry recovery and measured operational RPO/RTO remain. Remaining trust
+consumers/domains, SDK installation and live custody/provider/hardware acceptance
+are still open. Production remains disabled. No PR, push or remote CI occurred.

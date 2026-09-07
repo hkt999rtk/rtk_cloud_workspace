@@ -4,8 +4,8 @@
 writers or enter maintenance mode. Existing matched-set `backup create` remains a
 separate maintenance operation; scheduling that command does not provide continuous
 backup. The separate [physical backup adapter](postgresql-physical-backup.md) captures and
-verifies a standalone base backup. These commands do **not** yet provide automated
-replay, failover qualification or a PITR/RPO
+verifies a standalone base backup. The [targeted recovery adapter](postgresql-pitr.md) connects restore to explicit-LSN
+replay. These commands do **not** yet provide failover qualification or a PITR/RPO
 claim. Do not enable it as a complete production archive_command until those
 remaining paths and an actual restore drill are complete.
 
@@ -105,8 +105,9 @@ are removed on normal success/failure; abrupt process termination can leave
 `.wal-restore-*` files for reviewed cleanup. Use encrypted storage for both spool
 and recovery destination. Context deadlines do not forcibly interrupt OS disk I/O.
 
-This provides the full-segment fetch/decrypt primitive for a future
-`restore_command`; it does not configure PostgreSQL or establish replay eligibility.
+This provides the fetch/decrypt primitive used by the optional PITR adapter
+`restore_command`; the WAL command alone does not configure PostgreSQL or establish
+replay eligibility.
 Unsupported partial/backup-history files return failure. Base-backup selection
 and an actual PostgreSQL replay drill remain unqualified.
 
@@ -158,7 +159,6 @@ and completed segment (first-page timeline 1) passed encrypted round trips with
 byte-for-byte equality. Tests also reject unrelated ancestry/fork intervals, missing
 or symlinked history, malformed histories and changed history on retry.
 
-Remaining implementation: restore_command integration, backup-history handling,
-replay integration with verified physical base backups,
+Remaining implementation: cross-timeline replay drills, backup-history handling,
 continuous WAL/snapshot scheduling, retention, matched OpenBao/registry recovery,
 and measured recovery drills demonstrating RPO <= 15 minutes and RTO <= 4 hours.
