@@ -786,3 +786,23 @@ hardware qualification remain open; production stays disabled.
 
 Local Video Cloud commit `059cce0`, following workspace checkpoint `27126bb`.
 No PR, push, remote CI or deployment occurred.
+
+
+## Trust consumer cancellation continuation
+
+Root and CRL synchronization now share a 30-second context deadline across local
+consumer serialization, advisory-lock acquisition and management HTTP work.
+Nonblocking lock attempts honor cancellation without releasing another owner or
+mutating/acknowledging uninstalled state. This closes the shutdown gap where a
+worker could wait indefinitely behind another process's cache lock. Disk-only
+operator helpers keep their background-context behavior; runtime callbacks still
+must return promptly and OS file I/O is not forcibly interrupted.
+
+Tests hold real root/CRL advisory locks, prove deadline return and unchanged state,
+then release/reuse the locks. Mutex ownership/pre-cancellation cases and existing
+pkitrust/API race suites and focused vet pass. Full remaining scope still includes
+other TLS consumers/domains, platform installation, scheduled recovery/PITR and
+live provider/hardware/custody qualification. Production remains disabled.
+
+Local Video Cloud commit `62bd8db`, following workspace checkpoint `e72126b`.
+No PR, push, remote CI or deployment occurred.
