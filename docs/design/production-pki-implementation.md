@@ -1199,3 +1199,19 @@ compatibility mode preserves it. These tests do not prove successful physical
 Secure Enclave provisioning. Physical iOS enrollment/restart/signing/mTLS, atomic
 certificate installation and renewal integration remain required. Five top-level
 milestones remain open.
+
+## iOS independent-root installation validation
+
+The Keychain installer now requires a complete certificate chain and independently
+configured device roots. Native Security client-authentication trust evaluation
+uses only those anchors, disables network fetching, checks current validity and
+requires the evaluated chain to match the supplied order exactly. Validation
+precedes key proof and storage mutation. Empty roots fail closed; issuance response
+roots are never automatically trusted.
+
+Validation: all 51 Swift tests passed on macOS, including a valid four-level chain,
+missing/unrelated anchors, server-only EKU, expiration, incomplete/reordered/extra
+certificates, malformed/oversized PEM and installer rejection before key lookup.
+Only public synthetic certificates are committed. Strict device identity/profile
+checks, revocation, atomic version activation, intermediate persistence and physical
+iOS qualification remain required. Five top-level milestones remain open.
