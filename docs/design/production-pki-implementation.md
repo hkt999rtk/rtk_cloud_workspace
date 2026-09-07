@@ -1776,3 +1776,23 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next needs activation,
 session replacement, acknowledgement/retirement and in-flight cancellation,
 followed by revocation/lifecycle and live provider qualification.
+
+## Android renewal cancellation
+
+CancellationToken now supports internal race-safe native cancellation handlers.
+Production renewal registers the OkHttp call before execution, unregisters during
+cleanup, maps cancelled I/O to CANCELLED, and checks cancellation before receipt
+persistence. A receipt whose commit already began remains recoverable; cancellation
+cannot undo server issuance. Other transports require explicit hook integration.
+
+Validation: full JVM suite and release build passed. Tests cover handler removal,
+repeated cancellation, registration races and callback reentrancy. All eight PKI
+instrumentation tests passed on API 35, including a stalled authenticated renewal
+that cancels within five seconds without persisting a receipt and then retries.
+The local emulator was stopped after testing.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next needs durable activation,
+session replacement and acknowledgement/retirement, followed by revocation and
+application lifecycle integration and physical/live qualification.
