@@ -3999,3 +3999,37 @@ uncertain-outcome reconciliation and revocation publication/consumer adoption.
 Service client identity, dynamic App root policy, real host/SDK adoption and live
 qualification remain unfinished. This is an implementation checkpoint, not a live
 rollout or completion of any broad gate. No push, PR, remote CI or deployment.
+
+
+## 2026-09-08 — Server uncertain-outcome recovery
+
+Video Cloud `a5ad490` adds authenticated `reconcile-server` for a pinned private
+server issuer. Fresh pki_admin MFA and the existing Account Manager mTLS/assertion
+binding apply. The controller reconstructs exact DNS/CSR/TTL/context from the
+receipt and verifies its digest before provider reads. Known serial recovery uses
+one public certificate read; omitted serial discovers one unique stored CSR-key
+match under the exact service/mqtt/openbao_tls mount. Bounded paginated discovery
+rejects ambiguous, revoked, missing-status, malformed and incomplete inventories.
+The controller ACL adds only exact-mount certificate listing; it cannot sign.
+Recovery cannot release a pending claim or overwrite a different committed leaf.
+Final validation includes elapsed provider-read time and current issuer/CRL state.
+
+The final timing test exposed PostgreSQL microsecond precision differing from the
+initial nanosecond response. Follow-up `72df2ef` returns the timestamp persisted by
+SQL; a deterministic sub-microsecond regression test proves exact replay. The
+checkpoint includes both commits; the initial recovery commit alone was not the
+validated endpoint. All final checks passed: full Go suite; PKI/Postgres/OpenBao/
+controller race suites, rerun PKI/Postgres/certissuer race suites after the fix;
+focused vet; real local OpenBao 2.5.5 restricted controller recovery and signer
+listing denial. SQL integration recovers with the restricted controller role.
+Local discovery tests cover all three server domains plus App regressions, HTTP
+tests cover assertion/peer/environment/body binding and concurrent completion.
+Disposable local fixtures were removed; no external deployment or custody action.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next: server revocation
+receipts/publication/consumer acknowledgment and recovery verification, followed
+by actual host adoption. Read-only discovery requires writers/tidying fenced and
+does not establish complete external history, live RPO/RTO or restored-key use.
+Goal remains active. No push, PR or remote CI.

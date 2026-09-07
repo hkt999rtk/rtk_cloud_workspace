@@ -1,6 +1,6 @@
 # Production PKI domain and host inventory
 
-Reviewed 2026-09-08 through Video Cloud `6f5838e`.
+Reviewed 2026-09-08 through Video Cloud `72df2ef`.
 This inventory preserves the existing five acceptance milestones. It identifies
 implementation work; it does not add a sixth milestone or certify production.
 The authoritative trust boundaries remain Platform PKI contract sections 3–5.
@@ -11,7 +11,7 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | --- | --- | --- |
 | Device client identity | Video Cloud `internal/pki` registry and Product claims; `internal/certissuer/product.go` and Product-mode bootstrap; SDK renewal/trust and owner-lifetime adapters recorded in the ledger. | Real legacy cohort replacement, application policy/owner adoption, physical firmware and supported-platform evidence. |
 | App/user client identity | `internal/pki/app_issuance.go`, `app_verification.go`, `app_revocation.go`, `app_crl_worker.go`; API consumer and `internal/pkitrust/registry_app.go` compose broker/TURN acknowledgment after sweeps. Recovery includes `app_reconcile.go`, `recovery_app.go`, and `recovery_app_inventory.go`. | Dynamic App root-policy adoption, remaining application/SDK host wiring and real broker/relay eviction evidence. |
-| Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Uncertain-outcome reconciliation, server revocation publication/consumer adoption and actual host cutover. |
+| Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Server revocation publication/consumer adoption, recovery verification and actual host cutover. |
 | Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | An approved Service leaf profile, online issuance/selection and registry-backed service identity lifetime/revocation. Existing loaded files do not prove registry-managed lifecycle. |
 | Dedicated MQTT server TLS | Generic registry scope accepts `mqtt`; deployment TLS material can be provisioned separately. | If using the dedicated private-CA option, explicit server profile and consumer renewal/trust adoption. Public-CA MQTT remains a distinct supported contract choice. |
 | OpenBao transport TLS | Dedicated transport CA/files and TLS Raft deployment artifacts exist. | Dedicated server-only issuance/renewal policy and host adoption; transport trust must remain independent of Device, App and Service roots. Seal/custody and real HA qualification are separate. |
@@ -24,7 +24,8 @@ DNS policy, digest revalidation, independent private server-domain provisioning
 and server-only OpenBao roles. Existing reservations without a policy remain
 unsupported. The durable registry claim/validation portion of step 3 is implemented in
 `f304ec1`; provider/HTTP composition and opt-in bootstrap (step 4) are implemented
-in `6f5838e`. Uncertain-outcome recovery and actual gateway host adoption remain.
+in `6f5838e`. Server uncertain-outcome recovery is implemented in `a5ad490` plus
+`72df2ef` (persisted timestamp correction). Step 5 and actual host adoption remain.
 
 1. Bind an explicit server leaf policy to the approved immutable issuer operation.
    It must specify the intended private trust domain and exact permitted DNS names;
