@@ -31,6 +31,7 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] Certificate-bound device tokens with live API/refresh/MQTT authentication checks.
 - [x] Device WebSocket revalidation, MQTT authentication leases and broker cache/session operator tooling.
 - [x] Cumulative Root distrust, consumer acknowledgment gates, atomic local root state and opt-in API TLS reload.
+- [x] Explicit reconciliation of historical pending Root removals with governance and acknowledgment gates.
 - [ ] Remaining trust-consumer adapters, direct media termination and live trust/session qualification.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
@@ -269,3 +270,30 @@ trust store, production key, deployment, push, PR or remote CI run was changed.
 
 Local Root distrust commits: Video Cloud `eee0ebd`, Cloud Admin `fb44dff`, following
 workspace checkpoint `7019525`.
+
+
+## Historical Root removal reconciliation continuation
+
+The existing operation reconciliation endpoint now repairs missing removal records
+for pre-migration pending Root revocations/compromises. Recent administrator MFA,
+the original request digest, independent recorded administrator/custodian approvals,
+matching issuer state and execution audit are required. Publication and audit are
+atomic under operation/scope locks; concurrent retries reuse the same record.
+The operation stays pending until all required consumers acknowledge the latest
+cumulative policy. Earlier acknowledgments become stale after backfill. Policy
+reads reject a requested historical Root that has not itself been published.
+Cloud Admin labels the existing reconciliation control for both supported uses.
+
+Validation: isolated PostgreSQL and race tests cover both lifecycle actions,
+concurrent retries, missing approvals/execution history, changed request digest,
+wrong issuer status, stale MFA, wrong role, stale consumer evidence and subsequent
+completion with fresh acknowledgments. PKI, local trust-store and API race suites,
+controller compilation, focused vet and Cloud Admin application tests pass.
+
+This closes historical Root policy publication only. Unknown leaf-signing outcomes,
+remaining consumer adapters, deployment/backup/migration automation and live
+qualification are still unfinished. No shared database, provider, trust store or
+production key was changed. Work remains local with no PR, push or deployment.
+
+Local historical-removal commits: Video Cloud `17cbe09`, Cloud Admin `9a34bdc`,
+following workspace checkpoint `7b7ddc7`.
