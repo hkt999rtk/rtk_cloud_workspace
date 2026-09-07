@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,21 @@ func TestCheckDocsConsistencyReadsSourcesAndReportsFailures(t *testing.T) {
 	checkDocsConsistency(check, workspace)
 	if check.failures != 1 {
 		t.Fatalf("missing source: got %d failures, want 1", check.failures)
+	}
+}
+
+func TestRunDocsCheckReportsObsoleteDesignSource(t *testing.T) {
+	workspace := t.TempDir()
+	t.Setenv("RTK_CLOUD_WORKSPACE", workspace)
+	writeFile(t, filepath.Join(workspace, ".gitmodules"), "")
+	path := "repos/rtk_cloud_contracts_doc/api_usage.md"
+	mkdirAll(t, filepath.Dir(filepath.Join(workspace, path)))
+	writeFile(t, filepath.Join(workspace, path), "CSR subject app-brand-cloud-user:old-user\n")
+	stdout, stderr, err := captureOutput(func() error { return runDocsCheck(nil) })
+	if err == nil {
+		t.Fatal("docs-check accepted an incomplete workspace with obsolete guidance")
+	}
+	if !strings.Contains(stdout+stderr, "global app CSR identity: obsolete guidance in "+path) {
+		t.Fatalf("docs-check did not report the design conflict: %s%s", stdout, stderr)
 	}
 }
