@@ -1657,3 +1657,21 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Scheduled refresh, application wiring
 and other-platform/live owner qualification remain outstanding.
+
+## Scheduled Go CRL refresh worker
+
+A context-owned worker now immediately refreshes configured CRLs, retries while
+stored state remains valid and schedules ahead of signed expiry. Existing trust
+deadlines bound network attempts; failures do not extend freshness. Revocation,
+expired/unavailable state or parent cancellation ends the worker. It is designed
+to run alongside the established-owner GuardContext, with host supervision.
+
+Validation: the complete Go SDK suite and auth/transport race tests passed.
+Local HTTPS tests cover request cancellation, transient 503 recovery, signed
+revocation persistence and worker termination. Real application lifecycle and
+live publication/refresh qualification remain open.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next work includes concrete
+application wiring and equivalent platform/runtime qualification.
