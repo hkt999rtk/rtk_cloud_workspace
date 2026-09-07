@@ -3970,3 +3970,32 @@ recovery, revocation publication and host adoption. The legacy gateway handler i
 not yet switched; this checkpoint supplies registry primitives and does not claim
 end-to-end server issuance migration. No push, PR, remote CI, deployment or custody
 operation occurred. Goal remains active.
+
+
+## 2026-09-08 — Private server provider and gateway integration
+
+Video Cloud `6f5838e` adds `ServerIssuers` and the opt-in
+`CERT_ISSUER_SERVER_PKI_DOMAIN` (`service`, `mqtt`, `openbao_tls`, default empty).
+The gateway HTTP route uses direct authenticated caller identity and configured
+DNS allowlists, then pins the approved registry issuer before contacting OpenBao.
+The provider receives a fixed server role and explicit DNS SANs; completion checks
+its certificate against registry lineage, original CSR/lifetime and current CRLs.
+Pending provider failures or invalid certificates cannot release the claim or
+fall back to the legacy signer. Replays preserve certificate/time and recheck CRLs.
+Bootstrap requires an explicitly migrated registry and suppresses automatic schema
+migration in this mode; config/environment documentation records the opt-in.
+
+Validation: full Go suite; PKI/Postgres/certissuer/bootstrap/config/OpenBao race
+suites with disposable PostgreSQL; focused vet; actual OpenBao 2.5.5 restricted
+server-role test with explicit multi-name SANs. HTTP/PostgreSQL coverage proves
+identical replay, changed-purpose conflict, uncertain outcome held pending,
+incorrect EKU rejected, wrong-domain denial and revoked-leaf replay denial without
+another signing call. Existing Device/App tests passed. Local fixtures removed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next server work is durable
+uncertain-outcome reconciliation and revocation publication/consumer adoption.
+Service client identity, dynamic App root policy, real host/SDK adoption and live
+qualification remain unfinished. This is an implementation checkpoint, not a live
+rollout or completion of any broad gate. No push, PR, remote CI or deployment.
