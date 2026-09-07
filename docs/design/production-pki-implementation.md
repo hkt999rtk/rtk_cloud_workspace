@@ -2512,3 +2512,24 @@ staging/custody/recovery qualification. Milestones 2 and 3 advanced. Next concre
 work is Go expiry-driven durable renewal scheduling, then native provider and
 remaining domain/host integration. The audit reflects the implemented trust and
 coordinator APIs rather than retaining their previous implementation gaps.
+
+## Go durable expiry-driven renewal scheduling
+
+Added due calculation and durable automatic request selection, shared locking with
+manual coordination, pending validation across predecessor/successor states, and
+exact-record cleanup after durable acknowledgment. Pending state survives failures,
+activation and restart. Scheduling time is separate from real trust validation;
+post-completion scheduling uses the real clock. Directory syncs are repeated on
+retries, and lock cleanup failures are reported without suppressing operation errors.
+
+Validation: full Go suite and race checks passed. Native mTLS lifecycle fixtures
+cover waiting/due transitions, stable IDs, TTL conflict, malformed state preservation,
+callback and lost-ack recovery, activated pending state, changed-record cleanup
+rejection, completed replay and no-op waiting. Signed revocation remains enforced
+regardless of injected scheduling time. No remote CI or deployment was used.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Milestone 3 advanced. Go's identified local
+renewal scheduling gap is now implemented; real host supervision and qualification
+remain. Next: native supported-provider trust integration, then domain/host coverage.

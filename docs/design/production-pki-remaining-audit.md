@@ -16,7 +16,7 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 | --- | --- | --- |
 | 1. Legacy migration/device replacement | `repos/rtk_video_cloud/internal/pkicontrollerapp/legacy.go`, `internal/pki/legacy.go`, `internal/pki/replacement.go` implement staged inventory/import and device replacement; the ledger records local tests. | Actual staging cohort inventory, approved import, measured replacement/overlap and residual legacy population. Local fixtures do not establish cohort adoption. |
 | 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; JavaScript durable CRLs, bounded refresh, guard and mTLS/WebSocket lifetime cancellation; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK uses a host trust callback. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
-| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go now has durable acknowledgment/retirement, mandatory renewal CRLs and resumable session-replacement coordination; expiry-driven scheduling and host integration remain. Native provider integration remains host-supplied. These are implementation gaps, not merely physical test gates. |
+| 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go now has durable acknowledgment/retirement, mandatory renewal CRLs and resumable session-replacement coordination; durable expiry-driven scheduling is now implemented; host integration remains. Native provider integration remains host-supplied. These are implementation gaps, not merely physical test gates. |
 | 4. Provider/hardware compatibility | OpenBao policy/workload/Raft artifacts and local provider tests exist. Host Swift, API 35 emulator and native host checks are recorded. | Supported-provider/version and physical Secure Enclave, Android TEE/StrongBox, firmware/ARM and HSM matrix results. Local tests must not be substituted for this evidence. |
 | 5. Staging/custody/recovery qualification | Offline ceremony CLI, recovery tools and runbooks exist. | Real MFA identities and independent custodians, escrow/restore ceremony, failure-domain/seal approval, live matched recovery and post-backup security reconciliation, measured RPO ≤15 min and RTO ≤4 h. Production remains disabled. |
 
@@ -40,9 +40,10 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    Renewal entry points now enforce independent roots, the Device profile and signed
    current CRLs, including TLS handshakes and cached receipt recovery. The resumable
    coordinator requires session replacement before acknowledgment and rejects
-   overlapping coordinators. Expiry-driven scheduling, real host supervision and
-   qualification remain; returning a TLS identity alone does not close owner-lifetime
-   integration.
+   overlapping coordinators. Durable expiry-driven scheduling now retains a stable request through activation
+   and acknowledgment and clears it only after completion. Real host supervision
+   and qualification remain; returning a TLS identity alone does not close
+   owner-lifetime integration.
 3. **Native trust implementation boundary.**
    `repos/rtk_cloud_client/packages/native/src/rtkc_certificate_bundle.c` calls
    `validate_with_trust`; the public header requires the host to implement strict
@@ -62,8 +63,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 
 - JavaScript production lifecycle and trust primitives are now locally implemented;
   verify application host ownership and policy replacement with the domain inventory.
-- Finish Go expiry-driven renewal scheduling and host integration, then native
-  provider integration.
+- Implement native provider integration, then verify Go and other SDK host
+  ownership with the domain inventory.
 - Audit and implement domain-specific issuance/consumer and host wiring gaps.
 - Run the corresponding local integration checks; keep qualification evidence
   separate and attributable to the platform/environment actually exercised.
