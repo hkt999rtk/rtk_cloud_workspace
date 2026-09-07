@@ -4166,3 +4166,37 @@ transport composition, but not a deployed broker cutover. Next: CRL refresh and
 exact-digest consumer evidence, remaining Service/OpenBao transports, recovery
 verification and real host adoption. No root-file/key rotation or broker deployment,
 no fabricated acknowledgment, no push/PR/remote CI. Goal remains active.
+
+
+## 2026-09-08 — Domain-scoped server CRL maintenance worker
+
+Video Cloud `7869d5e` adds an opt-in server CRL worker selected by
+`PKI_SERVER_CRL_DOMAIN` (empty disables; service/mqtt/openbao_tls selects exactly
+one domain). It keyset-scans active/retiring intermediates and durable pending
+revocations in bounded pages, publishes existing authorized work, attempts exact-
+consumer finalization and refreshes intermediate CRLs before expiry. Fresh evidence
+is reused while awaiting ACKs. Offline root CRLs are checked but never generated.
+The worker cannot create a revocation, sign replacement identities or grant MFA.
+
+Existing controller worker health combines enabled App and server scan reports;
+missing evidence/ACKs, scan failure, stale results or shutdown remain unready. The
+same PKI_REQUIRED_CONSUMERS applies to enabled workers in a process; differing
+policies require separate deployment. SQL/provider operations are bounded and
+cancellable. Signed CRL digest/number/timestamp metadata is checked before treating
+current evidence as valid. No schema or live mode change is introduced; existing
+server registry grants and exact OpenBao controller ACLs are prerequisites.
+
+Validation passed: full Go suite; PKI/OpenBao/controller/Postgres race suites;
+focused vet; real OpenBao 2.5.5 rotate/read and scoped worker scans before/after
+explicit fixture acknowledgments. Tests cover publication retries, stable digest
+while waiting, finalization, scheduled refresh preserving prior revocations,
+33-issuer pagination, domain/environment isolation and offline-root absence without
+provider mutation. Final targeted tests passed after shared signed-metadata checking.
+Local fixtures removed. No push/PR/remote CI/deployment/custody operation.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next: bind MQTT consumer
+adoption and connection sweeps to exact installed CRL digests before automated ACKs;
+remaining Service/OpenBao transports, root-policy adoption, recovery verification
+and real rollout are still required. Goal remains active.
