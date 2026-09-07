@@ -611,3 +611,39 @@ acknowledgment wiring, App backup/recovery evidence and remaining trust domains.
 Dynamic App root-policy replacement and live host/fleet/custody qualification
 remain open. No push, PR, remote CI, deployment or custody operation occurred.
 Goal remains active.
+
+
+## Broker/TURN App CRL consumer checkpoint (2026-09-08)
+
+Video Cloud `3d70c01` wires optional reviewed App CRL manifests and independent
+management mTLS into the broker and TURN sweep workloads. Preparation fetches,
+validates, persists and installs signed monotonic records before each sweep.
+App token checks require the prepared root/intermediate digests in the same
+repeatable-read database snapshot as identity verification. Missing authorities,
+registry advancement and registry rollback deny affected tokens. Preparation
+failure still permits cleanup of unverifiable sessions and prevents acknowledgment.
+
+After successful sweep completion, acknowledgment reloads the prepared disk
+record and revalidates its current registry digest without fetching new evidence.
+Changed records require another preparation/sweep. The consumer retains monotonic
+disk state across restart and an in-process floor; installation inherits bounded
+operation cancellation. Workloads without the optional configuration retain
+registry checks without acknowledgment. Deployment examples and controller
+configuration documentation describe scope and required identities/manifests.
+
+Validation: full Go suite; API/trust/broker/TURN race suites; full PKI and trust
+race suites against disposable PostgreSQL; focused vet. Real mTLS/PostgreSQL
+coverage proves preparation without acknowledgment, changed-registry rejection,
+recovery, persisted rollback protection and restart acknowledgment. App leaf tests
+prove prepared root/intermediate completeness and denial after registry advance
+or simulated snapshot rollback. Consumer tests cover changed disk evidence,
+failed runtime revalidation, expiry and installer cancellation. The PostgreSQL
+fixture was stopped/removed. No workload was enabled or deployed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. This checkpoint supplies sweep-consumer
+evidence; it does not attest broker/coturn TLS-store installation or real cluster
+eviction timing. Next: App backup/recovery reconciliation and remaining trust-domain
+adapters; dynamic App root policy and live host/fleet/custody qualification remain.
+No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
