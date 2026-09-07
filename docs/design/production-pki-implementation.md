@@ -1796,3 +1796,24 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next needs durable activation,
 session replacement and acknowledgement/retirement, followed by revocation and
 application lifecycle integration and physical/live qualification.
+
+## Android durable active identity selection
+
+Android now explicitly initializes an active device identity, resolves it with
+key/trust/fingerprint validation, and activates installed renewal successors using
+the saved receipt and expected predecessor. Atomic bounded records outside backup
+use file sync and process/file locking. Repeating completed activation is safe;
+bootstrap cannot replace a different selection. Installation itself does not
+switch identities. Missing/corrupted state fails instead of selecting a fallback.
+
+Validation: full JVM suite and release build passed. Eight API 35 PKI tests passed,
+covering pre-install rejection, separate install/activation, retry/reopen, bootstrap
+rollback rejection and corrupt-state rejection. The initial instrumentation launch
+was rejected before user storage unlocked; rerunning after RUNNING_UNLOCKED passed.
+The emulator was stopped after testing. Physical hardware remains unqualified.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next Android steps are session
+replacement, acknowledgement/retirement and resumable lifecycle coordination,
+then revocation and physical/live provider qualification.
