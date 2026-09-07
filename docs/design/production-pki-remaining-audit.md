@@ -1,6 +1,9 @@
 # Remaining production PKI work: evidence audit
 
-Audited on 2026-09-07 against workspace `dc4638d` and client `c863c27`.
+Initial audit: 2026-09-07 against workspace `dc4638d` and client `c863c27`.
+Current-state review: 2026-09-08 against workspace `76e1e13` and Video Cloud
+`7e0aaf2`. See [domain/host inventory](production-pki-domain-host-inventory.md)
+for the next concrete implementation gap.
 This is a gap audit, not production sign-off. It preserves the five outstanding
 milestones and distinguishes missing implementation from missing qualification.
 No deployment, production key operation, remote CI or external approval was run.
@@ -64,23 +67,21 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    Cloud `4532ff8`. Known-serial pending-outcome recovery is implemented in `06a11d2`.
    Restricted App issuer/controller database grants and lineage locking are
    implemented and exercised under non-owner roles in `07672e6`.
-   App API certificate authentication now requires registry receipts and signed
-   intermediate/root CRLs in `15e08ba`. Provider evidence discovery for unknown
-   serials, automatic App revocation/CRL publication, backup/restore adapters and
-   live-session enforcement remain. App bearer-token provenance and current
-   registry/CRL checks at issuance, validation and refresh are implemented in
-   `de8d6cd`. App MQTT lease and operator-sweep wiring is implemented in `9c55992`
-   with HTTP fixture evidence; real EMQX acceptance remains. WebRTC signaling
-   creator provenance/revalidation is implemented in `3d6498d` with memory/Redis
-   protocol fixture evidence. Established peer connections and TURN allocations
-   still need actual lifetime enforcement; closing a signaling record is insufficient. Configured provider response validation was
-   implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
-   rejection of valid leaves without the optional Basic Constraints extension.
-   Replacement and runtime verification also require domain-specific review.
-   Gateway/service profiles remain unimplemented. Inventory real issuance and consumer entry
-   points for each required domain and identify missing adapters. A generic schema
-   is not proof of end-to-end domain support. This audit has not exhaustively
-   certified those entry points.
+   App certificate/token verification, API CRL fetch/install/acknowledgment,
+   broker and TURN sweeps with prepared-digest acknowledgment, durable revocation
+   and recurring CRL publication are now locally implemented. App lost-serial
+   recovery, read-only provider lineage/leaf checks and full per-issuer registry
+   recovery inventory are implemented through `7e0aaf2`. The appended checkpoints
+   retain the corresponding tests and limits; these are no longer missing-code
+   items. Real host adoption, firmware/media lifetime enforcement and cluster
+   eviction timing remain qualification requirements.
+   Gateway/server issuance still uses the legacy Device signer in
+   `internal/certissuer/service.go:signGateway`. Its DNS allowlist is deployment
+   configuration, and it has no independent registry issuer selection or durable
+   single-owner claim. `onlineClientRole` and `ConfigureClientRole` support Device
+   and App only. Service, dedicated MQTT and OpenBao TLS online profiles and host
+   adoption remain concrete implementation gaps. The new domain/host inventory
+   records their required boundaries and next implementation order.
 
 ## Next execution order
 

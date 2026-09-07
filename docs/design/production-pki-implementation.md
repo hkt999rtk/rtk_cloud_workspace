@@ -82,13 +82,14 @@ Validated against an isolated PostgreSQL 16 container, not any shared environmen
 - Account Manager authentication/API regression suites and PKI-role integration.
 - Go SDK certificate-bundle authentication package.
 
-The full proposed plan is not complete. The current audit identifies JavaScript
-production identity/lifecycle support, Go durable acknowledgment/retirement,
-native provider integration, and other trust-domain/host coverage as remaining
-implementation work. Backup and mobile SDK controls described below are already
-implemented locally; live adoption, real custody/MFA inputs, hardware compatibility
-and measured recovery qualification remain separate acceptance gates. Nothing
-in a local fixture substitutes for those operational inputs.
+The full proposed plan is not complete. JavaScript, Go and native production
+identity/lifecycle primitives and the App issuance, revocation and recovery
+controls are now locally implemented as recorded below. Concrete code gaps remain
+in independent gateway/server and service-domain issuance and application host
+policy adoption. The [domain/host inventory](production-pki-domain-host-inventory.md)
+records the current next steps. Live adoption, real custody/MFA inputs, hardware
+compatibility and measured recovery qualification remain separate acceptance
+gates; local fixtures do not establish those operational outcomes.
 
 ## Continuation delivery
 
