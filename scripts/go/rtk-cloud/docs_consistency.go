@@ -29,12 +29,18 @@ var docsConsistencyRules = []struct {
 }
 
 func activeDesignText(text string) string {
-	// Only an explicit level-two historical section exempts following prose.
-	// Historical material in other files is excluded by the scoped path list.
-	if before, _, ok := strings.Cut(text, "\n## Historical "); ok {
-		text = before
+	// Historical exemptions end at the next level-two heading.
+	var active []string
+	historical := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			historical = strings.HasPrefix(line, "## Historical ")
+		}
+		if !historical {
+			active = append(active, line)
+		}
 	}
-	return strings.Join(strings.Fields(text), " ")
+	return strings.Join(strings.Fields(strings.Join(active, "\n")), " ")
 }
 
 func checkDocsConsistency(check *checkState, workspace string) {

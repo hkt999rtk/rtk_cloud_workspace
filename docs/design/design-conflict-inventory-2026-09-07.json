@@ -238,8 +238,8 @@
         "storage": 23,
         "authority": 2
       },
-      "post_fix_sha256": "b074ae494c5129c9ea6680a541bb54ca63f845900e1cba128261425b421dfaec",
-      "post_fix_lines": 458
+      "post_fix_sha256": "21b593556d838cdfee17d459e50f9436ddb1d48406f19457a3bedb9e8d2a5355",
+      "post_fix_lines": 461
     },
     {
       "path": "docs/cost/linode-100k-estimate.md",
@@ -298,8 +298,8 @@
         "credentials": 3,
         "authority": 4
       },
-      "post_fix_sha256": "8ab3b0c667251028348ddd7df50807108eb4a59915c72e446d402e01cb60cd39",
-      "post_fix_lines": 314
+      "post_fix_sha256": "2cee6dee267954b2319a5842408515326c2b80057e139907a4f6b2f0a38f94d3",
+      "post_fix_lines": 316
     },
     {
       "path": "docs/design/tenant-billing-ux.md",

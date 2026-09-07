@@ -127,7 +127,9 @@ avoids single-failure protection.
 Likely AWS line items:
 
 - Two CloudHSMs instead of one HSM.
-- Multi-AZ-style RDS PostgreSQL estimate for the shared account/video database.
+- Separate Multi-AZ-style RDS PostgreSQL estimates for the service-owned
+  Account Manager, Video Cloud, and Billing databases; preserve each service
+  isolation boundary and price its redundant capacity independently.
 - Two ElastiCache/Valkey cache nodes instead of one node.
 - Two NAT Gateways for two-AZ private subnet routing. NAT Gateway is managed by
   AWS, but it is AZ-scoped, so one NAT Gateway per AZ avoids routing all private
@@ -222,8 +224,9 @@ Current shape:
 - Go REST API using Gin.
 - Postgres-backed identity, organization, RBAC, registry, device groups/tags,
   provisioning operations, outbox/inbox, retry, and dead-letter state.
-- Cross-service stream names are `account.video.commands` and
-  `video.account.events`.
+- Cross-service provisioning uses authenticated APIs, with durable outbox/inbox
+  records for retries, idempotency, and reconciliation. The current deployment
+  does not require a broker or named message streams.
 
 AWS costing choices:
 
@@ -231,8 +234,8 @@ AWS costing choices:
 - Lambda/API Gateway should be priced only as a future refactor because the
   current system assumes a long-running Go API and workers with database-backed
   lifecycle state.
-- SQS/EventBridge can be considered for lifecycle messages, but only after
-  replacing or adapting the broker contract.
+- SQS/EventBridge would be a separately reviewed future transport change to the
+  current API/outbox flow. Do not include a broker or queue in this baseline.
 
 Sizing inputs:
 
@@ -240,7 +243,7 @@ Sizing inputs:
 - Login/token refresh rate.
 - Device registry reads/writes.
 - Provision/deactivate operations/day.
-- Cross-service message throughput and dead-letter retention.
+- Cross-service API request throughput, outbox retry rate, and dead-letter retention.
 - RDS storage, IOPS, connection count, and backup retention.
 
 ### Video Cloud
