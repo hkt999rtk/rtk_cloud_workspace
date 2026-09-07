@@ -2991,3 +2991,29 @@ Next: domain-specific issuer policy and consumers. Read-only inspection confirms
 restricts online policy to Device Product issuers; schema support alone is not domain
 integration. No push, PR, remote CI, deployment or custody operation was performed.
 The overall goal remains active.
+
+
+## App intermediate provider checkpoint (2026-09-08)
+
+Video Cloud `4899d2f` implements independent App intermediate provisioning/import,
+canonical registry/mount checks, the client-auth App role and an exact-mount signer
+ACL requiring validated App common names and forbidding SAN overrides. Private
+keys remain inside OpenBao. Unsupported online domains are rejected before
+provisioning consumes its claim or creates a provider key. The configured signer
+now sends the common name explicitly, matching the role's refusal to use CSR names.
+
+Validation: `GOWORK=off go test ./...` passed. Focused race tests passed for pki,
+openbao, certissuer, pkicontrollerapp and certissuerapp, with the opt-in App
+integration enabled against disposable loopback OpenBao 2.5.5 and PostgreSQL 16.
+Coverage includes signed-CSR import, acknowledgment before activation, signing
+through the restricted token, exact profile/key binding, independent Device/App
+roots, rejected identity/SAN/role overrides, TTL limits and fail-before-provision
+behavior for unsupported Service profiles. See the controller runbook for the
+fixture command. This is local provider evidence only.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. App provision/import is now implemented;
+next work is App runtime registry binding and provider response validation, followed
+by remaining domain adapters and consumer inventory. No push, PR, remote CI,
+deployment or custody operation was performed. The overall goal remains active.

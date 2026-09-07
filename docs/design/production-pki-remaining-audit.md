@@ -57,9 +57,12 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    and owner-independent resolver cleanup. Application policy/domain wiring and physical/OpenSSL-provider qualification remain. The
    original fake callback test remains a plumbing test, not the verifier evidence.
 4. **Other trust domains and host inventory.** The generic issuer `Scope` has a
-   domain, but `internal/pki/openbao_policy.go`, replacement and runtime
-   verification contain device-specific restrictions. The controller runbook still
-   lists App/Gateway/service work. Inventory real issuance and consumer entry
+   domain. App intermediate provisioning/import and restricted provider signing
+   are now implemented in Video Cloud `4899d2f`, with local OpenBao/PostgreSQL
+   coverage. App runtime signer selection remains configuration-based; registry
+   binding, full provider response validation and App recovery adapters remain.
+   Replacement and runtime verification also require domain-specific review.
+   Gateway/service profiles remain unimplemented. Inventory real issuance and consumer entry
    points for each required domain and identify missing adapters. A generic schema
    is not proof of end-to-end domain support. This audit has not exhaustively
    certified those entry points.
