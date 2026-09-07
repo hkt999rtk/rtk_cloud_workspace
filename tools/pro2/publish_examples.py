@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Publish isolated PRO2 evaluation releases to the canonical Dev artifact store."""
+"""Publish isolated PRO2 evaluation releases to the selected Dev or Staging artifact store."""
 import argparse,base64,hashlib,json,subprocess,os
 from pathlib import Path
 import boto3
 import requests
 from botocore.exceptions import ClientError
 from botocore.config import Config
-p=argparse.ArgumentParser(description=__doc__);p.add_argument('--release-dir',type=Path,required=True);p.add_argument('--activate',action='store_true');a=p.parse_args()
-dev_store=Path(os.environ.get('RTK_CLOUD_CONFIG_ROOT',str(Path.home()/'.config/rtk_cloud')))/'dev'
+p=argparse.ArgumentParser(description=__doc__);p.add_argument('--release-dir',type=Path,required=True);p.add_argument('--activate',action='store_true');p.add_argument('--environment',choices=['dev','staging'],default='dev');a=p.parse_args()
+dev_store=Path(os.environ.get('RTK_CLOUD_CONFIG_ROOT',str(Path.home()/'.config/rtk_cloud')))/a.environment
 k=['kubectl','--kubeconfig',str(dev_store/'kube/kubeconfig.yaml')]
-raw=json.loads(subprocess.check_output(k+['-n','video-cloud-dev-frontend','get','secret','frontend-sdk-downloads','-o','json']))['data']
+raw=json.loads(subprocess.check_output(k+['-n','video-cloud-'+a.environment+'-frontend','get','secret','frontend-sdk-downloads','-o','json']))['data']
 c={n:base64.b64decode(v).decode() for n,v in raw.items()}
 operator=dev_store/'operator/env'
 c['SDK_ARTIFACT_ACCESS_KEY_ID']=(operator/'LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID').read_text().strip()
 c['SDK_ARTIFACT_SECRET_ACCESS_KEY']=(operator/'LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY').read_text().strip()
 s=boto3.client('s3',config=Config(request_checksum_calculation='when_required',response_checksum_validation='when_required'),endpoint_url=c['SDK_ARTIFACT_ENDPOINT'],region_name=c['SDK_ARTIFACT_REGION'],aws_access_key_id=c['SDK_ARTIFACT_ACCESS_KEY_ID'],aws_secret_access_key=c['SDK_ARTIFACT_SECRET_ACCESS_KEY'])
-bucket=c['SDK_ARTIFACT_BUCKET'];prefix='pro2-examples/dev/';release=a.release_dir.resolve();manifest=json.loads((release/'publish/manifest.json').read_text());version=manifest['version']
+bucket=c['SDK_ARTIFACT_BUCKET'];prefix='pro2-examples/'+a.environment+'/';release=a.release_dir.resolve();manifest=json.loads((release/'publish/manifest.json').read_text());version=manifest['version']
 import re
 if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,40}',version) or manifest.get('test_only') is not True:raise ValueError('Not an isolated evaluation release')
 expected={x['filename'] for x in manifest['artifacts']}|{'manifest.json'}
@@ -43,7 +43,8 @@ if a.activate:
   old=s.get_object(Bucket=bucket,Key=key);oldbody=old['Body'].read()
   if json.loads(oldbody).get('version')==version:
    print('ALREADY_ACTIVE',version);raise SystemExit(0)
-  if not (release/'previous-latest.json').exists():(release/'previous-latest.json').write_bytes(oldbody)
+  # Save the pointer replaced by this transition, including repeat activations.
+  (release/('previous-latest-'+a.environment+'.json')).write_bytes(oldbody)
   args['IfMatch']=old['ETag']
  except ClientError as e:
   if e.response['Error']['Code'] not in ['NoSuchKey','404']:raise
@@ -55,8 +56,8 @@ else:
  except ClientError as e:
   if e.response['Error']['Code'] not in ['NoSuchCORSConfiguration','404']:raise
   rules=[]
- if not (release/'previous-cors.json').exists():(release/'previous-cors.json').write_text(json.dumps(rules))
- rule={'ID':'pro2-examples-dev-browser','AllowedOrigins':['https://admin.video-cloud-dev.realtekconnect.com'],'AllowedMethods':['GET','HEAD'],'AllowedHeaders':['*'],'ExposeHeaders':['Content-Length','ETag'],'MaxAgeSeconds':300}
+ if not (release/('previous-cors-'+a.environment+'.json')).exists():(release/('previous-cors-'+a.environment+'.json')).write_text(json.dumps(rules))
+ rule={'ID':'pro2-examples-'+a.environment+'-browser','AllowedOrigins':['https://'+service+'.video-cloud-'+a.environment+'.realtekconnect.com' for service in ['admin','frontend']],'AllowedMethods':['GET','HEAD'],'AllowedHeaders':['*'],'ExposeHeaders':['Content-Length','ETag'],'MaxAgeSeconds':300}
  desired=[r for r in rules if r.get('ID')!=rule['ID']]+[rule]
  if rules!=desired:s.put_bucket_cors(Bucket=bucket,CORSConfiguration={'CORSRules':desired})
  print('CORS_READY; latest remains unchanged')
