@@ -706,3 +706,28 @@ live/hardware qualification remain open; production remains disabled. No PR, pus
 remote CI or deployment occurred.
 
 Local Video Cloud commit `d3874fd`, following workspace checkpoint `538c032`.
+
+
+## API CRL runtime worker continuation
+
+The API now optionally loads a reviewed, bounded issuer/cache manifest and composes
+CRL consumers into startup and periodic refresh. It uses independent management
+mTLS and requires matching environment, Device/App domain, unique authorities and
+absolute cache paths. All configured consumers synchronize before listening;
+failed refresh denies new handshakes and requests until successful retry.
+
+Runtime activation precedes acknowledgment. TLS verification and every HTTP
+request, including existing keep-alive requests, check current Root distrust and
+fresh CRL coverage across the client chain. Runtime monotonicity also rejects a
+restored older cache even if paired with an old authenticated response. Worker
+shutdown uses cancellation/join and idle connection cleanup. Defaults remain off.
+
+Tests combine local management mTLS, real X.509-verified chains, runtime TLS
+callbacks, exact acknowledgment, subsequent-request leaf revocation and restored
+cache rollback. API/pkitrust/config race suites, focused vet and API compilation
+pass. Upgraded WebSocket lifetime CRL revalidation, broker consumers, other trust
+domains/platform installation, recovery and live/hardware qualification remain
+open; this is not production qualification.
+
+Local Video Cloud commit `3e580bd`, following workspace checkpoint `b9a3838`.
+No PR, push, remote CI or deployment occurred.
