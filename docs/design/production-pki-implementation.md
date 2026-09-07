@@ -1182,3 +1182,20 @@ tagged temporary keys to prove retry preservation and rejection of an existing
 P-384 key without replacement, then delete their own fixtures. This does not prove
 physical iOS Secure Enclave behavior or complete production renewal installation.
 Five top-level milestones remain open.
+
+## iOS required hardware policy
+
+The default Keychain identity store now requires a P-256 Secure Enclave key and
+checks observed key attributes for both new and existing keys. Software fallback
+is available only through explicit development/test configuration. Generation,
+CSR signing, certificate key matching and mTLS identity lookup enforce this
+policy. Existing software keys are rejected without deletion. Key-generation
+token attributes now follow Apple's documented top-level placement, and access
+control creation must succeed.
+
+Validation: all 45 Swift tests passed on macOS. Native Keychain tests prove default
+policy rejects a software key for generation, CSR and identity lookup; explicit
+compatibility mode preserves it. These tests do not prove successful physical
+Secure Enclave provisioning. Physical iOS enrollment/restart/signing/mTLS, atomic
+certificate installation and renewal integration remain required. Five top-level
+milestones remain open.
