@@ -1732,3 +1732,25 @@ Milestone 3 advanced; five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. The next Android SDK work is durable
 renewal/activation and lifecycle/revocation integration, followed by runtime tests.
+
+## Android durable renewal preparation and runtime verification
+
+Android now prepares and persists the replacement key alias, exact CSR,
+predecessor, request ID and TTL before any production renewal submission. Atomic
+bounded records live outside Android backup and use file sync plus process/file
+locking. Reopening verifies CSR signature/profile/key binding and rejects changed
+parameters, corrupted records or missing keys. An interrupted pre-record attempt
+reuses its deterministic replacement key; the predecessor remains installed.
+
+Validation: the full JVM suite and release AAR build passed. Seven PKI tests ran
+successfully on the local API 35 emulator, including durable preparation and
+actual Android signed-certificate installation/rejection/mTLS trust gates. This
+also verifies earlier key-reuse instrumentation. The emulator was stopped after
+the run. Physical TEE/StrongBox qualification remains outstanding.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next requires production
+submission and durable response receipts, activation/session replacement and
+acknowledgement, plus revocation/lifecycle integration. Prepared state alone does
+not replace the existing legacy renewal endpoint.
