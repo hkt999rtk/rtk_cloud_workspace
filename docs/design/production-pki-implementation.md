@@ -2120,3 +2120,23 @@ Milestone 2 advanced. Five broad milestones remain: legacy migration/device
 replacement; remaining trust consumers/live sessions; backup/recovery and SDK
 integration; provider/hardware compatibility; staging/custody/recovery
 qualification. Next iOS work is bounded CRL refresh and refresh scheduling.
+
+## iOS bounded CRL refresh
+
+Added HTTPS-only issuer CRL download with no redirects/cookies/cache, a shared
+30-second maximum network deadline, native cancellation and bounded streaming
+responses. DER, PEM and controller JSON decode to signed CRLs; JSON metadata must
+match signed content. All downloads validate before durable update. Revoking data
+persists before refresh reports certRevoked, allowing the trust guard to close
+existing owners. Missing journals are never initialized by refresh.
+
+Validation: 82 host Swift tests and the simulator build passed. URLSession protocol
+fixtures exercise valid formats, mismatched metadata, non-200/non-HTTPS rejection,
+oversized streaming, timeout/cancellation and unchanged prior state after failure.
+The revoking refresh test also closes a real local WebSocket. Live HTTPS and
+physical background execution remain unqualified.
+
+Milestone 2 advanced. Five broad milestones remain: legacy migration/device
+replacement; remaining trust consumers/live sessions; backup/recovery and SDK
+integration; provider/hardware compatibility; staging/custody/recovery
+qualification. Next is periodic iOS CRL refresh bounded by signed trust expiry.
