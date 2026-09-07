@@ -18,14 +18,16 @@ records actual delivery status; unchecked items are not production capabilities.
 - [x] CSR/certificate exchange and existing-key Product provisioning reconciliation.
 - [x] Account Manager PKI authorization/API with request-bound RS256 assertions.
 - [x] Sealed one-time bootstrap, including existing installations and concurrent starts.
-- [ ] Administrative recovery and last-administrator protection.
+- [x] Last-administrator protection, including concurrent account/role removals.
+- [ ] Independently approved administrative recovery.
 - [x] OIDC assurance and recent-authentication enforcement; refresh grants no new MFA.
 - [x] Cloud Admin lifecycle UI, same-account OIDC MFA callback and public artifact export.
 - [x] Offline encrypted Root/Brand key and CA signing CLI.
 - [x] Dynamic certissuer selection, signed factory context and exact reservation validation.
 - [x] Runtime issuer-to-product binding and explicit staging legacy fingerprint checks.
 - [ ] Legacy inventory/import automation and staged migration.
-- [ ] Certificate replacement, revocation and versioned trust distribution.
+- [x] Offline CA CRL signing, immutable CRL publication, and exact consumer acknowledgment gates.
+- [ ] Certificate replacement, consumer installation/refresh, Root distrust and outstanding-token revocation.
 - [x] OpenBao Kubernetes login and projected-token reauthentication.
 - [x] Explicit runtime/PKI schema migration; Product mode workloads skip startup DDL.
 - [ ] OpenBao Raft deployment, scoped workload policies and database grants.
@@ -93,3 +95,19 @@ Local checkpoint commits (not pushed): Video Cloud `345a541`, Account Manager
 pins these four implementations and leaves unrelated repository pointer updates
 unstaged. Production remains disabled; this checkpoint does not complete the
 full implementation plan.
+
+## Local continuation after checkpoint d8d9c9c
+
+Added parent-signed CRL validation/publication and offline CRL signing. CRL
+rollback, omitted prior revocations, wrong signers, stale publication and old
+consumer acknowledgments are rejected. Completion is gated on the revoked
+issuer's serial and all required consumer acknowledgments. Root distrust and
+actual consumer installation remain separate work.
+
+Added sealed last-administrator protection at the database boundary, including
+user disablement/demotion, assignment removal and canonical system-role changes.
+Concurrent removals preserve one administrator under read-committed and
+repeatable-read isolation. Two-person administrative recovery remains pending.
+
+No PRs have been created and nothing has been pushed. Work remains local on
+`codex/production-pki-hierarchy` as requested.
