@@ -44,22 +44,26 @@ type Manifest struct {
 // Component identifies explicitly approved data. Namespace/name are not inferred
 // from a backup when selecting a restore target: the target inventory owns them.
 type Component struct {
-	ID           string   `json:"id"`
-	Kind         string   `json:"kind"` // postgres, redis, volume, secretstore, k8s-object
-	Namespace    string   `json:"namespace,omitempty"`
-	Pod          string   `json:"pod,omitempty"`
-	Container    string   `json:"container,omitempty"`
-	Database     string   `json:"database,omitempty"`
-	User         string   `json:"user,omitempty"`
-	Prefixes     []string `json:"prefixes,omitempty"`
-	ExcludeKeys  []string `json:"exclude_keys,omitempty"`
-	PVC          string   `json:"pvc,omitempty"`
-	Image        string   `json:"image,omitempty"`
-	Purpose      string   `json:"purpose,omitempty"` // openbao-file, sqlite, checkpoint, configuration
-	SQLiteFiles  []string `json:"sqlite_files,omitempty"`
-	Paths        []string `json:"paths,omitempty"`
-	Resource     string   `json:"resource,omitempty"`
-	ResourceName string   `json:"resource_name,omitempty"`
+	RaftPeers     []string `json:"raft_peers,omitempty"`
+	TokenFile     string   `json:"token_file,omitempty"`
+	CAFile        string   `json:"ca_file,omitempty"`
+	TLSServerName string   `json:"tls_server_name,omitempty"`
+	ID            string   `json:"id"`
+	Kind          string   `json:"kind"` // postgres, redis, volume, secretstore, k8s-object, openbao-raft
+	Namespace     string   `json:"namespace,omitempty"`
+	Pod           string   `json:"pod,omitempty"`
+	Container     string   `json:"container,omitempty"`
+	Database      string   `json:"database,omitempty"`
+	User          string   `json:"user,omitempty"`
+	Prefixes      []string `json:"prefixes,omitempty"`
+	ExcludeKeys   []string `json:"exclude_keys,omitempty"`
+	PVC           string   `json:"pvc,omitempty"`
+	Image         string   `json:"image,omitempty"`
+	Purpose       string   `json:"purpose,omitempty"` // openbao-file, sqlite, checkpoint, configuration
+	SQLiteFiles   []string `json:"sqlite_files,omitempty"`
+	Paths         []string `json:"paths,omitempty"`
+	Resource      string   `json:"resource,omitempty"`
+	ResourceName  string   `json:"resource_name,omitempty"`
 }
 
 type Workload struct {
@@ -208,6 +212,14 @@ func (c Config) Validate() error {
 				return errors.New("duplicate PostgreSQL dataset")
 			}
 			datasets[key+"/"+v.Database] = true
+		case "openbao-raft":
+			if err := validateRaftComponent(v); err != nil {
+				return err
+			}
+			if openbao {
+				return errors.New("only one OpenBao backend is supported")
+			}
+			openbao = true
 		case "redis":
 			if !Name.MatchString(v.Pod) || len(v.Prefixes) == 0 {
 				return errors.New("redis requires pod and durable prefixes")
@@ -227,6 +239,9 @@ func (c Config) Validate() error {
 				return errors.New("volume requires PVC and digest-pinned helper image")
 			}
 			if v.Purpose == "openbao-file" {
+				if openbao {
+					return errors.New("only one OpenBao backend is supported")
+				}
 				openbao = true
 			}
 			if v.Purpose != "openbao-file" && v.Purpose != "sqlite" && v.Purpose != "checkpoint" && v.Purpose != "configuration" {
@@ -258,7 +273,7 @@ func (c Config) Validate() error {
 		}
 	}
 	if !kinds["postgres"] || !kinds["secretstore"] || !openbao {
-		return errors.New("core backup requires Postgres, OpenBao file storage and SecretStore")
+		return errors.New("core backup requires Postgres, OpenBao file or Raft storage and SecretStore")
 	}
 	for pod := range pgData {
 		if !pgGlobals[pod] {

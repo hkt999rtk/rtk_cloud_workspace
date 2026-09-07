@@ -431,3 +431,41 @@ mutations. PKI, OpenBao, PostgreSQL and certissuer race/regression suites passed
 Local HA/policy service commit: Video Cloud `4156f45`, following database-role
 workspace checkpoint `15e4d84`. Full implementation and live qualification remain
 unfinished; the active goal is not marked complete.
+
+## Native Raft recovery adapter continuation
+
+Extended the canonical encrypted core recovery engine with `openbao-raft` rather
+than introducing an independent backup format. The same maintenance journal,
+matched database/runtime archive, remote publication and safety-backup gates now
+support native OpenBao snapshots. The selected pod loads a mounted operator token
+internally, verifies loopback HTTPS with an explicit CA/server name and streams
+snapshot bytes without a pod-local snapshot file. Restore retains the original
+seal check and disables transport retries; uncertain outcomes stay in maintenance.
+
+Target validation requires one OpenBao backend, an odd peer inventory of at least
+three pods, data workload classification, all configured peers present, explicit
+PVC exclusions and existing operator checks. Local validation checks compressed
+and decompressed limits, native archive members, metadata, digests and presence
+of sealed checksums before restore maintenance begins. OpenBao performs the
+actual sealed-checksum validation. The runbook specifies issuance/revocation
+fencing, snapshot-only operator ACLs, independent audit retention, escrow and
+post-restore issuer/trust/revocation verification.
+
+Validation includes corrupt/truncated snapshots, missing sealed hashes, duplicate
+members/digests, bounded decompression, invalid/missing/unlisted peer inventory,
+TLS/token command boundaries, capture/apply wiring and no ambiguous-operation
+retry. A disposable local TLS Raft instance of OpenBao 2.5.5 successfully streamed
+save/restore and reverted a post-snapshot test mutation; the recovery reader also
+accepted its native sealed snapshot. This single-node protocol test does not
+qualify three-node HA or production disaster recovery. Scheduled backups/PITR,
+RPO/RTO measurement, legacy migration, remaining trust domains/consumers and live
+qualification are still open. No production/shared environment was modified.
+
+Recovery package race tests (including the native snapshot fixture) and focused
+vet passed. The full `go test -race ./rtk-cloud/...` run exceeded the CLI package's
+10-minute default timeout while scanning test-spec inventory in
+`TestImportCloudValidationRejectsMissingCloudEvent`; it is not a passing full-suite
+result. The internal recovery, envroot and runner packages passed in that run.
+The targeted CLI recovery tests (`go test ./rtk-cloud -run '^TestRecovery'
+-count=1`) also passed. The disposable OpenBao container and test key material
+were removed after verification.

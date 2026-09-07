@@ -258,10 +258,12 @@ func (e *Engine) Preflight(ctx context.Context) ([]SavedWorkload, error) {
 				}
 			}
 		}
+		observedPods := map[string]bool{}
 		for _, p := range pods.Items {
 			if p.Status.Phase == "Succeeded" || p.Status.Phase == "Failed" {
 				continue
 			}
+			observedPods[p.Metadata.Name] = true
 			var owner Workload
 			found := false
 			for _, o := range p.Metadata.OwnerReferences {
@@ -276,7 +278,7 @@ func (e *Engine) Preflight(ctx context.Context) ([]SavedWorkload, error) {
 			}
 			covered := false
 			for _, c := range e.Config.Components {
-				if (c.Kind == "postgres" || c.Kind == "redis") && c.Namespace == ns && c.Pod == p.Metadata.Name {
+				if c.Namespace == ns && logicalPod(c, p.Metadata.Name) {
 					covered = true
 					if owner.Role != "data" {
 						return nil, errors.New("logical dump database Pod must have workload role data")
@@ -285,6 +287,15 @@ func (e *Engine) Preflight(ctx context.Context) ([]SavedWorkload, error) {
 			}
 			if owner.Role == "data" && !covered {
 				return nil, errors.New("online data Pod has no logical backup component")
+			}
+		}
+		for _, c := range e.Config.Components {
+			if c.Kind == "openbao-raft" && c.Namespace == ns {
+				for _, peer := range c.RaftPeers {
+					if !observedPods[peer] {
+						return nil, errors.New("configured Raft peer pod missing from target")
+					}
+				}
 			}
 		}
 	}

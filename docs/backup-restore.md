@@ -20,7 +20,8 @@ inventory/checks configure the adapter; archive contents never supply commands.
 Version 1 uses a **manual maintenance window**, not a zero-downtime backup.
 Stop all application writers and external ingress before taking one matched
 backup set. PostgreSQL and Redis stay available for logical exports; OpenBao
-file storage and SQLite writers stop before their PVCs are read. A backup is
+file storage and SQLite writers stop before their PVCs are read. Native Raft
+peers remain online behind the PKI write fence. A backup is
 not a cross-system transaction: consistency depends on holding the write fence
 throughout capture.
 
@@ -40,6 +41,7 @@ objects, release images and external audit history.
 | Data | v1 treatment | Restore requirement |
 | --- | --- | --- |
 | Account Manager, Billing and Video Cloud PostgreSQL | Custom-format dumps for every application database; globals per server. | Same PostgreSQL major version and release; roles, permissions, schema, rows, ownership, billing and outbox consistency checks. |
+| OpenBao Raft storage | Native sealed Raft snapshot streamed into the same encrypted set as PostgreSQL; all PKI writers fenced while peers remain online. | Original seal access, matching deployment and peer inventory, issuer/public-key comparison, trust/revocation reconciliation and operator recovery checks. No forced restore or physical live-PVC copy. |
 | OpenBao file storage | Offline archive of the entire dedicated PVC, in the same backup set as PostgreSQL. | Original seal/unseal access, issuer IDs, private keys, policies, auth configuration, trust chains and revocation reconciliation. Never replace a lost issuer with a newly generated Root and call it recovery. |
 | Frontend SQLite | Offline PVC archive including `connectplus.db`, `analytics.db` and any remaining WAL sidecars. | `PRAGMA integrity_check` on both databases, lead/admin and analytics checks. |
 | Cloud Admin SQLite | Offline PVC archive and explicitly listed database files. | Integrity check and local Admin configuration/session behavior. Account Manager remains the identity authority. |
@@ -77,7 +79,7 @@ to run backup/restore.
 
 Version 1 deliberately rejects or does not implement:
 
-- OpenBao Raft/HA, HSM restoration and managed/external database adapters;
+- OpenBao HA failover/rebuild qualification, HSM restoration and managed/external database adapters;
 - custom PostgreSQL tablespaces, non-simple role names in globals restoration,
   cross-version upgrades and cross-environment cloning;
 - Redis Cluster, expiring keys inside durable prefixes and provider-managed
@@ -152,7 +154,7 @@ these classifications automatically.
 
 | Check list | Required responsibility |
 | --- | --- |
-| `preflight_checks` | Target identity, held external traffic/worker fence, suspended external automation, independent private backup storage, escrow availability, supported OpenBao file backend, storage capacity and source/target compatibility. |
+| `preflight_checks` | Target identity, held external traffic/worker fence, suspended external automation, independent private backup storage, escrow availability, supported OpenBao file or native Raft backend, storage capacity and source/target compatibility. |
 | `startup_checks` | Reconfirm the external ingress/dispatch fence and automation exclusion immediately before private service startup, including a retry. Keep this independent of remote-backup availability so an upload outage does not prevent recovery of unchanged source services. |
 | `quiescence_checks` | Zero business writes/in-flight work, no direct writers, stable checkpoint/outbox boundary; must work while OpenBao is offline too. |
 | `recovery_checks` | Wait for private offline services, unseal using original escrow where necessary, reconcile runtime secrets/Kubernetes auth for the target cluster, invalidate disposable authorization caches, compare CA/issuer/trust data and database references; keep charge/email workers gated. |
@@ -313,7 +315,7 @@ network-isolated Docker PostgreSQL 16 fixture; they do not pull images or touch
 deployed resources. Missing local dependencies produce explicit skips.
 
 Before production use, rehearse the **whole configured set** on isolated
-same-environment recovery infrastructure: OpenBao file/PVC restoration and
+same-environment recovery infrastructure: OpenBao file/PVC or native Raft restoration and
 original unseal, existing-leaf validation/test issuance, PostgreSQL and SQLite
 service checks, durable Redis state, secret/auth rebinding, remote S3-compatible
 storage readback, interrupted operations and safety-backup rollback. Record
@@ -323,3 +325,71 @@ drills are not evidence that LKE/OpenBao or a remote bucket has been qualified.
 The old [restore-staging-runtime.sh](../scripts/restore-staging-runtime.sh) copies
 only an allowlisted **non-secret controller runtime**. It is not database,
 OpenBao, certificate, SecretStore or cloud disaster recovery.
+
+
+## Native OpenBao Raft component
+
+The maintenance-window core engine supports a single `openbao-raft` component as
+an alternative to `openbao-file`. This is an additive format-v1 component; older
+readers reject the unknown kind/fields and must be upgraded before using it.
+It does not provide scheduled online backups, PostgreSQL PITR, automated peer
+rebuild, or evidence of the production RPO/RTO.
+
+Example component (merge into a complete, target-specific core inventory):
+
+```json
+{
+  "id": "openbao",
+  "kind": "openbao-raft",
+  "namespace": "platform",
+  "pod": "openbao-0",
+  "container": "openbao",
+  "raft_peers": ["openbao-0", "openbao-1", "openbao-2"],
+  "token_file": "/openbao/recovery/token",
+  "ca_file": "/openbao/transport/ca.crt",
+  "tls_server_name": "openbao-internal"
+}
+```
+
+Declare the OpenBao StatefulSet as `data`, with every live peer listed in
+`raft_peers`. All configured peers must be present; other online data pods remain
+uncovered and fail preflight. Explicitly classify each peer's Raft PVC as excluded
+from physical capture because the native snapshot covers logical state. Classify
+audit PVCs as independently retained; never rewind the audit history. The engine
+requires an odd inventory of at least three peers; operator preflight must verify
+that these pods are members of the same healthy cluster with a leader and quorum.
+Pod inventory alone is not proof of Raft membership or health.
+
+Provision a short-lived recovery credential in the selected pod at `token_file`.
+The engine does not create or distribute this credential. Keep its Kubernetes
+Secret out of selected runtime-secret archives. Use separate operator policies:
+`read` on `sys/storage/raft/snapshot` for capture and `update` on that same path
+for restore. The restore workflow also takes a safety snapshot, so its credential
+needs both capabilities. Do not grant `sys/storage/raft/snapshot-force`, root,
+unseal, general PKI signing, or policy-management access. Original seal/recovery
+material remains separately escrowed. Credential expiry or loss fails the command.
+
+External fences and `quiescence_checks` must stop **all** issuance, renewal,
+revocation, controller jobs and direct provider mutations, including writers
+outside the inventoried namespaces, for the entire matched capture/restore.
+Raft remains online. Configure checks that work with this backend, rather than
+checks requiring OpenBao to be stopped. No live Raft data volume is tarred.
+
+The adapter runs the installed `bao` CLI against `https://127.0.0.1:8200` with
+explicit CA/server-name verification in a clean environment. Tokens are read
+inside the pod; snapshot bytes stream through exec stdin/stdout. Both compressed
+artifact size and decompressed size are bounded. Before entering restore
+maintenance, the reader verifies native archive structure, metadata size and
+SHA-256 digests and requires sealed checksums. OpenBao itself verifies the sealed
+checksums against the original seal during restore. There is no `-force` or
+transport retry; an uncertain result leaves the persistent maintenance journal
+requiring operator reconciliation. Existing safety-backup and explicit recovery,
+health and external-traffic gates continue to apply.
+
+Recovery checks must verify unseal/quorum, restored issuer IDs and public-key
+fingerprints, policies/auth access, independent audit availability, CRLs and
+post-backup revocation reconciliation before any writers or external traffic
+resume. A successful snapshot API response alone does not satisfy these checks.
+The adapter's streaming paths were exercised with a disposable TLS Raft instance
+of the pinned OpenBao 2.5.5 binary, restoring a changed test value. This is local
+single-node protocol verification, not a three-node HA or disaster-recovery drill.
