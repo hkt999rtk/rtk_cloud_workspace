@@ -1023,3 +1023,39 @@ shutdown ownership and digest-bound policy installation remain next. Five accept
 milestones remain: legacy migration/device replacement; trust consumers/live
 sessions; backup/recovery and SDK integration; provider/hardware compatibility;
 staging/custody/recovery qualification. Goal remains active.
+
+
+## 2026-09-08 — API and log-ingester MQTT server trust integration
+
+Video Cloud `a17c4ff` wires the connection owner into all API MQTT subscriber and
+publisher shards and the dedicated log ingester subscriber. Opt-in settings are
+`VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256` plus `VIDEO_CLOUD_MQTT_SERVER_PKI_NAME`;
+both default empty. The domain is fixed to `mqtt`, normal TLS requires explicit
+roots, and startup checks existing registry table/read access. Configured mode
+suppresses automatic schema initialization, including partial configuration, and
+cannot fall back to legacy dialing if initialization is absent. Existing verifier
+read grants are required; no new schema is introduced.
+
+The runtime schedules bounded connection sweeps (default 10s, allowed 1s–1m), logs
+validation failures and closes denied/unverifiable connections. Reconnect loops
+retain handshake admission and cannot reconnect to a still-revoked certificate.
+Cancellation closes the connection owner and prevents replacement connections.
+Legacy behavior remains when both opt-in fields are empty. Config/deploy docs
+record the mode and its independent root pin/name requirements.
+
+Validation passed: full Go suite; MQTT/PKI/API/log-ingester/config race suites with
+local PostgreSQL; focused vet. A real TLS MQTT protocol fixture connects the API's
+three subscribers and one publisher plus the dedicated log subscriber, publishes
+a message, revokes the registered broker certificate, observes timer-driven closure
+of all five original connections and denies subscriber/publisher reconnects. The
+test waits for publisher CONNACK readiness and tracks original connection closures
+so handshake attempts cannot substitute for eviction evidence. Config tests cover
+partial/invalid trust settings and interval bounds. Disposable fixture removed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. This is actual local workload
+transport composition, but not a deployed broker cutover. Next: CRL refresh and
+exact-digest consumer evidence, remaining Service/OpenBao transports, recovery
+verification and real host adoption. No root-file/key rotation or broker deployment,
+no fabricated acknowledgment, no push/PR/remote CI. Goal remains active.

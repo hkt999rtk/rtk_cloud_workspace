@@ -1,6 +1,6 @@
 # Production PKI domain and host inventory
 
-Reviewed 2026-09-08 through Video Cloud `243386e`.
+Reviewed 2026-09-08 through Video Cloud `a17c4ff`.
 This inventory preserves the existing five acceptance milestones. It identifies
 implementation work; it does not add a sixth milestone or certify production.
 The authoritative trust boundaries remain Platform PKI contract sections 3–5.
@@ -13,7 +13,7 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | App/user client identity | `internal/pki/app_issuance.go`, `app_verification.go`, `app_revocation.go`, `app_crl_worker.go`; API consumer and `internal/pkitrust/registry_app.go` compose broker/TURN acknowledgment after sweeps. Recovery includes `app_reconcile.go`, `recovery_app.go`, and `recovery_app_inventory.go`. | Dynamic App root-policy adoption, remaining application/SDK host wiring and real broker/relay eviction evidence. |
 | Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Server TLS enforcement/consumer adoption, CRL refresh, recovery verification and actual host cutover. |
 | Internal service client/server identity | `internal/certissuer/material.go:LoadTLSConfig` and service bootstraps load provisioned transport certificates/roots; the generic registry admits Service roots/intermediates. | An approved Service leaf profile, online issuance/selection and registry-backed service identity lifetime/revocation. Existing loaded files do not prove registry-managed lifecycle. |
-| Dedicated MQTT server TLS | Generic registry scope accepts `mqtt`; deployment TLS material can be provisioned separately. | If using the dedicated private-CA option, explicit server profile and consumer renewal/trust adoption. Public-CA MQTT remains a distinct supported contract choice. |
+| Dedicated MQTT server TLS | Independent `mqtt` issuer/receipt/CRL verification; `a17c4ff` wires opt-in API subscriber/publisher and log-ingester TLS admission, scheduled sweeps and connection eviction. | Exact-digest consumer evidence, CRL/root-policy refresh, broker key renewal and actual host rollout. Public-CA MQTT remains a distinct supported contract choice. |
 | OpenBao transport TLS | Dedicated transport CA/files and TLS Raft deployment artifacts exist. | Dedicated server-only issuance/renewal policy and host adoption; transport trust must remain independent of Device, App and Service roots. Seal/custody and real HA qualification are separate. |
 | Public HTTPS | Contract requires publicly trusted CA/ACME. | Verify deployment/renewal acceptance separately; never route browser/public HTTPS issuance through private Device/App issuers. |
 
@@ -30,7 +30,8 @@ CRL acknowledgment protocol are implemented in `742a768`; step 5 still requires
 TLS transport/connection-owner wiring, consumer/host adoption and recovery verification.
 `093bc79` adds read-only registry verification and a TLS handshake/resumption hook;
 `243386e` adds tracked connection sweeping/eviction, including active TLS streams.
-Actual transport wiring, process scheduling and digest-bound consumer evidence remain.
+`a17c4ff` wires API/log-ingester MQTT transports, periodic sweeps and shutdown.
+Service/OpenBao transport wiring, digest-bound consumer evidence and real rollout remain.
 
 1. Bind an explicit server leaf policy to the approved immutable issuer operation.
    It must specify the intended private trust domain and exact permitted DNS names;
