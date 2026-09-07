@@ -2321,3 +2321,23 @@ Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next is resumable JavaScript lifecycle
 orchestration with required session replacement, then trust freshness integration.
+
+## JavaScript resumable renewal coordinator
+
+Added saved-request/receipt resume through activation, mandatory idempotent session
+replacement and successor acknowledgment. Preparation can validate its already-active
+successor through the exact saved transition. Callback failure/cancellation stops
+acknowledgment; records and selected successor survive. Same-process overlapping
+or reentrant coordinator calls fail, with guard release on all exit paths.
+Cross-process host callbacks and low-level mutations still require host serialization.
+
+Validation: 38 JavaScript tests and TypeScript build passed. Local mTLS tests cover
+resume after activation, callback failure, cancellation, nested-call rejection,
+no retirement before successful callback, lost acknowledgment recovery and repeated
+callback with no repeated HTTP acknowledgment after completion.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next JavaScript work is expiry-based renewal
+scheduling and trust freshness/owner integration; physical/live qualification remains
+separate from this local coordinator evidence.
