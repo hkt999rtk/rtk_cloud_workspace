@@ -1093,3 +1093,39 @@ compatibility; staging/custody/recovery qualification. Next: bind MQTT consumer
 adoption and connection sweeps to exact installed CRL digests before automated ACKs;
 remaining Service/OpenBao transports, root-policy adoption, recovery verification
 and real rollout are still required. Goal remains active.
+
+
+## 2026-09-08 — MQTT exact-CRL consumer acknowledgments
+
+Video Cloud `57c68f6` adds a reviewed private-server CRL consumer and wires it into
+API/log-ingester MQTT startup and periodic sweeps. Optional manifest/controller/
+management-mTLS settings are all empty by default and require registry MQTT server
+trust. The consumer persists/reloads signed records with monotonic rollback floors,
+installs all manifest members, sweeps connections and only then acknowledges the
+same prepared digests. Failed preparation still triggers eviction; failed sweeps
+withhold ACKs until a later successful sweep. No newer record is fetched after the
+sweep. Changed current evidence or acknowledgment failure clears readiness.
+
+`VerifyServerWithCRLs` checks exact installed root/intermediate digests in the same
+snapshot as server admission. The connection owner accepts an additional check
+that can only restrict normal TLS/registry verification; it applies at handshake
+and sweep. Missing/stale bounds deny admission. Distinct per-process management
+identities and persistent paths are required; the controller authenticates the
+consumer CN. Existing verifier SQL grants suffice; no new schema is introduced.
+
+Validation passed: full Go suite; MQTT/pkitrust/PKI/API/log-ingester/Postgres race
+suites; focused vet. Actual controller CRL/ACK endpoints and separate consumer
+identities establish five TLS MQTT connections, publish, import the revoking CRL,
+verify original connection eviction before accepting new-digest ACKs, and record
+both exact consumer receipts. Tests also reject missing/stale bounds, registry
+advance after prepare, rollback and rollback after restart. An additional-denial
+connection test proves the installed-evidence check evicts an otherwise valid
+stream. Final checks passed. Disposable PostgreSQL fixture removed.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next: remaining Service/
+OpenBao transport integration, server recovery verification and root-policy/key
+renewal adoption, followed by real rollout/qualification. MQTT acknowledgment
+protocol is implemented locally; no live fleet evidence is claimed. No push, PR,
+remote CI, live deployment or custody operation. Goal remains active.
