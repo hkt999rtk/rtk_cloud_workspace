@@ -375,3 +375,35 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Next remains preflight-to-session grant
 association, now on top of atomic lifecycle updates. No push, PR, remote CI,
 deployment or custody operation occurred. Goal remains active.
+
+
+## PKI preflight/session association checkpoint (2026-09-08)
+
+Video Cloud `6783af8` accepts the optional `ice_username` create field and
+validates the persisted preflight grant against the original principal and
+device. Memory locking and Redis compare-and-swap make claims single-use;
+session expiry cannot exceed grant expiry. Both records carry reciprocal links.
+Closing, expiring or losing the linked record denies subsequent signaling/TURN
+authorization. A failed claim returns no credentials; cleanup is best-effort,
+but its unbound target cannot authorize and remains subject to TTL cleanup.
+Existing relay allocations require the recurring TURN controller to cancel them.
+
+Go SDK `b963e1a` forwards the PKI preflight username, rejects conflicting grants
+before creating a peer, and omits the field for legacy/static credentials. The
+server OpenAPI and stream contract and Go README describe the behavior.
+Association remains optional for existing callers; native and other SDK host
+wiring remains unfinished. This does not complete the live-session gate.
+
+Validation: full server Go suite; signaling/HTTP race suites including real local
+Redis 8.6.0 concurrent claims; full Go SDK race suite and vet. SDK wire tests cover
+exact forwarding with original bearer identity, legacy omission and conflicting
+grant rejection. Server tests cover foreign principal/device rejection, one
+winner under concurrent claims, target closure/deletion and parent closure. The
+disposable Redis process was shut down and confirmed terminal.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: per-session preflight forwarding in
+native and remaining SDK integrations, followed by the outstanding original
+acceptance requirements. No push, PR, remote CI, deployment or custody operation
+occurred. Goal remains active.
