@@ -2861,3 +2861,33 @@ Next: native continuous owner trust supervision and host periodic refresh/wiring
 Service-peer-protected CRL endpoints need the appropriate host authorization adapter;
 this public-distribution API does not claim that integration. No push, PR, remote CI,
 deployment or physical/custody qualification was performed.
+
+
+## Native continuous session trust guard
+
+Client `683230c` implements a POSIX guard that returns the initially validated
+identity and pins its selected version and bundle hash. Revalidation reads protected
+keys, active state and durable CRLs. A separate watcher enforces signed expiry,
+including while the worker performs validation outside the shared mutex. Terminal
+failure/cancellation invokes a required host close callback once and cannot revive.
+Same-deadline revalidation cannot extend its monotonic deadline on clock rollback.
+Hosts serialize session publication/closure, cancel on root-policy replacement,
+and retain callback context until exclusive destruction joins both threads.
+Destruction may wait for filesystem I/O; callback must return promptly and cannot
+call destroy. These ownership requirements are documented in the native API/README.
+
+Validation on macOS arm64: all twelve HTTP-enabled and disabled tests pass,
+ASan/UBSan and ThreadSanitizer provider tests pass, installed C consumer links/runs.
+Socket-pair tests cover cancellation, retirement, signed revocation, selection
+replacement, one-shot terminal closure and no revival after retirement restoration.
+A four-second signed CRL and sixty-second recheck interval prove independent expiry
+closure. These tests do not claim actual TLS host integration or injected blocking
+filesystem coverage. Reproduce via the native README configuration and
+`ctest --test-dir /private/tmp/rtk-native-http --output-on-failure`.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. This checkpoint advances native trust and
+SDK integration. Next: periodic CRL refresh and actual host/session/domain wiring.
+No push, PR, remote CI, deployment or physical/custody qualification was performed.
+The overall goal remains active.
