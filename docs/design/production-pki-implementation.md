@@ -1439,3 +1439,24 @@ application session owners, revocation freshness and live qualification. Backup/
 recovery qualification also remains. Five broad milestones remain: migration/
 device replacement; trust consumers/live sessions; backup/recovery and SDK
 integration; provider/hardware; staging/key custody/recovery qualification.
+
+## In-flight cancellation for iOS renewal
+
+Native renewal/ack requests now register an operation-token callback that cancels
+the current URLSession task and returns the cancellation status promptly. Token
+handlers are synchronized, run outside the token lock, and unregister after the
+request. Durable renewal state is preserved; an uncertain acknowledgement still
+leaves the predecessor retired. Custom transports must implement their own
+interruption support.
+
+Validation: all 71 Swift tests and the arm64 iOS simulator build passed. Native
+URLSession fixture tests cover interruption before request timeout, pre-cancelled
+requests and session reuse; token tests cover races and reentry. This is a
+prerequisite for host task expiration, not physical background execution evidence.
+The sample app does not currently own a device PKI identity, so attaching device
+renewal to its user-session lifecycle would not establish the required integration.
+
+Milestone 3 advanced. Remaining: host background/device-session integration,
+revocation freshness, live SDK and backup/recovery qualification. Five broad
+milestones remain: migration/device replacement; trust consumers/live sessions;
+backup/recovery and SDK integration; provider/hardware; staging/custody/recovery.
