@@ -2400,3 +2400,22 @@ Milestone 2 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next is mandatory JavaScript lifecycle
 trust-provider enforcement, followed by bounded refresh and owner teardown.
+
+## JavaScript mandatory lifecycle CRL gate
+
+Threaded a required CRL provider through production installation, initial/current
+identity validation, prepared requests, renewal receipts, activation, acknowledgment,
+coordinator and due scheduling. Native SDK validation authenticates the supplied
+CRLs and checks freshness/revocation after the provider resolves. New mTLS agents
+also require independent device trust/CRLs and key agreement. Explicit legacy
+fixture opt-in remains separate; existing owners are not yet lifetime-revalidated.
+
+Validation: 38 JavaScript tests and TypeScript build passed. The local mTLS lifecycle
+uses a durable provider; negative coverage includes absent/empty CRLs, revoked
+identity loading and agent construction, and installation without a provider.
+Root-policy/key/receipt/retirement regression checks continue to pass.
+
+Milestone 2 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next is bounded JavaScript CRL download/
+refresh and existing-owner cancellation at revocation or signed expiry.
