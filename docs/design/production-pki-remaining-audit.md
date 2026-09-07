@@ -1583,3 +1583,51 @@ Five acceptance milestones remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware
 compatibility; staging/custody/recovery qualification. No live qualification gate
 is closed. Local commits only.
+
+### Service client integration milestone completed locally (2026-09-08)
+
+Video Cloud commit `0481e7a` completes all **5/5 work groups** in the current
+factory-to-certificate-issuer Service client integration milestone:
+
+1. **Issuance/renewal orchestration:** the host store drives authenticated initial
+   issuance and same-identity renewal. Durable request/CSR state survives lost
+   responses; replay does not create another signature.
+2. **Scheduling/restart ownership:** one manager holds the host state lease,
+   renews at two-thirds of actual validity and retries every minute. Initial
+   startup failure preserves the request for supervised restart; uncertain
+   provider claims require the existing reconciliation operation.
+3. **Runtime integration:** factory enrollment owns `service:factory-enroll`,
+   dynamically presents its installed credential through the verified Service
+   HTTP owner, and closes previous connections on replacement. The certificate
+   issuer owns Service listener admission and active/hijacked socket eviction.
+4. **Registry/CRL lifecycle:** current receipt/profile/root/CRL checks apply during
+   admission, requests and periodic sweeps. Durable installed CRLs bind exact
+   acknowledgments; failed sweeps do not acknowledge. The Service controller
+   worker now handles client-only and combined server/client issuer revocations.
+5. **Integration/recovery checks:** real PostgreSQL and mTLS exercise lost-response
+   restart, successor installation, active-stream eviction, new-handshake denial,
+   exact CRL acknowledgment and denial of a restored revoked host backup. A
+   read-only paginated Service client recovery inventory checks all receipts,
+   pending claims, lineage, publication and current consumer evidence.
+
+The host private key stays in its private persistent directory; the registry
+contains public receipts. Configuration examples and runbook document the
+dedicated initial provisioner, per-instance storage, route identity policy,
+explicit schema/grants, CRL manifests and restore command. An unfinished TLS
+handshake cannot block listener sweep/shutdown.
+
+Validation passed: full Go suite with disposable PostgreSQL; affected runtime and
+PKI race tests; local OpenBao 2.5.5 provisioning/signing/reconciliation/revocation
+integration; vet, formatting and diff checks. The new end-to-end host test uses a
+fixture OpenBao HTTP signing endpoint; the separate real-provider test validates
+OpenBao behavior. Host-backup restore and registry inventory checks do not
+substitute for matched production database/provider PITR or post-backup audit
+reconciliation.
+
+**Current integration milestone: 0 work groups unfinished.** Five broader
+acceptance milestones remain: (1) legacy migration/device replacement,
+(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
+(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
+This closes the concrete local factory-to-issuer slice; other service-host
+adoption and live/hardware/recovery acceptance are not claimed complete.
+No push, PR, remote CI, deployment or custody operation.
