@@ -2341,3 +2341,23 @@ consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next JavaScript work is expiry-based renewal
 scheduling and trust freshness/owner integration; physical/live qualification remains
 separate from this local coordinator evidence.
+
+## JavaScript durable expiry-based renewal scheduling
+
+Added waiting/due calculation and immutable pending schedules before preparation.
+Request IDs are deterministic per active identity version, and pending state
+survives activation/restart. The due coordinator resumes session replacement and
+acknowledgment, then verifies/removes the completed schedule with directory sync.
+Failures retain it. Same-process overlapping scheduled runs fail; hosts serialize
+cross-process and low-level mutations. No OS daemon or live timing is claimed.
+
+Validation: 38 JavaScript tests and TypeScript build passed. The local mTLS lifecycle
+fixture covers waiting/due transition, stable pending request, TTL conflict, pending
+state through activation and callback/cancellation/lost acknowledgment, successful
+cleanup and future waiting without another session replacement. Changed-data journal
+removal is rejected. Injected scheduling time never bypasses real trust validation.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next is JavaScript signed CRL validation,
+durable freshness state, refresh and existing-owner teardown integration.
