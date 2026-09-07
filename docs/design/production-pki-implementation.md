@@ -1638,3 +1638,22 @@ Milestone 2 advanced. Five broad milestones remain: migration/device replacement
 remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next: active-session revocation/
 expiry teardown and scheduled refresh integration.
+
+## Go active-owner trust lifetime
+
+The durable CRL store now issues a validated owner context that periodically
+rechecks state and wakes at earlier certificate/CRL deadlines. Revocation,
+expiry, missing/corrupt state or parent cancellation permanently ends the context.
+Binding the existing WebSocket lifetime to it closes the established socket and
+rejects later sends. Root-input changes and unbound media/other transport owners
+still require explicit lifecycle integration.
+
+Validation: the complete Go SDK suite and auth/transport race tests passed. Local
+WebSocket/signature fixtures establish a session then revoke it, confirming
+context and socket teardown. Deadline/missing-state/non-resurrection cases pass.
+This is local integration evidence, not live firmware/media qualification.
+
+Milestone 2 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Scheduled refresh, application wiring
+and other-platform/live owner qualification remain outstanding.
