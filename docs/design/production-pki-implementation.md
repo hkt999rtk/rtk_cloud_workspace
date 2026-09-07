@@ -3648,3 +3648,41 @@ that removes historical entries is still rejected by monotonic import and requir
 retention compatibility qualification. Other trust domains, backup/recovery host
 wiring and live/hardware/custody acceptance remain open. No push, PR, remote CI,
 deployment or custody operation occurred. Goal remains active.
+
+
+## Recurring App CRL worker checkpoint (2026-09-08)
+
+Video Cloud `173cd4f` adds an opt-in worker to the existing PKI controller.
+`PKI_APP_CRL_WORKER_ENABLED` defaults false and accepts only explicit booleans.
+The worker pages active/retiring App issuers and pending receipts, retries
+publication/finalization, creates initial full App intermediate CRLs, and refreshes
+within one hour of expiry. It waits ten seconds after a complete scan; SQL and
+provider operations are bounded and cancellation propagates through shutdown.
+Page size is 32; total scan time depends on inventory and provider response time.
+
+Internal operations use fixed workload audit identity `pki-app-crl-worker` without
+fabricating an MFA Principal. Interactive API wrappers retain MFA enforcement.
+The worker cannot create revocations or consumer acknowledgments. Offline root
+CRLs are verified/reported, not generated. Current root and intermediate CRL
+digests must be acknowledged by every configured consumer for health to succeed.
+With the worker enabled, the existing mTLS listener exposes GET /healthz with
+aggregate counts/last complete scan; startup, errors, missing acknowledgments,
+shutdown and completion older than five minutes are unhealthy. Large/failing
+inventories remain unhealthy rather than receiving a hard-cutoff claim.
+
+Validation: full server Go suite; full PKI/controller/provider race suites against
+local PostgreSQL and OpenBao 2.5.5; real CRL refresh and a complete worker scan;
+initial publication, provider failure/recovery, stable ack-wait digest, automatic
+finalization, workload audit identity, freshness refresh preserving historical
+entries, loop failure/recovery/shutdown and stale health. A 33-issuer fixture
+crosses the page boundary and excludes another environment. Both task containers
+were stopped/removed. Optional deployment settings/documentation were added;
+no workload was enabled or deployed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: audit real consumer fetch/apply/ack
+wiring and App backup/recovery evidence; then the remaining unsupported trust
+domains and original acceptance requirements. Root custody, live fleet cutoff,
+provider retention/pruning and physical-platform qualification remain open.
+No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
