@@ -69,7 +69,8 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 - Native protected software key/CSR and immutable verified bundle storage are locally
   implemented (client `d9e44a7`); active selection is implemented in `38694dd`.
   Prepared renewal persistence is implemented in `f23213e`; implement response
-  wire conversion and HTTP issuance/acknowledgment and refresh/owner integration
+  HTTP issuance/acknowledgment and refresh/owner integration
+  (wire conversion is implemented in `8d33454`)
   (adapted-bundle response persistence is implemented in `c1e1018`)
   (post-activation request recovery is implemented in `7be4f12`), then verify SDK host ownership with the domain inventory.
 - Audit and implement domain-specific issuance/consumer and host wiring gaps.

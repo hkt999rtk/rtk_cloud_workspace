@@ -2711,3 +2711,29 @@ response conversion and authenticated HTTP issuance/acknowledgment, then retirem
 scheduling, refresh and session coordination. Metadata requires authenticated transport;
 certificate signatures do not independently sign request/issuer/overlap fields.
 No push, PR, remote CI, deployment or physical qualification was performed.
+
+
+## Native server renewal response conversion
+
+Client `8d33454` implements strict bounded parsing of the five-field server renewal
+response, UTC fractional overlap timestamps, exact leaf/chain agreement and
+certificate-derived serial/fingerprint/SPKI/validity metadata. It carries the
+validated Device/tenant/environment into a deterministic certificate-only bundle
+and passes it through the existing request/key/root/CRL and immutable response
+checks. The wire omits an issuance event timestamp; local `issuance.issued_at` uses
+signed certificate NotBefore as a normalization value, not proof of issuance time.
+
+Validation: all 12 native tests, ASan/UBSan and installed-package C consumer pass
+on macOS arm64. Coverage includes conversion, save/install/activation/replay,
+fractional time, duplicate fields, truncated JSON, leaf/chain disagreement and a
+valid wrong-request response. Corrected the previous wrong-request fixture so it
+no longer accidentally tested malformed JSON. Reproduce with
+`cmake --build /private/tmp/rtk-native-openssl -j 4` and
+`ctest --test-dir /private/tmp/rtk-native-openssl --output-on-failure`; native README
+records configuration, API ownership, bounds and normalization semantics.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. SDK integration advanced. Next: authenticated
+native HTTP renewal and acknowledgment, retirement/session coordinator, scheduling
+and refresh. No push, PR, remote CI, deployment or physical qualification occurred.
