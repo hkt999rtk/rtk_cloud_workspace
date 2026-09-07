@@ -2533,3 +2533,26 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Milestone 3 advanced. Go's identified local
 renewal scheduling gap is now implemented; real host supervision and qualification
 remain. Next: native supported-provider trust integration, then domain/host coverage.
+
+## Native OpenSSL Device trust provider
+
+Added an optional packaged OpenSSL 3.6/cJSON verifier implementing the native bundle
+trust callback for certificate-only Device P-256 identities. It validates bounded
+complete JSON/schema/metadata, exact independent-root ClientAuth chain and Device
+profile, full signed current issuer CRLs, and supplied EVP private-key possession.
+Successful validation returns the nearest signed trust expiry. Default builds do
+not acquire new dependencies; enabled package exports discover their dependencies.
+
+Validation: baseline 11 native tests passed; enabled build passes 12 tests including
+real generated RSA/P-256 crypto fixtures. Negative coverage includes wrong/missing/
+public-only keys and wrong roots, leaf/intermediate revocation, scoped/tampered or
+expired CRLs, signed SAN-profile rejection, duplicate/mismatched metadata, trailing
+DER and all JSON truncations. ASan/UBSan provider test and installed C consumer
+build/run passed on macOS arm64 with OpenSSL 3.6.3 and cJSON 1.7.19. Build commands
+are recorded in the native README; no remote CI or provider custody was exercised.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Milestones 2 and 4 advanced. Native crypto
+verification is now concrete; next are durable CRL high-water state and protected
+identity lifecycle integration, followed by host/domain and physical qualification.
