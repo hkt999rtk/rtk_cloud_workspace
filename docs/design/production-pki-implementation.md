@@ -599,3 +599,31 @@ command claims runtime installation; production remains disabled.
 
 Local Video Cloud commit `72fd90a`, following workspace checkpoint `525a5e7`.
 No PR, push, deployment or remote CI was performed.
+
+
+## API trust synchronization worker continuation
+
+The API now optionally composes the authenticated trust consumer into startup and
+runtime. Explicit independent management CA/client identity, controller origin,
+Root ID and dynamic Device state are required together. Initial synchronization
+and live loader validation complete before listening. A 30-second refresh worker
+repeats fetch/install/ack; failures deny new TLS handshakes until a successful
+retry. It preserves cumulative trust removal, disables TLS resumption and uses
+the same App-alias/cross-certificate/rollback checks as actual handshakes. Worker
+shutdown cancels in-flight requests, joins the goroutine and releases idle HTTP
+connections. Existing session termination remains governed by separate PKI checks.
+
+Local tests compose real management mTLS and the API runtime loader with actual
+client TLS handshakes: removed trust is rejected, retained trust succeeds, and
+acknowledgment follows reload. Failure/retry, startup, partial configuration,
+cancellation/join and disk rollback tests pass, alongside API/pkitrust/config race
+suites, focused vet and API binary compilation.
+
+The current controller endpoint requires an already revoked/compromised Root and
+preinstalled state. Initial trust bootstrap and domain-scoped synchronization
+before the first removal are still open; no artificial revocation is authorized.
+Broker/other consumers, CRLs, non-Device domains, installation/recovery and live
+qualification remain required. Defaults leave production synchronization disabled.
+
+Local Video Cloud commit `1b6963c`, following workspace checkpoint `4615e66`.
+No PR, push, remote CI or deployment occurred.
