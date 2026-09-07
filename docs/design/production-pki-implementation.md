@@ -3196,3 +3196,29 @@ live sessions; backup/recovery and SDK integration; provider/hardware compatibil
 staging/custody/recovery qualification. Next: App media/WebRTC lifetime enforcement.
 Live broker acceptance and automatic provider revocation/CRL publication remain.
 No push, PR, remote CI, deployment or custody operation occurred. The goal remains active.
+
+
+## WebRTC signaling authorization provenance (2026-09-08)
+
+Video Cloud `3d6498d` persists original authenticated creator scope/actor/App
+fingerprint/token expiry in WebRTC signaling records. Session and TURN credential
+issuance are capped to token expiry. App state is revalidated during create, ICE
+preflight, lookup, answer and answer-wait polling. Invalid state denies access and
+attempts to close the record. Explicit admin records retain their own expiry-bound
+policy; unbound legacy records are denied when App PKI is enabled. Neither bearer
+tokens nor untrusted header identities are stored. Memory principal values are
+copied; Redis serialization preserves provenance across service reconstruction.
+
+Validation: full Go suite passed. signaling/httpapi/apiapp race suites and the
+new API-boundary race test passed. Memory and Redis protocol fixtures exercise
+persistence, caller isolation, expiry caps, revocation while waiting and denied
+answer/read/creation operations. Registry-read load at the existing poll interval
+and actual deployment behavior remain unqualified.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Inspection confirms cloud signaling owns
+records, not PeerConnections; its close method does not terminate established
+peer-to-peer media. Next: peer/relay lifetime enforcement and existing TURN
+allocation termination. Do not count signaling closure as media termination.
+No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.

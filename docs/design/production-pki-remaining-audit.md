@@ -70,8 +70,10 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
    live-session enforcement remain. App bearer-token provenance and current
    registry/CRL checks at issuance, validation and refresh are implemented in
    `de8d6cd`. App MQTT lease and operator-sweep wiring is implemented in `9c55992`
-   with HTTP fixture evidence; real EMQX acceptance and media lifetime enforcement
-   remain. Configured provider response validation was
+   with HTTP fixture evidence; real EMQX acceptance remains. WebRTC signaling
+   creator provenance/revalidation is implemented in `3d6498d` with memory/Redis
+   protocol fixture evidence. Established peer connections and TURN allocations
+   still need actual lifetime enforcement; closing a signaling record is insufficient. Configured provider response validation was
    implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
    rejection of valid leaves without the optional Basic Constraints extension.
    Replacement and runtime verification also require domain-specific review.
