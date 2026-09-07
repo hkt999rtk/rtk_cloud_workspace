@@ -2419,3 +2419,23 @@ Milestone 2 advanced. Five remain: legacy migration/device replacement; trust
 consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
 staging/custody/recovery qualification. Next is bounded JavaScript CRL download/
 refresh and existing-owner cancellation at revocation or signed expiry.
+
+## JavaScript bounded CRL refresh
+
+Added explicit HTTPS issuer downloads into the durable CRL journal. DER, PEM and
+controller JSON envelopes are bounded and parsed; JSON digest/number/time metadata
+must match the signed object. All downloads share a maximum 30-second deadline;
+redirects, compression, non-200 responses, oversized bodies and cancellation fail.
+Every issuer is downloaded and authenticated before atomic journal publication.
+Revocation remains persistable; current identity validation rejects revoked data.
+
+Validation: 38 JavaScript tests and TypeScript build passed, including real local
+HTTPS downloads, native untrusted-server rejection, envelope mismatch, malformed
+second issuer, redirect, size/encoding rejection, stalled transfer and cancellation.
+Failed refreshes preserved the existing journal. No remote services were changed.
+
+Milestone 2 advanced. Five broad milestones remain: legacy migration/device
+replacement; trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware compatibility; staging/custody/recovery qualification. This is a
+substep of trust consumers, not an additional milestone. Next: periodic refresh and
+existing-owner cancellation at revocation or signed expiry.
