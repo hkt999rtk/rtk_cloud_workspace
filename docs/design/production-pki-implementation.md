@@ -2200,3 +2200,23 @@ staging/custody/recovery qualification. Next JavaScript work is independently
 anchored certificate installation and durable identity/renewal state. This helper
 alone cannot detect a missing key belonging to an installed identity; it must not
 be used as automatic identity repair.
+
+## JavaScript independently anchored installation validation
+
+Added a bounded closed-profile certificate chain validator using native Node
+signature/issuer checks plus explicit DER profile enforcement. Device installation
+requires independent roots, exact CN/P-256/clientAuth identity, current complete
+path, CA usages/path lengths and private-key match. Unknown critical extensions,
+unsupported constraints, malformed/trailing data and forbidden leaf SANs fail.
+Legacy fixture storage now requires explicit allowLegacyTestCertificate opt-in.
+
+Validation: 37 JavaScript tests and TypeScript build passed. Generated RSA/EC
+fixtures exercise positive installation, roots/identity/key/path/expiry failures,
+root path-length constraints, SAN/KU/EKU/critical-extension rejection and preservation
+of installed data on rejected input. This is not a generic PKIX engine or live
+revocation qualification. Writes are not yet an immutable installation journal.
+
+Milestone 3 advanced. Five remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware;
+staging/custody/recovery qualification. Next JavaScript work is durable versioned
+identity installation/activation and revocation/production renewal integration.
