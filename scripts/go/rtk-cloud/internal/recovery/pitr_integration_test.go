@@ -201,6 +201,7 @@ func exercisePITR(t *testing.T, ctx context.Context, docker, container, director
 		t.Fatal("native recovery did not fetch encrypted remote WAL", err)
 	}
 	assertPITRObservation(t, ctx, docker, container, directory, destination, socket, e, env, true)
+	assertPITRRehearsal(t, ctx, docker, container, directory, key, e, plan, env, true)
 	exercisePITRTimeline(t, ctx, docker, container, directory, encrypted, key, destination, e, plan, env, query)
 	// A fresh recovery with the required ciphertext removed must fail before
 	// reaching the target, rather than silently starting at an earlier point.
@@ -239,6 +240,7 @@ func exercisePITR(t *testing.T, ctx context.Context, docker, container, director
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	assertPITRRehearsal(t, ctx, docker, container, directory, key, e, plan, env, false)
 	t.Log("actual wal-restore CLI fetched TLS ciphertext; PostgreSQL paused at target with later write excluded")
 }
 
@@ -268,5 +270,46 @@ func assertPITRObservation(t *testing.T, ctx context.Context, docker, container,
 	}
 	if observed.Status != "paused-target-observed" || observed.SystemIdentifier != e.Config.WAL.SystemIdentifier || observed.DataDirectory != filepath.Join(destination, "pgdata") {
 		t.Fatalf("invalid runtime observation: %+v", observed)
+	}
+}
+
+func assertPITRRehearsal(t *testing.T, ctx context.Context, docker, container, directory, key string, e BaseBackupEngine, plan PITRPlan, env []string, wantSuccess bool) {
+	t.Helper()
+	planFile := filepath.Join(directory, "rehearsal-plan.json")
+	if err := WriteJSON(planFile, plan); err != nil {
+		t.Fatal(err)
+	}
+	if err := exec.CommandContext(ctx, docker, "exec", container, "chown", "postgres:postgres", planFile).Run(); err != nil {
+		t.Fatal(err)
+	}
+	destination := "/tmp/rtk-rehearsal-copy"
+	if !wantSuccess {
+		destination += "-missing-wal"
+	}
+	args := append(append([]string{}, env...), filepath.Join(directory, "rtk-cloud"), "base-backup", "rehearse", "--config", filepath.Join(directory, "observe-base.json"), "--confirm-environment", e.Config.WAL.Environment, "--confirm-stack", e.Config.WAL.Stack, "--id", "fixture", "--destination", destination, "--identity", key, "--pitr-plan", planFile, "--user", "postgres")
+	out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
+	if wantSuccess {
+		if err != nil {
+			t.Fatalf("native automated rehearsal: %v %s", err, out)
+		}
+		var report PITRRehearsal
+		if err := Decode(strings.NewReader(string(out)), &report); err != nil {
+			t.Fatal(err, string(out))
+		}
+		if report.Status != "postgres-replay-rehearsed" || report.Observation.Status != "paused-target-observed" || report.ElapsedSeconds <= 0 || report.FinishedAt.Before(report.StartedAt) {
+			t.Fatalf("invalid rehearsal report: %+v", report)
+		}
+	} else if err == nil {
+		t.Fatalf("missing WAL rehearsal accepted: %s", out)
+	}
+	// The command must have stopped its own server before returning, including a
+	// failed WAL replay. This is a separate process/filesystem check in the container.
+	if err := exec.CommandContext(ctx, docker, "exec", container, "sh", "-c", `test -d "$1/pgdata" && test ! -e "$1/pgdata/postmaster.pid"`, "sh", destination).Run(); err != nil {
+		t.Fatal("rehearsal left a running server or never restored its copy", err)
+	}
+	if !wantSuccess {
+		if err := exec.CommandContext(ctx, docker, "exec", container, "sh", "-c", `test ! -e "$1/rehearsal.json"`, "sh", destination).Run(); err != nil {
+			t.Fatal("failed rehearsal wrote success evidence", err)
+		}
 	}
 }

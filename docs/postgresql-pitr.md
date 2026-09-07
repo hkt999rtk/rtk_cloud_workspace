@@ -120,6 +120,60 @@ any separate decision to promote or resume writers. Observation does not release
 maintenance lock, start/promote a server, write qualification records, or mark a
 whole PKI restore as verified.
 
+## Automated isolated PostgreSQL rehearsal
+
+`base-backup rehearse` runs the restore/start/observe/stop sequence on a fresh local
+copy. Run it as the non-root OS account that will own PostgreSQL and use a database
+role available through the generated peer-authentication policy:
+
+```sh
+rtk-cloud base-backup rehearse --config /private/recovery/base.json \
+  --confirm-environment staging --confirm-stack video-cloud-staging \
+  --id base-20260907-001 --destination /private/recovery/drill-001 \
+  --identity /private/recovery/age-identity.txt \
+  --pitr-plan /private/recovery/target.json --user postgres --database postgres
+```
+
+The destination must be new, private, and on a filesystem supporting Unix sockets.
+Its `socket/` path must fit the OS Unix-socket path limit. Install the PostgreSQL 16
+server binary as well as backup/client tools in the configured binary directory.
+The executable and WAL configuration in the PITR plan must be usable by that OS
+account. Provision enough disk and memory for the restored cluster. Read-only
+archive credentials and independent access to the age identity must be available
+before the run; the command does not retrieve escrow or generate recovery keys.
+
+The command downloads and verifies the immutable encrypted base, prepares the
+isolated configuration, and directly owns the `postgres` process. It does not use a
+shell or daemonize through `pg_ctl`. The child inherits only a minimal PATH/locale,
+dedicated `RTK_BACKUP_*` credentials and optional `SSL_CERT_FILE`/`SSL_CERT_DIR`
+trust paths. Ambient `PG*` and loader settings are excluded. PostgreSQL writes a
+private `rehearsal-server.log` under the recovered directory. The server has TCP
+and archiving disabled; the command never promotes it or opens application traffic.
+
+Readiness polling uses the same observation checks above until the configured
+deadline. Successful observation is followed by fast shutdown (SIGINT) and a
+confirmed process exit. Shutdown survives normal caller cancellation and may take
+up to 45 additional seconds: after 30 seconds it requests immediate shutdown, then
+uses forced termination if necessary. Any forced or unconfirmed shutdown fails the
+drill. SIGKILL, host failure or a stuck kernel cannot be handled by normal process
+cleanup; use a service supervisor that cleans its process group and inspect retained
+private data/processes after such failures.
+
+Only successful observation **and** clean shutdown produce
+`postgres-replay-rehearsed` JSON and durable `rehearsal.json`. The report includes
+start/finish times, elapsed command duration and the runtime observation. Missing
+WAL, server exit, cancellation and cleanup failure return nonzero without success
+evidence. Recovered data and private logs are retained for inspection; failed
+preparation follows the restore command's existing cleanup rules. An existing
+destination is never reused, overwritten or silently removed by a rerun.
+
+This automates the PostgreSQL replay portion of a drill. It does not assert PKI
+application invariants, validate a leaf chain, test issuance, reconcile provider
+snapshots, choose a recovery target, schedule repeats, or apply retention. Its
+elapsed duration excludes infrastructure provisioning and escrow retrieval and is
+not production RTO. Schedule the complete matched PKI rehearsal only after its
+remaining provider/application checks and custody policy are implemented.
+
 ## Local integration evidence
 
 The test cross-compiles the actual recovery CLI and a TLS object-store fixture for
@@ -159,6 +213,9 @@ and shut down. This exercises the timeline
 ancestry described by [PostgreSQL's timeline documentation](https://www.postgresql.org/docs/16/continuous-archiving.html#BACKUP-TIMELINES).
 The drill invokes the actual `base-backup observe` CLI on both paused timelines
 and requires it to reject the first copy after explicit promotion.
+The actual `base-backup rehearse` CLI also runs a fresh complete replay cycle and
+a missing-WAL failure; both must leave their server stopped, and the failed run
+must not write success evidence.
 Only this disposable test explicitly promotes a restored server; the production
 restore command continues to prepare a paused recovery without starting/promoting.
 

@@ -16,13 +16,14 @@ import (
 
 func runBaseBackup(args []string) error {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Println("base-backup create|restore|scheduled|observe --config FILE --confirm-environment ENV --confirm-stack STACK [--id ID | --schedule FILE] [--destination NEW_DIRECTORY --identity FILE [--pitr-plan FILE]]")
+		fmt.Println("base-backup create|restore|scheduled|observe|rehearse --config FILE --confirm-environment ENV --confirm-stack STACK [--id ID | --schedule FILE] [--destination NEW_DIRECTORY --identity FILE [--pitr-plan FILE]]")
+		fmt.Println("rehearse: --id ID --destination NEW_DIRECTORY --identity FILE --pitr-plan FILE --user USER [--database postgres]")
 		fmt.Println("observe: --id ID --destination PREPARED_DIRECTORY --socket-directory PRIVATE_SOCKET --user USER [--database postgres --port 5432]")
 		return nil
 	}
 	action := args[0]
-	if action != "create" && action != "restore" && action != "scheduled" && action != "observe" {
-		return errors.New("base-backup requires create, restore, scheduled or observe")
+	if action != "create" && action != "restore" && action != "scheduled" && action != "observe" && action != "rehearse" {
+		return errors.New("base-backup requires create, restore, scheduled, observe or rehearse")
 	}
 	fs := flag.NewFlagSet("base-backup", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -44,12 +45,16 @@ func runBaseBackup(args []string) error {
 		fs.StringVar(&conn.User, "user", "", "local recovery database user")
 		fs.StringVar(&conn.Database, "database", "postgres", "local recovery database")
 	}
-	if action == "restore" {
+	if action == "rehearse" {
+		fs.StringVar(&conn.User, "user", "", "local recovery database user")
+		fs.StringVar(&conn.Database, "database", "postgres", "local recovery database")
+	}
+	if action == "restore" || action == "rehearse" {
 		fs.StringVar(&pitrPlan, "pitr-plan", "", "reviewed explicit WAL recovery target")
 		fs.StringVar(&destination, "destination", "", "new private recovery directory")
 		fs.StringVar(&identity, "identity", "", "private age identity file")
 	}
-	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *config == "" || (action != "scheduled" && id == "") || (action == "scheduled" && schedule == "") || (action == "restore" && (destination == "" || identity == "")) || (action == "observe" && (destination == "" || conn.SocketDirectory == "" || conn.User == "")) {
+	if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *config == "" || (action != "scheduled" && id == "") || (action == "scheduled" && schedule == "") || ((action == "restore" || action == "rehearse") && (destination == "" || identity == "")) || (action == "rehearse" && (pitrPlan == "" || conn.User == "")) || (action == "observe" && (destination == "" || conn.SocketDirectory == "" || conn.User == "")) {
 		return errors.New("invalid base-backup arguments; use --help")
 	}
 	f, err := os.Open(*config)
@@ -107,6 +112,13 @@ func runBaseBackup(args []string) error {
 			var plan recovery.PITRPlan
 			if err = recovery.Decode(io.LimitReader(pf, 1<<20), &plan); err != nil {
 				return err
+			}
+			if action == "rehearse" {
+				report, err := e.RehearsePITR(ctx, id, destination, identity, conn.User, conn.Database, plan)
+				if err != nil {
+					return err
+				}
+				return json.NewEncoder(os.Stdout).Encode(report)
 			}
 			err = e.RestorePITR(ctx, id, destination, identity, plan)
 		}

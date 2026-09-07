@@ -1045,3 +1045,32 @@ promotion. Focused race tests cover wrong identity, incomplete replay, target an
 isolation mismatches, unsafe connection inputs, private-file validation, malformed
 or oversized output and cancellation. Focused CLI tests, recovery vet and the Linux
 CLI build passed. All five top-level unfinished milestones remain open.
+
+## Automated isolated PostgreSQL rehearsal continuation
+
+Added `base-backup rehearse` for an explicit backup ID and reviewed PITR plan. It
+restores a fresh private copy, directly owns the PostgreSQL process, waits for the
+existing paused-target observation, and confirms clean fast shutdown before
+emitting `postgres-replay-rehearsed` and writing durable `rehearsal.json`. It runs
+as a non-root recovery OS user and retains recovered data/private logs. It never
+promotes a server, overwrites an existing destination or releases traffic fences.
+
+The child receives only explicit backup-reader credentials, TLS trust overrides
+and minimal PATH/locale. Source PG settings, shell interpretation and daemonized
+startup are excluded. Cancellation still invokes bounded shutdown; immediate or
+forced shutdown and unconfirmed termination fail the drill. External SIGKILL/host
+failure require supervisor/operator cleanup. The report's elapsed command duration
+is not a production RTO measurement and excludes provisioning/escrow retrieval.
+
+The native integration drill invokes the actual CLI for successful replay and
+missing-WAL failure, independently checks that both servers stopped, and rejects
+success evidence after failed replay. Focused subprocess tests cover controlled
+shutdown, unexpected exit, cancellation cleanup and inherited environment isolation.
+This implements the PostgreSQL restore/start/observe/stop portion, not scheduled
+matched PKI rehearsals: provider/registry consistency, leaf validation, controlled
+issuance, retention, custody and SDK protected installation remain unfinished.
+
+Validation: race-enabled recovery suite passed with native physical backup,
+archive-command, cross-timeline replay and automated rehearsal enabled (73 seconds).
+Focused CLI tests, recovery vet and Linux CLI build passed. Five top-level
+milestones remain open; these local fixture results do not qualify production.
