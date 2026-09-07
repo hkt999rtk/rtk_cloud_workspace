@@ -1544,3 +1544,24 @@ remains active.
 Full Go tests, targeted race tests, vet, formatting and diff checks passed. Tests
 exercise renewal admission, successor issuance and registry denial. No production
 acceptance gate is claimed closed.
+
+### Host-owned Service credential store checkpoint (2026-09-08)
+
+Video Cloud `835d50d` closes the local file-backed Service private-key persistence
+primitive. Keys are generated on the workload host, stored in an atomic `0600`
+state file, and never placed in the PKI registry. Pending request/key/CSR state is
+durable before network issuance and survives restart without changing the request.
+Validated successor chains are promoted atomically; a bad response or mismatched
+key leaves the previous credential usable.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. The remaining integration
+gap is to orchestrate initial issuance and renewal around this store, expose the
+active credential to actual Service clients/listeners, install exact CRLs and
+collect host/recovery evidence. Hardware-backed non-exportable key support remains
+in the provider/platform milestone. No push, PR, remote CI, deployment or custody
+action. Goal remains active.
+
+Full Go tests, the targeted race test, vet, formatting and diff checks passed.
+No production acceptance gate is claimed closed.

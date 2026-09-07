@@ -4656,3 +4656,26 @@ Goal remains active.
 
 Full Go tests, targeted race tests, vet, formatting and diff checks passed. No
 production acceptance gate is claimed closed.
+
+### Host-owned Service credential store checkpoint (2026-09-08)
+
+Video Cloud `835d50d` implements the workload-side Service identity state boundary.
+The reusable store generates P-256 keys locally and writes a single atomic `0600`
+state file inside a private directory. It persists a pending request ID, key and
+signed CSR before any network issuance and keeps the current credential beside it,
+so a crash or uncertain response cannot silently create a new signing attempt.
+
+Only an exact three-certificate clientAuth chain bound to the pending public key
+can be promoted. Invalid chains, identities or keys retain the previous usable
+credential. Restart loads and reuses the exact pending CSR, while a conflicting
+request is rejected. The registry and OpenBao never receive or store the workload
+private key.
+
+Five acceptance milestones remain: legacy migration/device replacement; trust
+consumers/live sessions; backup/recovery and SDK integration; provider/hardware
+compatibility; staging/custody/recovery qualification. Next is issuance/renewal
+client orchestration and real Service transport/listener adoption. No push, PR,
+remote CI, deployment or custody action. Goal remains active.
+
+Full Go tests, the targeted race test, vet, formatting and diff checks passed. No
+production acceptance gate is claimed closed.
