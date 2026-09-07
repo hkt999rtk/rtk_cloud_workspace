@@ -1817,3 +1817,29 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Next Android steps are session
 replacement, acknowledgement/retirement and resumable lifecycle coordination,
 then revocation and physical/live provider qualification.
+
+## Android acknowledgement, retirement and resumable renewal
+
+Android acknowledges through a fresh active-successor mTLS connection and persists
+predecessor retirement before sending. Uncertain results remain ATTEMPTED and block
+new predecessor mTLS contexts/active selection; confirmed results become monotonic
+ACKNOWLEDGED and require no further request. The shared production transport keeps
+HTTPS, redirect, bounded response, deadline and cancellation behavior for both calls.
+
+The resumable coordinator now orders preparation, receipt retrieval/submission,
+installation, activation, required host session replacement and acknowledgement.
+Callback failure stops acknowledgement; retries repeat the idempotent replacement
+callback. Same-device in-process reentrancy is rejected. Host cross-process and
+unrelated low-level mutation coordination is still required.
+
+Validation: full JVM suite and release/test builds passed. Eight API 35 tests
+passed, including successor mTLS, disconnect-after-request retirement, old-context
+construction rejection, retry/offline acknowledgement reuse and replacement failure
+preventing network acknowledgement. The emulator was stopped after the run. These
+fixtures do not prove actual host session closure or physical/live provider behavior.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Android next requires durable due-time
+scheduling/lifecycle wiring, backup/recovery reconciliation and CRL/live session
+integration, with physical/provider qualification still outstanding.
