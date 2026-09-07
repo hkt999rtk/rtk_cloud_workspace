@@ -3172,3 +3172,27 @@ App broker/media sessions that cache authorization still need their own lifetime
 integration. Existing HTTP WebSocket watcher is Device-specific. Next: inventory
 and wire those App live-session owners. No push, PR, remote CI, deployment or custody
 operation occurred. The full goal remains active.
+
+
+## App MQTT lease and session sweep (2026-09-08)
+
+Video Cloud `9c55992` caps App PKI MQTT authentication leases to the earlier of
+60 seconds or token expiry, attaching signed-token App fingerprint/actor provenance
+as broker attributes. Revoked tokens cannot reconnect through the token verifier.
+`PKI_BROKER_APP_PKI_ENABLED` explicitly enables App checks in the existing separate
+operator sweep; App checks always require current registered receipts and both CRLs.
+Rejected sessions are reread before disconnect API calls, preserving valid fresh
+results. Missing-provenance App-prefixed sessions are included; the Device-only
+entry point/default remains available for staged rollout.
+
+Validation: full Go suite passed. cloudhandoff/httpapi/pkibrokerapp race tests pass,
+covering lease/token bounds, App attributes, revoked-token denial, exact deletion of
+revoked/expired/legacy sessions and reread preservation. Evidence uses an HTTP broker
+fixture, not live EMQX. Broker cache policy, expire_at handling, disconnect timing and
+scale acceptance remain unqualified. No hard end-to-end 60-second bound is claimed.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: App media/WebRTC lifetime enforcement.
+Live broker acceptance and automatic provider revocation/CRL publication remain.
+No push, PR, remote CI, deployment or custody operation occurred. The goal remains active.
