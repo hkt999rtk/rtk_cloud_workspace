@@ -3040,3 +3040,33 @@ staging/custody/recovery qualification. Next: App registry-selected issuance wit
 active status, durable claims/replay handling, and recovery/domain consumer adapters.
 No push, PR, remote CI, deployment or custody operation was performed. The full
 goal remains active.
+
+
+## App runtime registry binding and durable claims (2026-09-08)
+
+Video Cloud `4532ff8` adds opt-in `CERT_ISSUER_APP_PKI_ENABLED` wiring that bypasses
+static App CA/key loading, selects the registered active App intermediate and signs
+only through its exact provider mount. Existing authenticated Account Manager caller
+and subject checks precede the registry path. P-256 CSR proof, exact subject/no SAN,
+metadata-bound request digest, environment and TTL admission are enforced.
+
+A separate App issuance table pins one issuer and grants one signing attempt.
+Concurrent retries and orphaned pending claims never obtain another token. Completion
+validates against registered App lineage and commits the result/audit transactionally.
+Changed requests conflict; successful replay returns the same result without signing.
+Issuer/root disablement and revoked claim state block completion/replay. Consumer
+revocation enforcement and operator recovery for uncertain provider outcomes remain.
+
+Validation: full Go suite passed; race tests passed for pki, certissuer,
+certissuerapp and config with disposable PostgreSQL 16 and OpenBao 2.5.5 fixtures.
+Tests cover eight concurrent owners, delayed completion, pending-owner loss, wrong
+token, request/metadata conflicts, retiring lineage, disablement, and HTTP replay
+with one provider call. Real restricted-token provider completion/replay exposed
+and corrected the prior generic validator's unnecessary requirement that a non-CA
+leaf carry the optional Basic Constraints extension. CA and key-usage checks remain.
+
+Five broad milestones remain: legacy migration/device replacement; trust consumers/
+live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. Next: pending App signing reconciliation,
+App revocation publication/consumers and remaining domain adapters. No push, PR,
+remote CI, deployment or custody operation was performed. The full goal remains active.

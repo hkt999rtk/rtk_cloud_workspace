@@ -59,10 +59,12 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 4. **Other trust domains and host inventory.** The generic issuer `Scope` has a
    domain. App intermediate provisioning/import and restricted provider signing
    are now implemented in Video Cloud `4899d2f`, with local OpenBao/PostgreSQL
-   coverage. App runtime signer selection remains configuration-based; registry
-   binding and App recovery adapters remain. Configured provider response
-   validation is implemented in Video Cloud `6522c24`; registry status/replay
-   authorization is still separate unfinished App work.
+   coverage. App runtime registry selection, durable single-owner claims, response validation
+   and status-checked replay are implemented behind an opt-in setting in Video
+   Cloud `4532ff8`. Pending-outcome recovery, App revocation publication and live
+   consumer enforcement remain. Configured provider response validation was
+   implemented in `6522c24`; the real-provider test in `4532ff8` corrected its
+   rejection of valid leaves without the optional Basic Constraints extension.
    Replacement and runtime verification also require domain-specific review.
    Gateway/service profiles remain unimplemented. Inventory real issuance and consumer entry
    points for each required domain and identify missing adapters. A generic schema
