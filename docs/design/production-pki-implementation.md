@@ -1098,3 +1098,26 @@ A disposable PostgreSQL 16 instance exercised matching state, independent Root-p
 rejection, provider mismatch and indexed/document disagreement. Recovery ACL and
 argument tests passed, along with controller build and focused vet. The temporary
 database was removed. Live OpenBao restore/key usability remains unqualified.
+
+## Existing device leaf recovery validation continuation
+
+Extended `pkicontroller recovery-check` with optional `DEVICE_ID LEAF_PEM` inputs.
+The existing independent Root pin and role-selected provider lineage comparison
+now accompany verification of a known existing leaf's signature, P-256 key,
+client-auth policy, identity, exact binding issuer/serial/expiry and active device
+entitlement. It requires current signed Product/Brand/Root CRLs, unrevoked lineage
+and valid replacement overlap. A shared strict CRL verifier runs inside the same
+read-only repeatable-read registry transaction rather than opening a second
+snapshot. Public certificate inputs are bounded regular files; no device key,
+CSR, signing operation or PKI mutation is involved.
+
+Success is scoped as `device-certificate-recovery-checked`. This does not recover
+lost post-backup security changes, prove device key possession, test hardware or
+perform controlled provider issuance. All five top-level milestones remain open.
+
+Validation: race-enabled PKI/OpenBao/controller tests passed. Disposable PostgreSQL
+integration covered valid existing-leaf recovery, missing/stale CRLs, disabled
+entitlement, altered serial/expiry, binding revocation, expired replacement overlap,
+signed leaf revocation and signed ancestor revocation. The existing strict-token
+and broker-eviction regression passed against the shared verifier. Controller build
+and focused vet passed; the temporary database was removed.
