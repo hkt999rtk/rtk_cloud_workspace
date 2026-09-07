@@ -1864,3 +1864,26 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Android next needs native background
 job/lifecycle wiring and backup/recovery reconciliation; CRL/live session and
 physical/provider qualification remain outstanding.
+
+## Android native background renewal jobs
+
+A host-subclassed JobService adapter now invokes renewal on a worker thread,
+schedules the next due date/retry, cancels the supplied token on Android stop and
+suppresses late completion from stopped runs. It uses network constraints and
+backoff, reports failures and supports explicit persisted-across-reboot scheduling.
+The host declares the protected service/permissions and supplies its configured
+store plus session replacement callback. No application-specific identity is
+invented by the library.
+
+Validation: full JVM suite and release/test builds passed. Ten API 35 tests passed,
+including registered JobScheduler execution, next-due scheduling and OS stop
+cancellation plus existing PKI renewal tests. SDK35 source documentation was used
+to verify lifecycle behavior. User storage was unlocked before the run; the emulator
+was stopped afterward. Reboot/Doze/OEM policy and real host owner behavior remain
+unqualified.
+
+Milestone 3 advanced. Five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. Next SDK work includes backup/recovery
+reconciliation and remaining trust/lifecycle consumers, with host application and
+physical/live qualification still required.
