@@ -1713,3 +1713,22 @@ remaining trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware; staging/custody/recovery. Concrete SDK substeps still include
 Android production certificate installation, durable renewal/session replacement,
 and native runtime/provider qualification.
+
+## Android installation and mTLS identity validation
+
+Android now requires independently configured device roots and validates the
+complete current trust path, Keystore key match and exact device leaf profile
+before storing an issued certificate. The same gate runs before constructing
+mTLS contexts. Certificate writes check synchronous persistence success; PEM
+input is bounded and rejects unrelated/trailing data. Self-signed legacy test
+fixtures require a separate explicit test-only option.
+
+Validation: signed JVM fixtures cover valid issuance and trust/key/profile/expiry
+failures; all Android unit tests, release AAR and instrumentation APK builds pass.
+No physical Android execution was performed. Revocation freshness, durable
+renewal/activation, backup exclusion and already-open session teardown remain.
+
+Milestone 3 advanced; five broad milestones remain: migration/device replacement;
+remaining trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware; staging/custody/recovery. The next Android SDK work is durable
+renewal/activation and lifecycle/revocation integration, followed by runtime tests.
