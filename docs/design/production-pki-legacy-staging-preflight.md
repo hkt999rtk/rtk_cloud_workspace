@@ -55,6 +55,22 @@ absent. No governed import or replacement operation can be executed yet.
 
 ## Ordered prerequisites before canary execution
 
+### Follow-up: provider availability and local rollout preparation
+
+A subsequent 2026-09-08 read-only attempt to forward the OpenBao Service for
+public root/CRL retrieval failed because `openbao-0` was Pending. Pod events
+reported CSI device-path mount failures for `pvc-0848cb41ff1545f1` and
+`pvc-d5992ca40171483a` on `lke646126-951189-9w6nc`. No public root or CRL was
+retrieved. Existing storage must be recovered and qualified before provider
+operations; no restart, PVC change, initialization or repair was performed.
+
+The service now provides controller image/release packaging and an offline
+three-phase [rollout renderer/runbook](../../repos/rtk_video_cloud/docs/pki-staging-rollout.md).
+It prepares reviewable manifests only. No schema migration, role grant,
+controller deployment, consumer cutover or CI publication has occurred.
+
+### Execution prerequisites
+
 1. Prepare and publish the reviewed PKI-capable service revision through canonical
    CI; retain existing images/settings as rollback evidence. Do not deploy local
    images to staging. Deployments remain Kubernetes-only.

@@ -1,5 +1,24 @@
 # Production PKI domain and host inventory
 
+## 2026-09-08 staging packaging checkpoint
+
+Service commit: `08be3b6`. Validation passed: three renderer unit tests,
+local linux/amd64 image build and controller executable/usage smoke check,
+default-PKCS11 release bundle verification, workflow YAML parsing, shell syntax
+and diff checks. No push, PR, remote CI or staging deployment occurred.
+
+Local staging preparation now includes the controller in the shared image and
+release bundle, with an offline renderer for separate migration, role grants and
+controller deployment phases. Runtime credentials are separate from migration
+credentials; deployment rendering requires a digest-pinned image and explicit
+consumer IDs. See the [service rollout runbook](../../repos/rtk_video_cloud/docs/pki-staging-rollout.md).
+
+Read-only inspection found OpenBao Pending with CSI volume mount failures; the
+public root/CRL query could not start. No storage repair or live change occurred.
+The [preflight](production-pki-legacy-staging-preflight.md) records prerequisites.
+All five live legacy checklist items remain open; item 1 is partially progressed.
+The five broader milestones remain unchanged, with legacy migration active.
+
 Reviewed 2026-09-08 through Video Cloud `0387086`.
 
 Active acceptance work is **milestone 1: legacy migration/device replacement**.

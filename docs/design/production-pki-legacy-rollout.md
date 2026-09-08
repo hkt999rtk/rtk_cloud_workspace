@@ -1,5 +1,12 @@
 # Milestone 1: legacy migration/device replacement
 
+Local deployment preparation is available in the
+[staging rollout runbook](../../repos/rtk_video_cloud/docs/pki-staging-rollout.md):
+controller packaging plus separate offline migration, grants and runtime
+manifests. This closes a packaging gap, not a live acceptance item. The
+[staging preflight](production-pki-legacy-staging-preflight.md) also records the
+OpenBao volume mount blocker. All five live items below remain open.
+
 This is the next active acceptance milestone. The existing governed staging
 inventory/import, immutable overlap window, Product replacement, acknowledgment
 and reconciliation flows are implemented. Do not replace those controls or
