@@ -8328,6 +8328,7 @@ func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
 
 func lkeFrontendSDKDownloadsSecretManifest(env map[string]string) (string, error) {
 	values := map[string]string{
+		"PRO2_EXAMPLES_PREFIX":           firstNonEmpty(os.Getenv("PRO2_EXAMPLES_PREFIX"), env["PRO2_EXAMPLES_PREFIX"], "pro2-examples/"),
 		"SDK_ARTIFACT_BUCKET":            firstNonEmpty(os.Getenv("SDK_ARTIFACT_BUCKET"), env["SDK_ARTIFACT_BUCKET"]),
 		"SDK_ARTIFACT_ENDPOINT":          firstNonEmpty(os.Getenv("SDK_ARTIFACT_ENDPOINT"), env["SDK_ARTIFACT_ENDPOINT"]),
 		"SDK_ARTIFACT_REGION":            firstNonEmpty(os.Getenv("SDK_ARTIFACT_REGION"), env["SDK_ARTIFACT_REGION"], "us-sea"),
@@ -8359,7 +8360,8 @@ stringData:
   SDK_ARTIFACT_ACCESS_KEY_ID: %q
   SDK_ARTIFACT_SECRET_ACCESS_KEY: %q
   SDK_LATEST_OBJECT_KEY: %q
-`, lkeNamespaceName(env, "frontend"), env["CLOUD_STACK_NAME"], values["SDK_ARTIFACT_BUCKET"], values["SDK_ARTIFACT_ENDPOINT"], values["SDK_ARTIFACT_REGION"], values["SDK_ARTIFACT_ACCESS_KEY_ID"], values["SDK_ARTIFACT_SECRET_ACCESS_KEY"], values["SDK_LATEST_OBJECT_KEY"]), nil
+  PRO2_EXAMPLES_PREFIX: %q
+`, lkeNamespaceName(env, "frontend"), env["CLOUD_STACK_NAME"], values["SDK_ARTIFACT_BUCKET"], values["SDK_ARTIFACT_ENDPOINT"], values["SDK_ARTIFACT_REGION"], values["SDK_ARTIFACT_ACCESS_KEY_ID"], values["SDK_ARTIFACT_SECRET_ACCESS_KEY"], values["SDK_LATEST_OBJECT_KEY"], values["PRO2_EXAMPLES_PREFIX"]), nil
 }
 
 func lkeBillingDatabaseEnsureJobManifest(env map[string]string) string {
