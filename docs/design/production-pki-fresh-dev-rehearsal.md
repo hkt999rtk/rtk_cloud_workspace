@@ -73,6 +73,40 @@ checkpoint qualifies the recorded Product-CA revocation and HTTP/WebSocket case,
 not individual Device-leaf revocation, MQTT, every provider failure, or production
 custody/recovery.
 
+## Next execution slice: MQTT transport and dev acceptance
+
+Read-only discovery confirms the existing dev `mqtt` StatefulSet runs EMQX 5.8.7.
+The implemented session worker targets 5.9+; the separate API also needs an
+internal callback transport. Its device listener enforces Device mTLS/CRLs and
+cannot accept the broker's independent service identity.
+
+1. Add an optional internal API HTTPS listener exposing only
+   `POST /v1/internal/mqtt/authenticate`. Reuse the API server TLS identity, but
+   require a separately configured broker client CA and exact broker client name.
+   Keep the existing broker bearer-key check, token provenance, current registry
+   checks, CRL policy, short leases and ACL calculation. The listener must never
+   expose device token issuance, management APIs, metrics or other API routes.
+   Starting or stopping either listener must stop its peer and close resources.
+2. Package the existing `pkibroker` worker in the dev image and prepare a distinct
+   broker callback client identity using dev transport provisioning. Create an
+   isolated dev broker with a pinned compatible EMQX image, server TLS, disabled
+   authentication/authorization caches, no permissive authenticator fallback,
+   and NetworkPolicies for only the required connections. Existing dev `mqtt`
+   and staging stay untouched. Broker management credentials belong only to its
+   colocated session worker; localhost management HTTP remains inside that pod.
+3. Provision a fresh Product issuer/device using the existing governed APIs and
+   actual consumer acknowledgments. Connect over verified MQTT TLS using a
+   certificate-bound token, verify publish/subscribe ACLs and the 60-second lease,
+   then test replacement/revocation, old-token reconnect denial and removal of
+   the exact affected live session while a valid successor remains connected.
+4. Persist scoped manifests and exact image/evidence records. Report broker
+   compatibility, cache reset, actual session actions and failures separately;
+   neither Pod readiness nor a simulated broker response closes MQTT acceptance.
+
+This slice tests the established fresh-dev scope. Independent hardware custody,
+cluster availability, legacy fleet migration and staging remain later work. The
+broker's own server certificate remains distinct from Device/Product authority.
+
 ## Earlier checkpoint: fresh hierarchy active
 
 Initial trust installation used Video Cloud `ad08eef`, workspace `0e12b30`.
