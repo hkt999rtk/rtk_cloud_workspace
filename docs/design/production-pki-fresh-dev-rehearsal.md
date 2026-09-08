@@ -7,13 +7,26 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
+## Current status: dev milestone complete (2026-09-08)
+
+**100% complete; zero remaining dev-milestone items.** The committed tool's fresh,
+uninterrupted run passed **12/12 checks**, and independent current-state audits
+proved all five requirements in the accepted dev scope. See the
+[completion audit](production-pki-dev-acceptance-completion.md) for the requirement
+mapping, exact evidence, measured cutoff times and final retained state.
+
+Four broader milestones remain: other trust consumers/live sessions;
+backup/recovery and SDK; provider/hardware compatibility; and deferred
+staging/custody/recovery qualification. Legacy fleet migration remains deferred.
+The dated checkpoints below are execution history, not the current remaining list.
+
 ## 2026-09-08 maintained acceptance tool: reconciled run passed
 
 The maintained runner completed all **12 named checks** for disposable Product
 issuer `760d3f92-c3f2-4676-8a4d-7d754324947d`. The protected report is
 `dev/pki/acceptance-run-20260908-1/report.json`. This was a reconciled development
-run across tool fixes; previous failure reports are retained. It is not yet the
-final uninterrupted run of the committed tool.
+run across tool fixes; previous failure reports are retained. At that checkpoint, the final uninterrupted run was still pending; it is now
+recorded in the completion audit above.
 
 The run verified actual API/broker activation receipts, one internal provider key,
 controller capability boundaries, factory enrollment, direct mTLS, MQTT ACL and
@@ -34,7 +47,7 @@ Service/callback startup convergence, the existing tenant topic rewrite, Python
 3.9 parsing of Go timestamps, and explicit TLS 1.3 certificate-alert observation.
 Local Python tests (11), Go probe race tests, vet and static checks passed.
 
-**Current milestone estimate: 98%.** One existing work package remains: execute
+**Estimate at this development checkpoint: 98%.** The remaining work was: execute
 an uninterrupted fresh run of the committed tool, then perform the five-item
 completion audit and record its result. All five reporting areas remain open.
 Root/Brand bootstrap remains separately recorded foundation evidence; this tool

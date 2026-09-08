@@ -1,5 +1,18 @@
 # Production PKI implementation ledger
 
+## Current milestone status: complete (2026-09-08)
+
+The authorized fresh dev PKI milestone is **100% complete, with zero remaining
+items**. The committed tool's uninterrupted run passed 12/12 checks; independent
+inspection verified all five acceptance requirements and final cleanup. See the
+[completion audit](production-pki-dev-acceptance-completion.md).
+
+Four broader areas remain: other trust consumers/live sessions (next priority),
+backup/recovery and SDK, provider/hardware compatibility, and deferred
+staging/custody/recovery qualification. Legacy migration remains deferred under
+the user's dev-scope correction. Historical progress entries below retain their
+original checkpoint counts; this section is the current status.
+
 ## Current execution scope: fresh dev PKI (2026-09-08)
 
 The user authorizes temporary accounts/devices and resetting dev databases when
@@ -8,7 +21,7 @@ This supersedes the earlier dev legacy-canary prerequisite and requests for real
 operator/device-owner input. Use distinct temporary accounts and ordinary login
 for simulated approval testing; MFA stays disabled and never applies to devices.
 
-The immediate acceptance sequence is:
+The completed dev acceptance sequence is:
 
 1. Deploy the controller and Account Manager with management mTLS and RS256 login;
    bootstrap temporary administrators and distinct approval accounts.

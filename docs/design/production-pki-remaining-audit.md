@@ -5,28 +5,23 @@ not required for present milestone acceptance. Devices use certificate/key
 authentication and never human MFA. Earlier MFA references below are historical;
 role checks, independent approvals and custody/recovery evidence remain required.
 
-## Current priority correction (2026-09-08)
+## Current status: four reporting areas remain (2026-09-08)
 
-The active work is fresh dev PKI lifecycle acceptance, with temporary accounts
-and devices and dev database resets permitted. Legacy fleet migration is deferred;
-it is not needed for this dev test. See the current scope in the
-[rollout plan](production-pki-legacy-rollout.md). Historical active-milestone and
-migration prerequisites below no longer set the dev execution order.
+Fresh dev PKI lifecycle acceptance is **complete (100%, zero remaining items)**.
+The uninterrupted run of committed tool `4ee0c2f` passed all 12 checks, and the
+independent five-item [completion audit](production-pki-dev-acceptance-completion.md)
+verified the current foundation, runtime, registry, provider and cleanup state.
 
-The five reporting areas are now: (1) fresh dev PKI acceptance, with legacy
-migration deferred; (2) trust consumers/live sessions; (3) backup/recovery and SDK
-integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
-qualification, deferred until dev passes. MFA is optional future human login
-only, including qualification; real independent custodians remain a later gate.
+The four unfinished areas are:
 
-## Latest: maintained dev acceptance runner (2026-09-08)
+1. Other trust consumers/live sessions — next priority.
+2. Backup/recovery and SDK integration.
+3. Provider/hardware compatibility.
+4. Staging/custody/recovery qualification — deferred.
 
-The reconciled tool-development run passed all 12 named checks and cleaned up its
-own policies/manifest entries. See the [fresh dev checkpoint](production-pki-fresh-dev-rehearsal.md)
-for measured results and limitations. Current milestone estimate: **98%**.
-The remaining work is one uninterrupted fresh run of the committed tool and the
-five-item completion audit. Five reporting areas remain open; this does not yet
-close the active milestone or qualify deferred staging/legacy work.
+Legacy fleet migration remains deferred under the user's dev-scope correction.
+MFA remains optional future human login only. The dated checkpoints below are
+historical and do not change this current remaining count.
 
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 
