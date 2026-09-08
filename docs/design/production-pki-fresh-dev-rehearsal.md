@@ -7,7 +7,75 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
-## Current live checkpoint: real dev MQTT lifecycle
+## 2026-09-08 live complete broker consumer and cross-CA replacement
+
+The clean Video Cloud `728362d` dev image was built locally for linux/amd64 and
+verified in GHCR at
+`sha256:16aee0a5e58c9c48edd90d16f9a9c3742bd69bf609fa63a08ba58f7935f6bdf3`.
+The dev `pki-controller` and isolated `mqtt-pki` worker now run that digest.
+EMQX remains `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`;
+the API image remains `536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`.
+Controller required consumers are now **video-cloud-api and pkibroker**.
+
+The worker uses its independently generated `pkibroker` management client,
+a dedicated controller NetworkPolicy and retained `mqtt-pki-trust` PVC
+(UID `bfb15b95-9c66-4bb3-93ed-e0affec06192`). Existing controller client CAs,
+server key, EMQX PVC and broker credentials were preserved. Worker state is owned
+by UID 10001, with a private 2700 directory and 0600 JSON files; EMQX does not
+mount it. The worker login still has only the verifier role, default read-only
+transactions, and no controller/issuer/superuser/role-creation privileges.
+
+Actual worker mTLS receipts now cover reviewed Root/Brand/Product bundles, their
+signed CRLs and the installed Root-policy digest. Pod readiness was supplemented
+by exact running-image checks, database receipt inspection, persisted-manifest
+comparison and authenticated MQTT ACL/QoS1 roundtrip verification.
+
+Fresh governed Product v4 `fab94fc3-0f2c-48ff-ab0f-7b9739bb0e61` was requested and
+approved by distinct temporary humans using ordinary RS256 login, with MFA off.
+OpenBao generated one internal Product key; the Brand key signed its CSR offline.
+With only the API bundle receipt present, activation returned **409** and the
+issuer stayed ready. After the worker installed the reviewed ready bundle and
+sent its own receipt, activation returned **204**. Product v3 became retiring;
+v4's initial CRL `0efa1f2900bac5b916b86ebd5cb58f0408953e982407d2fbf032ca65963ee1d3`
+was imported and the API retained both v3/v4 CRL trust. The signer retains exact
+v3/v4 policies during retirement; Product keys were not exported.
+
+The existing fresh dev Device then renewed from retiring v3 to active v4 using
+a new locally generated Device key. Replay returned the same result. The old
+certificate could not acknowledge (403); the successor could (204, idempotent).
+The worker disconnected only the predecessor **0.7944 seconds** after the ACK,
+at connection age **15.960275 seconds**, well before lease expiry. The successor
+remained connected for 12 further seconds before harness cleanup. Old-token
+MQTT reconnect returned CONNACK 5 and old-certificate API login returned 401;
+the v4 successor remained valid. The worker logged two examined, one disconnected.
+
+A subsequent broker restart exposed kubelet fsGroup remount widening retained
+files to 0660. The non-root init phase now restores the private directory and
+0600 regular files on every startup. A second actual restart verified those
+permissions, the same PVC and image digests, old unexpired-token MQTT rejection,
+old-certificate API 401 and new v4 API/MQTT ACL/QoS1 success. Evidence is retained
+in `consumer-fsgroup-before-repair.json`, `consumer-rollout-evidence.json` and
+`device-2/v4-restart-evidence.json`. The scoped desired Deployment includes the
+permission repair; it is not a manual one-time chmod.
+
+Protected evidence is in canonical dev `pki/fresh-rehearsal/`:
+`consumer-image-provenance.json`, `consumer-rollout-evidence.json`,
+`consumer-mqtt-roundtrip.json`, `product-v4-missing-broker-gate.json`,
+`product-v4-activation-gate-evidence.json`, and
+`device-2/v4-replacement-evidence.json`. Current Device 2 credentials are
+`v4-key.pem` and `v4-chain.pem`; the older successor files now identify the denied
+v3 predecessor. Scoped manifests/operator pins are persisted; temporary phase
+helpers are retained privately but are not yet a complete repeatable-run harness.
+
+Current active milestone: fresh dev PKI lifecycle acceptance, estimated **93%**.
+Remaining acceptance work is live revocation/failure/restart qualification with
+the complete required-consumer set, then one reproducible full dev run with
+explicit pass/fail evidence. All five broad areas remain open: fresh dev
+acceptance; other consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware compatibility; staging/custody/recovery qualification.
+Legacy migration and staging remain deferred. No Git push, PR or remote CI ran.
+
+## Earlier live checkpoint: real dev MQTT lifecycle
 
 ### Next implementation: broker Device trust receipts
 
@@ -33,7 +101,7 @@ The ordered distribution work and current evidence are:
    while unaffected sessions and parent-CRL receipts progress. Carry this behavior
    into the complete consumer's live tests. CRL receipts alone do not complete
    bundle or Root-policy distribution.
-3. **Next: live dev acceptance.** Deploy the complete consumer on isolated dev with its own management identity,
+3. **Deployed; activation gate passed. Revocation/failure acceptance remains.** Deploy the complete consumer on isolated dev with its own management identity,
    controller CA/network access and required-consumer configuration. Demonstrate
    missing/wrong/stale receipts blocking activation and revocation finalization,
    and actual installed receipts permitting the intended transitions.
@@ -102,9 +170,9 @@ own CRLs after activation, parent-CRL advancement/revocation, installed-version
 fences, empty/wrong trust, terminal branches and restart. Full related suites,
 race checks and vet passed. This is not live deployment evidence.
 
-The active dev milestone is estimated at approximately 90%. The remaining work
-is the scoped complete-consumer rollout/gate acceptance and the reproducible full
-dev run (ordered items 3 and 4 above). These are remaining acceptance jobs within
+The active dev milestone is estimated at approximately 93%. The complete consumer
+is deployed and activation/replacement passed. Remaining work is revocation/failure
+acceptance and the reproducible full dev run (ordered items 3 and 4 above). These are remaining acceptance jobs within
 the same milestone, not new milestones. After each commit, report this estimate,
 its remaining work and the five broad unfinished reporting areas.
 
@@ -129,6 +197,46 @@ policy evidence, not activation. A ready Root has no parent CRL. Installing its
 independently provisioned self-signed Root and acknowledging its pinned bundle
 releases activation. Devices stay denied until the entire active Root/Brand/Product
 lineage and all required CRLs exist. Bootstrap does not bypass required consumers.
+
+#### Scoped complete-consumer dev rollout
+
+Use clean Video Cloud `728362d` to build one unique dev image and verify its
+registry digest. Update only `pki-controller` and the `mqtt-pki` worker container;
+retain the existing EMQX/API images, database roles, runtime credentials and PVC.
+Prepare the worker's independent management client with canonical
+`pki-dev-prepare --environment dev --consumer pkibroker`. Append its public client
+CA to the controller's existing client trust; preserve the controller server key
+and all existing client CAs. Allow only the isolated broker pod to reach the
+controller's TLS port through a dedicated NetworkPolicy.
+
+Provision a separate retained `mqtt-pki-trust` PVC for the worker's Root policy,
+CRLs and terminal denial state. Keep that volume out of the EMQX container.
+Kubelet may add group permissions recursively when remounting an fsGroup PVC.
+A non-root init container therefore creates/restricts the Device state directory
+and restores all regular state files to 0600 on every startup; the worker
+mounts reviewed public Root/Brand/Product-v3 authority documents plus the
+independent Root PEM, and its own management identity. Enable strict CRLs,
+Root-policy consumption and bundle receipts together. The controller's required
+consumer set becomes `video-cloud-api,pkibroker`; adding the broker must not remove
+the API gate. Use Recreate with one replica and API-enforced resource-version and
+old-image preconditions. Persist every scoped manifest and image/feature override
+under the canonical dev configuration before considering the rollout durable.
+
+First verify current v3 receipts and an actual Device MQTT roundtrip with both
+containers at the expected digests. Then use fresh governed issuance to show
+missing broker receipts block activation, reviewed installed bundles release it,
+and revocation finalization waits for new signed trust and post-sweep receipts.
+For Product v4 gate testing, first install its reviewed bundle reference in the
+API while keeping its Root pool, strict CRLs and runtime image unchanged. Confirm
+API-only acknowledgment still leaves activation blocked. Then add the ready v4
+public issuer to the worker manifest alongside v3 and restart the isolated worker.
+After its real receipt, activate v4 and publish its initial provider CRL. Keep
+retiring v3 trust/signing capability while existing v3 devices still need renewal;
+add v4 to the API CRL manifest before testing new v4 Device credentials.
+Retain failure/restart evidence and independently check persisted denial state.
+The controller allowlist and worker are prerequisites to gate testing, not
+acceptance evidence by themselves. No staging, Git push, PR or full-platform
+provisioning is part of this rollout.
 
 The isolated `mqtt-pki` Deployment runs EMQX 5.9.0 plus `pkibroker` using verified
 running image digests `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`

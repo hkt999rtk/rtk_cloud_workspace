@@ -19,6 +19,74 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 live complete broker consumer and cross-CA replacement
+
+The clean Video Cloud `728362d` dev image was built locally for linux/amd64 and
+verified in GHCR at
+`sha256:16aee0a5e58c9c48edd90d16f9a9c3742bd69bf609fa63a08ba58f7935f6bdf3`.
+The dev `pki-controller` and isolated `mqtt-pki` worker now run that digest.
+EMQX remains `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`;
+the API image remains `536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`.
+Controller required consumers are now **video-cloud-api and pkibroker**.
+
+The worker uses its independently generated `pkibroker` management client,
+a dedicated controller NetworkPolicy and retained `mqtt-pki-trust` PVC
+(UID `bfb15b95-9c66-4bb3-93ed-e0affec06192`). Existing controller client CAs,
+server key, EMQX PVC and broker credentials were preserved. Worker state is owned
+by UID 10001, with a private 2700 directory and 0600 JSON files; EMQX does not
+mount it. The worker login still has only the verifier role, default read-only
+transactions, and no controller/issuer/superuser/role-creation privileges.
+
+Actual worker mTLS receipts now cover reviewed Root/Brand/Product bundles, their
+signed CRLs and the installed Root-policy digest. Pod readiness was supplemented
+by exact running-image checks, database receipt inspection, persisted-manifest
+comparison and authenticated MQTT ACL/QoS1 roundtrip verification.
+
+Fresh governed Product v4 `fab94fc3-0f2c-48ff-ab0f-7b9739bb0e61` was requested and
+approved by distinct temporary humans using ordinary RS256 login, with MFA off.
+OpenBao generated one internal Product key; the Brand key signed its CSR offline.
+With only the API bundle receipt present, activation returned **409** and the
+issuer stayed ready. After the worker installed the reviewed ready bundle and
+sent its own receipt, activation returned **204**. Product v3 became retiring;
+v4's initial CRL `0efa1f2900bac5b916b86ebd5cb58f0408953e982407d2fbf032ca65963ee1d3`
+was imported and the API retained both v3/v4 CRL trust. The signer retains exact
+v3/v4 policies during retirement; Product keys were not exported.
+
+The existing fresh dev Device then renewed from retiring v3 to active v4 using
+a new locally generated Device key. Replay returned the same result. The old
+certificate could not acknowledge (403); the successor could (204, idempotent).
+The worker disconnected only the predecessor **0.7944 seconds** after the ACK,
+at connection age **15.960275 seconds**, well before lease expiry. The successor
+remained connected for 12 further seconds before harness cleanup. Old-token
+MQTT reconnect returned CONNACK 5 and old-certificate API login returned 401;
+the v4 successor remained valid. The worker logged two examined, one disconnected.
+
+A subsequent broker restart exposed kubelet fsGroup remount widening retained
+files to 0660. The non-root init phase now restores the private directory and
+0600 regular files on every startup. A second actual restart verified those
+permissions, the same PVC and image digests, old unexpired-token MQTT rejection,
+old-certificate API 401 and new v4 API/MQTT ACL/QoS1 success. Evidence is retained
+in `consumer-fsgroup-before-repair.json`, `consumer-rollout-evidence.json` and
+`device-2/v4-restart-evidence.json`. The scoped desired Deployment includes the
+permission repair; it is not a manual one-time chmod.
+
+Protected evidence is in canonical dev `pki/fresh-rehearsal/`:
+`consumer-image-provenance.json`, `consumer-rollout-evidence.json`,
+`consumer-mqtt-roundtrip.json`, `product-v4-missing-broker-gate.json`,
+`product-v4-activation-gate-evidence.json`, and
+`device-2/v4-replacement-evidence.json`. Current Device 2 credentials are
+`v4-key.pem` and `v4-chain.pem`; the older successor files now identify the denied
+v3 predecessor. Scoped manifests/operator pins are persisted; temporary phase
+helpers are retained privately but are not yet a complete repeatable-run harness.
+
+Current active milestone: fresh dev PKI lifecycle acceptance, estimated **93%**.
+Remaining acceptance work is live revocation/failure/restart qualification with
+the complete required-consumer set, then one reproducible full dev run with
+explicit pass/fail evidence. All five broad areas remain open: fresh dev
+acceptance; other consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware compatibility; staging/custody/recovery qualification.
+Legacy migration and staging remain deferred. No Git push, PR or remote CI ran.
+
 ## 2026-09-08 broker installed bundles and first-issuer bootstrap
 
 Video Cloud `728362d` completes the local registry worker's bundle activation
