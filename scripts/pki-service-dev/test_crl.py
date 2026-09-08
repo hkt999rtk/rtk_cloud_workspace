@@ -68,7 +68,7 @@ class CRLTests(unittest.TestCase):
             manifest = {'request': request, 'request_sha256': 'expected', 'crl_sha256': 'tampered'}
             c.m.write(source / 'signed/public-manifest.json', manifest)
             runner = object.__new__(c.CRLRun)
-            runner.inspect = Mock(return_value=desired)
+            runner.inspect_crl = Mock(return_value=desired)
             runner.ceremony_call = Mock(return_value='expected')
             runner.probe = 'fixture'
             runner.save = Mock()
@@ -119,6 +119,13 @@ class CRLTests(unittest.TestCase):
                         runner.prepare_intermediate(True)
                         self.assertEqual((output / 'signed/revocations.pem').read_text(), 'after')
                 self.assertEqual(runner.bao.call_args.args[0], ['write', 'auth/token/revoke', '-'])
+
+    def test_crl_maintenance_uses_owner_inspection_after_renewal(self):
+        runner = object.__new__(c.CRLRun)
+        row = {'fingerprint': 'current', 'status': 'succeeded', 'revoked_at': None}
+        runner.rows = Mock(return_value=[dict(row, fingerprint='old'), row])
+        with patch.object(c.r.RenewalRun, 'inspect', return_value={'fingerprint': 'current', 'pending': False}):
+            self.assertEqual(runner.issuance(), row)
 
     def test_server_state_dispatch_does_not_inspect_account_manager(self):
         runner = object.__new__(c.CRLRun)

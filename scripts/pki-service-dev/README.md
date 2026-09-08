@@ -141,4 +141,6 @@ management recovery remains unqualified.
 
 Managed Account Manager early renewal is documented in [RENEWAL.md](RENEWAL.md).
 It uses operator SIGHUP and the existing guarded renewal path; no clock or private
-state edits are used. Old-leaf retirement and CRL receipts remain separate work.
+state edits are used. Follow [RETIREMENT.md](RETIREMENT.md) to retire the replaced
+leaf, publish its signed CRL and require actual certissuer/controller receipts.
+Active-session revocation and managed consumer transport adoption remain open.

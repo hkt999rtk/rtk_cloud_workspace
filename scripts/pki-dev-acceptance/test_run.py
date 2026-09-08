@@ -41,6 +41,11 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(parsed.utcoffset(), m.dt.timedelta(0))
         self.assertEqual(m.parse_time('2026-09-08T09:00:00Z').microsecond, 0)
 
+    def test_postgres_receipt_timestamp_matches_kubernetes_time(self):
+        receipt = m.parse_time('2026-09-08 16:23:11.862902+00')
+        self.assertGreater(receipt, m.parse_time('2026-09-08T16:23:11Z'))
+        self.assertEqual(receipt, m.parse_time('2026-09-08T16:23:11.862902Z'))
+
     def test_expected_plaintext_http_denial_is_not_a_json_error(self):
         runner = object.__new__(m.Acceptance)
         runner.ports = {'am': ('12345', None)}

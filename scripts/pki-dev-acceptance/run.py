@@ -57,6 +57,8 @@ def stamp(value=None):
 
 
 def parse_time(value):
+    # PostgreSQL may serialize UTC as +00; Python 3.9 needs +00:00.
+    value = re.sub(r'([+-]\d{2})$', r'\1:00', value)
     # Go emits RFC3339Nano; Python 3.9 accepts only 3 or 6 fractional digits.
     value = re.sub(r'\.(\d+)(?=Z$|[+-]\d{2}:\d{2}$)',
                    lambda match: '.' + match.group(1)[:6].ljust(6, '0'), value)

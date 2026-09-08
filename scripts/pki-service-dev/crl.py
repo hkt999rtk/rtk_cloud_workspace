@@ -124,7 +124,7 @@ class CRLRun(r.RenewalRun):
         self.artifact(self.output, root)
         self.check('root_signed', {'number': request['crl_number'], 'next_update': request['next_update'], 'published': False})
 
-    def inspect(self, raw, issuer):
+    def inspect_crl(self, raw, issuer):
         self.save('inspect.pem', raw)
         self.save('inspect-issuer.pem', issuer['certificate_pem'])
         # OpenSSL's verify failure is checked explicitly: some versions exit zero.
@@ -141,7 +141,7 @@ class CRLRun(r.RenewalRun):
     def artifact(self, source, issuer):
         m.require(m.read(source / 'issuer.json') == issuer, 'saved authority changed')
         raw = (source / 'signed/revocations.pem').read_text()
-        desired = self.inspect(raw, issuer)
+        desired = self.inspect_crl(raw, issuer)
         previous = m.read(source / 'previous.json')
         m.require(int(desired['crl_number']) > int(previous['crl_number']), 'signed CRL rollback')
         old_entries = json.loads(m.command([self.probe, 'crl'], previous['crl_pem'])) or []

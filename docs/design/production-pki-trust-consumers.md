@@ -1,6 +1,6 @@
 # Remaining trust consumers and live sessions
 
-Active milestone, 2026-09-08. Fresh dev Device PKI is complete; this milestone
+Active milestone, 2026-09-09. Fresh dev Device PKI is complete; this milestone
 extends the design to the other consumers and connections. Commits remain local
 unless a branch backup push is requested; PRs wait until all milestones finish.
 Live verification is dev-only.
@@ -43,7 +43,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 
 | Connection / owner | Existing implementation | Remaining acceptance in this milestone |
 | --- | --- | --- |
-| Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption and bootstrap-free restart now run in dev. Installed CRL receipts, renewal/revocation and remaining failure cases still need live qualification. |
+| Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption, early renewal, replaced-leaf retirement, both listener CRL receipts and bootstrap-free restarts passed in dev. Active-session revocation and remaining failure cases still need live qualification. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
 | Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed issuer server leaf and seedless restart passed in dev. Adopt managed client leaves; verify renewal, receipt gates and selective eviction. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
@@ -60,7 +60,7 @@ certissuer server-host adapters now serve registered dev leaves and preserve
 private state across seedless restarts. Renewal/revocation acceptance remains.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **60%**, an engineering estimate
+Overall milestone progress is approximately **65%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -989,3 +989,115 @@ complete and 5 open**. The same four broad milestones remain:
 4. Staging, independent custody and recovery qualification — deferred.
 
 The earliest active dev CRL deadline remains **2026-09-11T06:54:13Z** (Device Root).
+
+## Service client revocation receipts and self-hosted startup
+
+Retire only the replaced Account Manager leaf after verifying the installed
+replacement, current admission, original PVC and unchanged state. Use ordinary
+human-authenticated revocation and provider-publication APIs. Preserve one stable
+reason/fingerprint across retries. Publication alone cannot finalize revocation:
+require the current signed CRL to cover the old serial, exact installed receipts
+from certissuer and controller, and continued admission of the replacement.
+
+Service client CRL consumers already require direct registry access to validate
+their installer. Use that existing scoped read connection to obtain their signed
+CRL records during preparation, avoiding the controller's dependency on its own
+not-yet-listening HTTPS endpoint. Keep pinned authorities, signature/freshness
+validation, persisted monotonic floors, revocation preservation and the installer
+check against the current registry version unchanged. Other generic remote CRL
+consumers retain their existing fetch path. Failure to read/validate/install
+must fail closed; no empty, stale or unsigned startup fallback is allowed.
+
+Receipts still use the existing authenticated HTTPS consumer identity and exact
+controller authorization. They occur only after durable installation and a
+successful real listener sweep; do not insert acknowledgment rows directly or
+fabricate receipts from publication. Store each listener's Root/intermediate CRL
+state in its retained identity PVC, isolated from its private identity file.
+Roll out certissuer first and demonstrate that the missing controller receipt
+keeps finalization blocked, then enable the controller and require both receipts
+before finalization. Verify persistence after restart, current managed human API,
+unchanged identity keys/images outside the two listener owners, and Device
+mTLS/MQTT. Existing bootstrap consumer transports remain a separate adoption gap;
+this does not qualify managed consumer credentials or live revocation of an
+actively connected leaf whose key has already been discarded by renewal.
+
+
+## Dev replaced Service leaf retirement checkpoint
+
+Video Cloud commit `7ea6a17` prepares Service client CRLs from the existing
+registry connection before a self-hosted listener starts. Signature, issuer pin,
+freshness, persisted monotonicity and runtime installation checks remain in place.
+The listener acknowledges only while serving and after a successful sweep; its
+receipt still travels over its actual authenticated management connection.
+The Service integration suite covers blocked management transport during local
+preparation, no acknowledgment before serving, failed-sweep acknowledgment
+suppression and active-stream cutoff. Relevant Go suites, race checks and vet
+passed with a disposable PostgreSQL fixture, which was removed.
+
+The maintained [retirement procedure](../../scripts/pki-service-dev/RETIREMENT.md)
+records dev evidence under
+`~/.config/rtk_cloud/dev/pki/service-retirement-20260909-1/`. The original Account
+Manager leaf `eff6d595845860cd63938b047578811cbebeda1f41a9605c7345c2c988bcc849`
+was revoked through the ordinary human PKI API after checking the installed
+successor. Repeating that request preserves one revocation audit. Provider
+publication produced signed Service intermediate CRL **7**, digest
+`d1f19a181e5fd6b6c7abb39e9ea852bc44d88882df7de70837cac8f8da060291`, valid from
+**2026-09-08T16:19:23Z** until **2026-09-11T16:19:23Z**. Its serial coverage,
+preserved prior revocations and idempotent publication passed. Finalization
+returned 409 before publication and again without the listener receipts.
+
+Certissuer adopted the dev-only image
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:e32f6a2b57b108d3b4aae60a199fddc496df59a42d5166dbadeaa96611dc9e7f`.
+The build used clean service source, explicit dev metadata and a verified
+linux/amd64 registry digest. The first receipt verification failed on Python 3.9's
+handling of PostgreSQL's `+00` time-zone suffix. A first recovery stopped because
+Kubernetes had defaulted the ConfigMap file mode. The maintained recovery now
+normalizes the timestamp and compares the saved API-accepted template, including
+defaults. Both failed reports remain; `certissuer-recovery-2/` passed without
+recreating resources, signing or republishing. Exact Root/intermediate receipts,
+continued 409 while controller was missing, bootstrap-free restart, private-key
+preservation, managed human API and Device mTLS/MQTT ACL/QoS1 all passed.
+
+The helper also fixes a CRL/identity inspection method-name collision that could
+break maintenance after managed renewal. The CRL cryptographic inspector now has
+its own name, preserving owner-local inspection of the currently installed leaf.
+
+The `controller/` phase passed on the same pinned image. Its local signed-CRL
+preparation permitted startup before its own HTTPS endpoint was available.
+Both exact listener receipts then released finalization; the controller's
+bootstrap-free restart preserved its identity and retained CRLs. The Account
+Manager successor remained unchanged and managed API/Device checks passed.
+Public manifest `pki-service-client-crls`, private per-listener PVC state, scoped
+Deployment overlays and the two independent image pins persist the rollout.
+Account Manager API/owner, all workers and other monitored workload images stayed
+unchanged. No managed private key was exported.
+
+Final `verification/` passed: exact signed old-serial coverage, both installed
+Root/intermediate CRLs and receipts, finalized digest, managed identities,
+scoped persisted Deployment templates, unchanged other workload images and
+Device mTLS/MQTT. A separate `runtime-persistence-audit.json` confirms that both
+running image IDs match the pinned digest and the public ConfigMap, image pins
+and Deployment templates match the saved dev configuration. Evidence directories
+and files have no group/other access. Local helper validation passed **46 Python
+tests**, including timestamp parsing, recovery drift refusal and post-renewal
+CRL maintenance.
+
+The old managed key was discarded during renewal; this checkpoint does not claim
+live TLS rejection using that key or cutoff of its active sessions. Actual
+consumer acknowledgment transports still use separately trusted bootstrap
+credentials. Their managed adoption and active Service session revocation remain
+next priorities, followed by the other unchanged work groups. No database reset,
+branch push, PR, CI dispatch or staging operation was performed.
+
+Active milestone progress is approximately **65%**, with **1/6 work groups
+complete and 5 open**. Four broad milestones remain:
+
+1. Trust consumers/live sessions — active; remaining managed consumer callers,
+   active Service revocation, other transports/hosts, Root-policy adoption,
+   App/relay enforcement and complete dev acceptance.
+2. Matched backup/recovery and SDK integration.
+3. Provider/hardware compatibility.
+4. Staging, independent custody and recovery qualification — deferred.
+
+The earliest active dev CRL deadline remains **2026-09-11T06:54:13Z** (Device Root).
+No automatic CRL maintenance or expired-management-plane recovery is claimed.
