@@ -58,7 +58,7 @@ not additional Device/App identity consumers. Existing managed controller and
 certissuer server-host adapters need live adoption, not a second implementation.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **25%**, an engineering estimate
+Overall milestone progress is approximately **30%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -345,3 +345,66 @@ Retain scoped resource-version-checked rollback manifests and reproducible dev
 settings. Receipt absence must still block activation; no manual receipt writes
 or production-custody claim is permitted. Persist evidence at each stage and
 reconcile uncertain operations before replaying any mutation.
+
+
+## 2026-09-08 live dev Service Root checkpoint
+
+The independent Service Root is active in dev. Video Cloud `0f6f632` binds the
+offline ceremony to the complete approved issuer policy; workspace `08b06d5`
+adds the canonical managed-owner image build and separate dev consumer gates.
+The maintained [Service dev runner](../../scripts/pki-service-dev/README.md)
+records each scoped phase and preserves failed evidence for reconciliation.
+
+Root issuer: `59c37a28-7016-4706-ae93-e3da7746615d`.
+Certificate SHA-256:
+`87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2`.
+The Root key is encrypted offline in the private dev evidence directory, with a
+separate passphrase file; both have mode 0600 and key/certificate correspondence
+passed. Distinct ordinary-login approval accounts exercised the ceremony. This
+is software custody simulation, not independent human custody qualification.
+
+Only controller and certissuer workload images changed among the monitored dev
+owners. Both run the verified image
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:5ff8bbfadfba1db7a5b3671c8e4d34416c464033bea8bd0d8206e26982a7dcea`.
+They installed the reviewed Root bundle and each sent its actual serving-listener
+receipt. Activation returned 409 with no receipts and again with only controller's
+receipt; it succeeded after certissuer's receipt. Service membership is exactly
+`certissuer,pki-controller`; Device membership remains `video-cloud-api,pkibroker`.
+No receipt was written manually. Existing bootstrap management transport and
+server credentials remain in use pending governed leaf adoption.
+
+Root CRL 1 SHA-256:
+`2fcd66950a5a7b3df1e29c1ff66490ce3be9be67346f537f3f3a6680412ed6f8`.
+Its next update is **2026-09-09 11:39:27 UTC**; a reviewed offline refresh is
+required before expiry. The initial activation phase failed after signing,
+before import, because the runner expected `crl.pem` instead of the ceremony's
+`revocations.pem`. The corrected recovery phase validated and imported the exact
+saved signed CRL without signing again. The failed report remains alongside the
+successful recovery; this was not an uninterrupted acceptance run.
+
+The existing Device direct-mTLS and MQTT ACL/QoS1 baseline passed after import.
+A subsequent read-only runtime audit passed for running image digests/readiness,
+Root receipts/current CRL, offline key correspondence, persisted image/settings
+rendering and presence of the managed-owner binary in both images. Unchanged
+monitored API, broker, factory and Account Manager pods retained their images and
+identities. This is baseline regression evidence, not a full Device lifecycle rerun.
+
+Private phase reports are retained under the operator's dev configuration at
+`pki/service-rollout-20260908-1/{root,controller,certissuer,activation,crl-recovery,verification}`.
+Raw responses, keys and rollback objects stay outside Git. Desired scoped overlays,
+operator image files and Service settings are persisted in the existing dev PKI
+configuration. The runner re-renders and verifies those settings; the generic
+platform renderer does not automatically manage these Service overlays.
+
+Local validation passed: five Service runner tests, twelve Device acceptance
+helper tests, focused Go consumer/build tests, offline ceremony tests and vet,
+and the canonical dev image build. Source and live evidence cover this Root
+checkpoint only. No staging changes, Git push, PR or remote CI occurred.
+
+**Current milestone: approximately 30%; 1/6 work groups complete, 5 open.**
+Four broad milestones remain. Next create the approved Service intermediate,
+then adopt governed controller/certissuer server credentials and qualify managed
+Account Manager egress in dev. Other management callers, durable CRL adoption,
+renewal/revocation/restart, remaining transports, Root policy and App/relay live
+acceptance remain open. No Service intermediate or managed caller was deployed
+at this checkpoint.

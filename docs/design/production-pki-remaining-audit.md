@@ -23,7 +23,7 @@ Legacy fleet migration remains deferred under the user's dev-scope correction.
 MFA remains optional future human login only. The dated checkpoints below are
 historical and do not change this current remaining count.
 
-Current trust-consumer progress: approximately 25%, with inventory complete
+Current trust-consumer progress: approximately 30%, with inventory complete
 (1/6 work groups) and 5 work groups remaining. Video Cloud `9134882` adds local
 controller Service management admission and eviction; `8baa0e3` adds per-domain
 consumer permissions, completion gates and CRL worker selection. `a857a1f` adds
@@ -34,6 +34,13 @@ managed Account Manager egress through a private socket, with issuance/retry,
 renewal, revocation and restart tests. Other managed consumers, durable CRL
 adoption and live Service qualification remain open; see the active plan for
 the exact evidence.
+
+Live dev now has an active independent Service Root, actual controller/certissuer
+bundle receipts and Root CRL 1. Missing receipts blocked activation; Device
+mTLS/MQTT baseline and final runtime/configuration checks passed. See the
+[Root checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-root-checkpoint)
+for CRL expiry, the reconciled import failure and scope. The Service intermediate,
+governed server credentials and managed Account Manager rollout remain open.
 
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 
