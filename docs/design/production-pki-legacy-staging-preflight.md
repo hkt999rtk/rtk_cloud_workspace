@@ -73,6 +73,33 @@ controller deployment, consumer cutover or CI publication has occurred.
 
 ### 2026-09-08 storage diagnosis and proposed recovery
 
+**Recovery executed after user authorization:** added only required node affinity
+excluding `lke646126-951189-9w6nc`, with a StatefulSet resourceVersion precondition.
+Saved the prior template privately for rollback. Verified the old pod was Pending,
+had never started, and was the only pod referencing these claims; deleted it with
+UID/resourceVersion preconditions. Replacement UID
+`8854da77-df00-4320-ba43-7c1f02d524b6` scheduled on
+`lke646126-general-qnq9s`. CSI normally detached/reattached both original volumes;
+both VolumeAttachments now report that node and the pod is Running. Verified
+the StatefulSet template differs only by the node exclusion and the volume claim
+templates are unchanged. No forced detach, new volume, format or initialization.
+
+Verified TLS seal status using the mounted CA and certificate DNS name
+`openbao.video-cloud-staging-secrets.svc`: initialized=true, sealed=true,
+Shamir threshold/shares=1/1, OpenBao 2.5.4, file storage, HA=false. This proves
+the initialized store is accessible, not complete key usability or recovery
+qualification. Initial loopback-only status failed hostname verification; no
+TLS verification bypass was used. Readiness remains false while sealed.
+
+Next required action is unseal using the existing environment-local custody
+material; it was not performed as part of the authorized pod move. The canonical
+procedure locates it at the staging SecretStore `openbao/unseal-key`. Do not run
+the full bootstrap routine: it can initialize/configure the service and is broader
+than unseal. After authorized unseal, recheck status over verified TLS and retrieve
+only public legacy lineage/CRLs. Keep the temporary node exclusion until the
+original node's attachment discrepancy is resolved; do not silently revert it
+and risk scheduling back onto that node.
+
 Read-only follow-up confirmed `openbao-0` remains ContainerCreating on
 `lke646126-951189-9w6nc` (Linode instance `104080805`). Both PVCs remain Bound,
 with Retain reclaim and StatefulSet retention policies:
