@@ -5,6 +5,20 @@ not required for present milestone acceptance. Devices use certificate/key
 authentication and never human MFA. Earlier MFA references below are historical;
 role checks, independent approvals and custody/recovery evidence remain required.
 
+## Current priority correction (2026-09-08)
+
+The active work is fresh dev PKI lifecycle acceptance, with temporary accounts
+and devices and dev database resets permitted. Legacy fleet migration is deferred;
+it is not needed for this dev test. See the current scope in the
+[rollout plan](production-pki-legacy-rollout.md). Historical active-milestone and
+migration prerequisites below no longer set the dev execution order.
+
+The five reporting areas are now: (1) fresh dev PKI acceptance, with legacy
+migration deferred; (2) trust consumers/live sessions; (3) backup/recovery and SDK
+integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
+qualification, deferred until dev passes. MFA is optional future human login
+only, including qualification; real independent custodians remain a later gate.
+
 ## 2026-09-08 independent audit-history recovery checkpoint
 
 Service commit `79384c6`. Full pki/pkicontrollerapp suites passed with disposable
@@ -85,7 +99,7 @@ code gaps. The repeated count is therefore not five equally large coding tasks.
 | 2. Trust consumers/live sessions | Go CRL store/refresh/guard/TLS integration; Android durable CRLs, refresh and bound WebSocket; iOS corresponding implementation through `c863c27`; JavaScript durable CRLs, bounded refresh, guard and mTLS/WebSocket lifetime cancellation; server and firmware adapters recorded in the ledger. | Domain-specific App/Gateway/service issuance and consumer coverage remain unproven. Device-specific provider policy and verification cannot prove coverage of other domains. Native SDK now implements protected Device identity/renewal, durable CRLs, periodic refresh, guarded core HTTP/WebSocket mTLS and bounded DNS/TCP/TLS setup. Host wiring, root-policy changes and live firmware/session behavior need evidence. |
 | 3. Backup/recovery and SDK integration | `scripts/go/rtk-cloud/internal/recovery` contains physical backup, WAL/PITR, scheduling and rehearsal code; `repos/rtk_video_cloud/internal/pkicontrollerapp/recovery.go` implements recovery checks. Mobile and JavaScript production renewal and trust support exists. | Go now has durable acknowledgment/retirement, mandatory renewal CRLs and resumable session-replacement coordination; durable expiry-driven scheduling is now implemented; host integration remains. Native protected installation/renewal, durable scheduling and core HTTP/WebSocket owner integration are implemented. Application/domain policy adoption remains an implementation gap, not merely a physical test gate. |
 | 4. Provider/hardware compatibility | OpenBao policy/workload/Raft artifacts and local provider tests exist. Host Swift, API 35 emulator and native host checks are recorded. | Supported-provider/version and physical Secure Enclave, Android TEE/StrongBox, firmware/ARM and HSM matrix results. Local tests must not be substituted for this evidence. |
-| 5. Staging/custody/recovery qualification | Offline ceremony CLI, recovery tools and runbooks exist. | Real MFA identities and independent custodians, escrow/restore ceremony, failure-domain/seal approval, live matched recovery and post-backup security reconciliation, measured RPO ≤15 min and RTO ≤4 h. Production remains disabled. |
+| 5. Staging/custody/recovery qualification | Offline ceremony CLI, recovery tools and runbooks exist. | Real authenticated identities and independent custodians, escrow/restore ceremony, failure-domain/seal approval, live matched recovery and post-backup security reconciliation, measured RPO ≤15 min and RTO ≤4 h. Production remains disabled. |
 
 ## Concrete implementation gaps found
 

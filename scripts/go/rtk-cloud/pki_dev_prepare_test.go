@@ -56,18 +56,34 @@ func TestPKIDevPreparationPersistsUsableSeparateIdentities(t *testing.T) {
 	}
 	roots := x509.NewCertPool()
 	roots.AppendCertsFromPEM(read("management-ca.crt"))
+	consumerDir, err := preparePKIDevConsumer(store, "video-cloud-api", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumerCA, err := os.ReadFile(filepath.Join(consumerDir, "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumerPair, err := tls.LoadX509KeyPair(filepath.Join(consumerDir, "tls.crt"), filepath.Join(consumerDir, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientRoots := roots.Clone()
+	clientRoots.AppendCertsFromPEM(consumerCA)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if len(r.TLS.VerifiedChains) == 0 || r.TLS.PeerCertificates[0].Subject.CommonName != "account-manager" {
+		if len(r.TLS.VerifiedChains) == 0 || (r.TLS.PeerCertificates[0].Subject.CommonName != "account-manager" && r.TLS.PeerCertificates[0].Subject.CommonName != "video-cloud-api") {
 			t.Error("missing authenticated Account Manager peer")
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverPair}, ClientCAs: roots, ClientAuth: tls.RequireAndVerifyClientCert}
+	server.TLS = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{serverPair}, ClientCAs: clientRoots, ClientAuth: tls.RequireAndVerifyClientCert}
 	server.StartTLS()
 	defer server.Close()
-	for _, scenario := range []string{"valid", "missing-client", "wrong-host", "wrong-purpose"} {
+	for _, scenario := range []string{"valid", "consumer", "missing-client", "wrong-host", "wrong-purpose"} {
 		config := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: pkiDevServerName, Certificates: []tls.Certificate{clientPair}}
 		switch scenario {
+		case "consumer":
+			config.Certificates = []tls.Certificate{consumerPair}
 		case "missing-client":
 			config.Certificates = nil
 		case "wrong-host":
@@ -83,7 +99,7 @@ func TestPKIDevPreparationPersistsUsableSeparateIdentities(t *testing.T) {
 			response.Body.Close()
 		}
 		transport.CloseIdleConnections()
-		if (scenario == "valid") != (err == nil) {
+		if (scenario == "valid" || scenario == "consumer") != (err == nil) {
 			t.Fatalf("%s authentication outcome: %v", scenario, err)
 		}
 	}
@@ -156,5 +172,53 @@ func TestPKIDevPreparationRefusesReplacementAndOtherEnvironments(t *testing.T) {
 				t.Fatal("failure rotated trust", err)
 			}
 		})
+	}
+}
+
+func TestPKIDevConsumerPersistenceAndFailures(t *testing.T) {
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	dir, err := preparePKIDevConsumer(store, "video-cloud-api", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = preparePKIDevConsumer(store, "video-cloud-api", now); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("retry rotated client")
+	}
+	for _, name := range []string{"account-manager", "../escape", "unknown"} {
+		if _, err = preparePKIDevConsumer(store, name, now); err == nil {
+			t.Fatal("invalid consumer accepted")
+		}
+	}
+	if err = validatePKIDevConsumer(dir, "pkibroker", now); err == nil {
+		t.Fatal("wrong workload accepted")
+	}
+	if _, err = preparePKIDevConsumer(store, "video-cloud-api", now.Add(91*24*time.Hour)); err == nil {
+		t.Fatal("expired client accepted")
+	}
+	if err = os.Remove(filepath.Join(dir, "tls.crt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = preparePKIDevConsumer(store, "video-cloud-api", now); err == nil {
+		t.Fatal("partial client replaced")
+	}
+	after, _ = os.ReadFile(filepath.Join(dir, "tls.key"))
+	if !bytes.Equal(before, after) {
+		t.Fatal("failure rotated key")
+	}
+	store.Environment = "staging"
+	if _, err = preparePKIDevConsumer(store, "pkibroker", now); err == nil {
+		t.Fatal("staging accepted")
 	}
 }

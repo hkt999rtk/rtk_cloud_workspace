@@ -1,6 +1,35 @@
-# Milestone 1: legacy migration/device replacement
+# Milestone 1: dev PKI acceptance and later legacy migration
 
-## Current execution order: dev first
+## Current execution scope: fresh dev PKI (2026-09-08)
+
+The user authorizes temporary accounts/devices and resetting dev databases when
+useful. Existing dev data is not a migration requirement. Staging is untouched.
+This supersedes the earlier dev legacy-canary prerequisite and requests for real
+operator/device-owner input. Use distinct temporary accounts and ordinary login
+for simulated approval testing; MFA stays disabled and never applies to devices.
+
+The immediate acceptance sequence is:
+
+1. Deploy the controller and Account Manager with management mTLS and RS256 login;
+   bootstrap temporary administrators and distinct approval accounts.
+2. Create a fresh Cloud/Product and governed Device Root/Brand/Product hierarchy;
+   verify offline Root/Brand and OpenBao Product key custody without exporting
+   Product private keys. Install and acknowledge actual runtime trust.
+3. Enroll a fresh device using a device-generated key, then prove direct-mTLS
+   authentication and certificate renewal using the resulting hierarchy.
+4. Verify revoked credentials are rejected and active sessions close, including
+   MQTT with a compatible broker; exercise restart and interrupted renewal.
+5. Retain repeatable dev setup and result evidence, with explicit pass/fail status.
+
+Use schema migrations to initialize current schemas where needed; do not spend
+this rehearsal reconciling old issuance histories or replacing the existing dev
+fleet. A dev database reset is authorized, not mandatory. Reset only identified
+dev databases and coordinate affected workloads if a reset is actually needed.
+Legacy migration/device replacement remains deferred to environments that need
+it; its checklist below is retained for that later rollout, not as a dev gate.
+Dev test approvals demonstrate software behavior, not independent human custody.
+
+## Historical migration execution notes (superseded for dev)
 
 MFA is not a current prerequisite. It is an optional future human user-login
 feature, disabled by default through `PKI_REQUIRE_USER_MFA=false`. Ordinary

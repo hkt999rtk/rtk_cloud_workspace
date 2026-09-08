@@ -1,5 +1,52 @@
 # Production PKI implementation ledger
 
+## Current execution scope: fresh dev PKI (2026-09-08)
+
+The user authorizes temporary accounts/devices and resetting dev databases when
+useful. Existing dev data is not a migration requirement. Staging is untouched.
+This supersedes the earlier dev legacy-canary prerequisite and requests for real
+operator/device-owner input. Use distinct temporary accounts and ordinary login
+for simulated approval testing; MFA stays disabled and never applies to devices.
+
+The immediate acceptance sequence is:
+
+1. Deploy the controller and Account Manager with management mTLS and RS256 login;
+   bootstrap temporary administrators and distinct approval accounts.
+2. Create a fresh Cloud/Product and governed Device Root/Brand/Product hierarchy;
+   verify offline Root/Brand and OpenBao Product key custody without exporting
+   Product private keys. Install and acknowledge actual runtime trust.
+3. Enroll a fresh device using a device-generated key, then prove direct-mTLS
+   authentication and certificate renewal using the resulting hierarchy.
+4. Verify revoked credentials are rejected and active sessions close, including
+   MQTT with a compatible broker; exercise restart and interrupted renewal.
+5. Retain repeatable dev setup and result evidence, with explicit pass/fail status.
+
+Use schema migrations to initialize current schemas where needed; do not spend
+this rehearsal reconciling old issuance histories or replacing the existing dev
+fleet. A dev database reset is authorized, not mandatory. Reset only identified
+dev databases and coordinate affected workloads if a reset is actually needed.
+Legacy migration/device replacement remains deferred to environments that need
+it; its checklist below is retained for that later rollout, not as a dev gate.
+Dev test approvals demonstrate software behavior, not independent human custody.
+
+## 2026-09-08 fresh-dev controller deployment
+
+Added optional `pki-dev-prepare --consumer video-cloud-api` preparation with
+independent management client material, preserving existing server, Account
+Manager, JWT and database keys. Local race tests verify real TLS handshakes,
+repeat reuse, wrong peer/host/purpose, partial/expired material and environment
+rejection; vet and diff checks passed.
+
+Deployed `pki-controller` only in `video-cloud-dev-video-cloud` using verified
+`video-cloud-api@sha256:be8d897147d3aa297a2f58a1c3f284d44c403d4ece7b1d60d099e94643f83d35`.
+The running image ID matches. Live mTLS accepts Account Manager and the separately
+provisioned API identity; missing client, wrong hostname and server-only client
+identity are rejected. Account Manager without a human assertion and the API
+calling a human endpoint both receive 403. No issuer/trust acknowledgment was
+fabricated. Actual hierarchy/device acceptance remains pending. Required consumer
+`video-cloud-api` scopes the initial HTTP phase; MQTT is a subsequent phase.
+Persisted dev manifests and public probe results are in `controller-bootstrap/rollout`.
+
 ## Current human/device authentication policy
 
 MFA is an optional future human user-login feature, not a current implementation

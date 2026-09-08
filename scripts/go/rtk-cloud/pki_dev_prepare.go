@@ -31,11 +31,15 @@ func runPKIDevPrepare(args []string) error {
 	fs := flag.NewFlagSet("pki-dev-prepare", flag.ContinueOnError)
 	environment := fs.String("environment", "", "must be dev")
 	configRoot := fs.String("config-root", "", "canonical SecretStore base directory")
+	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, certissuer, factoryenroll or pkibroker")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *environment != "dev" || fs.NArg() != 0 {
 		return errors.New("pki-dev-prepare requires --environment dev and no positional arguments")
+	}
+	if *consumer != "" && !validPKIDevConsumer(*consumer) {
+		return errors.New("unknown dev PKI consumer")
 	}
 	store, err := newSecretStore(*configRoot, "dev")
 	if err != nil {
@@ -46,6 +50,13 @@ func runPKIDevPrepare(args []string) error {
 		return err
 	}
 	fmt.Printf("Validated dev PKI bootstrap material at %s; no live configuration changed\n", dir)
+	if *consumer != "" {
+		path, err := preparePKIDevConsumer(store, *consumer, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Validated dev PKI consumer material at %s; bind its CA to controller client trust before use\n", path)
+	}
 	return nil
 }
 
