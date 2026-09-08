@@ -29,6 +29,34 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 fresh device enrollment, renewal and restart checkpoint
+
+The fresh device generated its own key, enrolled through authenticated production
+admission and Product v2 signing, and authenticated to the API with direct mTLS.
+Enrollment replay preserved one certificate/reservation and quantity 1 of 1.
+Certissuer now uses a Kubernetes workload identity with only the Product signer
+policy. `86c0417` repairs the AppRole-only startup validator and separates Device
+renewal roots from service-route authority; real TLS/race tests cover matching-CN
+impersonation attempts. Factory enrollment runs `1067380` in the correct dev env.
+
+Two new-key renewals passed. `74906d7` fixes the initial response's timestamp
+precision using PostgreSQL's stored value; replacement race tests use nanosecond
+input. Its dev image is running with digest
+`7c678e7f6d56c10c4346b0dc5ded2cfaf6ee85ec397b688853bdb7f28b679292`.
+During the second renewal, certissuer and API restarted before acknowledgment.
+Exact replay, retained overlap, successor acknowledgment and immediate predecessor
+denial all passed. Three certificate bindings and two acknowledged replacements
+remain. This is a concrete pre-acknowledgment interruption case; broader unknown
+provider-outcome qualification is not implied.
+
+Current dev acceptance steps 1–3 now have live evidence for the recorded cases.
+Next are step 4 (revocation and live sessions, including compatible MQTT) and
+step 5 (repeatable complete-run evidence). All five broader reporting areas remain
+open. Strict OpenSSL compatibility of the existing service bootstrap certificate
+and runtime database role qualification remain recorded limitations. Staging is
+untouched and legacy migration stays deferred. See the
+[fresh dev record](production-pki-fresh-dev-rehearsal.md).
+
 ## 2026-09-08 fresh hierarchy activation complete
 
 Video Cloud `1067380` is running in the scoped dev controller/API deployments

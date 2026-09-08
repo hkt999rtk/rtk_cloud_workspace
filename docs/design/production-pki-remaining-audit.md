@@ -19,6 +19,21 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 fresh device lifecycle checkpoint
+
+Enrollment with a device-generated key, one-slot admission, direct API mTLS and
+two new-key renewals passed. The second renewal survived certissuer/API restarts
+before acknowledgment with exact response replay. Only successor-key acknowledgment
+completed cutover, after which the old identity was denied. Source `74906d7` fixes
+the timestamp discrepancy discovered during live replay; `86c0417` fixes workload
+auth validation and separates Device renewal trust from service caller authority.
+
+The recorded dev acceptance cases for steps 1–3 pass. Next are revocation/live
+sessions and repeatable complete-run evidence. Unknown provider-signing failures,
+strict OpenSSL service-certificate compatibility, and narrower runtime database
+roles are not qualified by this result. The five overall areas remain open;
+no staging or legacy fleet migration was attempted.
+
 ## 2026-09-08 fresh dev hierarchy checkpoint
 
 Root, Brand and Product v2 are active with real API trust acknowledgment. The

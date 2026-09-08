@@ -23,7 +23,8 @@ not the operator script. The requester then activated Root
 `c92fdbb1-f87b-4cab-80a6-fa77c2dce1d8` through Account Manager. The Root is active.
 The direct TLS listener rejected missing client identity, a management identity
 used as a Device identity, and an incorrect server name. These are negative TLS
-checks; a real Product device connection is still pending.
+checks. A real Product device connection and renewal now pass; see the fresh
+device checkpoint below.
 
 Continuous root-policy synchronization is now enabled. Its state is stored on
 PVC `video-cloud-api-pki-trust`, class `linode-block-storage-retain` (requested
@@ -126,9 +127,11 @@ was retained; no reset or staging mutation was needed.
 2. **Done for this dev simulation:** Brand and Product issuer provisioning,
    separate key custody, exact OpenBao policies, actual API bundle acknowledgment
    and governed activation. Hardware/offline-custody qualification stays deferred.
-3. **Next:** Enroll a fresh device with its own key; verify direct-mTLS authentication and
-   renewal. Check restart and interrupted renewal.
-4. Verify revocation denial and live-session termination, then add the compatible
+3. **Done for the recorded case:** fresh device-key enrollment, direct-mTLS
+   authentication, new-key renewal and interruption before acknowledgment across
+   certissuer/API restarts. Exact replay and old-key cutoff are verified below.
+   This does not qualify every possible provider failure or lost signing outcome.
+4. **Next:** Verify revocation denial and live-session termination, then add the compatible
    MQTT broker and its consumers to the required trust installation set.
 5. Retain pass/fail results and a reproducible setup for the full dev lifecycle.
 
@@ -189,7 +192,7 @@ Credential files are not tracked or included in reports. Root/Brand keys never
 belong in service database rows, container images or Kubernetes workloads.
 No git push, PR, CI run or staging mutation was performed.
 
-## Next deployment: factory issuance and device renewal
+## Factory issuance and device renewal deployment policy
 
 Reuse the existing independent certissuer service TLS identity and factory client
 identity. Upgrade only dev certissuer/factory enrollment, set their environment to
@@ -206,3 +209,70 @@ all other routes must retain service-chain verification. A matching factory or
 service common name on a Device certificate cannot grant service authority.
 The renewal handlers still require current registry binding, a new CSR key,
 issuer lifecycle checks and successor-key acknowledgment.
+
+## 2026-09-08 first fresh device and renewal
+
+Factory enrollment now runs Product PKI in `dev` using Video Cloud `1067380`,
+image digest `548bde6883afbe0708bfe1095389b08288d86a0f6e3cf4d5bf2b012a7e133e16`.
+The previous deployment's environment was incorrectly `staging`; it is corrected.
+Certissuer uses its existing independent service TLS identity and a projected
+Kubernetes token for SA `certissuer-pki`, role `certissuer-pki-dev`. Its sole
+policy signs through the active Product v2 mount; no controller rights or
+legacy/App signer permissions were added. Existing dev database credentials
+were preserved. Runtime database role qualification remains pending.
+
+Actual startup exposed an AppRole-only configuration validator even though the
+provider adapter supports Kubernetes auth. `86c0417` fixes that validation and
+adds separate `CERT_ISSUER_DEVICE_CLIENT_CA` trust for renewal. Real TLS tests
+cover a Device certificate with the same CN as a service caller: service routes
+reject it. Product renewal still requires current registry binding. Configuration
+and certissuer application race tests and vet passed.
+
+Device `pki-dev-d9c7d8aeada0411bb5676100b6662ca6` generated its P-256 key locally.
+An authenticated administrator created production run
+`e507f37b-39dd-4380-b416-73d0bcbc9b0b` with quantity 1. Actual factory enrollment
+reserved `6e6c55c9-f33f-4c40-a167-5ee784d67388`, signed through Product v2, completed
+Account Manager coordination, and projected entitlement/device state. The returned
+certificate matches the device key and issuer. Replay returned the same certificate
+and reservation; the database reports quantity 1 of 1 and exactly one reservation.
+
+Direct API mTLS authentication passed. The device generated a different successor
+key and renewed through certissuer. The successor authenticates; predecessor
+acknowledgment is denied, successor acknowledgment succeeds and is idempotent,
+and the predecessor can no longer authenticate or renew after acknowledgment.
+A Device certificate is also denied on the factory service route.
+
+The first renewal replay exposed only an `overlap_until` precision difference
+(first response nanoseconds versus persisted PostgreSQL microseconds). The
+certificate was identical. `74906d7` returns the stored timestamp; database-backed
+replacement race tests cover nanosecond input. Certissuer now runs `74906d7` with verified running digest
+`sha256:7c678e7f6d56c10c4346b0dc5ded2cfaf6ee85ec397b688853bdb7f28b679292`.
+The second renewal returned an exactly identical response on replay, including
+the deadline. With acknowledgment pending, both certissuer and the API were
+restarted using resource-version-checked Deployment changes. Replacement pods
+had new UIDs, retained the expected image IDs, became Ready, and reproduced the
+same renewal response from persisted state. Both keys authenticated during the
+overlap. Predecessor acknowledgment was denied; successor acknowledgment was
+idempotent and immediately denied the predecessor while preserving the successor.
+
+The database contains exactly three certificate bindings and two acknowledged
+replacement records for this device. Artifacts `renew2-issued.json`,
+`renew2-restart-before.json` and `renew2-restart-evidence.json` retain the precise
+case. This verifies a restart before installation acknowledgment, not every
+possible unknown provider-signing outcome. No database reset was used.
+
+The probe uses Go's verified TLS client, matching the application stack, with
+explicit server CA and hostname validation. The macOS system Python TLS runtime
+cannot decode the existing service CA algorithm; Python 3.14's strict X.509
+default additionally rejects its missing authority-key identifier. No TLS
+verification bypass was used. Service-certificate compatibility with strict
+OpenSSL clients remains a later compatibility item, not a Device CA key change.
+
+Protected artifacts are in `pki/fresh-rehearsal/device-1/`: enrollment request and
+result, production token, device/successor keys, authentication responses and
+renewal evidence. The current device key/chain are `successor2-key.pem` and
+`successor2-chain.pem`; predecessor files are retained for denial tests. Only public IDs/results are recorded here. The retained scoped
+rollouts are `certissuer-product-pki.json`, `factoryenroll-product-pki.json`,
+`certissuer-device-renewal-roots.json` and the certissuer ServiceAccount manifest.
+`PKI_CERTISSUER_IMAGE` and `PKI_FACTORYENROLL_IMAGE` accompany these explicit
+overlays; the full-platform provisioner does not automatically consume them.
