@@ -134,3 +134,7 @@ qualification. Retain all failed phase reports separately from successful recove
 For the following managed controller/certissuer server rollout, see [HOSTS.md](HOSTS.md).
 
 For managed Account Manager controller credentials after host adoption, follow [MANAGEMENT.md](MANAGEMENT.md).
+
+Service CRL maintenance and publication-response-loss recovery are documented in
+[CRL.md](CRL.md). Run before the earliest applicable signed CRL expires; post-expiry
+management recovery remains unqualified.

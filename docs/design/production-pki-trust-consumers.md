@@ -60,7 +60,7 @@ certissuer server-host adapters now serve registered dev leaves and preserve
 private state across seedless restarts. Renewal/revocation acceptance remains.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **50%**, an engineering estimate
+Overall milestone progress is approximately **55%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -784,3 +784,115 @@ The temporary provider audit token was revoked. Other monitored workload images
 and all Account Manager worker images are unchanged. Local validation passed
 34 Python tests, the Go TLS probe suite including the replacement-CA case, Go
 vet and diff checks. Both service repositories remain at their existing commits.
+
+## Dev Service CRL maintenance and publication recovery contract
+
+Managed server and client admission depends on fresh Root/intermediate CRLs.
+Their normal management API cannot be assumed available after these CRLs expire.
+Perform routine refresh before the existing evidence expires; never relax the
+host guard, restore removed bootstrap trust or edit registry rows to keep traffic
+working. Recovery of an expired/unavailable management plane requires a separate
+reviewed operator path and remains unqualified in this checkpoint.
+
+The maintained dev flow snapshots the current Root and intermediate, their signed
+CRLs, issuer fingerprints and registered leaves. For the offline Root, construct
+a complete refresh manifest with a strictly increasing CRL number, unchanged
+revocation entries, current UTC thisUpdate and a 72-hour nextUpdate (within the
+existing seven-day maximum). Bind the manifest digest and pinned Root to the
+existing encrypted offline key/passphrase ceremony; never upload that key or
+create an online Root signer. Publish the resulting public CRL through the normal
+human-authenticated Account Manager/controller API while trust is still fresh.
+
+Signing and publication are separate phases with durable private evidence. An
+uncertain publication must read the registry and reconcile the saved signed DER
+digest, number and prior digest before retrying the same public artifact. Reject
+unrelated newer CRLs, changed artifacts/authority or rollback; never sign again
+as a response-loss retry. Exercise a real, request-scoped localhost proxy that
+forwards one authenticated import but drops its HTTP response. The recovered
+registry must contain exactly one new version and one matching import audit;
+idempotent replay must not add either. Retain the deliberately failed report.
+
+Refresh the Service intermediate separately through the actual controller
+workload's existing OpenBao rotation/read capability, saving the returned signed
+public CRL before importing it. Do not regenerate its key or broaden provider
+roles. If provider rotation is uncertain, reconcile the provider's current CRL
+before considering another rotation. Validate signatures, monotonic numbering
+and preserved revocations with the existing registry importer, and test rollback
+denial using the previous signed artifacts.
+
+After both refreshes, verify all managed leaves/state hashes and images remain
+unchanged, real human PKI operations and Device mTLS/MQTT still pass, and repeated
+publication remains idempotent. Record each new expiry and the earliest active
+Device/Service CRL deadline. Registry publication is not an installed-consumer
+receipt; durable CRL adoption, expiry recovery, automatic maintenance, credential
+renewal/revocation and the other existing work groups remain open. No staging,
+Git push, PR or scheduled automation is authorized by this maintenance command.
+
+## Dev Service CRL refresh and response-loss checkpoint
+
+The maintained [CRL runbook](../../scripts/pki-service-dev/CRL.md) and `crl.py`
+separate offline signing, provider rotation, publication and reconciliation.
+Private evidence is under
+`~/.config/rtk_cloud/dev/pki/service-crl-20260908-1/`.
+
+The Root refresh reused the existing encrypted offline key, preserved the prior
+revocation set and published CRL **2**, digest
+`71aff1bf67d81917a6ffe5d94b2d114eed1f7d6077764c41ffb3997b625cb5dc`,
+valid 2026-09-08T14:15:24Z through **2026-09-11T14:15:24Z**. The
+`response-loss/` report deliberately remains failed: the scoped proxy forwarded
+exactly one import, received upstream HTTP 200 and dropped the response; the
+caller observed EOF. `root-publication/` reconciled the already-published signed
+artifact without signing again. Replay left exactly one version row and one
+matching import audit event. The original CRL was rejected with HTTP 409.
+
+The actual controller workload identity rotated/read the existing Service
+intermediate through OpenBao. Its signed CRL **3**, digest
+`021fa25f547dd1a7a69b82260dab6c43f3e658eb2a8bd7195b05f8cf9a0cb6e5`,
+is valid 2026-09-08T14:18:18Z through **2026-09-11T14:18:18Z**.
+The provider selected the monotonic CRL number; registry versions need not be
+contiguous. `intermediate-publication/` passed import, idempotent replay, exactly
+one row/audit and prior-CRL rollback denial. The temporary workload audit token
+was revoked. No issuer key, provider role, workload image or trust policy was
+changed by these publication phases.
+
+Recovery accepts only the saved prior registry record or the exact desired
+signed artifact. Changed issuer/request/artifact evidence and unrelated registry
+updates fail closed. An uncertain provider rotation has a separate read-only
+reconciliation phase that never blindly rotates again. Local validation passed
+**40 Python tests**, including real HTTP response loss, altered-artifact denial,
+concurrent-version rejection and uncertain-provider recovery without another
+rotation. This is pre-expiry maintenance evidence, not expired-management-plane
+recovery or installed-consumer CRL receipt qualification.
+
+The first `verification/` run passed managed identity/image comparison, human API
+and Device mTLS/MQTT, then failed in the final deadline-report query because it
+used API field names for database columns. The maintained query now reads
+`pki_issuers.id`/`domain` and includes active issuers without a CRL so missing
+maintenance evidence cannot disappear from the report. The failed report is
+retained; verification recovery performs no signing, rotation or republication.
+
+The final `verification-recovery/` passed all four checks: image/preflight,
+managed human API and key-mount separation, Device mTLS/MQTT ACL/QoS1, and complete
+refresh acceptance. Both published CRLs still match their saved artifacts. The
+three managed identity state hashes, Account Manager issuance, actual server
+fingerprints, monitored workload images and all Account Manager worker images
+remain unchanged. Evidence files/directories have no group/other access.
+
+The earliest active dev CRL deadline is now **2026-09-11T06:54:13Z** (Device Root);
+Product and Brand expire at 08:27:00Z and 09:28:44Z that day, followed by the
+Service Root/intermediate above. These deadlines still require operator
+maintenance; this checkpoint creates no automatic signer or scheduler.
+
+Active milestone progress is approximately **55%**, with **1/6 work groups
+complete and 5 open**. Four broad milestones remain:
+
+1. Trust consumers/live sessions — active; next prioritize managed Service
+   credential renewal/revocation and actual installed-CRL receipts, followed by
+   remaining callers/hosts, Root-policy adoption, App/relay enforcement and full
+   dev acceptance. Expired-management-plane recovery remains unqualified.
+2. Matched backup/recovery and SDK integration.
+3. Provider/hardware compatibility.
+4. Staging, independent custody and recovery qualification — deferred.
+
+This checkpoint is committed locally. No additional backup push, PR, CI dispatch,
+workload restart, database reset or staging change was performed.
