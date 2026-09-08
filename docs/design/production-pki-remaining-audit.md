@@ -1724,3 +1724,38 @@ Five broader acceptance milestones remain: (1) legacy migration/device replaceme
 (2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
 (4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
 Local commits only; no push, PR, remote CI, deployment or custody operation.
+
+### PKI controller managed server-host milestone (2026-09-08)
+
+Video Cloud `6d76748` completes the fixed **3/3** local adoption checklist:
+(1) share the managed Service server host owner; (2) integrate controller policy,
+listener and lifecycle; (3) validate compatibility/recovery behavior and document
+deployment configuration.
+
+Both certificate issuer and PKI controller now use `internal/pkitrust.ServerHost`.
+The controller's isolated `PKI_HOST_` configuration selects protected per-replica
+state, independent host root/name policy, separate renewal management identity and
+verified remote issuer transport. Initial registered chain/key files seed state
+once. Startup/shutdown own scheduling, lease and transport cleanup; the listener
+uses current credentials and evicts connections on replacement or trust denial.
+Static TLS remains the default; incomplete host policy fails closed. The existing
+controller production-qualification gate and account-manager authorization remain.
+
+Full Go tests passed with disposable PostgreSQL; affected-package race tests,
+`go vet ./...`, formatting and diff checks passed. The shared loader regression
+adds mTLS listener admission, exclusive ownership, worker shutdown, restart without
+seed files and revoked-state startup denial. Existing tests retain lost-response
+renewal replay and active-stream eviction coverage. Controller adapter tests verify
+static mTLS compatibility and reject partial configuration. Signing uses an OpenBao
+HTTP fixture; no actual controller deployment or real-provider run is claimed.
+
+**Current controller-host milestone: 0/3 items unfinished.** Other Service hosts,
+MQTT/OpenBao server-key lifecycle adoption, dynamic root migration, management
+credential renewal and matched recovery-history reconciliation remain. Optional
+remote CRL consumption needs an independently reachable management endpoint at
+startup; local host admission does not emit CRL acknowledgments.
+
+Five broader acceptance milestones remain: (1) legacy migration/device replacement,
+(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
+(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody operation.
