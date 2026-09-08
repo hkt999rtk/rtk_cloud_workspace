@@ -1,0 +1,76 @@
+# Dev managed listener egress adoption
+
+This procedure replaces the two listeners' **outgoing** static management
+credentials. It targets only canonical dev (`lke649805-ctx`) and namespace
+`video-cloud-dev-video-cloud`. It does not touch staging, Device trust, database
+contents, or any private key outside the workload-owned PVC.
+
+Run it only after the successful Service retirement evidence and after building
+the committed Video Cloud source with the canonical dev image builder. The image
+must be a verified linux/amd64 digest under
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:...`. Every phase takes a
+new private output directory. Retain both successful and failed evidence.
+
+```sh
+python3 scripts/pki-service-dev/egress.py --phase certissuer-enroll \
+  --authority ROOT --intermediate INTERMEDIATE --retirement RETIREMENT \
+  --image VERIFIED_DEV_IMAGE --output RUN/certissuer-enroll
+python3 scripts/pki-service-dev/egress.py --phase certissuer-adopt \
+  --authority ROOT --intermediate INTERMEDIATE --retirement RETIREMENT \
+  --enrollment RUN/certissuer-enroll --image VERIFIED_DEV_IMAGE \
+  --output RUN/certissuer-adopt
+python3 scripts/pki-service-dev/egress.py --phase controller-enroll \
+  --authority ROOT --intermediate INTERMEDIATE --retirement RETIREMENT \
+  --certissuer RUN/certissuer-adopt --image VERIFIED_DEV_IMAGE \
+  --output RUN/controller-enroll
+python3 scripts/pki-service-dev/egress.py --phase controller-adopt \
+  --authority ROOT --intermediate INTERMEDIATE --retirement RETIREMENT \
+  --certissuer RUN/certissuer-adopt --enrollment RUN/controller-enroll \
+  --image VERIFIED_DEV_IMAGE --output RUN/controller-adopt
+python3 scripts/pki-service-dev/egress.py --phase verify \
+  --authority ROOT --intermediate INTERMEDIATE --retirement RETIREMENT \
+  --certissuer RUN/certissuer-adopt --controller RUN/controller-adopt \
+  --image VERIFIED_DEV_IMAGE --output RUN/verification
+```
+
+`certissuer-enroll` first records the exact current Deployment, PVC and static
+consumer identity, narrows the issuer's provisioner authorization to exactly
+`^certissuer$`, and runs `/app/serviceidentity-bootstrap service:certissuer`
+inside the existing certissuer Pod. The helper generates the new P-256 key and
+writes `/var/lib/pki-host/identity/client.json` with mode 0600 in the existing
+PVC. It reports only the subject and public certificate fingerprint. It cannot
+print or export a private key. The static credential is used only for this
+recorded initial request; the policy is then narrowed to `^pki-controller$` for
+the next phase.
+
+`certissuer-adopt` switches only certissuer to the supplied image. It sets the
+managed client state path and continues to use the independently pinned issuer
+origin, controller URL, manifests and public management CA. It removes the
+static management certificate/key environment values and the host-renewal
+certificate/key environment values, replaces the Secret mount with a ConfigMap
+containing only the public management CA, and removes the static certissuer CA
+from controller inbound trust. It permits only the managed Service identities
+needed during the staggered transition. The runner requires the client state to
+survive restart and verifies that no runtime static credential path remains.
+
+`controller-enroll` repeats the recorded initial request for
+`service:pki-controller`, using only its own still-mounted static credential and
+the exact `^pki-controller$` provisioner policy. `controller-adopt` performs its
+equivalent dynamic switch, strips controller's static CA from certissuer inbound
+trust, sets the provisioner policy to `^$`, and deletes each legacy consumer
+Secret only after neither Deployment mounts it. It does not delete a Secret if
+an owner, UID, resource version, volume, environment variable or CA bundle has
+drifted.
+
+The final verification requires both managed client state files, their distinct
+server/client public leaf fingerprints, matching unrevoked registry rows, scoped
+persisted Deployment templates, no legacy Secret mounts or static CA blocks, and
+normal managed API plus Device mTLS/MQTT ACL/QoS1 traffic. A fresh signed Service
+CRL and new dynamic receipts are a later, separately recorded acceptance phase;
+this procedure does not claim them merely because historical receipt rows exist.
+
+Do not use `--phase` again to work around an uncertain mutation. Inspect the
+saved live object, state fingerprint, registry row and report first. The runner
+never creates a second client state, regenerates a key, broadens a provisioner
+policy, restores the legacy Secret, changes staging, resets the database, pushes
+Git, opens a PR or dispatches CI.
