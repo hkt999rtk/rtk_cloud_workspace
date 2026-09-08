@@ -53,6 +53,29 @@ class CRLTests(unittest.TestCase):
         finally:
             thread.join(5); server.server_close()
 
+    def test_publication_uses_security_custodian_for_every_import(self):
+        runner = object.__new__(c.CRLRun)
+        identifier = '00000000-0000-0000-0000-000000000001'
+        root = {'issuer_id': identifier, 'kind': 'root'}
+        previous = {'issuer_id': identifier, 'crl_number': '1', 'crl_sha256': 'a' * 64, 'crl_pem': 'old'}
+        desired = {'issuer_id': identifier, 'crl_number': '2', 'crl_sha256': 'b' * 64, 'crl_pem': 'new'}
+        runner.hierarchy = Mock(return_value=(root, {}))
+        runner.args = Mock(source='source')
+        runner.artifact = Mock(return_value=(previous, desired))
+        runner.sql = Mock(return_value='1|1')
+        runner.check = Mock()
+        runner.wait_receipts = Mock(return_value=c.LISTENERS)
+        calls = []
+        def api(path, data=None, expected=200, role='requester'):
+            calls.append((data, expected, role))
+            return previous if data is None and len(calls) == 1 else desired
+        runner.api = api
+        with patch.object(c.Path, 'is_file', return_value=True), patch.object(c.m, 'read', return_value=root):
+            runner.publish()
+        writes = [call for call in calls if call[0] is not None]
+        self.assertEqual([call[2] for call in writes], ['custodian', 'custodian', 'custodian'])
+        runner.wait_receipts.assert_called_once_with(identifier, 'b' * 64, c.LISTENERS, 'crl')
+
     def test_altered_signed_manifest_fails_before_publication(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)
@@ -133,6 +156,50 @@ class CRLTests(unittest.TestCase):
             self.assertEqual(runner.state_digest('certissuer'), 'server')
             host.assert_called_once_with(runner, 'certissuer'); client.assert_not_called()
             self.assertEqual(runner.state_digest(), 'client')
+
+    def test_crl_snapshot_checks_host_without_legacy_client_replay(self):
+        runner = object.__new__(c.CRLRun)
+        runner.verify_identity = Mock()
+        runner.prepared = Mock(side_effect=lambda name: ('source', 'ref', {'certificate_pem': name}))
+        runner.check_host_identity = Mock()
+        runner.state_digest = Mock(side_effect=lambda name='account-manager': name + '-state')
+        runner.issuance = Mock(return_value={'fingerprint': 'managed'})
+        runner.report = {'checks': {'preflight': {'evidence': {'images': {'all': 'fixed'}}}}}
+        runner.worker_images = Mock(return_value={'worker': 'fixed'})
+        result = runner.snapshot()
+        self.assertEqual(runner.check_host_identity.call_count, 2)
+        self.assertEqual(result['states']['account-manager'], 'account-manager-state')
+
+    def test_managed_listener_runtime_requires_dynamic_identity_without_legacy_mount(self):
+        def owner(name):
+            selected = c.listener_profile(name)
+            return {'spec': {'template': {'spec': {
+                'containers': [{'name': name, 'image': 'image@sha256:' + 'a' * 64, 'env': [
+                    {'name': selected['prefix'] + '_IDENTITY_STATE', 'value': c.LISTENER_CLIENT_STATE},
+                    {'name': selected['prefix'] + '_MANAGEMENT_CA', 'value': '/managed/ca.crt'}],
+                    'volumeMounts': [{'name': 'service-managed-egress-ca'}]}],
+                'volumes': [{'name': 'service-managed-egress-ca', 'configMap': {'name': 'public-ca'}}]}}}}
+        for name in c.LISTENERS:
+            current = owner(name)
+            self.assertEqual(c.managed_listener_runtime(current, name)['subject'], 'service:' + name)
+            selected = c.listener_profile(name)
+            private = current['spec']['template']['spec']['containers'][0]
+            private['env'].append({'name': selected['prefix'] + '_MANAGEMENT_KEY', 'value': '/legacy/key'})
+            with self.assertRaisesRegex(RuntimeError, 'exclusively using managed egress'):
+                c.managed_listener_runtime(current, name)
+            current = owner(name)
+            current['spec']['template']['spec']['volumes'].append(
+                {'name': 'old', 'secret': {'secretName': selected['secret']}})
+            with self.assertRaisesRegex(RuntimeError, 'legacy listener credential'):
+                c.managed_listener_runtime(current, name)
+
+    def test_fresh_acknowledgment_must_follow_signed_refresh(self):
+        record = {'this_update': '2026-09-09T01:00:00Z'}
+        self.assertEqual(c.fresh_acknowledgment('2026-09-09T01:00:01Z', record),
+                         c.m.parse_time('2026-09-09T01:00:01Z'))
+        for stamp in ('', '2026-09-09T00:59:59Z'):
+            with self.assertRaises(RuntimeError):
+                c.fresh_acknowledgment(stamp, record)
 
 
 if __name__ == '__main__': unittest.main()

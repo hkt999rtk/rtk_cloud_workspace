@@ -1161,8 +1161,7 @@ settings must preserve that policy and remove obsolete static key paths; renderi
 the saved deployment must reproduce the live template. Bootstrap Secret deletion,
 residual legacy trust removal, fresh CRL receipts, actual managed renewal and
 negative credential tests remain separate acceptance checks. Deployment readiness
-alone does not close them. Current milestone estimate remains approximately 70%,
-with 1/6 work groups complete and 5 open, pending this dev validation.
+alone does not close them.
 
 ### Managed listener egress adoption verified in dev (2026-09-09)
 
@@ -1210,7 +1209,57 @@ key comparison; old-credential rejection plus removal of residual legacy trust
 and the two unmounted Secrets; and restart/failure regression after cleanup.
 Historical CRL 7 receipts do not prove the new dynamic transport.
 
-Current milestone estimate: **72%; 1/6 work groups complete, 5 open**. Four broad
+The maintained CRL tool now includes `qualify-listeners`. It accepts only exact,
+successful Root and Intermediate publication evidence plus both managed-adoption
+reports. For each listener it verifies a pinned ready Pod, managed-only egress,
+the current unrevoked client registry row, the newly acknowledged digests and the
+matching PVC-resident CRL states. Receipt timestamps must follow the signed
+refresh, and the two listener client public keys must differ. This turns the next
+live refresh into durable transport evidence rather than inferring success from
+an old acknowledgment row.
+
+### Fresh managed-listener CRL receipts verified in dev (2026-09-09)
+
+Private evidence is retained under
+`~/.config/rtk_cloud/dev/pki/service-crl-20260909-managed-egress-1/`. The final
+successful paths are `root-recovery-2`, `root-publication-recovery`, `intermediate`,
+`intermediate-publication-recovery`, `listener-qualification` and `verification`.
+Earlier failed reports remain retained and do not count as passing evidence.
+
+The Service Root CRL advanced to number 3 with digest
+`bed5d9c106b80a25df754de838bcc335dc0e1c354325bc748a34a09fbb183503`;
+the Service Intermediate CRL advanced to number 9 with digest
+`7c996b1cccae16a03a237995be54f284a3b88fbf3ead2881678aa93fe0f24137`.
+Both preserve their prior revocation entries and expire after 2026-09-11T23:24Z.
+Publication replay, single row/audit identity and rollback denial passed.
+
+Certissuer and PKI controller each acknowledged both new digests after their
+signed refresh times. All four installed states match the registry records and
+retain private directory/file modes. The listener templates contain no static
+client key or consumer Secret mount; their current `service:*` client leaves are
+unrevoked registry members with distinct public keys. These receipts therefore
+qualify the managed transports rather than the retired static credentials.
+The complete CRL maintenance audit and Device direct mTLS plus MQTT ACL/QoS1
+roundtrip passed with unchanged workload identities, images and workers.
+
+Two maintenance defects were fixed and retained as regression tests. Host
+inspection no longer replays a server issuance with retired static client keys;
+it verifies the registry-backed server leaf over TLS without presenting any
+client credential. CRL imports use the security custodian, then wait for required
+listener receipts before authenticated replay: the controller intentionally
+fails closed while its installed CRL floor trails the registry. The failed Root
+preparations changed nothing, and the first Intermediate publication imported
+the CRL successfully before its immediate replay was denied during that bounded
+propagation window.
+
+This completes the **fresh dynamic CRL receipt** item. Remaining listener-egress
+acceptance is actual client and host renewal/revocation, server/client public-key
+separation evidence, rejection of both old credentials, residual legacy trust
+and Secret cleanup, and restart/failure regression after cleanup. The earliest
+active dev CRL remains the Device Root at **2026-09-11T06:54:13Z**; its maintenance
+belongs to the already completed Device lifecycle operations.
+
+Current milestone estimate: **75%; 1/6 work groups complete, 5 open**. Four broad
 milestones remain: (1) trust consumers/live sessions, active; (2) matched
 backup/recovery and SDK integration; (3) provider/hardware compatibility;
 (4) staging/independent custody/recovery qualification, deferred. No Git push,

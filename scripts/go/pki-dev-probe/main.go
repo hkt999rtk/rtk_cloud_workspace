@@ -98,6 +98,9 @@ func run(args []string) error {
 	if args[0] == "tls" || args[0] == "tls-denial" {
 		return runTLS(args[1:], args[0] == "tls-denial")
 	}
+	if args[0] == "tls-peer" {
+		return runTLSPeer(args[1:])
+	}
 	if len(args) == 2 && args[0] == "service-state" {
 		return serviceState(args[1], os.Stdout)
 	}
@@ -108,6 +111,35 @@ func run(args []string) error {
 		return fmt.Errorf("unknown probe mode")
 	}
 	return runMQTT()
+}
+
+func runTLSPeer(args []string) error {
+	if len(args) != 3 {
+		return fmt.Errorf("TLS peer probe requires CA, host and local port")
+	}
+	ca, err := os.ReadFile(args[0])
+	if err != nil {
+		return fmt.Errorf("read TLS CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return fmt.Errorf("invalid TLS CA")
+	}
+	observed := errors.New("verified TLS peer observed")
+	peer := ""
+	_, err = tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort("127.0.0.1", args[2]),
+		&tls.Config{RootCAs: roots, ServerName: args[1], MinVersion: tls.VersionTLS12,
+			VerifyConnection: func(state tls.ConnectionState) error {
+				if len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
+					return fmt.Errorf("verified TLS peer chain unavailable")
+				}
+				peer = fmt.Sprintf("%x", sha256.Sum256(state.PeerCertificates[0].Raw))
+				return observed
+			}})
+	if !errors.Is(err, observed) || peer == "" {
+		return fmt.Errorf("verified TLS peer unavailable: %w", err)
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]string{"peer_sha256": peer})
 }
 func runMQTT() error {
 	var c struct{ CA, Host, Port, Username, Password, ClientID, Topic, DeliveryTopic, Payload, Mode string }

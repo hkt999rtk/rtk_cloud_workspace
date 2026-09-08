@@ -106,6 +106,31 @@ A fresh signed Service
 CRL and new dynamic receipts are a later, separately recorded acceptance phase;
 this procedure does not claim them merely because historical receipt rows exist.
 
+After publishing freshly signed Service Root and Intermediate CRLs with `crl.py`,
+bind those exact publication reports and both successful adoption reports:
+
+```sh
+python3 scripts/pki-service-dev/crl.py --phase qualify-listeners \
+  --authority ROOT --intermediate INTERMEDIATE --prepared HOST_PREPARATION \
+  --root-publication ROOT_PUBLICATION \
+  --intermediate-publication INTERMEDIATE_PUBLICATION \
+  --egress-certissuer CERTISSUER_ADOPTION \
+  --egress-controller CONTROLLER_ADOPTION --output RUN/listener-qualification
+```
+
+Qualification requires the exact current CRL records, managed-only listener
+templates, pinned ready Pods, current unrevoked managed client rows, all four new
+receipt rows, and matching private CRL state on both listener PVCs. Each receipt
+must postdate the signed refresh. A new digest plus absence of any mounted static
+client credential ties the acknowledgment to the managed transport; historical
+receipt replay cannot satisfy this phase.
+
+CRL publication waits for both required listener receipts before testing an
+authenticated replay or rollback. The controller deliberately rejects management
+traffic while its installed CRL floor trails the registry; an immediate replay
+inside that bounded propagation window is expected to fail closed and is not an
+import failure.
+
 `resume-controller-adopt` uses the original failed `controller-adopt` directory
 and successful controller enrollment evidence. Recovery requires exact live
 Deployment/PVC ownership, the saved template (including its old image), immutable

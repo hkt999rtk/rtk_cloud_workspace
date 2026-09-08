@@ -76,6 +76,41 @@ func TestTLSProbeReportsActuallyServedCertificate(t *testing.T) {
 	}
 }
 
+func TestTLSPeerProbeVerifiesServerWithoutClientCredential(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.StartTLS()
+	defer server.Close()
+	server.TLS.ClientAuth = tls.RequireAnyClientCert
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.pem")
+	pair := server.TLS.Certificates[0]
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pair.Certificate[0]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.CreateTemp(dir, "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	before := os.Stdout
+	os.Stdout = output
+	defer func() { os.Stdout = before }()
+	if err = runTLSPeer([]string{caPath, "example.com", port}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = output.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]string
+	if err = json.NewDecoder(output).Decode(&result); err != nil || result["peer_sha256"] != fmt.Sprintf("%x", sha256.Sum256(pair.Certificate[0])) {
+		t.Fatalf("verified peer differs: %v %v", result, err)
+	}
+}
+
 func TestCertificateDenialRequiresRemoteCertificateAlert(t *testing.T) {
 	for _, tc := range []struct {
 		err    error

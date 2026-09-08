@@ -14,12 +14,52 @@ import re
 import signal
 import sys
 import threading
+import time
 import uuid
 
 spec = importlib.util.spec_from_file_location('managed_renewal', Path(__file__).with_name('renewal.py'))
 r = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(r)
 h, m = r.h, r.m
+LISTENERS = ['certissuer', 'pki-controller']
+LISTENER_CRL_STATE = '/var/lib/pki-host/identity/crls'
+LISTENER_CLIENT_STATE = '/var/lib/pki-host/identity/client.json'
+
+
+def listener_profile(name):
+    m.require(name in LISTENERS, 'unknown managed listener')
+    prefix = 'CERT_ISSUER_SERVICE_CLIENT' if name == 'certissuer' else 'PKI_SERVICE_CLIENT'
+    host = 'CERT_ISSUER_HOST_RENEWAL' if name == 'certissuer' else 'PKI_HOST_RENEWAL'
+    return {'subject': 'service:' + name, 'prefix': prefix, 'host_prefix': host,
+            'secret': 'pki-service-consumer-' + name}
+
+
+def managed_listener_runtime(owner, name):
+    selected = listener_profile(name)
+    containers = owner['spec']['template']['spec']['containers']
+    m.require(len(containers) == 1 and containers[0]['name'] == name, 'listener container changed')
+    container = containers[0]
+    values = {item['name']: item.get('value') for item in container.get('env', [])}
+    m.require(len(values) == len(container.get('env', [])), 'duplicate listener environment')
+    m.require(values.get(selected['prefix'] + '_IDENTITY_STATE') == LISTENER_CLIENT_STATE
+              and not values.get(selected['prefix'] + '_MANAGEMENT_CERT')
+              and not values.get(selected['prefix'] + '_MANAGEMENT_KEY')
+              and not values.get(selected['host_prefix'] + '_CLIENT_CERT')
+              and not values.get(selected['host_prefix'] + '_CLIENT_KEY'),
+              'listener is not exclusively using managed egress')
+    mounts = {item['name']: item for item in container.get('volumeMounts', [])}
+    m.require(selected['secret'] not in [item.get('secret', {}).get('secretName') for item in owner['spec']['template']['spec'].get('volumes', [])]
+              and 'service-consumer' not in mounts and 'service-managed-egress-ca' in mounts,
+              'legacy listener credential remains mounted')
+    return {'image': container['image'], 'subject': selected['subject']}
+
+
+def fresh_acknowledgment(stamp, record):
+    m.require(stamp, 'missing listener CRL acknowledgment')
+    acknowledged = m.parse_time(stamp)
+    this_update = m.parse_time(record['this_update'])
+    m.require(acknowledged >= this_update, 'listener CRL acknowledgment predates signed refresh')
+    return acknowledged
 
 
 def der_digest(pem):
@@ -101,10 +141,26 @@ class CRLRun(r.RenewalRun):
         self.verify_identity()
         for name in h.h.h.SERVICE_CONSUMERS:
             source, _, issued = self.prepared(name)
-            self.check_host(name, source, issued)
+            self.check_host_identity(name, issued)
         return {'states': {name: self.state_digest(name) for name in ['account-manager'] + h.h.h.SERVICE_CONSUMERS},
                 'issuance': self.issuance(), 'images': self.report['checks']['preflight']['evidence']['images'],
                 'workers': self.worker_images()}
+
+    def check_host_identity(self, name, issued):
+        m.require(name in LISTENERS, 'unknown Service host')
+        host = name + '.' + h.NS + '.svc'
+        port = 9443 if name == 'certissuer' else 18446
+        self.forward(name + '-peer', h.NS, name, port)
+        leaf = issued['certificate_pem']
+        fingerprint = m.digest(base64.b64decode(''.join(leaf.strip().splitlines()[1:-1])))
+        peer = json.loads(m.command([self.probe, 'tls-peer', self.output / 'root.pem', host,
+                                     self.ports[name + '-peer'][0]]))
+        m.require(peer['peer_sha256'] == fingerprint, 'listener serves another registered certificate')
+        rows = self.sql("SELECT count(*) FROM pki_server_issuances WHERE environment='dev' AND domain='service' "
+                        "AND fingerprint='" + fingerprint + "' AND status='succeeded' AND revoked_at IS NULL;")
+        m.require(rows == '1', 'served listener certificate lacks current registry admission')
+        self.save(name + '-served.json', {'certificate_sha256': fingerprint,
+                  'state_sha256': self.state_digest(name), 'client_credential_used': False})
 
     def prepare_root(self):
         root, _ = self.hierarchy()
@@ -173,20 +229,24 @@ class CRLRun(r.RenewalRun):
         if fault:
             m.require(state == 'pending', 'response-loss experiment requires unpublished artifact')
             result = drop_response(self.ports['am'][0], '/v1/platform/pki' + path,
-                                   json.dumps({'crl_pem': desired['crl_pem']}).encode(), self.token())
+                                   json.dumps({'crl_pem': desired['crl_pem']}).encode(), self.token('custodian'))
             self.save('response-loss.json', result)
             m.require(result == {'forwarded': 1, 'response_lost': True, 'upstream_status': 200}, 'publication response loss not established; reconcile')
             raise RuntimeError('intentional publication response loss; reconcile the saved signed artifact')
         if state == 'pending':
-            m.require(self.api(path, {'crl_pem': desired['crl_pem']}) == desired, 'published CRL differs')
-        m.require(self.api(path, {'crl_pem': desired['crl_pem']}) == desired, 'idempotent import changed CRL')
+            m.require(self.api(path, {'crl_pem': desired['crl_pem']}, role='custodian') == desired, 'published CRL differs')
+        # The controller intentionally fails management admission while its
+        # listener CRL floor trails the registry. Wait for both required
+        # listeners before exercising authenticated replay and rollback.
+        self.wait_receipts(issuer['issuer_id'], desired['crl_sha256'], LISTENERS, 'crl')
+        m.require(self.api(path, {'crl_pem': desired['crl_pem']}, role='custodian') == desired, 'idempotent import changed CRL')
         m.require(self.api(path) == desired, 'current CRL changed')
         identifier, digest = str(uuid.UUID(issuer['issuer_id'])), desired['crl_sha256']
         m.require(re.fullmatch('[0-9a-f]{64}', digest), 'invalid digest')
         counts = self.sql("SELECT (SELECT count(*) FROM pki_crls WHERE issuer_id='" + identifier + "' AND digest='" + digest + "'),"
                           "(SELECT count(*) FROM pki_audit WHERE issuer_id='" + identifier + "' AND event='crl_imported:" + digest + "');")
         m.require(counts == '1|1', 'duplicate/missing CRL or import audit')
-        self.api(path, {'crl_pem': previous['crl_pem']}, expected=409)
+        self.api(path, {'crl_pem': previous['crl_pem']}, expected=409, role='custodian')
         m.require(self.api(path) == desired, 'rollback denial changed current CRL')
         self.check('publication_reconciled', {'issuer_id': identifier, 'initial_state': state, 'crl': desired,
                                             'rows': 1, 'import_audits': 1, 'rollback_denied': True, 'resigned': False})
@@ -244,20 +304,100 @@ class CRLRun(r.RenewalRun):
         self.check('refresh_acceptance', {'unchanged_identity_and_images': True, 'earliest_deadline': rows[0],
                                          'installed_crl_receipts': 'unqualified', 'post_expiry_recovery': 'unqualified'})
 
+    def qualify_listeners(self):
+        root, intermediate = self.hierarchy()
+        records = []
+        for issuer, directory in zip((root, intermediate), (self.args.root_publication, self.args.intermediate_publication)):
+            source = Path(directory)
+            m.require(m.read(source / 'report.json')['status'] == 'passed', 'successful fresh CRL publication required')
+            record = m.read(source / 'desired.json')
+            m.require(record['issuer_id'] == issuer['issuer_id']
+                      and self.api('/issuers/' + issuer['issuer_id'] + '/crl') == record,
+                      'fresh CRL publication changed before listener qualification')
+            records.append((issuer, record))
+        evidence = {'certissuer': self.args.egress_certissuer, 'pki-controller': self.args.egress_controller}
+        identities = {}
+        for name in LISTENERS:
+            source = Path(evidence[name])
+            report = m.read(source / 'report.json')
+            expected_phase = 'resume-' + ('controller' if name == 'pki-controller' else name) + '-adopt'
+            m.require(report['status'] == 'passed' and report['phase'] in (expected_phase, expected_phase[7:]),
+                      'successful matching managed listener adoption required')
+            owner = self.obj('deployment', name)
+            runtime = managed_listener_runtime(owner, name)
+            selector = ','.join(key + '=' + value for key, value in owner['spec']['selector']['matchLabels'].items())
+            pods = json.loads(self.kube(['-n', h.NS, 'get', 'pods', '-l', selector, '-o', 'json']))['items']
+            pods = [pod for pod in pods if not pod['metadata'].get('deletionTimestamp')]
+            m.require(len(pods) == 1, 'unexpected managed listener owner')
+            statuses = {item['name']: item for item in pods[0]['status'].get('containerStatuses', [])}
+            status = statuses.get(name, {})
+            m.require(status.get('ready') and status.get('imageID', '').endswith(runtime['image'].split('@')[-1]),
+                      'managed listener image/readiness differs')
+            identity = json.loads(self.kube(['-n', h.NS, 'exec', 'deployment/' + name, '-c', name, '--',
+                                              '/app/serviceidentity-bootstrap', 'inspect', LISTENER_CLIENT_STATE,
+                                              runtime['subject'], root['certificate_fingerprint_sha256']]))
+            rows = [json.loads(line) for line in self.sql(
+                "SELECT row_to_json(t) FROM (SELECT issuer_id,subject,status,fingerprint,revoked_at "
+                "FROM pki_service_client_issuances WHERE environment='dev' AND subject='" + runtime['subject'] + "' "
+                "AND fingerprint='" + identity['fingerprint'] + "') t;").splitlines()]
+            m.require(not identity['pending'] and identity['subject'] == runtime['subject']
+                      and identity['root_sha256'] == root['certificate_fingerprint_sha256']
+                      and len(rows) == 1 and rows[0]['issuer_id'] == intermediate['issuer_id']
+                      and rows[0]['status'] == 'succeeded' and rows[0]['revoked_at'] is None,
+                      'managed listener client lacks current registry admission')
+            receipts = []
+            for issuer, record in records:
+                deadline = time.monotonic() + 100
+                stamp = ''
+                while not stamp:
+                    stamp = self.sql("SELECT acknowledged_at FROM pki_crl_acknowledgments WHERE issuer_id='" +
+                                     issuer['issuer_id'] + "' AND digest='" + record['crl_sha256'] +
+                                     "' AND consumer_id='" + name + "';")
+                    if stamp:
+                        break
+                    m.require(time.monotonic() < deadline, 'fresh managed listener receipt deadline')
+                    time.sleep(3)
+                acknowledged = fresh_acknowledgment(stamp, record)
+                state_path = LISTENER_CRL_STATE + '/' + issuer['issuer_id'] + '.json'
+                state = json.loads(self.kube(['-n', h.NS, 'exec', 'deployment/' + name, '-c', name, '--', 'cat', state_path]))
+                m.require(state['issuer_fingerprint'] == issuer['certificate_fingerprint_sha256']
+                          and state['crl'] == record, 'installed listener CRL differs from fresh receipt')
+                modes = self.kube(['-n', h.NS, 'exec', 'deployment/' + name, '-c', name, '--',
+                                   'stat', '-c', '%a', LISTENER_CRL_STATE, state_path]).split()
+                m.require(modes in (['700', '600'], ['2700', '600']), 'listener CRL state permissions differ')
+                self.save(name + '-' + issuer['issuer_id'] + '-state.json', state)
+                receipts.append({'issuer_id': issuer['issuer_id'], 'crl_sha256': record['crl_sha256'],
+                                 'acknowledged_at': m.stamp(acknowledged)})
+            identities[name] = identity
+            self.check(name + '_managed_crl_receipts', {'pod_uid': pods[0]['metadata']['uid'],
+                       'subject': identity['subject'], 'client_fingerprint': identity['fingerprint'],
+                       'receipts': receipts, 'static_credential_mounted': False})
+        m.require(identities['certissuer']['public_key_sha256'] != identities['pki-controller']['public_key_sha256'],
+                  'managed listener client keys unexpectedly match')
+        self.device_baseline()
+        self.check('managed_listener_crl_qualification', {'listeners': LISTENERS, 'issuers': [item[0]['issuer_id'] for item in records],
+                   'fresh_receipts': 4, 'distinct_listener_client_keys': True,
+                   'post_expiry_recovery': 'unqualified'})
+
 
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', required=True, choices=['prepare-root', 'lose-response', 'publish', 'prepare-intermediate', 'resume-intermediate', 'verify'])
+    parser.add_argument('--phase', required=True, choices=['prepare-root', 'lose-response', 'publish', 'prepare-intermediate', 'resume-intermediate', 'verify', 'qualify-listeners'])
     parser.add_argument('--config-root', default=str(Path.home() / '.config/rtk_cloud'))
     for name in ('authority', 'intermediate', 'prepared', 'output'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--source')
     parser.add_argument('--root-publication')
     parser.add_argument('--intermediate-publication')
+    parser.add_argument('--egress-certissuer')
+    parser.add_argument('--egress-controller')
     args = parser.parse_args()
-    m.require(args.phase in ('prepare-root', 'prepare-intermediate') or args.source, 'saved phase evidence required')
-    m.require(args.phase != 'verify' or (args.root_publication and args.intermediate_publication), 'both publication reports required')
+    m.require(args.phase in ('prepare-root', 'prepare-intermediate', 'qualify-listeners') or args.source,
+              'saved phase evidence required')
+    m.require(args.phase not in ('verify', 'qualify-listeners') or (args.root_publication and args.intermediate_publication), 'both publication reports required')
+    m.require(args.phase != 'qualify-listeners' or (args.egress_certissuer and args.egress_controller),
+              'both managed listener adoption reports required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -268,7 +408,7 @@ def main():
         runner.preflight()
         {'prepare-root': runner.prepare_root, 'lose-response': lambda: runner.publish(True), 'publish': runner.publish,
          'prepare-intermediate': runner.prepare_intermediate, 'resume-intermediate': lambda: runner.prepare_intermediate(True),
-         'verify': runner.verify}[args.phase]()
+         'verify': runner.verify, 'qualify-listeners': runner.qualify_listeners}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'; runner.report['failure'] = str(error)
