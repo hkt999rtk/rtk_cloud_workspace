@@ -55,6 +55,29 @@ absent. No governed import or replacement operation can be executed yet.
 
 ## Ordered prerequisites before canary execution
 
+### Residual and entitlement binding follow-up
+
+Read-only PostgreSQL aggregation confirmed the 22 successful source issuance
+records outside the candidate set have **no entitlement row**, rather than an
+inactive entitlement or an active entitlement pointing to a different record.
+All 204 existing entitlements are active. All 204 certificate serials match the
+corresponding successful issuance record.
+
+The two stored fingerprint fields use different representations: factory
+enrollment stores SHA-256 of the returned certificate PEM text, while issuance
+stores the DER certificate fingerprint. Direct string comparison therefore
+differs for all 204 rows, including after case/colon normalization. A read-only
+SHA-256 calculation over the exact persisted PEM matched every entitlement hash
+(204/204); source inspection of `internal/factoryenroll/service.go` confirms
+`sha256HexString(issuerResp.CertificatePEM)`. This is an explained representation
+difference, not evidence of 204 identity substitutions. No rows were rewritten.
+
+Keep the 22 records in residual accounting and excluded from canary selection
+unless their entitlement/governance history is resolved. The 204 remain candidates,
+not verified eligible devices: complete trusted chains, fresh signed CRLs and
+target hierarchy/governed import are still required. No unseal or custody action
+was performed by this follow-up; the explicit unseal approval remains pending.
+
 ### Follow-up: provider availability and local rollout preparation
 
 A subsequent 2026-09-08 read-only attempt to forward the OpenBao Service for
