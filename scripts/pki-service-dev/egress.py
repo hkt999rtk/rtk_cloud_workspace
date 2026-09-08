@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import re
 import signal
-import subprocess
 import sys
 import uuid
 
@@ -114,8 +113,6 @@ def legacy_inbound_ca_path(base, name):
 class EgressRun(c.c.CRLRun):
     def __init__(self, args):
         super().__init__(args)
-        self.probe_pods = {}
-        self.remote_probe = '/tmp/pki-egress-state-' + uuid.uuid4().hex
         self.report['egress_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.report['foundation_scope'] = 'Dev managed listener outgoing Service credentials'
 
@@ -149,38 +146,11 @@ class EgressRun(c.c.CRLRun):
         return [json.loads(line) for line in raw.splitlines() if line]
 
     def inspect_client(self, name, root):
-        owner = self.deployment(name)
-        selector = ','.join(k + '=' + v for k, v in owner['spec']['selector']['matchLabels'].items())
-        pods = [p for p in json.loads(self.kube(['-n', NS, 'get', 'pods', '-l', selector, '-o', 'json']))['items']
-                if not p['metadata'].get('deletionTimestamp')]
-        m.require(len(pods) == 1, 'unexpected listener pod count')
-        pod = pods[0]
-        uid, podname = pod['metadata']['uid'], pod['metadata']['name']
-        if uid not in self.probe_pods:
-            binary = self.output / 'pki-dev-probe-linux'
-            if not binary.exists():
-                result = subprocess.run(['go', 'build', '-o', str(binary), './pki-dev-probe'], cwd=m.WORKSPACE / 'scripts/go',
-                                        env=dict(os.environ, GOOS='linux', GOARCH='amd64', CGO_ENABLED='0', GOWORK='off'),
-                                        capture_output=True, timeout=180)
-                m.require(result.returncode == 0, 'public egress inspection probe build failed')
-            self.kube(['-n', NS, 'exec', '-i', podname, '-c', name, '--', 'sh', '-c',
-                       'umask 077; base64 -d > ' + self.remote_probe + ' && chmod 700 ' + self.remote_probe],
-                      base64.b64encode(binary.read_bytes()).decode())
-            self.probe_pods[uid] = (podname, name)
-        result = json.loads(self.kube(['-n', NS, 'exec', podname, '-c', name, '--', self.remote_probe, 'service-state', STATE]))
+        result = json.loads(self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', name, '--',
+                                       '/app/serviceidentity-bootstrap', 'inspect', STATE, profile(name)['subject'], root['certificate_fingerprint_sha256']]))
         m.require(result['subject'] == profile(name)['subject'] and result['root_sha256'] == root['certificate_fingerprint_sha256']
                   and not result['pending'], 'managed client state differs')
         return result
-
-    def close(self):
-        for uid, record in self.probe_pods.items():
-            name, container = record
-            try:
-                if self.obj('pod', name)['metadata']['uid'] == uid:
-                    self.kube(['-n', NS, 'exec', name, '-c', container, '--', 'rm', '-f', self.remote_probe])
-            except RuntimeError:
-                pass
-        super().close()
 
     def enroll(self, name):
         root, issuer = self.selected()

@@ -1137,3 +1137,10 @@ setting is present; partial configuration fails closed. Existing static transpor
 remains the explicitly supported compatibility path only until this migration is
 qualified. No staging change, external key copy or change to Device trust is part
 of this dev-only contract.
+
+The enrollment helper also has an inspection mode that runs inside the identity
+owner and emits only public subject, certificate fingerprint, public-key hash,
+Root pin, pending flag and state hash. It never serializes the key or state file.
+This supports hardened listener containers whose read-only root filesystem cannot
+accept a copied diagnostic binary; copying private state out is not an approved
+recovery mechanism.
