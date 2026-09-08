@@ -117,3 +117,14 @@ Add broker/other consumer identities and required acknowledgments as those runti
 join the rehearsal. Account Manager is a human-request proxy and never stands in
 for an installed runtime. Issuers must remain inactive until actual installation
 acknowledgments exist. No acknowledgment is sent by credential preparation.
+
+## Dedicated dev API TLS server
+
+`pki-dev-prepare --environment dev --server video-cloud-api-pki` prepares separate
+server-only transport material in `dev/pki/servers/video-cloud-api-pki`. Its DNS
+names are the dev Service FQDN and cluster-local FQDN. The existing bundle and
+consumer keys are preserved; retries validate and reuse the protected files.
+This server certificate is independent of Device roots and management clients.
+A separate API workload avoids redirecting existing plaintext Service traffic.
+The controller renderer's `--consumer-pods video-cloud-api-pki` binds the existing
+`video-cloud-api` management consumer to that actual pod label for network ingress.

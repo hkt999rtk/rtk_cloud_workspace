@@ -26,10 +26,20 @@ func validPKIDevConsumer(name string) bool {
 // public CA explicitly; existing server, Account Manager and JWT keys stay intact.
 // This is bootstrap transport, not Device/Brand/Product authority.
 func preparePKIDevConsumer(store secretStore, name string, now time.Time) (string, error) {
-	if store.Environment != "dev" || !validPKIDevConsumer(name) {
+	return preparePKIDevTransport(store, name, now, false)
+}
+
+func preparePKIDevTransport(store secretStore, name string, now time.Time, server bool) (string, error) {
+	valid := validPKIDevConsumer(name)
+	category := "consumers"
+	if server {
+		valid = name == "video-cloud-api-pki"
+		category = "servers"
+	}
+	if store.Environment != "dev" || !valid {
 		return "", errors.New("known dev consumer required")
 	}
-	parent := filepath.Join(store.Root, "pki", "consumers")
+	parent := filepath.Join(store.Root, "pki", category)
 	for _, dir := range []string{store.ConfigRoot, store.Root, filepath.Join(store.Root, "pki"), parent} {
 		if err := ensurePrivateDirectory(dir); err != nil {
 			return "", err
@@ -41,7 +51,7 @@ func preparePKIDevConsumer(store secretStore, name string, now time.Time) (strin
 	}
 	defer os.Remove(dir + ".lock")
 	if _, err := os.Lstat(dir); err == nil {
-		return dir, validatePKIDevConsumer(dir, name, now)
+		return dir, validatePKIDevTransport(dir, name, now, server)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -60,6 +70,11 @@ func preparePKIDevConsumer(store secretStore, name string, now time.Time) (strin
 	leaf := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: name},
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(90 * 24 * time.Hour),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
+	if server {
+		leaf.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
+		host := name + ".video-cloud-dev-video-cloud.svc"
+		leaf.DNSNames = []string{host, host + ".cluster.local"}
+	}
 	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, key.Public(), caKey)
 	if err != nil {
 		return "", err
@@ -76,7 +91,7 @@ func preparePKIDevConsumer(store secretStore, name string, now time.Time) (strin
 			return "", err
 		}
 	}
-	if err := validatePKIDevConsumer(staged, name, now); err != nil {
+	if err := validatePKIDevTransport(staged, name, now, server); err != nil {
 		return "", err
 	}
 	if err := os.Rename(staged, dir); err != nil {
@@ -86,6 +101,10 @@ func preparePKIDevConsumer(store secretStore, name string, now time.Time) (strin
 }
 
 func validatePKIDevConsumer(dir, name string, now time.Time) error {
+	return validatePKIDevTransport(dir, name, now, false)
+}
+
+func validatePKIDevTransport(dir, name string, now time.Time, server bool) error {
 	info, err := os.Lstat(dir)
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
 		return errors.New("consumer directory must be a real mode-0700 directory")
@@ -110,11 +129,17 @@ func validatePKIDevConsumer(dir, name string, now time.Time) error {
 	if err != nil {
 		return errors.New("invalid consumer TLS pair")
 	}
+	usage := x509.ExtKeyUsageClientAuth
+	hostname := ""
+	if server {
+		usage = x509.ExtKeyUsageServerAuth
+		hostname = name + ".video-cloud-dev-video-cloud.svc"
+	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil || leaf.IsCA || leaf.Subject.CommonName != name || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth || leaf.NotAfter.Sub(now) < 24*time.Hour {
+	if err != nil || leaf.IsCA || leaf.Subject.CommonName != name || len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != usage || leaf.NotAfter.Sub(now) < 24*time.Hour {
 		return errors.New("invalid consumer leaf profile or remaining lifetime")
 	}
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: now, DNSName: hostname, KeyUsages: []x509.ExtKeyUsage{usage}}); err != nil {
 		return errors.New("consumer certificate validation failed")
 	}
 	return nil

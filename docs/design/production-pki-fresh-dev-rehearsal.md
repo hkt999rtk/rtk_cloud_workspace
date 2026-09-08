@@ -69,6 +69,16 @@ installation acknowledgment before activation. Complete a real initial
 installation path before starting automatic synchronization. Do not bypass
 activation checks or pretend that writing a file is a runtime reload.
 
+The initial installation path uses an explicit reviewed manifest of issuer IDs
+and exact trust-bundle versions. API startup re-reads those issuers from its
+registry, checks environment/domain/status/version and verifies their full chains
+against its actual loaded TLS client trust pool before sending acknowledgments
+with its own management identity. It never adds trust from the manifest. Any
+validation or delivery failure fails startup; a restart safely repeats the exact
+acknowledgment. After initial Root activation, configure the existing dynamic
+root-policy synchronizer for continuing trust removal. This initial bootstrap
+does not itself claim continuing revocation or MQTT acceptance.
+
 ## Retained configuration and artifacts
 
 The canonical dev SecretStore contains:

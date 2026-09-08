@@ -222,3 +222,55 @@ func TestPKIDevConsumerPersistenceAndFailures(t *testing.T) {
 		t.Fatal("staging accepted")
 	}
 }
+
+func TestPKIDevAPIServerTransport(t *testing.T) {
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	dir, err := preparePKIDevTransport(store, "video-cloud-api-pki", now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pair, err := tls.LoadX509KeyPair(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	roots.AppendCertsFromPEM(ca)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+	srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
+	srv.StartTLS()
+	defer srv.Close()
+	for _, host := range []string{"video-cloud-api-pki.video-cloud-dev-video-cloud.svc", "wrong.example"} {
+		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: host}}
+		client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+		r, err := client.Get(srv.URL)
+		if r != nil {
+			r.Body.Close()
+		}
+		transport.CloseIdleConnections()
+		if (host == "wrong.example") != (err != nil) {
+			t.Fatal("server hostname check", host, err)
+		}
+	}
+	if err := validatePKIDevConsumer(dir, "video-cloud-api-pki", now); err == nil {
+		t.Fatal("server identity accepted as client")
+	}
+	key, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+	if _, err = preparePKIDevTransport(store, "video-cloud-api-pki", now, true); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+	if !bytes.Equal(key, after) {
+		t.Fatal("repeat rotated server")
+	}
+	if _, err = preparePKIDevTransport(store, "account-manager", now, true); err == nil {
+		t.Fatal("unknown server accepted")
+	}
+}

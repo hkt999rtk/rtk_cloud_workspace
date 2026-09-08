@@ -29,6 +29,25 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 initial API bundle acknowledgment implementation
+
+Video Cloud `ad08eef` adds explicit reviewed issuer manifests and startup
+acknowledgment from the actual API TLS trust configuration. The runtime verifies
+current registry versions, chain digests, active parents, installed roots and
+runtime policy before using its own management identity to acknowledge. It adds
+no roots and does not bypass governed activation. Initial static installation
+can precede first Root activation; continuous root-policy synchronization is
+configured after activation. Live deployment/activation remains to be verified.
+
+Full affected pkitrust, pki, apiapp and config suites passed against disposable
+PostgreSQL 16. Focused race checks cover absent trust, stale version, revoked issuer
+or parent, bad chain, failed reload, intermediate-as-anchor, missing mTLS and
+retry after delivery failure. Six renderer tests and vet passed.
+The renderer supports explicit consumer-to-pod-name mapping for the separate dev
+API listener. Workspace bootstrap now prepares a distinct server-only TLS identity
+for that listener, preserving existing management/JWT/database credentials.
+Server hostname/purpose, persistence and existing dev preparation race tests passed.
+
 ## 2026-09-08 fresh-dev authentication and first Root
 
 Account Manager is deployed with the verified `63c928f` image, RS256 signing and
