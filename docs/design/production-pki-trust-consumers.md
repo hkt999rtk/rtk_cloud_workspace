@@ -1101,3 +1101,39 @@ complete and 5 open**. Four broad milestones remain:
 
 The earliest active dev CRL deadline remains **2026-09-11T06:54:13Z** (Device Root).
 No automatic CRL maintenance or expired-management-plane recovery is claimed.
+
+## Governed listener egress contract
+
+The managed listener server leaves and installed Service CRLs do not govern the
+listener's own outgoing identity. Certissuer and PKI controller must replace their
+separate static consumer credentials before their CRL receipts or server-renewal
+calls can be called fully governed. Each listener therefore owns one additional
+Service client identity: `service:certissuer` or `service:pki-controller`.
+
+Each client key is generated and retained only in that listener's existing
+identity PVC, in a distinct private state file from the server identity and CRL
+state. A `serviceidentity.Manager` uses the approved certissuer origin, Service
+Root pin, registry admission and normal two-thirds renewal rule. Its dynamic
+client-certificate callback supplies both the controller receipt transport and
+the managed server-renewal transport. Replacing this client identity evicts all
+owned outgoing HTTP connections before any subsequent request. The server leaf
+and client leaf must never share a key or state file.
+
+Initial enrollment needs a deliberate, one-time bootstrap operation because
+certissuer cannot issue its own first client leaf while its replacing Pod has not
+yet started serving. A short-lived helper runs against the current healthy issuer,
+generates the client key inside the selected listener PVC and stores the resulting
+managed state there. It uses only the recorded legacy bootstrap credential while
+the issuer's provisioner policy is temporarily narrowed to the selected helper
+identity. The helper is not a long-lived signer and cannot export the generated
+key. Before normal listener rollout, verify exact registry issuance, state/key
+correspondence and expected subject. After both listeners have switched, reject
+the two legacy credentials, remove their Secrets, mounts and provisioner trust,
+then prove bootstrap-free restarts and the managed receipt/renewal paths.
+
+The controller is rolled out after certissuer's managed egress succeeds. Both
+deployments use a dynamic identity only when every identity, origin and root-pin
+setting is present; partial configuration fails closed. Existing static transport
+remains the explicitly supported compatibility path only until this migration is
+qualified. No staging change, external key copy or change to Device trust is part
+of this dev-only contract.
