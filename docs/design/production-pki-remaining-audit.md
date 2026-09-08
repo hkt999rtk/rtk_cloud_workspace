@@ -19,6 +19,34 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 broker terminal-authority handling
+
+Video Cloud `3dc94ec` preserves permanent Device authority denial in the worker's
+existing CRL state. Revoked/compromised/retired authorities and their descendants
+are excluded from acceptance, while unaffected branches continue with fresh CRLs.
+Retained signed evidence is separated from the active CRL field so older readers
+also reject terminal state. A database status rollback, process restart or loss
+of a state file within a running process cannot silently revive an observed
+terminal authority. Operators must still retain the state directory across host
+replacement and restore; loss of both process memory and retained state is not
+qualified by this result.
+
+PostgreSQL-backed tests exercise governed Product revocation and Brand compromise,
+selective EMQX-adapter session eviction, actual management-mTLS CRL receipts, and
+revocation finalization blocked until the new parent CRL is installed and
+acknowledged after the sweep. Root revocation excludes its entire hierarchy but
+does not substitute for a Root-policy receipt. Retired status uses an explicit
+state fixture, since normal retirement forbids outstanding leaves. Tests also
+cover reversed manifests, missing/cross-cloud ancestors, restart/status rollback,
+missing local-file repair, corrupt state and pre-CRL terminal observations.
+
+Full pkitrust/pkibrokerapp/pkiturnapp race suites passed with PostgreSQL 16; API
+regression tests, relevant vet and diff checks passed. This remains local evidence:
+no live image, required-consumer setting, staging resource, PR or remote CI changed.
+Next implement actual registry bundle/Root-policy receipts and ready-issuer
+bootstrap, then scoped dev gating and the reproducible complete run. The five
+broad reporting areas remain open.
+
 ## 2026-09-08 broker Device CRL receipt implementation
 
 Video Cloud `ce9b5c4` adds an optional reviewed Device CRL consumer to `pkibroker`.

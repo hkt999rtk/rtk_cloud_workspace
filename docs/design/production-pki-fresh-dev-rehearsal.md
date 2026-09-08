@@ -27,12 +27,11 @@ Implement and qualify the remaining distribution work in this order:
    including ready-issuer activation. Bundle readiness and active leaf issuance
    are separate: requiring an active Product's own CRL before acknowledging its
    activation would create a cycle. Keep issuer status and CRL checks intact and
-   test that bootstrap sequence explicitly. Also qualify manifest transitions
-   when an authority becomes revoked/compromised/retired: the initial strict CRL
-   consumer fails preparation for a terminal authority still in its manifest.
-   Terminal lineage must remain denied while unaffected sessions and parent-CRL
-   receipts can progress. CRL receipts alone do not complete bundle or Root-policy
-   distribution.
+   test that bootstrap sequence explicitly. Terminal-authority handling is now
+   implemented and tested locally in `3dc94ec`: denied lineage stays excluded
+   while unaffected sessions and parent-CRL receipts progress. Carry this behavior
+   into the complete consumer's live tests. CRL receipts alone do not complete
+   bundle or Root-policy distribution.
 3. Deploy the complete consumer on isolated dev with its own management identity,
    controller CA/network access and required-consumer configuration. Demonstrate
    missing/wrong/stale receipts blocking activation and revocation finalization,
@@ -42,6 +41,32 @@ Implement and qualify the remaining distribution work in this order:
 
 The following live checkpoint predates this implementation; no new consumer gate
 is claimed until the scoped rollout and its acceptance evidence are recorded.
+
+#### Terminal-authority handling
+
+Implemented locally in Video Cloud `3dc94ec`, with PostgreSQL-backed lifecycle,
+management-mTLS receipt, session-sweep and restart tests. Live rollout remains
+pending bundle/Root-policy integration.
+
+The Device consumer retains a permanent denial marker in the authority's
+existing persisted CRL state after observing a matching registry authority in
+`revoked`, `compromised` or `retired` status. This marker identifies the issuer and
+its pinned certificate, preserves any previously cached signed CRL under
+`retained_crl`, and clears the active `crl` field so older readers fail closed.
+It never acts as a CRL or a controller acknowledgment. The same file lock and durable
+atomic replacement protect both CRL advancement and terminal denial.
+
+A reviewed Device manifest must include each listed authority's ancestors. A
+terminal authority and its descendants are excluded from prepared acceptance
+coverage, so their sessions remain denied even after a registry rollback or
+worker restart. Other branches continue using their own fresh signed CRLs. The
+worker acknowledges only the surviving authorities after successful session
+enforcement; it never acknowledges a terminal issuer's old CRL. A terminal-state
+change between preparation and acknowledgment invalidates that sweep's receipts
+and requires another sweep. Corrupt/mismatched state remains an error.
+
+This handles session exclusion and parent-CRL progress. It does not replace the
+Root-policy or ready-issuer bundle receipts still required by the full consumer.
 
 The isolated `mqtt-pki` Deployment runs EMQX 5.9.0 plus `pkibroker` using verified
 running image digests `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`
