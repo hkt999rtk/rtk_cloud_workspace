@@ -104,6 +104,13 @@ def enrollment_environment_reference(name):
     return '$VIDEO_CLOUD_ENV' if name == 'certissuer' else '${PKI_ENVIRONMENT:?}'
 
 
+def legacy_inbound_ca_path(base, name):
+    m.require(name in NAMES, 'unknown listener')
+    path = Path(base) / 'pki' / 'consumers' / name / 'ca.crt'
+    m.require(path.is_file(), 'saved legacy inbound CA is missing')
+    return path
+
+
 class EgressRun(c.c.CRLRun):
     def __init__(self, args):
         super().__init__(args)
@@ -267,14 +274,19 @@ class EgressRun(c.c.CRLRun):
         values = env_values(template['spec']['containers'][0])
         self.apply_template(name, owner, template, self.args.image,
                             {key: value for key, value in values.items() if key.startswith(selected['prefix'])})
+        self.complete_adopt(name, root, enrolled)
+
+    def complete_adopt(self, name, root, enrolled):
+        selected = profile(name)
         current = self.inspect_client(name, root)
         m.require(current['fingerprint'] == enrolled['certificate_sha256'] and current['state_sha256'] == enrolled['state_sha256'],
                   'managed client changed during adoption')
-        # The paired listener must no longer accept this legacy client CA after its owner changed.
+        # This is the old client issuer CA, not the egress Secret's server CA.
+        legacy_ca = legacy_inbound_ca_path(self.base, name).read_text()
         trust_secret, field = ('pki-controller-tls', 'ca.crt') if name == 'certissuer' else ('certissuer-runtime', 'client-ca.crt')
         trust = self.obj('secret', trust_secret)
         bundle = base64.b64decode(trust['data'][field]).decode()
-        updated = remove_pem(bundle, public_ca)
+        updated = remove_pem(bundle, legacy_ca)
         self.scoped_patch('secret', trust, [{'op': 'replace', 'path': '/data/' + field,
                                              'value': base64.b64encode(updated.encode()).decode()}])
         if name == 'certissuer':
@@ -283,12 +295,32 @@ class EgressRun(c.c.CRLRun):
         else:
             issuer = self.deployment('certissuer')
             self.apply_template('certissuer', issuer, enrollment_template(issuer, self.args.image, '^$'), self.args.image)
-        owner = self.deployment(name)
-        self.apply_template(name, owner, owner['spec']['template'], self.args.image,
-                            {key: value for key, value in env_values(owner['spec']['template']['spec']['containers'][0]).items() if key.startswith(selected['prefix'])})
+        if name == 'pki-controller':
+            owner = self.deployment(name)
+            template = json.loads(json.dumps(owner['spec']['template']))
+            template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/managed-egress-restart'] = self.output.name
+            self.apply_template(name, owner, template, self.args.image,
+                                {key: value for key, value in env_values(template['spec']['containers'][0]).items() if key.startswith(selected['prefix'])})
         m.require(self.inspect_client(name, root) == current, 'restart changed managed client state')
         self.check(name + '_managed_egress_adopted', {'subject': selected['subject'], 'state_sha256': current['state_sha256'],
                                                        'bootstrap_free_restart': True, 'static_ca_removed_from_peer': trust_secret})
+
+    def resume_adopt(self, name):
+        failed = Path(self.args.failed)
+        report = m.read(failed / 'report.json')
+        m.require(report['status'] == 'failed' and report['phase'] == name + '-adopt', 'matching failed adoption evidence required')
+        root, _ = self.selected()
+        enrollment = Path(self.args.enrollment)
+        m.require(m.read(enrollment / 'report.json')['status'] == 'passed', 'successful matching enrollment evidence required')
+        enrolled = m.read(enrollment / 'enrolled.json')
+        owner = self.deployment(name)
+        saved = m.read(failed / ('after-' + NS + '-' + name + '-deployment.json'))
+        m.require(owner['spec']['template'] == saved['spec']['template'], 'failed adoption runtime drifted; reconcile manually')
+        config = self.obj('configmap', profile(name)['configmap'])
+        expected = m.read(failed / ('create-' + profile(name)['configmap'] + '.json'))
+        m.require(config.get('immutable') is True and config.get('data') == expected.get('data'), 'managed public CA ConfigMap drifted')
+        self.report['reconciled_from'] = str(failed)
+        self.complete_adopt(name, root, enrolled)
 
     def verify(self):
         root, issuer = self.selected()
@@ -320,7 +352,7 @@ class EgressRun(c.c.CRLRun):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', choices=['certissuer-enroll', 'resume-certissuer-enroll', 'certissuer-adopt', 'controller-enroll', 'controller-adopt', 'verify'], required=True)
+    parser.add_argument('--phase', choices=['certissuer-enroll', 'resume-certissuer-enroll', 'certissuer-adopt', 'resume-certissuer-adopt', 'controller-enroll', 'controller-adopt', 'verify'], required=True)
     parser.add_argument('--config-root', default=str(Path.home() / '.config/rtk_cloud'))
     for key in ('authority', 'intermediate', 'retirement', 'output'):
         parser.add_argument('--' + key, required=True)
@@ -334,6 +366,7 @@ def main():
               'verified dev listener image required')
     m.require(args.phase not in ('certissuer-adopt', 'controller-adopt') or args.enrollment, 'matching enrollment evidence required')
     m.require(args.phase != 'resume-certissuer-enroll' or args.failed, 'failed enrollment evidence required')
+    m.require(args.phase != 'resume-certissuer-adopt' or (args.failed and args.enrollment), 'failed adoption and enrollment evidence required')
     m.require(args.phase not in ('controller-enroll', 'controller-adopt', 'verify') or args.certissuer, 'certissuer evidence required')
     m.require(args.phase != 'verify' or args.controller, 'controller evidence required')
     fd = os.open(Path(args.config_root).expanduser() / 'dev/pki/service-egress.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -342,7 +375,7 @@ def main():
     try:
         runner.preflight()
         {'certissuer-enroll': lambda: runner.enroll('certissuer'), 'resume-certissuer-enroll': lambda: runner.resume_enroll('certissuer'),
-         'certissuer-adopt': lambda: runner.adopt('certissuer'),
+         'certissuer-adopt': lambda: runner.adopt('certissuer'), 'resume-certissuer-adopt': lambda: runner.resume_adopt('certissuer'),
          'controller-enroll': lambda: runner.enroll('pki-controller'), 'controller-adopt': lambda: runner.adopt('pki-controller'),
          'verify': runner.verify}[args.phase]()
         runner.report['status'] = 'passed'

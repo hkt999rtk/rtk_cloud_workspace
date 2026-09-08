@@ -77,6 +77,15 @@ from controller inbound trust. It permits only the managed Service identities
 needed during the staggered transition. The runner requires the client state to
 survive restart and verifies that no runtime static credential path remains.
 
+If certissuer has reached its saved dynamic template and public CA ConfigMap but
+stops before legacy inbound trust is removed, use `resume-certissuer-adopt` with
+the failed adoption and successful enrollment directories. It requires the exact
+saved live template, immutable public ConfigMap, current managed client state and
+matching enrollment evidence. It removes exactly one certificate block from the
+paired listener's inbound bundle using the saved legacy consumer CA at
+`dev/pki/consumers/certissuer/ca.crt`; it never uses the egress Secret's
+management-server CA for this operation.
+
 `controller-enroll` repeats the recorded initial request for
 `service:pki-controller`, using only its own still-mounted static credential and
 the exact `^pki-controller$` provisioner policy. `controller-adopt` performs its

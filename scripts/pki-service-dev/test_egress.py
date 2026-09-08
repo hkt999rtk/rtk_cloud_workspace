@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
 
 spec = importlib.util.spec_from_file_location('service_egress', Path(__file__).with_name('egress.py'))
 e = importlib.util.module_from_spec(spec)
@@ -85,6 +86,14 @@ class EgressTests(unittest.TestCase):
         self.assertEqual(e.enrollment_environment_reference('pki-controller'), '${PKI_ENVIRONMENT:?}')
         with self.assertRaisesRegex(RuntimeError, 'unknown listener'):
             e.enrollment_environment_reference('other')
+
+    def test_legacy_inbound_ca_source_is_separate_from_egress_secret(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'pki/consumers/certissuer/ca.crt'
+            e.m.write(path, 'public-ca')
+            self.assertEqual(e.legacy_inbound_ca_path(directory, 'certissuer'), path)
+            with self.assertRaisesRegex(RuntimeError, 'saved legacy inbound CA'):
+                e.legacy_inbound_ca_path(directory, 'pki-controller')
 
 
 if __name__ == '__main__':
