@@ -1,5 +1,21 @@
 # Milestone 1: legacy migration/device replacement
 
+## Current execution order: dev first
+
+Per the user's correction, perform migration testing on `video-cloud-dev` before
+any further staging work. Dev discovery verified context `lke649805-ctx` and a
+Ready OpenBao pod. Staging is out of scope for subsequent operations. The earlier
+authorized staging unseal completed before the correction; no staging lineage
+export or migration followed it.
+
+Implement explicit `dev` support alongside `staging` in legacy inventory/import,
+immutable environment-specific migration windows, verification and reporting.
+Do not label dev as staging or weaken independent approval, signed chain/CRL,
+entitlement, replacement or cutoff checks. Production remains excluded.
+Test dev import/replacement locally, then use only dev credentials and workloads
+for the canary rehearsal. Dev evidence must be labeled as such and cannot close
+staging/custody qualification. The original five acceptance items remain intact.
+
 Local deployment preparation is available in the
 [staging rollout runbook](../../repos/rtk_video_cloud/docs/pki-staging-rollout.md):
 controller packaging plus separate offline migration, grants and runtime
