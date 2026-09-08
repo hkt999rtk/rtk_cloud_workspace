@@ -71,6 +71,47 @@ controller deployment, consumer cutover or CI publication has occurred.
 
 ### Execution prerequisites
 
+### 2026-09-08 storage diagnosis and proposed recovery
+
+Read-only follow-up confirmed `openbao-0` remains ContainerCreating on
+`lke646126-951189-9w6nc` (Linode instance `104080805`). Both PVCs remain Bound,
+with Retain reclaim and StatefulSet retention policies:
+
+| Claim | Linode volume | Kubernetes PV |
+| --- | --- | --- |
+| data-openbao-0 | 17676701 | pvc-0848cb41ff1545f1 |
+| audit-openbao-0 | 17641459 | pvc-d5992ca40171483a |
+
+The Linode read API reports both volumes active, in `sg-sin-2`, attached to
+`104080805`; Kubernetes VolumeAttachments also report attached to that node.
+Read-only inspection through its existing CSI node container found only `sda`
+in `/proc/partitions` and only the QEMU system disk in `/dev/disk/by-id`.
+Neither expected volume device exists. CSI logs repeatedly fail NodeStageVolume
+for these exact handles. This identifies a control-plane/guest device discrepancy,
+not proof that data was lost or that it is intact.
+
+Proposed next live action, not executed: temporarily exclude this node from the
+OpenBao StatefulSet's scheduling through required node affinity, preserving its
+existing pod anti-affinity, then recreate only the unstarted OpenBao pod. Retain
+the exact PVCs, single replica, image `quay.io/openbao/openbao:2.5.4`, Secrets and
+configuration. Kubernetes/CSI must perform ordinary detach/reattach; do not force
+detach, delete VolumeAttachments, format disks, recreate PVCs, initialize OpenBao,
+or change the storage backend. Other nodes in the same region are Ready, but
+actual placement/capacity and attachment behavior must be verified during repair.
+
+Before mutation capture exact StatefulSet resourceVersion/template and Pod UID;
+use preconditions to reject concurrent changes. Confirm no existing OpenBao
+process is running and no other pod is using these claims. Stop on multi-attach,
+missing volume, mount/filesystem failure or unexpected initialization state;
+escalate the retained volume IDs and device evidence to the provider rather than
+resetting storage. Preserve the old template for rollback; restoring it must not
+force a second running writer or bypass CSI ownership.
+
+After mounting, verify existing initialized/sealed state before any further
+operation. Unseal/custody actions remain separate. Retrieve only public legacy
+Root/issuer chains/CRLs once available, then resume cohort eligibility analysis.
+No live repair, restart, provider mutation or support message was performed.
+
 Local follow-up `5787230` aligns the controller pod with the existing OpenBao HA
 network-policy selector. Three renderer tests and a direct comparison with the
 actual HA values passed: the controller matches the allowed pod selector while
