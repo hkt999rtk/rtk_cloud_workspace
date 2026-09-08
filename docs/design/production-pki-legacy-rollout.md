@@ -11,6 +11,13 @@ human MFA. Device authentication, renewal and replacement never require MFA.
 RS256 request binding, management mTLS, independent approval and certificate
 validation remain. This replaces the earlier proposed dev-only exception.
 
+Current bootstrap progress: the dev migration and grants Jobs completed, and
+dedicated runtime database access passed live read/denial checks. TLS/key/trust
+dependencies are installed. The controller and Account Manager signer cutover
+remain pending, starting with dedicated OpenBao Kubernetes authentication.
+See the latest dev preflight checkpoint; older discovery counts below describe
+the environment before this bootstrap. No governed import/replacement has run.
+
 See the [dev source preflight](production-pki-legacy-dev-preflight.md): 111 current
 credentials selected uniquely from issuance history, with full chain/CRL checks
 passed after refreshing the two expired dev CRLs. Registry eligibility, target
@@ -21,15 +28,16 @@ verification and report environment binding. Legacy/replacement PostgreSQL tests
 race checks, vet and diff checks passed. Tests exercise actual dev replacement
 through acknowledgment and predecessor rejection, an expired staging window
 alongside a fresh dev window, repeated schema upgrade, immutable windows,
-cross-environment denial and production exclusion. No dev schema/deployment
-mutation has been performed yet.
+cross-environment denial and production exclusion. At that checkpoint no dev
+schema/deployment mutation had been performed; the latest checkpoint above records
+the subsequent live database bootstrap.
 
 Read-only dev inventory: 1,331 successful issuance rows; 111 active entitlements;
 1,211 successful rows map to active-entitlement device IDs, and 120 have no
 entitlement. Every active entitlement has at least one successful source row.
 These are issuance counts, not unique eligible device/certificate counts. Resolve
 current credentials and historical issuance before selecting a fixed canary.
-The live dev database has zero public `pki_*` tables. The controller/schema and
+Initial discovery found zero public `pki_*` tables. The controller/schema and
 governed target hierarchy must be prepared before import. Source history and dev
 public chain/CRL validation are the next prerequisites; staging stays untouched.
 

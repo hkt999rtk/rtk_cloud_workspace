@@ -71,3 +71,10 @@ consumers. Include Account Manager's migration-alias fix in its migration image.
 Retain database backup/rehearsal evidence and apply migration, grants and runtime
 phases in order. Roles are assigned through authenticated administration to actual
 operators; prepared signer keys are never used to manufacture their approvals.
+
+The current dev database and credential-binding execution is recorded in the
+[dev preflight](production-pki-legacy-dev-preflight.md). `PKI_CONTROLLER_IMAGE` in
+the dev operator directory holds the verified digest for this separate overlay;
+read it explicitly as the renderer's `--image` argument. It does not replace the
+existing API's `LKE_VIDEO_CLOUD_IMAGE` or trigger a platform-wide update. Persisted
+phase manifests and Job evidence live beside the prepared material in `rollout/`.

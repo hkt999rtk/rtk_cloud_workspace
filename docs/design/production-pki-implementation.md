@@ -9,6 +9,18 @@ historical implementation evidence; they do not reinstate a mandatory MFA gate.
 Authenticated user identity, role authorization, distinct approvals, device
 certificate/key-possession checks and custody controls remain required.
 
+## 2026-09-08 live dev PKI schema and runtime database access
+
+Fixed the workspace dev image generator to include `pkicontroller`, built and
+published the current service revision to the dev package, and verified its
+registry digest. The dev migration and grants Jobs completed with exit 0 using
+that exact digest. Twenty PKI tables now exist. The dedicated controller login
+has only its reviewed group membership; live read, permission-denial and
+incorrect-password checks passed. Existing workloads and OpenBao authority remain
+unchanged. See the [dev preflight](production-pki-legacy-dev-preflight.md) for
+backup, digest, Job and credential-binding evidence. Provider Kubernetes auth and
+the coordinated rollout are next; the five device-migration acceptance items remain open.
+
 ## 2026-09-08 dev controller credential preparation
 
 Added the dev-only `pki-dev-prepare` deployment command and

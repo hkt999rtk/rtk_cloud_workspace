@@ -63,6 +63,57 @@ before approval/import.
 
 ## Next critical path
 
+### 2026-09-08 live dev database bootstrap
+
+Published the local dev package from clean Video Cloud `0dca4d9`. The workspace
+builder needed a two-line fix to include `/app/pkicontroller`; its generated
+Dockerfile had omitted that binary despite the service Dockerfile including it.
+Builder regression tests, vet, image architecture inspection and the controller
+executable smoke check passed. No Git push, PR or remote CI run was used.
+
+Verified registry reference and the actual image IDs used by both completed Jobs:
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:be8d897147d3aa297a2f58a1c3f284d44c403d4ece7b1d60d099e94643f83d35`.
+The build tag is `dev-pki-0dca4d9-20260908-1303`. Persisted the digest reference in
+the dev operator file `PKI_CONTROLLER_IMAGE`; the separate overlay renderer read
+that file to produce the executed manifests. Existing `LKE_VIDEO_CLOUD_IMAGE` and
+application Deployment images were not changed. This image is dev-only.
+
+Before schema mutation, captured a fresh read-only `video_cloud` dump and verified
+its archive table of contents. It is 1,454,205 bytes, SHA-256
+`82fd4cff778bc8e0047f312bb8dd7de72240adb1cbdb99ca5a38fce98fc4719c`, retained privately
+as `/private/tmp/rtk-dev-pki-bootstrap-rehearsal/video_cloud-before-live-migrate.dump`.
+The earlier restored-snapshot rehearsal covered the same migration/grant commands.
+This phase changes database schema/permissions only; no provider configuration,
+CA key, certificate, trust publication or governed operation was changed.
+
+| Dev Job | UID | Result |
+| --- | --- | --- |
+| `pki-migrate` | `155cc400-18a9-42cf-8a1f-5ef1d4219928` | Completed, container exit 0 |
+| `pki-grants` | `57fb0639-29b2-4058-abc9-6ddd783ee681` | Completed, container exit 0 |
+
+The live database now has 20 `pki_*` tables and three unprivileged NOLOGIN groups.
+Issuer, operation, approval, legacy-import and replacement counts are all zero;
+schema creation is not a governed migration or device replacement.
+
+Created `pki-migration-database` (resource version `760892`) from existing dev
+PostgreSQL owner credentials for the two Jobs only. Created the dedicated login
+`rtk_pki_controller_dev` using its previously prepared password, with inheritance
+from only `rtk_pki_controller` and no elevated role flags or object ownership.
+Created and verified `pki-controller-database` (resource version `761093`). The
+runtime login connected over the actual dev PostgreSQL Service, read all 1,331
+source rows and the empty issuer registry. Actual source/audit deletion and schema
+creation probes failed with SQLSTATE 42501; an incorrect password was rejected.
+No probe deleted rows or left objects behind.
+
+Manifests, Job logs and `database-checkpoint.json` are retained under the dev
+SecretStore's `pki/controller-bootstrap/rollout` directory. The controller remains
+undeployed, and Account Manager still uses its existing login signer. Read-only
+OpenBao inspection found AppRole/token authentication only; its existing service
+account can perform Kubernetes TokenReview. Configure a dedicated Kubernetes auth
+binding next, preserving legacy AppRole settings and issuer-scoped policy controls.
+The coordinated Account Manager/controller rollout, real approvers, target hierarchy
+and owned canary device remain pending. Staging was not accessed.
+
 ### 2026-09-08 prepared dev controller credentials and transport dependencies
 
 The dev-only `rtk-cloud pki-dev-prepare --environment dev` command now creates
