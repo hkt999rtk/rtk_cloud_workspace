@@ -2,6 +2,8 @@ import importlib.util
 from pathlib import Path
 import unittest
 import tempfile
+import copy
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('service_egress', Path(__file__).with_name('egress.py'))
 e = importlib.util.module_from_spec(spec)
@@ -94,6 +96,82 @@ class EgressTests(unittest.TestCase):
             self.assertEqual(e.legacy_inbound_ca_path(directory, 'certissuer'), path)
             with self.assertRaisesRegex(RuntimeError, 'saved legacy inbound CA'):
                 e.legacy_inbound_ca_path(directory, 'pki-controller')
+
+    def test_recovery_upgrades_exact_saved_image_and_refuses_all_runtime_drift(self):
+        owner = self.owner('pki-controller')
+        owner['metadata'] = {'uid': 'deployment-uid'}
+        owner['spec']['template'] = e.managed_template(owner, 'pki-controller', 'old-image')
+        saved = copy.deepcopy(owner)
+        baseline = {'deployment_uid': 'deployment-uid', 'pvc_uid': 'pvc-uid'}
+        result = e.recovery_template(owner, saved, baseline, 'pvc-uid', 'pki-controller', 'new-image')
+        self.assertEqual(result['spec']['containers'][0]['image'], 'new-image')
+        self.assertEqual(owner, saved)
+        for drift in ('image', 'uid', 'pvc', 'env'):
+            changed = copy.deepcopy(owner)
+            pvc = 'pvc-uid'
+            if drift == 'image':
+                changed['spec']['template']['spec']['containers'][0]['image'] = 'unrecorded-image'
+            elif drift == 'uid':
+                changed['metadata']['uid'] = 'replacement'
+            elif drift == 'pvc':
+                pvc = 'replacement'
+            else:
+                changed['spec']['template']['spec']['containers'][0]['env'].append({'name': 'DRIFT', 'value': 'true'})
+            with self.assertRaisesRegex(RuntimeError, 'runtime drifted'):
+                e.recovery_template(changed, saved, baseline, pvc, 'pki-controller', 'new-image')
+
+    def test_recovery_validates_evidence_before_image_mutation(self):
+        for drift in (None, 'configmap', 'state', 'trust'):
+            with self.subTest(drift=drift), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                failed, enrollment = base / 'failed', base / 'enrollment'
+                name = 'pki-controller'
+                owner = self.owner(name)
+                owner['metadata'] = {'uid': 'deployment-uid'}
+                owner['spec']['template'] = e.managed_template(owner, name, 'old-image')
+                e.m.write(failed / 'report.json', {'status': 'failed', 'phase': 'controller-adopt'})
+                e.m.write(failed / ('after-' + e.NS + '-' + name + '-deployment.json'), owner)
+                config = {'immutable': True, 'data': {'ca.crt': 'public-ca'}}
+                e.m.write(failed / ('create-' + e.profile(name)['configmap'] + '.json'), config)
+                e.m.write(enrollment / 'report.json', {'status': 'passed'})
+                e.m.write(enrollment / 'baseline.json', {'deployment_uid': 'deployment-uid', 'pvc_uid': 'pvc-uid'})
+                e.m.write(enrollment / 'enrolled.json', {'subject': 'service:pki-controller', 'state_sha256': 'saved-hash'})
+                if drift == 'trust':
+                    e.m.write(failed / ('before-' + e.NS + '-certissuer-runtime-secret.json'), {})
+                runner = object.__new__(e.EgressRun)
+                runner.args = SimpleNamespace(failed=str(failed), enrollment=str(enrollment), image='new-image')
+                runner.report = {}
+                runner.selected = lambda: ({}, {})
+                runner.deployment = lambda _: copy.deepcopy(owner)
+                runner.obj = lambda kind, _: ({'metadata': {'uid': 'pvc-uid'}} if kind == 'persistentvolumeclaim'
+                                             else dict(config, data={'ca.crt': 'drift'}) if drift == 'configmap' else config)
+                runner.kube = lambda _: '600\n' + ('changed' if drift == 'state' else 'saved-hash') + '  client.json\n'
+                events = []
+                runner.apply_template = lambda name, old, template, image: events.append(('apply', template['spec']['containers'][0]['image']))
+                runner.complete_adopt = lambda *args: events.append(('complete', args[0]))
+                if drift:
+                    with self.assertRaises(RuntimeError):
+                        runner.resume_adopt(name)
+                    self.assertEqual(events, [])
+                else:
+                    runner.resume_adopt(name)
+                    self.assertEqual(events, [('apply', 'new-image'), ('complete', name)])
+
+    def test_persistence_keeps_host_policy_and_unrelated_overrides_without_static_keys(self):
+        owner = self.owner('certissuer')
+        template = e.managed_template(owner, 'certissuer', 'new-image')
+        template['spec']['containers'][0]['env'].extend([
+            {'name': 'CERT_ISSUER_GATEWAY_CLIENT_CN_PATTERN', 'value': '^service:(certissuer|pki-controller)$'},
+            {'name': 'CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN', 'value': '^$'}])
+        existing = {'UNRELATED': 'retained', 'CERT_ISSUER_HOST_RENEWAL_CLIENT_KEY': 'old-key',
+                    'CERT_ISSUER_SERVICE_CLIENT_MANAGEMENT_CERT': 'old-cert',
+                    'CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN': '^pki-controller$'}
+        result = e.persisted_settings(existing, template, 'certissuer')
+        self.assertEqual(result['UNRELATED'], 'retained')
+        self.assertEqual(result['CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN'], '^$')
+        self.assertEqual(result['CERT_ISSUER_GATEWAY_CLIENT_CN_PATTERN'], '^service:(certissuer|pki-controller)$')
+        self.assertNotIn('CERT_ISSUER_HOST_RENEWAL_CLIENT_KEY', result)
+        self.assertNotIn('CERT_ISSUER_SERVICE_CLIENT_MANAGEMENT_CERT', result)
 
 
 if __name__ == '__main__':

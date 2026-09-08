@@ -90,17 +90,31 @@ management-server CA for this operation.
 `service:pki-controller`, using only its own still-mounted static credential and
 the exact `^pki-controller$` provisioner policy. `controller-adopt` performs its
 equivalent dynamic switch, strips controller's static CA from certissuer inbound
-trust, sets the provisioner policy to `^$`, and deletes each legacy consumer
-Secret only after neither Deployment mounts it. It does not delete a Secret if
-an owner, UID, resource version, volume, environment variable or CA bundle has
-drifted.
+trust, sets the provisioner policy to `^$`, and changes host-renewal authorization
+to exactly `^service:(certissuer|pki-controller)$`. Both listeners restart, and
+the changed image/settings are checked against the persisted listener renderer.
+Legacy consumer Secret deletion and removal of residual legacy CA blocks from
+both inbound bundles are still separate acceptance work; this runner does not
+implement that cleanup.
 
-The final verification requires both managed client state files, their distinct
-server/client public leaf fingerprints, matching unrevoked registry rows, scoped
-persisted Deployment templates, no legacy Secret mounts or static CA blocks, and
-normal managed API plus Device mTLS/MQTT ACL/QoS1 traffic. A fresh signed Service
+The verification phase checks both managed client state files, matching unrevoked
+registry rows, no static credential paths or mounts, disabled bootstrap policy,
+managed host-renewal authorization, and the existing Device baseline checks.
+Separate server/client key comparison, actual managed host renewal, rejection of
+old credentials and residual trust/Secret cleanup still require recorded evidence.
+A fresh signed Service
 CRL and new dynamic receipts are a later, separately recorded acceptance phase;
 this procedure does not claim them merely because historical receipt rows exist.
+
+`resume-controller-adopt` uses the original failed `controller-adopt` directory
+and successful controller enrollment evidence. Recovery requires exact live
+Deployment/PVC ownership, the saved template (including its old image), immutable
+public CA data and unchanged private-state hash **before** applying the requested
+replacement image. Evidence of an attempted trust mutation blocks this recovery;
+it is only for a failure before that boundary. Unrecorded image drift is not
+accepted. The built-in inspector validates a single existing state snapshot and
+reports its actual pending flag without creating state/lock files or exporting
+private material. All Service rollout phases share the same local lock.
 
 Do not use `--phase` again to work around an uncertain mutation. Inspect the
 saved live object, state fingerprint, registry row and report first. The runner

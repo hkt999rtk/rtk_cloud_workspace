@@ -1144,3 +1144,22 @@ Root pin, pending flag and state hash. It never serializes the key or state file
 This supports hardened listener containers whose read-only root filesystem cannot
 accept a copied diagnostic binary; copying private state out is not an approved
 recovery mechanism.
+
+### Listener adoption recovery correction (2026-09-09)
+
+The previous controller recovery failed before mutation because the saved CLI
+phase is `controller-adopt`, while the implementation compared the workload name
+`pki-controller-adopt`. Recovery now checks the matching phase, Deployment and
+PVC UIDs, exact saved template, immutable public CA and enrolled state hash before
+updating to the selected inspection image. It refuses unrecorded image drift or
+evidence of an already attempted trust mutation. Inspection validates one atomic
+state snapshot and reports the actual pending flag; it does not initialize files.
+
+On final controller adoption the issuer must authorize the managed Service
+subjects for host renewal and disable the initial provisioner. Persisted listener
+settings must preserve that policy and remove obsolete static key paths; rendering
+the saved deployment must reproduce the live template. Bootstrap Secret deletion,
+residual legacy trust removal, fresh CRL receipts, actual managed renewal and
+negative credential tests remain separate acceptance checks. Deployment readiness
+alone does not close them. Current milestone estimate remains approximately 70%,
+with 1/6 work groups complete and 5 open, pending this dev validation.

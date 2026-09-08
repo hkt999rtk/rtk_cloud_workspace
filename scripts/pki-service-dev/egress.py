@@ -35,6 +35,43 @@ def env_values(container):
     return values
 
 
+def adoption_phase(name):
+    profile(name)
+    return ('controller' if name == 'pki-controller' else name) + '-adopt'
+
+
+def recovery_template(owner, saved, baseline, pvc_uid, name, image):
+    """Reject drift before selecting an explicitly requested replacement image."""
+    m.require(owner['metadata']['uid'] == baseline['deployment_uid']
+              and pvc_uid == baseline['pvc_uid']
+              and owner['spec']['template'] == saved['spec']['template'],
+              'failed adoption runtime drifted; reconcile manually')
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec']['containers']
+    m.require(len(containers) == 1 and containers[0]['name'] == name
+              and env_values(containers[0]).get(profile(name)['prefix'] + '_IDENTITY_STATE') == STATE,
+              'failed adoption managed state selection differs')
+    containers[0]['image'] = image
+    return template
+
+
+def persisted_settings(existing, template, name):
+    """Retain unrelated overrides while removing obsolete static credentials."""
+    selected = profile(name)
+    values = env_values(template['spec']['containers'][0])
+    managed = (selected['prefix'], selected['host_prefix'], 'CERT_ISSUER_GATEWAY_')
+    result = {key: value for key, value in existing.items() if not key.startswith(managed)}
+    result.update({key: value for key, value in values.items() if key.startswith(managed) and value is not None})
+    return result
+
+
+def normalized_template(template):
+    result = json.loads(json.dumps(template))
+    for container in result['spec']['containers']:
+        container['env'] = sorted(container.get('env', []), key=lambda item: item['name'])
+    return result
+
+
 def remove_pem(bundle, certificate):
     """Remove exactly one public certificate block without accepting malformed drift."""
     marker = certificate.strip()
@@ -130,7 +167,15 @@ class EgressRun(c.c.CRLRun):
                   'listener must retain exclusive PVC ownership')
         return owner
 
-    def apply_template(self, name, owner, template, image, settings=None):
+    def apply_template(self, name, owner, template, image):
+        path = self.base / 'pki/controller-bootstrap/rollout' / (name + '-service-settings.json')
+        existing = m.read(path) if path.exists() else {}
+        settings = persisted_settings(existing, template, name)
+        predicted = json.loads(json.dumps(template))
+        container = predicted['spec']['containers'][0]
+        container['env'] = h.h.h.with_env(container['env'], settings)
+        m.require(normalized_template(predicted) == normalized_template(template),
+                  'unrelated persisted settings differ; reconcile before rollout')
         self.scoped_patch('deployment', owner, [{'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
                                                 {'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name, '--timeout=300s'], timeout=310)
@@ -138,8 +183,10 @@ class EgressRun(c.c.CRLRun):
             self.forward('issuer', NS, name, 9443)
         key = 'PKI_CERTISSUER_IMAGE' if name == 'certissuer' else 'PKI_CONTROLLER_IMAGE'
         m.write(self.base / 'operator/env' / key, image + '\n')
-        if settings is not None:
-            m.write(self.base / 'pki/controller-bootstrap/rollout' / (name + '-service-settings.json'), settings)
+        m.write(path, settings)
+        rendered = h.h.h.render_persisted_listener(self.base, name)
+        m.require(normalized_template(rendered['spec']['template']) == normalized_template(template),
+                  'persisted listener template differs from rollout')
 
     def client_rows(self, subject):
         raw = self.sql("SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,caller,status,fingerprint,certificate_pem,issued_at,revoked_at FROM pki_service_client_issuances WHERE environment='dev' AND subject='" + subject + "' ORDER BY issued_at,request_id) t;")
@@ -241,9 +288,7 @@ class EgressRun(c.c.CRLRun):
         self.create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': selected['configmap'], 'namespace': NS},
                      'immutable': True, 'data': {'ca.crt': public_ca}})
         template = managed_template(owner, name, self.args.image)
-        values = env_values(template['spec']['containers'][0])
-        self.apply_template(name, owner, template, self.args.image,
-                            {key: value for key, value in values.items() if key.startswith(selected['prefix'])})
+        self.apply_template(name, owner, template, self.args.image)
         self.complete_adopt(name, root, enrolled)
 
     def complete_adopt(self, name, root, enrolled):
@@ -264,13 +309,16 @@ class EgressRun(c.c.CRLRun):
             self.apply_template('certissuer', issuer, enrollment_template(issuer, self.args.image, '^pki-controller$'), self.args.image)
         else:
             issuer = self.deployment('certissuer')
-            self.apply_template('certissuer', issuer, enrollment_template(issuer, self.args.image, '^$'), self.args.image)
+            template = enrollment_template(issuer, self.args.image, '^$')
+            container = template['spec']['containers'][0]
+            container['env'] = h.h.h.with_env(container['env'], {
+                'CERT_ISSUER_GATEWAY_CLIENT_CN_PATTERN': '^service:(certissuer|pki-controller)$'})
+            self.apply_template('certissuer', issuer, template, self.args.image)
         if name == 'pki-controller':
             owner = self.deployment(name)
             template = json.loads(json.dumps(owner['spec']['template']))
             template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/managed-egress-restart'] = self.output.name
-            self.apply_template(name, owner, template, self.args.image,
-                                {key: value for key, value in env_values(template['spec']['containers'][0]).items() if key.startswith(selected['prefix'])})
+            self.apply_template(name, owner, template, self.args.image)
         m.require(self.inspect_client(name, root) == current, 'restart changed managed client state')
         self.check(name + '_managed_egress_adopted', {'subject': selected['subject'], 'state_sha256': current['state_sha256'],
                                                        'bootstrap_free_restart': True, 'static_ca_removed_from_peer': trust_secret})
@@ -278,26 +326,31 @@ class EgressRun(c.c.CRLRun):
     def resume_adopt(self, name):
         failed = Path(self.args.failed)
         report = m.read(failed / 'report.json')
-        m.require(report['status'] == 'failed' and report['phase'] == name + '-adopt', 'matching failed adoption evidence required')
+        m.require(report['status'] == 'failed' and report['phase'] == adoption_phase(name), 'matching failed adoption evidence required')
+        trust_secret = 'pki-controller-tls' if name == 'certissuer' else 'certissuer-runtime'
+        m.require(not (failed / ('before-' + NS + '-' + trust_secret + '-secret.json')).exists(),
+                  'trust mutation already attempted; reconcile manually')
         root, _ = self.selected()
         enrollment = Path(self.args.enrollment)
         m.require(m.read(enrollment / 'report.json')['status'] == 'passed', 'successful matching enrollment evidence required')
         enrolled = m.read(enrollment / 'enrolled.json')
+        baseline = m.read(enrollment / 'baseline.json')
+        m.require(enrolled['subject'] == profile(name)['subject'], 'enrollment subject differs')
         owner = self.deployment(name)
         saved = m.read(failed / ('after-' + NS + '-' + name + '-deployment.json'))
-        if owner['spec']['template'] != saved['spec']['template']:
-            prior = json.loads(json.dumps(owner['spec']['template']))
-            prior['spec']['containers'][0]['image'] = saved['spec']['template']['spec']['containers'][0]['image']
-            m.require(prior == saved['spec']['template'], 'failed adoption runtime drifted; reconcile manually')
-            upgraded = json.loads(json.dumps(owner['spec']['template']))
-            upgraded['spec']['containers'][0]['image'] = self.args.image
-            self.apply_template(name, owner, upgraded, self.args.image,
-                                {key: value for key, value in env_values(upgraded['spec']['containers'][0]).items() if key.startswith(profile(name)['prefix'])})
-            owner = self.deployment(name)
+        upgraded = recovery_template(owner, saved, baseline,
+                                     self.obj('persistentvolumeclaim', name + '-service-identity')['metadata']['uid'],
+                                     name, self.args.image)
         config = self.obj('configmap', profile(name)['configmap'])
         expected = m.read(failed / ('create-' + profile(name)['configmap'] + '.json'))
         m.require(config.get('immutable') is True and config.get('data') == expected.get('data'), 'managed public CA ConfigMap drifted')
+        # Works on the old image without copying tools or exporting private data.
+        state = self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', name, '--', 'sh', '-c',
+                           'set -eu; test ! -L ' + STATE + '; test -f ' + STATE + '; stat -c %a ' + STATE + '; sha256sum ' + STATE]).splitlines()
+        m.require(len(state) == 2 and state[0] == '600' and state[1].split()[0] == enrolled['state_sha256'],
+                  'failed adoption client state drifted')
         self.report['reconciled_from'] = str(failed)
+        self.apply_template(name, owner, upgraded, self.args.image)
         self.complete_adopt(name, root, enrolled)
 
     def verify(self):
@@ -322,6 +375,8 @@ class EgressRun(c.c.CRLRun):
         issuer_owner = self.deployment('certissuer')
         issuer_values = env_values(issuer_owner['spec']['template']['spec']['containers'][0])
         m.require(issuer_values.get('CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN') == '^$', 'bootstrap provisioner remains enabled')
+        m.require(issuer_values.get('CERT_ISSUER_GATEWAY_CLIENT_CN_PATTERN') == '^service:(certissuer|pki-controller)$',
+                  'host renewal caller policy differs')
         self.device_baseline()
         self.check('managed_listener_egress_verified', {'listeners': NAMES, 'private_client_states': True,
                                                         'legacy_secret_deletion': 'requires separate guarded cleanup after fresh CRL receipts'})
@@ -348,7 +403,7 @@ def main():
     m.require(args.phase != 'resume-controller-adopt' or (args.failed and args.enrollment), 'failed adoption and enrollment evidence required')
     m.require(args.phase not in ('controller-enroll', 'controller-adopt', 'verify') or args.certissuer, 'certissuer evidence required')
     m.require(args.phase != 'verify' or args.controller, 'controller evidence required')
-    fd = os.open(Path(args.config_root).expanduser() / 'dev/pki/service-egress.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    fd = os.open(Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = EgressRun(args)
     try:
