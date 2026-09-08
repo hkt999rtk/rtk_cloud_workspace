@@ -12,6 +12,12 @@ leaf key/CSR state and renewal. Neither holds a Device/Product CA private key.
 
 ## Fixed implementation checklist (four items)
 
+Completed 4/4: documentation in workspace `95bbc11`, implementation and
+verification in Video Cloud `0387086`. Full tests, race checks, vet and the
+PKCS#11-enabled release check passed. Disposable EMQX 5.9.0 verified actual
+certificate replacement and MQTT session termination. The acceptance boundaries
+below remain; this is not a deployed cluster or recovery qualification.
+
 1. Clarify responsibilities and commit this plan before implementation.
 2. Add a host supervisor using the existing durable server identity manager,
    an independent MQTT root/name policy and a separate management mTLS credential

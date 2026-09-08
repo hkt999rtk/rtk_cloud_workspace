@@ -1,6 +1,6 @@
 # Remaining production PKI work: evidence audit
 
-Next MQTT host work follows [Managed EMQX host identity](production-pki-emqx-host.md).
+Completed local MQTT host work is recorded in [Managed EMQX host identity](production-pki-emqx-host.md).
 EMQX owns MQTT TLS termination; `pkibroker` is an outbound session-management
 worker. The fixed four-item plan separates local supervisor implementation from
 real broker, cluster and recovery qualification.
@@ -1730,6 +1730,8 @@ Five broader acceptance milestones remain: (1) legacy migration/device replaceme
 (4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
 Local commits only; no push, PR, remote CI, deployment or custody operation.
 
+
+
 ### PKI controller managed server-host milestone (2026-09-08)
 
 Video Cloud `6d76748` completes the fixed **3/3** local adoption checklist:
@@ -1763,4 +1765,45 @@ startup; local host admission does not emit CRL acknowledgments.
 Five broader acceptance milestones remain: (1) legacy migration/device replacement,
 (2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
 (4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody operation.
+
+### Managed EMQX host implementation (2026-09-08)
+
+Documentation was clarified first in workspace `95bbc11`. Video Cloud
+`0387086` completes the fixed **4/4** plan in
+[Managed EMQX host identity](production-pki-emqx-host.md):
+responsibility clarification; MQTT host identity/renewal;
+local EMQX installation and process ownership; tests/deployment/runbook.
+
+`emqxpkihost` supervises one native EMQX foreground node under a dedicated
+systemd control group. The MQTT leaf private key stays in protected local state
+and runtime files; the renewal origin uses independent Service trust and a
+separate management credential. Durable pending renewal survives restart/lost
+responses. The process owner stops before replacement, rechecks registry evidence,
+and denies serving on revocation, expiry or unavailable trust. Polling is every
+five seconds with five-second verification timeouts; process shutdown escalates
+from TERM to KILL. This replaces the full node and causes a reconnect outage.
+`pkibroker` remains an outbound session worker with no TLS listener.
+
+Full Go tests passed with disposable PostgreSQL. Affected-package race checks,
+vet, formatting and diff checks passed. Release verification passed with the
+normal PKCS#11-enabled build (an earlier build without PKCS#11 was correctly
+rejected by the release checker). The MQTT-domain integration uses distinct MQTT
+and Service roots, lost-response replay, restart without seed files and denial of
+restored revoked state. Its signing endpoint is an OpenBao HTTP fixture.
+
+A disposable real `emqx/emqx:5.9.0` test passed for replacement TLS certificates
+and established MQTT 3.1.1 session termination after replacement and simulated
+trust denial. The image digest is
+`sha256:c897388a3c628b684c064459a14c71b259317b044be02a586eaaab14916d755c`.
+Client authentication was disabled only in that isolated lifecycle fixture.
+Actual operator authentication/ACL policy, durable-session recovery, cluster
+rollout, physical custody and matched restore/security-history reconciliation
+remain acceptance work. No deployment or zero-downtime guarantee is claimed;
+local supervision does not emit CRL installation acknowledgments.
+
+**Current EMQX milestone: 0/4 items unfinished.** Five broader acceptance
+milestones remain: (1) legacy migration/device replacement, (2) trust consumers/
+live sessions, (3) backup/recovery and SDK integration, (4) provider/hardware
+compatibility, (5) staging/custody/recovery qualification.
 Local commits only; no push, PR, remote CI, deployment or custody operation.
