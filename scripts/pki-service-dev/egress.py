@@ -211,6 +211,27 @@ class EgressRun(c.c.CRLRun):
         self.check(name + '_initial_managed_client', {'subject': selected['subject'], 'certificate_sha256': result['certificate_sha256'],
                                                       'private_key_exported': False, 'provisioner_pattern': pattern})
 
+    def resume_enroll(self, name):
+        failed = Path(self.args.failed)
+        report = m.read(failed / 'report.json')
+        m.require(report['status'] == 'failed' and report['phase'] == name + '-enroll', 'matching failed enrollment evidence required')
+        root, _ = self.selected()
+        baseline = m.read(failed / 'baseline.json')
+        owner = self.deployment(name)
+        saved = m.read(failed / ('after-' + NS + '-' + name + '-deployment.json'))
+        m.require(owner['metadata']['uid'] == baseline['deployment_uid']
+                  and self.obj('persistentvolumeclaim', name + '-service-identity')['metadata']['uid'] == baseline['pvc_uid']
+                  and owner['spec']['template'] == saved['spec']['template'], 'failed enrollment runtime drifted; reconcile manually')
+        values = env_values(owner['spec']['template']['spec']['containers'][0])
+        m.require(values.get(profile(name)['prefix'] + '_IDENTITY_STATE') is None
+                  and values.get('CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN') == '^' + name + '$',
+                  'failed enrollment policy/state differs')
+        self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', name, '--', 'test', '!', '-e', STATE])
+        m.require(not self.client_rows(profile(name)['subject']), 'client issuance exists; do not retry enrollment')
+        self.report['reconciled_from'] = str(failed)
+        self.save('failed-baseline.json', baseline)
+        self.enroll(name)
+
     def adopt(self, name):
         root, _ = self.selected()
         selected = profile(name)
@@ -282,7 +303,7 @@ class EgressRun(c.c.CRLRun):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', choices=['certissuer-enroll', 'certissuer-adopt', 'controller-enroll', 'controller-adopt', 'verify'], required=True)
+    parser.add_argument('--phase', choices=['certissuer-enroll', 'resume-certissuer-enroll', 'certissuer-adopt', 'controller-enroll', 'controller-adopt', 'verify'], required=True)
     parser.add_argument('--config-root', default=str(Path.home() / '.config/rtk_cloud'))
     for key in ('authority', 'intermediate', 'retirement', 'output'):
         parser.add_argument('--' + key, required=True)
@@ -290,10 +311,12 @@ def main():
     parser.add_argument('--enrollment')
     parser.add_argument('--certissuer')
     parser.add_argument('--controller')
+    parser.add_argument('--failed')
     args = parser.parse_args()
     m.require(args.phase == 'verify' or re.fullmatch(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}', args.image or ''),
               'verified dev listener image required')
     m.require(args.phase not in ('certissuer-adopt', 'controller-adopt') or args.enrollment, 'matching enrollment evidence required')
+    m.require(args.phase != 'resume-certissuer-enroll' or args.failed, 'failed enrollment evidence required')
     m.require(args.phase not in ('controller-enroll', 'controller-adopt', 'verify') or args.certissuer, 'certissuer evidence required')
     m.require(args.phase != 'verify' or args.controller, 'controller evidence required')
     fd = os.open(Path(args.config_root).expanduser() / 'dev/pki/service-egress.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -301,7 +324,8 @@ def main():
     runner = EgressRun(args)
     try:
         runner.preflight()
-        {'certissuer-enroll': lambda: runner.enroll('certissuer'), 'certissuer-adopt': lambda: runner.adopt('certissuer'),
+        {'certissuer-enroll': lambda: runner.enroll('certissuer'), 'resume-certissuer-enroll': lambda: runner.resume_enroll('certissuer'),
+         'certissuer-adopt': lambda: runner.adopt('certissuer'),
          'controller-enroll': lambda: runner.enroll('pki-controller'), 'controller-adopt': lambda: runner.adopt('pki-controller'),
          'verify': runner.verify}[args.phase]()
         runner.report['status'] = 'passed'

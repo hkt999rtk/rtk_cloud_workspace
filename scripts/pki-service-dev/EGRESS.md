@@ -43,6 +43,25 @@ print or export a private key. The static credential is used only for this
 recorded initial request; the policy is then narrowed to `^pki-controller$` for
 the next phase.
 
+If that first phase reaches the saved Deployment template but fails before a
+client state file or Service-client issuance exists (for example, the selected
+image omitted the helper), use a new private directory and the narrowly guarded
+recovery phase:
+
+```sh
+python3 scripts/pki-service-dev/egress.py --phase resume-certissuer-enroll \
+  --authority ROOT --intermediate INTERMEDIATE --retirement RETIREMENT \
+  --failed FAILED_CERTISSUER_ENROLL --image VERIFIED_REPLACEMENT_IMAGE \
+  --output RUN/certissuer-enroll-recovery
+```
+
+It requires the saved Deployment/PVC UID and exact accepted template, the
+temporary `^certissuer$` policy, no client state file and zero issuance rows for
+`service:certissuer`. It changes only the certissuer image to the verified
+replacement, then performs the original single enrollment. Any state, issuance
+or template drift stops recovery; it never creates a second request or deletes a
+private state file.
+
 `certissuer-adopt` switches only certissuer to the supplied image. It sets the
 managed client state path and continues to use the independently pinned issuer
 origin, controller URL, manifests and public management CA. It removes the
