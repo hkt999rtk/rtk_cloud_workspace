@@ -19,6 +19,16 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 fresh dev hierarchy checkpoint
+
+Root, Brand and Product v2 are active with real API trust acknowledgment. The
+OpenBao mount collision is fixed in `1067380`; Product key generation remains
+inside OpenBao with a separate exact controller policy. Fresh acceptance steps
+1–2 passed for this dev simulation. Steps 3–5 remain: device enrollment/renewal,
+revocation/live sessions, and repeatable full-lifecycle evidence. No broader
+milestone or staging/custody qualification is marked complete. See the
+[fresh dev rehearsal](production-pki-fresh-dev-rehearsal.md).
+
 ## 2026-09-08 independent audit-history recovery checkpoint
 
 Service commit `79384c6`. Full pki/pkicontrollerapp suites passed with disposable

@@ -29,6 +29,23 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 fresh hierarchy activation complete
+
+Video Cloud `1067380` is running in the scoped dev controller/API deployments
+with digest `548bde6883afbe0708bfe1095389b08288d86a0f6e3cf4d5bf2b012a7e133e16`.
+Fresh Root, Brand and Product v2 are active. Product internal key generation,
+Brand signing, import, exact provider policies and actual API acknowledgment
+passed; activation without acknowledgment was denied. The failed v1 reservation
+has no provider mount/key, remains in the audit record, and its unused controller
+policy was removed. Required consumers remain `video-cloud-api` for this HTTP phase.
+
+Current acceptance sequence: steps 1 and 2 passed for the dev simulation;
+steps 3–5 remain (device enrollment/renewal, revocation/live sessions, repeatable
+full-lifecycle evidence). Five broader reporting areas remain open. Next deploy
+and verify the Product-aware certissuer/factory enrollment path and enroll a new
+device with its own key. No migration, MFA, staging, PR or git push is required.
+See [live evidence](production-pki-fresh-dev-rehearsal.md).
+
 ## 2026-09-08 Brand activation and Product mount repair
 
 Brand activation passed through the governed API after actual API trust

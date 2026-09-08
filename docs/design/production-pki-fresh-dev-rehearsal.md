@@ -7,9 +7,10 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
-## Current live checkpoint: initial trust complete
+## Current live checkpoint: fresh hierarchy active
 
-Video Cloud `ad08eef`, workspace `0e12b30`. Deployed the separate dev API listener
+Initial trust installation used Video Cloud `ad08eef`, workspace `0e12b30`.
+It deployed the separate dev API listener
 `video-cloud-api-pki` with verified image and running image ID
 `ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:c79a651d2807db0bad26b5872784fc435f2833f9143ce042ade710b5f8d2fea7`.
 The existing API Deployment and plaintext Service were preserved.
@@ -55,9 +56,30 @@ is retained as evidence; do not retry key generation or rewrite that reference.
 
 The corrected design reserves new issuers at
 `pki-issuers/<domain>/<issuer_id>/v<version>`. Existing governed references retain
-their exact old layout. Next, deploy the namespace correction, remove the unused
-v1 controller policy and reserve an approved Product v2. This is a fresh dev
-provisioning repair, not migration work.
+their exact old layout. Video Cloud `1067380` is now deployed to the controller and separate API with
+verified running image digest
+`sha256:548bde6883afbe0708bfe1095389b08288d86a0f6e3cf4d5bf2b012a7e133e16`.
+The unused v1 policy was removed and the controller role now has only the exact
+v2 policy. This is a fresh dev provisioning repair, not migration work.
+
+Product v2 issuer `14865afa-c346-4976-b9cb-915d7b21a958` is active. OpenBao generated
+one internal P-256 key at
+`pki-issuers/device/14865afa-c346-4976-b9cb-915d7b21a958/v2`, returning only the CSR.
+The encrypted Brand key signed it in the local ceremony simulation. Import and
+role configuration passed. Activation before API acknowledgment returned 409;
+the API then verified the exact Product bundle against its actual TLS trust,
+acknowledged it using its management identity, and governed activation passed.
+
+Provider metadata exposes no private key. Effective controller-token capabilities
+deny device signing, key reads, exported generation and legacy device signing.
+This establishes the internal-generation path and runtime permission separation;
+it does not qualify hardware custody or independent disaster recovery.
+
+Local verification: complete affected pki, pkitrust, apiapp and postgres suites
+passed against disposable PostgreSQL 16; OpenBao/PKI race tests and vet passed.
+New/old governed layouts, exact policies, domain separation and malformed/broad
+mount rejection are covered. The disposable test database was removed. Dev data
+was retained; no reset or staging mutation was needed.
 
 ## Earlier bootstrap verification on 2026-09-08
 
@@ -101,11 +123,10 @@ provisioning repair, not migration work.
 
 1. **Done:** API initial trust installation, actual bundle acknowledgment, governed
    Root activation, continuous policy synchronization and persisted-state restart.
-2. **In progress:** Brand activation is complete; finish Product provisioning. Keep Brand keys
-   in the encrypted local ceremony simulation and generate Product keys inside
-   isolated OpenBao mounts with per-issuer policies. Verify key non-export and
-   actual consumer installation before activation.
-3. Enroll a fresh device with its own key; verify direct-mTLS authentication and
+2. **Done for this dev simulation:** Brand and Product issuer provisioning,
+   separate key custody, exact OpenBao policies, actual API bundle acknowledgment
+   and governed activation. Hardware/offline-custody qualification stays deferred.
+3. **Next:** Enroll a fresh device with its own key; verify direct-mTLS authentication and
    renewal. Check restart and interrupted renewal.
 4. Verify revocation denial and live-session termination, then add the compatible
    MQTT broker and its consumers to the required trust installation set.
@@ -146,6 +167,11 @@ The canonical dev SecretStore contains:
   `PKI_CONSUMER_PODS=video-cloud-api-pki` maps its pod name to the existing
   `video-cloud-api` management identity. The restart-check annotation is transient
   operational evidence and does not change the persisted workload configuration.
+- `pki/fresh-rehearsal/brand-active.json`, `product-v2-active.json`,
+  `product-v2-custody-probe.json`, `product-v2-key-inventory.json`, and
+  `product-v2-policies.json` retain hierarchy and provider evidence. The failed
+  first Product attempt remains in `product-v2-prior-attempt.json` and its original
+  operation/approval files. No provider key existed for that attempt.
 - `pki/fresh-rehearsal/device-root-active.json`, `cloud.json`, `product.json`,
   `api-restart.json` and `api-tls-negative-probe.json` retain this checkpoint.
 - `operator/env/PKI_CONTROLLER_IMAGE`, `PKI_REQUIRED_CONSUMERS`,
