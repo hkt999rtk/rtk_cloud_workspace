@@ -1,5 +1,30 @@
 # Production PKI implementation ledger
 
+## 2026-09-08 independent audit-history recovery checkpoint
+
+Service commit `79384c6`. Full pki/pkicontrollerapp suites passed with disposable
+PostgreSQL 16, as did recovery race tests, focused history/App-revocation race
+tests, vet, gofmt and diff checks. The history test models deleted/conflicting
+restored rows and verifies no audit writes; CLI tests cover digest and file checks.
+
+Regression validation also exposed App revocation receipt timestamp mismatch.
+The initial response now returns PostgreSQL's stored timestamp, matching the
+existing server/Service-client paths and making subsequent replay identical.
+The revocation test now includes sub-microsecond input precision.
+
+The controller now exports a complete per-issuer audit snapshot and compares a
+restored database against a file bound to an independently retained SHA-256 digest.
+Comparison reports missing/conflicting events without writing rows or replaying
+security actions. Sequence gaps are permitted; no incremental commit-order
+watermark is inferred. Commands are staging-only and bounded by event/file limits.
+See [controller recovery instructions](../../repos/rtk_video_cloud/docs/production-pki-controller.md).
+
+This advances backup/recovery implementation while legacy migration remains the
+active live milestone. Independent collection/retention, complete issuer coverage,
+post-capture events and reconciliation of actual revocation/root-distrust effects
+remain required. Matching audit rows alone cannot qualify restored security state.
+The five broader milestones remain open. No staging mutation, push, PR or CI run.
+
 ## 2026-09-08 staging packaging checkpoint
 
 Service commit: `08be3b6`. Validation passed: three renderer unit tests,
