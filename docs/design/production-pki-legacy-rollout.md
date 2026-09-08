@@ -2,6 +2,23 @@
 
 ## Current execution order: dev first
 
+Local implementation `558c101` adds dev-specific immutable windows, imports,
+verification and report environment binding. Legacy/replacement PostgreSQL tests,
+race checks, vet and diff checks passed. Tests exercise actual dev replacement
+through acknowledgment and predecessor rejection, an expired staging window
+alongside a fresh dev window, repeated schema upgrade, immutable windows,
+cross-environment denial and production exclusion. No dev schema/deployment
+mutation has been performed yet.
+
+Read-only dev inventory: 1,331 successful issuance rows; 111 active entitlements;
+1,211 successful rows map to active-entitlement device IDs, and 120 have no
+entitlement. Every active entitlement has at least one successful source row.
+These are issuance counts, not unique eligible device/certificate counts. Resolve
+current credentials and historical issuance before selecting a fixed canary.
+The live dev database has zero public `pki_*` tables. The controller/schema and
+governed target hierarchy must be prepared before import. Source history and dev
+public chain/CRL validation are the next prerequisites; staging stays untouched.
+
 Per the user's correction, perform migration testing on `video-cloud-dev` before
 any further staging work. Dev discovery verified context `lke649805-ctx` and a
 Ready OpenBao pod. Staging is out of scope for subsequent operations. The earlier
