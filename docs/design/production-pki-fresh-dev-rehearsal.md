@@ -136,8 +136,11 @@ cannot accept the broker's independent service identity.
    isolated dev broker with a pinned compatible EMQX image, server TLS, disabled
    authentication/authorization caches, no permissive authenticator fallback,
    and NetworkPolicies for only the required connections. Existing dev `mqtt`
-   and staging stay untouched. Broker management credentials belong only to its
-   colocated session worker; localhost management HTTP remains inside that pod.
+   and staging stay untouched. Use `pki-dev-prepare --environment dev --broker` for separate, persistent
+   credentials in the canonical dev store; missing/invalid existing files must
+   fail rather than rotate credentials. Give the worker a dedicated database
+   login inheriting only `rtk_pki_verifier`. Broker management credentials belong
+   only to its colocated session worker; localhost management HTTP remains inside that pod.
 3. Provision a fresh Product issuer/device using the existing governed APIs and
    actual consumer acknowledgments. Connect over verified MQTT TLS using a
    certificate-bound token, verify publish/subscribe ACLs and the 60-second lease,

@@ -31,6 +31,7 @@ func runPKIDevPrepare(args []string) error {
 	fs := flag.NewFlagSet("pki-dev-prepare", flag.ContinueOnError)
 	environment := fs.String("environment", "", "must be dev")
 	configRoot := fs.String("config-root", "", "canonical SecretStore base directory")
+	broker := fs.Bool("broker", false, "prepare isolated mqtt-pki runtime credentials without changing live services")
 	server := fs.String("server", "", "optional dev TLS server: video-cloud-api-pki or mqtt-pki")
 	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, certissuer, factoryenroll, pkibroker or emqx-pki")
 	if err := fs.Parse(args); err != nil {
@@ -67,6 +68,13 @@ func runPKIDevPrepare(args []string) error {
 			return err
 		}
 		fmt.Printf("Validated dev PKI server material at %s; no live configuration changed\n", path)
+	}
+	if *broker {
+		path, err := preparePKIDevBroker(store)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Validated isolated dev broker credentials at %s; no live configuration changed\n", path)
 	}
 	return nil
 }
