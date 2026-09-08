@@ -29,6 +29,18 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 fresh-dev authentication and first Root
+
+Account Manager is deployed with the verified `63c928f` image, RS256 signing and
+MFA disabled. Its schema Job and ordinary password login passed. Three simulated
+dev actors received roles through authenticated administration; unassigned access,
+self-approval and wrong-role approval were denied. The first Device Root is
+imported and `ready`; activation remains blocked until actual API trust
+installation. Video Cloud `14ff366` fixes missing controller ingress revealed by
+the live proxy request. See the [fresh dev rehearsal](production-pki-fresh-dev-rehearsal.md)
+for image digests, exact evidence, protected artifact locations and next steps.
+No database reset, staging operation or fabricated trust acknowledgment occurred.
+
 ## 2026-09-08 fresh-dev controller deployment
 
 Added optional `pki-dev-prepare --consumer video-cloud-api` preparation with

@@ -1,5 +1,19 @@
 # Legacy migration: dev source evidence
 
+## 2026-09-08 fresh-dev authentication and first Root
+
+Account Manager is deployed with the verified `63c928f` image, RS256 signing and
+MFA disabled. Its schema Job and ordinary password login passed. Three simulated
+dev actors received roles through authenticated administration; unassigned access,
+self-approval and wrong-role approval were denied. The first Device Root is
+imported and `ready`; activation remains blocked until actual API trust
+installation. Video Cloud `14ff366` fixes missing controller ingress revealed by
+the live proxy request. See the [fresh dev rehearsal](production-pki-fresh-dev-rehearsal.md)
+for image digests, exact evidence, protected artifact locations and next steps.
+No database reset, staging operation or fabricated trust acknowledgment occurred.
+
+The historical legacy inventory below is not a fresh-dev acceptance gate.
+
 ## Current authentication policy
 
 Per the user's clarification, MFA is optional future functionality for human

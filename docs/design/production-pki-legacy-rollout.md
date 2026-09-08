@@ -29,6 +29,9 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+Current measured progress and the next initial trust-installation task are in the
+[fresh dev rehearsal](production-pki-fresh-dev-rehearsal.md).
+
 ## Historical migration execution notes (superseded for dev)
 
 MFA is not a current prerequisite. It is an optional future human user-login
