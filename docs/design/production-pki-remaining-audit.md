@@ -1,5 +1,10 @@
 # Remaining production PKI work: evidence audit
 
+Next MQTT host work follows [Managed EMQX host identity](production-pki-emqx-host.md).
+EMQX owns MQTT TLS termination; `pkibroker` is an outbound session-management
+worker. The fixed four-item plan separates local supervisor implementation from
+real broker, cluster and recovery qualification.
+
 Initial audit: 2026-09-07 against workspace `dc4638d` and client `c863c27`.
 Current-state review: 2026-09-08 against workspace `76e1e13` and Video Cloud
 `7e0aaf2`. See [domain/host inventory](production-pki-domain-host-inventory.md)

@@ -1,6 +1,12 @@
+
 # Production PKI domain and host inventory
 
 Reviewed 2026-09-08 through Video Cloud `6d76748`.
+
+Next MQTT host work follows [Managed EMQX host identity](production-pki-emqx-host.md).
+EMQX owns MQTT TLS termination; `pkibroker` is an outbound session-management
+worker. The fixed four-item plan separates local supervisor implementation from
+real broker, cluster and recovery qualification.
 This inventory preserves the existing five acceptance milestones. It identifies
 implementation work; it does not add a sixth milestone or certify production.
 The authoritative trust boundaries remain Platform PKI contract sections 3–5.

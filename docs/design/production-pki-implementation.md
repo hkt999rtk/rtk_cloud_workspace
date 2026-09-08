@@ -1,5 +1,10 @@
 # Production PKI implementation ledger
 
+Next MQTT host work follows [Managed EMQX host identity](production-pki-emqx-host.md).
+EMQX owns MQTT TLS termination; `pkibroker` is an outbound session-management
+worker. The fixed four-item plan separates local supervisor implementation from
+real broker, cluster and recovery qualification.
+
 This change implements the Platform PKI contract in dependency order. This file
 records actual delivery status; unchecked items are not production capabilities.
 
