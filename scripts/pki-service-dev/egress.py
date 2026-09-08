@@ -285,7 +285,15 @@ class EgressRun(c.c.CRLRun):
         enrolled = m.read(enrollment / 'enrolled.json')
         owner = self.deployment(name)
         saved = m.read(failed / ('after-' + NS + '-' + name + '-deployment.json'))
-        m.require(owner['spec']['template'] == saved['spec']['template'], 'failed adoption runtime drifted; reconcile manually')
+        if owner['spec']['template'] != saved['spec']['template']:
+            prior = json.loads(json.dumps(owner['spec']['template']))
+            prior['spec']['containers'][0]['image'] = saved['spec']['template']['spec']['containers'][0]['image']
+            m.require(prior == saved['spec']['template'], 'failed adoption runtime drifted; reconcile manually')
+            upgraded = json.loads(json.dumps(owner['spec']['template']))
+            upgraded['spec']['containers'][0]['image'] = self.args.image
+            self.apply_template(name, owner, upgraded, self.args.image,
+                                {key: value for key, value in env_values(upgraded['spec']['containers'][0]).items() if key.startswith(profile(name)['prefix'])})
+            owner = self.deployment(name)
         config = self.obj('configmap', profile(name)['configmap'])
         expected = m.read(failed / ('create-' + profile(name)['configmap'] + '.json'))
         m.require(config.get('immutable') is True and config.get('data') == expected.get('data'), 'managed public CA ConfigMap drifted')
