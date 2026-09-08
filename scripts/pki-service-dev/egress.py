@@ -330,7 +330,7 @@ class EgressRun(c.c.CRLRun):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', choices=['certissuer-enroll', 'resume-certissuer-enroll', 'certissuer-adopt', 'resume-certissuer-adopt', 'controller-enroll', 'controller-adopt', 'verify'], required=True)
+    parser.add_argument('--phase', choices=['certissuer-enroll', 'resume-certissuer-enroll', 'certissuer-adopt', 'resume-certissuer-adopt', 'controller-enroll', 'controller-adopt', 'resume-controller-adopt', 'verify'], required=True)
     parser.add_argument('--config-root', default=str(Path.home() / '.config/rtk_cloud'))
     for key in ('authority', 'intermediate', 'retirement', 'output'):
         parser.add_argument('--' + key, required=True)
@@ -345,6 +345,7 @@ def main():
     m.require(args.phase not in ('certissuer-adopt', 'controller-adopt') or args.enrollment, 'matching enrollment evidence required')
     m.require(args.phase != 'resume-certissuer-enroll' or args.failed, 'failed enrollment evidence required')
     m.require(args.phase != 'resume-certissuer-adopt' or (args.failed and args.enrollment), 'failed adoption and enrollment evidence required')
+    m.require(args.phase != 'resume-controller-adopt' or (args.failed and args.enrollment), 'failed adoption and enrollment evidence required')
     m.require(args.phase not in ('controller-enroll', 'controller-adopt', 'verify') or args.certissuer, 'certissuer evidence required')
     m.require(args.phase != 'verify' or args.controller, 'controller evidence required')
     fd = os.open(Path(args.config_root).expanduser() / 'dev/pki/service-egress.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -355,6 +356,7 @@ def main():
         {'certissuer-enroll': lambda: runner.enroll('certissuer'), 'resume-certissuer-enroll': lambda: runner.resume_enroll('certissuer'),
          'certissuer-adopt': lambda: runner.adopt('certissuer'), 'resume-certissuer-adopt': lambda: runner.resume_adopt('certissuer'),
          'controller-enroll': lambda: runner.enroll('pki-controller'), 'controller-adopt': lambda: runner.adopt('pki-controller'),
+         'resume-controller-adopt': lambda: runner.resume_adopt('pki-controller'),
          'verify': runner.verify}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
