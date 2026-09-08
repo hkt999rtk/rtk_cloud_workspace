@@ -80,6 +80,12 @@ class EgressTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'unknown listener'):
             e.enrollment_database_reference('other')
 
+    def test_enrollment_resolves_only_the_listener_local_environment_reference(self):
+        self.assertEqual(e.enrollment_environment_reference('certissuer'), '$VIDEO_CLOUD_ENV')
+        self.assertEqual(e.enrollment_environment_reference('pki-controller'), '${PKI_ENVIRONMENT:?}')
+        with self.assertRaisesRegex(RuntimeError, 'unknown listener'):
+            e.enrollment_environment_reference('other')
+
 
 if __name__ == '__main__':
     unittest.main()

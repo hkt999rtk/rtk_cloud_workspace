@@ -98,6 +98,12 @@ def enrollment_database_reference(name):
     return '$CERT_ISSUER_DB_DSN' if name == 'certissuer' else '${PKI_DATABASE_URL:?}'
 
 
+def enrollment_environment_reference(name):
+    m.require(name in NAMES, 'unknown listener')
+    # Certissuer uses the shared runtime name; controller already owns PKI_ENVIRONMENT.
+    return '$VIDEO_CLOUD_ENV' if name == 'certissuer' else '${PKI_ENVIRONMENT:?}'
+
+
 class EgressRun(c.c.CRLRun):
     def __init__(self, args):
         super().__init__(args)
@@ -194,8 +200,10 @@ class EgressRun(c.c.CRLRun):
             self.apply_template(name, owner, template, self.args.image)
         self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', name, '--', 'test', '-x', '/app/serviceidentity-bootstrap'])
         database = enrollment_database_reference(name)
+        environment = enrollment_environment_reference(name)
         command = ('set -eu; test ! -e ' + STATE + '; umask 077; exec env '
                    'PKI_DATABASE_URL="' + database + '" '
+                   'PKI_ENVIRONMENT="' + environment + '" '
                    'PKI_CLIENT_IDENTITY_STATE=' + STATE + ' '
                    'PKI_CLIENT_ROOT_SHA256=' + root['certificate_fingerprint_sha256'] + ' '
                    'PKI_CLIENT_ISSUER_URL=https://certissuer.' + NS + '.svc:9443 '
