@@ -8,8 +8,11 @@ identity enforcement is locally implemented in Video Cloud `9134882`, and
 per-domain receipt permissions/completion gates in `8baa0e3`. Actual serving
 Service listener bundle receipts and ready-CA bootstrap are implemented in
 `a857a1f`, with local mTLS/registry integration and failure/restart tests.
+Account Manager `41f1294` and Video Cloud `72a9ccf` add a private-socket managed
+Service identity owner for Account Manager, including issuance/retry, renewal,
+verified remote connections and revocation cutoff. Live adoption remains open.
 Inventory is complete (1/6 work groups); 5 work groups remain, with management
-adoption underway. Active milestone progress is approximately 20% (engineering
+adoption underway. Active milestone progress is approximately 25% (engineering
 estimate; live adoption remains). Keep commits local and create PRs only after
 all milestones are finished.
 

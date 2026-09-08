@@ -42,7 +42,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 
 | Connection / owner | Existing implementation | Remaining acceptance in this milestone |
 | --- | --- | --- |
-| Account Manager → controller | `rtk_account_manager/internal/api/pki.go` owns static mTLS files and signed human assertions; controller has exact-name route policy. | Governed client identity admission (first implementation below), managed caller keys, independent server revocation checks, installed receipts and dev lifecycle. |
+| Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Live managed caller adoption, installed CRL receipts and dev lifecycle; static mode remains available until explicit opt-in. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
 | Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Deploy independent Service hierarchy and verify renewal, receipt gates, selective eviction and restart in dev. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
@@ -58,7 +58,7 @@ not additional Device/App identity consumers. Existing managed controller and
 certissuer server-host adapters need live adoption, not a second implementation.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **20%**, an engineering estimate
+Overall milestone progress is approximately **25%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -239,3 +239,88 @@ changed. MFA policy is unchanged.
 Current milestone estimate: **20%; 1/6 work groups complete, 5 open**. Four broad
 milestones remain. This checkpoint completes a bootstrap prerequisite, not the
 whole management adoption work group.
+
+## Account Manager managed controller transport
+
+Account Manager is a separate Go module; the existing Service identity manager
+and registry-backed connection owners are Video Cloud internal packages. Reuse
+those owners in a host-local `pkimanagement` process rather than copying key-state
+and renewal implementations into Account Manager. This process is deployed with
+Account Manager and owns `service:account-manager`; it is not a general proxy or
+a new authority. The same private host state retains the generated key, pending
+CSR/request and installed identity across restarts. Private keys never cross the
+local HTTP interface. Initial issuance uses a separately trusted provisioner
+credential only at the certificate issuer; controller traffic always requires
+the installed registered identity, including immediately after startup.
+
+Account Manager opts into `PKI_CONTROLLER_SOCKET`, mutually exclusive with its
+static controller certificate/key/CA settings. Its existing HTTPS controller
+origin remains explicit and must match the local proxy's configured destination.
+Only a private Unix socket is used, with a private parent directory owned by the
+runtime UID. Deploy both processes with that UID and share only the socket mount;
+mount credential state and provisioner material only in the managed owner. No TCP
+listener or environment proxy fallback is permitted. The owner rejects changed
+origins, noncanonical paths, queries, upgrades, CONNECT, oversized requests and
+routes outside `/v1/pki/issuers` and `/v1/pki/operations`. It preserves the exact
+request body, method, Authorization assertion and idempotency key. The controller
+still verifies signed human assertions and roles; local socket access cannot mint
+or change them. Account Manager's current human-login/MFA policy is unchanged.
+
+The owner requires separate explicit verified Service server policies for the
+certificate issuer and controller. Reuse `ServerHTTPClient` for their registry,
+CRL, deadline and connection eviction behavior, and `serviceidentity.Manager`
+for initial issuance, renewal/retry and atomic installation. Managed replacement
+or local identity denial evicts connections to both remote origins. Start serving
+only after a registered current identity exists; use `Current` (never bootstrap)
+for controller client TLS. No static fallback after opt-in or on owner failure.
+Shutdown cancels renewal, closes outbound sockets and releases state/socket
+ownership. Do not remove an unowned existing socket during startup.
+
+Local acceptance must cover Unix request binding, preserved assertions, denial
+without the owner, initial issuance, renewal/restart, revoked identity denial,
+response-stream cutoff and failed trust. The deployment example must make UID,
+private state and socket-sharing requirements explicit. Live dev adoption and
+per-consumer durable CRL receipt qualification remain open until exercised; this
+transport does not itself establish persistent Root-policy rotation or SDK work.
+
+
+## Managed Account Manager checkpoint
+
+Account Manager `41f1294` adds opt-in private Unix-socket controller egress while
+preserving its signed human assertion, exact body/method/path and idempotency key.
+Socket mode is mutually exclusive with static controller key/CA settings and has
+no TCP/static fallback. Video Cloud `72a9ccf` implements `pkimanagement`: existing
+host-owned Service issuance/retry/renewal plus separate registry-verified issuer
+and controller connection owners. Controller TLS uses only the registered current
+identity. Bootstrap remains confined to issuance. Keys stay in private owner
+state; socket mounts are shared with Account Manager, credential mounts are not.
+
+Local PostgreSQL/mTLS integration passed initial response-loss recovery without
+a second signature, duplicate-owner rejection, current identity use over the
+actual socket, renewal, old-response cutoff through the local proxy, clean shutdown,
+restart without bootstrap, wrong remote Root-pin denial, revoked stream cutoff,
+new-call/renewal denial and revoked-state restart denial. Account Manager tests
+verify the actual RS256 assertion and body hash after socket transport, ordinary
+human MFA=false behavior, changed-origin denial, owner absence/shutdown and unsafe
+socket configuration. Route, size, query, upgrade and traversal rejection tests
+passed. These tests use disposable authorities/provider fixtures, not live dev
+or production provider qualification.
+
+The affected Video Cloud package suites (pki, pkitrust, serviceidentity,
+pkimanagementapp, pkicontrollerapp, certissuerapp) and Account Manager API/auth
+suites passed. Focused race tests, vet, shell syntax, diff checks and a Linux
+amd64 CGO-disabled build of the new executable passed. Makefile, image build,
+release inventory, env examples and runtime documentation include the new owner;
+no image publication or full release qualification is claimed.
+
+Work group 2 remains open for other management consumers, actual durable CRL
+receipt membership/adoption and live Service hierarchy/caller renewal, revocation
+and restart. Next prioritize a dev Service rollout using the implemented
+listener bootstrap and managed caller, preserving the completed Device gates.
+The other four open groups remain host/transport adoption, persistent Root policy,
+App/relay enforcement and repeatable dev acceptance. No live environment changes,
+Git pushes, PRs or remote CI occurred. Staging and legacy migration stay deferred.
+
+Current milestone estimate: **25%; 1/6 work groups complete, 5 open**. Four broad
+milestones remain. This is implementation progress within management adoption;
+it does not claim that the entire work group or milestone is complete.

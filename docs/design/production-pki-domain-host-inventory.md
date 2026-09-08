@@ -10,7 +10,9 @@ remain. Controller management Service-client registry admission, role binding
 and connection eviction are locally implemented in `9134882`; per-domain consumer
 gates are implemented in `8baa0e3`. Serving-listener Service bundle receipts and
 ready-CA bootstrap are implemented locally in `a857a1f`; managed callers and live
-Service adoption remain open. The active milestone is approximately 20%, with 1/6 work groups complete and 5 open.
+Service adoption remain open. Account Manager `41f1294` and Video Cloud `72a9ccf`
+add locally tested Account Manager managed identity/egress through a private socket.
+The active milestone is approximately 25%, with 1/6 work groups complete and 5 open.
 
 ## 2026-09-08 staging packaging checkpoint
 
