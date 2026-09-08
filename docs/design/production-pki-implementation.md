@@ -29,6 +29,30 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 Product revocation and HTTP session checkpoint
+
+Fresh dev steps 1–3 retain their recorded passes. Step 4 now has live evidence
+for Product CA revocation: distinct approvals, registry denial of new device
+authentication/renewal, and closure of an existing verified-mTLS WebSocket within
+8.003 seconds. Finalization failed before CRL publication, then succeeded only
+after the API installed and acknowledged the Brand-signed CRL number 2. Subsequent
+TLS handshakes were rejected. A controlled API restart preserved the image and
+all four trust-state file hashes and retained TLS denial. See the [rehearsal record](production-pki-fresh-dev-rehearsal.md)
+for operation IDs, CRL digest, configuration and qualification limits.
+
+The disposable Product v2 is revoked; Root/Brand remain active. The separate API
+now enforces Root/Brand/Product CRLs and continuous root-policy synchronization.
+Its completed bootstrap bundle acknowledgment setting is disabled because the
+Root-only bootstrap chain conflicts with the client CRL verifier. Existing
+activation receipts remain intact. No authorization or freshness check was
+relaxed, and the image is unchanged.
+
+Next: compatible MQTT broker/consumer acceptance with a fresh Product issuer and
+device, then reproducible full dev lifecycle evidence. Individual Device-leaf
+revocation and simultaneous Root bootstrap/client-CRL configuration are not
+qualified by this test. The five broader reporting areas remain open; legacy
+migration and staging remain deferred. No reset, git push, PR or CI run occurred.
+
 ## 2026-09-08 fresh device enrollment, renewal and restart checkpoint
 
 The fresh device generated its own key, enrolled through authenticated production

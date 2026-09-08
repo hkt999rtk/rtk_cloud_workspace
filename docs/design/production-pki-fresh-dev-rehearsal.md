@@ -7,7 +7,73 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
-## Current live checkpoint: fresh hierarchy active
+## Current live checkpoint: Product revocation and HTTP sessions
+
+The disposable Product v2 issuer is now **revoked**. Root and Brand remain active;
+the activation and enrollment records below are historical checkpoints. A new
+Product issuer and fresh device are needed for the next MQTT acceptance run.
+
+Governed operation `75ddce79-8f0b-41b5-a55b-cb043473ab43` used distinct simulated
+PKI-admin and custodian approvals. Before execution, the device authenticated
+with its current successor key and opened a verified-mTLS WebSocket (HTTP 101).
+It remained connected through a full 12-second observation interval. Revocation
+execution immediately changed registry authorization; the existing socket closed
+8.003 seconds after the revoke request began. New token issuance returned 401
+and certissuer renewal returned 403. These denials were observed before publishing
+the new Brand CRL, so they establish online registry/session enforcement.
+
+Finalization before CRL publication returned 409. The encrypted dev Brand key
+then signed full CRL number 2 containing the revoked Product CA serial, reason 5
+(cessation of operation). The API process fetched, installed, persisted and
+acknowledged digest
+`fac732d26b8373d950a284da07a72d07301d3ae9d1a447dec478e511bf76bb33`
+at `2026-09-08T06:57:54.712328Z`. Only after this actual consumer acknowledgment
+did governed finalization succeed. New device connections were then rejected at
+the TLS handshake as well. No operator-generated acknowledgment or direct SQL
+revocation write was used.
+
+Full-chain CRL enforcement is enabled on the separate dev API with
+`VIDEO_CLOUD_AUTH_CRL_MANIFEST=/run/pki-device/crls.json` and
+`VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS=true`. The manifest pins the public
+Root, Brand and Product authority records; their CRL caches live on the existing
+PVC under `/run/pki-state`. Initial Root/Brand CRLs were signed by their encrypted
+local simulation keys. The Product CRL was retrieved from OpenBao's public
+`cert/crl` endpoint and was signed inside OpenBao; no Product key was exported.
+
+The rollout exposed a bootstrap/runtime configuration conflict: leaving the
+completed Root bundle acknowledgment enabled makes its CA-only chain enter the
+client CRL verifier, which correctly requires a leaf/issuer chain. After verifying
+all three issuers were active and their CRLs were acknowledged, the API's
+`VIDEO_CLOUD_AUTH_ISSUER_TRUST_MANIFEST` setting was removed. The completed bundle
+receipts remain in the registry; dynamic root-policy and mandatory CRL verification
+remain enabled. Do not re-enable the historical all-issuer bootstrap manifest in
+this steady-state configuration. Support for simultaneous Root bootstrap
+acknowledgment and mandatory client CRLs has not been qualified.
+
+A controlled API restart then replaced the pod with
+`597e2d97-956d-4504-a6b1-2ecd9eb84fda`. Its image ID was unchanged, and the Root
+policy plus all three persisted CRL files retained identical SHA-256 hashes.
+The new Ready process still rejected the revoked device at TLS handshake.
+`api-crl-restart-before.json` and `api-crl-restart-after.json` retain this check;
+`product-v2-revocation-evidence.json` has SHA-256
+`05d1f3314a1ce825f855c583605b8efd63d84d1255aa5ac20f084a14135669b3`.
+
+Scoped deployment and ConfigMap manifests are persisted in the canonical dev
+store. The revoked Product was removed from retained initial bundle references;
+its pinned CRL authority and public revocation evidence remain available. The
+API image stays at `548bde6883afbe0708bfe1095389b08288d86a0f6e3cf4d5bf2b012a7e133e16`.
+The original API, factory enrollment, certissuer, MQTT and staging workloads were
+not redeployed for this CRL/session test. No database reset was needed.
+
+Evidence in the protected `pki/fresh-rehearsal` directory includes
+`product-v2-revocation-evidence.json`, the requested/approved/pending/completed
+operation snapshots, `brand-crl-2-imported.json` and the public ceremony manifests.
+CRLs in this rehearsal expire on 2026-09-11; freshness remains enforced. This
+checkpoint qualifies the recorded Product-CA revocation and HTTP/WebSocket case,
+not individual Device-leaf revocation, MQTT, every provider failure, or production
+custody/recovery.
+
+## Earlier checkpoint: fresh hierarchy active
 
 Initial trust installation used Video Cloud `ad08eef`, workspace `0e12b30`.
 It deployed the separate dev API listener
@@ -131,8 +197,9 @@ was retained; no reset or staging mutation was needed.
    authentication, new-key renewal and interruption before acknowledgment across
    certissuer/API restarts. Exact replay and old-key cutoff are verified below.
    This does not qualify every possible provider failure or lost signing outcome.
-4. **Next:** Verify revocation denial and live-session termination, then add the compatible
-   MQTT broker and its consumers to the required trust installation set.
+4. **Partially done:** Product CA revocation, direct-mTLS denial and existing
+   WebSocket termination passed. Next add the compatible MQTT broker and its
+   consumers to the required trust installation set, using a fresh Product/device.
 5. Retain pass/fail results and a reproducible setup for the full dev lifecycle.
 
 Initial HTTP acceptance currently requires consumer `video-cloud-api`. MQTT is
