@@ -2,6 +2,11 @@
 
 ## Current execution order: dev first
 
+See the [dev source preflight](production-pki-legacy-dev-preflight.md): 111 current
+credentials selected uniquely from issuance history, with full chain/CRL checks
+passed after refreshing the two expired dev CRLs. Registry eligibility, target
+hierarchy, device possession and canary execution remain pending.
+
 Local implementation `558c101` adds dev-specific immutable windows, imports,
 verification and report environment binding. Legacy/replacement PostgreSQL tests,
 race checks, vet and diff checks passed. Tests exercise actual dev replacement
