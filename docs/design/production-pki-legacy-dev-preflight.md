@@ -63,6 +63,61 @@ before approval/import.
 
 ## Next critical path
 
+### 2026-09-08 dev OpenBao workload authentication
+
+Revalidated dev context `lke649805-ctx`, the ready OpenBao pod and the absence of
+the controller Deployment. Created the `pki-controller` service account in
+`video-cloud-dev-video-cloud` with automatic token mounting disabled. OpenBao's
+existing service account already had TokenReview permission; no new cluster RBAC
+grant was needed.
+
+The previously absent `kubernetes/` auth mount now has a controller-only role:
+
+| Setting | Verified value |
+| --- | --- |
+| Role | `pki-controller-dev` |
+| Bound service account | `pki-controller` |
+| Bound namespace | `video-cloud-dev-video-cloud` |
+| Audience | `openbao` |
+| Issuer | `https://kubernetes.default.svc.cluster.local` |
+| Issuer validation | Enabled |
+| Kubernetes API | `https://kubernetes.default.svc:443`, verified using the mounted cluster CA |
+| Reviewer | Existing OpenBao pod service-account credential |
+| Token TTL / maximum | 900 / 3,600 seconds |
+| Token policies | Empty; default policy disabled |
+
+The exact controller service account authenticated successfully through verified
+OpenBao TLS using a Kubernetes TokenRequest credential. The returned token had
+no token/identity policies and a 900-second lease. Tokens for the wrong service
+account or wrong audience were denied. A legacy Device CA signing request using
+the returned token was denied with HTTP 403; the probe contained no valid CSR
+and produced no certificate. This proves the identity boundary and deny-by-default
+bootstrap, not Product provisioning or projected-token rotation in a controller pod.
+No issuer mount permissions were granted. Existing AppRole configuration was not
+modified, and no CA key, device credential or human approval was created.
+
+Public configuration/probe summaries are persisted as `openbao-auth.json` and
+`openbao-auth-probe.json` under the dev SecretStore's
+`pki/controller-bootstrap/rollout` directory. No service-account JWT or issued
+OpenBao token is included in those files.
+
+The controller remains undeployed pending a complete trust-consumer binding.
+`PKI_REQUIRED_CONSUMERS` identifies actual management certificate CNs: an
+Account Manager identity cannot stand in for a workload's installed-trust
+acknowledgment. Current API, certissuer and factory workloads have no new
+controller-consumer management certificate mount. The API's existing inline
+authentication setting uses trusted client-certificate headers; the target
+Product PKI trust synchronizer requires direct mTLS and a dedicated management
+identity. Prepare that consumer identity and the corresponding transport rollout
+before treating trust installation as ready.
+
+The existing dev `mqtt` StatefulSet has one ready replica on `emqx/emqx:5.8.7`.
+The implemented session-revocation plan requires EMQX 5.9 or later for its cache
+reset/client-attribute APIs. Broker upgrade and the `pkibroker` workload remain
+part of live old-session rejection acceptance; neither was changed here.
+Staging remains untouched. The real approvers, target hierarchy and owned canary
+device are still outstanding; all five live migration acceptance items remain open.
+
 ### 2026-09-08 live dev database bootstrap
 
 Published the local dev package from clean Video Cloud `0dca4d9`. The workspace

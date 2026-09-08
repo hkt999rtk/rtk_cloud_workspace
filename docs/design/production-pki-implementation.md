@@ -9,6 +9,18 @@ historical implementation evidence; they do not reinstate a mandatory MFA gate.
 Authenticated user identity, role authorization, distinct approvals, device
 certificate/key-possession checks and custody controls remain required.
 
+## 2026-09-08 dev OpenBao controller authentication
+
+Installed a dedicated Kubernetes auth binding for the dev controller service
+account with exact namespace/audience/issuer checks, short token lifetimes and
+no default or issuer policies. Live authentication succeeded; wrong identity,
+wrong audience and legacy signing were denied. Existing AppRole settings and
+device authority were preserved. Public evidence is recorded in the
+[dev preflight](production-pki-legacy-dev-preflight.md). Consumer management
+identity/direct-mTLS wiring precedes the controller/trust rollout. Dev's current
+EMQX 5.8.7 also requires the already-planned upgrade for session-revocation
+acceptance. No fake acknowledgments or approvals were used; milestone 1 remains open.
+
 ## 2026-09-08 live dev PKI schema and runtime database access
 
 Fixed the workspace dev image generator to include `pkicontroller`, built and

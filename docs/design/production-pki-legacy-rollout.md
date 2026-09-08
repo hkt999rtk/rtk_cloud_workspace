@@ -13,8 +13,9 @@ validation remain. This replaces the earlier proposed dev-only exception.
 
 Current bootstrap progress: the dev migration and grants Jobs completed, and
 dedicated runtime database access passed live read/denial checks. TLS/key/trust
-dependencies are installed. The controller and Account Manager signer cutover
-remain pending, starting with dedicated OpenBao Kubernetes authentication.
+dependencies and a deny-by-default OpenBao Kubernetes auth binding are installed.
+The controller and Account Manager signer cutover remain pending, starting with
+the actual consumer management identities and direct-mTLS transport binding.
 See the latest dev preflight checkpoint; older discovery counts below describe
 the environment before this bootstrap. No governed import/replacement has run.
 
