@@ -53,6 +53,36 @@ before approval/import.
 
 ## Next critical path
 
+### Controller and authorization discovery
+
+Local implementation `bc4b247`: four renderer tests and diff checks passed;
+linux/amd64 image build and controller executable/usage smoke check passed.
+Local image ID `sha256:1988dd988b3321d3f9d0e71e93ab20729982c82c198dda3bf4f1111edcd9582a`
+has not been published or deployed. It is build evidence, not a registry digest
+or live dev qualification.
+
+The service renderer now has an explicit dev target: dev namespace, dev package
+digest, dev OpenBao endpoint/auth role and existing `ghcr-pull` reference. The
+controller-specific Secrets/ConfigMaps are absent in dev: migration/runtime DB
+connections, controller TLS identity, Account Manager assertion public key and
+provider transport CA. Their bootstrap must precede application of the rendered
+workloads; generating manifests does not provision these dependencies.
+
+Account Manager's Deployment has only its certificate-issuer client volume and
+loads `account-manager-runtime`. A key-name-only inspection found HS256 access/
+refresh secret settings and no signer selection, asymmetric key paths, PKI
+controller connection or MFA assurance configuration. Current source defaults
+`JWT_SIGNER_PROVIDER` to `hs256`; `SignPKIAssertion` requires RS256. The existing
+integration also requires recent verified IdP MFA and distinct PKI Administrator/
+Security Custodian approvals. The dev IdP and two actual operator identities have
+been requested; no roles, MFA claims or approval assertions were fabricated.
+
+Prepare controller bootstrap together with the Account Manager RS256/controller
+transport configuration and compatibility checks for its token consumers. A
+controller-only deployment cannot complete the governed canary. No dev rollout,
+database migration, credential generation or Account Manager change has occurred
+in this preparation step. Staging remains outside scope.
+
 1. Prepare the dev-only registry/controller rollout; public `pki_*` tables and
    the controller are absent. Preserve existing dev service configuration/data.
 2. Establish the governed Device/Brand/Product target hierarchy with independent
