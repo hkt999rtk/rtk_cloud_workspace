@@ -324,3 +324,24 @@ Git pushes, PRs or remote CI occurred. Staging and legacy migration stay deferre
 Current milestone estimate: **25%; 1/6 work groups complete, 5 open**. Four broad
 milestones remain. This is implementation progress within management adoption;
 it does not claim that the entire work group or milestone is complete.
+
+## Dev rollout prerequisites and first Service authority
+
+Before live adoption, include `pkimanagement` in the workspace's canonical
+`lke-build-images` generated Dockerfile as well as the service Dockerfile. The
+offline ceremony must reconstruct the complete approved provision request,
+including `service_client_ids` and `server_dns_names`, when validating the request
+digest and authority policy. Reject changes to either policy before signing; do
+not bypass the approved digest to make a Service intermediate ceremony proceed.
+Device request digests and offline key custody remain unchanged.
+
+Roll out the selected dev controller revision with explicit domain membership,
+preserving the existing Device API/broker gate. Provision a separate dev Service
+Root with normal distinct human approvals and encrypted offline ceremony state.
+Install its reviewed manifest at actual controller/certissuer listeners, obtain
+their real receipts, then activate and import a signed Root CRL. Only then create
+the approved Service intermediate and subsequent server/client identities.
+Retain scoped resource-version-checked rollback manifests and reproducible dev
+settings. Receipt absence must still block activation; no manual receipt writes
+or production-custody claim is permitted. Persist evidence at each stage and
+reconcile uncertain operations before replaying any mutation.

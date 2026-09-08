@@ -30,6 +30,14 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def device_consumers(env):
+    domain_keys = ['PKI_REQUIRED_CONSUMERS_' + domain for domain in ('DEVICE', 'APP', 'SERVICE', 'MQTT', 'OPENBAO_TLS')]
+    domain_mode = any(env.get(key) for key in domain_keys)
+    require(not (domain_mode and env.get('PKI_REQUIRED_CONSUMERS')), 'mixed consumer policy modes')
+    value = env.get('PKI_REQUIRED_CONSUMERS_DEVICE' if domain_mode else 'PKI_REQUIRED_CONSUMERS', '')
+    return sorted(value.split(','))
+
+
 def digest(raw):
     return hashlib.sha256(raw.encode() if isinstance(raw, str) else raw).hexdigest()
 
@@ -270,7 +278,7 @@ class Acceptance:
             require(all('@sha256:' in c['image'] for c in containers), 'image not pinned: ' + deployment)
             if deployment == 'pki-controller':
                 env = {v['name']: v.get('value') for c in containers for v in c.get('env', [])}
-                require(sorted(env.get('PKI_REQUIRED_CONSUMERS', '').split(',')) == CONSUMERS,
+                require(device_consumers(env) == CONSUMERS,
                         'required consumer set changed')
         broker_config = self.obj('configmap', 'mqtt-pki-config')['data']['base.hocon']
         require(broker_config.count('dest_topic = "_bc/${username}/$1"') == 2,

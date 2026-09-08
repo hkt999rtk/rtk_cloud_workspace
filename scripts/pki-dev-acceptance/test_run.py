@@ -11,6 +11,16 @@ spec.loader.exec_module(m)
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_device_gate_survives_domain_policy_adoption(self):
+        legacy = {'PKI_REQUIRED_CONSUMERS': 'video-cloud-api,pkibroker'}
+        domains = {'PKI_REQUIRED_CONSUMERS_DEVICE': 'video-cloud-api,pkibroker',
+                   'PKI_REQUIRED_CONSUMERS_SERVICE': 'pki-controller,certissuer'}
+        self.assertEqual(m.device_consumers(legacy), m.CONSUMERS)
+        self.assertEqual(m.device_consumers(domains), m.CONSUMERS)
+        with self.assertRaisesRegex(RuntimeError, 'mixed consumer'):
+            m.device_consumers(dict(legacy, **domains))
+        self.assertNotEqual(m.device_consumers({'PKI_REQUIRED_CONSUMERS_SERVICE': 'video-cloud-api,pkibroker'}), m.CONSUMERS)
+
     def test_go_rfc3339_fraction_precision_on_python_39(self):
         for fraction in ('1', '12', '123', '1234', '12345', '123456', '123456789'):
             parsed = m.parse_time('2026-09-08T09:00:00.' + fraction + 'Z')

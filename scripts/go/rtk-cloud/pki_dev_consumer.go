@@ -16,7 +16,7 @@ import (
 
 func validPKIDevConsumer(name string) bool {
 	switch name {
-	case "video-cloud-api", "certissuer", "factoryenroll", "pkibroker", "emqx-pki":
+	case "video-cloud-api", "certissuer", "factoryenroll", "pkibroker", "emqx-pki", "pki-controller":
 		return true
 	}
 	return false

@@ -313,3 +313,26 @@ func TestPKIDevBrokerCallbackIdentityIsIndependent(t *testing.T) {
 		t.Fatal("CA private key retained")
 	}
 }
+
+func TestControllerConsumerHasIndependentReusableIdentity(t *testing.T) {
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	dir, err := preparePKIDevConsumer(store, "pki-controller", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(filepath.Join(dir, "tls.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := preparePKIDevConsumer(store, "pki-controller", now); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+	if !bytes.Equal(key, after) || validatePKIDevConsumer(dir, "certissuer", now) == nil {
+		t.Fatal("controller identity rotated or reused another consumer name")
+	}
+}

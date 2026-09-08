@@ -99,7 +99,7 @@ GOWORK=off go run ./rtk-cloud pki-dev-prepare --environment dev --consumer video
 ```
 
 Supported consumer names are `video-cloud-api`, `certissuer`, `factoryenroll` and
-`pkibroker`. Each explicitly selected client gets a separate 0700 directory at
+`pkibroker` and `pki-controller`. Each explicitly selected client gets a separate 0700 directory at
 `dev/pki/consumers/<name>`, containing mode-0600 `ca.crt`, `tls.crt` and `tls.key`.
 Generation retains only its public CA and client key; the CA private key is
 not retained. Repeats validate and reuse material; invalid existing material fails.
