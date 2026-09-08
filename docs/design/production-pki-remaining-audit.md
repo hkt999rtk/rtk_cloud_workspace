@@ -19,6 +19,15 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## Latest: maintained dev acceptance runner (2026-09-08)
+
+The reconciled tool-development run passed all 12 named checks and cleaned up its
+own policies/manifest entries. See the [fresh dev checkpoint](production-pki-fresh-dev-rehearsal.md)
+for measured results and limitations. Current milestone estimate: **98%**.
+The remaining work is one uninterrupted fresh run of the committed tool and the
+five-item completion audit. Five reporting areas remain open; this does not yet
+close the active milestone or qualify deferred staging/legacy work.
+
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 
 The complete dev consumer set now passed the Product revocation gate under an

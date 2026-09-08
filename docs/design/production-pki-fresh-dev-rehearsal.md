@@ -7,6 +7,71 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
+## 2026-09-08 maintained acceptance tool: reconciled run passed
+
+The maintained runner completed all **12 named checks** for disposable Product
+issuer `760d3f92-c3f2-4676-8a4d-7d754324947d`. The protected report is
+`dev/pki/acceptance-run-20260908-1/report.json`. This was a reconciled development
+run across tool fixes; previous failure reports are retained. It is not yet the
+final uninterrupted run of the committed tool.
+
+The run verified actual API/broker activation receipts, one internal provider key,
+controller capability boundaries, factory enrollment, direct mTLS, MQTT ACL and
+exact tenant-rewritten QoS1 delivery, new-key renewal/replay and replacement.
+The predecessor closed **4.544977 seconds** after acknowledgment at connection
+age **16.696256 seconds**; its successor remained connected. Under the repeated
+controlled worker fault, a valid baseline session closed **11.680498 seconds**
+after injection at age **22.400401 seconds**. API-only revocation completion was
+blocked; both receipts allowed completion after exact Root-state restoration.
+Explicit revoked-client TLS rejection, unexpired-token MQTT denial, terminal
+state/PVC/permission retention and healthy baseline traffic passed on restart.
+Only this run's provider policies and manifest entries were removed; its internal
+key, revoked Product and terminal audit remain. No fault remains active.
+
+The tool fixes cover the cluster's minimum token lifetime, permitted key-ID
+listing versus prohibited private-key access/signing, plaintext HTTP denials,
+Service/callback startup convergence, the existing tenant topic rewrite, Python
+3.9 parsing of Go timestamps, and explicit TLS 1.3 certificate-alert observation.
+Local Python tests (11), Go probe race tests, vet and static checks passed.
+
+**Current milestone estimate: 98%.** One existing work package remains: execute
+an uninterrupted fresh run of the committed tool, then perform the five-item
+completion audit and record its result. All five reporting areas remain open.
+Root/Brand bootstrap remains separately recorded foundation evidence; this tool
+revalidates that foundation and does not claim to recreate it on every run.
+Staging and legacy migration remain deferred; MFA is future human-login-only.
+
+## Maintained repeatable dev acceptance tool
+
+Implemented [`scripts/pki-dev-acceptance/run.py`](../../scripts/pki-dev-acceptance/README.md)
+and a standard-library Go TLS/MQTT probe.
+The explicit baseline is the existing isolated dev controller/API/broker and
+reviewed Root/Brand plus three temporary human accounts. Revalidate that baseline,
+its current certificate/key correspondence, required consumer set and running
+images before mutation. Initial Cloud/Root/Brand provisioning remains separately
+recorded setup evidence; the repeatable run must not label it as newly executed.
+
+Each run creates a unique disposable Product profile under the reviewed Brand,
+then its governed Product CA with an internal OpenBao key. It checks missing
+consumer gates, installs the public bundle in API and broker, activates with both
+real receipts, imports its CRL, and enrolls a fresh device with a locally generated
+key. Exercise new-key renewal, interrupted-response replay, predecessor-ACK denial,
+selective MQTT cutoff, valid successor traffic and restart. Revoke the run's own
+Product, preserving existing Brand CRL entries, and verify completion is blocked
+by a deliberately faulted broker until it recovers and sends the new receipt.
+Retain terminal denial and healthy baseline v4 traffic after recovery/restart.
+
+No temporary Product replaces the baseline v4 Product. Add/remove only the run's
+own provider policies and reviewed manifest entries; retain provider keys and
+audit records. Use canonical dev access, resource-version guarded K8s patches,
+private run directories, unique request IDs, owned temporary port-forwards,
+finally-based fault restoration and explicit failure reports. Never infer success
+from preexisting evidence files or mark an unexecuted phase passed. Preserve the
+phase and private request/result files on ambiguous signing responses so operators
+can reconcile them; do not automatically repeat an irreversible provider action.
+The final report separates current-run checks from prior setup evidence and the
+remaining staging/provider/SDK qualification areas.
+
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 
 The complete dev consumer set now passed the Product revocation gate under an
@@ -647,7 +712,7 @@ was retained; no reset or staging mutation was needed.
   controller. This is a dev simulation on the workstation, not a physically
   offline ceremony or qualified escrow.
 
-## Remaining acceptance work, in order
+## Historical acceptance checkpoint (superseded by latest status above)
 
 1. **Done:** API initial trust installation, actual bundle acknowledgment, governed
    Root activation, continuous policy synchronization and persisted-state restart.

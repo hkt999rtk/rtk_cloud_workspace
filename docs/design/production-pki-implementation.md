@@ -5538,3 +5538,17 @@ Five broader acceptance milestones remain: legacy migration/device replacement
 (active); trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware compatibility; staging/custody/recovery qualification.
 Local commits only; no push, PR, remote CI, deployment or custody operation.
+
+
+### Maintained fresh-dev acceptance runner (2026-09-08)
+
+Added the repository-owned Python runner and standard-library Go TLS/MQTT probe.
+The reconciled development run passed all 12 checks through activation gates,
+provider custody, enrollment, renewal/replacement, actual broker fault, revocation
+receipt gates, recovery/restart and scoped cleanup. Failed reports remain explicit;
+no signing/key generation is blindly replayed at guarded resumption points.
+Python tests (11), Go race tests/vet and static checks passed. The active milestone
+is estimated 98%, with one work package left: a fresh uninterrupted run of the
+committed tool and the five-item completion audit. See the current
+[fresh dev checkpoint](production-pki-fresh-dev-rehearsal.md). Five reporting areas
+remain open. No staging changes, Git push, PR or remote CI were performed.
