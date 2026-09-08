@@ -9,6 +9,40 @@ only; devices never use it. Legacy fleet migration is deferred.
 
 ## Current live checkpoint: real dev MQTT lifecycle
 
+### Next implementation: broker Device trust receipts
+
+The broker worker is a registry-backed session consumer. Its acknowledgment must
+describe the trust state actually used for session decisions; it must never use
+a synthetic TLS configuration to claim installation in EMQX's server TLS listener.
+Implement and qualify the remaining distribution work in this order:
+
+1. Prepare a reviewed Device CRL manifest, persist monotonic signed records, and
+   bind each session decision to those exact Root/Brand/Product digests in the
+   same database snapshot as identity verification. After a complete successful
+   sweep, recheck the prepared state and send CRL receipts using the worker's own
+   management mTLS identity. Preparation, scan or version-check failures suppress
+   receipts. App and Device manifests share transport credentials, but retain
+   separate domains, state files and token verifiers.
+2. Add genuine registry-consumer bundle and Root-policy installation/receipts,
+   including ready-issuer activation. Bundle readiness and active leaf issuance
+   are separate: requiring an active Product's own CRL before acknowledging its
+   activation would create a cycle. Keep issuer status and CRL checks intact and
+   test that bootstrap sequence explicitly. Also qualify manifest transitions
+   when an authority becomes revoked/compromised/retired: the initial strict CRL
+   consumer fails preparation for a terminal authority still in its manifest.
+   Terminal lineage must remain denied while unaffected sessions and parent-CRL
+   receipts can progress. CRL receipts alone do not complete bundle or Root-policy
+   distribution.
+3. Deploy the complete consumer on isolated dev with its own management identity,
+   controller CA/network access and required-consumer configuration. Demonstrate
+   missing/wrong/stale receipts blocking activation and revocation finalization,
+   and actual installed receipts permitting the intended transitions.
+4. Retain a reproducible full dev lifecycle run, including restart and failure
+   cases, before closing this milestone. Legacy migration and staging stay deferred.
+
+The following live checkpoint predates this implementation; no new consumer gate
+is claimed until the scoped rollout and its acceptance evidence are recorded.
+
 The isolated `mqtt-pki` Deployment runs EMQX 5.9.0 plus `pkibroker` using verified
 running image digests `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`
 and `536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`, respectively.

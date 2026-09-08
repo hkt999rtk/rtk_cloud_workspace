@@ -29,6 +29,30 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 broker Device CRL receipt implementation
+
+Video Cloud `ce9b5c4` adds an optional reviewed Device CRL consumer to `pkibroker`.
+It prepares and persists signed records, fences Device session verification to
+those exact Root/Brand/Product digests in the identity database snapshot, and
+sends its own mTLS receipts only after a complete successful sweep and prepared
+state revalidation. App and Device retain separate manifests/state while sharing
+management transport. No consumer acknowledgment is substituted for TLS installation.
+
+PostgreSQL 16-backed pki/pkitrust/pkibrokerapp/pkiturnapp suites passed. Related
+consumer/worker/TURN race suites, focused Device verification race tests, vet and
+diff checks passed. Tests cover missing/expired/cross-issuer prepared coverage,
+revoked leaf/ancestor denial, selective session eviction, scan/cache/preparation
+failure, registry advancement during a scan, persisted rollback rejection after
+restart, cross-domain manifests and shared-state rejection.
+
+This is local implementation evidence; live dev images and controller required
+consumers are unchanged. Bundle and Root-policy receipts, ready-issuer bootstrap
+and terminal-authority manifest transitions still require integration before
+this optional consumer is enabled as a required live gate. Then complete the
+reproducible full dev run. See the [ordered implementation work](production-pki-fresh-dev-rehearsal.md#next-implementation-broker-device-trust-receipts).
+All five broad areas remain open. Staging and legacy migration remain deferred;
+no push, PR or remote CI was run.
+
 ## 2026-09-08 real MQTT replacement and restart checkpoint
 
 The isolated dev EMQX 5.9.0 broker and session worker are deployed. Cache reset,
