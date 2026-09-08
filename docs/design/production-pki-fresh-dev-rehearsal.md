@@ -14,18 +14,18 @@ only; devices never use it. Legacy fleet migration is deferred.
 The broker worker is a registry-backed session consumer. Its acknowledgment must
 describe the trust state actually used for session decisions; it must never use
 a synthetic TLS configuration to claim installation in EMQX's server TLS listener.
-Implement and qualify the remaining distribution work in this order:
+The ordered distribution work and current evidence are:
 
-1. Prepare a reviewed Device CRL manifest, persist monotonic signed records, and
+1. **Implemented locally (`ce9b5c4`).** Prepare a reviewed Device CRL manifest, persist monotonic signed records, and
    bind each session decision to those exact Root/Brand/Product digests in the
    same database snapshot as identity verification. After a complete successful
    sweep, recheck the prepared state and send CRL receipts using the worker's own
    management mTLS identity. Preparation, scan or version-check failures suppress
    receipts. App and Device manifests share transport credentials, but retain
    separate domains, state files and token verifiers.
-2. Add genuine registry-consumer bundle installation/receipts, including
-   ready-issuer activation. Root-policy installation and receipts are implemented
-   locally in `9553085`; integrate their tested behavior with bundle activation. Bundle readiness and active leaf issuance
+2. **Implemented locally (`728362d`).** Registry-consumer bundle installation/receipts
+   include ready-issuer activation and integrate Root-policy receipts from
+   `9553085`. Bundle readiness and active leaf issuance
    are separate: requiring an active Product's own CRL before acknowledging its
    activation would create a cycle. Keep issuer status and CRL checks intact and
    test that bootstrap sequence explicitly. Terminal-authority handling is now
@@ -33,11 +33,11 @@ Implement and qualify the remaining distribution work in this order:
    while unaffected sessions and parent-CRL receipts progress. Carry this behavior
    into the complete consumer's live tests. CRL receipts alone do not complete
    bundle or Root-policy distribution.
-3. Deploy the complete consumer on isolated dev with its own management identity,
+3. **Next: live dev acceptance.** Deploy the complete consumer on isolated dev with its own management identity,
    controller CA/network access and required-consumer configuration. Demonstrate
    missing/wrong/stale receipts blocking activation and revocation finalization,
    and actual installed receipts permitting the intended transitions.
-4. Retain a reproducible full dev lifecycle run, including restart and failure
+4. **Pending.** Retain a reproducible full dev lifecycle run, including restart and failure
    cases, before closing this milestone. Legacy migration and staging stay deferred.
 
 The following live checkpoint predates this implementation; no new consumer gate
@@ -47,7 +47,7 @@ is claimed until the scoped rollout and its acceptance evidence are recorded.
 
 Implemented locally in Video Cloud `3dc94ec`, with PostgreSQL-backed lifecycle,
 management-mTLS receipt, session-sweep and restart tests. Live rollout remains
-pending bundle/Root-policy integration.
+pending scoped deployment and acceptance.
 
 The Device consumer retains a permanent denial marker in the authority's
 existing persisted CRL state after observing a matching registry authority in
@@ -67,13 +67,13 @@ change between preparation and acknowledgment invalidates that sweep's receipts
 and requires another sweep. Corrupt/mismatched state remains an error.
 
 This handles session exclusion and parent-CRL progress. It does not replace the
-Root-policy or ready-issuer bundle receipts still required by the full consumer.
+Root-policy or ready-issuer bundle receipts supplied by the complete consumer.
 
 #### Registry worker Root trust
 
 Implemented locally in Video Cloud `9553085`, with PostgreSQL-backed Root-removal
 finalization, actual management-mTLS receipt, session enforcement and restart tests.
-Live deployment still awaits bundle activation receipts.
+Bundle receipts are integrated locally in `728362d`; live deployment remains pending.
 
 The Device worker loads independently provisioned Root certificates and a
 persisted monotonic Root-distrust policy. It verifies each registered Product
@@ -90,9 +90,45 @@ sessions and remain valid installation evidence after removing the last Root.
 Root-policy exclusion also omits denied branches from CRL preparation so an
 unavailable CRL under an already removed key cannot stop unaffected branches.
 
-Root trust configuration is separate from the forthcoming ready-issuer bundle
-receipt. Both must be integrated before enabling the complete required-consumer
-gate in dev; Root-policy receipts alone do not authorize Product activation.
+Root trust configuration is separate from the explicit bundle mode below.
+Both must be enabled and qualified before completing the required-consumer gate
+in dev; Root-policy receipts alone do not authorize Product activation.
+
+#### Bundle activation and first-issuer bootstrap
+
+Implemented locally in Video Cloud `728362d`. PostgreSQL-backed tests cover
+actual governed activation, worker mTLS receipts after a successful scan, missing
+own CRLs after activation, parent-CRL advancement/revocation, installed-version
+fences, empty/wrong trust, terminal branches and restart. Full related suites,
+race checks and vet passed. This is not live deployment evidence.
+
+The active dev milestone is estimated at approximately 90%. The remaining work
+is the scoped complete-consumer rollout/gate acceptance and the reproducible full
+dev run (ordered items 3 and 4 above). These are remaining acceptance jobs within
+the same milestone, not new milestones. After each commit, report this estimate,
+its remaining work and the five broad unfinished reporting areas.
+
+Bundle acknowledgment is an explicit mode of the reviewed Device authority
+manifest. Each entry already pins its public chain and bundle digest, so no
+second manifest or trust store is needed. The worker installs those exact versions
+into its registry session verifier and requires configured Root trust. Every
+accepted Device lineage must match those versions in the identity database snapshot.
+
+Ready authorities may appear in the manifest but remain excluded from Device
+acceptance and CRL receipts. Their CA bundle can be acknowledged after verification
+of the registered chain, installed Root pool, current Root policy and parent CRLs,
+followed by a successful session sweep. A ready CA does not need its own CRL before
+activation. After activation, the worker resolves the same pinned authority's
+actual active record and requires its fresh CRL before allowing Devices. It never
+changes a ready status locally to make CRL validation pass. Retiring lineages stay
+usable while valid; terminal lineages remain permanently excluded.
+
+For the first Root, the controller may expose and accept receipts for the current
+environment/domain distrust policy while that Root is ready. This is removal-only
+policy evidence, not activation. A ready Root has no parent CRL. Installing its
+independently provisioned self-signed Root and acknowledging its pinned bundle
+releases activation. Devices stay denied until the entire active Root/Brand/Product
+lineage and all required CRLs exist. Bootstrap does not bypass required consumers.
 
 The isolated `mqtt-pki` Deployment runs EMQX 5.9.0 plus `pkibroker` using verified
 running image digests `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`

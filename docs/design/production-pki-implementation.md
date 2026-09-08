@@ -29,6 +29,47 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 broker installed bundles and first-issuer bootstrap
+
+Video Cloud `728362d` completes the local registry worker's bundle activation
+receipt implementation. Explicit `PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED=true`
+uses the existing reviewed Device manifest, actual installed Root pool/policy
+and prepared parent CRLs. Every accepted Device lineage must match all installed
+bundle versions in the same database snapshot as identity and CRL verification.
+The worker sends its independent management-mTLS bundle receipts only after a
+successful full session sweep and trust revalidation.
+
+Ready Device Root/Brand/Product authorities can be installed before activation.
+The first ready Device Root can consume the removal policy without an own CRL;
+ready descendants require active parents and their current CRLs. Actual activation
+then makes the issuer's own CRL mandatory for Device acceptance. No lifecycle
+status is synthesized, no TLS listener installation is claimed, and other
+required consumers retain their activation gates. Retiring and permanently
+excluded terminal branches preserve their previous behavior.
+
+PostgreSQL 16-backed tests exercised real request/approval/import/activation,
+missing consumer gates, Root bootstrap, ready-to-active transitions, missing own
+CRLs, actual Device acceptance, parent-CRL changes and revoked ready Products,
+restart and malformed/empty installed trust. The executable's actual sweep path
+suppressed all CRL/Root/bundle receipts for failed inventories, enabled caches,
+failed preparation and superseded evidence. Terminal branch/root removal tests
+also passed with bundle mode enabled.
+
+Full pki/pkitrust/pkibrokerapp/pkiturnapp suites, consumer/worker/TURN/API race
+suites, focused Device verification race checks, relevant vet and diff checks
+passed. This remains local evidence: live dev images and required consumers are
+unchanged. No git push, PR, remote CI or staging operation occurred.
+
+Current active milestone (fresh dev PKI lifecycle acceptance): approximately
+90%, an engineering estimate rather than a measured checklist percentage. Two
+immediate acceptance jobs remain: (1) deploy and qualify the complete isolated dev
+consumer and required-consumer gates; (2) retain a reproducible full dev lifecycle
+run including restart and failure cases. All five broad reporting areas remain
+open: fresh dev acceptance; other consumers/live sessions; backup/recovery and
+SDK; provider/hardware compatibility; staging/custody/recovery qualification.
+Legacy migration and staging remain deferred. After every local commit, report
+active milestone percentage, remaining acceptance work and the broad area list.
+
 ## 2026-09-08 broker installed Root trust and receipts
 
 Video Cloud `9553085` adds actual Root-pool and Root-policy enforcement to the
