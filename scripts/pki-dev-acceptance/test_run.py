@@ -11,6 +11,19 @@ spec.loader.exec_module(m)
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_managed_issuer_uses_approved_name_and_rejects_partial_settings(self):
+        self.assertEqual(m.certissuer_server_name({}), 'certissuer.' + m.NS + '.svc.cluster.local')
+        env = {'CERT_ISSUER_HOST_NAME': 'certissuer.' + m.NS + '.svc',
+               'CERT_ISSUER_HOST_IDENTITY_STATE': '/private/state.json', 'CERT_ISSUER_HOST_ROOT_SHA256': 'a' * 64}
+        self.assertEqual(m.certissuer_server_name(env), env['CERT_ISSUER_HOST_NAME'])
+        for key in env:
+            bad = dict(env)
+            del bad[key]
+            with self.assertRaises(RuntimeError):
+                m.certissuer_server_name(bad)
+        with self.assertRaises(RuntimeError):
+            m.certissuer_server_name(dict(env, CERT_ISSUER_HOST_NAME='different.example'))
+
     def test_device_gate_survives_domain_policy_adoption(self):
         legacy = {'PKI_REQUIRED_CONSUMERS': 'video-cloud-api,pkibroker'}
         domains = {'PKI_REQUIRED_CONSUMERS_DEVICE': 'video-cloud-api,pkibroker',

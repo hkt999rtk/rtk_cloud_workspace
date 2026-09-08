@@ -38,6 +38,16 @@ def device_consumers(env):
     return sorted(value.split(','))
 
 
+def certissuer_server_name(env):
+    host = env.get('CERT_ISSUER_HOST_NAME')
+    if not host:
+        require(not env.get('CERT_ISSUER_HOST_IDENTITY_STATE'), 'managed issuer host name missing')
+        return 'certissuer.' + NS + '.svc.cluster.local'
+    require(host == 'certissuer.' + NS + '.svc' and env.get('CERT_ISSUER_HOST_IDENTITY_STATE')
+            and re.fullmatch('[0-9a-f]{64}', env.get('CERT_ISSUER_HOST_ROOT_SHA256', '')), 'managed issuer host policy differs')
+    return host
+
+
 def digest(raw):
     return hashlib.sha256(raw.encode() if isinstance(raw, str) else raw).hexdigest()
 
@@ -280,6 +290,9 @@ class Acceptance:
                 env = {v['name']: v.get('value') for c in containers for v in c.get('env', [])}
                 require(device_consumers(env) == CONSUMERS,
                         'required consumer set changed')
+            if deployment == 'certissuer':
+                env = {v['name']: v.get('value') for c in containers for v in c.get('env', [])}
+                self.certissuer_host = certissuer_server_name(env)
         broker_config = self.obj('configmap', 'mqtt-pki-config')['data']['base.hocon']
         require(broker_config.count('dest_topic = "_bc/${username}/$1"') == 2,
                 'broker publish/subscribe tenant rewrite differs from reviewed baseline')
@@ -558,7 +571,7 @@ class Acceptance:
 
     def tls(self, service, path, body, identity, expected=200):
         host, ca = ('video-cloud-api-pki.' + NS + '.svc', self.base / 'pki/servers/video-cloud-api-pki/ca.crt') if service == 'api' else (
-            'certissuer.' + NS + '.svc.cluster.local', self.output / 'issuer-ca.pem')
+            getattr(self, 'certissuer_host', 'certissuer.' + NS + '.svc.cluster.local'), self.output / 'issuer-ca.pem')
         prefix = Path(identity)
         result = json.loads(command([self.probe, 'tls-denial' if expected == 'denied' else 'tls', ca, str(prefix) + '-chain.pem', str(prefix) + '-key.pem',
                                      host, self.ports[service][0], path], json.dumps(body)))

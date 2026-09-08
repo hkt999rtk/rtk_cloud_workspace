@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
@@ -363,9 +364,10 @@ func runTLS(args []string, denialOnly bool) error {
 		return fmt.Errorf("invalid response size")
 	}
 	return json.NewEncoder(os.Stdout).Encode(struct {
-		Status int    `json:"status"`
-		Body   string `json:"body"`
-	}{res.StatusCode, string(raw)})
+		Status     int    `json:"status"`
+		Body       string `json:"body"`
+		PeerSHA256 string `json:"peer_sha256"`
+	}{res.StatusCode, string(raw), fmt.Sprintf("%x", sha256.Sum256(res.TLS.PeerCertificates[0].Raw))})
 }
 
 // Only a peer's explicit certificate alert is denial evidence. Local server

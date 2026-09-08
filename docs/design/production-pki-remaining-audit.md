@@ -23,7 +23,14 @@ Legacy fleet migration remains deferred under the user's dev-scope correction.
 MFA remains optional future human login only. The dated checkpoints below are
 historical and do not change this current remaining count.
 
-Current trust-consumer progress: approximately 35%, with inventory complete
+Certissuer/controller now serve governed Service leaves from private persistent
+managed state and passed seedless restart. Fresh factory enrollment, Device mTLS
+and MQTT ACL/QoS1 passed. See the
+[managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint)
+for recovery evidence and remaining lifecycle limits. Managed Account Manager
+egress is the next adoption target.
+
+Current trust-consumer progress: approximately 45%, with inventory complete
 (1/6 work groups) and 5 work groups remaining. Video Cloud `9134882` adds local
 controller Service management admission and eviction; `8baa0e3` adds per-domain
 consumer permissions, completion gates and CRL worker selection. `a857a1f` adds

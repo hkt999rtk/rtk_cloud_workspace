@@ -130,3 +130,5 @@ python3 -m unittest discover -s scripts/pki-dev-acceptance -v
 The report records only checks actually executed. Preflight is not a new complete
 Device lifecycle run; live Root receipts are not Service client renewal/revocation
 qualification. Retain all failed phase reports separately from successful recovery.
+
+For the following managed controller/certissuer server rollout, see [HOSTS.md](HOSTS.md).

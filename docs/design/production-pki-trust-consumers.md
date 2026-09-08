@@ -44,7 +44,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 | --- | --- | --- |
 | Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Live managed caller adoption, installed CRL receipts and dev lifecycle; static mode remains available until explicit opt-in. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
-| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Adopt governed server/client leaves under the active dev Service hierarchy; verify renewal, receipt gates, selective eviction and restart. |
+| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed issuer server leaf and seedless restart passed in dev. Adopt managed client leaves; verify renewal, receipt gates and selective eviction. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
 | Controller / certissuer → OpenBao | Both live workload constructions support registry-backed transport; recovery commands deliberately use separate restore trust. | Governed OpenBao TLS host renewal and root-policy adoption, actual dev transport replacement/denial. Recovery commands remain in the recovery milestone. |
 | API / log ingester → EMQX | Independent MQTT server registry verification, CRL receipts and connection eviction locally; native `emqxpkihost` owns keys and replacement. Device MQTT auth/ACL/session worker passed in dev. | Governed MQTT server-host and client rollout, root-policy adoption, actual authenticated reconnect/session behavior. |
@@ -55,10 +55,11 @@ Cloud Admin is a browser/BFF using Account Manager's human-authenticated proxy;
 it does not own the controller's management client key. Database connections and
 provider seal/HSM custody are separate infrastructure/qualification boundaries,
 not additional Device/App identity consumers. Existing managed controller and
-certissuer server-host adapters need live adoption, not a second implementation.
+certissuer server-host adapters now serve registered dev leaves and preserve
+private state across seedless restarts. Renewal/revocation acceptance remains.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **35%**, an engineering estimate
+Overall milestone progress is approximately **45%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -509,10 +510,154 @@ image already contains the required implementation, so no new image publication
 or service source change was needed. No Git push, PR, remote CI, staging change
 or database reset occurred.
 
-**Current milestone: approximately 35%; 1/6 work groups complete, 5 open.**
+**Current milestone: approximately 45%; 1/6 work groups complete, 5 open.**
 Four broad milestones remain. The active management-adoption group now has its
 live Root/intermediate hierarchy and real listener bundle receipts. Next: issue
 and adopt governed controller/certissuer server credentials with their caller
 trust updates, then qualify managed Account Manager egress. Durable CRL adoption,
 other callers, renewal/revocation/restart and the other four work groups remain
 open. Hierarchy activation does not complete management adoption.
+
+
+## Managed server rollout contract (dev)
+
+Use the active Service intermediate for the exact approved controller/certissuer
+names. Enable only its server signing policy on the existing certificate-issuer
+workload; preserve the separate Service-client signing boundary. Restrict the
+initial server/renewal route to the two selected bootstrap management identities.
+Append their public CAs to issuer client trust and allow their pods to reach the
+issuer's renewal port. Record existing settings and exact policy grants first.
+
+Generate each host key and CSR inside a dedicated dev PVC using the existing
+image's OpenSSL. Export only the CSR; obtain the registered server certificate
+through authenticated issuer HTTP and return only the public chain to the PVC.
+Retain a stable request ID and key on uncertain issuance. Keys never pass through
+the operator machine or enter Git/ConfigMaps. Each host imports its seed once into
+its existing managed state owner, then seed files are removed. Use one replica,
+Recreate rollout, private 0700 directory/0600 state and fsGroup OnRootMismatch to
+preserve those permissions across volume attachment and restart.
+
+Before switching the listeners, add the public Service Root to Account Manager,
+Device API/broker and both Service bundle callers' controller trust, and to
+factory/Account Manager issuer trust. Normalize both factory's explicit issuer URL
+and Account Manager's envFrom issuer URL to the approved `.svc` name. Keep their
+bootstrap client identities. Restart callers to load trust before certificate
+replacement; verify normal authenticated behavior under the old server first.
+
+Switch certissuer first, then controller, using their existing managed-host
+implementation, separate bootstrap renewal client certificates, exact remote
+server name/Root policy and durable per-host state. Verify the observed served
+certificate fingerprint against the registered issuance and actual application
+calls. Remove only that host's seed after state installation is proven; restart
+without seed and verify unchanged state/certificate and Device baseline. This
+proves managed server adoption/restart, not natural scheduled renewal, live
+revocation, managed Account Manager egress or matched backup/recovery. Retain
+explicit failure evidence and reconcile rather than regenerating host keys.
+
+
+Managed server mode also requires `CERT_ISSUER_MAX_TTL_DAYS=365`; the legacy
+1,095-day default fails configuration validation. Set this before enabling the
+server domain. Verify a real authenticated endpoint after rollout readiness,
+which can briefly precede process configuration failure. The short Service
+regression helper now explicitly runs MQTT ACL/QoS1 roundtrip after connection
+readiness; earlier short-helper results established connection readiness only.
+
+
+After both managed server transitions, enroll one fresh dev canary through the
+actual factory service using a new one-device, one-hour production run on the
+existing active dev Product. Verify the selected Product issuer, matching device
+key/certificate, direct mTLS authentication and MQTT ACL/QoS1. Keep the identified
+dev canary and private credentials as explicit follow-up test state; the run's
+quantity is consumed and its token expires. This tests the real factory-to-issuer
+transport after the server name/trust transition without replacing the existing
+Device baseline or claiming a full Device lifecycle rerun.
+
+
+The first live certissuer adoption served its registered certificate and passed
+its authenticated issuance replay, but the inspection helper initially rejected
+an inherited setgid directory mode (`02700`). The runtime's private-access check
+correctly permits it: setgid does not add group permissions. The helper now
+accepts `0700`/`02700` directories and requires a `0600` state file, with regression
+tests rejecting group access. Recovery verifies the unchanged live template/PVC
+and existing seed, then removes the seed and restarts without issuing another
+certificate. Preserve the failed inspection and successful recovery as distinct
+reports; do not characterize this rollout as uninterrupted.
+
+Controller adoption removed its seed and served the managed certificate after
+restart, then a subsequent Device TLS probe failed. A separate read-only check
+passed controller serving and Device mTLS/MQTT with fresh port forwards. The
+original transport error was not captured, so its cause remains unconfirmed.
+Recovery must verify the recorded template, PVC and private state hash, require
+all seed files absent, then repeat the seedless restart and actual Device probes.
+Preserve the failed phase; do not regenerate a key or replay host issuance.
+
+## 2026-09-08 live dev managed server checkpoint
+
+The existing certissuer and controller images now serve registered Service server
+leaves under intermediate `488243a7-e41b-4788-bcec-19d721daab80`. Their separate
+P-256 keys were generated inside dedicated retained PVCs and never exported.
+Each existing host owner adopted a private managed state file, removed its seed
+key/CSR/chain, and successfully restarted from managed state alone. The state
+hash and actual served certificate stayed unchanged across the qualified restart.
+
+| Host | Retained PVC | Served certificate SHA-256 |
+| --- | --- | --- |
+| certissuer | `certissuer-service-identity` | `d67f758e9fb03e3f2eefcbd9ef46659a94db7d6afa860a337b5e6d37b10b7ff6` |
+| pki-controller | `pki-controller-service-identity` | `679fba85cc50e3ecceabfa8b6116ae5c5a59f16718c1ae2dc959fc9878b0c23d` |
+
+Both hosts use one replica with Recreate, UID/GID 10001, private directory access
+and a `0600` state file. The self/peer renewal transport has an independent
+Service Root pin, approved `.svc` name and separate bootstrap client credential.
+Account Manager, factory enrollment and the four controller consumer workloads
+received additive Root trust before either server changed. Human assertions and
+Device consumer gates remain enforced. The private scoped deployment renderer
+retains complete volume settings and the configured host policy.
+
+Private evidence lives under
+`~/.config/rtk_cloud/dev/pki/service-hosts-20260908-1/`.
+`prepared-recovery`, `callers`, `certissuer-recovery` and `controller-recovery`
+passed. Original `prepare`, `certissuer` and `controller` reports remain failed:
+respectively incompatible legacy TTL, overly strict setgid inspection, and an
+unreproduced later TLS probe failure. Recovery reused the recorded requests,
+keys and PVCs; no phase is described as an uninterrupted successful rollout.
+
+This checkpoint does not qualify natural scheduled renewal, server revocation
+and active-stream cutoff, managed caller credentials, root rotation, database
+least privilege, or matched recovery. Certissuer's pre-existing database identity
+remains unchanged. No staging resources, repository pushes, PRs, remote CI or
+runtime images changed. Next priority is managed Account Manager egress and its
+credential/CRL lifecycle on these governed server endpoints.
+
+The real factory-enrollment canary passed with a new one-device production run
+valid for one hour, the expected active Product issuer, a matching private key,
+Device mTLS authentication and MQTT ACL/QoS1 delivery. Its identified dev Device
+and private credentials are retained in `canary/` for later tests; baseline
+Device state was preserved. The corrected short Device probe also passed after
+both listener adoptions. Earlier Service hierarchy short probes verified MQTT
+CONNECT only; their prior `mqtt_acl_qos1` label was too broad. The complete earlier
+Device lifecycle acceptance is separate and is not replaced by this short probe.
+
+Active milestone: approximately **45%**, **1/6 work groups complete, 5 open**.
+Within those open groups, the two server adoptions and fresh factory canary are
+complete; managed clients and CRL lifecycle, remaining transports, root-policy
+adoption, App/relay enforcement and complete repeatable dev acceptance remain.
+The four broad unfinished milestones are unchanged.
+
+The first final audit passed mounted caller transports and host persistence,
+then used the Deployment name as a service account name. Kubernetes rejected
+the token request: the actual account is `certissuer-pki`. The corrected audit
+must discover that account from the Deployment, test the existing OpenBao role,
+and revoke its audit token; no runtime identity or policy change is required.
+The original `verification/` failure remains retained.
+
+The corrected `verification-recovery/` audit passed all five checks: preflight,
+actual mounted controller-caller mTLS/CRL reads, server signer boundary, Device
+mTLS/MQTT ACL/QoS1 and managed host persistence/serving verification. The four
+consumer pods read the expected current signed CRLs over verified TLS; Account
+Manager's ordinary human assertion path also passed. These reads are transport
+evidence, not fabricated CRL installation receipts. The actual certissuer
+workload role permits server signing only for this intermediate; Service-client
+signing, private key reads, role mutation and internal key generation are denied.
+The audit token was revoked. All six monitored Deployment images match the
+pre-rollout inventory. Local validation passed 28 Python tests, the Go TLS probe
+suite, Go vet and diff checks.

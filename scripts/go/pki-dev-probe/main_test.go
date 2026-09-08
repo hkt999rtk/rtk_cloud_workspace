@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -16,12 +17,64 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestTLSProbeReportsActuallyServedCertificate(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"accepted":true}`))
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	certPath, keyPath := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	pair := server.TLS.Certificates[0]
+	key, err := x509.MarshalPKCS8PrivateKey(pair.PrivateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pair.Certificate[0]}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.CreateTemp(dir, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := os.CreateTemp(dir, "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	beforeIn, beforeOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = input, output
+	defer func() { os.Stdin, os.Stdout = beforeIn, beforeOut }()
+	_, port, err := net.SplitHostPort(server.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = runTLS([]string{certPath, certPath, keyPath, "example.com", port, "/"}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = output.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Status int    `json:"status"`
+		Peer   string `json:"peer_sha256"`
+	}
+	if err = json.NewDecoder(output).Decode(&result); err != nil || result.Status != 200 || result.Peer != fmt.Sprintf("%x", sha256.Sum256(pair.Certificate[0])) {
+		t.Fatalf("actual TLS peer evidence differs: %+v %v", result, err)
+	}
+}
 
 func TestCertificateDenialRequiresRemoteCertificateAlert(t *testing.T) {
 	for _, tc := range []struct {

@@ -297,6 +297,7 @@ class ServiceRun(m.Acceptance):
         device = m.read(self.foundation / 'device-2/enroll-request.json')['devid']
         auth = self.auth(self.foundation / 'device-2/v4', device)
         attempts = self.wait_positive_mqtt(auth, device)
+        self.mqtt(auth, device, 'roundtrip')
         self.check('device_baseline_after_service_hierarchy', {'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
                    'attempts': attempts, 'full_device_lifecycle_rerun': False})
 

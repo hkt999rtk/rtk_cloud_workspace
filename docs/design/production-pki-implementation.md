@@ -12,9 +12,9 @@ Account Manager `41f1294` and Video Cloud `72a9ccf` add a private-socket managed
 Service identity owner for Account Manager, including issuance/retry, renewal,
 verified remote connections and revocation cutoff. Live adoption remains open.
 Inventory is complete (1/6 work groups); 5 work groups remain, with management
-adoption underway. Active milestone progress is approximately 35% (engineering
-estimate; managed leaf/caller adoption remains). Keep commits local and create PRs only after
-all milestones are finished.
+adoption underway. Active milestone progress is approximately 45% (engineering
+estimate; managed caller lifecycle and remaining hosts still require adoption).
+Keep commits local and create PRs only after all milestones are finished.
 
 The first independent dev Service Root is now active with actual controller and
 certissuer receipts and a signed Root CRL. Missing receipts blocked activation;
@@ -24,7 +24,10 @@ records the exact scope, CRL expiry, recovered import failure and evidence.
 The Service intermediate is now active with real controller/certissuer receipts,
 provider key-custody checks and a signed CRL; Device mTLS/MQTT baseline passed.
 See the [intermediate checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-intermediate-checkpoint).
-Governed server certificates and managed caller credentials remain next.
+Certissuer/controller now serve governed server certificates and passed seedless
+managed-state restarts. Fresh factory enrollment and Device mTLS/MQTT ACL/QoS1
+passed. Managed Account Manager egress is next; see the
+[managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint).
 
 ## Previous milestone status: complete (2026-09-08)
 
