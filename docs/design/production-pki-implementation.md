@@ -1,5 +1,32 @@
 # Production PKI implementation ledger
 
+## Current human/device authentication policy
+
+MFA is an optional future human user-login feature, not a current implementation
+or acceptance prerequisite. It never applies to devices. See Platform PKI contract
+section 6.0 and the current legacy rollout plan. Earlier MFA checks below are
+historical implementation evidence; they do not reinstate a mandatory MFA gate.
+Authenticated user identity, role authorization, distinct approvals, device
+certificate/key-possession checks and custody controls remain required.
+
+## 2026-09-08 optional human-login MFA alignment
+
+Local commits: contracts `82d3220`, Account Manager `2fc7ea9`, Video Cloud
+`0dca4d9`, Cloud Admin `f369c13`.
+
+Updated the Platform PKI contract first, then aligned Account Manager, the PKI
+controller, administrator recovery and console guidance. `PKI_REQUIRE_USER_MFA`
+defaults to false in both services; explicit true enables the existing recent
+verified human-MFA checks. Ordinary signed assertions retain `mfa=false` and
+`auth_time=0`. Device and workload authentication paths do not use this setting.
+
+Local validation passed: full controller/PKI suites against disposable PostgreSQL;
+focused race checks for controller authorization, legacy/replacement/CRL paths;
+Account Manager signing/API/recovery race tests, including independent approvals
+with ordinary login and with optional MFA; focused console tests and Go vet.
+No live environment configuration changed in this alignment. Dev qualification
+and the five live legacy-migration acceptance items remain open.
+
 ## 2026-09-08 independent audit-history recovery checkpoint
 
 Service commit `79384c6`. Full pki/pkicontrollerapp suites passed with disposable

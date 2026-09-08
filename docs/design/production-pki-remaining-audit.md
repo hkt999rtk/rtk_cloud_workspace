@@ -1,5 +1,10 @@
 # Remaining production PKI work: evidence audit
 
+Current policy: MFA is optional future human user-login functionality and is
+not required for present milestone acceptance. Devices use certificate/key
+authentication and never human MFA. Earlier MFA references below are historical;
+role checks, independent approvals and custody/recovery evidence remain required.
+
 ## 2026-09-08 independent audit-history recovery checkpoint
 
 Service commit `79384c6`. Full pki/pkicontrollerapp suites passed with disposable

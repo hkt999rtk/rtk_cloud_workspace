@@ -1,5 +1,15 @@
 # Legacy migration: dev source evidence
 
+## Current authentication policy
+
+Per the user's clarification, MFA is optional future functionality for human
+user login only. It is not required now and is never a device authentication
+requirement. The historical MFA prerequisites below describe the previous code,
+not the current acceptance gate. `PKI_REQUIRE_USER_MFA` defaults to false;
+authenticated users, correct roles and distinct approvals remain required.
+The pending request for an MFA IdP/assurance class is withdrawn. Operator account
+selection, RS256/mTLS setup and role provisioning remain separate work.
+
 Observed 2026-09-08 on dev context `lke649805-ctx`, namespaces
 `video-cloud-dev-video-cloud`, `video-cloud-dev-platform` and
 `video-cloud-dev-secrets`. Staging was not accessed in this follow-up.
@@ -73,9 +83,10 @@ loads `account-manager-runtime`. A key-name-only inspection found HS256 access/
 refresh secret settings and no signer selection, asymmetric key paths, PKI
 controller connection or MFA assurance configuration. Current source defaults
 `JWT_SIGNER_PROVIDER` to `hs256`; `SignPKIAssertion` requires RS256. The existing
-integration also requires recent verified IdP MFA and distinct PKI Administrator/
-Security Custodian approvals. The dev IdP and two actual operator identities have
-been requested; no roles, MFA claims or approval assertions were fabricated.
+integration previously required recent verified IdP MFA. Under the current policy,
+MFA is optional; distinct PKI Administrator/Security Custodian approvals remain
+required. Actual operator identities still need selection; the MFA IdP request is
+withdrawn. No roles, MFA claims or approval assertions were fabricated.
 
 Prepare controller bootstrap together with the Account Manager RS256/controller
 transport configuration and compatibility checks for its token consumers. A
@@ -88,7 +99,8 @@ providers, two linked OIDC identities, and zero linked identity records containi
 either `acr` or `auth_time`. These persisted records do not establish recent MFA;
 the existence of Google login must not be treated as sufficient assurance. This
 observation does not prove that every possible provider configuration lacks MFA.
-The exact configured MFA assurance class and actual two operators remain required.
+An MFA assurance class is no longer a prerequisite. The actual two operators
+and their required roles remain necessary for independent approval.
 
 The live Account Manager database contains no `pki_admin`, `security_custodian`
 or `pki_auditor` role rows, and no PKI/admin-recovery tables. Required PKI role and

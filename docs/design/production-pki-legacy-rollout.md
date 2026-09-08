@@ -2,14 +2,14 @@
 
 ## Current execution order: dev first
 
-The user has waived MFA for the current dev rehearsal. Implement the explicit
-`PKI_DEV_ALLOW_NON_MFA=true` opt-in at both Account Manager and the controller,
-valid only when `PKI_ENVIRONMENT=dev`. Ordinary authenticated user sessions may
-then invoke PKI with current local role checks and distinct approvals intact.
-Sign an explicit dev non-MFA marker and retain `mfa=false`; never manufacture
-MFA evidence. The controller must require its own opt-in and reject the exception
-in staging/production. Default behavior remains recent verified MFA. RS256 request
-binding, management mTLS, independent approval and certificate validation remain.
+MFA is not a current prerequisite. It is an optional future human user-login
+feature, disabled by default through `PKI_REQUIRE_USER_MFA=false`. Ordinary
+authenticated user sessions may invoke PKI with current role checks and distinct
+approvals intact; assertions must honestly retain `mfa=false`. If explicitly
+enabled later, both Account Manager and the controller enforce recent verified
+human MFA. Device authentication, renewal and replacement never require MFA.
+RS256 request binding, management mTLS, independent approval and certificate
+validation remain. This replaces the earlier proposed dev-only exception.
 
 See the [dev source preflight](production-pki-legacy-dev-preflight.md): 111 current
 credentials selected uniquely from issuance history, with full chain/CRL checks
