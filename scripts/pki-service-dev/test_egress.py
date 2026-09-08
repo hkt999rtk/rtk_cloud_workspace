@@ -74,6 +74,12 @@ class EgressTests(unittest.TestCase):
         self.assertEqual(result['spec']['containers'][0]['image'], 'new-image')
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]['image'], 'old')
 
+    def test_enrollment_resolves_only_the_listener_local_database_reference(self):
+        self.assertEqual(e.enrollment_database_reference('certissuer'), '$CERT_ISSUER_DB_DSN')
+        self.assertEqual(e.enrollment_database_reference('pki-controller'), '${PKI_DATABASE_URL:?}')
+        with self.assertRaisesRegex(RuntimeError, 'unknown listener'):
+            e.enrollment_database_reference('other')
+
 
 if __name__ == '__main__':
     unittest.main()

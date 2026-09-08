@@ -43,6 +43,11 @@ print or export a private key. The static credential is used only for this
 recorded initial request; the policy is then narrowed to `^pki-controller$` for
 the next phase.
 
+The runner maps the already-mounted certissuer-only `CERT_ISSUER_DB_DSN` into
+the helper's process as `PKI_DATABASE_URL`; the DSN never leaves the Pod or
+appears in evidence. Controller enrollment requires its pre-existing
+`PKI_DATABASE_URL` directly and fails closed if it is absent.
+
 If that first phase reaches the saved Deployment template but fails before a
 client state file or Service-client issuance exists (for example, the selected
 image omitted the helper), use a new private directory and the narrowly guarded

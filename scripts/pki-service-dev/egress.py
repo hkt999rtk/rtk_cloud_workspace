@@ -92,6 +92,12 @@ def enrollment_template(owner, image, provisioner):
     return template
 
 
+def enrollment_database_reference(name):
+    m.require(name in NAMES, 'unknown listener')
+    # Resolve only inside the workload shell; never load or write the DSN into evidence.
+    return '$CERT_ISSUER_DB_DSN' if name == 'certissuer' else '${PKI_DATABASE_URL:?}'
+
+
 class EgressRun(c.c.CRLRun):
     def __init__(self, args):
         super().__init__(args)
@@ -187,7 +193,9 @@ class EgressRun(c.c.CRLRun):
             template['spec']['containers'][0]['image'] = self.args.image
             self.apply_template(name, owner, template, self.args.image)
         self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', name, '--', 'test', '-x', '/app/serviceidentity-bootstrap'])
+        database = enrollment_database_reference(name)
         command = ('set -eu; test ! -e ' + STATE + '; umask 077; exec env '
+                   'PKI_DATABASE_URL="' + database + '" '
                    'PKI_CLIENT_IDENTITY_STATE=' + STATE + ' '
                    'PKI_CLIENT_ROOT_SHA256=' + root['certificate_fingerprint_sha256'] + ' '
                    'PKI_CLIENT_ISSUER_URL=https://certissuer.' + NS + '.svc:9443 '
