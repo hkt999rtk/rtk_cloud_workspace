@@ -11,6 +11,60 @@ spec.loader.exec_module(m)
 
 
 class RolloutTests(unittest.TestCase):
+    def test_provider_role_audit_rejects_expanded_names_and_wrong_eku(self):
+        for client in (True, False):
+            role = dict.fromkeys(('allow_any_name', 'allow_subdomains', 'allow_glob_domains', 'allow_wildcard_certificates',
+                                 'allow_ip_sans', 'use_csr_common_name', 'use_csr_sans', 'code_signing_flag', 'email_protection_flag', 'no_store'), False)
+            role.update(allowed_domains=m.SERVICE_CLIENT_IDS if client else m.SERVICE_DNS_NAMES,
+                        key_type='ec', key_bits=256, client_flag=client, server_flag=not client,
+                        max_ttl=(90 if client else 365) * 86400, key_usage=['DigitalSignature'],
+                        require_cn=True, allow_bare_domains=True, enforce_hostnames=not client, allowed_uri_sans=[], allowed_other_sans=[])
+            m.verify_provider_role(role, client)
+            for field, value in [('allow_any_name', True), ('client_flag', not client),
+                                 ('allowed_domains', role['allowed_domains'] + ['unapproved.example']),
+                                 ('allowed_uri_sans', ['*'])]:
+                with self.assertRaises(RuntimeError):
+                    m.verify_provider_role(dict(role, **{field: value}), client)
+
+    def test_intermediate_policy_is_limited_to_selected_dev_hosts(self):
+        root = {'environment': 'dev', 'trust_domain': 'service', 'kind': 'root', 'status': 'active', 'issuer_id': 'root'}
+        request = m.intermediate_request(root)
+        self.assertEqual(request['server_dns_names'], ['certissuer.video-cloud-dev-video-cloud.svc', 'pki-controller.video-cloud-dev-video-cloud.svc'])
+        self.assertEqual(request['service_client_ids'], ['service:account-manager', 'service:certissuer', 'service:pki-controller'])
+        request['service_client_ids'].append('service:unreviewed')
+        self.assertNotIn('service:unreviewed', m.intermediate_request(root)['service_client_ids'])
+        for field, value in [('environment', 'staging'), ('trust_domain', 'device'), ('status', 'ready'), ('kind', 'intermediate')]:
+            with self.assertRaisesRegex(RuntimeError, 'active dev Service Root required'):
+                m.intermediate_request(dict(root, **{field: value}))
+
+    def test_listener_transition_preserves_other_volumes_and_rejects_changed_source(self):
+        owner = {'spec': {'template': {'metadata': {'annotations': {'retained': 'value'}},
+                 'spec': {'volumes': [{'name': 'service-bundles', 'configMap': {'name': 'pki-service-bundles'}},
+                                      {'name': 'private', 'secret': {'secretName': 'private'}}]}}}}
+        changed = m.listener_bundle_template(owner, 'reviewed-intermediate')
+        self.assertEqual(changed['spec']['volumes'][1], owner['spec']['template']['spec']['volumes'][1])
+        self.assertEqual(changed['metadata'], owner['spec']['template']['metadata'])
+        self.assertEqual(owner['spec']['template']['spec']['volumes'][0]['configMap']['name'], 'pki-service-bundles')
+        owner['spec']['template'] = changed
+        with self.assertRaisesRegex(RuntimeError, 'listener bundle source changed'):
+            m.listener_bundle_template(owner, 'another')
+
+    def test_changed_intermediate_policy_fails_before_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            issuer = {'issuer_id': 'intermediate', 'status': 'ready', 'parent_issuer_id': 'root',
+                      'service_client_ids': ['service:unreviewed'], 'server_dns_names': m.SERVICE_DNS_NAMES}
+            m.m.write(source / 'intermediate-ready.json', issuer)
+            runner = object.__new__(m.ServiceRun)
+            runner.args = Mock(intermediate=str(source))
+            runner.active_root = Mock(return_value={'issuer_id': 'root'})
+            runner.api = Mock(return_value=issuer)
+            runner.create, runner.observed_patch = Mock(), Mock()
+            with self.assertRaisesRegex(RuntimeError, 'approved policy changed'):
+                runner.install_intermediate(True)
+            runner.create.assert_not_called()
+            runner.observed_patch.assert_not_called()
+
     def test_domain_change_preserves_unrelated_secret_references(self):
         secret = {'name': 'DATABASE_URL', 'valueFrom': {'secretKeyRef': {'name': 'database', 'key': 'dsn'}}}
         env = [secret, {'name': 'PKI_REQUIRED_CONSUMERS', 'value': 'video-cloud-api,pkibroker'}]

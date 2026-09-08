@@ -1,7 +1,7 @@
-# Dev Service Root rollout
+# Dev Service hierarchy rollout
 
 This phased runner extends the completed Device baseline with an independent
-Service Root. It uses the same distinct, ordinary-login approval accounts and
+Service Root and an approved OpenBao intermediate. It uses the same distinct, ordinary-login approval accounts and
 private evidence helpers as `pki-dev-acceptance`. It only targets canonical dev
 context `lke649805-ctx` and namespace `video-cloud-dev-video-cloud`. Staging,
 legacy migration, hardware and independent human custody are excluded.
@@ -63,6 +63,43 @@ reviewed offline ceremony before it expires. This runner does not refresh or
 replace existing Root keys. Successful Root setup does not provision the online
 Service intermediate, server leaves or Account Manager managed caller, and is
 not completion of the trust-consumer milestone.
+
+After the Root phase, the intermediate sequence uses a NEW private directory for
+each phase. Reuse the original Root evidence path; do not create another Root.
+
+```sh
+python3 scripts/pki-service-dev/run.py --phase prepare-intermediate \
+  --authority ROOT_EVIDENCE --output INTERMEDIATE_EVIDENCE
+python3 scripts/pki-service-dev/run.py --phase intermediate-controller \
+  --authority ROOT_EVIDENCE --intermediate INTERMEDIATE_EVIDENCE --output INT_CONTROLLER_EVIDENCE
+python3 scripts/pki-service-dev/run.py --phase intermediate-certissuer \
+  --authority ROOT_EVIDENCE --intermediate INTERMEDIATE_EVIDENCE --output INT_CERTISSUER_EVIDENCE
+python3 scripts/pki-service-dev/run.py --phase activate-intermediate \
+  --authority ROOT_EVIDENCE --intermediate INTERMEDIATE_EVIDENCE --output INT_ACTIVATION_EVIDENCE
+python3 scripts/pki-service-dev/run.py --phase verify \
+  --authority ROOT_EVIDENCE --intermediate INTERMEDIATE_EVIDENCE --output NEW_FINAL_AUDIT
+```
+
+The reviewed intermediate policy permits exactly the dev controller and certissuer
+service DNS names, plus `service:account-manager`, `service:certissuer` and
+`service:pki-controller`. The first phase refuses an existing Service intermediate,
+requires a fresh Root CRL, and records normal approvals before OpenBao internal key
+generation and offline Root signing. Controller workload capabilities must deny
+key read/export and both server/client leaf signing. Generated exact-mount policy
+is added to the existing dev controller role; the original role is saved privately.
+No leaf signer grant is installed by these phases.
+
+A new immutable Root/intermediate ConfigMap is adopted by the controller first,
+then certissuer. Both changes preserve image/settings and unrelated volumes;
+resource-version and old-volume tests guard the rollout. Activation must fail
+before receipts and with only controller's receipt. The final phase activates
+with both actual receipts, imports the provider-signed CRL, rechecks custody and
+runs Device mTLS/MQTT baseline. Verification checks both manifests, persisted
+volumes/settings, active intermediate/receipt/CRL evidence, and both OpenBao roles'
+exact identity policies and selected issuer certificates. It does not deploy
+managed server/client leaves or install durable CRL consumers. Failed intermediate
+phases require explicit reconciliation from their saved operation/issuer/provider
+state; they have no automatic retry or key regeneration mode.
 
 Any error leaves a failed phase report and saved prior/current observations.
 Do not rerun a phase against a new output directory to work around an uncertain

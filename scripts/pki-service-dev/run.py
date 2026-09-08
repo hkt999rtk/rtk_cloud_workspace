@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dev-only Service Root rollout. Each phase uses a new private evidence directory."""
+"""Dev-only Service hierarchy rollout. Each phase uses a new private evidence directory."""
 import argparse
 import base64
 import datetime as dt
@@ -20,6 +20,40 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 NS = m.NS
 SERVICE_CONSUMERS = ['certissuer', 'pki-controller']
+SERVICE_CLIENT_IDS = ['service:account-manager', 'service:certissuer', 'service:pki-controller']
+SERVICE_DNS_NAMES = [name + '.' + NS + '.svc' for name in SERVICE_CONSUMERS]
+
+
+def intermediate_request(root):
+    m.require(root['environment'] == 'dev' and root['trust_domain'] == 'service'
+              and root['kind'] == 'root' and root['status'] == 'active', 'active dev Service Root required')
+    return {'environment': 'dev', 'trust_domain': 'service', 'kind': 'intermediate',
+            'parent_issuer_id': root['issuer_id'], 'service_client_ids': list(SERVICE_CLIENT_IDS),
+            'server_dns_names': list(SERVICE_DNS_NAMES)}
+
+
+def listener_bundle_template(owner, configmap):
+    template = json.loads(json.dumps(owner['spec']['template']))
+    volumes = template['spec']['volumes']
+    selected = [v for v in volumes if v['name'] == 'service-bundles']
+    m.require(len(selected) == 1 and selected[0].get('configMap', {}).get('name') == 'pki-service-bundles',
+              'listener bundle source changed; reconcile')
+    selected[0]['configMap']['name'] = configmap
+    return template
+
+
+def verify_provider_role(role, client):
+    m.require(role['allowed_domains'] == (SERVICE_CLIENT_IDS if client else SERVICE_DNS_NAMES)
+              and role['key_type'] == 'ec' and role['key_bits'] == 256
+              and role['client_flag'] is client and role['server_flag'] is not client
+              and role['max_ttl'] == (90 if client else 365) * 86400
+              and role['key_usage'] == ['DigitalSignature'] and role['require_cn'] and role['allow_bare_domains']
+              and role['enforce_hostnames'] is not client,
+              'provider role differs from approved identity/profile')
+    for field in ('allow_any_name', 'allow_subdomains', 'allow_glob_domains', 'allow_wildcard_certificates',
+                  'allow_ip_sans', 'use_csr_common_name', 'use_csr_sans', 'code_signing_flag', 'email_protection_flag', 'no_store'):
+        m.require(role[field] is False, 'provider role broadens profile: ' + field)
+    m.require(not role['allowed_uri_sans'] and not role['allowed_other_sans'], 'provider role permits other SANs')
 
 
 def with_env(existing, updates, remove=()):
@@ -57,9 +91,10 @@ class ServiceRun(m.Acceptance):
     def __init__(self, args):
         super().__init__(args.config_root, 'lke649805-ctx', args.output)
         self.args = args
-        self.report['foundation_scope'] = 'Existing dev Device baseline; independent Service Root rollout'
+        self.report['foundation_scope'] = 'Existing dev Device baseline; independent Service hierarchy rollout'
         self.report['checks'] = {}
         self.report['phase'] = args.phase
+        self.report['service_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
     def ready(self):
@@ -119,6 +154,151 @@ class ServiceRun(m.Acceptance):
         self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
         self.check('root_ready_gate_closed', {'issuer_id': issuer['issuer_id'], 'activation_without_receipts': 409,
                                              'key_custody': 'encrypted offline dev simulation; distinct software approval accounts'})
+
+    def active_root(self):
+        saved = m.read(Path(self.args.authority) / 'root-ready.json')
+        root = self.api('/issuers/' + saved['issuer_id'])
+        intermediate_request(root)
+        m.require(root['certificate_fingerprint_sha256'] == saved['certificate_fingerprint_sha256']
+                  and root['trust_bundle_version'] == saved['trust_bundle_version'], 'Service Root changed')
+        crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        m.require(dt.datetime.fromisoformat(crl['next_update'].replace('Z', '+00:00')) >
+                  dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1), 'Service Root CRL needs reviewed refresh')
+        self.save('service-root.json', root)
+        self.save('service-root-crl.json', crl)
+        return root
+
+    def prepare_intermediate(self):
+        root = self.active_root()
+        cursor = ''
+        while True:
+            page = self.api('/issuers/search', {'limit': 100, 'before': cursor})
+            m.require(not any(i['trust_domain'] == 'service' and i['kind'] == 'intermediate' for i in page['items']),
+                      'Service intermediate already exists; reconcile')
+            cursor = page.get('next', '')
+            if not cursor:
+                break
+        for name in SERVICE_CONSUMERS:
+            service = self.obj('service', name)
+            m.require(service['metadata']['namespace'] == NS and service['spec']['selector'].get('app.kubernetes.io/name') == name,
+                      'Service host endpoint ownership changed')
+        request = intermediate_request(root)
+        self.save('intermediate-request.json', request)
+        operation = self.api('/operations', request, key='dev-service-intermediate-' + uuid.uuid4().hex)
+        self.save('intermediate-operation.json', operation)
+        self.approval(operation)
+        issuer = self.api('/issuers/' + operation['issuer_id'])
+        m.require(issuer['status'] == 'approved' and issuer['signer_provider'] == 'openbao', 'intermediate reservation differs')
+        m.require(issuer['signer_reference'] + '/' not in json.loads(self.bao(['secrets', 'list', '-format=json'])),
+                  'intermediate provider mount already exists; reconcile')
+        policies = json.loads(self.kube(['-n', NS, 'exec', 'deployment/pki-controller', '--',
+                                        '/app/pkicontroller', 'render-openbao-policy', issuer['issuer_id']]))
+        m.require(policies['mount'] == issuer['signer_reference'] and policies['environment'] == 'dev', 'provider policy scope differs')
+        self.save('provider-policies.json', policies)
+        before = json.loads(self.bao(['read', '-format=json', 'auth/kubernetes/role/pki-controller-dev']))['data']
+        self.save('controller-role-before.json', before)
+        self.role_policy('pki-controller-dev', 'pki-controller-dev-' + issuer['issuer_id'], policies['controller_policy'])
+        self.api('/operations/' + operation['operation_id'] + '/provision', {})
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'provisioning' and issuer['csr_pem'], 'Service CSR not durably registered')
+        self.save('intermediate-provisioning.json', issuer)
+        self.verify_intermediate_custody(issuer)
+        source = Path(self.args.authority)
+        csr_digest = m.digest(base64.b64decode(''.join(issuer['csr_pem'].splitlines()[1:-1])))
+        self.ceremony_call(['sign', '--issuer', self.output / 'intermediate-provisioning.json',
+                            '--expected-request-sha256', operation['request_sha256'], '--expected-csr-sha256', csr_digest,
+                            '--parent', self.output / 'service-root.json', '--expected-parent-sha256', root['certificate_fingerprint_sha256'],
+                            '--key', source / 'root-offline-simulation/ca-key.encrypted.pem',
+                            '--passphrase-file', m.read(source / 'passphrase-reference.json')['path'], '--out', self.output / 'intermediate-signed'])
+        self.api('/operations/' + operation['operation_id'] + '/import',
+                 {'certificate_pem': (self.output / 'intermediate-signed/certificate.pem').read_text()}, 204)
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'ready', 'Service intermediate import not ready')
+        self.save('intermediate-ready.json', issuer)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        self.check('intermediate_ready_gate_closed', {'issuer_id': issuer['issuer_id'], 'activation_without_receipts': 409,
+                                                    'service_client_ids': issuer['service_client_ids'], 'server_dns_names': issuer['server_dns_names']})
+
+    def verify_intermediate_custody(self, issuer):
+        keys = json.loads(self.bao(['list', '-format=json', issuer['signer_reference'] + '/keys']))
+        m.require(len(keys) == 1, 'intermediate must own exactly one internal key')
+        jwt = self.kube(['-n', NS, 'create', 'token', 'pki-controller', '--audience=openbao', '--duration=10m']).strip()
+        login = json.loads(self.bao(['write', '-format=json', 'auth/kubernetes/login', '-'],
+                                   json.dumps({'role': 'pki-controller-dev', 'jwt': jwt})))
+        token = login['auth']['client_token']
+        try:
+            for suffix in ('keys', 'key/' + keys[0], 'sign/server', 'sign/service-client', 'sign/default',
+                           'sign-verbatim/default', 'intermediate/generate/exported'):
+                result = json.loads(self.bao(['write', '-format=json', 'sys/capabilities', '-'],
+                                            json.dumps({'token': token, 'paths': [issuer['signer_reference'] + '/' + suffix]})))
+                m.require(result['data']['capabilities'] == (['list'] if suffix == 'keys' else ['deny']),
+                          'controller key/signing capability differs from approved boundary')
+        finally:
+            self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
+        self.check('service_intermediate_key_custody', {'issuer_id': issuer['issuer_id'], 'internal_key_count': 1,
+                  'controller_private_key_read_export_and_leaf_signing_denied': True})
+
+    def ready_intermediate(self):
+        root = self.active_root()
+        source = Path(self.args.intermediate)
+        saved = m.read(source / 'intermediate-ready.json')
+        issuer = self.api('/issuers/' + saved['issuer_id'])
+        m.require(issuer == saved and issuer['status'] == 'ready' and issuer['parent_issuer_id'] == root['issuer_id']
+                  and issuer['service_client_ids'] == SERVICE_CLIENT_IDS and issuer['server_dns_names'] == SERVICE_DNS_NAMES,
+                  'ready intermediate or approved policy changed; reconcile')
+        operation = m.read(source / 'intermediate-operation.json')
+        m.require(operation['issuer_id'] == issuer['issuer_id'], 'saved intermediate operation differs')
+        return root, issuer, operation
+
+    def install_intermediate(self, controller):
+        root, issuer, operation = self.ready_intermediate()
+        name = 'pki-controller' if controller else 'certissuer'
+        configmap = 'pki-service-bundles-' + issuer['issuer_id'][:8]
+        refs = [{'issuer_id': i['issuer_id'], 'trust_bundle_version': i['trust_bundle_version']} for i in (root, issuer)]
+        if controller:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': configmap, 'namespace': NS},
+                         'immutable': True, 'data': {'issuers.json': json.dumps(refs)}})
+        else:
+            current = self.obj('configmap', configmap)
+            m.require(current.get('immutable') and json.loads(current['data']['issuers.json']) == refs, 'reviewed Service manifest changed')
+            self.wait_receipts(issuer['issuer_id'], issuer['trust_bundle_version'], ['pki-controller'], absent='certissuer')
+        owner = self.obj('deployment', name)
+        template = listener_bundle_template(owner, configmap)
+        m.require(owner['spec']['replicas'] == 1, 'expected one dev listener replica')
+        self.observed_patch('deployment', name, owner, [
+            {'op': 'test', 'path': '/spec/template/spec/containers/0/image', 'value': template['spec']['containers'][0]['image']},
+            {'op': 'test', 'path': '/spec/template/spec/volumes', 'value': owner['spec']['template']['spec']['volumes']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name, '--timeout=180s'], timeout=190)
+        receipts = self.wait_receipts(issuer['issuer_id'], issuer['trust_bundle_version'],
+                                     ['pki-controller'] if controller else SERVICE_CONSUMERS, absent='certissuer' if controller else None)
+        if controller:
+            self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        self.check(name + '_intermediate_receipt', {'issuer_id': issuer['issuer_id'], 'consumers': receipts,
+                                                   'missing_certissuer_activation_denied': controller})
+
+    def activate_intermediate(self):
+        _, issuer, operation = self.ready_intermediate()
+        receipts = self.wait_receipts(issuer['issuer_id'], issuer['trust_bundle_version'], SERVICE_CONSUMERS)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 204)
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'active', 'Service intermediate not active')
+        self.save('intermediate-active.json', issuer)
+        provider = json.loads(self.bao(['read', '-format=json', issuer['signer_reference'] + '/cert/crl']))
+        self.save('intermediate-provider-crl.json', provider)
+        record = self.api('/issuers/' + issuer['issuer_id'] + '/crl', {'crl_pem': provider['data']['certificate']})
+        self.save('intermediate-crl.json', record)
+        self.verify_intermediate_custody(issuer)
+        self.check('intermediate_active_with_crl', {'issuer_id': issuer['issuer_id'], 'consumers': receipts,
+                  'crl_sha256': record['crl_sha256'], 'next_update': record['next_update'], 'leaf_signer_policies_granted': False})
+        self.device_baseline()
+
+    def device_baseline(self):
+        device = m.read(self.foundation / 'device-2/enroll-request.json')['devid']
+        auth = self.auth(self.foundation / 'device-2/v4', device)
+        attempts = self.wait_positive_mqtt(auth, device)
+        self.check('device_baseline_after_service_hierarchy', {'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
+                   'attempts': attempts, 'full_device_lifecycle_rerun': False})
 
     def create(self, obj):
         self.save('create-' + obj['metadata']['name'] + '.json', obj)
@@ -250,10 +430,7 @@ class ServiceRun(m.Acceptance):
         self.save('root-crl.json', record)
         self.check('root_active_with_crl', {'issuer_id': issuer_id, 'consumers': receipts, 'crl_sha256': record['crl_sha256'],
                                           'signed_evidence': str(source), 'resigned': False})
-        device = m.read(self.foundation / 'device-2/enroll-request.json')['devid']
-        auth = self.auth(self.foundation / 'device-2/v4', device)
-        attempts = self.wait_positive_mqtt(auth, device)
-        self.check('device_baseline_after_service_root', {'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed', 'attempts': attempts, 'full_device_lifecycle_rerun': False})
+        self.device_baseline()
 
     def finish_root_crl(self):
         source = Path(self.args.activation)
@@ -275,13 +452,18 @@ class ServiceRun(m.Acceptance):
         m.require(root['status'] == 'active' and root['certificate_fingerprint_sha256'] == saved['certificate_fingerprint_sha256']
                   and root['trust_domain'] == 'service' and root['environment'] == 'dev', 'Service Root changed')
         record = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        m.require(dt.datetime.fromisoformat(record['next_update'].replace('Z', '+00:00')) > dt.datetime.now(dt.timezone.utc),
+                  'Service Root CRL expired')
         receipts = self.wait_receipts(root['issuer_id'], root['trust_bundle_version'], SERVICE_CONSUMERS)
         for name in SERVICE_CONSUMERS:
             desired = render_persisted_listener(self.base, name)
             current = self.obj('deployment', name)
             wanted = desired['spec']['template']['spec']['containers'][0]
             actual = current['spec']['template']['spec']['containers'][0]
-            m.require(actual['image'] == wanted['image'] and {e['name']: e for e in actual['env']} == {e['name']: e for e in wanted['env']}, 'live/persisted listener configuration differs')
+            m.require(actual['image'] == wanted['image'] and {e['name']: e for e in actual['env']} == {e['name']: e for e in wanted['env']}
+                      and actual['volumeMounts'] == wanted['volumeMounts']
+                      and current['spec']['template']['spec']['volumes'] == desired['spec']['template']['spec']['volumes'],
+                      'live/persisted listener configuration differs')
             self.save('rendered-' + name + '.json', desired)
             self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c', 'test -x /app/pkimanagement'])
         source = Path(self.args.authority)
@@ -297,28 +479,70 @@ class ServiceRun(m.Acceptance):
         self.check('service_root_runtime_audit', {'issuer_id': root['issuer_id'], 'consumers': receipts,
                   'crl_sha256': record['crl_sha256'], 'crl_next_update': record['next_update'],
                   'offline_key_matches': True, 'persisted_render_matches_live': True, 'managed_owner_binary_present': True,
-                  'service_intermediate_and_callers': 'not yet deployed'})
+                  'managed_callers': 'outside hierarchy audit scope'})
+        if self.args.intermediate:
+            saved_intermediate = m.read(Path(self.args.intermediate) / 'intermediate-ready.json')
+            issuer = self.api('/issuers/' + saved_intermediate['issuer_id'])
+            m.require(issuer['status'] == 'active' and issuer['parent_issuer_id'] == root['issuer_id']
+                      and issuer['certificate_fingerprint_sha256'] == saved_intermediate['certificate_fingerprint_sha256']
+                      and issuer['service_client_ids'] == SERVICE_CLIENT_IDS and issuer['server_dns_names'] == SERVICE_DNS_NAMES,
+                      'active intermediate policy or certificate differs')
+            crl = self.api('/issuers/' + issuer['issuer_id'] + '/crl')
+            m.require(dt.datetime.fromisoformat(crl['next_update'].replace('Z', '+00:00')) > dt.datetime.now(dt.timezone.utc),
+                      'intermediate CRL expired')
+            acks = self.wait_receipts(issuer['issuer_id'], issuer['trust_bundle_version'], SERVICE_CONSUMERS)
+            configmap = 'pki-service-bundles-' + issuer['issuer_id'][:8]
+            manifest = self.obj('configmap', configmap)
+            refs = [{'issuer_id': i['issuer_id'], 'trust_bundle_version': i['trust_bundle_version']} for i in (root, issuer)]
+            m.require(manifest.get('immutable') and json.loads(manifest['data']['issuers.json']) == refs, 'intermediate bundle changed')
+            for name in SERVICE_CONSUMERS:
+                pod = self.obj('deployment', name)['spec']['template']['spec']
+                selected = [v for v in pod['volumes'] if v['name'] == 'service-bundles']
+                m.require(len(selected) == 1 and selected[0]['configMap']['name'] == configmap, 'listener uses another bundle')
+            self.verify_intermediate_custody(issuer)
+            for role_name in ('server', 'service-client'):
+                role = json.loads(self.bao(['read', '-format=json', issuer['signer_reference'] + '/roles/' + role_name]))['data']
+                verify_provider_role(role, role_name == 'service-client')
+                selected = role['issuer_ref']
+                m.require(selected == 'default' or re.fullmatch('[0-9a-f-]{36}', selected), 'invalid provider selected issuer')
+                provider_issuer = json.loads(self.bao(['read', '-format=json', issuer['signer_reference'] + '/issuer/' + selected]))['data']
+                cert = provider_issuer['certificate']
+                fingerprint = m.digest(base64.b64decode(''.join(cert.strip().splitlines()[1:-1]), validate=True))
+                m.require(fingerprint == issuer['certificate_fingerprint_sha256'], 'provider role selects another issuer')
+                self.save('provider-role-' + role_name + '.json', role)
+                self.save('provider-issuer-' + role_name + '.json', provider_issuer)
+            self.save('intermediate-active.json', issuer)
+            self.save('intermediate-crl.json', crl)
+            self.check('service_intermediate_runtime_audit', {'issuer_id': issuer['issuer_id'], 'consumers': acks,
+                      'crl_sha256': crl['crl_sha256'], 'crl_next_update': crl['next_update'], 'persisted_manifest_matches_live': True,
+                      'provider_server_and_client_profiles_match': True, 'managed_leaves': 'outside hierarchy audit scope'})
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', choices=['prepare-root', 'controller', 'certissuer', 'activate-root', 'finish-root-crl', 'verify'], required=True)
+    parser.add_argument('--phase', choices=['prepare-root', 'controller', 'certissuer', 'activate-root', 'finish-root-crl', 'verify',
+                                          'prepare-intermediate', 'intermediate-controller', 'intermediate-certissuer', 'activate-intermediate'], required=True)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--authority')
     parser.add_argument('--image')
     parser.add_argument('--activation')
+    parser.add_argument('--intermediate')
     args = parser.parse_args()
     m.require(args.phase == 'prepare-root' or args.authority, 'prior prepared Root evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     m.require(args.phase != 'finish-root-crl' or args.activation, 'saved signed activation evidence required')
+    m.require(args.phase not in ('intermediate-controller', 'intermediate-certissuer', 'activate-intermediate') or args.intermediate,
+              'saved ready intermediate evidence required')
     runner = ServiceRun(args)
     try:
         runner.preflight()
         {'prepare-root': runner.prepare_root, 'controller': lambda: runner.rollout_listener(True),
-         'certissuer': lambda: runner.rollout_listener(False), 'activate-root': runner.activate_root, 'finish-root-crl': runner.finish_root_crl, 'verify': runner.verify_runtime}[args.phase]()
+         'certissuer': lambda: runner.rollout_listener(False), 'activate-root': runner.activate_root, 'finish-root-crl': runner.finish_root_crl, 'verify': runner.verify_runtime,
+         'prepare-intermediate': runner.prepare_intermediate, 'intermediate-controller': lambda: runner.install_intermediate(True),
+         'intermediate-certissuer': lambda: runner.install_intermediate(False), 'activate-intermediate': runner.activate_intermediate}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
