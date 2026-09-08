@@ -9,6 +9,19 @@ historical implementation evidence; they do not reinstate a mandatory MFA gate.
 Authenticated user identity, role authorization, distinct approvals, device
 certificate/key-possession checks and custody controls remain required.
 
+## 2026-09-08 dev controller credential preparation
+
+Added the dev-only `pki-dev-prepare` deployment command and
+[bootstrap runbook](production-pki-dev-bootstrap.md). Prepared persistent dedicated
+controller database credentials, separate Account Manager RSA signers and static
+management TLS identities in the dev SecretStore. Installed and verified the
+previously absent TLS/public-key Kubernetes dependencies. Existing workloads,
+login signing, device CAs and staging are unchanged. See the
+[dev preflight](production-pki-legacy-dev-preflight.md) for exact object evidence.
+Focused race tests, actual mTLS handshake tests, CLI routing checks and vet passed.
+Database login/grants, provider authorization, coordinated Account Manager rollout
+and the governed canary remain on the critical path; no live acceptance item closes.
+
 ## 2026-09-08 dev database rollout rehearsal
 
 Account Manager `63c928f` fixes the actual dev rollout blocker caused by historical

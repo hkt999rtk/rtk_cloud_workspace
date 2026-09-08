@@ -63,6 +63,48 @@ before approval/import.
 
 ## Next critical path
 
+### 2026-09-08 prepared dev controller credentials and transport dependencies
+
+The dev-only `rtk-cloud pki-dev-prepare --environment dev` command now creates
+and validates persistent material in the canonical SecretStore at
+`dev/pki/controller-bootstrap`. It generated the dedicated controller database
+password, separate Account Manager access/refresh RSA pairs and independent
+management server/client TLS identities. A repeat validated the same material.
+No Device/Brand/Product CA or human assertion/approval was created. See the
+[dev bootstrap runbook](production-pki-dev-bootstrap.md) for file custody,
+scope, expiration and the remaining binding steps.
+
+Created the previously absent objects only on dev context `lke649805-ctx` and
+read them back to verify exact data against their selected sources:
+
+| Namespace suffix | Object | Resource version at verification |
+| --- | --- | --- |
+| `-video-cloud` | Secret `pki-controller-tls` | `760635` |
+| `-video-cloud` | ConfigMap `pki-account-manager-public-key` | `760638` |
+| `-account-manager` | Secret `account-manager-pki-auth` | `760640` |
+| `-video-cloud` | ConfigMap `pki-openbao-transport-ca` | `760724` |
+
+OpenBao trust was copied only from the public `ca.crt` field of the existing dev
+`openbao-tls` Secret. OpenSSL 3 verified the root self-signature, server chain,
+serverAuth purpose and `openbao.video-cloud-dev-secrets.svc` hostname. The CA DER
+SHA-256 is `44e0b04c974362d1eac26b4ee3334da9b216b38f7f29899a329c469b633ffe26`.
+It is distinct from the new management trust. This is certificate evidence;
+runtime controller-to-OpenBao connection and Kubernetes authentication are pending.
+
+The Account Manager Deployment retained resource version `655962`, its existing
+image and sole `account-manager-certissuer-client` secret mount, with one ready
+replica. Prepared keys are not yet used for live login signing. No workload image,
+database schema, role assignment, operator feature setting or existing key was
+changed. Staging was not accessed.
+
+Local tests cover real management mTLS admission and rejection of missing client
+identity, staging hostname and server-only credentials used as clients; retries
+preserve keys. Invalid environment, partial/mismatched/expired material, unsafe
+permissions, shared JWT signers, symlinks and concurrent preparation locks fail.
+Focused race tests (including CLI environment handling and SecretStore coverage),
+vet and diff checks passed. These checks do not establish a running controller,
+runtime database access, OpenBao authorization or device migration acceptance.
+
 ### 2026-09-08 migration rehearsal against dev snapshots
 
 Rechecked canonical dev context `lke649805-ctx`: OpenBao is Running/Ready and
@@ -110,12 +152,12 @@ Local image ID `sha256:1988dd988b3321d3f9d0e71e93ab20729982c82c198dda3bf4f1111ed
 has not been published or deployed. It is build evidence, not a registry digest
 or live dev qualification.
 
-The service renderer now has an explicit dev target: dev namespace, dev package
-digest, dev OpenBao endpoint/auth role and existing `ghcr-pull` reference. The
-controller-specific Secrets/ConfigMaps are absent in dev: migration/runtime DB
-connections, controller TLS identity, Account Manager assertion public key and
-provider transport CA. Their bootstrap must precede application of the rendered
-workloads; generating manifests does not provision these dependencies.
+The service renderer has an explicit dev target: dev namespace, dev package
+digest, dev OpenBao endpoint/auth role and existing `ghcr-pull` reference. Initially
+all controller-specific Secrets/ConfigMaps were absent. The current checkpoint
+above records the installed TLS/public-key/provider-CA objects. Migration/runtime
+database connections and provider authorization remain to be provisioned before
+application of the rendered workloads.
 
 Account Manager's Deployment has only its certificate-issuer client volume and
 loads `account-manager-runtime`. A key-name-only inspection found HS256 access/

@@ -56,6 +56,7 @@ var commands = map[string]commandSpec{
 	"restore":                          {run: runRestore},
 	"bind-devices":                     {run: runBindDevices},
 	"account-manager-email-deploy":     {run: runAccountManagerEmailDeploy},
+	"pki-dev-prepare":                  {run: runPKIDevPrepare},
 	"activate-load-owner":              {run: runActivateLoadOwner},
 	"check-certificates":               {run: runCheckCertificates},
 	"certissuer-openbao-sync":          {run: runCertIssuerOpenBaoSync},
@@ -200,7 +201,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "pki-dev-prepare" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
 		return args, nil
 	}
 	var environment, workspace string
