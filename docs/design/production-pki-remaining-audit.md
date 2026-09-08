@@ -19,6 +19,20 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 MQTT callback deployment checkpoint
+
+Service `9d11534` adds the missing independent broker-service mTLS callback and
+is deployed only on the separate dev PKI API. Real callback authorization and
+identity/route isolation tests pass; the public Device listener retains its
+revocation denial and persisted trust. The workspace image now packages
+`pkibroker`, and dev broker transport identities are prepared. See the
+[fresh dev record](production-pki-fresh-dev-rehearsal.md#mqtt-callback-transport-deployed-2026-09-08).
+
+This resolves the callback transport prerequisite. Actual EMQX deployment,
+cache/lease enforcement, MQTT session replacement/revocation, fresh Product/device
+provisioning and repeatable complete-run evidence remain. No overall milestone
+is closed, and the existing broker and staging remain untouched.
+
 ## 2026-09-08 Product revocation and HTTP session checkpoint
 
 Fresh dev steps 1–3 retain their recorded passes. Step 4 now has live evidence

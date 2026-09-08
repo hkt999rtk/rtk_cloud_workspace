@@ -73,6 +73,50 @@ checkpoint qualifies the recorded Product-CA revocation and HTTP/WebSocket case,
 not individual Device-leaf revocation, MQTT, every provider failure, or production
 custody/recovery.
 
+## MQTT callback transport deployed (2026-09-08)
+
+Video Cloud source `9d11534`, workspace packaging `d9f958b`, is running only in
+`video-cloud-api-pki` with verified registry/running digest
+`sha256:536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`.
+Ready pod UID: `8947006f-b2ba-40d9-b57c-e2a0776e26de`. The image includes the
+existing `pkibroker` executable; the worker is not deployed yet.
+
+The optional callback listens on internal HTTPS port 18447. Its service client
+is `emqx-pki`, prepared by the canonical dev transport command with an independent
+client CA. The API mounts only that public CA in `pki-mqtt-callback-ca`; the client
+key remains in the dev consumer directory pending broker deployment. The new
+`allow-mqtt-pki-callback` NetworkPolicy permits only pods labeled `mqtt-pki` in the
+same namespace on this port. The existing policies were inspected for overlapping
+permissions. No public Ingress or existing broker setting was changed.
+
+Live verified-TLS probes passed: the broker identity plus existing broker bearer
+key can authenticate the internal server account; an incorrect bearer key returns
+explicit deny. Missing identity, Device identity, another management identity and
+wrong server name are rejected. `/request_token` returns 404 on the callback.
+The previously revoked device's still-unexpired token returns deny through the
+real MQTT authentication handler. These checks establish callback transport and
+authorization, not an EMQX client session.
+
+The public Device listener still rejects the revoked device and the broker service
+identity. This negative recheck used TLS 1.2 to obtain explicit remote TLS alerts;
+a TLS 1.3 rejection through kubectl port-forward reset that forwarding process,
+which was restarted only after its terminal failure was confirmed. The Root policy
+and all three CRL cache files retained their previous SHA-256 hashes. Public
+Device trust was not expanded for the broker.
+
+`mqtt-callback-evidence.json` in the protected rehearsal directory contains these
+results. Scoped Deployment/Service/ConfigMap/NetworkPolicy manifests and
+`operator/env/PKI_API_IMAGE` retain the exact rollout; full-platform provision does
+not automatically apply these PKI overlays. Full API/config race suites, vet,
+paired-listener cleanup, actual TLS isolation and dev preparation/packaging tests
+passed before deployment. No database reset or staging mutation occurred.
+
+The next slice below has completed item 1 and image/transport preparation from
+item 2. Remaining: deploy the isolated compatible EMQX broker and session worker,
+provision the next fresh Product/device, then measure MQTT ACL/lease/replacement/
+revocation behavior and retain reproducible full-run evidence. `mqtt-pki` server
+transport material is prepared but is not governed MQTT-domain custody evidence.
+
 ## Next execution slice: MQTT transport and dev acceptance
 
 Read-only discovery confirms the existing dev `mqtt` StatefulSet runs EMQX 5.8.7.

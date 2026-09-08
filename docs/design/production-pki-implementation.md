@@ -47,8 +47,12 @@ The workspace image builder now includes `pkibroker`. Dev-only preparation adds
 independent `emqx-pki` callback-client and `mqtt-pki` server transport identities,
 with protected durable files and no retained CA private key. Targeted preparation
 and packaging tests pass. These are bootstrap transport identities, not evidence
-of governed MQTT/Service-domain renewal. Next deploy the callback and isolated
-compatible broker, then perform the fresh-device MQTT acceptance flow.
+of governed MQTT/Service-domain renewal. The callback is now deployed on the separate dev API with image digest
+`536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`.
+Live service identity isolation, broker-key denial, unrelated-route denial and
+rejection of the revoked device’s still-unexpired token passed. Public Device
+TLS denial and all four durable trust-file hashes are preserved. Next deploy
+the isolated compatible broker and perform fresh-device MQTT acceptance.
 
 ## 2026-09-08 Product revocation and HTTP session checkpoint
 
