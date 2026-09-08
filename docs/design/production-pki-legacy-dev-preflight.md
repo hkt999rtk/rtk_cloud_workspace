@@ -63,6 +63,45 @@ before approval/import.
 
 ## Next critical path
 
+### 2026-09-08 migration rehearsal against dev snapshots
+
+Rechecked canonical dev context `lke649805-ctx`: OpenBao is Running/Ready and
+the PKI controller remains absent. Took read-only custom-format PostgreSQL dumps
+of `video_cloud` and `rtk_account_manager`, restored them into disposable local
+PostgreSQL 16 databases, and ran only migration/grant commands against those
+copies. No application server, device client or email worker used copied data.
+Restricted local artifacts are in `/private/tmp/rtk-dev-pki-bootstrap-rehearsal`;
+they contain sensitive database contents and are not committed or durable escrow.
+
+- Video Cloud `0dca4d9`: `pkicontroller migrate-runtime` succeeded twice, then
+  `grant-runtime-roles` succeeded. Twenty PKI tables were present. Content hashes
+  over every original column proved all 4,131 existing rows in 43 tables unchanged.
+  The three PKI groups have no login, superuser, role/database creation or RLS
+  bypass privileges. Controller source reads succeeded in the privilege matrix;
+  source deletion/schema creation, verifier issuer writes and issuer approval
+  inserts were denied by that matrix. This is local privilege evidence, not a
+  deployed workload-login check.
+- The unmodified Account Manager migrator failed before PKI at
+  `071_test_lab_sessions.sql`: dev recorded earlier Test Lab names 068/069/070.
+  The deployed image already contains the renamed 071/072/073 files, whose SHA-256
+  hashes match this checkout. No live history or table was modified to bypass it.
+- Account Manager `63c928f` recognizes those exact historical filenames and the
+  earlier 070/071/072 source lineage. Adoption pins current file digests, preserves
+  original markers/timestamps and does not replay session revocations. Unknown
+  filenames and changed migration contents fail instead of being inferred from
+  an existing table or numeric prefix.
+- With the fix, the copied Account Manager database reached migration 077.
+  All 7,865 existing rows across 78 tables were preserved; only three system roles
+  and seven canonical migration markers were added to the original tables.
+  New bootstrap state was sealed with reason `existing_installation`; the PKI
+  roles were assigned to nobody. A second run preserved the migrated contents.
+  The full database race suite, migration regressions, vet and diff checks passed.
+
+Live dev schema, credentials, images, roles and sessions are unchanged by this
+rehearsal. Include the fixed migrator in the scoped rollout. Dedicated controller
+database access, management TLS, OpenBao auth/policy, Account Manager RS256 setup,
+the two real approvers and a device owner remain required. Stage is not accessed.
+
 ### Controller and authorization discovery
 
 Local implementation `bc4b247`: four renderer tests and diff checks passed;

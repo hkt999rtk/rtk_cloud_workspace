@@ -9,6 +9,19 @@ historical implementation evidence; they do not reinstate a mandatory MFA gate.
 Authenticated user identity, role authorization, distinct approvals, device
 certificate/key-possession checks and custody controls remain required.
 
+## 2026-09-08 dev database rollout rehearsal
+
+Account Manager `63c928f` fixes the actual dev rollout blocker caused by historical
+Test Lab migration filenames. Known aliases retain their timestamps and do not
+replay DDL/session revocations; adoption rejects changed SQL. Full database race
+tests, migration regression tests and vet passed. On restored current dev dumps,
+Video Cloud migration/grants preserved all 4,131 existing rows, and Account Manager
+preserved all 7,865 existing rows while adding the expected roles/markers and sealed
+bootstrap state. Both migration commands passed repeat execution. See the
+[dev preflight](production-pki-legacy-dev-preflight.md) for scope and evidence.
+This resolves a rollout compatibility defect; live migration and all five legacy
+acceptance items remain open. No staging access or live workload mutation occurred.
+
 ## 2026-09-08 optional human-login MFA alignment
 
 Local commits: contracts `82d3220`, Account Manager `2fc7ea9`, Video Cloud
