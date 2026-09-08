@@ -323,7 +323,11 @@ func runTLS(args []string, denialOnly bool) error {
 	}
 	if denialOnly {
 		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", net.JoinHostPort("127.0.0.1", args[4]),
-			&tls.Config{RootCAs: roots, ServerName: args[3], Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12})
+			&tls.Config{RootCAs: roots, ServerName: args[3], MinVersion: tls.VersionTLS12,
+				// Present the selected identity even after its CA was removed from
+				// the server's advertised list. Missing-client alerts prove nothing
+				// about rejection of the certificate this probe was asked to test.
+				GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &pair, nil }})
 		if err == nil {
 			defer conn.Close()
 			// In TLS 1.3 the server may reject the client certificate after the

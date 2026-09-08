@@ -28,9 +28,9 @@ managed state and passed seedless restart. Fresh factory enrollment, Device mTLS
 and MQTT ACL/QoS1 passed. See the
 [managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint)
 for recovery evidence and remaining lifecycle limits. Managed Account Manager
-egress is the next adoption target.
+egress now passes initial dev adoption and bootstrap removal.
 
-Current trust-consumer progress: approximately 45%, with inventory complete
+Current trust-consumer progress: approximately 50%, with inventory complete
 (1/6 work groups) and 5 work groups remaining. Video Cloud `9134882` adds local
 controller Service management admission and eviction; `8baa0e3` adds per-domain
 consumer permissions, completion gates and CRL worker selection. `a857a1f` adds
@@ -41,6 +41,12 @@ managed Account Manager egress through a private socket, with issuance/retry,
 renewal, revocation and restart tests. Other managed consumers, durable CRL
 adoption and live Service qualification remain open; see the active plan for
 the exact evidence.
+
+The [Account Manager checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-account-manager-credential-checkpoint)
+records private key ownership, real human-asserted PKI calls, bootstrap-free
+restart, rejected bootstrap credential and Device mTLS/MQTT evidence. Next:
+Service CRL freshness/refresh recovery, credential renewal/revocation and actual
+installed-CRL receipts. Other callers and transport owners remain open.
 
 Live dev now has an active independent Service Root, actual controller/certissuer
 bundle receipts and Root CRL 1. Missing receipts blocked activation; Device

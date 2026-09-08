@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 import tempfile
 from unittest.mock import Mock
+import json
 
 spec = importlib.util.spec_from_file_location('managed_hosts', Path(__file__).with_name('hosts.py'))
 m = importlib.util.module_from_spec(spec)
@@ -64,6 +65,22 @@ class ManagedHostTests(unittest.TestCase):
             runner.verify_server_signer({'signer_reference': 'mount'})
         self.assertEqual(runner.kube.call_args.args[0][4], 'certissuer-pki')
         self.assertEqual(runner.bao.call_args.args[0], ['write', 'auth/token/revoke', '-'])
+
+    def test_client_signer_requires_explicit_audit_policy(self):
+        for enabled in (False, True):
+            runner = object.__new__(m.HostRun)
+            runner.obj = Mock(return_value={'spec': {'template': {'spec': {'serviceAccountName': 'certissuer-pki'}}}})
+            runner.kube = Mock(return_value='workload-jwt')
+            runner.check = Mock()
+            responses = ['["key-id"]', '{"auth":{"client_token":"audit-token"}}']
+            responses += [json.dumps({'data': {'capabilities': c}}) for c in
+                          [['update'], ['update'] if enabled else ['deny'], ['deny'], ['deny'], ['deny']]]
+            if enabled:
+                responses.append(json.dumps({'data': {'capabilities': ['deny']}}))
+            runner.bao = Mock(side_effect=responses + [''])
+            runner.verify_server_signer({'signer_reference': 'mount'}, service_client=enabled)
+            self.assertEqual(runner.check.call_args.args[1]['service_client_signing_allowed'], enabled)
+            self.assertEqual(runner.bao.call_args.args[0], ['write', 'auth/token/revoke', '-'])
 
     def test_host_settings_keep_server_key_and_client_identity_separate(self):
         for name, prefix in [('pki-controller', 'PKI'), ('certissuer', 'CERT_ISSUER')]:

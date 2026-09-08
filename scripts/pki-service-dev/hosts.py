@@ -385,7 +385,7 @@ class HostRun(h.ServiceRun):
         self.check('managed_hosts_verified', {'hosts': h.SERVICE_CONSUMERS, 'private_persistent_state': True,
                                             'served_certificates_match_registry': True, 'scheduled_renewal_and_revocation': 'not yet qualified'})
 
-    def verify_server_signer(self, issuer):
+    def verify_server_signer(self, issuer, service_client=False):
         keys = json.loads(self.bao(['list', '-format=json', issuer['signer_reference'] + '/keys']))
         m.require(len(keys) == 1, 'intermediate key count changed')
         service_account = self.obj('deployment', 'certissuer')['spec']['template']['spec']['serviceAccountName']
@@ -395,14 +395,19 @@ class HostRun(h.ServiceRun):
                                    json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
         token = login['auth']['client_token']
         try:
-            for path in ('sign/server', 'sign/service-client', 'key/' + keys[0], 'roles/server', 'intermediate/generate/internal'):
+            paths = ['sign/server', 'sign/service-client', 'key/' + keys[0], 'roles/server', 'intermediate/generate/internal']
+            if service_client:
+                paths.append('roles/service-client')
+            for path in paths:
                 response = json.loads(self.bao(['write', '-format=json', 'sys/capabilities', '-'],
                                                json.dumps({'token': token, 'paths': [issuer['signer_reference'] + '/' + path]})))
-                m.require(response['data']['capabilities'] == (['update'] if path == 'sign/server' else ['deny']),
+                allowed = path == 'sign/server' or (service_client and path == 'sign/service-client')
+                m.require(response['data']['capabilities'] == (['update'] if allowed else ['deny']),
                           'certificate-issuer provider capability differs: ' + path)
         finally:
             self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
-        self.check('server_signer_boundary', {'server_signing_allowed': True, 'client_signing_key_read_role_write_and_key_generation_denied': True})
+        self.check('server_signer_boundary', {'server_signing_allowed': True, 'service_client_signing_allowed': service_client,
+                                             'key_read_role_write_and_key_generation_denied': True})
 
     def verify_controller_callers(self, root):
         host = 'pki-controller.' + NS + '.svc'

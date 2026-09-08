@@ -1,8 +1,9 @@
 # Remaining trust consumers and live sessions
 
 Active milestone, 2026-09-08. Fresh dev Device PKI is complete; this milestone
-extends the design to the other consumers and connections. Local commits only;
-PRs wait until all milestones are finished. Live verification is dev-only.
+extends the design to the other consumers and connections. Commits remain local
+unless a branch backup push is requested; PRs wait until all milestones finish.
+Live verification is dev-only.
 Legacy migration and staging remain deferred. MFA is optional future human
 login functionality and is never a Device authentication requirement.
 
@@ -42,7 +43,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 
 | Connection / owner | Existing implementation | Remaining acceptance in this milestone |
 | --- | --- | --- |
-| Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Live managed caller adoption, installed CRL receipts and dev lifecycle; static mode remains available until explicit opt-in. |
+| Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption and bootstrap-free restart now run in dev. Installed CRL receipts, renewal/revocation and remaining failure cases still need live qualification. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
 | Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed issuer server leaf and seedless restart passed in dev. Adopt managed client leaves; verify renewal, receipt gates and selective eviction. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
@@ -59,7 +60,7 @@ certissuer server-host adapters now serve registered dev leaves and preserve
 private state across seedless restarts. Renewal/revocation acceptance remains.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **45%**, an engineering estimate
+Overall milestone progress is approximately **50%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -661,3 +662,125 @@ signing, private key reads, role mutation and internal key generation are denied
 The audit token was revoked. All six monitored Deployment images match the
 pre-rollout inventory. Local validation passed 28 Python tests, the Go TLS probe
 suite, Go vet and diff checks.
+
+## Dev Account Manager credential adoption contract
+
+The next checkpoint deploys the existing `pkimanagement` owner beside the single
+dev Account Manager API replica. Build the committed Account Manager source for
+socket support; reuse the qualified Video Cloud image for the owner. Preserve
+worker images, environment settings, application data and JWT assertion keys.
+The API's existing `pki-auth` mount must project only its four JWT key files after
+opt-in: its former controller TLS key must no longer be mounted into the API.
+Only the owner mounts its dedicated retained identity PVC and verifier database
+Secret. Both containers share a private socket directory under an ephemeral
+volume and run as UID/GID 10001. Recreate prevents simultaneous identity owners.
+An init container prepares the socket directory before either process starts;
+container restart must not silently delete an existing socket or identity state.
+
+Use a new dev login role inheriting the existing non-login PKI verifier role,
+with no issuance/revocation writes or schema ownership. Verify the inherited PKI
+read grants and denied writes. Grant only this active intermediate's explicit
+Service-client signing policy to certissuer, preserving its server/Device signing
+policies. The earlier server-only provider audit is historical after this grant.
+
+A dedicated short-lived bootstrap CA and provisioner leaf are scoped to this dev
+adoption. Trust the CA only at certissuer and allow its exact provisioner CN.
+The owner generates the managed `service:account-manager` key/CSR in its PVC;
+bootstrap keys are separate and may be stored in the protected rollout evidence
+and owner-only Kubernetes Secret. Never read managed private state out of the pod.
+Record its public issuance from the registry and a private-state hash, then prove
+normal signed human operations traverse the socket and registered controller
+identity. Remove owner bootstrap settings/mount and the temporary issuer trust/
+provisioner permission after installation. Restart without bootstrap and verify
+unchanged identity/state, no duplicate issuance, and retained ordinary login.
+
+Keep provider/registry reads available independently of the Account Manager path
+for diagnosis. A failed adoption retains exact before/after Deployments, PVC UID,
+issuance evidence and stable pending state; reconcile rather than delete or issue
+another identity. This checkpoint does not force early renewal by editing state
+or clocks. Natural renewal, live revocation/stream cutoff, installed CRL receipts
+and unavailable-trust qualification remain explicit later lifecycle checks.
+Staging stays untouched. Git pushes remain backup-only; no PR or CI dispatch.
+
+The first Account Manager adoption reached a healthy managed owner and one
+successful registry issuance, then its audit incorrectly expected status
+`issued` instead of the table's `succeeded`. Keep that failed report. Correct
+the checker with pending/revoked/duplicate regression cases, then reconcile the
+unchanged Deployment/PVC and existing issuance through a read-only recovery.
+Do not replay preparation, rollout or key generation to repair an audit label.
+
+Bootstrap removal restarted Account Manager successfully with unchanged managed
+state, then exposed a denial-probe limitation: Go's automatic certificate
+selection omitted the old bootstrap leaf once its CA disappeared from the
+server's advertised list. The issuer logged a missing client certificate. That
+is not evidence of rejecting the selected credential. The probe must explicitly
+present that credential while still verifying the remote server, and require an
+actual remote certificate-rejection alert. A TLS 1.3 replacement-CA fixture
+regresses this behavior; timeouts and missing-certificate alerts remain failures.
+Retain the failed sealing report. Recovery checks the unchanged owner/PVC/state
+and already-removed issuer trust, repeats a bootstrap-free restart, verifies the
+explicit rejection, then removes only the recorded bootstrap Secret.
+
+## 2026-09-08 live dev Account Manager credential checkpoint
+
+Account Manager now uses `service:account-manager` through the private socket
+`/run/account-pki/private/controller.sock`. Its `pkimanagement` owner generated
+and retains the key in `account-manager-service-identity`, at private state path
+`/var/lib/account-pki/private/identity.json`. The key was never exported. The API
+container retains human JWT keys, but no longer mounts its old controller TLS
+key or the managed state. The credential owner does not mount human JWT keys.
+
+The registered certificate fingerprint is
+`eff6d595845860cd63938b047578811cbebeda1f41a9605c7345c2c988bcc849`,
+issued by Service intermediate `488243a7-e41b-4788-bcec-19d721daab80` for stable
+request `f073005c-67e0-4d52-9f62-5abf579e9f36`. Exactly one successful issuance
+remained across bootstrap-free restarts, with unchanged private state hash.
+Ordinary human-asserted PKI searches passed for the three distinct dev users,
+and the existing Device mTLS/MQTT ACL/QoS1 baseline passed after each transition.
+MFA remains disabled. Initial provider signing and registry admission were real.
+
+The temporary provisioner settings/mount, issuer CA trust and provisioner
+permission were removed. The owner restarted with its installed identity alone.
+The old provisioner certificate was then explicitly presented and rejected by
+certissuer. Only the recorded bootstrap Secret and its desired overlay were
+deleted; protected local bootstrap evidence and managed identity PVC are retained.
+
+The API image was built from clean Account Manager `41f1294` with the canonical
+dev builder and pinned to its registry-verified linux/amd64 digest:
+`ghcr.io/hkt999rtk/rtk_cloud_dev/account-manager@sha256:4b83e65364ef6c18a3787c5f634bbed51edccc1a9cfebeecf62151a8d6155d39`.
+The owner reuses the qualified Video Cloud image ending `a7dcea`. The API-only
+image pin and complete Deployment are consumed by the scoped `render_management`
+renderer; full platform provisioning must explicitly reconcile these overlays.
+The verified controller origin is
+`https://pki-controller.video-cloud-dev-video-cloud.svc:18446`, with independent
+issuer origin `https://certissuer.video-cloud-dev-video-cloud.svc:9443`; both have
+explicit Service Root and DNS pins.
+
+Private evidence lives under
+`~/.config/rtk_cloud/dev/pki/account-manager-managed-20260908-1/`.
+`prepare`, `adopt-recovery` and `seal-recovery` passed. The original `adopt` and
+`seal` reports remain failed for the audit status-name and certificate-selection
+bugs described above; no uninterrupted run is claimed. Recovery retained the
+same issuance, key and PVC, and did not reset application data or alter staging.
+Git backup branches were pushed only when requested earlier; this implementation
+checkpoint creates no PR, CI dispatch or additional Git push.
+
+Active milestone progress is approximately **50%**: **1/6 work groups complete,
+5 open**. Initial Account Manager adoption/bootstrap removal is complete, while
+Service credential renewal/revocation, durable CRL receipts, other managed
+callers/transports, Root-policy adoption, App/relay enforcement and full dev
+acceptance remain. Four broad unfinished milestones remain. The next dev work
+must keep Service CRLs fresh (the current Root CRL expires
+2026-09-09T11:39:27Z) and qualify refresh/recovery plus credential lifecycle; this
+checkpoint does not establish an automatic Root CRL maintenance path.
+
+The final `verification/` run passed all seven checks: live image/preflight,
+OpenBao server/Service-client signer boundary, explicit bootstrap TLS denial,
+managed human API and two-way key-mount separation, verifier SQL permissions,
+Device mTLS/MQTT ACL/QoS1, and the final persistence/worker-image audit. The
+certissuer workload can sign the reviewed Service server/client profiles; key
+reads, server/client role mutation and internal key generation remain denied.
+The temporary provider audit token was revoked. Other monitored workload images
+and all Account Manager worker images are unchanged. Local validation passed
+34 Python tests, the Go TLS probe suite including the replacement-CA case, Go
+vet and diff checks. Both service repositories remain at their existing commits.

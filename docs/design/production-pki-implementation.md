@@ -10,11 +10,13 @@ Service listener bundle receipts and ready-CA bootstrap are implemented in
 `a857a1f`, with local mTLS/registry integration and failure/restart tests.
 Account Manager `41f1294` and Video Cloud `72a9ccf` add a private-socket managed
 Service identity owner for Account Manager, including issuance/retry, renewal,
-verified remote connections and revocation cutoff. Live adoption remains open.
+verified remote connections and revocation cutoff. Initial managed dev adoption
+and bootstrap-free restart now pass; live renewal/revocation qualification remains.
 Inventory is complete (1/6 work groups); 5 work groups remain, with management
-adoption underway. Active milestone progress is approximately 45% (engineering
+adoption underway. Active milestone progress is approximately 50% (engineering
 estimate; managed caller lifecycle and remaining hosts still require adoption).
-Keep commits local and create PRs only after all milestones are finished.
+Keep new commits local unless a backup push is requested. Create PRs only after
+all milestones are finished.
 
 The first independent dev Service Root is now active with actual controller and
 certissuer receipts and a signed Root CRL. Missing receipts blocked activation;
@@ -26,8 +28,14 @@ provider key-custody checks and a signed CRL; Device mTLS/MQTT baseline passed.
 See the [intermediate checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-intermediate-checkpoint).
 Certissuer/controller now serve governed server certificates and passed seedless
 managed-state restarts. Fresh factory enrollment and Device mTLS/MQTT ACL/QoS1
-passed. Managed Account Manager egress is next; see the
+passed. See the
 [managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint).
+
+The [Account Manager checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-account-manager-credential-checkpoint)
+records private key ownership, real human-asserted PKI calls, bootstrap-free
+restart, rejected bootstrap credential and Device mTLS/MQTT evidence. Next:
+Service CRL freshness/refresh recovery, credential renewal/revocation and actual
+installed-CRL receipts. Other callers and transport owners remain open.
 
 ## Previous milestone status: complete (2026-09-08)
 

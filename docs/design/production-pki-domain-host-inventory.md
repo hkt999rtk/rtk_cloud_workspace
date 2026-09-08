@@ -12,13 +12,13 @@ gates are implemented in `8baa0e3`. Serving-listener Service bundle receipts and
 ready-CA bootstrap are implemented locally in `a857a1f`; managed callers and live
 Service adoption remain open. Account Manager `41f1294` and Video Cloud `72a9ccf`
 add locally tested Account Manager managed identity/egress through a private socket.
-The active milestone is approximately 45%, with 1/6 work groups complete and 5 open.
+The active milestone is approximately 50%, with 1/6 work groups complete and 5 open.
 
 The independent Service Root is active in dev, with actual controller/certissuer
 bundle receipts and signed Root CRL 1. Both listeners run the current image;
 existing Device mTLS/MQTT baseline passed. Their governed server leaves are now
-live with seedless managed-state restarts; managed Account Manager egress remains
-next. See the
+live with seedless managed-state restarts. Managed Account Manager egress also
+passes initial adoption and bootstrap removal. See the
 [live Root checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-root-checkpoint)
 for exact evidence and limitations. The separate
 [intermediate checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-intermediate-checkpoint)
@@ -27,6 +27,12 @@ provider key-custody checks and signed CRL. The
 [managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint)
 records certissuer/controller serving and restart evidence plus fresh factory
 enrollment and Device mTLS/MQTT ACL/QoS1. Remaining host/caller lifecycle is open.
+
+The [Account Manager checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-account-manager-credential-checkpoint)
+records private key ownership, real human-asserted PKI calls, bootstrap-free
+restart, rejected bootstrap credential and Device mTLS/MQTT evidence. Next:
+Service CRL freshness/refresh recovery, credential renewal/revocation and actual
+installed-CRL receipts. Other callers and transport owners remain open.
 
 ## 2026-09-08 staging packaging checkpoint
 

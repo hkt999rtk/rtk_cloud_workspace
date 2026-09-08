@@ -132,3 +132,5 @@ Device lifecycle run; live Root receipts are not Service client renewal/revocati
 qualification. Retain all failed phase reports separately from successful recovery.
 
 For the following managed controller/certissuer server rollout, see [HOSTS.md](HOSTS.md).
+
+For managed Account Manager controller credentials after host adoption, follow [MANAGEMENT.md](MANAGEMENT.md).

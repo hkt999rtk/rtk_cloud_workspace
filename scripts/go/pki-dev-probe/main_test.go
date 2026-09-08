@@ -249,9 +249,23 @@ func TestTLS13CertificateRejectionIsReadBeforeHTTP(t *testing.T) {
 	if err := os.WriteFile(keyFile, keyPEM, 0600); err != nil {
 		t.Fatal(err)
 	}
+	// Advertise a replacement CA so automatic certificate selection would omit
+	// the requested old credential. Denial must still test that actual identity.
+	replacement := *template
+	replacement.Subject = pkix.Name{CommonName: "replacement CA"}
+	replacementDER, err := x509.CreateCertificate(rand.Reader, &replacement, &replacement, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementCA, err := x509.ParseCertificate(replacementDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advertised := x509.NewCertPool()
+	advertised.AddCert(replacementCA)
 	for _, deny := range []bool{true, false} {
 		t.Run(fmt.Sprint(deny), func(t *testing.T) {
-			config := &tls.Config{Certificates: []tls.Certificate{pair}, ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
+			config := &tls.Config{Certificates: []tls.Certificate{pair}, ClientAuth: tls.RequireAnyClientCert, ClientCAs: advertised, MinVersion: tls.VersionTLS13}
 			if deny {
 				config.VerifyPeerCertificate = func([][]byte, [][]*x509.Certificate) error { return errors.New("fixture rejects client") }
 			}
