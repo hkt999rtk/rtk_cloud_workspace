@@ -6,8 +6,10 @@ Fresh dev Device PKI is complete. **Remaining trust consumers/live sessions** is
 now active; see the [fixed work groups and management adoption design](production-pki-trust-consumers.md).
 Staging and legacy migration remain deferred. The dated staging and milestone
 counts below are historical, superseded by this section. Four broad milestones
-remain. First implementation: controller management Service-client registry
-admission, role binding and connection eviction.
+remain. Controller management Service-client registry admission, role binding
+and connection eviction are locally implemented in `9134882`; per-domain consumer
+gates are implemented in `8baa0e3`. Live Service adoption remains open. The active
+milestone is approximately 15%, with 1/6 work groups complete and 5 open.
 
 ## 2026-09-08 staging packaging checkpoint
 

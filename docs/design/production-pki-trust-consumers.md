@@ -58,7 +58,7 @@ not additional Device/App identity consumers. Existing managed controller and
 certissuer server-host adapters need live adoption, not a second implementation.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **10%**, an engineering estimate
+Overall milestone progress is approximately **15%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -113,3 +113,61 @@ required-consumer list. It currently applies Device consumers to other domains
 too. Add explicit per-domain membership and gate selection before attempting a
 Service rollout, so Service activation/revocation cannot depend on fabricated
 Device receipts or weaken the existing Device gate.
+
+## Domain-specific consumer policy
+
+Add explicit `PKI_REQUIRED_CONSUMERS_{DEVICE,APP,SERVICE,MQTT,OPENBAO_TLS}` lists.
+When any domain list is present, use only explicitly configured domains and
+reject simultaneous `PKI_REQUIRED_CONSUMERS`. When none is present, preserve
+the existing global-list mode. Empty, duplicate and malformed IDs fail startup;
+unconfigured domains cannot activate or finish revocations in domain mode.
+
+Resolve the domain from the stored issuer (or stored operation's issuer), never
+from a consumer request. Use the same selected membership for bundle, CRL and
+Root-policy receipt endpoints, activation/revocation completion and App/server
+CRL workers. Human access to searches, emergency revocation requests and public
+issuer inspection remains governed by existing assertion/role checks; missing
+consumer configuration must not prevent emergency denial. Consumers belonging
+to another domain cannot submit receipts or fetch its consumer-scoped records.
+Policy is immutable for a running process; configuration changes require a
+reviewed restart and preservation of existing required Device members.
+
+Test both modes, missing/wrong-domain receipts, exact-domain completion and
+worker health/finalization. A configuration change alone never creates receipts
+or qualifies a consumer as deployed.
+
+## Domain policy implementation checkpoint
+
+Video Cloud `8baa0e3` implements per-domain configuration and selects membership
+from the stored authority for all three consumer route families, issuer
+activation, CA/leaf revocation completion and App/server CRL workers. Global
+mode is retained; mixed modes, invalid IDs and missing domain gates fail closed.
+Emergency revocation and human issuer inspection do not depend on configured
+consumer membership.
+
+The full Video Cloud Go suite passed with disposable PostgreSQL 16. Focused
+race tests and vet passed. Integration tests prove Device activation still waits
+for API and broker, Service Root removal uses its own consumer, cross-domain
+CRL/Root/bundle requests are denied, historical foreign-domain receipts do not
+release gates, and App/server/Service-client CRL workers select their own domain
+in both finalization and health checks. Missing-domain emergency denial passed.
+
+Read-only dev inspection confirmed the controller, certissuer, isolated Device
+API and MQTT worker remain Ready on their prior image digests. The controller
+still uses `PKI_REQUIRED_CONSUMERS=video-cloud-api,pkibroker`; registered Service
+client policy and managed host identity remain disabled. No dev or staging
+runtime mutation, image publication, PR or remote CI occurred in these two
+implementation checkpoints.
+
+Work group 2 now has two local prerequisites complete: controller management
+Service admission and domain-specific consumer selection. Remaining within this
+group: actual Service trust installation/receipts (including ready-issuer
+bootstrap), managed Account Manager/consumer credential adoption, and live dev
+renewal/revocation/restart qualification. The existing Device-only bundle
+consumer cannot stand in for a Service listener. A Service root must be installed
+by its actual consumers before activation; new client identities remain denied
+until their issuer and signed CRLs are active. Resolve this bootstrap ordering
+in the consuming-process implementation before live rollout.
+
+Current overall milestone estimate: **15%; 1/6 work groups complete, 5 open**.
+Four broad milestones remain; this milestone is not complete.
