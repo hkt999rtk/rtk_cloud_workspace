@@ -2,6 +2,10 @@
 
 Reviewed 2026-09-08 through Video Cloud `0387086`.
 
+Active acceptance work is **milestone 1: legacy migration/device replacement**.
+See the [fixed five-item rollout checklist](production-pki-legacy-rollout.md).
+Local reporting preparation does not complete a live cohort acceptance item.
+
 Completed local MQTT host work is recorded in [Managed EMQX host identity](production-pki-emqx-host.md).
 EMQX owns MQTT TLS termination; `pkibroker` is an outbound session-management
 worker. The fixed four-item plan separates local supervisor implementation from
@@ -765,4 +769,34 @@ local supervision does not emit CRL installation acknowledgments.
 milestones remain: (1) legacy migration/device replacement, (2) trust consumers/
 live sessions, (3) backup/recovery and SDK integration, (4) provider/hardware
 compatibility, (5) staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody operation.
+
+### Milestone 1 local cohort reporting preparation (2026-09-08)
+
+Video Cloud `e6c17a4` adds `pkicontroller legacy-progress OPERATION_ID`.
+It reports the fixed cohort from a completed governed staging import using a
+read-only repeatable-read snapshot. The report validates operation/manifest scope
+and digest, tracks pending signing, awaiting acknowledgment and acknowledgment,
+retains missing/inconsistent entries, and reports current legacy registry
+acceptance independently from replacement status. Expiry/revocation is not
+counted as successful replacement. This is not global population inventory,
+current successor health, installed CRL evidence or live-session proof.
+
+The complete pki/pkicontrollerapp suites passed with disposable PostgreSQL.
+Legacy migration/replacement race tests, final progress race tests, vet, gofmt
+and diff checks passed. The new integration exercises approved import through
+actual replacement claim/completion/acknowledgment, residual accounting,
+expiry, revocation, changed/missing bindings and audit-write absence.
+
+The active milestone is now legacy migration/device replacement, with the fixed
+[five-item acceptance checklist](production-pki-legacy-rollout.md). Local reporting
+preparation is complete. **All five live checklist items remain open:** cohort
+inventory; approved canary import/trust deployment; measured replacement;
+expanded rollout/residual accounting; legacy-trust withdrawal. The target staging
+environment and cohort have been requested; no live inventory, approvals, device
+replacement or consumer trust change was performed.
+
+Five broader acceptance milestones remain: legacy migration/device replacement
+(active); trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware compatibility; staging/custody/recovery qualification.
 Local commits only; no push, PR, remote CI, deployment or custody operation.
