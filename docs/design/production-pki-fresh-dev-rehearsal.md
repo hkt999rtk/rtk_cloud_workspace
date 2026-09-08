@@ -188,3 +188,21 @@ The canonical dev SecretStore contains:
 Credential files are not tracked or included in reports. Root/Brand keys never
 belong in service database rows, container images or Kubernetes workloads.
 No git push, PR, CI run or staging mutation was performed.
+
+## Next deployment: factory issuance and device renewal
+
+Reuse the existing independent certissuer service TLS identity and factory client
+identity. Upgrade only dev certissuer/factory enrollment, set their environment to
+`dev`, and enable Product PKI together. Use a projected Kubernetes token bound to
+the certissuer service account, with only the active Product mount's signer policy.
+Keep existing dev database credentials for this feature rehearsal; database role
+qualification remains separate work. Do not migrate legacy enrollment records.
+
+Certissuer startup validation must accept the Kubernetes authentication already
+supported by its provider adapter and require the role/projected-token path.
+For device renewal, load Device Root trust separately from service client trust.
+Only the two device renewal routes may admit identities under the Device Root;
+all other routes must retain service-chain verification. A matching factory or
+service common name on a Device certificate cannot grant service authority.
+The renewal handlers still require current registry binding, a new CSR key,
+issuer lifecycle checks and successor-key acknowledgment.
