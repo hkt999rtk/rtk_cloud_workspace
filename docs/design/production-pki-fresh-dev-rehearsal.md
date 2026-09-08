@@ -7,7 +7,44 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
-## Verified on 2026-09-08
+## Current live checkpoint: initial trust complete
+
+Video Cloud `ad08eef`, workspace `0e12b30`. Deployed the separate dev API listener
+`video-cloud-api-pki` with verified image and running image ID
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:c79a651d2807db0bad26b5872784fc435f2833f9143ce042ade710b5f8d2fea7`.
+The existing API Deployment and plaintext Service were preserved.
+
+The API verified the reviewed Root bundle against its loaded TLS client pool
+and acknowledged bundle
+`b72ea85670db35f6a8edada250a1dc66fd4cf4581863d9e21be23133fc32e07b`
+as consumer `video-cloud-api`. This acknowledgment came from the API process,
+not the operator script. The requester then activated Root
+`c92fdbb1-f87b-4cab-80a6-fa77c2dce1d8` through Account Manager. The Root is active.
+The direct TLS listener rejected missing client identity, a management identity
+used as a Device identity, and an incorrect server name. These are negative TLS
+checks; a real Product device connection is still pending.
+
+Continuous root-policy synchronization is now enabled. Its state is stored on
+PVC `video-cloud-api-pki-trust`, class `linode-block-storage-retain` (requested
+5Gi, CSI provisioned 10Gi). The init container copies the authenticated initial
+state only if no state exists, then the API fetches and installs the current
+policy before listening. Policy acknowledgment digest:
+`96381e5ae666aa055fa02db383fdadeb5b581a13e234f26406050da6c7b5b455`.
+
+A controlled Recreate restart changed the API pod UID from
+`33ef644d-965e-4a0b-8c7b-065aeb2bee50` to
+`7763f25e-6316-4d2e-905e-46ce23c588ee`. The exact image ID and persisted state
+SHA-256 `e849ecce2ef73602e133ec69ee3fc181bb4bd1af9c9d355bcb81475f64b152d1`
+were unchanged; the replacement became Ready with current policy acknowledgment.
+This verifies initial trust persistence/reload, not device renewal recovery.
+
+Fresh Cloud `5382d0cf-0966-45e9-ad5e-9955f4f6360d` and Product
+`773aa199-16e3-4d59-94c6-5cdb5801c02f` are active in Account Manager. They were
+created through the authenticated administration API with the temporary requester
+as designated owner. Their Brand/Product CA workflows remain unstarted; Cloud
+and Product creation alone does not generate private CA keys.
+
+## Earlier bootstrap verification on 2026-09-08
 
 - Dev context `lke649805-ctx`; namespaces `video-cloud-dev-video-cloud` and
   `video-cloud-dev-account-manager`.
@@ -47,9 +84,9 @@ only; devices never use it. Legacy fleet migration is deferred.
 
 ## Remaining acceptance work, in order
 
-1. Install the new Root in the actual API TLS runtime and acknowledge the exact
-   installed bundle. Then activate it through the governed API.
-2. Create a fresh Cloud/Product and their Brand/Product issuers. Keep Brand keys
+1. **Done:** API initial trust installation, actual bundle acknowledgment, governed
+   Root activation, continuous policy synchronization and persisted-state restart.
+2. **Next:** provision Brand/Product issuers for the newly created Cloud/Product. Keep Brand keys
    in the encrypted local ceremony simulation and generate Product keys inside
    isolated OpenBao mounts with per-issuer policies. Verify key non-export and
    actual consumer installation before activation.
@@ -63,11 +100,11 @@ Initial HTTP acceptance currently requires consumer `video-cloud-api`. MQTT is
 not included in that phase and is not yet qualified. Do not count missing
 acknowledgments as user-input blockers or send fabricated acknowledgments.
 
-The next concrete bootstrap issue: the API's automatic root-policy synchronizer
+The resolved bootstrap issue was: the API's automatic root-policy synchronizer
 expects an already active/retiring Root, while the first Root needs actual
-installation acknowledgment before activation. Complete a real initial
-installation path before starting automatic synchronization. Do not bypass
-activation checks or pretend that writing a file is a runtime reload.
+installation acknowledgment before activation. The new initial
+installation path now resolves that cycle and automatic synchronization is running.
+Activation checks remain enforced; disk-only installation is never a runtime ACK.
 
 The initial installation path uses an explicit reviewed manifest of issuer IDs
 and exact trust-bundle versions. API startup re-reads those issuers from its
@@ -88,6 +125,14 @@ The canonical dev SecretStore contains:
 - `pki/controller-bootstrap/rollout/account-manager-pki-migrate.json` and
   `account-manager-pki.json`: exact scoped schema/runtime manifests.
   `account-manager-before.json` retains the prior Deployment for review/rollback.
+- `pki/controller-bootstrap/rollout/video-cloud-api-pki-deployment.json`, the
+  matching Service/ConfigMap/PVC manifests and initial-state manifest retain the
+  scoped API overlay. `PKI_API_IMAGE` pins its verified dev image;
+  `PKI_CONSUMER_PODS=video-cloud-api-pki` maps its pod name to the existing
+  `video-cloud-api` management identity. The restart-check annotation is transient
+  operational evidence and does not change the persisted workload configuration.
+- `pki/fresh-rehearsal/device-root-active.json`, `cloud.json`, `product.json`,
+  `api-restart.json` and `api-tls-negative-probe.json` retain this checkpoint.
 - `operator/env/PKI_CONTROLLER_IMAGE`, `PKI_REQUIRED_CONSUMERS`,
   `PKI_ACCOUNT_MANAGER_IMAGE` and the selected JWT/PKI file settings record the
   overlay configuration. These separate PKI overlays are not automatically

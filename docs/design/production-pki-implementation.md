@@ -29,6 +29,19 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 live API initial trust and Root activation
+
+The dev API image built from `ad08eef` is deployed as a separate direct-mTLS
+listener. Its actual runtime acknowledged the Root bundle, and the governed API
+activated the Root. Continuous root-policy synchronization now uses a retained
+PVC. A controlled restart preserved the exact trust-state digest and image ID;
+the replacement became Ready and current-policy acknowledgment is recorded.
+Fresh Cloud/Product creation also passed through authenticated administration.
+See the [fresh dev rehearsal](production-pki-fresh-dev-rehearsal.md) for IDs,
+digests, manifests and the precise limits of this evidence. Brand/Product CA
+provisioning and first real device enrollment are next; no migration/staging
+acceptance item or full dev lifecycle is declared complete.
+
 ## 2026-09-08 initial API bundle acknowledgment implementation
 
 Video Cloud `ad08eef` adds explicit reviewed issuer manifests and startup
