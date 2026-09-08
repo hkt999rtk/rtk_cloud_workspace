@@ -71,6 +71,13 @@ controller deployment, consumer cutover or CI publication has occurred.
 
 ### Execution prerequisites
 
+Local follow-up `5787230` aligns the controller pod with the existing OpenBao HA
+network-policy selector. Three renderer tests and a direct comparison with the
+actual HA values passed: the controller matches the allowed pod selector while
+migration/grant Jobs do not. The existing workload namespace must also carry
+`rtk.cloud/pki-client-access=enabled`; this was documented, not applied or assumed
+present. This closes a manifest integration gap without changing live acceptance.
+
 1. Prepare and publish the reviewed PKI-capable service revision through canonical
    CI; retain existing images/settings as rollback evidence. Do not deploy local
    images to staging. Deployments remain Kubernetes-only.
