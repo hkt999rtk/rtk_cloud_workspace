@@ -41,8 +41,23 @@ This verifies initial trust persistence/reload, not device renewal recovery.
 Fresh Cloud `5382d0cf-0966-45e9-ad5e-9955f4f6360d` and Product
 `773aa199-16e3-4d59-94c6-5cdb5801c02f` are active in Account Manager. They were
 created through the authenticated administration API with the temporary requester
-as designated owner. Their Brand/Product CA workflows remain unstarted; Cloud
-and Product creation alone does not generate private CA keys.
+as designated owner. Brand issuer `b4da0b7b-42ff-4966-95cc-50eb77c706f0` is active after distinct
+approvals, an encrypted local key ceremony, Root signing, import and actual API
+bundle acknowledgment. Activation before that acknowledgment returned 409.
+Cloud and Product creation alone does not generate private CA keys.
+
+Product v1 issuer `2a3f529b-a663-418b-bc62-da4092fe6cb1`, operation
+`b09930b0-a32f-4151-83e5-b74cda10d352`, received distinct approvals but provisioning
+failed before key generation. OpenBao rejected its nested mount with HTTP 400:
+`path is already in use at pki/device/`. Provider inventory confirms the target
+mount is absent. Existing legacy mounts remain unchanged. Its provisioning record
+is retained as evidence; do not retry key generation or rewrite that reference.
+
+The corrected design reserves new issuers at
+`pki-issuers/<domain>/<issuer_id>/v<version>`. Existing governed references retain
+their exact old layout. Next, deploy the namespace correction, remove the unused
+v1 controller policy and reserve an approved Product v2. This is a fresh dev
+provisioning repair, not migration work.
 
 ## Earlier bootstrap verification on 2026-09-08
 
@@ -86,7 +101,7 @@ and Product creation alone does not generate private CA keys.
 
 1. **Done:** API initial trust installation, actual bundle acknowledgment, governed
    Root activation, continuous policy synchronization and persisted-state restart.
-2. **Next:** provision Brand/Product issuers for the newly created Cloud/Product. Keep Brand keys
+2. **In progress:** Brand activation is complete; finish Product provisioning. Keep Brand keys
    in the encrypted local ceremony simulation and generate Product keys inside
    isolated OpenBao mounts with per-issuer policies. Verify key non-export and
    actual consumer installation before activation.

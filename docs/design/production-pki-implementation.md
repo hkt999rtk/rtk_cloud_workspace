@@ -29,6 +29,15 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 Brand activation and Product mount repair
+
+Brand activation passed through the governed API after actual API trust
+installation. Product v1 failed before key generation because its planned mount
+was nested beneath existing `pki/device/`. The design now reserves new mounts in
+`pki-issuers/<domain>/<issuer_id>/v<version>`, retaining immutable existing
+references. Fix and verify this provider incompatibility before the fresh Product
+v2 ceremony and device enrollment. No dev migration or reset is needed.
+
 ## 2026-09-08 live API initial trust and Root activation
 
 The dev API image built from `ad08eef` is deployed as a separate direct-mTLS
