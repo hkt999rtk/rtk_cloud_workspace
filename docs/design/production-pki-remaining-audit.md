@@ -19,6 +19,59 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 live revocation gate, failed consumer and terminal restart
+
+The complete dev consumer set now passed the Product revocation gate under an
+actual worker fault. Product v3 `56df0589-ae15-4fc0-b4a2-b4114c5b95eb` was revoked
+through distinct simulated requester/approver/custodian accounts. Operation
+`1439799a-27db-4eb5-a01c-3fbbbcb1dc9f` is **completed**. The API manifest now
+contains Root/Brand/active-v4; the broker retains v3 as a terminal authority.
+
+A controlled invalid Root-state file was installed under the worker's existing
+lock after saving its exact bytes and checking the controller Root-policy digest.
+The worker disconnected a previously valid v4 MQTT session **5.910373 seconds**
+after corruption, at connection age **16.630997 seconds**, before lease expiry.
+The independent API still authenticated v4. No new Brand CRL receipt appeared
+from the faulted broker.
+
+Brand CRL 3 is
+`8aef056aec56f6c03a0e8c0d627b036ed773edd5a61f669eaba15c527e51444d`.
+It preserves the prior v2 revocation and adds v3. Completion returned **409**
+before publication and again after the API acknowledged that exact new CRL while
+pkibroker had only its older receipt. The test's finally handler restored the
+exact Root-state bytes under the lock after verifying the authoritative policy
+had not changed. The worker then persisted terminal v3 denial, consumed Brand
+CRL 3 and sent its own receipt. Completion returned **204** with both consumers.
+V4 Device API and MQTT ACL/QoS1 roundtrip recovered successfully.
+
+A real broker restart retained the identical terminal marker and signed v3 CRL
+in `retained_crl`, with no active CRL acceptance record for v3. Root policy/pool,
+image digests and the same PVC were preserved. Private state permissions were
+0600 under UID 10001. V4 direct mTLS and MQTT succeeded; an unexpired predecessor
+token remained denied. That predecessor was already cut off by replacement, so
+its denial is a regression check, not independent attribution to CA revocation.
+
+The obsolete v3 signer policy was removed after completed revocation. The
+certissuer role now grants only the exact active v4 signer policy. The revoked
+v3 provider mount and its one internal key remain retained; no private key was
+exported. Controller and worker still run dev image `16aee0a5e58c9c48edd90d16f9a9c3742bd69bf609fa63a08ba58f7935f6bdf3`,
+with required consumers `video-cloud-api,pkibroker`. No fault remains active.
+
+Protected canonical dev evidence: `product-v3-revocation-fault-evidence.json`,
+`product-v3-revocation-completed.json`, `product-v3-broker-terminal-state.json`,
+`product-v3-terminal-restart-evidence.json`, `product-v3-policy-cleanup-evidence.json`
+and updated `consumer-rollout-evidence.json`. The raw Root-state backup and
+bounded phase scripts are retained privately for reproducibility work.
+
+Current active milestone: fresh dev PKI lifecycle acceptance, estimated **96%**.
+One acceptance work package remains: turn the verified phases into maintained,
+repeatable dev setup/acceptance tooling and execute a complete run with explicit
+pass/fail evidence. This is the existing reproducibility requirement, not a new
+milestone. All five broad areas remain open: fresh dev acceptance; other trust
+consumers/live sessions; backup/recovery and SDK; provider/hardware compatibility;
+staging/custody/recovery qualification. Staging and legacy migration stay deferred;
+MFA remains optional future human login only. No Git push, PR or remote CI ran.
+
 ## 2026-09-08 live complete broker consumer and cross-CA replacement
 
 The clean Video Cloud `728362d` dev image was built locally for linux/amd64 and
