@@ -619,3 +619,32 @@ Five broader acceptance milestones remain: legacy migration/device replacement;
 trust consumers/live sessions; backup/recovery and SDK integration;
 provider/hardware compatibility; staging/custody/recovery qualification.
 Local commits only; no push, PR, remote CI, deployment or custody action.
+
+### Authenticated private-server renewal API milestone (2026-09-08)
+
+Video Cloud `aac4a46` completes the fixed **3/3** local API checklist:
+(1) authenticate current-certificate ownership and current registry/CRL admission;
+(2) issue an exact-CN/DNS replacement through durable claims and replay;
+(3) add regression coverage, configuration and recovery guidance.
+
+`POST /v1/certificates/gateway/renew` requires an authorized direct-mTLS
+management caller plus a versioned request proof signed by the current P-256
+server key. Server certificates stay serverAuth-only. The proof binds environment,
+domain, independent root pin, caller, predecessor, CSR, request ID and explicit TTL.
+Both predecessor verification and claimed replacement lineage enforce the pin.
+The separate initial route also enforces the pin when configured. There is no
+legacy fallback from renewal.
+
+Tests with disposable PostgreSQL and a fixture OpenBao signing endpoint cover
+successor key replacement, identical replay with a fresh randomized signature,
+changed request conflict, uncertain provider outcomes without re-signing, invalid
+caller/proof/domain/root/names, stale CRLs, expiry and revoked-predecessor replay.
+Affected-package tests, targeted race tests, vet and diff checks passed. This
+checkpoint did not run a real OpenBao instance or deploy a host.
+
+**Current API milestone: 0/3 items unfinished.** The next server-host implementation
+gap remains protected key/CSR state, durable scheduling and listener replacement;
+the API alone does not implement those. Five broader acceptance milestones remain:
+legacy migration/device replacement; trust consumers/live sessions;
+backup/recovery and SDK integration; provider/hardware compatibility;
+staging/custody/recovery qualification. No push, PR, remote CI or custody action.
