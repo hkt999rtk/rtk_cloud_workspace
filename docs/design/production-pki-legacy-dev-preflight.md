@@ -83,6 +83,30 @@ controller-only deployment cannot complete the governed canary. No dev rollout,
 database migration, credential generation or Account Manager change has occurred
 in this preparation step. Staging remains outside scope.
 
+Read-only authorization follow-up found enabled Google OIDC and GitHub OAuth2
+providers, two linked OIDC identities, and zero linked identity records containing
+either `acr` or `auth_time`. These persisted records do not establish recent MFA;
+the existence of Google login must not be treated as sufficient assurance. This
+observation does not prove that every possible provider configuration lacks MFA.
+The exact configured MFA assurance class and actual two operators remain required.
+
+The live Account Manager database contains no `pki_admin`, `security_custodian`
+or `pki_auditor` role rows, and no PKI/admin-recovery tables. Required PKI role and
+sealed-bootstrap/recovery migrations therefore precede role assignment and canary
+approval. No roles were assigned through direct SQL or bootstrap bypass.
+
+Source review of Account Manager `internal/auth/auth.go` confirms strict signer
+algorithm matching: after an RS256 switch, existing HS256 access and refresh
+tokens are rejected. Plan fresh dev logins at the cutover; retaining HMAC secrets
+does not provide dual-token acceptance. Do not switch signers as an unnoticed
+controller-only change. Existing controller assertions and token consumers must
+be tested together after the selected dev authorization configuration is ready.
+
+Focused local Account Manager tests passed for configured verified MFA assurance,
+refresh not minting MFA authority, HS256 denial for PKI assertions, RSA token-kind
+validation and PEM signer loading/error cases. These are local implementation
+checks, not proof of live IdP assurance or operator authentication.
+
 1. Prepare the dev-only registry/controller rollout; public `pki_*` tables and
    the controller are absent. Preserve existing dev service configuration/data.
 2. Establish the governed Device/Brand/Product target hierarchy with independent
