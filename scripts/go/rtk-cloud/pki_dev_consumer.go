@@ -16,7 +16,7 @@ import (
 
 func validPKIDevConsumer(name string) bool {
 	switch name {
-	case "video-cloud-api", "certissuer", "factoryenroll", "pkibroker":
+	case "video-cloud-api", "certissuer", "factoryenroll", "pkibroker", "emqx-pki":
 		return true
 	}
 	return false
@@ -33,7 +33,7 @@ func preparePKIDevTransport(store secretStore, name string, now time.Time, serve
 	valid := validPKIDevConsumer(name)
 	category := "consumers"
 	if server {
-		valid = name == "video-cloud-api-pki"
+		valid = name == "video-cloud-api-pki" || name == "mqtt-pki"
 		category = "servers"
 	}
 	if store.Environment != "dev" || !valid {

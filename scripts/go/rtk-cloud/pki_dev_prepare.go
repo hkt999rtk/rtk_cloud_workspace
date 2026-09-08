@@ -31,8 +31,8 @@ func runPKIDevPrepare(args []string) error {
 	fs := flag.NewFlagSet("pki-dev-prepare", flag.ContinueOnError)
 	environment := fs.String("environment", "", "must be dev")
 	configRoot := fs.String("config-root", "", "canonical SecretStore base directory")
-	server := fs.String("server", "", "optional dev TLS server: video-cloud-api-pki")
-	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, certissuer, factoryenroll or pkibroker")
+	server := fs.String("server", "", "optional dev TLS server: video-cloud-api-pki or mqtt-pki")
+	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, certissuer, factoryenroll, pkibroker or emqx-pki")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func runPKIDevPrepare(args []string) error {
 	if *consumer != "" && !validPKIDevConsumer(*consumer) {
 		return errors.New("unknown dev PKI consumer")
 	}
-	if *server != "" && *server != "video-cloud-api-pki" {
+	if *server != "" && *server != "video-cloud-api-pki" && *server != "mqtt-pki" {
 		return errors.New("unknown dev PKI server")
 	}
 	store, err := newSecretStore(*configRoot, "dev")
@@ -59,7 +59,7 @@ func runPKIDevPrepare(args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Validated dev PKI consumer material at %s; bind its CA to controller client trust before use\n", path)
+		fmt.Printf("Validated dev PKI consumer material at %s; bind its CA only to the intended service endpoint before use\n", path)
 	}
 	if *server != "" {
 		path, err := preparePKIDevTransport(store, *server, time.Now().UTC(), true)

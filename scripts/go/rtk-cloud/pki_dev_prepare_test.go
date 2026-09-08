@@ -224,53 +224,92 @@ func TestPKIDevConsumerPersistenceAndFailures(t *testing.T) {
 }
 
 func TestPKIDevAPIServerTransport(t *testing.T) {
+	for _, serverName := range []string{"video-cloud-api-pki", "mqtt-pki"} {
+		t.Run(serverName, func(t *testing.T) {
+			store, err := newSecretStore(t.TempDir(), "dev")
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now()
+			dir, err := preparePKIDevTransport(store, serverName, now, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pair, err := tls.LoadX509KeyPair(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ca, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			roots := x509.NewCertPool()
+			roots.AppendCertsFromPEM(ca)
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
+			srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
+			srv.StartTLS()
+			defer srv.Close()
+			for _, host := range []string{serverName + ".video-cloud-dev-video-cloud.svc", "wrong.example"} {
+				transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: host}}
+				client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
+				r, err := client.Get(srv.URL)
+				if r != nil {
+					r.Body.Close()
+				}
+				transport.CloseIdleConnections()
+				if (host == "wrong.example") != (err != nil) {
+					t.Fatal("server hostname check", host, err)
+				}
+			}
+			if err := validatePKIDevConsumer(dir, serverName, now); err == nil {
+				t.Fatal("server identity accepted as client")
+			}
+			key, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+			if _, err = preparePKIDevTransport(store, serverName, now, true); err != nil {
+				t.Fatal(err)
+			}
+			after, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+			if !bytes.Equal(key, after) {
+				t.Fatal("repeat rotated server")
+			}
+			if _, err = preparePKIDevTransport(store, "account-manager", now, true); err == nil {
+				t.Fatal("unknown server accepted")
+			}
+		})
+	}
+}
+
+func TestPKIDevBrokerCallbackIdentityIsIndependent(t *testing.T) {
 	store, err := newSecretStore(t.TempDir(), "dev")
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	dir, err := preparePKIDevTransport(store, "video-cloud-api-pki", now, true)
+	broker, err := preparePKIDevConsumer(store, "emqx-pki", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pair, err := tls.LoadX509KeyPair(filepath.Join(dir, "tls.crt"), filepath.Join(dir, "tls.key"))
+	api, err := preparePKIDevConsumer(store, "video-cloud-api", now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ca, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
-	if err != nil {
+	brokerCA, _ := os.ReadFile(filepath.Join(broker, "ca.crt"))
+	apiCA, _ := os.ReadFile(filepath.Join(api, "ca.crt"))
+	if bytes.Equal(brokerCA, apiCA) {
+		t.Fatal("broker reused API management CA")
+	}
+	key, _ := os.ReadFile(filepath.Join(broker, "tls.key"))
+	if _, err := preparePKIDevConsumer(store, "emqx-pki", now); err != nil {
 		t.Fatal(err)
 	}
-	roots := x509.NewCertPool()
-	roots.AppendCertsFromPEM(ca)
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) }))
-	srv.TLS = &tls.Config{Certificates: []tls.Certificate{pair}}
-	srv.StartTLS()
-	defer srv.Close()
-	for _, host := range []string{"video-cloud-api-pki.video-cloud-dev-video-cloud.svc", "wrong.example"} {
-		transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: host}}
-		client := &http.Client{Transport: transport, Timeout: 5 * time.Second}
-		r, err := client.Get(srv.URL)
-		if r != nil {
-			r.Body.Close()
-		}
-		transport.CloseIdleConnections()
-		if (host == "wrong.example") != (err != nil) {
-			t.Fatal("server hostname check", host, err)
-		}
-	}
-	if err := validatePKIDevConsumer(dir, "video-cloud-api-pki", now); err == nil {
-		t.Fatal("server identity accepted as client")
-	}
-	key, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
-	if _, err = preparePKIDevTransport(store, "video-cloud-api-pki", now, true); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.ReadFile(filepath.Join(dir, "tls.key"))
+	after, _ := os.ReadFile(filepath.Join(broker, "tls.key"))
 	if !bytes.Equal(key, after) {
-		t.Fatal("repeat rotated server")
+		t.Fatal("retry rotated broker identity")
 	}
-	if _, err = preparePKIDevTransport(store, "account-manager", now, true); err == nil {
-		t.Fatal("unknown server accepted")
+	if validatePKIDevConsumer(broker, "video-cloud-api", now) == nil {
+		t.Fatal("broker became API management identity")
+	}
+	if _, err := os.Stat(filepath.Join(broker, "ca.key")); !os.IsNotExist(err) {
+		t.Fatal("CA private key retained")
 	}
 }

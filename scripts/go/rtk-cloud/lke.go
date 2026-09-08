@@ -2555,6 +2555,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/api ./cmd/api
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/certissuer ./cmd/certissuer
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/pkicontroller ./cmd/pkicontroller
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/pkibroker ./cmd/pkibroker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/cleaner ./cmd/cleaner
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/statistics ./cmd/statistics
@@ -2576,6 +2577,7 @@ RUN apt-get update \
 COPY --from=builder /out/api /app/api
 COPY --from=builder /out/certissuer /app/certissuer
 COPY --from=builder /out/pkicontroller /app/pkicontroller
+COPY --from=builder /out/pkibroker /app/pkibroker
 COPY --from=builder /out/factoryenroll /app/factoryenroll
 COPY --from=builder /out/cleaner /app/cleaner
 COPY --from=builder /out/statistics /app/statistics

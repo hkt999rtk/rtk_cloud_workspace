@@ -29,6 +29,27 @@ Legacy migration/device replacement remains deferred to environments that need
 it; its checklist below is retained for that later rollout, not as a dev gate.
 Dev test approvals demonstrate software behavior, not independent human custody.
 
+## 2026-09-08 MQTT callback transport implementation
+
+Video Cloud `9d11534` adds an optional internal mTLS listener for only the MQTT
+HTTP authentication callback, with independent broker client trust and exact
+client identity. It reuses the existing token/registry/CRL/ACL/lease decisions;
+the Device listener's TLS policy is unchanged. Paired listener bind failure,
+peer failure and cancellation stop both transports and release resources.
+
+Full API/config race suites and vet passed. Actual TLS tests reject absent,
+expired, wrong-purpose, wrong-name and same-name/untrusted Device certificates;
+wrong server name and unrelated routes fail. Valid broker callbacks preserve
+certificate provenance, short leases and ACLs, and deny the token after its
+certificate verifier changes to revoked. These local tests do not qualify EMQX.
+
+The workspace image builder now includes `pkibroker`. Dev-only preparation adds
+independent `emqx-pki` callback-client and `mqtt-pki` server transport identities,
+with protected durable files and no retained CA private key. Targeted preparation
+and packaging tests pass. These are bootstrap transport identities, not evidence
+of governed MQTT/Service-domain renewal. Next deploy the callback and isolated
+compatible broker, then perform the fresh-device MQTT acceptance flow.
+
 ## 2026-09-08 Product revocation and HTTP session checkpoint
 
 Fresh dev steps 1–3 retain their recorded passes. Step 4 now has live evidence
