@@ -19,6 +19,24 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 real MQTT replacement and restart checkpoint
+
+The isolated dev EMQX 5.9.0 broker and session worker are deployed. Cache reset,
+read-only PKI verification, real ACL/QoS1 roundtrip, a 59.260888-second lease,
+reconnect, and revoked-token denial passed. A fresh Product v3/device then completed
+new-key renewal: the worker disconnected the predecessor 3.112123 seconds after
+successor acknowledgment, preserved the successor, and denied old-token reconnect.
+A stable-node restart preserved broker identity, images/PVC, cache policy and
+old/new authentication decisions. The Docker node-name override discovered during
+verification is fixed in the persisted isolated deployment. See the
+[fresh dev evidence](production-pki-fresh-dev-rehearsal.md#current-live-checkpoint-real-dev-mqtt-lifecycle).
+
+Dev MQTT behavior now has measured evidence. Broker Device trust-consumer
+acknowledgments/gating and a reproducible complete dev run still remain; controller
+required consumers are still only `video-cloud-api`. Do not substitute session
+sweep results for trust receipts. The original broker, staging and legacy fleet
+remain untouched. All five broad reporting areas remain open.
+
 ## 2026-09-08 MQTT callback deployment checkpoint
 
 Service `9d11534` adds the missing independent broker-service mTLS callback and

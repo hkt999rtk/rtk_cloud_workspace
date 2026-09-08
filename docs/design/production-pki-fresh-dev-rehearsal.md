@@ -7,7 +7,76 @@ useful. Existing dev issuance data is not a migration requirement. Staging is
 untouched. MFA remains disabled and is optional future human-login functionality
 only; devices never use it. Legacy fleet migration is deferred.
 
-## Current live checkpoint: Product revocation and HTTP sessions
+## Current live checkpoint: real dev MQTT lifecycle
+
+The isolated `mqtt-pki` Deployment runs EMQX 5.9.0 plus `pkibroker` using verified
+running image digests `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`
+and `536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`, respectively.
+The original dev broker remains 5.8.7; staging is untouched. Broker management HTTP
+binds to pod loopback, with credentials limited to its bootstrap and colocated
+worker. External MQTT uses verified server TLS and certificate-bound tokens.
+Authentication/authorization caches are disabled; no permissive authenticator
+fallback is configured. The worker successfully reset both caches and scanned
+actual sessions. Its dedicated login `rtk_pki_broker_dev` inherits only the existing
+PKI verifier role, defaults to read-only transactions and has no superuser,
+role/database creation or replication privilege. PKI issuer UPDATE and binding
+INSERT privileges are absent; the live session scans exercised its database reads.
+
+Product v3 `56df0589-ae15-4fc0-b4a2-b4114c5b95eb` is active after distinct approvals,
+one internal OpenBao key generation, Brand signing, import and actual API bundle
+acknowledgment. Activation without that acknowledgment returned 409. Its mount is
+`pki-issuers/device/56df0589-ae15-4fc0-b4a2-b4114c5b95eb/v3`; bundle digest is
+`4ec29d424a583f1f446f9244b2f224c5a772b4d3eb86b333cc4f1e74828b5a4c` and CRL digest is
+`fa6a914a8c0793e188058631fd12654ce452a5149deb0f2f6f58fdcbec1f1141`. The API now
+consumes Root/Brand/Product-v3 CRLs. Product v2 remains revoked; its mount/key and
+audit evidence remain, while obsolete controller/signing policies were removed.
+Current policies target only v3. Provider metadata and effective controller-token
+checks again verify no exported/readable Product key or controller signing grant.
+
+Fresh device `pki-dev-e824d85b32c946258f64f4e400074d20` generated its own key and
+enrolled through production run `aeec4936-7c41-4d18-ac4b-b76a44a9c363`, reservation
+`d10cf206-da20-48bc-b793-c6f2fd7d2080`. Direct API mTLS issued its token. The real
+broker passed an allowed subscription and QoS1 publish/receive roundtrip and denied
+`_bc/other/#` and `$aws/#` subscriptions. With client keepalives continuing, its
+session closed after 59.260888 seconds; the same still-valid token reconnected
+successfully. The older revoked Product-v2 device's unexpired token returned
+CONNACK 5, establishing real-broker denial in addition to the earlier HTTP checks.
+
+During a new-key renewal, both predecessor and successor connected to MQTT.
+Successor acknowledgment at `2026-09-08T07:26:21.464451Z` cut off the old identity;
+its socket closed 3.112123 seconds later at a connection age of 19.262191 seconds,
+well before lease expiry. The worker recorded `examined:2, disconnected:1`.
+The successor remained connected for a further 12-second observation window.
+Old-token MQTT reconnect returned CONNACK 5 and old-key API authentication returned
+401; successor-key API authentication passed. Renewal replay was identical, and
+the predecessor could not acknowledge its replacement. The test harness then
+closed the surviving successor session deliberately.
+
+A broker restart exposed Docker overriding HOCON's node name with the Pod IP.
+The isolated deployment now explicitly sets `EMQX_NODE__NAME=emqx@127.0.0.1`.
+After verifying that actual name, a second controlled restart preserved it, both
+image digests, PVC UID `21e2bc2a-ac11-4cb7-af2d-fbdc54bda70e` and its volume. The
+new Ready pod UID is `2ca1058d-3279-4181-a8d4-6edb2a1f16d8`. Cache reset repeated
+successfully. Post-restart, the predecessor was still denied and the successor's
+ACL/roundtrip test passed. This does not claim durable queued-session recovery.
+
+Evidence is retained in `mqtt-broker-startup-evidence.json`,
+`mqtt-revoked-v2-connect-denied.json`, `mqtt-worker-renewal-evidence.json`,
+`mqtt-stable-restart-{before,after}.json`, `mqtt-post-restart-auth-evidence.json`,
+`product-v3-*`, and `device-2/mqtt-{lease,connect,renewal}-evidence.json` in the
+protected rehearsal directory. Exact scoped manifests and Secrets are retained
+in the protected rollout directory; `PKI_MQTT_IMAGE` and `PKI_BROKER_IMAGE` pin
+images. Credentials come from the canonical `pki-dev-prepare --broker` flow;
+partial/invalid existing files fail without rotation. No database reset was used.
+
+**Remaining acceptance:** the worker enforces Device CRLs through live registry
+reads but has no Device trust-consumer acknowledgment configured. Required
+controller consumers remain `video-cloud-api`; a sweep is not a bundle/CRL receipt.
+Finish broker consumer acknowledgment/gating and retain a reproducible full dev
+run before closing distribution acceptance. Governed MQTT/Service identity renewal,
+HA, durable queued-session recovery and independent custody remain separate work.
+
+## Previous checkpoint: Product revocation and HTTP sessions
 
 The disposable Product v2 issuer is now **revoked**. Root and Brand remain active;
 the activation and enrollment records below are historical checkpoints. A new
@@ -278,9 +347,9 @@ was retained; no reset or staging mutation was needed.
    authentication, new-key renewal and interruption before acknowledgment across
    certissuer/API restarts. Exact replay and old-key cutoff are verified below.
    This does not qualify every possible provider failure or lost signing outcome.
-4. **Partially done:** Product CA revocation, direct-mTLS denial and existing
-   WebSocket termination passed. Next add the compatible MQTT broker and its
-   consumers to the required trust installation set, using a fresh Product/device.
+4. **Partially done:** HTTP/WebSocket and real EMQX ACL, lease, replacement,
+   old-identity denial and restart cases passed. Finish broker Device
+   trust-consumer acknowledgment/gating before closing distribution acceptance.
 5. Retain pass/fail results and a reproducible setup for the full dev lifecycle.
 
 Initial HTTP acceptance currently requires consumer `video-cloud-api`. MQTT is
