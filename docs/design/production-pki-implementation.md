@@ -1,6 +1,16 @@
 # Production PKI implementation ledger
 
-## Current milestone status: complete (2026-09-08)
+## Current milestone: other trust consumers/live sessions (2026-09-08)
+
+The next milestone is now active. Its [six fixed work groups](production-pki-trust-consumers.md)
+track the remaining adoption and dev acceptance; controller management Service
+identity enforcement is locally implemented in Video Cloud `9134882`.
+Inventory is complete (1/6 work groups); 5 work groups remain, with management
+adoption underway. Active milestone progress is approximately 10% (engineering
+estimate; live adoption remains). Keep commits local and create PRs only after
+all milestones are finished.
+
+## Previous milestone status: complete (2026-09-08)
 
 The authorized fresh dev PKI milestone is **100% complete, with zero remaining
 items**. The committed tool's uninterrupted run passed 12/12 checks; independent

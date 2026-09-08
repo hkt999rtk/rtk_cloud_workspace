@@ -14,7 +14,7 @@ verified the current foundation, runtime, registry, provider and cleanup state.
 
 The four unfinished areas are:
 
-1. Other trust consumers/live sessions — next priority.
+1. Other trust consumers/live sessions — active; [fixed work groups](production-pki-trust-consumers.md).
 2. Backup/recovery and SDK integration.
 3. Provider/hardware compatibility.
 4. Staging/custody/recovery qualification — deferred.
@@ -22,6 +22,11 @@ The four unfinished areas are:
 Legacy fleet migration remains deferred under the user's dev-scope correction.
 MFA remains optional future human login only. The dated checkpoints below are
 historical and do not change this current remaining count.
+
+Current trust-consumer progress: approximately 10%, with inventory complete
+(1/6 work groups) and 5 work groups remaining. Video Cloud `9134882` adds local
+controller Service management admission and eviction. See the active plan for
+validation and remaining live-adoption boundaries.
 
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 

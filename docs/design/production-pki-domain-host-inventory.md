@@ -1,5 +1,14 @@
 # Production PKI domain and host inventory
 
+## Current execution scope (2026-09-08)
+
+Fresh dev Device PKI is complete. **Remaining trust consumers/live sessions** is
+now active; see the [fixed work groups and management adoption design](production-pki-trust-consumers.md).
+Staging and legacy migration remain deferred. The dated staging and milestone
+counts below are historical, superseded by this section. Four broad milestones
+remain. First implementation: controller management Service-client registry
+admission, role binding and connection eviction.
+
 ## 2026-09-08 staging packaging checkpoint
 
 Service commit: `08be3b6`. Validation passed: three renderer unit tests,
