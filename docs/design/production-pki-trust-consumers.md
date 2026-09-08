@@ -60,7 +60,7 @@ certissuer server-host adapters now serve registered dev leaves and preserve
 private state across seedless restarts. Renewal/revocation acceptance remains.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **65%**, an engineering estimate
+Overall milestone progress is approximately **72%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -1163,3 +1163,55 @@ residual legacy trust removal, fresh CRL receipts, actual managed renewal and
 negative credential tests remain separate acceptance checks. Deployment readiness
 alone does not close them. Current milestone estimate remains approximately 70%,
 with 1/6 work groups complete and 5 open, pending this dev validation.
+
+### Managed listener egress adoption verified in dev (2026-09-09)
+
+Source: Video Cloud `55ae28a`, workspace runner `abe8156`. The canonical dev build
+was verified as linux/amd64 and both listener Deployments now run:
+
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:15fa35190b72373a8525b7bc7535f1f65af7f63f1eb008b35bb68e8b7a9d40e2`
+
+The original failed `controller-adopt` evidence was reconciled by
+`controller-adopt-recovery-2`, which passed. The previous
+`controller-adopt-recovery` report remains failed: its phase-name guard rejected
+the run before mutation. The final `verification` phase also passed. Private
+evidence is retained under
+`~/.config/rtk_cloud/dev/pki/service-egress-20260909-1/`.
+
+Observed results:
+
+- Both clients use their existing PVC-owned managed states, have no pending
+  request, and match an unrevoked successful issuance under the active Service
+  Intermediate. No initial enrollment was repeated during recovery.
+- Both running image digests and readiness match the intended release. Server
+  and client state hashes for both listeners match the saved pre-recovery hashes.
+  Inspection exports only public metadata, never key or state contents.
+- Both listeners have no static management/host-renewal credential settings or
+  consumer Secret mounts. The issuer provisioner is `^$`; host renewal permits
+  exactly `^service:(certissuer|pki-controller)$`. Actual renewal is still pending
+  acceptance; checking this policy is not renewal evidence.
+- Persisted images/settings reproduce both live Pod templates. The pre/post
+  snapshots show unchanged API, MQTT/pkibroker, factory and Account Manager images.
+- Human-authenticated management preflight, Device direct mTLS and MQTT ACL/QoS1
+  roundtrip passed. This is baseline regression coverage, not a full Device
+  lifecycle rerun or public HTTPS qualification.
+
+Local validation passed: 42 Python tests; Service identity, pkitrust and helper
+Go tests; affected identity/trust race tests; vet and build. Recovery tests cover
+the original controller phase, requested image replacement, and no mutation on
+Deployment/PVC/template, CA, state or prior trust-mutation drift. Public inspection
+tests cover real installed credentials, pending renewal, trust/subject/expiry
+rejection, file protection and non-mutating output.
+
+This closes the listener **adoption/recovery step**, not work group 2. Its next
+acceptance items are fresh signed Service CRL receipts through both dynamic
+clients; actual client/host renewal and revocation; separate server/client public
+key comparison; old-credential rejection plus removal of residual legacy trust
+and the two unmounted Secrets; and restart/failure regression after cleanup.
+Historical CRL 7 receipts do not prove the new dynamic transport.
+
+Current milestone estimate: **72%; 1/6 work groups complete, 5 open**. Four broad
+milestones remain: (1) trust consumers/live sessions, active; (2) matched
+backup/recovery and SDK integration; (3) provider/hardware compatibility;
+(4) staging/independent custody/recovery qualification, deferred. No Git push,
+PR, CI dispatch or staging mutation was performed in this continuation.
