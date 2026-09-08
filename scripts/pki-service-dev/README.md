@@ -138,3 +138,7 @@ For managed Account Manager controller credentials after host adoption, follow [
 Service CRL maintenance and publication-response-loss recovery are documented in
 [CRL.md](CRL.md). Run before the earliest applicable signed CRL expires; post-expiry
 management recovery remains unqualified.
+
+Managed Account Manager early renewal is documented in [RENEWAL.md](RENEWAL.md).
+It uses operator SIGHUP and the existing guarded renewal path; no clock or private
+state edits are used. Old-leaf retirement and CRL receipts remain separate work.

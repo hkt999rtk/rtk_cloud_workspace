@@ -85,6 +85,11 @@ def render_management(base):
     image = (base / 'operator/env/PKI_ACCOUNT_MANAGER_API_IMAGE').read_text().strip()
     m.require(h.h.re.fullmatch(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/account-manager@sha256:[0-9a-f]{64}', image), 'persisted management image not pinned')
     containers[0]['image'] = image
+    owner_pin = base / 'operator/env/PKI_ACCOUNT_MANAGER_OWNER_IMAGE'
+    if owner_pin.exists():
+        owner_image = owner_pin.read_text().strip()
+        m.require(h.h.re.fullmatch(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}', owner_image), 'persisted identity owner image not pinned')
+        containers[1]['image'] = owner_image
     return desired
 
 

@@ -57,6 +57,10 @@ class ManagementTests(unittest.TestCase):
             rendered = m.render_management(base)
             self.assertEqual(rendered['spec']['template']['spec']['containers'][0]['image'], image)
             self.assertEqual(rendered['spec']['template']['spec']['containers'][1]['image'], 'retained-owner')
+            owner_image = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' + 'c' * 64
+            m.m.write(base / 'operator/env/PKI_ACCOUNT_MANAGER_OWNER_IMAGE', owner_image)
+            pinned = m.render_management(base)['spec']['template']['spec']['containers']
+            self.assertEqual([c['image'] for c in pinned], [image, owner_image])
             desired['metadata']['namespace'] = 'video-cloud-staging-account-manager'
             m.m.write(path, desired)
             with self.assertRaises(RuntimeError): m.render_management(base)

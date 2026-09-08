@@ -16,10 +16,10 @@ import sys
 import threading
 import uuid
 
-spec = importlib.util.spec_from_file_location('managed_account', Path(__file__).with_name('management.py'))
-h = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(h)
-m = h.m
+spec = importlib.util.spec_from_file_location('managed_renewal', Path(__file__).with_name('renewal.py'))
+r = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(r)
+h, m = r.h, r.m
 
 
 def der_digest(pem):
@@ -91,7 +91,7 @@ def drop_response(port, path, body, token):
     return result
 
 
-class CRLRun(h.ManagementRun):
+class CRLRun(r.RenewalRun):
     def state_digest(self, name='account-manager'):
         if name in h.h.h.SERVICE_CONSUMERS:
             return h.h.HostRun.state_digest(self, name)

@@ -60,7 +60,7 @@ certissuer server-host adapters now serve registered dev leaves and preserve
 private state across seedless restarts. Renewal/revocation acceptance remains.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **55%**, an engineering estimate
+Overall milestone progress is approximately **60%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -896,3 +896,96 @@ complete and 5 open**. Four broad milestones remain:
 
 This checkpoint is committed locally. No additional backup push, PR, CI dispatch,
 workload restart, database reset or staging change was performed.
+
+## Managed Service early renewal contract
+
+Routine renewal remains due at two-thirds of the actual certificate lifetime.
+Add an operator-requested early renewal for the Account Manager identity owner so
+planned key rotation can happen before that deadline. The `pkimanagement` process
+accepts SIGHUP from its local process operator and queues a renewal on its existing
+single owner. This is process-control authority, not a new HTTP endpoint, human
+MFA flow or remote permission. It does not change clocks, rewrite identity state,
+shorten issued certificates or restore bootstrap credentials.
+
+Early renewal requires an already installed, currently registry-admitted identity.
+Reuse the normal authenticated renewal route, private key/CSR generation, saved
+request/CSR retry, issuer verification and durable installation. Concurrent timer
+and operator requests serialize; queued duplicate signals coalesce. A failed or
+lost response retains the same pending request for subsequent retry. Revoked,
+expired or otherwise unavailable current identity cannot renew or fall back to
+bootstrap. Installing the replacement invokes the existing connection eviction
+callback so issuer/controller connections and open responses cannot retain the
+old key. The ordinary timed path remains unchanged.
+
+Qualify this first on the actual dev Account Manager owner, with its retained PVC
+and bootstrap absent. Deploy only the owner container image, retain the API and
+worker images, and persist that independent image pin. Capture old public registry
+identity and private-state hash, send one signal, and reconcile exactly one new
+successful renewal, changed public key, verified managed human API, bootstrap-free
+restart and Device mTLS/MQTT. Never copy a managed private key out of its owner.
+This is operator-driven renewal evidence; timed due-boundary coverage remains in
+tests, and live revocation/CRL receipts remain separate required acceptance.
+
+## Dev managed early-renewal checkpoint
+
+Video Cloud commit `ec631d7` adds guarded operator renewal through the existing
+owner. Local Service identity and managed Account Manager suites passed, including
+lost-response/restart retry without a second signature, missing-current/denied
+identity refusal, early key replacement and closure of an actual open response
+stream. Management/Service suites passed under the race detector; controller and
+certissuer application suites and relevant vet checks also passed with a
+disposable local PostgreSQL fixture. That test container was removed.
+
+The dev-only owner image is
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:7bae6526454b53be56d7b847c2498597719abc54ae4325fe00de01b4e4fed556`.
+Only Account Manager's `pkimanagement` container changed. Its API/init-container,
+all workers, controller, certissuer and other monitored workload images remain
+unchanged. The independent `PKI_ACCOUNT_MANAGER_OWNER_IMAGE` pin and complete
+scoped Deployment overlay persist the change; the original identity PVC remains.
+The first build's absent normalized runtime metadata produced a staging-labelled
+manifest; no staging deployment was attempted. The retained `build-dev/` evidence
+uses explicit dev metadata, verified `video-cloud-dev` manifest and registry
+linux/amd64 digest from clean committed service source. Earlier build diagnostics
+remain private and are not promoted as dev deployment evidence.
+
+The [maintained renewal procedure](../../scripts/pki-service-dev/RENEWAL.md) passed
+all three dev phases under
+`~/.config/rtk_cloud/dev/pki/service-renewal-20260908-1/`: owner-only adoption,
+operator renewal/bootstrap-free restart, and final verification. The image
+upgrade first preserved the original identity exactly. One real SIGHUP then
+produced exactly one additional successful issuance through the authenticated
+`service:account-manager` caller:
+
+- Request: `2e086dcc-e132-43d5-8f65-9aff5796c36d`.
+- Installed leaf: `0dce6e54234195ec9c1891e34e836f6bc7204628ca4f0faddd37ea8e69f5ef37`.
+- Public key SHA-256: `c46d3ebd6cb2e07455308551603c482bce522a9e245f0306052fdb9a94b5a0be`.
+- Private-state hash: `78a2e065d5d3d2b76b006cc19606bcd33a8d22b19148c80bcfc18f768ebabd72`.
+
+An owner-local probe confirms the installed certificate matches its private key
+and reports only public metadata/state hash. No managed private key left the pod.
+The changed key/leaf, same Root and subject, no pending request, stable replacement
+after restart, ordinary human PKI API calls, key-mount separation and Device
+mTLS/MQTT ACL/QoS1 all passed. Final audit confirmed persistence and unchanged
+other images. Evidence has no group/other access. Local validation also passed
+42 Python tests, the Go probe suite (including public-only state inspection) and
+Go vet. CRL maintenance now selects the actually installed fingerprint rather
+than incorrectly assuming one historical issuance per subject.
+
+The original leaf remains registered and unrevoked; retiring it through the
+normal governed revocation/publication path is the next priority. This checkpoint
+does not claim live old-leaf revocation, installed CRL receipts, active-session
+revocation cutoff, natural timer execution in dev or post-expiry recovery. No
+clock/private-state edits, restored bootstrap trust, database resets, branch
+pushes, PRs, CI dispatches or staging changes were performed.
+
+Active milestone progress is approximately **60%**, with **1/6 work groups
+complete and 5 open**. The same four broad milestones remain:
+
+1. Trust consumers/live sessions — next retire the replaced Service leaf and
+   qualify CRL receipts/revocation; remaining callers/hosts, Root-policy adoption,
+   App/relay enforcement and full dev acceptance remain open.
+2. Matched backup/recovery and SDK integration.
+3. Provider/hardware compatibility.
+4. Staging, independent custody and recovery qualification — deferred.
+
+The earliest active dev CRL deadline remains **2026-09-11T06:54:13Z** (Device Root).

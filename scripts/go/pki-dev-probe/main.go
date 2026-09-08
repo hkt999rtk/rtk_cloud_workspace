@@ -98,6 +98,9 @@ func run(args []string) error {
 	if args[0] == "tls" || args[0] == "tls-denial" {
 		return runTLS(args[1:], args[0] == "tls-denial")
 	}
+	if len(args) == 2 && args[0] == "service-state" {
+		return serviceState(args[1], os.Stdout)
+	}
 	if len(args) == 1 && args[0] == "crl" {
 		return readCRL(os.Stdin, os.Stdout)
 	}

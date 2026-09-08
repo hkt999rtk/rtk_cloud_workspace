@@ -66,3 +66,10 @@ operations and Device mTLS/MQTT ACL/QoS1. It records every active issuer's lates
 CRL deadline and the earliest deadline. These commands create no scheduler, Git
 push, PR or CI dispatch. Refresh must be repeated before the earliest applicable
 expiry; this rehearsal is not an automatic Root signing service.
+
+After managed renewal, CRL maintenance identifies the installed Account Manager
+leaf using the owner-local public inspection probe. Multiple historical issuance
+rows are expected; it never guesses the active leaf from the newest row or uses
+the original single-issuance adoption assumption. A saved verification baseline
+from before a legitimate rotation remains historical; prepare a fresh maintenance
+baseline for the next refresh.
