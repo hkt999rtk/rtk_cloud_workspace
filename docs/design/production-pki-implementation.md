@@ -5,9 +5,11 @@
 The next milestone is now active. Its [six fixed work groups](production-pki-trust-consumers.md)
 track the remaining adoption and dev acceptance; controller management Service
 identity enforcement is locally implemented in Video Cloud `9134882`, and
-per-domain receipt permissions/completion gates in `8baa0e3`.
+per-domain receipt permissions/completion gates in `8baa0e3`. Actual serving
+Service listener bundle receipts and ready-CA bootstrap are implemented in
+`a857a1f`, with local mTLS/registry integration and failure/restart tests.
 Inventory is complete (1/6 work groups); 5 work groups remain, with management
-adoption underway. Active milestone progress is approximately 15% (engineering
+adoption underway. Active milestone progress is approximately 20% (engineering
 estimate; live adoption remains). Keep commits local and create PRs only after
 all milestones are finished.
 

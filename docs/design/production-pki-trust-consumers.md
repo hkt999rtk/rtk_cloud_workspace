@@ -58,7 +58,7 @@ not additional Device/App identity consumers. Existing managed controller and
 certissuer server-host adapters need live adoption, not a second implementation.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **15%**, an engineering estimate
+Overall milestone progress is approximately **20%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -171,3 +171,71 @@ in the consuming-process implementation before live rollout.
 
 Current overall milestone estimate: **15%; 1/6 work groups complete, 5 open**.
 Four broad milestones remain; this milestone is not complete.
+
+## Service listener bundle installation and bootstrap
+
+Use an explicit reviewed `*_SERVICE_CLIENT_BUNDLE_MANIFEST` containing issuer
+IDs and exact bundle versions. The controller and certificate issuer will share
+the Service listener implementation. A receipt attests the CA pool actually
+used by the bound direct-mTLS listener, its independent Service root pin and
+the registry lineage. It is emitted over that listener's separate management
+identity only after the server begins serving and a successful connection sweep.
+Stopped listeners, partial configuration, changed bundles, wrong domains,
+missing installed roots or unavailable registry evidence emit no new receipts.
+
+A ready Root can be installed before activation without its own CRL. A ready
+Service intermediate requires an active parent with a current signed CRL and
+its approved Service client policy. Active and retiring issuers require their
+own fresh CRLs. Retiring authorities remain valid for existing clients during
+overlap but receive no new bundle receipts.
+The whole reviewed manifest is validated in a read-only repeatable-read snapshot
+before sending receipts and revalidated before each send. Leaf admission remains
+bound to the reviewed manifest, current receipts and signed CRLs; installing a
+ready CA never authorizes a workload leaf. This does not install server leaves.
+
+Bundle-only bootstrap uses the four existing management transport settings plus
+the bundle manifest. The optional durable CRL consumer remains separate; enable
+it after the initial hierarchy has active issuers and CRLs. When both are enabled,
+they share transport settings and failed installation/sweep suppresses receipts.
+Use separately trusted bootstrap management credentials until governed callers
+exist. The controller can deliver bundle receipts to its own serving endpoint;
+startup CRL preparation still requires an independently reachable endpoint.
+
+This first Service manifest is immutable for a process lifetime. Changes require
+a reviewed restart; removed or invalid entries deny acceptance until reconciled.
+Persistent Root-policy updates and selective terminal-issuer retention remain
+in the existing root-policy work group, not claimed by bundle installation.
+
+
+## Service listener bundle checkpoint
+
+Video Cloud `a857a1f` implements actual controller/certissuer Service bundle
+receipts with serving-listener ownership, a frozen client CA pool, immutable
+reviewed references and a read-only repeatable registry snapshot. Ready Root
+and intermediate installation can now satisfy their activation gate without
+misusing Device bundle logic or admitting a ready issuer's workload clients.
+Exact registered leaf admission also checks manifest membership. Active and
+retiring authorities require fresh signed CRLs; retiring authorities remain
+usable during overlap but receive no new bundle receipts.
+
+The four affected package suites passed with disposable local PostgreSQL 16
+(pki, pkitrust, pkicontrollerapp, certissuerapp). Focused race tests, vet and diff
+checks passed. A real local direct-mTLS controller receipt endpoint exercised
+ready Root receipt/activation, missing-CRL denial, listener restart with a ready
+intermediate, intermediate receipt/activation and registered/revoked client TLS.
+Receipt delivery failure blocked activation and retried successfully. Additional
+tests cover invalid references, wrong roots/environment/versions/policy, an
+unreviewed leaf intermediate, retiring overlap, pre-serving/closed owners and
+managed local identity denial with no connections. Local signer fixtures are
+not OpenBao provider or live deployment evidence.
+
+Work group 2 remains open: managed Account Manager/consumer client credentials,
+actual durable CRL receipt adoption, and live dev renewal/revocation/restart
+qualification are still required. The other open groups are remaining host and
+transport adoption, persistent Root-policy adoption, App/relay enforcement and
+repeatable dev acceptance. No live environment, Git remote, PR or remote CI was
+changed. MFA policy is unchanged.
+
+Current milestone estimate: **20%; 1/6 work groups complete, 5 open**. Four broad
+milestones remain. This checkpoint completes a bootstrap prerequisite, not the
+whole management adoption work group.

@@ -23,11 +23,14 @@ Legacy fleet migration remains deferred under the user's dev-scope correction.
 MFA remains optional future human login only. The dated checkpoints below are
 historical and do not change this current remaining count.
 
-Current trust-consumer progress: approximately 15%, with inventory complete
+Current trust-consumer progress: approximately 20%, with inventory complete
 (1/6 work groups) and 5 work groups remaining. Video Cloud `9134882` adds local
 controller Service management admission and eviction; `8baa0e3` adds per-domain
-consumer permissions, completion gates and CRL worker selection. See the active plan for
-validation and remaining live-adoption boundaries.
+consumer permissions, completion gates and CRL worker selection. `a857a1f` adds
+actual serving-listener Service bundle receipts, ready-CA bootstrap and reviewed
+leaf membership checks. Local PostgreSQL/mTLS integration, focused race tests
+and vet passed. Managed callers, durable CRL adoption and live Service
+qualification remain open; see the active plan for the exact evidence.
 
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 
