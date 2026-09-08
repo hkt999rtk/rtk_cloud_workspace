@@ -222,7 +222,8 @@ class EgressRun(c.c.CRLRun):
     def resume_enroll(self, name):
         failed = Path(self.args.failed)
         report = m.read(failed / 'report.json')
-        m.require(report['status'] == 'failed' and report['phase'] == name + '-enroll', 'matching failed enrollment evidence required')
+        m.require(report['status'] == 'failed' and report['phase'] in (name + '-enroll', 'resume-' + name + '-enroll'),
+                  'matching failed enrollment evidence required')
         root, _ = self.selected()
         baseline = m.read(failed / 'baseline.json')
         owner = self.deployment(name)
