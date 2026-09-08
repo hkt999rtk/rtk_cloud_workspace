@@ -1689,3 +1689,38 @@ the API alone does not implement those. Five broader acceptance milestones remai
 legacy migration/device replacement; trust consumers/live sessions;
 backup/recovery and SDK integration; provider/hardware compatibility;
 staging/custody/recovery qualification. No push, PR, remote CI or custody action.
+
+### Managed certificate-issuer server-host milestone (2026-09-08)
+
+Video Cloud `bbbd902` completes the fixed **4/4** local host checklist:
+(1) protected server key/CSR storage; (2) durable renewal scheduling/restart retries;
+(3) actual certificate-issuer listener replacement and connection eviction;
+(4) integration/restore tests, configuration example and runbook.
+
+The opt-in Service server host imports an already registered three-certificate
+chain and matching key once, after current receipt/CRL verification. A private
+0700 directory, atomic 0600 state and manager lease protect host-owned state.
+Replacement keys/CSRs survive lost responses and restart. Renewal uses a separate
+authorized management mTLS identity plus current server-key proof; server leaves
+remain serverAuth-only. The worker checks on startup and every minute and renews
+at two-thirds of validity. The listener dynamically selects the installed leaf
+and checks current registry/CRL admission at handshake, requests and timed sweeps;
+installation and trust denial evict active connections.
+
+Full `GOWORK=off go test ./...` passed with disposable PostgreSQL. Race tests for
+serviceidentity, config, certissuerapp and pkitrust, `go vet ./...`, gofmt and diff
+checks passed. The PostgreSQL/mTLS integration proves pending-key replay without
+a second signature after a lost response, successor certificate selection,
+old-stream eviction, revocation eviction and rejection of restored predecessor
+state. Provider signing used an OpenBao HTTP fixture, not a real provider run.
+
+**Current host milestone: 0/4 work groups unfinished.** This closes certificate
+issuer host adoption; it does not close other Service/MQTT/OpenBao server hosts,
+dynamic root-policy migration, management credential lifecycle, matched provider/
+database restore or post-backup audit reconciliation. Local ownership checks do
+not themselves install or acknowledge CRLs.
+
+Five broader acceptance milestones remain: (1) legacy migration/device replacement,
+(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
+(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody operation.

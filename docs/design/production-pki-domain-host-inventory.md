@@ -1,6 +1,6 @@
 # Production PKI domain and host inventory
 
-Reviewed 2026-09-08 through Video Cloud `57c68f6`.
+Reviewed 2026-09-08 through Video Cloud `bbbd902`.
 This inventory preserves the existing five acceptance milestones. It identifies
 implementation work; it does not add a sixth milestone or certify production.
 The authoritative trust boundaries remain Platform PKI contract sections 3–5.
@@ -11,7 +11,7 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | --- | --- | --- |
 | Device client identity | Video Cloud `internal/pki` registry and Product claims; `internal/certissuer/product.go` and Product-mode bootstrap; SDK renewal/trust and owner-lifetime adapters recorded in the ledger. | Real legacy cohort replacement, application policy/owner adoption, physical firmware and supported-platform evidence. |
 | App/user client identity | `internal/pki/app_issuance.go`, `app_verification.go`, `app_revocation.go`, `app_crl_worker.go`; API consumer and `internal/pkitrust/registry_app.go` compose broker/TURN acknowledgment after sweeps. Recovery includes `app_reconcile.go`, `recovery_app.go`, and `recovery_app_inventory.go`. | Dynamic App root-policy adoption, remaining application/SDK host wiring and real broker/relay eviction evidence. |
-| Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Remaining server host adoption, root/key renewal, external recovery-history reconciliation and actual host cutover. CRL maintenance, public lineage recovery and restored-registry inventory are implemented locally. |
+| Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select an independent registry domain. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Authenticated renewal and certificate-issuer Service host key storage, scheduling, listener replacement and eviction are implemented. Empty issuance mode retains the legacy Device-backed signer. | Other server host adoption, dynamic root-policy migration, external recovery-history reconciliation and actual host cutover. CRL maintenance, public lineage recovery and restored-registry inventory are implemented locally. |
 | Internal service client/server identity | The registry owns approved Service client identities, receipts, verification, reconciliation and revocation. Factory enrollment now owns durable key/CSR storage, issuance, scheduled renewal and its verified outbound connection lifecycle; certificate issuer listener admission, eviction and exact CRL consumption are integrated. Service CRL publication, restored receipt inventory and client-role-selected provider lineage checks are implemented locally. | Adoption by remaining Service hosts, dynamic root-policy/key renewal beyond the integrated host, and live eviction, matched restore and post-backup audit reconciliation evidence. |
 | Dedicated MQTT server TLS | Independent `mqtt` issuer/receipt/CRL verification; `a17c4ff` wires opt-in API subscriber/publisher and log-ingester TLS admission, scheduled sweeps and connection eviction. | Root-policy refresh, broker key renewal and actual host rollout. CRL maintenance is implemented in `7869d5e`, and exact installed-digest MQTT acknowledgments in `57c68f6`. Public-CA MQTT remains a distinct supported contract choice. |
 | OpenBao transport TLS | Dedicated transport CA/files and TLS Raft artifacts; independent server issuance/CRLs/recovery; controller and certificate issuer support opt-in registry-backed provider HTTP with verified login/renewal, periodic connection eviction and optional exact installed-CRL ACKs. | Other provider-client adoption, root-policy/server-key renewal and real host rollout. Transport trust remains independent of Device/App/Service roots; seal/custody and HA qualification remain separate. |
@@ -648,3 +648,38 @@ the API alone does not implement those. Five broader acceptance milestones remai
 legacy migration/device replacement; trust consumers/live sessions;
 backup/recovery and SDK integration; provider/hardware compatibility;
 staging/custody/recovery qualification. No push, PR, remote CI or custody action.
+
+### Managed certificate-issuer server-host milestone (2026-09-08)
+
+Video Cloud `bbbd902` completes the fixed **4/4** local host checklist:
+(1) protected server key/CSR storage; (2) durable renewal scheduling/restart retries;
+(3) actual certificate-issuer listener replacement and connection eviction;
+(4) integration/restore tests, configuration example and runbook.
+
+The opt-in Service server host imports an already registered three-certificate
+chain and matching key once, after current receipt/CRL verification. A private
+0700 directory, atomic 0600 state and manager lease protect host-owned state.
+Replacement keys/CSRs survive lost responses and restart. Renewal uses a separate
+authorized management mTLS identity plus current server-key proof; server leaves
+remain serverAuth-only. The worker checks on startup and every minute and renews
+at two-thirds of validity. The listener dynamically selects the installed leaf
+and checks current registry/CRL admission at handshake, requests and timed sweeps;
+installation and trust denial evict active connections.
+
+Full `GOWORK=off go test ./...` passed with disposable PostgreSQL. Race tests for
+serviceidentity, config, certissuerapp and pkitrust, `go vet ./...`, gofmt and diff
+checks passed. The PostgreSQL/mTLS integration proves pending-key replay without
+a second signature after a lost response, successor certificate selection,
+old-stream eviction, revocation eviction and rejection of restored predecessor
+state. Provider signing used an OpenBao HTTP fixture, not a real provider run.
+
+**Current host milestone: 0/4 work groups unfinished.** This closes certificate
+issuer host adoption; it does not close other Service/MQTT/OpenBao server hosts,
+dynamic root-policy migration, management credential lifecycle, matched provider/
+database restore or post-backup audit reconciliation. Local ownership checks do
+not themselves install or acknowledge CRLs.
+
+Five broader acceptance milestones remain: (1) legacy migration/device replacement,
+(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
+(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody operation.
