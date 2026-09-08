@@ -19,6 +19,36 @@ integration; (4) provider/hardware compatibility; (5) staging/custody/recovery
 qualification, deferred until dev passes. MFA is optional future human login
 only, including qualification; real independent custodians remain a later gate.
 
+## 2026-09-08 broker installed Root trust and receipts
+
+Video Cloud `9553085` adds actual Root-pool and Root-policy enforcement to the
+registry Device session consumer. The worker prepares persisted monotonic Root
+trust without acknowledging, verifies registered Product CA chains against that
+installed pool, and compares the exact policy digest in the same read-only
+repeatable-read transaction as Device identity and prepared CRLs. After successful
+session enforcement it revalidates the exact installed policy/pool and sends its
+own management-mTLS Root receipt. No TLS listener configuration is fabricated.
+
+PostgreSQL-backed tests show Root revocation remains incomplete after preparation
+and completes only after the sweep and real Root receipt. Removing the last Root
+installs an explicit empty pool and denies all Device sessions. Tests also cover
+same-key Root reissuance, unrelated policy advancement, intermediate-anchor
+promotion denial, changed policy/pool between preparation and receipt, installer
+failure, restart/status rollback, and worker scan/cache/CRL failures suppressing
+both CRL and Root receipts. Shared immediate-sync behavior remains covered.
+
+Full pki/pkitrust/pkibrokerapp/pkiturnapp suites passed with PostgreSQL 16, as did
+consumer/worker/TURN/API race suites, focused Device trust race verification,
+relevant vet and diff checks. The three optional Root settings and persistence
+requirements are documented in the service runbook and broker env example.
+
+This is local implementation evidence. Live dev images and controller required
+consumers remain unchanged. The remaining implementation gate is genuine bundle
+installation/activation receipts, including ready-issuer bootstrap. Then deploy
+the complete consumer in isolated dev and retain the reproducible complete run.
+All five broad areas remain open; staging and legacy migration remain deferred.
+No git push, PR or remote CI occurred.
+
 ## 2026-09-08 broker terminal-authority handling
 
 Video Cloud `3dc94ec` preserves permanent Device authority denial in the worker's

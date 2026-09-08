@@ -23,8 +23,9 @@ Implement and qualify the remaining distribution work in this order:
    management mTLS identity. Preparation, scan or version-check failures suppress
    receipts. App and Device manifests share transport credentials, but retain
    separate domains, state files and token verifiers.
-2. Add genuine registry-consumer bundle and Root-policy installation/receipts,
-   including ready-issuer activation. Bundle readiness and active leaf issuance
+2. Add genuine registry-consumer bundle installation/receipts, including
+   ready-issuer activation. Root-policy installation and receipts are implemented
+   locally in `9553085`; integrate their tested behavior with bundle activation. Bundle readiness and active leaf issuance
    are separate: requiring an active Product's own CRL before acknowledging its
    activation would create a cycle. Keep issuer status and CRL checks intact and
    test that bootstrap sequence explicitly. Terminal-authority handling is now
@@ -67,6 +68,31 @@ and requires another sweep. Corrupt/mismatched state remains an error.
 
 This handles session exclusion and parent-CRL progress. It does not replace the
 Root-policy or ready-issuer bundle receipts still required by the full consumer.
+
+#### Registry worker Root trust
+
+Implemented locally in Video Cloud `9553085`, with PostgreSQL-backed Root-removal
+finalization, actual management-mTLS receipt, session enforcement and restart tests.
+Live deployment still awaits bundle activation receipts.
+
+The Device worker loads independently provisioned Root certificates and a
+persisted monotonic Root-distrust policy. It verifies each registered Product
+CA chain against that actual pool, together with the prepared CRLs and identity
+checks in one database snapshot. Policy version changes fail closed until the
+worker prepares the new state; removed keys are rejected even if reissued under
+another certificate or if the registry is restored to an older status.
+
+Root synchronization must support prepare-without-acknowledgment. Only after a
+successful session sweep may the worker revalidate its exact installed policy
+and Root pool and send its own management-mTLS Root receipt. No TLS listener or
+handshake configuration is fabricated. Explicit empty pools deny all Device
+sessions and remain valid installation evidence after removing the last Root.
+Root-policy exclusion also omits denied branches from CRL preparation so an
+unavailable CRL under an already removed key cannot stop unaffected branches.
+
+Root trust configuration is separate from the forthcoming ready-issuer bundle
+receipt. Both must be integrated before enabling the complete required-consumer
+gate in dev; Root-policy receipts alone do not authorize Product activation.
 
 The isolated `mqtt-pki` Deployment runs EMQX 5.9.0 plus `pkibroker` using verified
 running image digests `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`
