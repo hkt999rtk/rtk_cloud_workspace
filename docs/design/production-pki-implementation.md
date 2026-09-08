@@ -4745,3 +4745,32 @@ acceptance milestones remain: (1) legacy migration/device replacement,
 This closes the concrete local factory-to-issuer slice; other service-host
 adoption and live/hardware/recovery acceptance are not claimed complete.
 No push, PR, remote CI, deployment or custody operation.
+
+### Service client provider recovery checkpoint (2026-09-08)
+
+Video Cloud `4cac76a` adds
+`pkicontroller recovery-check-service-client ISSUER_ID EXPECTED_ROOT_SHA256 [SERVICE_SUBJECT LEAF_PEM]`.
+With writers fenced, it checks approved restored Service lineage against an
+independent root pin, then reads the separate OpenBao `service-client` role's
+selected issuer and public key binding. It cannot substitute the server role.
+An optional exact Service leaf must also pass its successful unrevoked receipt,
+profile, policy and current signed root/intermediate CRLs. Invalid local evidence
+fails before provider metadata reads. The registry transaction is read-only.
+
+Affected-package tests with PostgreSQL, targeted race tests, vet and diff checks
+passed. A disposable OpenBao 2.5.5 integration exercised the existing recovery-only
+ACL and verified that signing, revocation and key generation are denied. Its
+offline Service root fixture now supplies the serial metadata required by the
+strict recovery validator.
+
+This closes a provider-lineage verification item within backup/recovery work,
+not an additional completed acceptance milestone. Issuer-only success proves
+lineage matching, not CRL freshness. Neither this check nor registry inventory
+proves signing-key usability, full provider inventory/policy equivalence or
+post-backup security history. Other Service host adoption and live matched
+restore/audit reconciliation remain.
+
+Five broader acceptance milestones remain: legacy migration/device replacement;
+trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware compatibility; staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody action.

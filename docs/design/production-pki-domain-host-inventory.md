@@ -12,7 +12,7 @@ The authoritative trust boundaries remain Platform PKI contract sections 3–5.
 | Device client identity | Video Cloud `internal/pki` registry and Product claims; `internal/certissuer/product.go` and Product-mode bootstrap; SDK renewal/trust and owner-lifetime adapters recorded in the ledger. | Real legacy cohort replacement, application policy/owner adoption, physical firmware and supported-platform evidence. |
 | App/user client identity | `internal/pki/app_issuance.go`, `app_verification.go`, `app_revocation.go`, `app_crl_worker.go`; API consumer and `internal/pkitrust/registry_app.go` compose broker/TURN acknowledgment after sweeps. Recovery includes `app_reconcile.go`, `recovery_app.go`, and `recovery_app_inventory.go`. | Dynamic App root-policy adoption, remaining application/SDK host wiring and real broker/relay eviction evidence. |
 | Gateway/server issuance | `internal/certissuer/server_registry.go` and gateway handler/bootstrap select a configured independent registry domain via `CERT_ISSUER_SERVER_PKI_DOMAIN`. Exact approved DNS policy, durable claims, provider validation and CRL-aware replay apply. Empty mode retains the legacy Device-backed signer. | Remaining server host adoption, root/key renewal, external recovery-history reconciliation and actual host cutover. CRL maintenance, public lineage recovery and restored-registry inventory are implemented locally. |
-| Internal service client/server identity | The registry owns approved Service client IDs, durable issuance receipts, exact client verification, reconciliation and revocation. Initial issuance authenticates a dedicated provisioner; self-renewal revalidates the current receipt, root pin, policy and CRLs. A host store now generates P-256 keys locally, persists unresolved CSRs before network issuance, atomically promotes validated chains and retains the current credential on failure. Service serverAuth lifecycle and a reusable HTTP connection owner also exist locally. | Connect the host store to issuance/renewal scheduling and each Service transport/listener, install and acknowledge exact CRLs, add restored-inventory checks, then collect live eviction and production-like recovery evidence. |
+| Internal service client/server identity | The registry owns approved Service client identities, receipts, verification, reconciliation and revocation. Factory enrollment now owns durable key/CSR storage, issuance, scheduled renewal and its verified outbound connection lifecycle; certificate issuer listener admission, eviction and exact CRL consumption are integrated. Service CRL publication, restored receipt inventory and client-role-selected provider lineage checks are implemented locally. | Adoption by remaining Service hosts, dynamic root-policy/key renewal beyond the integrated host, and live eviction, matched restore and post-backup audit reconciliation evidence. |
 | Dedicated MQTT server TLS | Independent `mqtt` issuer/receipt/CRL verification; `a17c4ff` wires opt-in API subscriber/publisher and log-ingester TLS admission, scheduled sweeps and connection eviction. | Root-policy refresh, broker key renewal and actual host rollout. CRL maintenance is implemented in `7869d5e`, and exact installed-digest MQTT acknowledgments in `57c68f6`. Public-CA MQTT remains a distinct supported contract choice. |
 | OpenBao transport TLS | Dedicated transport CA/files and TLS Raft artifacts; independent server issuance/CRLs/recovery; controller and certificate issuer support opt-in registry-backed provider HTTP with verified login/renewal, periodic connection eviction and optional exact installed-CRL ACKs. | Other provider-client adoption, root-policy/server-key renewal and real host rollout. Transport trust remains independent of Device/App/Service roots; seal/custody and HA qualification remain separate. |
 | Public HTTPS | Contract requires publicly trusted CA/ACME. | Verify deployment/renewal acceptance separately; never route browser/public HTTPS issuance through private Device/App issuers. |
@@ -590,3 +590,32 @@ acceptance milestones remain: (1) legacy migration/device replacement,
 This closes the concrete local factory-to-issuer slice; other service-host
 adoption and live/hardware/recovery acceptance are not claimed complete.
 No push, PR, remote CI, deployment or custody operation.
+
+### Service client provider recovery checkpoint (2026-09-08)
+
+Video Cloud `4cac76a` adds
+`pkicontroller recovery-check-service-client ISSUER_ID EXPECTED_ROOT_SHA256 [SERVICE_SUBJECT LEAF_PEM]`.
+With writers fenced, it checks approved restored Service lineage against an
+independent root pin, then reads the separate OpenBao `service-client` role's
+selected issuer and public key binding. It cannot substitute the server role.
+An optional exact Service leaf must also pass its successful unrevoked receipt,
+profile, policy and current signed root/intermediate CRLs. Invalid local evidence
+fails before provider metadata reads. The registry transaction is read-only.
+
+Affected-package tests with PostgreSQL, targeted race tests, vet and diff checks
+passed. A disposable OpenBao 2.5.5 integration exercised the existing recovery-only
+ACL and verified that signing, revocation and key generation are denied. Its
+offline Service root fixture now supplies the serial metadata required by the
+strict recovery validator.
+
+This closes a provider-lineage verification item within backup/recovery work,
+not an additional completed acceptance milestone. Issuer-only success proves
+lineage matching, not CRL freshness. Neither this check nor registry inventory
+proves signing-key usability, full provider inventory/policy equivalence or
+post-backup security history. Other Service host adoption and live matched
+restore/audit reconciliation remain.
+
+Five broader acceptance milestones remain: legacy migration/device replacement;
+trust consumers/live sessions; backup/recovery and SDK integration;
+provider/hardware compatibility; staging/custody/recovery qualification.
+Local commits only; no push, PR, remote CI, deployment or custody action.
