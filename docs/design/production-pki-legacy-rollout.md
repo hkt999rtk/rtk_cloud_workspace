@@ -27,8 +27,12 @@ and real device access remain required at their respective steps.
 ## Local preparation
 
 Completed in Video Cloud `e6c17a4`: the report, runbook, PostgreSQL-backed lifecycle
-test, affected-package tests, race checks and vet. The staging environment/cohort
-has been requested but not selected. No live checklist item is marked complete.
+test, affected-package tests, race checks and vet. The canonical staging environment
+has now been identified and inspected read-only. See the
+[staging preflight](production-pki-legacy-staging-preflight.md): 226 source
+issuances, 204 active candidate devices, no live PKI registry schema, and incomplete
+legacy root/CRL evidence. Cohort eligibility and canary selection remain incomplete;
+no live checklist item is marked complete.
 
 Add `pkicontroller legacy-progress OPERATION_ID` to report one completed,
 immutable import batch under a repeatable-read, read-only transaction. Report

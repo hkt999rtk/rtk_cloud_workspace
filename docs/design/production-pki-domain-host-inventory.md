@@ -6,6 +6,12 @@ Active acceptance work is **milestone 1: legacy migration/device replacement**.
 See the [fixed five-item rollout checklist](production-pki-legacy-rollout.md).
 Local reporting preparation does not complete a live cohort acceptance item.
 
+Read-only staging discovery is recorded in the
+[2026-09-08 preflight](production-pki-legacy-staging-preflight.md): 226 successful
+source issuances and 204 active candidate devices. The live PKI schema/controller
+and complete legacy root/CRL evidence are prerequisites still missing; no candidate
+is yet declared eligible or migrated. Item 1 has progressed, not completed.
+
 Completed local MQTT host work is recorded in [Managed EMQX host identity](production-pki-emqx-host.md).
 EMQX owns MQTT TLS termination; `pkibroker` is an outbound session-management
 worker. The fixed four-item plan separates local supervisor implementation from
