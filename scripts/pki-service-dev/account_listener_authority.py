@@ -322,6 +322,13 @@ class AccountListenerAuthority(fa.FactoryAdoption):
             {'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', r.NS, 'rollout', 'status', 'deployment/pki-controller',
                    '--timeout=300s'], timeout=310)
+        self.verify_controller_gate(image)
+
+    def verify_controller_gate(self, image):
+        m.require(re.fullmatch(
+            r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}',
+            image or ''), 'verified dev Video Cloud image digest required')
+        _, _, successor, _ = self.ready_v3()
         current = self.obj('deployment', 'pki-controller')
         installed = current['spec']['template']['spec']['containers'][0]
         installed_env = {entry['name']: entry.get('value')
@@ -350,6 +357,15 @@ class AccountListenerAuthority(fa.FactoryAdoption):
             'bundle_consumers': BUNDLE_CONSUMERS.split(','),
             'crl_revocation_consumers': ['certissuer', 'factory-enroll', 'pki-controller'],
             'v3_status': 'ready', 'device_baseline': 'passed'})
+
+    def recover_controller_gate(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed' and failed['phase'] == 'controller-gate',
+                  'failed controller gate evidence required')
+        self.verify_controller_gate(self.args.image)
+        self.report['checks']['controller_bundle_gate_installed']['evidence'][
+            'deployment_mutation_replayed'] = False
+        self.save('report.json', self.report)
 
     def install_certissuer(self):
         root, predecessors, successor, operation = self.ready_v3()
@@ -483,7 +499,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=['prepare-intermediate-v3', 'controller',
                                            'recover-controller', 'certissuer',
-                                           'controller-gate', 'activate'],
+                                           'controller-gate', 'recover-controller-gate',
+                                           'activate'],
                         default='prepare-intermediate-v3')
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -501,8 +518,9 @@ def main():
               'resume is limited to v3 preparation')
     m.require(args.phase != 'recover-controller' or args.failed,
               'failed controller evidence required for recovery')
-    m.require(args.phase != 'controller-gate' or (args.failed and args.image),
-              'failed activation evidence and verified image required')
+    m.require(args.phase not in ('controller-gate', 'recover-controller-gate')
+              or (args.failed and args.image),
+              'failed phase evidence and verified image required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -514,6 +532,7 @@ def main():
          'recover-controller': runner.recover_controller,
          'certissuer': runner.install_certissuer,
          'controller-gate': runner.install_controller_gate,
+         'recover-controller-gate': runner.recover_controller_gate,
          'activate': runner.activate_v3}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:

@@ -65,6 +65,9 @@ python3 scripts/pki-service-dev/account_listener_authority.py \
 This phase updates only `pki-controller`, persists its digest and Service setting,
 and requires v3 to remain ready. Bundle activation then requires the two actual
 listener installers. CRL/revocation finalization continues to require factory.
+If its final Device canary fails after the rollout, rerun with
+`--phase recover-controller-gate`, the failed gate evidence, the same verified
+image digest and a new output directory. Recovery only verifies retained state.
 
 The successor retains the exact v1/v2 policies, adds only
 `service:video-cloud-api` and
