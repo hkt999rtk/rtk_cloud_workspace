@@ -389,6 +389,11 @@ The whole reviewed manifest is validated in a read-only repeatable-read snapshot
 before sending receipts and revalidated before each send. Leaf admission remains
 bound to the reviewed manifest, current receipts and signed CRLs; installing a
 ready CA never authorizes a workload leaf. This does not install server leaves.
+Receipt sweeps require current CRLs for every active/retiring manifest member.
+Connection admission validates every manifest member but requires CRLs for the
+peer's exact intermediate and Root lineage. Thus an active successor awaiting its
+first CRL suppresses receipts without disconnecting clients of another retiring
+issuer; the peer's own revocation checks remain fail closed.
 
 Bundle-only bootstrap uses the four existing management transport settings plus
 the bundle manifest. The optional durable CRL consumer remains separate; enable
@@ -1822,3 +1827,13 @@ setting and keeps the old policy as the fallback. Local full tests, focused race
 tests and vet passed. The denied dev activation remains ready for the same
 operation after the controller image/settings are updated; no replacement v3
 operation or key is permitted.
+
+The same v3 operation then activated in dev and exposed a narrow initial-CRL
+window: the full bundle verifier rejected existing v2 management clients while
+v3 was active but its first CRL had not yet been imported. The dedicated
+bootstrap recovery credential imported the signed OpenBao v3 CRL; v1/v2 were
+confirmed retiring and v3 active without replacing the operation or key. Video
+Cloud `bb311ae` removes the outage window by separating the complete receipt
+sweep from per-peer CRL verification as specified above. A regression fixture
+requires the incomplete successor to suppress receipts while the retiring
+client remains admitted through its fully checked lineage.
