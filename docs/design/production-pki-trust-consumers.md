@@ -19,12 +19,12 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority and factory managed adoption are live. Factory renewal/retirement, remaining Account Manager/MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority and factory managed lifecycle are qualified in dev. Remaining Account Manager/MQTT/OpenBao transports/hosts, shared legacy CA withdrawal and public HTTPS evidence remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 21/40 = 52.5%.** The fixed decomposition below
+**Current checkpoint completion: 22/40 = 55%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **1/6
@@ -45,11 +45,11 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 8/11 | 73% |
-| Transports and hosts | 5/11 | 45% |
+| Transports and hosts | 6/11 | 55% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **21/40** | **52.5%** |
+| **Total** | **22/40** | **55%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -77,7 +77,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
-**Group 3 — transports and hosts (5/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
+**Group 3 — transports and hosts (6/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
 [host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
 linked above, the [transport inventory](production-pki-domain-host-inventory.md#current-entry-points)
 and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-checklist-four-items).
@@ -87,8 +87,8 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T3: Adopt controller's managed server host and qualify renewal, retirement and restart in dev.
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
-- [ ] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart.
-- [ ] T7: Adopt the Account Manager Service listener and API/factory callers, with dev lifecycle evidence.
+- [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence.
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -139,13 +139,13 @@ The immediate factory work package has six exit criteria:
    with no static client key mount plus actual factory enrollment/Device traffic.
 4. **Complete:** install factory's dynamic CRL transport, authorize its exact consumer
    identity/ingress and require real current receipts before completing subsequent Service transitions.
-5. **Open:** qualify one SIGHUP renewal, a different key/leaf, restart persistence
+5. **Complete:** qualify one SIGHUP renewal, a different key/leaf, restart persistence
    and measured held-connection cutoff with unaffected traffic surviving.
-6. **Open:** revoke the replaced managed leaf with the required receipts; inventory
+6. **Partial:** revoke the replaced managed leaf with the required receipts; inventory
    the legacy bootstrap leaf before selecting registry revocation or exact legacy
    trust withdrawal, then remove its unreferenced Secret and verify the baseline.
 
-Factory package: **4/6 exit criteria complete (67%); 2 remain.** Intermediate v1
+Factory package: **5/6 exit criteria complete (83%); 1 remains.** Intermediate v1
 retirement is a later consequence of inventorying all its descendants; it is not
 a prerequisite for factory's first adoption and must not be forced by this package.
 
@@ -173,8 +173,34 @@ used files directly inside the existing private directory, retained the original
 key/PVC and authority, and reconciled the exact failed rollout. The second attempt
 stopped at readiness preflight while that failed Pod was backing off; replacing
 that Pod cleared the backoff. These failed attempts are retained as evidence,
-not counted as passes. M10 is complete; T6 and held-session qualification remain
-open until renewal/retirement work passes. Core login code is unchanged.
+not counted as passes. Core login code is unchanged.
+
+`factory-lifecycle-1` passed the dev lifecycle on 2026-09-09. One SIGHUP generated
+one new key/leaf and one registry row, replacing leaf `58ec0cd5…46cf7e3` with
+`ee7d3808…0901155`. A probe inside the factory owner retained the original key in
+memory and held actual HTTP/1.1 sockets to both listeners. Revocation closed the
+certissuer socket within **9.02 seconds** and the controller socket within
+**9.60 seconds** of the revocation request beginning. Fresh connections with the
+old key were explicitly denied; held successor connections remained admitted.
+Service v2 CRL 5 (`1c0cfd38…d39f040`) included the retired leaf and retained prior
+serials. All three consumer receipts arrived before finalization. The renewed
+identity survived restart, new factory enrollment, Device mTLS and MQTT QoS1.
+These results close T6; cross-caller session/failure checkpoints M11/T11 remain open.
+
+Legacy inventory found that factory's unregistered bootstrap leaf and Account
+Manager's still-mounted certissuer client share CA `db619ebf…9547907d`. Shared CA
+withdrawal must follow Account Manager certissuer egress adoption, tracked under
+T7. The factory caller policy already accepts only `service:factory-enroll`, and
+bootstrap provisioning remains closed. This dependency is recorded within the
+existing 40 checkpoints; no new milestone is added.
+
+`factory-cleanup-1` passed after confirming zero workload references and deleting
+the old factory Secret with UID/resourceVersion preconditions. The shared CA was
+unchanged. Factory restarted with the same successor, and a fresh enrollment plus
+Device mTLS/MQTT acceptance passed again. Factory exit criterion 6 remains partial
+only for shared-CA withdrawal. Local verification passed the Go probe suite and
+63 Service-runner plus 14 Device-runner tests. No core application changes, image
+rollouts, PRs or staging operations were needed for this lifecycle qualification.
 
 ## Fixed acceptance work groups
 
@@ -214,7 +240,8 @@ record. "Local" means implementation/test evidence, not live qualification.
 | --- | --- | --- |
 | Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption, early renewal, replaced-leaf retirement, both listener CRL receipts and bootstrap-free restarts passed in dev. Active-session revocation and remaining failure cases still need live qualification. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
-| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed certissuer server leaf is live. Factory still uses its static client Secret; managed bootstrap/adoption, factory CRL receipts, renewal, restart and retirement remain. Listener lifecycle evidence must not be counted as factory lifecycle evidence. |
+| Factory enrollment → certissuer/controller | Factory owns the registered Service identity for issuer requests and CRL acknowledgments. | Dev adoption, renewal, old-leaf retirement, real held-socket cutoff, successor survival, restart and factory/Device/MQTT canaries passed. Shared legacy CA withdrawal depends on Account Manager egress adoption. |
+| Account Manager → certissuer | The active Account Manager deployment still mounts its legacy certissuer client credential, signed by the same CA as factory's old bootstrap leaf. | Adopt its managed Service egress, qualify lifecycle and remove the shared legacy CA after its last caller moves; tracked under T7. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
 | Controller / certissuer → OpenBao | Both live workload constructions support registry-backed transport; recovery commands deliberately use separate restore trust. | Governed OpenBao TLS host renewal and root-policy adoption, actual dev transport replacement/denial. Recovery commands remain in the recovery milestone. |
 | API / log ingester → EMQX | Independent MQTT server registry verification, CRL receipts and connection eviction locally; native `emqxpkihost` owns keys and replacement. Device MQTT auth/ACL/session worker passed in dev. | Governed MQTT server-host and client rollout, root-policy adoption, actual authenticated reconnect/session behavior. |

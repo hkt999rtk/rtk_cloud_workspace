@@ -104,6 +104,9 @@ func run(args []string) error {
 	if len(args) == 2 && args[0] == "service-state" {
 		return serviceState(args[1], os.Stdout)
 	}
+	if args[0] == "service-session" {
+		return serviceSession(args[1:], os.Stdin, os.Stdout)
+	}
 	if len(args) == 1 && args[0] == "crl" {
 		return readCRL(os.Stdin, os.Stdout)
 	}

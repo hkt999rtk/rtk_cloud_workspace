@@ -99,7 +99,7 @@ def command(args, body=None, cwd=None, timeout=90):
 
 class Process:
     """Own one child and drain lines in a thread (no buffered-read/select race)."""
-    def __init__(self, args, body=None):
+    def __init__(self, args, body=None, keep_stdin=False):
         self.child = subprocess.Popen([str(a) for a in args], stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         self.lines = queue.Queue()
@@ -112,7 +112,8 @@ class Process:
         try:
             if body is not None:
                 self.child.stdin.write(body + '\n')
-            self.child.stdin.close()
+            if not keep_stdin:
+                self.child.stdin.close()
         except BaseException:
             self.close()
             raise
@@ -143,6 +144,8 @@ class Process:
         raise RuntimeError('session ended before stability deadline')
 
     def close(self):
+        if not self.child.stdin.closed:
+            self.child.stdin.close()
         if self.child.poll() is None:
             self.child.terminate()
             try:

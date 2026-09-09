@@ -9,9 +9,25 @@ spec = importlib.util.spec_from_file_location(
     'factory_identity', Path(__file__).with_name('factory_identity.py'))
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+life_spec = importlib.util.spec_from_file_location('factory_lifecycle', Path(__file__).with_name('factory_lifecycle.py'))
+life = importlib.util.module_from_spec(life_spec)
+life_spec.loader.exec_module(life)
 
 
 class FactoryIdentityTests(unittest.TestCase):
+    def test_renewal_requires_one_new_key_and_exact_registry_receipt(self):
+        before = dict(subject=m.SUBJECT, root_sha256='root', fingerprint='old', public_key_sha256='old-key', state_sha256='old-state')
+        after = dict(before, fingerprint='new', public_key_sha256='new-key', state_sha256='new-state', pending=False)
+        old = {'fingerprint': 'old'}
+        new = dict(fingerprint='new', issuer_id='issuer', subject=m.SUBJECT, caller=m.SUBJECT, status='succeeded', revoked_at=None)
+        self.assertEqual(life.replacement(before, after, [old], [old, new], {'issuer_id': 'issuer'}), new)
+        with self.assertRaisesRegex(RuntimeError, 'rotate cleanly'):
+            life.replacement(before, dict(after, public_key_sha256='old-key'), [old], [old, new], {'issuer_id': 'issuer'})
+        with self.assertRaisesRegex(RuntimeError, 'issuance changes'):
+            life.replacement(before, after, [old], [old, new, new], {'issuer_id': 'issuer'})
+        with self.assertRaisesRegex(RuntimeError, 'registry receipt'):
+            life.replacement(before, after, [old], [old, dict(new, caller='factoryenroll')], {'issuer_id': 'issuer'})
+
     def test_select_active_v2_requires_exact_transition(self):
         root = {'issuer_id': 'root'}
         common = {'environment': 'dev', 'trust_domain': 'service',

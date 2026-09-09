@@ -141,3 +141,39 @@ factory rollout can use `--failed FAILED_ADOPTION_EVIDENCE` after reconciling th
 manifest. Recovery requires the original seed, exact Deployment/PVC identity,
 expected managed template and controller policy. It never seeds another key or
 repeats authority activation. The canary reopens its port-forward after restart.
+
+After adoption, qualify the existing SIGHUP renewal and retire its replaced leaf:
+
+```sh
+python3 scripts/pki-service-dev/factory_lifecycle.py \
+  --authority SERVICE_ROOT_EVIDENCE --adoption SUCCESSFUL_FACTORY_ADOPTION_EVIDENCE \
+  --output NEW_PRIVATE_FACTORY_LIFECYCLE_EVIDENCE
+```
+
+This sends exactly one SIGHUP, verifies a new key/leaf and one registry issuance,
+then revokes only the replaced leaf. A temporary probe runs inside the factory
+owner; it retains the old key only in memory and holds authenticated HTTP/1.1
+sockets to both certissuer and controller. Revocation must close both old sockets
+within 30 seconds, reject a fresh old-key connection and preserve held successor
+connections. CRL publication must retain prior serials and obtain all three real
+receipts before finalization. A restart and fresh factory/Device/MQTT canary follow.
+The runner removes its temporary probe. It never exports private state or repeats
+a renewal after a failed attempt; reconcile saved intent and registry rows first.
+Legacy bootstrap trust/Secret cleanup remains a separate final check.
+
+The successful dev evidence is
+`service-factory-adoption-20260909/factory-lifecycle-1`. Do not repeat its SIGHUP.
+To remove the unreferenced factory bootstrap Secret after that lifecycle:
+
+```sh
+python3 scripts/pki-service-dev/factory_lifecycle.py --phase cleanup \
+  --authority SERVICE_ROOT_EVIDENCE --adoption SUCCESSFUL_FACTORY_ADOPTION_EVIDENCE \
+  --lifecycle SUCCESSFUL_FACTORY_LIFECYCLE_EVIDENCE \
+  --output NEW_PRIVATE_FACTORY_CLEANUP_EVIDENCE
+```
+
+Cleanup verifies zero workload references, confirms the legacy leaf has no registry
+row, and uses Secret UID/resourceVersion deletion preconditions. It preserves the
+shared legacy CA because Account Manager still mounts a certissuer client signed
+by it, then restarts factory and repeats enrollment/Device/MQTT acceptance. Full
+shared-CA withdrawal follows Account Manager egress adoption under T7.
