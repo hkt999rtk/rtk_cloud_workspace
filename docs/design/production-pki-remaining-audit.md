@@ -23,6 +23,7 @@ historical evidence, not competing plans or completion counters.
 | [Platform PKI contract](../../repos/rtk_cloud_contracts_doc/platform_pki.md) | Normative hierarchy, identity domains and key-custody boundaries. |
 | [Implementation ledger](production-pki-implementation.md) | Original implementation decisions and dated source/test evidence. |
 | [Trust-consumer plan](production-pki-trust-consumers.md) | Fixed active acceptance groups, current statuses and immediate execution order. |
+| [Detailed remaining execution plan](production-pki-remaining-implementation-plan.md) | Implementation steps, tests and exit criteria for the 18 open checkpoints; no separate completion counter. |
 | This scope audit | Scope decisions and limitations; references historical evidence without duplicating it. |
 | [Dev Service runbooks](../../scripts/pki-service-dev/README.md) | Phase-specific operational preconditions and recovery; not production deployment tooling or proof of completion. |
 

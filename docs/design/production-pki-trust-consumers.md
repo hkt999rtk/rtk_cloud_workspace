@@ -32,6 +32,9 @@ whole work groups is closed**; that 17% closure ratio understates partial progre
 and must not be presented as the milestone's implementation/acceptance progress.
 Keep the 40-checkpoint denominator stable; document any future scope change before
 recalculating. Local-only checkpoints never substitute for corresponding dev checks.
+The [detailed 18-checkpoint execution plan](production-pki-remaining-implementation-plan.md)
+specifies implementation steps, test steps, dependencies and completion criteria
+for every currently open ID. It expands this scope without adding checkpoints.
 The four broad milestones remain: this milestone; backup/recovery and SDK;
 provider/hardware compatibility; deferred staging/custody/recovery qualification.
 
