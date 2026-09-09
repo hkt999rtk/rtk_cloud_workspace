@@ -92,7 +92,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
 - [x] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, Account Manager client/listener renewal, retirement, held-connection cutoff, CRL fail-closed recovery and stale dev-record reconciliation have passed. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
-- [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
+- [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated dev MQTT Root is prepared and inactive; managed host rollout and client evidence remain.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
 - [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
@@ -1906,6 +1906,23 @@ four stale rows. The remaining history contains five properly revoked leaves and
 the one current leaf; no noncurrent Account Manager leaf remains marked active.
 Private dev evidence is under `pki/t7-account-manager-crl-failure-20260909` and
 `pki/t7-account-manager-history-reconcile-20260909`. This completes T7.
+
+### Dedicated dev MQTT Root preparation (2026-09-09)
+
+T8 begins from the existing dev EMQX and separate `pkibroker` worker; neither
+was changed while the authority was prepared. The maintained
+[`mqtt_authority.py`](../../scripts/pki-service-dev/mqtt_authority.py) procedure
+created an isolated offline MQTT Root, with separate requester, approver and
+custodian actions. Its private key remains in the encrypted, owner-local dev
+ceremony state. The imported Root is `ready`, not active.
+
+An activation probe was blocked with HTTP 503 before a MQTT consumer policy or
+receipt exists. The reconciliation procedure retained that result and verified
+the same ready issuer rather than retrying creation or activation. Private dev
+evidence is under `pki/t8-mqtt-authority-20260909` and
+`pki/t8-mqtt-authority-reconcile-20260909`. The next T8 work is the retained
+host identity, exact MQTT DNS/signing policy, then the supervised broker and
+actual API/log-ingester client rollout.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
