@@ -1493,3 +1493,18 @@ its retained private PVC, perform the one-time managed identity bootstrap, remov
 the static client mount after a seedless restart, and qualify renewal/revocation.
 Four broad milestones remain; staging remains untouched and no PR or remote CI
 was triggered.
+
+### Factory CRL transport reuses the managed identity (2026-09-09)
+
+Factory enrollment's issuer client also owns installed server-CRL synchronization.
+That management path must not retain a second file-based client private key after
+the application adopts `service:factory-enroll`. Video Cloud `98655b2` allows a
+managed HTTP owner to present the same dynamic identity to the CRL consumer and
+rejects configured static management certificate/key paths in that mode. Static
+HTTP consumers keep their existing complete-credential validation.
+
+The dev adoption will therefore mount only public Service CA/manifests plus the
+factory-owned private PVC. The one managed identity authenticates initial/renewal
+issuance, certissuer requests and controller CRL acknowledgments. Before enabling
+the CRL consumer, controller receipt policy and ingress must explicitly add
+`factoryenroll`; all future Service CRL gates then require its real receipt.
