@@ -85,6 +85,26 @@ Activation makes v2 retiring, publishes the initial v3 CRL, extends the existing
 Service CRL manifest, restarts both listeners and requires their CRL receipts.
 It does not deploy the Account Manager listener or issue either new leaf.
 
+After successful v3 activation, install the Account Manager listener with the
+qualified Video Cloud image and a new private output directory:
+
+```sh
+python3 scripts/pki-service-dev/account_listener.py \
+  --authority ROOT_EVIDENCE --activation V3_ACTIVATION \
+  --image VERIFIED_VIDEO_CLOUD_DIGEST --output LISTENER_INSTALL
+```
+
+This creates only dev Account Manager objects: an internal `:8443` Service,
+an ingress policy limited to Video Cloud API and factory enrollment pods, and
+namespace-local immutable Service bundle/CRL manifests. The listener's server
+key is generated inside the retained Account Manager PVC. A short-lived local
+bootstrap client can sign only its initial DNS name; sealing removes that issuer
+trust, the seed files, and their settings after a state-backed restart. The
+public Account Manager listener, human login, and MFA settings are unchanged.
+The next phase issues and installs the real `service:video-cloud-api` client,
+which supplies the first end-to-end caller-admission evidence. Do not use an
+older controller-management certificate as a Service listener test client.
+
 Preparation creates a dedicated verifier login inheriting the existing non-login
 PKI verifier role, a private Secret for its DSN, public Service Root ConfigMap and
 10 GiB retained identity PVC. It verifies PKI write and schema-create denial. It
