@@ -54,6 +54,19 @@ class AccountListenerAuthorityTest(unittest.TestCase):
         refs = a.bundle_references(self.root(), self.issuers(), successor)
         self.assertEqual([ref['issuer_id'] for ref in refs], ['root', 'v1', 'v2', 'v3'])
 
+    def test_controller_gate_changes_only_image_and_one_setting(self):
+        owner = {'spec': {'template': {'metadata': {'labels': {'app': 'pki'}},
+                                      'spec': {'volumes': [{'name': 'keep'}],
+                                               'containers': [{
+                                                   'name': 'pki-controller', 'image': 'old',
+                                                   'env': [{'name': 'KEEP', 'value': 'yes'}]}]}}}}
+        template = a.controller_gate_template(owner, 'new')
+        self.assertEqual(template['spec']['containers'][0]['image'], 'new')
+        self.assertEqual({e['name']: e['value'] for e in template['spec']['containers'][0]['env']},
+                         {'KEEP': 'yes', 'PKI_REQUIRED_BUNDLE_CONSUMERS_SERVICE': a.BUNDLE_CONSUMERS})
+        self.assertEqual(template['spec']['volumes'], [{'name': 'keep'}])
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]['image'], 'old')
+
 
 if __name__ == '__main__':
     unittest.main()

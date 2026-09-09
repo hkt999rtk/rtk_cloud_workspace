@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 import uuid
@@ -24,6 +25,7 @@ V3_CLIENT_IDS = V2_CLIENT_IDS + ['service:video-cloud-api']
 ACCOUNT_DNS = 'account-manager-internal.video-cloud-dev-account-manager.svc'
 V2_DNS_NAMES = list(r.SERVICE_DNS_NAMES)
 V3_DNS_NAMES = sorted(V2_DNS_NAMES + [ACCOUNT_DNS])
+BUNDLE_CONSUMERS = 'certissuer,pki-controller'
 
 
 def v3_request(root):
@@ -70,6 +72,21 @@ def bundle_references(root, predecessors, successor):
     return [{'issuer_id': i['issuer_id'],
              'trust_bundle_version': i['trust_bundle_version']}
             for i in issuers]
+
+
+def controller_gate_template(owner, image):
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec']['containers']
+    m.require(len(containers) == 1 and containers[0]['name'] == 'pki-controller',
+              'controller container changed')
+    env = containers[0].get('env', [])
+    current = {entry['name']: entry.get('value') for entry in env}
+    m.require('PKI_REQUIRED_BUNDLE_CONSUMERS_SERVICE' not in current,
+              'controller bundle gate already configured; reconcile')
+    containers[0]['image'] = image
+    containers[0]['env'] = r.with_env(
+        env, {'PKI_REQUIRED_BUNDLE_CONSUMERS_SERVICE': BUNDLE_CONSUMERS})
+    return template
 
 
 class AccountListenerAuthority(fa.FactoryAdoption):
@@ -285,6 +302,55 @@ class AccountListenerAuthority(fa.FactoryAdoption):
                   'Service v3 bundle differs')
         return name, refs
 
+    def install_controller_gate(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed' and failed['phase'] == 'activate',
+                  'failed activation evidence required')
+        _, _, successor, _ = self.ready_v3()
+        image = self.args.image
+        m.require(re.fullmatch(
+            r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}',
+            image or ''), 'verified dev Video Cloud image digest required')
+        owner = self.obj('deployment', 'pki-controller')
+        template = controller_gate_template(owner, image)
+        old = owner['spec']['template']['spec']['containers'][0]
+        self.observed_patch('deployment', 'pki-controller', owner, [
+            {'op': 'test', 'path': '/spec/template/spec/containers/0/image',
+             'value': old['image']},
+            {'op': 'test', 'path': '/spec/template/spec/containers/0/env',
+             'value': old.get('env', [])},
+            {'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', r.NS, 'rollout', 'status', 'deployment/pki-controller',
+                   '--timeout=300s'], timeout=310)
+        current = self.obj('deployment', 'pki-controller')
+        installed = current['spec']['template']['spec']['containers'][0]
+        installed_env = {entry['name']: entry.get('value')
+                         for entry in installed.get('env', [])}
+        m.require(installed['image'] == image
+                  and installed_env.get('PKI_REQUIRED_BUNDLE_CONSUMERS_SERVICE')
+                  == BUNDLE_CONSUMERS,
+                  'controller bundle gate rollout differs')
+        directory = self.base / 'pki/controller-bootstrap/rollout'
+        desired = m.read(directory / 'pki-controller-deployment.json')
+        desired_container = desired['spec']['template']['spec']['containers'][0]
+        desired_container['image'] = image
+        desired_container['env'] = r.with_env(
+            desired_container.get('env', []),
+            {'PKI_REQUIRED_BUNDLE_CONSUMERS_SERVICE': BUNDLE_CONSUMERS})
+        m.write(directory / 'pki-controller-deployment.json', desired)
+        settings = m.read(directory / 'pki-controller-service-settings.json')
+        settings['PKI_REQUIRED_BUNDLE_CONSUMERS_SERVICE'] = BUNDLE_CONSUMERS
+        m.write(directory / 'pki-controller-service-settings.json', settings)
+        m.write(self.base / 'operator/env/PKI_CONTROLLER_IMAGE', image + '\n')
+        m.require(self.api('/issuers/' + successor['issuer_id'])['status'] == 'ready',
+                  'controller gate changed authority before activation')
+        self.device_baseline()
+        self.check('controller_bundle_gate_installed', {
+            'image': image,
+            'bundle_consumers': BUNDLE_CONSUMERS.split(','),
+            'crl_revocation_consumers': ['certissuer', 'factory-enroll', 'pki-controller'],
+            'v3_status': 'ready', 'device_baseline': 'passed'})
+
     def install_certissuer(self):
         root, predecessors, successor, operation = self.ready_v3()
         new_name, refs = self.require_v3_bundle(root, predecessors, successor)
@@ -416,7 +482,8 @@ class AccountListenerAuthority(fa.FactoryAdoption):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=['prepare-intermediate-v3', 'controller',
-                                           'recover-controller', 'certissuer', 'activate'],
+                                           'recover-controller', 'certissuer',
+                                           'controller-gate', 'activate'],
                         default='prepare-intermediate-v3')
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -424,15 +491,18 @@ def main():
     parser.add_argument('--authority', required=True)
     parser.add_argument('--prepared')
     parser.add_argument('--failed')
+    parser.add_argument('--image')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
-    args.image, args.activation, args.intermediate = None, None, None
+    args.activation, args.intermediate = None, None
     m.require(args.phase == 'prepare-intermediate-v3' or args.prepared,
               'successful v3 preparation evidence required')
     m.require(not args.resume or args.phase == 'prepare-intermediate-v3',
               'resume is limited to v3 preparation')
     m.require(args.phase != 'recover-controller' or args.failed,
               'failed controller evidence required for recovery')
+    m.require(args.phase != 'controller-gate' or (args.failed and args.image),
+              'failed activation evidence and verified image required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -443,6 +513,7 @@ def main():
          'controller': runner.install_controller,
          'recover-controller': runner.recover_controller,
          'certissuer': runner.install_certissuer,
+         'controller-gate': runner.install_controller_gate,
          'activate': runner.activate_v3}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:

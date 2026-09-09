@@ -52,6 +52,20 @@ verifies the installed bundle, sole controller receipt, absent certissuer receip
 and still-closed activation gate. It does not patch the listener or mutate the
 authority again.
 
+If v3 activation is denied because the current Service CRL consumer list also
+contains the outbound-only factory consumer, deploy the committed controller
+bundle-gate split before retrying the same activation operation:
+
+```sh
+python3 scripts/pki-service-dev/account_listener_authority.py \
+  --phase controller-gate --authority ROOT_EVIDENCE --prepared V3_PREPARED \
+  --failed FAILED_ACTIVATION --image VERIFIED_VIDEO_CLOUD_DIGEST --output V3_GATE
+```
+
+This phase updates only `pki-controller`, persists its digest and Service setting,
+and requires v3 to remain ready. Bundle activation then requires the two actual
+listener installers. CRL/revocation finalization continues to require factory.
+
 The successor retains the exact v1/v2 policies, adds only
 `service:video-cloud-api` and
 `account-manager-internal.video-cloud-dev-account-manager.svc`, and keeps all
