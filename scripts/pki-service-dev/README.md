@@ -6,6 +6,47 @@ private evidence helpers as `pki-dev-acceptance`. It only targets canonical dev
 context `lke649805-ctx` and namespace `video-cloud-dev-video-cloud`. Staging,
 legacy migration, hardware and independent human custody are excluded.
 
+## Account Manager caller acceptance
+
+`account_callers.py` proves actual factory admission and public App-token
+authorization through the managed Account Manager listener. It uses the existing
+reviewed dev Cloud/Product, the rehearsal owner, and a dedicated
+`pki-service-caller-…@dev.invalid` member created with `rtk-cloud create-users`.
+The owner claims the Device and receives a token; the member without Product
+admission and an unassigned Device are denied. Core login is unchanged.
+
+Use an OpenSSL-backed Python (on this workstation,
+`/opt/homebrew/bin/python3`); the bundled macOS LibreSSL cannot load Ed25519.
+Supply a new private output directory for every invocation. A fresh run creates
+one production run, Device and claim, and issues the owner's first App certificate
+only if none exists. Existing owner credentials must be supplied explicitly:
+
+```sh
+/opt/homebrew/bin/python3 scripts/pki-service-dev/account_callers.py \
+  --database PRIVATE_TEST_DATA_SQLITE --email CALLER_TEST_EMAIL \
+  --owner-identity RETAINED_OWNER_IDENTITY --output NEW_PRIVATE_OUTPUT
+```
+
+To reuse an already enrolled and claimed Device, add `--fixture ENROLLMENT_OUTPUT`.
+This repeats the exact factory request and requires the same returned certificate;
+it does not create another production run, Device or claim. The original
+production JWT must still be valid. The fixture contains `enroll-request.json`,
+`enrolled.json` and `production-run.json`; the owner identity directory contains
+`owner-chain.pem` and `owner-key.pem`.
+
+Add `--restart video-cloud-api`, `--restart factoryenroll`, or
+`--restart account-manager` to that reuse command to replace one Pod with
+UID/resourceVersion preconditions, verify unchanged identity hashes and
+Deployment specifications, and repeat both caller paths. Restarts are dev-only
+and sequential. No configuration rollout or private Service-key export occurs.
+Reports retain selected Account Manager internal request logs and explicit
+pass/fail checks. A failure requires reconciliation of saved intents/responses;
+do not create replacement credentials or replay uncertain mutations blindly.
+Renewal, retirement, held connections and trust-outage qualification remain
+separate T7 checks.
+
+## Authority rollout
+
 First run Device preflight. Build the selected Video Cloud revision using
 `lke-build-images --workloads video-cloud` and the dev registry. Verify the image
 manifest's dev stack and immutable registry digest. Prepare independent bootstrap

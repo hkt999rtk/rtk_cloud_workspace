@@ -88,7 +88,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, the listener, and managed API/factory caller deployment have passed; an isolated authenticated app-token request and the remaining lifecycle/failure evidence are still required.
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests and all three owner restarts have passed. Early renewal, old-leaf denial, held-connection cutoff and remaining trust-failure evidence are still required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -1786,16 +1786,65 @@ operation. Generate it using the targeted dev storage-bootstrap flow, which
 performs the configured scoped storage canary and writes the local receipt. It
 does not authorize a staging operation or a database reset.
 
-The 2026-09-09 bounded run created the isolated brand and user, issued its App
-certificate, and confirmed the API/factory Service identity deployments. It did
-not close T7. Factory enrollment reached certissuer but was denied with
-`product_issuer_denied` for the generated `runtime-e2e` profile; the fallback
-then correctly received a replay conflict for the same request. The API simulator
-also loaded a valid App certificate/login fixture but could not issue the App
-token because the newly generated dev runtime lacked its live MQTT endpoint
-state. Fix those dev configuration defects, then repeat the one-user, one-device
-proof and retain only redacted evidence. Neither failure permits a static
-management-key fallback or a policy bypass.
+The initial bounded run did not close T7. Its fresh Product had no approved,
+active governed issuer, so `product_issuer_denied` was expected; changing a
+`runtime-e2e` profile allowlist would not fix it. The separate App simulator
+failure was a public-ingress client-certificate rejection (HTTP 400). MQTT
+endpoint state was present, and the simulator requests the App token before
+opening Device MQTT. The earlier diagnosis of a missing MQTT endpoint was
+incorrect. No signer-policy relaxation, broad deployment or static management
+key is needed for these caller checks.
+
+### Account Manager caller acceptance (2026-09-09)
+
+The maintained [caller runner](../../scripts/pki-service-dev/account_callers.py)
+reuses the reviewed `PKI Dev Rehearsal` Cloud and its active `pki-device` Product
+issuer. A fresh Device enrolled successfully through factory's managed Account
+Manager transport and the governed signer. The existing rehearsal Cloud owner
+received its first App certificate using a local P-256 key; no existing App
+credential was rotated. The fresh member fixture retains its Ed25519 App key.
+
+Actual requests to `https://device.video-cloud-dev.realtekconnect.com/request_token`
+with normal public server/hostname validation produced:
+
+- Cloud owner, claimed Device: HTTP 200 with an App access token; Account Manager
+  logged internal authorization HTTP 200 through its loopback proxy.
+- Member without Product admission, same Device: API HTTP 401 and Account Manager
+  HTTP 403. Cloud membership alone does not grant Product access.
+- Unassigned Device: API HTTP 401 and Account Manager HTTP 403.
+- Exact factory enrollment replay: the same certificate returned, with internal
+  reservation/result HTTP 200; no second device or certificate was created.
+
+Each of `video-cloud-api`, `factoryenroll`, and `account-manager` was restarted
+separately using Pod UID/resourceVersion deletion preconditions. All managed
+identity-state hashes remained unchanged, Deployment specifications remained
+unchanged, and both caller flows passed again. Each report records only selected
+request-log fields and public hashes. Keys, claim credentials and raw enrollment
+responses remain in owner-only local evidence, never in Git.
+
+Private evidence is under dev `pki/service-account-callers-20260909`: `run-3`
+contains successful enrollment; `run-5` contains the owner's App identity and
+successful claim; `run-6` contains the initial positive/negative App proof;
+`api-restart`, `factory-restart` and `account-restart` contain the successful
+restart checks. `final-check` passed the final runner against the retained
+fixture; `fresh-complete` then passed a second fresh Device enrollment, owner
+claim and all authorization/log checks without recovery steps. Earlier failed
+attempts are retained: local LibreSSL could not
+load Ed25519; the test runner initially used the wrong profile response field;
+member direct binding and platform-admin claim resolution correctly failed the
+Cloud/Product authorization boundary. The existing claim was then resolved by
+the Cloud owner without repeating enrollment or weakening permissions.
+
+Use an OpenSSL-backed Python for this runner. macOS's bundled LibreSSL 2.8.3
+cannot load the Ed25519 fixture. The runner refuses implicit owner App rotation;
+repeat runs reuse its retained key. A failed mutation must be reconciled against
+saved intent/response before another creation attempt.
+
+These are substantive T7 acceptance results, but T7 remains open for early
+renewal, old-leaf denial, held-connection cutoff and remaining trust-failure
+checks. The fixed milestone total therefore remains **22/40 = 55%**, with
+**18 checkpoints unfinished**. This percentage describes this active milestone,
+not the entire multi-milestone plan. Core login logic and staging are unchanged.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
