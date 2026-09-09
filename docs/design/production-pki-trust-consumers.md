@@ -61,7 +61,7 @@ private state across seedless restarts. Both listener client and host early-rene
 paths now pass in dev; old-leaf revocation and active-session acceptance remain.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **86%**, an engineering estimate
+Overall milestone progress is approximately **88%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -1364,3 +1364,32 @@ the residual legacy trust blocks and two unmounted bootstrap Secrets with a
 guarded inventory and restart audit, then continue with remaining caller/host,
 Root-policy and App/relay adoption. Four broad milestones remain; staging stays
 deferred and no PR or remote CI was triggered.
+
+### Retired listener bootstrap trust removed in dev (2026-09-09)
+
+The maintained [listener cleanup procedure](../../scripts/pki-service-dev/LISTENER_CLEANUP.md)
+requires successful renewal and four-leaf retirement evidence plus the exact
+current Intermediate CRL. It inventories all namespaced workload kinds before
+mutation. The two legacy bootstrap Secrets had zero references. The certissuer
+legacy CA remained exactly once only in certissuer's self-trust bundle; the
+controller legacy CA remained exactly once only in the controller's self-trust
+bundle. Their peer-side copies were already absent.
+
+The cleanup removed those two exact public certificate blocks with resourceVersion
+and data-field tests. It saved the credential Secrets only in private evidence,
+then deleted each with its observed UID as an API precondition. Both listener
+Deployments restarted without bootstrap mounts or trust. Their two current client
+and two current server identities remained admitted, the wire leaves and final
+CRL remained current, and Device direct mTLS plus MQTT ACL/QoS1 passed.
+
+Private evidence is retained under
+`~/.config/rtk_cloud/dev/pki/service-listener-cleanup-20260909/{cleanup,verification}`.
+The independent verification confirms zero legacy CA blocks, zero bootstrap
+Secrets and zero workload references. It also rechecks the four successors and
+Device baseline. No private credential data is written to Git or command output.
+
+Current milestone estimate: **88%; 1/6 work groups complete, 5 open**. The managed
+listener egress lifecycle is complete except for a future pre-held session cutoff
+test during the next rotation. Next prioritize remaining real caller/host adoption,
+then Root-policy and App/relay enforcement. Four broad milestones remain; staging
+is deferred and no PR or remote CI was triggered.
