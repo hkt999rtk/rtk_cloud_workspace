@@ -30,6 +30,30 @@ python3 scripts/pki-service-dev/management.py --phase issuer-egress \
   --owner-image VERIFIED_VIDEO_CLOUD_DIGEST --output ISSUER_EGRESS
 ```
 
+The internal listener needs one immutable Service-policy successor because v2
+does not contain `service:video-cloud-api` or the Account Manager internal DNS
+name. Prepare and activate that exact v3 before seeding the listener:
+
+```sh
+python3 scripts/pki-service-dev/account_listener_authority.py \
+  --phase prepare-intermediate-v3 --authority ROOT_EVIDENCE --output V3_PREPARED
+python3 scripts/pki-service-dev/account_listener_authority.py \
+  --phase controller --authority ROOT_EVIDENCE --prepared V3_PREPARED --output V3_CONTROLLER
+python3 scripts/pki-service-dev/account_listener_authority.py \
+  --phase certissuer --authority ROOT_EVIDENCE --prepared V3_PREPARED --output V3_CERTISSUER
+python3 scripts/pki-service-dev/account_listener_authority.py \
+  --phase activate --authority ROOT_EVIDENCE --prepared V3_PREPARED --output V3_ACTIVATION
+```
+
+The successor retains the exact v1/v2 policies, adds only
+`service:video-cloud-api` and
+`account-manager-internal.video-cloud-dev-account-manager.svc`, and keeps all
+three intermediates in listener trust. Controller and certissuer install the
+immutable bundle in separate phases and send real receipts before activation.
+Activation makes v2 retiring, publishes the initial v3 CRL, extends the existing
+Service CRL manifest, restarts both listeners and requires their CRL receipts.
+It does not deploy the Account Manager listener or issue either new leaf.
+
 Preparation creates a dedicated verifier login inheriting the existing non-login
 PKI verifier role, a private Secret for its DSN, public Service Root ConfigMap and
 10 GiB retained identity PVC. It verifies PKI write and schema-create denial. It

@@ -1797,3 +1797,11 @@ held-connection cutoff and unchanged Device/login canaries. Service v2 currently
 lacks `service:video-cloud-api`; add that caller through a reviewed successor
 intermediate instead of widening the active policy in place. Fixed milestone
 accounting remains **22/40 = 55%** until those live exit criteria pass.
+
+The maintained dev transition prepares exact Service v3 policy by retaining v1
+and v2, adding only `service:video-cloud-api` and the internal Account Manager
+DNS name, and installing an additive immutable bundle on controller and
+certissuer. It keeps preparation, each listener receipt, activation, initial CRL
+publication and CRL receipts as separate gates. The runner also persists each
+changed dev overlay. It does not issue leaves or deploy the Account Manager
+listener; those remain the next T7 phase.
