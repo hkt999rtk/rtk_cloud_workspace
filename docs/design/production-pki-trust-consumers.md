@@ -91,7 +91,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, and Account Manager client/listener early renewal have passed. Old-leaf denial, held-connection cutoff and remaining trust-failure evidence are still required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, and Account Manager client/listener renewal, retirement and held-connection cutoff have passed. Remaining scoped trust-failure evidence and reconciliation of one malformed historical dev issuance record are required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -1849,8 +1849,8 @@ separately pinned direct certissuer transport for Service credential renewal.
 The retained renewal request reconciled after a corrected restart with one new
 successful issuance, a changed leaf and public key, and the same root and
 subject; the existing factory/App caller canary passed afterwards. T7 remains
-open for old-leaf denial, held-connection cutoff and remaining trust-failure
-checks. The fixed milestone total therefore remains **22/40 = 55%**, with
+open for remaining trust-failure checks and reconciliation of one malformed
+historical dev issuance record. The fixed milestone total therefore remains **22/40 = 55%**, with
 **18 checkpoints unfinished**. This percentage describes this active milestone,
 not the entire multi-milestone plan. Core login logic and staging are unchanged.
 
@@ -1872,8 +1872,30 @@ the same caller checks passed. Private dev evidence is retained under
 `pki/t7-account-manager-listener-renew-20260909`; it contains public hashes and
 run reports only in the tracked summary, while certificate material and keys
 remain owner-local. This completes listener/client early renewal and seed-free
-restart evidence, not old-leaf denial, held-connection cutoff, or trust-outage
-qualification.
+restart evidence.
+
+### Account Manager held predecessor retirement (2026-09-09)
+
+The maintained `account_listener_lifecycle.py` runner opens one authenticated
+HTTP/1.1 session from the Account Manager owner using its current client state,
+then sends one SIGHUP. It keeps the predecessor key only in that process,
+rotates the client and listener, and confirms a successor session before
+revoking the predecessor. Two bounded dev runs closed the held predecessor
+sessions within 9.7 and 9.5 seconds; a new connection using each retained old
+key was denied. The successor client remained admitted, and the successor
+listener continued to be served after its predecessor server leaf was published
+and finalized in the Service CRL.
+
+The maintained caller runner then performed a seed-free Account Manager restart
+and passed factory replay, the positive App-token request, and both denied
+authorization cases. The lifecycle evidence retains only public fingerprints,
+CRL digests and timing bounds under private dev `pki` evidence; the session
+probe executes inside the existing owner and never exports a private key. One
+older dev issuance record predating this bounded lifecycle cannot be re-parsed
+by the controller for retrospective publication. It is isolated from the live
+predecessor proof and remains a dev-data reconciliation item; it does not alter
+the current listener or caller admission state. Scoped trust-failure evidence is
+the remaining T7 lifecycle work.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
