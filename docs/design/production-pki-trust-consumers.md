@@ -19,12 +19,12 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and Account Manager certissuer egress are qualified in dev. Account Manager's listener, its managed client, and API/factory callers now have deployment, renewal and seed-free restart evidence. Old-leaf denial, held-connection cutoff, trust failures, MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and complete Account Manager transport lifecycle are qualified in dev. MQTT/OpenBao transports and hosts, public HTTPS evidence, and cross-host held-session/trust-failure coverage remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 22/40 = 55%.** The fixed decomposition below
+**Current checkpoint completion: 23/40 = 57.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **1/6
@@ -48,11 +48,11 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 8/11 | 73% |
-| Transports and hosts | 6/11 | 55% |
+| Transports and hosts | 7/11 | 64% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **22/40** | **55%** |
+| **Total** | **23/40** | **57.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -91,7 +91,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, and Account Manager client/listener renewal, retirement and held-connection cutoff have passed. Remaining scoped trust-failure evidence and reconciliation of one malformed historical dev issuance record are required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
+- [x] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, Account Manager client/listener renewal, retirement, held-connection cutoff, CRL fail-closed recovery and stale dev-record reconciliation have passed. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -1762,12 +1762,10 @@ legacy App signer permission and an incorrect two-certificate bundle removal.
 The Service Root was restored before the successful final audit, and the saved
 runtime overlay now contains exactly that retained certificate.
 
-T7 remains open for an authenticated API caller proof and the remaining
-lifecycle/failure evidence. The Account Manager listener and both managed callers
-are deployed in dev: `service:video-cloud-api` and `service:factory-enroll` retain
+The authenticated API caller proof and the Account Manager listener lifecycle are complete in dev. The Account Manager listener and both managed callers are deployed in dev: `service:video-cloud-api` and `service:factory-enroll` retain
 their own Service identity state and use it for the internal listener transport;
 no static management client key is mounted for either caller. Fixed milestone
-accounting therefore remains **22/40 = 55%**, with **18 checkpoints open**.
+accounting is now **23/40 = 57.5%**, with **17 checkpoints open**.
 Staging, MFA, PR creation and remote CI were not changed or triggered.
 
 ### Dev app-token caller qualification prerequisite (2026-09-09)
@@ -1848,11 +1846,7 @@ the managed caller uses Account Manager only for its application request and a
 separately pinned direct certissuer transport for Service credential renewal.
 The retained renewal request reconciled after a corrected restart with one new
 successful issuance, a changed leaf and public key, and the same root and
-subject; the existing factory/App caller canary passed afterwards. T7 remains
-open for remaining trust-failure checks and reconciliation of one malformed
-historical dev issuance record. The fixed milestone total therefore remains **22/40 = 55%**, with
-**18 checkpoints unfinished**. This percentage describes this active milestone,
-not the entire multi-milestone plan. Core login logic and staging are unchanged.
+subject; the existing factory/App caller canary passed afterwards. The final scoped trust-failure and historical-record reconciliation results are recorded below. The fixed milestone total is **23/40 = 57.5%**, with **17 checkpoints unfinished**. This percentage describes this active milestone, not the entire multi-milestone plan. Core login logic and staging are unchanged.
 
 ### Account Manager client and listener early renewal (2026-09-09)
 
@@ -1890,12 +1884,28 @@ The maintained caller runner then performed a seed-free Account Manager restart
 and passed factory replay, the positive App-token request, and both denied
 authorization cases. The lifecycle evidence retains only public fingerprints,
 CRL digests and timing bounds under private dev `pki` evidence; the session
-probe executes inside the existing owner and never exports a private key. One
-older dev issuance record predating this bounded lifecycle cannot be re-parsed
-by the controller for retrospective publication. It is isolated from the live
-predecessor proof and remains a dev-data reconciliation item; it does not alter
-the current listener or caller admission state. Scoped trust-failure evidence is
-the remaining T7 lifecycle work.
+probe executes inside the existing owner and never exports a private key. The pre-lifecycle dev history was then reconciled as described below; it no longer leaves noncurrent Account Manager credentials marked active. The live predecessor proof remains independent of that cleanup.
+
+### Account Manager scoped CRL failure and history reconciliation (2026-09-09)
+
+A bounded dev-only configuration fault changed only the Account Manager
+`pkimanagement` sidecar's Service client/server CRL-manifest path to a nonexistent
+file. The deployment reached zero ready replicas and its internal listener was
+unavailable; it did not retain a static listener client key or certificate and
+could not emit a successful readiness/receipt path. The exact saved Pod template
+was restored with resource-version and template preconditions. The Deployment
+returned ready, then the maintained caller runner again passed factory exact
+replay, positive App-token authorization and both denied authorization cases.
+
+The reconciliation then inspected the current private identity in place and
+validated the ten historical certificate signatures against their issuer without
+exporting a key. The only live identity was `66616…bc30`. One guarded dev
+transaction required exactly that current unrevoked row, exactly four older
+unrevoked Account Manager rows and no revocation dependencies before deleting the
+four stale rows. The remaining history contains five properly revoked leaves and
+the one current leaf; no noncurrent Account Manager leaf remains marked active.
+Private dev evidence is under `pki/t7-account-manager-crl-failure-20260909` and
+`pki/t7-account-manager-history-reconcile-20260909`. This completes T7.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
@@ -1933,8 +1943,7 @@ dedicated internal Service, a server authority/DNS policy, managed API and facto
 callers, actual receipts, seed removal, restart, early renewal, old-leaf denial,
 held-connection cutoff and unchanged Device/login canaries. Service v2 currently
 lacks `service:video-cloud-api`; add that caller through a reviewed successor
-intermediate instead of widening the active policy in place. Fixed milestone
-accounting remains **22/40 = 55%** until those live exit criteria pass.
+intermediate instead of widening the active policy in place. Those live exit criteria now pass; the current fixed milestone accounting is **23/40 = 57.5%**.
 
 The maintained dev transition prepares exact Service v3 policy by retaining v1
 and v2, adding only `service:video-cloud-api` and the internal Account Manager
@@ -1977,5 +1986,4 @@ on both controller and certissuer. The recovery verified the existing operation
 as active without replay, matched the imported v3 CRL to OpenBao, installed and
 persisted the four-authority CRL manifest, received controller and certissuer CRL
 acknowledgments, and passed the Device mTLS/MQTT baseline. v1 and v2 are retiring;
-v3 is active. T7 remains open until the Account Manager listener, API caller and
-factory caller pass their managed lifecycle checks.
+v3 is active. The subsequent Account Manager listener, API caller and factory caller managed lifecycle checks have passed; their current final evidence is recorded above.
