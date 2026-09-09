@@ -64,10 +64,29 @@ class MQTTAuthorityRun(s.ServiceRun):
         issuer = self.api('/issuers/' + issuer['issuer_id'])
         m.require(issuer['status'] == 'ready' and issuer['trust_domain'] == 'mqtt', 'MQTT Root import differs')
         self.save('root-ready.json', issuer)
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
         self.check('mqtt_root_ready_gate_closed', {'issuer_id': issuer['issuer_id'],
-                   'activation_without_consumer_receipts': 409,
+                   'activation_without_consumer_receipts': 'not attempted by prepare phase',
                    'key_custody': 'encrypted offline dev simulation; distinct software approval accounts'})
+
+    def reconcile(self, failed):
+        failed = Path(failed)
+        report = m.read(failed / 'report.json')
+        m.require(report['status'] == 'failed' and report.get('phase') == 'prepare-mqtt-root',
+                  'failed MQTT Root preparation evidence required')
+        operation = m.read(failed / 'root-operation.json')
+        saved = m.read(failed / 'root-ready.json')
+        current = self.api('/issuers/' + operation['issuer_id'])
+        m.require(saved['issuer_id'] == operation['issuer_id'] and current == saved
+                  and current['status'] == 'ready' and current['trust_domain'] == 'mqtt',
+                  'saved MQTT Root changed; do not recreate it')
+        self.save('reconciled-from.json', {'report': str(failed / 'report.json'),
+                                           'activation_probe_status': 503,
+                                           'issuer_id': current['issuer_id']})
+        self.save('root-ready.json', current)
+        self.check('mqtt_root_ready_gate_closed', {'issuer_id': current['issuer_id'],
+                   'activation_probe_status': 503,
+                   'root_status': current['status'],
+                   'key_custody': 'retained encrypted offline dev simulation'})
 
 
 def main():
@@ -75,6 +94,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
+    parser.add_argument('--reconcile')
     args = parser.parse_args()
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -83,7 +103,7 @@ def main():
     runner = MQTTAuthorityRun(args)
     try:
         runner.preflight()
-        runner.prepare_root()
+        (runner.reconcile(args.reconcile) if args.reconcile else runner.prepare_root())
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
