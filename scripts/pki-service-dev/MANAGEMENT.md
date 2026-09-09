@@ -45,6 +45,13 @@ python3 scripts/pki-service-dev/account_listener_authority.py \
   --phase activate --authority ROOT_EVIDENCE --prepared V3_PREPARED --output V3_ACTIVATION
 ```
 
+If the controller phase has already installed the exact bundle but a later
+canary fails, use a new output directory with `--phase recover-controller`,
+`--failed FAILED_CONTROLLER`, and the same authority/prepared evidence. Recovery
+verifies the installed bundle, sole controller receipt, absent certissuer receipt
+and still-closed activation gate. It does not patch the listener or mutate the
+authority again.
+
 The successor retains the exact v1/v2 policies, adds only
 `service:video-cloud-api` and
 `account-manager-internal.video-cloud-dev-account-manager.svc`, and keeps all

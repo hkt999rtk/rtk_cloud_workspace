@@ -254,6 +254,28 @@ class AccountListenerAuthority(fa.FactoryAdoption):
             'bundle': new_name, 'references': refs, 'consumers': receipts,
             'certissuer_absent': True, 'activation_denied': 409})
 
+    def recover_controller(self):
+        failed = Path(self.args.failed)
+        report = m.read(failed / 'report.json')
+        m.require(report['status'] == 'failed' and report['phase'] == 'controller',
+                  'failed controller phase evidence required')
+        root, predecessors, successor, operation = self.ready_v3()
+        bundle, refs = self.require_v3_bundle(root, predecessors, successor)
+        m.require(self.current_bundle_for('pki-controller') == bundle,
+                  'controller did not retain Service v3')
+        m.require(self.current_bundle_for('certissuer') != bundle,
+                  'certissuer advanced during controller recovery')
+        receipts = self.wait_receipts(successor['issuer_id'],
+                                      successor['trust_bundle_version'],
+                                      ['pki-controller'], absent='certissuer')
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        self.persist_listener('pki-controller')
+        self.device_baseline()
+        self.check('intermediate_v3_controller_receipt_recovered', {
+            'bundle': bundle, 'references': refs, 'consumers': receipts,
+            'certissuer_absent': True, 'activation_denied': 409,
+            'authority_mutation_replayed': False})
+
     def require_v3_bundle(self, root, predecessors, successor):
         name = self.v3_bundle_name(successor)
         refs = bundle_references(root, predecessors, successor)
@@ -394,13 +416,14 @@ class AccountListenerAuthority(fa.FactoryAdoption):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=['prepare-intermediate-v3', 'controller',
-                                           'certissuer', 'activate'],
+                                           'recover-controller', 'certissuer', 'activate'],
                         default='prepare-intermediate-v3')
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--authority', required=True)
     parser.add_argument('--prepared')
+    parser.add_argument('--failed')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     args.image, args.activation, args.intermediate = None, None, None
@@ -408,6 +431,8 @@ def main():
               'successful v3 preparation evidence required')
     m.require(not args.resume or args.phase == 'prepare-intermediate-v3',
               'resume is limited to v3 preparation')
+    m.require(args.phase != 'recover-controller' or args.failed,
+              'failed controller evidence required for recovery')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -416,6 +441,7 @@ def main():
         runner.preflight()
         {'prepare-intermediate-v3': runner.resume_v3 if args.resume else runner.prepare_v3,
          'controller': runner.install_controller,
+         'recover-controller': runner.recover_controller,
          'certissuer': runner.install_certissuer,
          'activate': runner.activate_v3}[args.phase]()
         runner.report['status'] = 'passed'
