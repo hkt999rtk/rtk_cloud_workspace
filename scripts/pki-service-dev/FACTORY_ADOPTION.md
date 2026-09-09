@@ -65,7 +65,24 @@ The controller phase creates one immutable manifest containing Root, v1 and v2,
 then requires controller's real receipt while certissuer remains absent and v1
 remains active. The certissuer phase installs the same object, requires both
 receipts and adds only the generated v2 server and Service-client signer policies
-to certissuer's existing OpenBao role. The activation phase rechecks exact
+to certissuer's existing OpenBao role. It verifies that the operation remains
+`ready`; it never probes activation after both receipts exist. The activation phase rechecks exact
 workload mounts, receipts, role profiles and provider capabilities, atomically
 makes v2 active and v1 retiring, immediately imports v2's signed CRL, waits for
-both CRL receipts, restarts both listeners and runs the Device baseline.
+both CRL receipts, restarts both listeners and runs the Device baseline. After
+CRL import it adds v2 to the separate Root/v1 server-CRL manifest before those
+restarts; bundle membership alone does not configure CRL consumption.
+
+If activation returned success but the caller lost the response or later work
+failed, never send activation again. After the exact Root/v1/v2 CRL manifest and
+both receipts have been restored, qualify that state with:
+
+```sh
+python3 scripts/pki-service-dev/factory_adoption.py --phase recover-activation \
+  --authority SERVICE_ROOT_EVIDENCE --prepared V2_PREPARATION_EVIDENCE \
+  --output NEW_ACTIVATION_RECOVERY_EVIDENCE
+```
+
+This phase requires v1 `retiring`, v2 `active`, exact certificate fingerprints,
+the complete CRL manifest, both bundle/CRL receipts and signer boundaries. It
+restarts both listeners, runs the Device baseline and never calls activation.

@@ -7,7 +7,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import re
 import signal
 import sys
 import uuid
@@ -61,6 +60,12 @@ def replacement_bundle_template(owner, old_name, new_name):
               'listener is not using the reviewed Service v1 bundle')
     selected[0]['configMap']['name'] = new_name
     return template
+
+
+def crl_entries(*issuers):
+    return [{'issuer': issuer,
+             'state_path': '/var/lib/pki-host/identity/crls/' + issuer['issuer_id'] + '.json'}
+            for issuer in issuers]
 
 
 class FactoryAdoption(r.ServiceRun):
@@ -302,10 +307,11 @@ class FactoryAdoption(r.ServiceRun):
         self.role_policy(role, 'pki-service-client-dev-v2-' + new['issuer_id'],
                          policies['service_client_signer_policy'])
         self.verify_v2_signer(new)
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
         m.require(self.api('/issuers/' + old['issuer_id']) == old
                   and self.api('/issuers/' + new['issuer_id']) == new,
                   'authority changed before reviewed activation')
+        m.require(self.api('/operations/' + operation['operation_id'])['status'] == 'ready',
+                  'Service intermediate v2 operation changed before activation')
         self.device_baseline()
         self.check('intermediate_v2_listener_receipts_and_signer', {
             'bundle': new_name, 'references': refs, 'consumers': receipts,
@@ -374,10 +380,11 @@ class FactoryAdoption(r.ServiceRun):
                                         new['signer_reference'] + '/cert/crl']))
         record = self.api('/issuers/' + new['issuer_id'] + '/crl',
                           {'crl_pem': provider['data']['certificate']})
-        crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
-                                         r.SERVICE_CONSUMERS, kind='crl')
+        self.install_v2_crl_manifest(root, current_old, current_new)
         for name in r.SERVICE_CONSUMERS:
             self.rollout_listener_restart(name)
+        crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
+                                         r.SERVICE_CONSUMERS, kind='crl')
         self.device_baseline()
         self.save('intermediate-v2-active.json', current_new)
         self.save('intermediate-v1-retiring.json', current_old)
@@ -387,6 +394,66 @@ class FactoryAdoption(r.ServiceRun):
             'crl_sha256': record['crl_sha256'], 'crl_consumers': crl_receipts,
             'v1_status': 'retiring', 'v2_status': 'active',
             'listener_restarts': r.SERVICE_CONSUMERS, 'device_baseline': 'passed',
+        })
+
+    def install_v2_crl_manifest(self, root, old, new):
+        name = 'pki-service-client-crls'
+        manifest = self.obj('configmap', name)
+        current = json.loads(manifest['data']['crls.json'])
+        m.require([entry['issuer']['issuer_id'] for entry in current]
+                  == [root['issuer_id'], old['issuer_id']],
+                  'existing Service CRL manifest differs before v2 activation')
+        updated = crl_entries(root, old, new)
+        self.observed_patch('configmap', name, manifest, [
+            {'op': 'test', 'path': '/data/crls.json', 'value': manifest['data']['crls.json']},
+            {'op': 'replace', 'path': '/data/crls.json', 'value': json.dumps(updated)},
+        ])
+        self.save('service-crl-manifest-issuer-ids.json',
+                  [entry['issuer']['issuer_id'] for entry in updated])
+
+    def recover_activation(self):
+        root = self.active_root()
+        source = Path(self.args.prepared)
+        m.require(m.read(source / 'report.json')['status'] == 'passed',
+                  'successful Service intermediate v2 preparation required')
+        old_saved = m.read(source / 'intermediate-v1.json')
+        new_saved = m.read(source / 'intermediate-ready.json')
+        old = self.api('/issuers/' + old_saved['issuer_id'])
+        new = self.api('/issuers/' + new_saved['issuer_id'])
+        m.require(old['status'] == 'retiring' and new['status'] == 'active'
+                  and old['certificate_fingerprint_sha256'] == old_saved['certificate_fingerprint_sha256']
+                  and new['certificate_fingerprint_sha256'] == new_saved['certificate_fingerprint_sha256']
+                  and new['service_client_ids'] == V2_CLIENT_IDS,
+                  'exact activated Service intermediate transition required')
+        bundle, refs = self.require_v2_bundle(root, old, new)
+        manifest = self.obj('configmap', 'pki-service-client-crls')
+        entries = json.loads(manifest['data']['crls.json'])
+        expected = crl_entries(root, old, new)
+        m.require(entries == expected, 'recovered Service CRL manifest differs')
+        bundle_receipts = self.wait_receipts(new['issuer_id'], new['trust_bundle_version'],
+                                            r.SERVICE_CONSUMERS)
+        record = self.api('/issuers/' + new['issuer_id'] + '/crl')
+        crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
+                                         r.SERVICE_CONSUMERS, kind='crl')
+        self.verify_v2_signer(new)
+        for name in r.SERVICE_CONSUMERS:
+            owner = self.obj('deployment', name)
+            selected = [v for v in owner['spec']['template']['spec']['volumes']
+                        if v['name'] == 'service-bundles']
+            m.require(len(selected) == 1 and selected[0]['configMap']['name'] == bundle,
+                      'listener does not use recovered Service v2 bundle: ' + name)
+            self.rollout_listener_restart(name)
+        self.device_baseline()
+        self.save('intermediate-v2-active.json', new)
+        self.save('intermediate-v1-retiring.json', old)
+        self.save('intermediate-v2-crl.json', record)
+        self.check('intermediate_v2_activation_recovered', {
+            'bundle': bundle, 'references': refs, 'bundle_consumers': bundle_receipts,
+            'crl_sha256': record['crl_sha256'], 'crl_consumers': crl_receipts,
+            'crl_manifest_issuer_ids': [i['issuer_id'] for i in (root, old, new)],
+            'v1_status': 'retiring', 'v2_status': 'active',
+            'listener_restarts': r.SERVICE_CONSUMERS, 'device_baseline': 'passed',
+            'activation_replayed': False,
         })
 
     def rollout_listener_restart(self, name):
@@ -403,7 +470,7 @@ class FactoryAdoption(r.ServiceRun):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=['prepare-intermediate-v2', 'controller',
-                                           'certissuer', 'activate'],
+                                           'certissuer', 'activate', 'recover-activation'],
                         default='prepare-intermediate-v2')
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -427,7 +494,8 @@ def main():
                                      if args.resume else runner.prepare_intermediate_v2),
          'controller': runner.install_controller,
          'certissuer': runner.install_certissuer,
-         'activate': runner.activate_v2}[args.phase]()
+         'activate': runner.activate_v2,
+         'recover-activation': runner.recover_activation}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

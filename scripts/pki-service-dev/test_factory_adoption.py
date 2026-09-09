@@ -65,6 +65,14 @@ class FactoryAdoptionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'reviewed Service v1 bundle'):
             m.replacement_bundle_template(owner, 'another-bundle', 'new-bundle')
 
+    def test_crl_manifest_uses_one_private_state_path_per_authority(self):
+        root, old, new = ({'issuer_id': name} for name in ('root', 'old', 'new'))
+        entries = m.crl_entries(root, old, new)
+        self.assertEqual([entry['issuer']['issuer_id'] for entry in entries],
+                         ['root', 'old', 'new'])
+        self.assertEqual(entries[-1]['state_path'],
+                         '/var/lib/pki-host/identity/crls/new.json')
+
 
 if __name__ == '__main__':
     unittest.main()
