@@ -242,7 +242,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
 | Factory enrollment → certissuer/controller | Factory owns the registered Service identity for issuer requests and CRL acknowledgments. | Dev adoption, renewal, old-leaf retirement, real held-socket cutoff, successor survival, restart and factory/Device/MQTT canaries passed. Its old bootstrap and the formerly shared legacy CA are removed. |
 | Account Manager → certissuer | Account Manager sends the single App issuance route through its existing private `pkimanagement` socket. The owner uses the same managed `service:account-manager` identity and certissuer client it already maintains. | Live dev issuance, exact caller audit, old-leaf denial and legacy Secret/CA removal passed. Remaining Account Manager listener/caller and broader lifecycle work stays under T7. |
-| API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
+| API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. The local `pkimanagement` owner can terminate a separate managed Account Manager mTLS listener with exact caller/route ACLs and a loopback upstream. | Dev listener rollout, API/factory managed caller adoption, receipts, server/client replacement and revocation evidence. |
 | Controller / certissuer → OpenBao | Both live workload constructions support registry-backed transport; recovery commands deliberately use separate restore trust. | Governed OpenBao TLS host renewal and root-policy adoption, actual dev transport replacement/denial. Recovery commands remain in the recovery milestone. |
 | API / log ingester → EMQX | Independent MQTT server registry verification, CRL receipts and connection eviction locally; native `emqxpkihost` owns keys and replacement. Device MQTT auth/ACL/session worker passed in dev. | Governed MQTT server-host and client rollout, root-policy adoption, actual authenticated reconnect/session behavior. |
 | App clients → API / MQTT, signaling → TURN | App registry issuance/revocation, CRL consumers and broker/TURN owner adapters exist locally. Device-only dynamic root installation does not implement App root changes. | App root-policy installation, full App/relay dev revocation and renewal with selective active-session cutoff and failure/restart evidence. |
@@ -1758,3 +1758,42 @@ T7 remains open for the Account Manager listener and API/factory callers plus
 their lifecycle evidence. Fixed milestone accounting therefore remains
 **22/40 = 55%**, with **18 checkpoints open**. Staging, MFA, PR creation and remote
 CI were not changed or triggered.
+
+### Account Manager internal Service listener design (2026-09-09)
+
+The internal server belongs to the existing `pkimanagement` owner. Account
+Manager continues serving its current public/user HTTP path and keeps human login
+logic unchanged. The owner terminates a second, cluster-internal mTLS listener,
+stores its server key in a distinct file on the retained Account PKI volume and
+proxies to Account Manager over a fixed loopback HTTP origin. This keeps private
+server credentials and renewal out of the login process without adding another
+daemon or identity manager.
+
+The listener admits only current registered Service chains under the pinned
+Service root. Its application ACL is fixed in code: `service:video-cloud-api`
+may call only `POST /v1/internal/app-token-authorizations`; and
+`service:factory-enroll` may call only the factory enrollment reserve, lookup,
+cancel and canonical reservation-result routes. Both callers must still send
+their existing dedicated Bearer token, which Account Manager validates. Query
+strings, redirects, upgrades, encoded/noncanonical paths, other methods, headers
+and oversized bodies are denied. Public ingress and browser traffic never use
+this listener.
+
+The server leaf uses the exact internal Account Manager DNS name and the Service
+server issuer. Its one-time seed chain/key are removed after state-backed restart.
+Renewal uses the already managed `service:account-manager` client, so no new
+static renewal key is introduced. SIGHUP rotates that client first and then the
+server leaf. The existing `ServiceListener` and `ServerHost` owners provide
+registry admission, periodic connection sweeps, installed bundle/CRL receipts,
+local-server validity checks and replacement eviction. The outbound client and
+inbound server retain separate state files.
+
+Local implementation is Video Cloud `3b9c63f` in the existing `pkimanagement`
+package and reuses
+the existing API/factory verified clients. T7 does not close until dev has a
+dedicated internal Service, a server authority/DNS policy, managed API and factory
+callers, actual receipts, seed removal, restart, early renewal, old-leaf denial,
+held-connection cutoff and unchanged Device/login canaries. Service v2 currently
+lacks `service:video-cloud-api`; add that caller through a reviewed successor
+intermediate instead of widening the active policy in place. Fixed milestone
+accounting remains **22/40 = 55%** until those live exit criteria pass.
