@@ -1050,6 +1050,20 @@ cases:
       title: builds devices URLs with supported filters only
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#classifies%20unknown%20paths%20as%20not%20found
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: classifies unknown paths as not found
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/routes.test.mjs#classifies%20unknown%20platform%20paths%20as%20not%20found
+      module: cloud-admin-web
+      language: javascript
+      source: src/routes.test.mjs
+      title: classifies unknown platform paths as not found
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#cloud%20switch%20keeps%20an%20authorized%20feature%20and%20falls%20back%20to%20overview%20otherwise
       module: cloud-admin-web
       language: javascript
@@ -1077,14 +1091,18 @@ cases:
       source: src/routes.test.mjs
       title: falls back unknown paths to the customer overview route
       owner: rtk_cloud_admin
-      status: active
+      status: retired
+      retired_at: "2026-09-09"
+      reason: Replaced by explicit not-found route coverage.
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#falls%20back%20unknown%20platform%20paths%20inside%20Platform%20View
       module: cloud-admin-web
       language: javascript
       source: src/routes.test.mjs
       title: falls back unknown platform paths inside Platform View
       owner: rtk_cloud_admin
-      status: active
+      status: retired
+      retired_at: "2026-09-09"
+      reason: Replaced by explicit not-found route coverage.
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#maps%20Brand%20Cloud%20membership%20invitation%20acceptance%20outside%20regular%20console%20navigation
       module: cloud-admin-web
       language: javascript
