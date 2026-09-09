@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import sys
 import uuid
@@ -47,6 +48,21 @@ def select_v1(items, root):
     return issuer
 
 
+def bundle_references(root, old, new):
+    return [{'issuer_id': i['issuer_id'], 'trust_bundle_version': i['trust_bundle_version']}
+            for i in (root, old, new)]
+
+
+def replacement_bundle_template(owner, old_name, new_name):
+    template = json.loads(json.dumps(owner['spec']['template']))
+    volumes = template['spec']['volumes']
+    selected = [v for v in volumes if v['name'] == 'service-bundles']
+    m.require(len(selected) == 1 and selected[0].get('configMap', {}).get('name') == old_name,
+              'listener is not using the reviewed Service v1 bundle')
+    selected[0]['configMap']['name'] = new_name
+    return template
+
+
 class FactoryAdoption(r.ServiceRun):
     def __init__(self, args):
         m.Acceptance.__init__(self, args.config_root, 'lke649805-ctx', args.output,
@@ -54,7 +70,7 @@ class FactoryAdoption(r.ServiceRun):
         self.args = args
         self.report['foundation_scope'] = 'Existing dev Service Root/v1; factory Service client adoption'
         self.report['checks'] = {}
-        self.report['phase'] = 'prepare-intermediate-v2'
+        self.report['phase'] = args.phase
         self.report['factory_adoption_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
@@ -189,27 +205,229 @@ class FactoryAdoption(r.ServiceRun):
             'private_key_exported': False,
         })
 
+    def ready_v2(self):
+        root = self.active_root()
+        source = Path(self.args.prepared)
+        m.require(m.read(source / 'report.json')['status'] == 'passed',
+                  'successful Service intermediate v2 preparation required')
+        old = m.read(source / 'intermediate-v1.json')
+        new = m.read(source / 'intermediate-ready.json')
+        operation = m.read(source / 'intermediate-operation.json')
+        m.require(self.api('/issuers/' + old['issuer_id']) == old and old['status'] == 'active',
+                  'Service intermediate v1 changed before v2 activation')
+        current = self.api('/issuers/' + new['issuer_id'])
+        m.require(current == new and new['status'] == 'ready'
+                  and new['parent_issuer_id'] == root['issuer_id']
+                  and new['issuer_version'] == old['issuer_version'] + 1
+                  and new['service_client_ids'] == V2_CLIENT_IDS
+                  and new['server_dns_names'] == r.SERVICE_DNS_NAMES
+                  and operation['issuer_id'] == new['issuer_id'],
+                  'ready Service intermediate v2 evidence changed')
+        return root, old, new, operation
+
+    def old_bundle_name(self, old):
+        name = 'pki-service-bundles-' + old['issuer_id'][:8]
+        manifest = self.obj('configmap', name)
+        expected = [{'issuer_id': i['issuer_id'], 'trust_bundle_version': i['trust_bundle_version']}
+                    for i in (self.api('/issuers/' + old['parent_issuer_id']), old)]
+        m.require(manifest.get('immutable') and json.loads(manifest['data']['issuers.json']) == expected,
+                  'existing Service v1 bundle differs')
+        return name
+
+    def v2_bundle_name(self, new):
+        return 'pki-service-bundles-v2-' + new['issuer_id'][:8]
+
+    def install_listener_bundle(self, name, old_name, new_name):
+        owner = self.obj('deployment', name)
+        m.require(owner['spec']['replicas'] == 1, 'expected one dev listener replica')
+        template = replacement_bundle_template(owner, old_name, new_name)
+        self.observed_patch('deployment', name, owner, [
+            {'op': 'test', 'path': '/spec/template/spec/volumes',
+             'value': owner['spec']['template']['spec']['volumes']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template},
+        ])
+        self.kube(['-n', r.NS, 'rollout', 'status', 'deployment/' + name,
+                   '--timeout=300s'], timeout=310)
+
+    def install_controller(self):
+        root, old, new, operation = self.ready_v2()
+        old_name, new_name = self.old_bundle_name(old), self.v2_bundle_name(new)
+        refs = bundle_references(root, old, new)
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': new_name, 'namespace': r.NS},
+                     'immutable': True, 'data': {'issuers.json': json.dumps(refs)}})
+        self.install_listener_bundle('pki-controller', old_name, new_name)
+        receipts = self.wait_receipts(new['issuer_id'], new['trust_bundle_version'],
+                                     ['pki-controller'], absent='certissuer')
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        m.require(self.api('/issuers/' + old['issuer_id']) == old
+                  and self.api('/issuers/' + new['issuer_id']) == new,
+                  'authority changed during controller-only installation')
+        self.device_baseline()
+        self.check('intermediate_v2_controller_receipt', {
+            'bundle': new_name, 'references': refs, 'consumers': receipts,
+            'certissuer_absent': True, 'activation_denied': 409,
+            'v1_still_active': True,
+        })
+
+    def require_v2_bundle(self, root, old, new):
+        name = self.v2_bundle_name(new)
+        manifest = self.obj('configmap', name)
+        refs = bundle_references(root, old, new)
+        m.require(manifest.get('immutable') and json.loads(manifest['data']['issuers.json']) == refs,
+                  'Service v2 bundle differs')
+        return name, refs
+
+    def install_certissuer(self):
+        root, old, new, operation = self.ready_v2()
+        old_name = self.old_bundle_name(old)
+        new_name, refs = self.require_v2_bundle(root, old, new)
+        controller = self.obj('deployment', 'pki-controller')
+        selected = [v for v in controller['spec']['template']['spec']['volumes']
+                    if v['name'] == 'service-bundles']
+        m.require(len(selected) == 1 and selected[0]['configMap']['name'] == new_name,
+                  'controller has not retained the Service v2 bundle')
+        self.wait_receipts(new['issuer_id'], new['trust_bundle_version'],
+                           ['pki-controller'], absent='certissuer')
+        self.install_listener_bundle('certissuer', old_name, new_name)
+        receipts = self.wait_receipts(new['issuer_id'], new['trust_bundle_version'],
+                                     r.SERVICE_CONSUMERS)
+
+        policies = m.read(Path(self.args.prepared) / 'provider-policies.json')
+        role = 'certissuer-pki-dev'
+        self.save('certissuer-role-before.json',
+                  json.loads(self.bao(['read', '-format=json', 'auth/kubernetes/role/' + role]))['data'])
+        self.role_policy(role, 'pki-service-server-dev-v2-' + new['issuer_id'],
+                         policies['signer_policy'])
+        self.role_policy(role, 'pki-service-client-dev-v2-' + new['issuer_id'],
+                         policies['service_client_signer_policy'])
+        self.verify_v2_signer(new)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        m.require(self.api('/issuers/' + old['issuer_id']) == old
+                  and self.api('/issuers/' + new['issuer_id']) == new,
+                  'authority changed before reviewed activation')
+        self.device_baseline()
+        self.check('intermediate_v2_listener_receipts_and_signer', {
+            'bundle': new_name, 'references': refs, 'consumers': receipts,
+            'v2_server_and_service_client_signing_only': True,
+            'activation_still_separate': True, 'v1_still_active': True,
+        })
+
+    def verify_v2_signer(self, issuer):
+        keys = json.loads(self.bao(['list', '-format=json', issuer['signer_reference'] + '/keys']))
+        m.require(len(keys) == 1, 'Service intermediate v2 key count changed')
+        account = self.obj('deployment', 'certissuer')['spec']['template']['spec']['serviceAccountName']
+        m.require(account, 'certissuer ServiceAccount missing')
+        jwt = self.kube(['-n', r.NS, 'create', 'token', account,
+                         '--audience=openbao', '--duration=10m']).strip()
+        login = json.loads(self.bao(['write', '-format=json', 'auth/kubernetes/login', '-'],
+                                   json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+        token = login['auth']['client_token']
+        try:
+            for path in ('sign/server', 'sign/service-client', 'key/' + keys[0],
+                         'roles/server', 'roles/service-client',
+                         'intermediate/generate/internal'):
+                result = json.loads(self.bao(['write', '-format=json', 'sys/capabilities', '-'],
+                                             json.dumps({'token': token, 'paths': [
+                                                 issuer['signer_reference'] + '/' + path]})))
+                expected = ['update'] if path in ('sign/server', 'sign/service-client') else ['deny']
+                m.require(result['data']['capabilities'] == expected,
+                          'certissuer v2 provider capability differs: ' + path)
+        finally:
+            self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
+        for role_name, expected_names in (
+                ('server', r.SERVICE_DNS_NAMES), ('service-client', V2_CLIENT_IDS)):
+            data = json.loads(self.bao(['read', '-format=json',
+                                        issuer['signer_reference'] + '/roles/' + role_name]))['data']
+            m.require(data['allowed_domains'] == expected_names
+                      and data['key_type'] == 'ec' and data['key_bits'] == 256
+                      and data['client_flag'] is (role_name == 'service-client')
+                      and data['server_flag'] is (role_name == 'server')
+                      and data['key_usage'] == ['DigitalSignature']
+                      and data['require_cn'] and data['allow_bare_domains']
+                      and not data['allow_any_name'] and not data['allow_subdomains']
+                      and not data['allow_glob_domains'] and not data['allow_ip_sans']
+                      and not data['use_csr_common_name'] and not data['use_csr_sans'],
+                      'Service intermediate v2 provider role differs: ' + role_name)
+            self.save('provider-role-' + role_name + '.json', data)
+
+    def activate_v2(self):
+        root, old, new, operation = self.ready_v2()
+        bundle, refs = self.require_v2_bundle(root, old, new)
+        for name in r.SERVICE_CONSUMERS:
+            owner = self.obj('deployment', name)
+            selected = [v for v in owner['spec']['template']['spec']['volumes']
+                        if v['name'] == 'service-bundles']
+            m.require(len(selected) == 1 and selected[0]['configMap']['name'] == bundle,
+                      'listener does not use Service v2 bundle: ' + name)
+        receipts = self.wait_receipts(new['issuer_id'], new['trust_bundle_version'],
+                                     r.SERVICE_CONSUMERS)
+        self.verify_v2_signer(new)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 204)
+        current_new = self.api('/issuers/' + new['issuer_id'])
+        current_old = self.api('/issuers/' + old['issuer_id'])
+        m.require(current_new['status'] == 'active' and current_old['status'] == 'retiring'
+                  and current_new['certificate_fingerprint_sha256'] == new['certificate_fingerprint_sha256']
+                  and current_old['certificate_fingerprint_sha256'] == old['certificate_fingerprint_sha256'],
+                  'Service intermediate activation transition differs')
+        provider = json.loads(self.bao(['read', '-format=json',
+                                        new['signer_reference'] + '/cert/crl']))
+        record = self.api('/issuers/' + new['issuer_id'] + '/crl',
+                          {'crl_pem': provider['data']['certificate']})
+        crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
+                                         r.SERVICE_CONSUMERS, kind='crl')
+        for name in r.SERVICE_CONSUMERS:
+            self.rollout_listener_restart(name)
+        self.device_baseline()
+        self.save('intermediate-v2-active.json', current_new)
+        self.save('intermediate-v1-retiring.json', current_old)
+        self.save('intermediate-v2-crl.json', record)
+        self.check('intermediate_v2_active_with_crl', {
+            'bundle': bundle, 'references': refs, 'bundle_consumers': receipts,
+            'crl_sha256': record['crl_sha256'], 'crl_consumers': crl_receipts,
+            'v1_status': 'retiring', 'v2_status': 'active',
+            'listener_restarts': r.SERVICE_CONSUMERS, 'device_baseline': 'passed',
+        })
+
+    def rollout_listener_restart(self, name):
+        owner = self.obj('deployment', name)
+        annotations = dict(owner['spec']['template']['metadata'].get('annotations', {}))
+        annotations['rtk.cloud/pki-service-v2'] = uuid.uuid4().hex
+        self.observed_patch('deployment', name, owner, [
+            {'op': 'add', 'path': '/spec/template/metadata/annotations', 'value': annotations},
+        ])
+        self.kube(['-n', r.NS, 'rollout', 'status', 'deployment/' + name,
+                   '--timeout=300s'], timeout=310)
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--phase', choices=['prepare-intermediate-v2', 'controller',
+                                           'certissuer', 'activate'],
+                        default='prepare-intermediate-v2')
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--authority', required=True)
+    parser.add_argument('--prepared')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
-    args.phase, args.image, args.activation, args.intermediate = (
-        'prepare-intermediate-v2', None, None, None)
+    args.image, args.activation, args.intermediate = None, None, None
+    m.require(args.phase == 'prepare-intermediate-v2' or args.prepared,
+              'successful v2 preparation evidence required')
+    m.require(not args.resume or args.phase == 'prepare-intermediate-v2',
+              'resume is limited to v2 preparation')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = FactoryAdoption(args)
     try:
         runner.preflight()
-        if args.resume:
-            runner.resume_approved_intermediate()
-        else:
-            runner.prepare_intermediate_v2()
+        {'prepare-intermediate-v2': (runner.resume_approved_intermediate
+                                     if args.resume else runner.prepare_intermediate_v2),
+         'controller': runner.install_controller,
+         'certissuer': runner.install_certissuer,
+         'activate': runner.activate_v2}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

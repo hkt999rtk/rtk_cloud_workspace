@@ -45,6 +45,26 @@ class FactoryAdoptionTests(unittest.TestCase):
                           204, 'approver'))
         self.assertEqual(runner.api.call_count, 2)
 
+    def test_bundle_transition_is_additive_and_exact(self):
+        root = {'issuer_id': 'root', 'trust_bundle_version': 'a' * 64}
+        old = {'issuer_id': 'old', 'trust_bundle_version': 'b' * 64}
+        new = {'issuer_id': 'new', 'trust_bundle_version': 'c' * 64}
+        self.assertEqual(m.bundle_references(root, old, new), [
+            {'issuer_id': 'root', 'trust_bundle_version': 'a' * 64},
+            {'issuer_id': 'old', 'trust_bundle_version': 'b' * 64},
+            {'issuer_id': 'new', 'trust_bundle_version': 'c' * 64},
+        ])
+        owner = {'spec': {'template': {'spec': {'volumes': [
+            {'name': 'other', 'emptyDir': {}},
+            {'name': 'service-bundles', 'configMap': {'name': 'old-bundle'}},
+        ]}}}}
+        updated = m.replacement_bundle_template(owner, 'old-bundle', 'new-bundle')
+        self.assertEqual(updated['spec']['volumes'][0], owner['spec']['template']['spec']['volumes'][0])
+        self.assertEqual(updated['spec']['volumes'][1]['configMap']['name'], 'new-bundle')
+        self.assertEqual(owner['spec']['template']['spec']['volumes'][1]['configMap']['name'], 'old-bundle')
+        with self.assertRaisesRegex(RuntimeError, 'reviewed Service v1 bundle'):
+            m.replacement_bundle_template(owner, 'another-bundle', 'new-bundle')
+
 
 if __name__ == '__main__':
     unittest.main()

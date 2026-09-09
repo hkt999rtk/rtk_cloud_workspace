@@ -45,3 +45,27 @@ The following phases will install additive Root/v1/v2 trust, activate v2 with
 both real listener receipts, seed the factory-owned PVC, switch factoryenroll,
 qualify early renewal, revoke the static bootstrap leaf and remove its unused
 Secret. Keep v1 trusted while its still-valid listener leaves remain.
+
+Install the additive bundle one listener at a time, then activate in a separate
+phase. Each command requires a new private output directory:
+
+```sh
+python3 scripts/pki-service-dev/factory_adoption.py --phase controller \
+  --authority SERVICE_ROOT_EVIDENCE --prepared V2_PREPARATION_EVIDENCE \
+  --output NEW_CONTROLLER_EVIDENCE
+python3 scripts/pki-service-dev/factory_adoption.py --phase certissuer \
+  --authority SERVICE_ROOT_EVIDENCE --prepared V2_PREPARATION_EVIDENCE \
+  --output NEW_CERTISSUER_EVIDENCE
+python3 scripts/pki-service-dev/factory_adoption.py --phase activate \
+  --authority SERVICE_ROOT_EVIDENCE --prepared V2_PREPARATION_EVIDENCE \
+  --output NEW_ACTIVATION_EVIDENCE
+```
+
+The controller phase creates one immutable manifest containing Root, v1 and v2,
+then requires controller's real receipt while certissuer remains absent and v1
+remains active. The certissuer phase installs the same object, requires both
+receipts and adds only the generated v2 server and Service-client signer policies
+to certissuer's existing OpenBao role. The activation phase rechecks exact
+workload mounts, receipts, role profiles and provider capabilities, atomically
+makes v2 active and v1 retiring, immediately imports v2's signed CRL, waits for
+both CRL receipts, restarts both listeners and runs the Device baseline.
