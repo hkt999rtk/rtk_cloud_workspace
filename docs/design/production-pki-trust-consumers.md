@@ -91,7 +91,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests and all three owner restarts have passed. Early renewal, old-leaf denial, held-connection cutoff and remaining trust-failure evidence are still required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts and API caller early renewal have passed. Factory/listener renewal, old-leaf denial, held-connection cutoff and remaining trust-failure evidence are still required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -1843,9 +1843,14 @@ cannot load the Ed25519 fixture. The runner refuses implicit owner App rotation;
 repeat runs reuse its retained key. A failed mutation must be reconciled against
 saved intent/response before another creation attempt.
 
-These are substantive T7 acceptance results, but T7 remains open for early
-renewal, old-leaf denial, held-connection cutoff and remaining trust-failure
-checks. The fixed milestone total therefore remains **22/40 = 55%**, with
+These are substantive T7 acceptance results. API early renewal is also complete:
+the managed caller uses Account Manager only for its application request and a
+separately pinned direct certissuer transport for Service credential renewal.
+The retained renewal request reconciled after a corrected restart with one new
+successful issuance, a changed leaf and public key, and the same root and
+subject; the existing factory/App caller canary passed afterwards. T7 remains
+open for factory/listener renewal, old-leaf denial, held-connection cutoff and
+remaining trust-failure checks. The fixed milestone total therefore remains **22/40 = 55%**, with
 **18 checkpoints unfinished**. This percentage describes this active milestone,
 not the entire multi-milestone plan. Core login logic and staging are unchanged.
 
