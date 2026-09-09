@@ -45,7 +45,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 | --- | --- | --- |
 | Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption, early renewal, replaced-leaf retirement, both listener CRL receipts and bootstrap-free restarts passed in dev. Active-session revocation and remaining failure cases still need live qualification. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
-| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed issuer server leaf and seedless restart passed in dev. Adopt managed client leaves; verify renewal, receipt gates and selective eviction. |
+| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed issuer server leaf, managed client adoption, fresh CRL receipts, client/host early renewal and seedless restarts passed in dev. Old-leaf revocation and selective active-session eviction remain. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
 | Controller / certissuer → OpenBao | Both live workload constructions support registry-backed transport; recovery commands deliberately use separate restore trust. | Governed OpenBao TLS host renewal and root-policy adoption, actual dev transport replacement/denial. Recovery commands remain in the recovery milestone. |
 | API / log ingester → EMQX | Independent MQTT server registry verification, CRL receipts and connection eviction locally; native `emqxpkihost` owns keys and replacement. Device MQTT auth/ACL/session worker passed in dev. | Governed MQTT server-host and client rollout, root-policy adoption, actual authenticated reconnect/session behavior. |
@@ -57,10 +57,11 @@ it does not own the controller's management client key. Database connections and
 provider seal/HSM custody are separate infrastructure/qualification boundaries,
 not additional Device/App identity consumers. Existing managed controller and
 certissuer server-host adapters now serve registered dev leaves and preserve
-private state across seedless restarts. Renewal/revocation acceptance remains.
+private state across seedless restarts. Both listener client and host early-renewal
+paths now pass in dev; old-leaf revocation and active-session acceptance remain.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **72%**, an engineering estimate
+Overall milestone progress is approximately **82%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -1264,3 +1265,59 @@ milestones remain: (1) trust consumers/live sessions, active; (2) matched
 backup/recovery and SDK integration; (3) provider/hardware compatibility;
 (4) staging/independent custody/recovery qualification, deferred. No Git push,
 PR, CI dispatch or staging mutation was performed in this continuation.
+
+### Managed listener client and host renewal verified in dev (2026-09-09)
+
+Video Cloud `88f9eab` exposes operator-requested early renewal for listener-owned
+identities. One `SIGHUP` is serialized by the process: it renews the installed,
+registry-admitted managed client first, evicts its owned outbound connections,
+then renews the server host with that replacement client. Both managers preserve
+their request ID, key and CSR in the private state file before the network request,
+so a lost response is retried without another issuance. Signals received while an
+operation is running are coalesced. Normal two-thirds lifetime renewal is unchanged.
+
+The maintained [listener renewal procedure](../../scripts/pki-service-dev/LISTENER_RENEWAL.md)
+records the exact Deployment/PVC owner, public client and server state, complete
+matching issuance rows and an intent before sending one signal. Recovery refuses
+owner, image, template, state or registry drift. An intent-bearing recovery never
+sends another signal. The public inspection probe runs temporarily inside the
+private identity PVC because the controller root filesystem is read-only; it emits
+only certificate, public-key, Root and state hashes and is removed afterward.
+
+The canonical dev image was built from workspace `6daa3b3` and Video Cloud
+`88f9eab`, verified as linux/amd64, and pinned on both listeners as:
+
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:9805c1393609580f214e7520e22f2d2f00bbc38e3c4a311c9cf6cfae2d0dfe4e`
+
+Private evidence is retained under
+`~/.config/rtk_cloud/dev/pki/service-listener-renewal-20260909/`. The successful
+paths are `certissuer-recovery-2`, `pki-controller-recovery-3` and `verification`.
+Earlier failed reports remain retained. The first two certissuer attempts failed
+before rollout because of stale adoption-only CRL validation and a runner helper
+reference. The first controller attempt failed before rollout because `/tmp` is
+read-only. The next attempt completed the image rollout but stopped before intent
+because the workload name differs from the PID 1 binary name. Its recovery wrote
+the first intent, renewed both identities and restarted, then lost its pod-bound
+port-forward; the final recovery recognized the completed intent/renewal/restart,
+sent no signal, established a fresh forward and completed verification.
+
+For each listener, live evidence proves exactly one new Service-client issuance
+and exactly one new Service server issuance, with changed leaf fingerprint,
+changed public key, unchanged subject/DNS scope and Root, successful unrevoked
+registry admission, no pending request and no exported key. The server endpoint
+served the replacement leaf. Both identities survived a bootstrap-free restart;
+persisted dev image/settings reproduce the live templates. The final audit and
+Device direct-mTLS plus MQTT ACL/QoS1 roundtrip passed.
+
+This completes the listener **client/host early-renewal and restart** item.
+Remaining work in this active milestone includes revoking the four replaced old
+listener leaves, publishing and installing the resulting CRLs, proving old-client
+and old-server denial with selective active-session cutoff, removing residual
+legacy trust and the two unmounted bootstrap Secrets, then adopting the remaining
+callers/hosts and Root/App/relay policies.
+
+Current milestone estimate: **82%; 1/6 work groups complete, 5 open**. Four broad
+milestones remain: (1) trust consumers/live sessions, active; (2) matched
+backup/recovery and SDK integration; (3) provider/hardware compatibility; and
+(4) staging/independent custody/recovery qualification, deferred. No PR, remote
+CI dispatch or staging mutation occurred.
