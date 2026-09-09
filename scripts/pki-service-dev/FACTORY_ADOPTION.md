@@ -86,3 +86,9 @@ python3 scripts/pki-service-dev/factory_adoption.py --phase recover-activation \
 This phase requires v1 `retiring`, v2 `active`, exact certificate fingerprints,
 the complete CRL manifest, both bundle/CRL receipts and signer boundaries. It
 restarts both listeners, runs the Device baseline and never calls activation.
+
+The dev v2 transition completed on 2026-09-09. Successful private evidence is in
+`service-factory-adoption-20260909/{v2-prepare,controller,activation-recovery-3,activation-verification-2}`.
+The active v2 is `2b98cbae-b116-4064-ab36-060951062d07`; v1 is retained as
+`retiring` because its listener leaves are still valid. Continue with the factory
+PVC/bootstrap phase. Do not rerun authority preparation or activation.

@@ -1443,3 +1443,53 @@ Current milestone estimate: **89%; 1/6 work groups complete, 5 open**. The next
 concrete task is the guarded Intermediate v2 preparation and additive listener
 trust phase, followed by factoryenroll managed-client adoption. Four broad
 milestones remain.
+
+### Service Intermediate v2 activated in dev (2026-09-09)
+
+The new Intermediate is `2b98cbae-b116-4064-ab36-060951062d07`, version 2,
+certificate fingerprint
+`b58689ecd600963ad34bd3b16db189ee9be2bcd01d4aac9ad7b413705c52f29d`.
+Its immutable policy retains the two listener DNS names and the three v1 client
+subjects, adding only `service:factory-enroll`. The existing Service Root remains
+unchanged. Provider custody checks proved one internal key while the controller
+could list the key identity but could not read/export it or invoke either leaf
+signer.
+
+Both listeners installed the same immutable Root+v1+v2 bundle and sent exact v2
+bundle receipts before activation. Certissuer's OpenBao role gained only the new
+Intermediate's exact server and Service-client sign paths; key access, role writes
+and internal key generation remain denied. Activation atomically changed v1 to
+`retiring` and v2 to `active`.
+
+The v2 CRL is number 1, digest
+`2657749f1d0688d59e4d943b3f4a24bf122714f822a26d1468ccea392bf6c0f1`,
+with next update `2026-09-12T00:36:26Z`. The separate server-CRL manifest contains
+Root, retiring v1 and active v2; both certissuer and PKI controller installed and
+acknowledged the v2 digest. Listener restarts preserved the bundle, CRL state and
+current v1-issued managed leaves. Device direct mTLS plus MQTT ACL/QoS1 passed.
+
+Private successful evidence is retained under
+`~/.config/rtk_cloud/dev/pki/service-factory-adoption-20260909/` in `v2-prepare`,
+`controller`, `activation-recovery-3` and `activation-verification-2`. Failed
+reports are retained separately. The first preparation stopped after the correct
+independent admin approval because the runner incorrectly requested a redundant
+custodian approval; recovery reused the exact operation and created no second
+authority. During certissuer installation, an erroneous post-receipt activation
+probe returned 204 because the gate was correctly satisfied. Recovery did not
+replay activation: it imported the CRL, added v2 to the distinct CRL manifest,
+obtained both receipts and completed an independent restart/baseline audit. One
+first final Device probe failed transiently; the fresh complete audit passed.
+
+The runner now models these findings: Intermediate approval uses the distinct
+admin required by policy, certissuer installation only verifies the operation is
+still ready, activation immediately imports the CRL and extends its separate
+manifest, and recovery accepts only the exact already-active transition without
+calling activation.
+
+Current milestone estimate: **93%; 2/6 work groups complete, 4 open**. The Service
+authority now permits factory enrollment without changing Root policy. Next build
+and pin the Video Cloud image containing factoryenroll's renewal signal, create
+its retained private PVC, perform the one-time managed identity bootstrap, remove
+the static client mount after a seedless restart, and qualify renewal/revocation.
+Four broad milestones remain; staging remains untouched and no PR or remote CI
+was triggered.
