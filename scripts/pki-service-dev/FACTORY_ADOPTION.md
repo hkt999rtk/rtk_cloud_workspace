@@ -99,3 +99,18 @@ certissuer requests and CRL receipt acknowledgements. Do not configure
 `FACTORY_ENROLL_CERT_ISSUER_MANAGEMENT_KEY` after adoption. The application
 validates this transport with the managed-identity rules before opening its
 private state, so a second static management key is rejected at startup.
+
+Seed the retained factory-owned PVC with the verified dev image. This phase
+temporarily permits only the existing `factoryenroll` bootstrap certificate,
+runs one non-root Pod with no ServiceAccount token, requires exactly one v2
+registry issuance and closes the provisioner policy back to `^$` even when the
+seed attempt fails:
+
+```sh
+python3 scripts/pki-service-dev/factory_identity.py --phase seed \
+  --authority SERVICE_ROOT_EVIDENCE --image VERIFIED_DEV_IMAGE_DIGEST \
+  --output NEW_PRIVATE_FACTORY_SEED_EVIDENCE
+```
+
+The completed seed Pod remains present so the adoption phase can compare its UID
+and delete that exact bootstrap owner before mounting the PVC in the Deployment.
