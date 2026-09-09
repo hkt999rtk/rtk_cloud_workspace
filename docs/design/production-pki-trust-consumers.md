@@ -19,7 +19,7 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and Account Manager certissuer egress are qualified in dev. Remaining Account Manager listener/callers, MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and Account Manager certissuer egress are qualified in dev. Account Manager's listener, its managed client, and API/factory callers now have deployment, renewal and seed-free restart evidence. Old-leaf denial, held-connection cutoff, trust failures, MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
@@ -91,7 +91,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts and API caller early renewal have passed. Factory/listener renewal, old-leaf denial, held-connection cutoff and remaining trust-failure evidence are still required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, and Account Manager client/listener early renewal have passed. Old-leaf denial, held-connection cutoff and remaining trust-failure evidence are still required. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -1849,10 +1849,31 @@ separately pinned direct certissuer transport for Service credential renewal.
 The retained renewal request reconciled after a corrected restart with one new
 successful issuance, a changed leaf and public key, and the same root and
 subject; the existing factory/App caller canary passed afterwards. T7 remains
-open for factory/listener renewal, old-leaf denial, held-connection cutoff and
-remaining trust-failure checks. The fixed milestone total therefore remains **22/40 = 55%**, with
+open for old-leaf denial, held-connection cutoff and remaining trust-failure
+checks. The fixed milestone total therefore remains **22/40 = 55%**, with
 **18 checkpoints unfinished**. This percentage describes this active milestone,
 not the entire multi-milestone plan. Core login logic and staging are unchanged.
+
+### Account Manager client and listener early renewal (2026-09-09)
+
+One targeted SIGHUP to the existing dev `pkimanagement` owner renewed its
+outbound `service:account-manager` client and its internal Account Manager
+listener. Each identity changed both leaf and public-key fingerprint, retained
+the same Service Root and expected subject, and reconciled with no pending
+request. The issuer recorded exactly one additional successful issuance for
+each identity. A TLS peer probe through the internal Service observed the new
+listener leaf, rather than merely reading the persisted state.
+
+The retained caller fixture then passed exact factory replay, positive App-token
+authorization, and both denied cases over the renewed listener. A second run
+replaced the Account Manager Pod with UID/resourceVersion preconditions; both
+managed state files retained their hashes, the Deployment returned ready, and
+the same caller checks passed. Private dev evidence is retained under
+`pki/t7-account-manager-listener-renew-20260909`; it contains public hashes and
+run reports only in the tracked summary, while certificate material and keys
+remain owner-local. This completes listener/client early renewal and seed-free
+restart evidence, not old-leaf denial, held-connection cutoff, or trust-outage
+qualification.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
