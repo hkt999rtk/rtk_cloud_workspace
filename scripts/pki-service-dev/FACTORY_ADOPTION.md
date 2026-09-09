@@ -92,3 +92,10 @@ The dev v2 transition completed on 2026-09-09. Successful private evidence is in
 The active v2 is `2b98cbae-b116-4064-ab36-060951062d07`; v1 is retained as
 `retiring` because its listener leaves are still valid. Continue with the factory
 PVC/bootstrap phase. Do not rerun authority preparation or activation.
+
+The factory runtime uses its one application-owned dynamic identity for both
+certissuer requests and CRL receipt acknowledgements. Do not configure
+`FACTORY_ENROLL_CERT_ISSUER_MANAGEMENT_CERT` or
+`FACTORY_ENROLL_CERT_ISSUER_MANAGEMENT_KEY` after adoption. The application
+validates this transport with the managed-identity rules before opening its
+private state, so a second static management key is rejected at startup.

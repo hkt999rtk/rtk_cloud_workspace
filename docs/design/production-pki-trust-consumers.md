@@ -1503,6 +1503,11 @@ managed HTTP owner to present the same dynamic identity to the CRL consumer and
 rejects configured static management certificate/key paths in that mode. Static
 HTTP consumers keep their existing complete-credential validation.
 
+The application-level validation must select those managed-identity rules too;
+otherwise the common static preflight rejects the intended keyless management
+settings before the dynamic owner is opened. Video Cloud `af68f19` makes that
+selection explicit and rejects a second static management key at startup.
+
 The dev adoption will therefore mount only public Service CA/manifests plus the
 factory-owned private PVC. The one managed identity authenticates initial/renewal
 issuance, certissuer requests and controller CRL acknowledgments. Before enabling
