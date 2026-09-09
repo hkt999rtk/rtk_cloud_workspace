@@ -9399,7 +9399,9 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
               value: %q
             - name: CLOUD_ADMIN_GRAFANA_DASHBOARD_PATH
               value: %q
-`, lkeAccountManagerInternalURL(env), "http://video-cloud-api."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeSDKPortalBaseURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env))
+            - name: PRIVACY_POLICY_URL
+              value: %q
+`, lkeAccountManagerInternalURL(env), "http://video-cloud-api."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeSDKPortalBaseURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env), lkeEnvValue(env, "PRIVACY_POLICY_URL"))
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
