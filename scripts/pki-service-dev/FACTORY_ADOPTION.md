@@ -15,7 +15,8 @@ python3 scripts/pki-service-dev/factory_adoption.py \
 ```
 
 The runner requires the exact active v1 policy, refuses another unfinished
-Intermediate transition, obtains both ordinary-login approvals, provisions one
+Intermediate transition, obtains an ordinary-login approval from a `pki_admin`
+distinct from the requester, provisions one
 new internal OpenBao key, verifies that the controller cannot read or sign with
 it, and offline-signs its CSR with the existing dev-simulation Root key. The v2
 policy retains the three current client subjects, adds only
@@ -27,6 +28,18 @@ runner does not change a Deployment, listener trust bundle, signer role, factory
 key, Secret or PVC. Continue only from the successful private preparation
 evidence. Never rerun into a new directory after an uncertain failure: inspect
 the saved operation, issuer, provider mount and controller role first.
+
+If the first run stopped after the independent admin approval but before saving
+provider policy or provisioning the key, resume that exact evidence directory:
+
+```sh
+python3 scripts/pki-service-dev/factory_adoption.py \
+  --authority SERVICE_ROOT_EVIDENCE \
+  --output EXISTING_FAILED_V2_PREPARATION_EVIDENCE --resume
+```
+
+Recovery requires the exact saved request, approved operation, unchanged active
+v1 and absent provider mount. It cannot create or approve another operation.
 
 The following phases will install additive Root/v1/v2 trust, activate v2 with
 both real listener receipts, seed the factory-owned PVC, switch factoryenroll,

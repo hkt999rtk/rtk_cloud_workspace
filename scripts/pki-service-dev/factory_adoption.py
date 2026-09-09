@@ -49,7 +49,11 @@ def select_v1(items, root):
 
 class FactoryAdoption(r.ServiceRun):
     def __init__(self, args):
-        super().__init__(args)
+        m.Acceptance.__init__(self, args.config_root, 'lke649805-ctx', args.output,
+                              resume='ready' if args.resume else False)
+        self.args = args
+        self.report['foundation_scope'] = 'Existing dev Service Root/v1; factory Service client adoption'
+        self.report['checks'] = {}
         self.report['phase'] = 'prepare-intermediate-v2'
         self.report['factory_adoption_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
@@ -83,7 +87,7 @@ class FactoryAdoption(r.ServiceRun):
         operation = self.api('/operations', request,
                              key='dev-service-intermediate-v2-' + uuid.uuid4().hex)
         self.save('intermediate-operation.json', operation)
-        self.approval(operation)
+        self.approve_intermediate(operation)
         issuer = self.api('/issuers/' + operation['issuer_id'])
         m.require(issuer['status'] == 'approved' and issuer['signer_provider'] == 'openbao'
                   and issuer['issuer_version'] == old['issuer_version'] + 1,
@@ -91,6 +95,48 @@ class FactoryAdoption(r.ServiceRun):
         m.require(issuer['signer_reference'] + '/' not in
                   json.loads(self.bao(['secrets', 'list', '-format=json'])),
                   'Service intermediate v2 provider mount already exists; reconcile')
+
+        self.provision_and_sign(root, old, operation, issuer)
+
+    def approve_intermediate(self, operation):
+        path = '/operations/' + operation['operation_id']
+        self.api(path + '/approvals', {
+            'request_sha256': operation['request_sha256'], 'role': 'pki_admin'},
+            204, 'approver')
+        approved = self.api(path)
+        m.require(approved['status'] == 'approved'
+                  and approved['operation_id'] == operation['operation_id']
+                  and approved['request_sha256'] == operation['request_sha256'],
+                  'independent Intermediate approval not recorded')
+        return approved
+
+    def resume_approved_intermediate(self):
+        root = self.active_root()
+        request = m.read(self.output / 'intermediate-request.json')
+        operation = m.read(self.output / 'intermediate-operation.json')
+        old = m.read(self.output / 'intermediate-v1.json')
+        m.require(request == v2_request(root), 'saved Service intermediate v2 request changed')
+        m.require(self.api('/issuers/' + old['issuer_id']) == old and old['status'] == 'active',
+                  'Service intermediate v1 changed during recovery')
+        current_operation = self.api('/operations/' + operation['operation_id'])
+        m.require(current_operation['operation_id'] == operation['operation_id']
+                  and current_operation['issuer_id'] == operation['issuer_id']
+                  and current_operation['request_sha256'] == operation['request_sha256']
+                  and current_operation['status'] == 'approved',
+                  'saved approved v2 operation differs')
+        issuer = self.api('/issuers/' + operation['issuer_id'])
+        m.require(issuer['status'] == 'approved' and issuer['parent_issuer_id'] == root['issuer_id']
+                  and issuer['service_client_ids'] == V2_CLIENT_IDS
+                  and issuer['server_dns_names'] == r.SERVICE_DNS_NAMES,
+                  'approved Service intermediate v2 differs during recovery')
+        m.require(not (self.output / 'provider-policies.json').exists()
+                  and issuer['signer_reference'] + '/' not in
+                  json.loads(self.bao(['secrets', 'list', '-format=json'])),
+                  'recovery is limited to the pre-provision approval failure')
+        self.report['reconciled_from'] = str(self.output)
+        self.provision_and_sign(root, old, current_operation, issuer)
+
+    def provision_and_sign(self, root, old, operation, issuer):
 
         policies = json.loads(self.kube(['-n', r.NS, 'exec', 'deployment/pki-controller', '--',
                                          '/app/pkicontroller', 'render-openbao-policy', issuer['issuer_id']]))
@@ -150,6 +196,7 @@ def main():
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--authority', required=True)
+    parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     args.phase, args.image, args.activation, args.intermediate = (
         'prepare-intermediate-v2', None, None, None)
@@ -159,7 +206,10 @@ def main():
     runner = FactoryAdoption(args)
     try:
         runner.preflight()
-        runner.prepare_intermediate_v2()
+        if args.resume:
+            runner.resume_approved_intermediate()
+        else:
+            runner.prepare_intermediate_v2()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import Mock
 
 
 spec = importlib.util.spec_from_file_location('factory_adoption', Path(__file__).with_name('factory_adoption.py'))
@@ -31,6 +32,18 @@ class FactoryAdoptionTests(unittest.TestCase):
         pending = dict(issuer, status='ready', issuer_id='v2')
         with self.assertRaisesRegex(RuntimeError, 'transition already exists'):
             m.select_v1([issuer, pending], root)
+
+    def test_intermediate_approval_uses_one_independent_admin(self):
+        runner = object.__new__(m.FactoryAdoption)
+        operation = {'operation_id': 'operation', 'request_sha256': 'a' * 64}
+        approved = dict(operation, issuer_id='issuer', status='approved')
+        runner.api = Mock(side_effect=[None, approved])
+        self.assertEqual(runner.approve_intermediate(operation), approved)
+        self.assertEqual(runner.api.call_args_list[0].args,
+                         ('/operations/operation/approvals',
+                          {'request_sha256': 'a' * 64, 'role': 'pki_admin'},
+                          204, 'approver'))
+        self.assertEqual(runner.api.call_count, 2)
 
 
 if __name__ == '__main__':

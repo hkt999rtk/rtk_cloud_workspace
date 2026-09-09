@@ -1416,7 +1416,8 @@ Root. Its approved policy retains all three current client subjects, adds only
 `service:factory-enroll`, and retains the two current listener DNS names. The
 transition must:
 
-1. create, independently approve, provision and offline-sign the new Intermediate;
+1. create, obtain approval from a `pki_admin` distinct from the requester,
+   provision and offline-sign the new Intermediate;
 2. publish a valid CRL and install additive old-plus-new Intermediate trust on
    certissuer and PKI controller before activation;
 3. require exact receipts from both listeners, then atomically activate v2 while
