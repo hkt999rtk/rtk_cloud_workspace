@@ -5,320 +5,130 @@ not required for present milestone acceptance. Devices use certificate/key
 authentication and never human MFA. Earlier MFA references below are historical;
 role checks, independent approvals and custody/recovery evidence remain required.
 
-## Current status: four reporting areas remain (2026-09-08)
+## Current scope and sources of truth
 
-Fresh dev PKI lifecycle acceptance is **complete (100%, zero remaining items)**.
-The uninterrupted run of committed tool `4ee0c2f` passed all 12 checks, and the
-independent five-item [completion audit](production-pki-dev-acceptance-completion.md)
-verified the current foundation, runtime, registry, provider and cleanup state.
+Four broad milestones remain: trust consumers/live sessions (active);
+backup/recovery and SDK integration; provider/hardware compatibility; and
+staging/custody/recovery qualification (deferred). The fresh dev Device milestone
+is complete according to its [five-item completion audit](production-pki-dev-acceptance-completion.md).
+Legacy-data migration is not required for dev; no MFA feature is part of current
+acceptance. Preserve ordinary human login and distinct approval roles.
 
-The four unfinished areas are:
+The [current trust-consumer acceptance table](production-pki-trust-consumers.md#current-acceptance-status-2026-09-09-scope-review)
+is the sole current progress record. The ledger and dated checkpoints below are
+historical evidence, not competing plans or completion counters.
 
-1. Other trust consumers/live sessions — active; [fixed work groups](production-pki-trust-consumers.md).
-2. Backup/recovery and SDK integration.
-3. Provider/hardware compatibility.
-4. Staging/custody/recovery qualification — deferred.
+| Document | Responsibility |
+| --- | --- |
+| [Platform PKI contract](../../repos/rtk_cloud_contracts_doc/platform_pki.md) | Normative hierarchy, identity domains and key-custody boundaries. |
+| [Implementation ledger](production-pki-implementation.md) | Original implementation decisions and dated source/test evidence. |
+| [Trust-consumer plan](production-pki-trust-consumers.md) | Fixed active acceptance groups, current statuses and immediate execution order. |
+| This scope audit | Scope decisions and limitations; references historical evidence without duplicating it. |
+| [Dev Service runbooks](../../scripts/pki-service-dev/README.md) | Phase-specific operational preconditions and recovery; not production deployment tooling or proof of completion. |
 
-Legacy fleet migration remains deferred under the user's dev-scope correction.
-MFA remains optional future human login only. The dated checkpoints below are
-historical and do not change this current remaining count.
+## Scope review completion (2026-09-09)
 
-Certissuer/controller now serve governed Service leaves from private persistent
-managed state and passed seedless restart. Fresh factory enrollment, Device mTLS
-and MQTT ACL/QoS1 passed. See the
-[managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint)
-for recovery evidence and remaining lifecycle limits. Managed Account Manager
-egress now passes initial dev adoption and bootstrap removal.
+The requested bounded review is complete: inventory/classification, requirement
+mapping, duplicate-document consolidation and progress reconciliation (4/4).
+This closes the review work package, not the trust-consumer milestone. It is a
+scope review, not a line-by-line correctness or security certification.
 
-Current trust-consumer progress: approximately 50%, with inventory complete
-(1/6 work groups) and 5 work groups remaining. Video Cloud `9134882` adds local
-controller Service management admission and eviction; `8baa0e3` adds per-domain
-consumer permissions, completion gates and CRL worker selection. `a857a1f` adds
-actual serving-listener Service bundle receipts, ready-CA bootstrap and reviewed
-leaf membership checks. Local PostgreSQL/mTLS integration, focused race tests
-and vet passed. Account Manager `41f1294` and Video Cloud `72a9ccf` implement
-managed Account Manager egress through a private socket, with issuance/retry,
-renewal, revocation and restart tests. Other managed consumers, durable CRL
-adoption and live Service qualification remain open; see the active plan for
-the exact evidence.
+### Measured change surface
 
-The [Account Manager checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-account-manager-credential-checkpoint)
-records private key ownership, real human-asserted PKI calls, bootstrap-free
-restart, rejected bootstrap credential and Device mTLS/MQTT evidence. Next:
-Service CRL freshness/refresh recovery, credential renewal/revocation and actual
-installed-CRL receipts. Other callers and transport owners remain open.
+Snapshot: workspace `38d50a5`, base `414aa0b8`. Submodule comparisons use
+the old/new gitlinks in that workspace diff, not each repository's local main.
+Counts below include implementation, deployment, tests and documentation.
 
-Live dev now has an active independent Service Root, actual controller/certissuer
-bundle receipts and Root CRL 1. Missing receipts blocked activation; Device
-mTLS/MQTT baseline and final runtime/configuration checks passed. See the
-[Root checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-root-checkpoint)
-for CRL expiry, the reconciled import failure and scope. The subsequent
-[Service intermediate checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-intermediate-checkpoint)
-passed all four phases: provider internal key/CSR, real listener receipts with
-missing-consumer activation denial, activation/CRL import and Device baseline.
-Governed server credentials and managed Account Manager rollout remain open.
+| Repository | Changed files | Added lines | Removed lines |
+| --- | ---: | ---: | ---: |
+| Workspace (including six gitlink entries) | 114 | 27,520 | 32 |
+| Video Cloud | 386 | 49,374 | 477 |
+| Cloud Client | 141 | 21,405 | 407 |
+| Account Manager | 33 | 2,237 | 19 |
+| Ameba WebRTC | 42 | 1,664 | 194 |
+| Cloud Admin | 16 | 815 | 16 |
+| Contracts | 9 | 183 | 60 |
+
+Earlier local-main comparisons were preliminary and missed some gitlink changes.
+These are cumulative branch differences, not files created by the current review,
+and do not attribute every inherited change to PKI work.
+
+Workspace additions comprise 14,052 documentation lines, 4,703 test lines and
+5,779 dev acceptance/probe lines: approximately 89% supporting material by path
+classification. Video Cloud additions comprise 23,096 test lines (47%), 4,163
+documentation lines (8%) and 22,115 implementation/deployment lines (45%).
+The latter category includes configuration and command adapters; it is not a
+measurement of core business logic. Cross-platform SDK tests need language-aware
+classification; no aggregate claim that the entire branch is mostly tests is made.
+
+### Scope decisions
+
+| Change family | Decision and reason |
+| --- | --- |
+| Registry, approved issuer policy, key ownership, issuance/renewal/revocation, caller adapters | Keep: these implement the design's actual identity and custody boundaries. Prefer the existing shared identity/transport owners when finishing integrations. |
+| Negative, restart, response-loss and active-session tests | Keep: these verify distinct failure behavior; reducing file count alone is not a reason to remove them. |
+| Dev acceptance/bootstrap/recovery scripts | Keep within dev operations; keep phase-specific guards outside request handlers and ordinary login. Reuse existing helpers; do not build a generic deployment framework for this work. |
+| Matched backup/recovery and SDK lifecycle work | Retain implemented work under its existing milestone. Do not count it as complete dev trust-consumer acceptance or expand it while closing the factory package. |
+| Provider/hardware, staging qualification and legacy fleet migration | Retain historical/local work; live qualification is deferred to the corresponding scope. No dev legacy-data migration or database reset is needed for this review. |
+| Repeated status narratives | Consolidate: 58 exact duplicate sections occupied 1,956 lines in this audit. Keep their headings/anchors, replace bodies with links to the original ledger and retain unique evidence. |
+| Core business logic and login | Keep simple: reuse one managed identity and transport owner per workload, preserve current human login, and keep optional future MFA outside this milestone. Do not create parallel core flows to satisfy test harnesses. |
+
+### Corrections and next execution boundary
+
+- **Internal inconsistency:** 50%, 88%, 93% and 95% were presented as current
+  progress without a stable denominator. Current reporting uses the six original
+  acceptance groups; only inventory is fully closed. Service v2 activation is a
+  partial transport prerequisite, not completion of all management consumers.
+- **Evidence attribution error:** the factory inventory credited listener
+  adoption/renewal as factory lifecycle evidence. Corrected: factory runtime
+  still uses its legacy static client credential.
+- **Historical duplication:** implementation history is maintained in the ledger;
+  other summaries link to it. Future commits update current acceptance rows and
+  concise evidence references instead of copying the same narrative into several files.
+- **Operational gap:** the interrupted factory seed never started (private image
+  pull lacked credentials); zero factory Service issuance rows were observed.
+  Its temporary provisioner was closed and its exact pending Pod removed.
+  The retained PVC and failed report require explicit reconciliation before reuse.
+  The seed must use a private subdirectory, not the group-accessible PVC root.
+
+Next valuable implementation remains the six-criterion factory work package in
+the active plan. Reconcile the failed seed, complete real factory adoption and
+receipts, then qualify renewal/retirement. Do not advance progress for image
+builds, helper additions or commits alone. The remaining host, root-policy and
+App/relay acceptance is still required before this broad milestone can close.
+
+## Historical evidence index
+
+Dated entries below retain their original scope and may describe superseded
+milestone numbering or staging prerequisites. They do not override current scope.
 
 ## 2026-09-08 live revocation gate, failed consumer and terminal restart
 
-The complete dev consumer set now passed the Product revocation gate under an
-actual worker fault. Product v3 `56df0589-ae15-4fc0-b4a2-b4114c5b95eb` was revoked
-through distinct simulated requester/approver/custodian accounts. Operation
-`1439799a-27db-4eb5-a01c-3fbbbcb1dc9f` is **completed**. The API manifest now
-contains Root/Brand/active-v4; the broker retains v3 as a terminal authority.
-
-A controlled invalid Root-state file was installed under the worker's existing
-lock after saving its exact bytes and checking the controller Root-policy digest.
-The worker disconnected a previously valid v4 MQTT session **5.910373 seconds**
-after corruption, at connection age **16.630997 seconds**, before lease expiry.
-The independent API still authenticated v4. No new Brand CRL receipt appeared
-from the faulted broker.
-
-Brand CRL 3 is
-`8aef056aec56f6c03a0e8c0d627b036ed773edd5a61f669eaba15c527e51444d`.
-It preserves the prior v2 revocation and adds v3. Completion returned **409**
-before publication and again after the API acknowledged that exact new CRL while
-pkibroker had only its older receipt. The test's finally handler restored the
-exact Root-state bytes under the lock after verifying the authoritative policy
-had not changed. The worker then persisted terminal v3 denial, consumed Brand
-CRL 3 and sent its own receipt. Completion returned **204** with both consumers.
-V4 Device API and MQTT ACL/QoS1 roundtrip recovered successfully.
-
-A real broker restart retained the identical terminal marker and signed v3 CRL
-in `retained_crl`, with no active CRL acceptance record for v3. Root policy/pool,
-image digests and the same PVC were preserved. Private state permissions were
-0600 under UID 10001. V4 direct mTLS and MQTT succeeded; an unexpired predecessor
-token remained denied. That predecessor was already cut off by replacement, so
-its denial is a regression check, not independent attribution to CA revocation.
-
-The obsolete v3 signer policy was removed after completed revocation. The
-certissuer role now grants only the exact active v4 signer policy. The revoked
-v3 provider mount and its one internal key remain retained; no private key was
-exported. Controller and worker still run dev image `16aee0a5e58c9c48edd90d16f9a9c3742bd69bf609fa63a08ba58f7935f6bdf3`,
-with required consumers `video-cloud-api,pkibroker`. No fault remains active.
-
-Protected canonical dev evidence: `product-v3-revocation-fault-evidence.json`,
-`product-v3-revocation-completed.json`, `product-v3-broker-terminal-state.json`,
-`product-v3-terminal-restart-evidence.json`, `product-v3-policy-cleanup-evidence.json`
-and updated `consumer-rollout-evidence.json`. The raw Root-state backup and
-bounded phase scripts are retained privately for reproducibility work.
-
-Current active milestone: fresh dev PKI lifecycle acceptance, estimated **96%**.
-One acceptance work package remains: turn the verified phases into maintained,
-repeatable dev setup/acceptance tooling and execute a complete run with explicit
-pass/fail evidence. This is the existing reproducibility requirement, not a new
-milestone. All five broad areas remain open: fresh dev acceptance; other trust
-consumers/live sessions; backup/recovery and SDK; provider/hardware compatibility;
-staging/custody/recovery qualification. Staging and legacy migration stay deferred;
-MFA remains optional future human login only. No Git push, PR or remote CI ran.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-live-revocation-gate-failed-consumer-and-terminal-restart).
 
 ## 2026-09-08 live complete broker consumer and cross-CA replacement
 
-The clean Video Cloud `728362d` dev image was built locally for linux/amd64 and
-verified in GHCR at
-`sha256:16aee0a5e58c9c48edd90d16f9a9c3742bd69bf609fa63a08ba58f7935f6bdf3`.
-The dev `pki-controller` and isolated `mqtt-pki` worker now run that digest.
-EMQX remains `91ff2f25da30904a6d3ddf28b09787ba391a34e04271babe8bcd20adbb3dacd7`;
-the API image remains `536f52d49c78d57b846fa80a683c787ea6c9a0dba7f0861e7b0f9bb0a10c81ef`.
-Controller required consumers are now **video-cloud-api and pkibroker**.
-
-The worker uses its independently generated `pkibroker` management client,
-a dedicated controller NetworkPolicy and retained `mqtt-pki-trust` PVC
-(UID `bfb15b95-9c66-4bb3-93ed-e0affec06192`). Existing controller client CAs,
-server key, EMQX PVC and broker credentials were preserved. Worker state is owned
-by UID 10001, with a private 2700 directory and 0600 JSON files; EMQX does not
-mount it. The worker login still has only the verifier role, default read-only
-transactions, and no controller/issuer/superuser/role-creation privileges.
-
-Actual worker mTLS receipts now cover reviewed Root/Brand/Product bundles, their
-signed CRLs and the installed Root-policy digest. Pod readiness was supplemented
-by exact running-image checks, database receipt inspection, persisted-manifest
-comparison and authenticated MQTT ACL/QoS1 roundtrip verification.
-
-Fresh governed Product v4 `fab94fc3-0f2c-48ff-ab0f-7b9739bb0e61` was requested and
-approved by distinct temporary humans using ordinary RS256 login, with MFA off.
-OpenBao generated one internal Product key; the Brand key signed its CSR offline.
-With only the API bundle receipt present, activation returned **409** and the
-issuer stayed ready. After the worker installed the reviewed ready bundle and
-sent its own receipt, activation returned **204**. Product v3 became retiring;
-v4's initial CRL `0efa1f2900bac5b916b86ebd5cb58f0408953e982407d2fbf032ca65963ee1d3`
-was imported and the API retained both v3/v4 CRL trust. The signer retains exact
-v3/v4 policies during retirement; Product keys were not exported.
-
-The existing fresh dev Device then renewed from retiring v3 to active v4 using
-a new locally generated Device key. Replay returned the same result. The old
-certificate could not acknowledge (403); the successor could (204, idempotent).
-The worker disconnected only the predecessor **0.7944 seconds** after the ACK,
-at connection age **15.960275 seconds**, well before lease expiry. The successor
-remained connected for 12 further seconds before harness cleanup. Old-token
-MQTT reconnect returned CONNACK 5 and old-certificate API login returned 401;
-the v4 successor remained valid. The worker logged two examined, one disconnected.
-
-A subsequent broker restart exposed kubelet fsGroup remount widening retained
-files to 0660. The non-root init phase now restores the private directory and
-0600 regular files on every startup. A second actual restart verified those
-permissions, the same PVC and image digests, old unexpired-token MQTT rejection,
-old-certificate API 401 and new v4 API/MQTT ACL/QoS1 success. Evidence is retained
-in `consumer-fsgroup-before-repair.json`, `consumer-rollout-evidence.json` and
-`device-2/v4-restart-evidence.json`. The scoped desired Deployment includes the
-permission repair; it is not a manual one-time chmod.
-
-Protected evidence is in canonical dev `pki/fresh-rehearsal/`:
-`consumer-image-provenance.json`, `consumer-rollout-evidence.json`,
-`consumer-mqtt-roundtrip.json`, `product-v4-missing-broker-gate.json`,
-`product-v4-activation-gate-evidence.json`, and
-`device-2/v4-replacement-evidence.json`. Current Device 2 credentials are
-`v4-key.pem` and `v4-chain.pem`; the older successor files now identify the denied
-v3 predecessor. Scoped manifests/operator pins are persisted; temporary phase
-helpers are retained privately but are not yet a complete repeatable-run harness.
-
-Current active milestone: fresh dev PKI lifecycle acceptance, estimated **93%**.
-Remaining acceptance work is live revocation/failure/restart qualification with
-the complete required-consumer set, then one reproducible full dev run with
-explicit pass/fail evidence. All five broad areas remain open: fresh dev
-acceptance; other consumers/live sessions; backup/recovery and SDK integration;
-provider/hardware compatibility; staging/custody/recovery qualification.
-Legacy migration and staging remain deferred. No Git push, PR or remote CI ran.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-live-complete-broker-consumer-and-cross-ca-replacement).
 
 ## 2026-09-08 broker installed bundles and first-issuer bootstrap
 
-Video Cloud `728362d` completes the local registry worker's bundle activation
-receipt implementation. Explicit `PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED=true`
-uses the existing reviewed Device manifest, actual installed Root pool/policy
-and prepared parent CRLs. Every accepted Device lineage must match all installed
-bundle versions in the same database snapshot as identity and CRL verification.
-The worker sends its independent management-mTLS bundle receipts only after a
-successful full session sweep and trust revalidation.
-
-Ready Device Root/Brand/Product authorities can be installed before activation.
-The first ready Device Root can consume the removal policy without an own CRL;
-ready descendants require active parents and their current CRLs. Actual activation
-then makes the issuer's own CRL mandatory for Device acceptance. No lifecycle
-status is synthesized, no TLS listener installation is claimed, and other
-required consumers retain their activation gates. Retiring and permanently
-excluded terminal branches preserve their previous behavior.
-
-PostgreSQL 16-backed tests exercised real request/approval/import/activation,
-missing consumer gates, Root bootstrap, ready-to-active transitions, missing own
-CRLs, actual Device acceptance, parent-CRL changes and revoked ready Products,
-restart and malformed/empty installed trust. The executable's actual sweep path
-suppressed all CRL/Root/bundle receipts for failed inventories, enabled caches,
-failed preparation and superseded evidence. Terminal branch/root removal tests
-also passed with bundle mode enabled.
-
-Full pki/pkitrust/pkibrokerapp/pkiturnapp suites, consumer/worker/TURN/API race
-suites, focused Device verification race checks, relevant vet and diff checks
-passed. This remains local evidence: live dev images and required consumers are
-unchanged. No git push, PR, remote CI or staging operation occurred.
-
-Current active milestone (fresh dev PKI lifecycle acceptance): approximately
-90%, an engineering estimate rather than a measured checklist percentage. Two
-immediate acceptance jobs remain: (1) deploy and qualify the complete isolated dev
-consumer and required-consumer gates; (2) retain a reproducible full dev lifecycle
-run including restart and failure cases. All five broad reporting areas remain
-open: fresh dev acceptance; other consumers/live sessions; backup/recovery and
-SDK; provider/hardware compatibility; staging/custody/recovery qualification.
-Legacy migration and staging remain deferred. After every local commit, report
-active milestone percentage, remaining acceptance work and the broad area list.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-broker-installed-bundles-and-first-issuer-bootstrap).
 
 ## 2026-09-08 broker installed Root trust and receipts
 
-Video Cloud `9553085` adds actual Root-pool and Root-policy enforcement to the
-registry Device session consumer. The worker prepares persisted monotonic Root
-trust without acknowledging, verifies registered Product CA chains against that
-installed pool, and compares the exact policy digest in the same read-only
-repeatable-read transaction as Device identity and prepared CRLs. After successful
-session enforcement it revalidates the exact installed policy/pool and sends its
-own management-mTLS Root receipt. No TLS listener configuration is fabricated.
-
-PostgreSQL-backed tests show Root revocation remains incomplete after preparation
-and completes only after the sweep and real Root receipt. Removing the last Root
-installs an explicit empty pool and denies all Device sessions. Tests also cover
-same-key Root reissuance, unrelated policy advancement, intermediate-anchor
-promotion denial, changed policy/pool between preparation and receipt, installer
-failure, restart/status rollback, and worker scan/cache/CRL failures suppressing
-both CRL and Root receipts. Shared immediate-sync behavior remains covered.
-
-Full pki/pkitrust/pkibrokerapp/pkiturnapp suites passed with PostgreSQL 16, as did
-consumer/worker/TURN/API race suites, focused Device trust race verification,
-relevant vet and diff checks. The three optional Root settings and persistence
-requirements are documented in the service runbook and broker env example.
-
-This is local implementation evidence. Live dev images and controller required
-consumers remain unchanged. The remaining implementation gate is genuine bundle
-installation/activation receipts, including ready-issuer bootstrap. Then deploy
-the complete consumer in isolated dev and retain the reproducible complete run.
-All five broad areas remain open; staging and legacy migration remain deferred.
-No git push, PR or remote CI occurred.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-broker-installed-root-trust-and-receipts).
 
 ## 2026-09-08 broker terminal-authority handling
 
-Video Cloud `3dc94ec` preserves permanent Device authority denial in the worker's
-existing CRL state. Revoked/compromised/retired authorities and their descendants
-are excluded from acceptance, while unaffected branches continue with fresh CRLs.
-Retained signed evidence is separated from the active CRL field so older readers
-also reject terminal state. A database status rollback, process restart or loss
-of a state file within a running process cannot silently revive an observed
-terminal authority. Operators must still retain the state directory across host
-replacement and restore; loss of both process memory and retained state is not
-qualified by this result.
-
-PostgreSQL-backed tests exercise governed Product revocation and Brand compromise,
-selective EMQX-adapter session eviction, actual management-mTLS CRL receipts, and
-revocation finalization blocked until the new parent CRL is installed and
-acknowledged after the sweep. Root revocation excludes its entire hierarchy but
-does not substitute for a Root-policy receipt. Retired status uses an explicit
-state fixture, since normal retirement forbids outstanding leaves. Tests also
-cover reversed manifests, missing/cross-cloud ancestors, restart/status rollback,
-missing local-file repair, corrupt state and pre-CRL terminal observations.
-
-Full pkitrust/pkibrokerapp/pkiturnapp race suites passed with PostgreSQL 16; API
-regression tests, relevant vet and diff checks passed. This remains local evidence:
-no live image, required-consumer setting, staging resource, PR or remote CI changed.
-Next implement actual registry bundle/Root-policy receipts and ready-issuer
-bootstrap, then scoped dev gating and the reproducible complete run. The five
-broad reporting areas remain open.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-broker-terminal-authority-handling).
 
 ## 2026-09-08 broker Device CRL receipt implementation
 
-Video Cloud `ce9b5c4` adds an optional reviewed Device CRL consumer to `pkibroker`.
-It prepares and persists signed records, fences Device session verification to
-those exact Root/Brand/Product digests in the identity database snapshot, and
-sends its own mTLS receipts only after a complete successful sweep and prepared
-state revalidation. App and Device retain separate manifests/state while sharing
-management transport. No consumer acknowledgment is substituted for TLS installation.
-
-PostgreSQL 16-backed pki/pkitrust/pkibrokerapp/pkiturnapp suites passed. Related
-consumer/worker/TURN race suites, focused Device verification race tests, vet and
-diff checks passed. Tests cover missing/expired/cross-issuer prepared coverage,
-revoked leaf/ancestor denial, selective session eviction, scan/cache/preparation
-failure, registry advancement during a scan, persisted rollback rejection after
-restart, cross-domain manifests and shared-state rejection.
-
-This is local implementation evidence; live dev images and controller required
-consumers are unchanged. Bundle and Root-policy receipts, ready-issuer bootstrap
-and terminal-authority manifest transitions still require integration before
-this optional consumer is enabled as a required live gate. Then complete the
-reproducible full dev run. See the [ordered implementation work](production-pki-fresh-dev-rehearsal.md#next-implementation-broker-device-trust-receipts).
-All five broad areas remain open. Staging and legacy migration remain deferred;
-no push, PR or remote CI was run.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-broker-device-crl-receipt-implementation).
 
 ## 2026-09-08 real MQTT replacement and restart checkpoint
 
-The isolated dev EMQX 5.9.0 broker and session worker are deployed. Cache reset,
-read-only PKI verification, real ACL/QoS1 roundtrip, a 59.260888-second lease,
-reconnect, and revoked-token denial passed. A fresh Product v3/device then completed
-new-key renewal: the worker disconnected the predecessor 3.112123 seconds after
-successor acknowledgment, preserved the successor, and denied old-token reconnect.
-A stable-node restart preserved broker identity, images/PVC, cache policy and
-old/new authentication decisions. The Docker node-name override discovered during
-verification is fixed in the persisted isolated deployment. See the
-[fresh dev evidence](production-pki-fresh-dev-rehearsal.md#current-live-checkpoint-real-dev-mqtt-lifecycle).
-
-Dev MQTT behavior now has measured evidence. Broker Device trust-consumer
-acknowledgments/gating and a reproducible complete dev run still remain; controller
-required consumers are still only `video-cloud-api`. Do not substitute session
-sweep results for trust receipts. The original broker, staging and legacy fleet
-remain untouched. All five broad reporting areas remain open.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-real-mqtt-replacement-and-restart-checkpoint).
 
 ## 2026-09-08 MQTT callback deployment checkpoint
 
@@ -336,27 +146,7 @@ is closed, and the existing broker and staging remain untouched.
 
 ## 2026-09-08 Product revocation and HTTP session checkpoint
 
-Fresh dev steps 1–3 retain their recorded passes. Step 4 now has live evidence
-for Product CA revocation: distinct approvals, registry denial of new device
-authentication/renewal, and closure of an existing verified-mTLS WebSocket within
-8.003 seconds. Finalization failed before CRL publication, then succeeded only
-after the API installed and acknowledged the Brand-signed CRL number 2. Subsequent
-TLS handshakes were rejected. A controlled API restart preserved the image and
-all four trust-state file hashes and retained TLS denial. See the [rehearsal record](production-pki-fresh-dev-rehearsal.md)
-for operation IDs, CRL digest, configuration and qualification limits.
-
-The disposable Product v2 is revoked; Root/Brand remain active. The separate API
-now enforces Root/Brand/Product CRLs and continuous root-policy synchronization.
-Its completed bootstrap bundle acknowledgment setting is disabled because the
-Root-only bootstrap chain conflicts with the client CRL verifier. Existing
-activation receipts remain intact. No authorization or freshness check was
-relaxed, and the image is unchanged.
-
-Next: compatible MQTT broker/consumer acceptance with a fresh Product issuer and
-device, then reproducible full dev lifecycle evidence. Individual Device-leaf
-revocation and simultaneous Root bootstrap/client-CRL configuration are not
-qualified by this test. The five broader reporting areas remain open; legacy
-migration and staging remain deferred. No reset, git push, PR or CI run occurred.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-product-revocation-and-http-session-checkpoint).
 
 ## 2026-09-08 fresh device lifecycle checkpoint
 
@@ -385,28 +175,7 @@ milestone or staging/custody qualification is marked complete. See the
 
 ## 2026-09-08 independent audit-history recovery checkpoint
 
-Service commit `79384c6`. Full pki/pkicontrollerapp suites passed with disposable
-PostgreSQL 16, as did recovery race tests, focused history/App-revocation race
-tests, vet, gofmt and diff checks. The history test models deleted/conflicting
-restored rows and verifies no audit writes; CLI tests cover digest and file checks.
-
-Regression validation also exposed App revocation receipt timestamp mismatch.
-The initial response now returns PostgreSQL's stored timestamp, matching the
-existing server/Service-client paths and making subsequent replay identical.
-The revocation test now includes sub-microsecond input precision.
-
-The controller now exports a complete per-issuer audit snapshot and compares a
-restored database against a file bound to an independently retained SHA-256 digest.
-Comparison reports missing/conflicting events without writing rows or replaying
-security actions. Sequence gaps are permitted; no incremental commit-order
-watermark is inferred. Commands are staging-only and bounded by event/file limits.
-See [controller recovery instructions](../../repos/rtk_video_cloud/docs/production-pki-controller.md).
-
-This advances backup/recovery implementation while legacy migration remains the
-active live milestone. Independent collection/retention, complete issuer coverage,
-post-capture events and reconciliation of actual revocation/root-distrust effects
-remain required. Matching audit rows alone cannot qualify restored security state.
-The five broader milestones remain open. No staging mutation, push, PR or CI run.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08-independent-audit-history-recovery-checkpoint).
 
 ## 2026-09-08 staging packaging checkpoint
 
@@ -562,1381 +331,203 @@ The full goal remains active.
 
 ## Viewer local teardown checkpoint (2026-09-08)
 
-Native WebRTC SDK commit `27ccaef` closes the viewer peer before state callbacks,
-token acquisition and remote cleanup. Failed starts close locally before reporting
-failure. The close callback runs once, blocks reentrant session destruction, and
-retains its error for subsequent explicit cleanup. Peer destroy retains final
-resource ownership; explicit close/destroy still cleans up cloud session records.
-
-Validation: macOS AppleClang core build and all 10 configured CTest tests passed
-in `/private/tmp/rtk-webrtc-pki-core` (POSIX HTTP, Ameba host tests and examples
-disabled). Tests assert local closure before token refresh/cloud cleanup,
-immediate failed-start teardown, once-only close, close failure propagation and
-reentrant close/destroy rejection. No hardware or live relay qualification.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Autonomous viewer authorization/expiry
-checks and existing TURN allocation termination remain open. No push, PR, remote
-CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#viewer-local-teardown-checkpoint-2026-09-08).
 
 
 ## Go viewer authorization lifetime checkpoint (2026-09-08)
 
-WebRTC SDK commit `0475139` binds the Go viewer's Pion media lifetime to the
-original owner context, requested duration, mandatory server expiry and original
-token expiry when supplied. Invalid/expired server expiry fails connection and
-cleans up locally and remotely. The effective deadline cannot be extended by
-subsequent token refresh. The example waits for local session termination.
-
-A 10-second watcher rechecks the original session/token through the existing
-answer endpoint, each request bounded by five seconds. Denial, malformed response
-or network failure ends the lifetime. A separate cancellation/deadline watcher
-closes the actual peer independently of network checks and token/remote cleanup;
-Done signals local teardown and further PLI requests are rejected. Custom token
-providers with zero expiry add no token bound; requested/server/owner bounds still
-apply. Production mTLS providers supply JWT expiry. Registry revocation checks
-require the matching registry-aware server implementation.
-
-Validation from `repos/rtk_ameba_webrtc/packages/golang`: `CGO_ENABLED=0 GOWORK=off
-go test ./...`, `GOWORK=off go test -race ./...` and `GOWORK=off go vet ./...` passed.
-A final targeted race test also passed after strengthening the rotating-token
-fixture. Coverage includes original-principal polling, server/token/owner expiry,
-owner cancellation, invalid expiry, blocked token cleanup, and actual Pion
-ICE/DTLS/SRTP H.264 receipt followed by viewer transport closure while the device
-remains live. Evidence is local macOS; live registry propagation, load, platform
-scheduling and relay allocation termination remain unqualified.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Native C viewer autonomous lifetime checks,
-other host/domain wiring, and TURN allocation termination remain open. No push,
-PR, remote CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#go-viewer-authorization-lifetime-checkpoint-2026-09-08).
 
 
 ## Native viewer expiry watchdog checkpoint (2026-09-08)
 
-WebRTC SDK commit `edfc170` requires native viewer backends to implement
-`set_expiry`. The SDK arms the earlier requested-duration/original-token deadline
-before ICE/offer work, validates server RFC3339 expiry after creation, and only
-tightens lifetime. Invalid clock/expiry or backend rejection fails admission.
-The existing device RFC3339 parser is shared unchanged with the viewer. Custom
-backends and consumers must rebuild for the changed struct layout; native shared
-ABI/SONAME is now 1, confirmed via macOS install-name inspection. No release was
-published. Zero token expiry adds no token-specific bound; duration/server bounds
-remain required.
-
-The libdatachannel backend owns an independent 100ms wall/steady-clock watchdog.
-It closes/deletes the PeerConnection and its C API track, serializes deletion
-against offer/answer/stats operations, wakes gathering on expiry, and rejects
-reactivation or lifetime extension. It drops new RTP callbacks after observing
-expiry. Backend media/state callbacks must signal the host rather than reenter
-session/backend operations. Stats failure lets the native example leave its
-200ms loop and perform cloud cleanup. Host scheduling and native close latency
-still affect observed shutdown time. Native registry revocation polling and
-forced removal of remote TURN allocations are not implemented by this checkpoint.
-
-Validation: core build/10 tests passed; final shared libdatachannel build with
-POSIX HTTP and Ameba host tests passed all 21 CTests. Actual H.264 over direct
-Pion and local TURN fixture paths now verifies native peer expiry after media
-receipt; adapter tests verify shortening, no extension/reactivation, and required
-admission. Missing backend support and malformed server expiry are rejected.
-A separately instrumented ThreadSanitizer adapter test passed with halt_on_error.
-All evidence is local macOS, not physical firmware or deployment qualification.
-
-Reproduce the full suite with `cmake --build /private/tmp/rtk-webrtc-pki-peer -j6`
-and `ctest --test-dir /private/tmp/rtk-webrtc-pki-peer --output-on-failure`.
-ThreadSanitizer executable: `/private/tmp/rtk-webrtc-pki-tsan/rtk_libdatachannel_peer_test`.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: native live authorization rechecks
-and remote TURN allocation termination. No push, PR, remote CI, deployment or
-custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#native-viewer-expiry-watchdog-checkpoint-2026-09-08).
 
 
 ## Native authorization recheck and lease checkpoint (2026-09-08)
 
-WebRTC SDK commit `113b53f` adds `rtk_session_poll` / C++ Session::poll, wired to
-the native example's serialized 200ms loop. Every 10 seconds the SDK rechecks the
-original session/token through Wait Answer with a five-second request budget.
-It neither refreshes the original identity nor reapplies returned SDP. Failure,
-empty response, expiry or clock rollback closes locally before reporting failure.
-Original-token memory is explicitly cleared on failure/close/destruction. The
-symbol is exported by the shared library and both export manifests.
-
-The developing native ABI 1 backend now also requires refresh_authorization: a
-30-second monotonic lease, renewable only while alive and bounded by the fixed
-hard session expiry. Successful checks renew it; missing polls, blocked signaling
-or prolonged setup expire it. The independent backend watchdog closes the actual
-peer even if the C host loop is stuck. The POSIX adapter caps total Wait Answer
-request timeout by the supplied budget using a per-call config copy. Custom
-backends/consumers must rebuild and implement the same lease contract. Effective
-certificate revocation checking requires the registry-aware server endpoint.
-
-Validation: the full native shared build passed all 22 CTests, including direct
-and local TURN H.264 paths. The core test verifies original-token successful
-recheck followed by denial/local closure. A real backend test renews at 15 seconds,
-remains alive beyond the original 30-second lease, then stops renewal and observes
-closure near 45 seconds; expired renewal cannot revive it. This 45-second lease
-test also passed ThreadSanitizer with halt_on_error. A subsequent targeted HTTP
-test passed a short-budget timeout followed by a longer-budget successful call,
-verifying transport config is not permanently shortened.
-
-Reproduce: `cmake --build /private/tmp/rtk-webrtc-pki-peer -j6` then
-`ctest --test-dir /private/tmp/rtk-webrtc-pki-peer --output-on-failure -j4`.
-TSan: `TSAN_OPTIONS=halt_on_error=1 /private/tmp/rtk-webrtc-pki-tsan/rtk_libdatachannel_peer_test --lease`.
-All evidence is local macOS; scheduling, physical hosts, deployment load and
-registry/CRL propagation require independent qualification.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: remote TURN allocation termination
-and remaining host/domain wiring. No push, PR, remote CI, deployment or custody
-operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#native-authorization-recheck-and-lease-checkpoint-2026-09-08).
 
 
 ## TURN grant authorization checkpoint (2026-09-08)
 
-Video Cloud commit `e9bbab5` persists TURN-bearing preflight grant receipts in App
-PKI mode before returning credentials. Save failure denies issuance. Original
-principal, exact issued ICE entries and expiry survive service reconstruction;
-PKI preflight/session IDs use separate random UUID namespaces. Preflight records
-cannot be consumed as signaling sessions. Memory store copies ICE slices and
-principals to prevent returned-object mutation of authoritative receipts.
-
-AuthorizeTURNUsername is the relay controller's policy prerequisite: it requires
-canonical PKI usernames, exact persisted issuance, live credential/record/token
-expiry, open state and current original-principal registry/CRL authorization.
-Unknown, altered, unbound and legacy grants are denied. Legacy API behavior stays
-unchanged. Full Go suite and signaling race suite passed, including memory/Redis
-protocol persistence, revocation, expiry boundary, close, failed-save and alias
-checks. Real coturn cancellation has not yet been implemented or qualified.
-
-Upstream coturn 4.6.2 source confirms administrative exact-user session listing
-and numeric allocation cancellation commands. Next is restricted CLI/controller
-wiring, cancellation confirmation and repeat-allocation handling. A preflight
-grant remains independent of its subsequent signaling session; closing that
-session alone does not identify/close the preflight grant. Principal revocation
-and expiry still apply to both. See service docs/turn.md for precise limits.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. No push, PR, remote CI, deployment or
-custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#turn-grant-authorization-checkpoint-2026-09-08).
 
 
 ## Coturn cancellation adapter checkpoint (2026-09-08)
 
-Video Cloud commit `51a6200` adds internal/turncontrol: loopback-only authenticated
-coturn CLI access, bounded session inventory, exact username/ID reread before
-numeric cancellation, and disappearance confirmation. A bounded sweep rechecks
-denied authorization immediately before cancellation and reports only confirmed
-removals. No arbitrary command API is exposed; malformed/truncated inventories
-and unsafe command input are rejected. The sweep assumes a dedicated managed
-relay where unknown users are denied. Each socket operation has a five-second
-bound; scan/check contexts are two minutes/five seconds respectively.
-
-Validation: full Go suite passed; package race tests passed. A disposable cached
-coturn 4.6.3 localhost container created two real UDP allocations, cancelled one
-without affecting the other, preserved allocations on stale username/ID input,
-accepted an idempotent cancellation, demonstrated reallocation, and cancelled
-both remaining allocations with a denying sweep. The pinned source reference is
-coturn 4.6.2; do not conflate that reference with the tested container version.
-The fixture container was removed. Test config and opt-in commands are recorded
-in service docs/turn.md. A final targeted race suite passed after checking that
-late authorization success cannot override an expired check context.
-
-Recurring process/registry-validator wiring, deployment secret delivery, health
-reporting, fleet latency and hostile-client qualification remain outstanding.
-The adapter is not running automatically. Reallocation remains possible with
-unexpired shared-secret credentials, so repeated sweeps and further qualification
-are required; this is not a hard revocation cutoff guarantee.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. No push, PR, remote CI, deployed relay
-change or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#coturn-cancellation-adapter-checkpoint-2026-09-08).
 
 
 ## Recurring TURN controller checkpoint (2026-09-08)
 
-Video Cloud commit `c8b115d` adds the separate `pkiturn` operator workload with
-sweep/watch/health commands. It composes persisted TURN grant validation, current
-App registry/CRL verification and confirmed coturn cancellation. Watch waits ten
-seconds after each scan. It requires explicit dedicated-relay configuration,
-shared signaling Redis, verifier-only database access, numeric loopback CLI and
-a private password file. Production remains gated. No schema migrations or
-coturn configuration mutations occur. Optional env/systemd assets and binary
-packaging are included; they are not enabled or deployed.
-
-Atomic health state records scan start/completion and aggregate counts. Failed,
-stale/future results and stalled scans are unhealthy; last completion older than
-30 seconds fails health. Dependency failures degrade health while unverifiable
-grants remain denied where coturn is reachable. Monitors must invoke the health
-command; process liveness alone does not establish scan freshness. Scan/socket/
-verification contexts remain bounded; no hard fleet cutoff is claimed.
-
-Validation: full Go suite, targeted race suites, script checks and release bundle
-verification passed. An opt-in race integration used disposable PostgreSQL 16,
-Redis 8.6.0 and coturn 4.6.3: the assembled one-shot process preserved a recorded
-admin grant, cancelled an unknown grant, cancelled the recorded grant after close,
-and failed health after a broken registry query. Watch failure/recovery/shutdown
-are unit-tested. App certificate/CRL decisions remain separately tested; this
-runtime fixture used the explicit admin policy. Both task containers and the
-local Redis process were shut down and verified terminal afterward.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: review remaining host/domain wiring
-and TURN grant/session association, plus cutoff/load/hostile-client qualification.
-No push, PR, remote CI, deployed relay change or custody operation occurred.
-Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#recurring-turn-controller-checkpoint-2026-09-08).
 
 
 ## Atomic signaling closure checkpoint (2026-09-08)
 
-Video Cloud commit `79260e4` fixes a race found while preparing TURN grant/session
-association: Redis SaveAnswer previously read and rewrote the entire record, so
-an answer could overwrite concurrent closure and restore TURN authorization.
-Answer/close updates now use a bounded optimistic retry with an atomic Lua
-snapshot comparison, preserving the existing remaining TTL. Closed/preflight/
-expired records reject answers; repeated close preserves its original timestamp.
-Deleted keys cannot be recreated by outstanding updates. Memory storage applies
-the same lifecycle checks under its mutex.
-
-Validation: full Go suite and signaling race suite passed. Concurrent answer/close
-checks passed in memory, the Redis protocol fixture and real local Redis 8.6.0.
-The real fixture also verified stale-snapshot rejection after close/deletion and
-no TTL extension. Each race case confirms TURN authorization stays denied after
-closure. The temporary Redis process was shut down and verified terminal.
-Signaling writers now require EVAL/GET/PTTL/SET session-key permissions; controller
-receipt readers do not need the write script. No unsafe write fallback exists.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next remains preflight-to-session grant
-association, now on top of atomic lifecycle updates. No push, PR, remote CI,
-deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#atomic-signaling-closure-checkpoint-2026-09-08).
 
 
 ## PKI preflight/session association checkpoint (2026-09-08)
 
-Video Cloud `6783af8` accepts the optional `ice_username` create field and
-validates the persisted preflight grant against the original principal and
-device. Memory locking and Redis compare-and-swap make claims single-use;
-session expiry cannot exceed grant expiry. Both records carry reciprocal links.
-Closing, expiring or losing the linked record denies subsequent signaling/TURN
-authorization. A failed claim returns no credentials; cleanup is best-effort,
-but its unbound target cannot authorize and remains subject to TTL cleanup.
-Existing relay allocations require the recurring TURN controller to cancel them.
-
-Go SDK `b963e1a` forwards the PKI preflight username, rejects conflicting grants
-before creating a peer, and omits the field for legacy/static credentials. The
-server OpenAPI and stream contract and Go README describe the behavior.
-Association remains optional for existing callers; native and other SDK host
-wiring remains unfinished. This does not complete the live-session gate.
-
-Validation: full server Go suite; signaling/HTTP race suites including real local
-Redis 8.6.0 concurrent claims; full Go SDK race suite and vet. SDK wire tests cover
-exact forwarding with original bearer identity, legacy omission and conflicting
-grant rejection. Server tests cover foreign principal/device rejection, one
-winner under concurrent claims, target closure/deletion and parent closure. The
-disposable Redis process was shut down and confirmed terminal.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: per-session preflight forwarding in
-native and remaining SDK integrations, followed by the outstanding original
-acceptance requirements. No push, PR, remote CI, deployment or custody operation
-occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#pki-preflightsession-association-checkpoint-2026-09-08).
 
 
 ## Native preflight/session association checkpoint (2026-09-08)
 
-WebRTC SDK `b1cd16d` passes each session's original preflight JSON to the native
-create callback. The POSIX transport extracts the PKI TURN username and sends
-`ice_username`, with legacy omission and rejection of conflicting/oversized
-grants before HTTP creation. No preflight state is stored in the shared transport.
-The callback ABI changed; SONAME is 2. Native consumers and custom transports must
-rebuild and update the signature. Non-POSIX transports must implement forwarding.
-The preflight buffer is borrowed only for the callback duration.
-
-Validation: baseline native build succeeded; updated shared libdatachannel/POSIX/
-Ameba host build and core build succeeded. All 22 full native CTests and all 10
-core CTests passed. The expanded POSIX HTTP contract test additionally passed
-after rebuilding its executable: exact PKI forwarding, duplicate matching grants,
-legacy omission, conflicting/oversized rejection and two outstanding grants on
-one shared transport. The native core test verifies the callback receives the
-original preflight response. The full suite includes direct and local TURN H264,
-authorization lease expiry and repeated connect/close. These are local host
-fixtures, not physical-device or live staging qualification.
-
-Reproducible local checks: `cmake --build /private/tmp/rtk-webrtc-pki-peer -j 4`
-and `ctest --test-dir /private/tmp/rtk-webrtc-pki-peer --output-on-failure`;
-corresponding core build/test directory is `/private/tmp/rtk-webrtc-pki-core`.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: cloud-client typed signaling methods
-in Go/JavaScript/iOS/Android/native still need grant-reference plumbing and host
-integration review. Their source entry points were located during this checkpoint;
-no completion is claimed for them. No push, PR, remote CI, deployment or custody
-operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#native-preflightsession-association-checkpoint-2026-09-08).
 
 
 ## Cloud-client preflight reference checkpoint (2026-09-08)
 
-Cloud-client `c250789` adds optional grant references to Go, JavaScript, Swift,
-Kotlin and native C/C++ WebRTC create requests. Nonempty values are transmitted
-unchanged as `ice_username`; absent/empty values retain legacy omission. Native
-uses a struct_size-gated trailing extension and accepts the previous layout,
-without reading the extension from older requests. Kotlin consumers must rebuild.
-The common PKI create fixture exercises the same wire representation across
-JavaScript, Swift, Kotlin and native; Go tests exercise forwarding and omission.
-
-Validation: full Go race suite; JavaScript 42-test suite plus rebuilt 35-test
-package suite after field-order normalization; all 85 Swift host tests; Android
-Gradle unit tests; native build and all 12 CTests. The native error-path fixture
-uses the old struct_size with nonzero trailing storage and verifies that the grant
-is omitted. These are local host checks, not physical-device qualification.
-
-These cloud-client methods perform signaling only. Hosts still obtain preflight
-and pass the reference for the original device/token; they do not gain automatic
-peer lifetime ownership from the optional field. WebRTC viewer forwarding was
-implemented separately in the prior Go/native checkpoints. Omission remains
-supported by the server; this is not proof that every deployed caller binds grants.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next implementation priority returns to
-App certificate revocation/publication and other issuance-domain gaps in the
-original audit, together with host adoption. Current App verification checks
-revoked_at and signed CRLs, but tests still inject receipt revocation directly;
-automatic revocation/controller publication is not complete. No push, PR, remote
-CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#cloud-client-preflight-reference-checkpoint-2026-09-08).
 
 
 ## App leaf revocation checkpoint (2026-09-08)
 
-Video Cloud `583c943` adds durable App revocation receipts and authenticated
-`revoke-app` / `finalize-app-revocation` issuer endpoints. The initial transaction
-marks the issued receipt revoked and records original operator/reason/time;
-same-reason retries preserve that record. Existing App identity/token checks and
-issuance replay/completion deny afterward. Publication remains pending until a
-current signed full issuer CRL contains the leaf serial and every configured
-consumer acknowledges its exact digest. Empty consumer policy is rejected;
-finalization rechecks freshness/policy and avoids duplicate audits. Controller-only
-SQL grants cover the new table; migration and explicit grant refresh are required.
-
-Review also found that issuer retirement omitted App leaves. Retirement now blocks
-pending App signing outcomes, live unrevoked leaves and unpublished revocations.
-It cannot discard the signer before those descendants settle.
-
-Validation: full server Go suite; full PKI race suite against disposable PostgreSQL
-16; restricted controller/issuer/verifier role integration; signed HTTP assertion,
-service identity and environment tests; retirement before/after publication.
-App token verification/refresh tests now invoke RevokeApp instead of directly
-mutating revoked_at, and pass. The task PostgreSQL container was stopped and
-removed through its --rm lifecycle. No live environment or provider was mutated.
-
-This is durable denial and verified publication receipt handling, not automatic
-OpenBao revocation. Provider revoke/CRL retrieval, bounded retries/recovery and
-worker scheduling remain the next implementation step. Disconnected-client/fleet
-cutoff and real consumer acknowledgments remain qualification requirements.
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. No push, PR, remote CI, deployment or
-custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-leaf-revocation-checkpoint-2026-09-08).
 
 
 ## App provider publication checkpoint (2026-09-08)
 
-Video Cloud `7c62649` implements a bounded OpenBao App revocation adapter and
-`publish-app-revocation` controller endpoint. Only an existing revoked receipt can
-request publication. The persisted certificate/issuer determines the serial and
-exact provider mount. The adapter revokes, rotates the full CRL and retrieves PEM;
-the controller verifies signature, freshness, target serial and monotonic history
-before importing it. Provider outcomes do not manufacture consumer acknowledgments.
-A valid current imported CRL is reused so retries preserve the digest while
-consumers acknowledge it. Failure leaves the original denial/pending receipt intact.
-
-App controller ACLs now include exact-mount revoke update and CRL rotate/PEM read;
-the App signer has no revocation rights. Re-render/application is an explicit
-operational step. Other domains are unchanged. The adapter has a 15-second total
-context, redirect denial, bounded responses and explicit mutation confirmations.
-
-Validation: full server Go suite; full PostgreSQL PKI race suite; OpenBao adapter
-race suite (malformed/missing confirmations, redirects, oversized responses and
-timeouts); real local OpenBao 2.5.5 plus PostgreSQL integration using restricted
-controller/signer tokens. The real fixture verifies revocation/rotation/import,
-repeated provider revocation after a possible uncertain outcome, stable imported
-retry digest, and mandatory consumer acknowledgment before finalization. HTTP
-publication assertion/identity/environment tests pass. Both disposable containers
-were stopped and removed. An initial timeout-test fixture teardown bug was fixed;
-all final suites passed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: recurring pending-publication retries,
-initial/ongoing App CRL freshness and health/scheduling integration. Provider pruning
-that removes historical entries is still rejected by monotonic import and requires
-retention compatibility qualification. Other trust domains, backup/recovery host
-wiring and live/hardware/custody acceptance remain open. No push, PR, remote CI,
-deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-provider-publication-checkpoint-2026-09-08).
 
 
 ## Recurring App CRL worker checkpoint (2026-09-08)
 
-Video Cloud `173cd4f` adds an opt-in worker to the existing PKI controller.
-`PKI_APP_CRL_WORKER_ENABLED` defaults false and accepts only explicit booleans.
-The worker pages active/retiring App issuers and pending receipts, retries
-publication/finalization, creates initial full App intermediate CRLs, and refreshes
-within one hour of expiry. It waits ten seconds after a complete scan; SQL and
-provider operations are bounded and cancellation propagates through shutdown.
-Page size is 32; total scan time depends on inventory and provider response time.
-
-Internal operations use fixed workload audit identity `pki-app-crl-worker` without
-fabricating an MFA Principal. Interactive API wrappers retain MFA enforcement.
-The worker cannot create revocations or consumer acknowledgments. Offline root
-CRLs are verified/reported, not generated. Current root and intermediate CRL
-digests must be acknowledged by every configured consumer for health to succeed.
-With the worker enabled, the existing mTLS listener exposes GET /healthz with
-aggregate counts/last complete scan; startup, errors, missing acknowledgments,
-shutdown and completion older than five minutes are unhealthy. Large/failing
-inventories remain unhealthy rather than receiving a hard-cutoff claim.
-
-Validation: full server Go suite; full PKI/controller/provider race suites against
-local PostgreSQL and OpenBao 2.5.5; real CRL refresh and a complete worker scan;
-initial publication, provider failure/recovery, stable ack-wait digest, automatic
-finalization, workload audit identity, freshness refresh preserving historical
-entries, loop failure/recovery/shutdown and stale health. A 33-issuer fixture
-crosses the page boundary and excludes another environment. Both task containers
-were stopped/removed. Optional deployment settings/documentation were added;
-no workload was enabled or deployed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: audit real consumer fetch/apply/ack
-wiring and App backup/recovery evidence; then the remaining unsupported trust
-domains and original acceptance requirements. Root custody, live fleet cutoff,
-provider retention/pruning and physical-platform qualification remain open.
-No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#recurring-app-crl-worker-checkpoint-2026-09-08).
 
 
 ## App-only API CRL consumer checkpoint (2026-09-08)
 
-Video Cloud `9c47d1b` removes a Device-only prerequisite from the existing API
-CRL consumer. App-only PKI now uses provisioned App CA trust and the existing
-management URL/CA/cert/key settings without requiring Device Root ID/state or
-Product PKI. Product PKI still requires dynamic Device trust; legacy Device mTLS
-without Device trust is rejected. The App-only path does not start a Device root
-policy worker. Static App root policy changes still require reconfiguration/restart.
-
-The existing consumer fetches signed CRLs over independent management mTLS,
-checks monotonic history, persists/activates exact records and then acknowledges
-them. Initial synchronization precedes listening; current CRLs are enforced at
-handshake and on requests over existing TLS connections. Registry-backed App
-certificate/token checks remain additional enforcement, not replaced by the cache.
-
-Validation: full server Go suite and full API/trust/config race suites passed.
-A three-level App root/intermediate/P-256 leaf fixture verifies activation before
-both acknowledgments, live App mTLS success, existing-request/new-handshake denial
-after signed revocation, and rollback denial. Configuration tests prove App-only
-acceptance without weakening Product or legacy Device trust requirements. Existing
-Product CRL consumer tests still pass. Deployment example and config documentation
-were updated; no runtime settings were enabled or deployed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: broker/TURN and other service consumer
-acknowledgment wiring, App backup/recovery evidence and remaining trust domains.
-Dynamic App root-policy replacement and live host/fleet/custody qualification
-remain open. No push, PR, remote CI, deployment or custody operation occurred.
-Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-only-api-crl-consumer-checkpoint-2026-09-08).
 
 
 ## Broker/TURN App CRL consumer checkpoint (2026-09-08)
 
-Video Cloud `3d70c01` wires optional reviewed App CRL manifests and independent
-management mTLS into the broker and TURN sweep workloads. Preparation fetches,
-validates, persists and installs signed monotonic records before each sweep.
-App token checks require the prepared root/intermediate digests in the same
-repeatable-read database snapshot as identity verification. Missing authorities,
-registry advancement and registry rollback deny affected tokens. Preparation
-failure still permits cleanup of unverifiable sessions and prevents acknowledgment.
-
-After successful sweep completion, acknowledgment reloads the prepared disk
-record and revalidates its current registry digest without fetching new evidence.
-Changed records require another preparation/sweep. The consumer retains monotonic
-disk state across restart and an in-process floor; installation inherits bounded
-operation cancellation. Workloads without the optional configuration retain
-registry checks without acknowledgment. Deployment examples and controller
-configuration documentation describe scope and required identities/manifests.
-
-Validation: full Go suite; API/trust/broker/TURN race suites; full PKI and trust
-race suites against disposable PostgreSQL; focused vet. Real mTLS/PostgreSQL
-coverage proves preparation without acknowledgment, changed-registry rejection,
-recovery, persisted rollback protection and restart acknowledgment. App leaf tests
-prove prepared root/intermediate completeness and denial after registry advance
-or simulated snapshot rollback. Consumer tests cover changed disk evidence,
-failed runtime revalidation, expiry and installer cancellation. The PostgreSQL
-fixture was stopped/removed. No workload was enabled or deployed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. This checkpoint supplies sweep-consumer
-evidence; it does not attest broker/coturn TLS-store installation or real cluster
-eviction timing. Next: App backup/recovery reconciliation and remaining trust-domain
-adapters; dynamic App root policy and live host/fleet/custody qualification remain.
-No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#brokerturn-app-crl-consumer-checkpoint-2026-09-08).
 
 
 ## App issuer and certificate recovery checkpoint (2026-09-08)
 
-Video Cloud `a05c6a8` adds the read-only `pkicontroller recovery-check-app`
-command. It compares the registry's independent App intermediate/root lineage
-with the key-bound issuer selected by OpenBao's App role and an independently
-supplied Root fingerprint. Optional App subject/public leaf inputs also require
-the exact successful issuance receipt and fresh signed intermediate/root CRLs;
-revoked, expired, mismatched and unregistered identities cannot pass. Issuer-only
-and existing-certificate evidence have distinct report statuses.
-
-The bounded check uses a read-only repeatable-read registry snapshot, checks
-indexed/document identity, CSR/key and certificate metadata, and performs only
-provider metadata GETs. The existing exact-mount App recovery ACL suffices.
-Device recovery retains its three-authority profile through shared validation;
-App recovery uses its independent two-authority chain. Public leaf file bounds
-and regular-file checks cover both commands. No new configuration is enabled.
-
-Validation: full server Go suite; full PKI/OpenBao/controller race suites with
-local PostgreSQL; recovery negative cases; focused vet; real OpenBao 2.5.5 App
-recovery ACL/role-selected chain retrieval. The restricted identity is denied
-signing, revocation and key-generation writes. Existing App provisioning/signing/
-revocation integration still passes. Final focused recovery race tests passed
-after simplifying the shared validator. Both task fixtures were stopped/removed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. This proves public lineage and selected
-existing identity checks, not private-key usability after restore or complete
-backup/revocation inventory. Writers must remain fenced during comparison.
-Next: matched App backup/restore inventory and reconciliation of uncertain signing
-and revocation outcomes, followed by remaining trust-domain/runtime adapters.
-No push, PR, remote CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-issuer-and-certificate-recovery-checkpoint-2026-09-08).
 
 
 ## App lost-serial recovery checkpoint (2026-09-08)
 
-Video Cloud `937acc7` closes the known-serial prerequisite for an unresolved
-App signing outcome. The existing authenticated reconciliation endpoint accepts
-an omitted serial and derives discovery inputs only from the original persisted
-claim. OpenBao discovery scans exact-mount public certificate inventory in pages
-of 64, requires a complete unique match to the original CSR key, and re-reads that
-unrevoked leaf before the existing transactional completion checks. It never
-signs again or releases the original signing claim after failure.
-
-Duplicate-key outcomes, revoked matching certificates, absent outcomes, invalid
-or repeated pages, and cancellation leave recovery unresolved. Unrelated revoked
-certificates do not block a valid match. The operation is bounded to 30 seconds;
-large or pruned inventories require independently obtained evidence rather than
-a partial-success claim. The exact App controller policy adds certs:list; signer
-and issuer-lineage-only recovery identities retain their narrower permissions.
-Provider writers and tidying must be fenced during reconstruction because listing
-is not a provider snapshot. API/configuration documentation describes these limits.
-
-Validation: full server Go suite; full PKI/OpenBao/controller race suites with
-PostgreSQL; focused vet; a 65-certificate paginated HTTP fixture including
-ambiguity, revoked matches, unrelated revocations, incomplete/repeated pages and
-cancellation. Real OpenBao 2.5.5 recovery with more than 64 stored certificates
-returns the original signed leaf through the restricted controller identity;
-the signer cannot list the inventory. Original-owner completion remains idempotent,
-failed discovery preserves the pending claim, and recovery uses the persisted CSR.
-Task PostgreSQL/OpenBao fixtures were stopped/removed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Full database/provider capture already
-includes App tables and keys, but matched restore inventory, post-backup security
-reconciliation and real custody/RPO/RTO qualification remain. A recovered outcome
-does not prove a complete inventory or authorize resuming issuance. Next: connect
-App inventory and security-state checks to matched recovery acceptance, then
-remaining trust-domain/runtime adapters. No push, PR, remote CI, deployment or
-custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-lost-serial-recovery-checkpoint-2026-09-08).
 
 
 ## App registry recovery inventory checkpoint (2026-09-08)
 
-Video Cloud `7e0aaf2` adds `recovery-inventory-app` for an explicitly pinned App
-intermediate/root and required consumer set. The bounded read-only check scans
-all issuer receipts in one repeatable-read database snapshot with 128-row pages.
-It detects unresolved claims and invalid original request/certificate/CSR records,
-checks revocation receipt consistency, verifies historical publication digests
-against signed CRLs containing the leaf, and requires current signed CRL coverage
-and root/intermediate acknowledgments. Revoked intermediates are rejected.
-Incomplete or blocked inventories fail; success is registry consistency evidence.
-The verifier role gains only SELECT on revocation and CRL acknowledgment records.
-
-Validation: full server Go suite; full PKI/controller/PostgreSQL race suites with
-a disposable PostgreSQL fixture; focused vet; final inventory race tests after
-avoiding repeated full historical-CRL copies. A 129-receipt test crosses the page
-boundary. Missing acknowledgments, unpublished or false publication receipts,
-request digest mismatch, revoked intermediates and missing revocation records
-are denied; complete published revocations pass. Restricted-role tests verify
-recovery evidence reads without revocation write access. The fixture was removed.
-
-Workspace backup documentation now composes the App issuer/leaf and inventory
-commands through environment-owned recovery_checks, retaining independent root
-pins, consumers and provider/registry credentials. No live configuration changed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. The registry inventory is not proof of
-complete external history or restored-key usability. Independently retained
-post-backup security history, full issuer inventory, real matched restore/custody
-and RPO/RTO evidence remain. Next: review remaining original domain/runtime
-implementation gaps against the fixed acceptance list. No push, PR, remote CI,
-deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-registry-recovery-inventory-checkpoint-2026-09-08).
 
 
 ## Approved private server issuer policy checkpoint (2026-09-08)
 
-Video Cloud `893ff9a` implements canonical server_dns_names in approved issuer
-requests and public issuer records. Only service/mqtt/openbao_tls intermediates
-can carry the policy. Exact lowercase sorted unique DNS names are required;
-wildcards, IPs, URI syntax, invalid labels and client-domain reuse are rejected.
-The policy participates in the request digest. Controller/store provisioning,
-CSR persistence, import and activation recheck the original approved request,
-preventing policy removal or changes from bypassing approval.
-
-OpenBao provisioning now supports these explicit private server intermediates,
-generates private keys in the provider and configures exact-name P-256 server-only
-roles after importing the independently signed chain. CSR names are ignored as
-policy, and wildcard/subdomain/IP/URI alternatives are disabled. ACL rendering
-separates server signing from controller and recovery metadata access. Device/App
-profiles remain separate; server reservations without policy remain unsupported.
-Public HTTPS continues to require public CA/ACME.
-
-Validation: full Go suite; full PKI/OpenBao/controller/PostgreSQL race suites with
-local PostgreSQL; focused vet; real OpenBao 2.5.5 server CA provisioning/import,
-restricted server signing, injected CSR-name exclusion and rejection of unapproved
-CN/SAN, wildcard, subdomain and alternate-role issuance. Existing App provider/
-revocation/recovery integration still passes. Registry tests prove policy persistence,
-idempotency conflict on changed names and rejection after approved-policy drift
-or removal. Both local fixtures were stopped/removed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Domain-inventory steps 1–2 are implemented;
-next are durable server leaf claims and validated replay/recovery, gateway handler
-and bootstrap integration, then revocation and consuming-host adoption. The legacy
-gateway handler still uses its old signer; this checkpoint does not claim complete
-server runtime migration. No push, PR, remote CI, deployment or custody operation
-occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#approved-private-server-issuer-policy-checkpoint-2026-09-08).
 
 
 ## App recovery end-to-end permission correction (2026-09-08)
 
-Video Cloud `330e2a5` corrects two defects found while preparing server claim
-integration. The verifier previously lacked SELECT on CSR/TTL/request-digest
-columns used by the full App inventory. A real HTTP App issuance also included
-ContextDigest in its request hash without persisting that field, so inventory
-could not reconstruct the original request. Earlier owner-role inventory tests
-and limited verifier SELECT tests did not cover this combined path.
-
-The explicit schema migration now adds context_digest; issuance persists it,
-reconciliation reconstructs and compares the entire request digest before any
-provider access, and inventory includes that context. Verifier grants permit the
-required public/request metadata reads while withholding claim tokens and writes.
-Existing receipts whose original context was not persisted remain blocked when
-their digest cannot be reconstructed; no original digest is rewritten or claim
-released to bypass recovery evidence. Schema migration and grant refresh are
-required before using the updated code; no live migration was performed.
-
-Validation: full server Go suite, full PKI/PostgreSQL/controller race suites with
-local PostgreSQL and focused vet. The restricted-role integration now performs
-the complete inventory over real HTTP issuance, known-serial recovery and a
-published revocation, rather than checking only selected table access. It passes
-while claim-token reads and CSR writes remain denied. Nonempty-context recovery
-passes; changed persisted context is denied before provider discovery. Inventory
-also rejects context tampering. The task PostgreSQL fixture was removed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. This was a prerequisite correction, not a
-new milestone. Next remains durable private server signing claims, gateway runtime
-integration, and domain-specific recovery/revocation and host adoption. No push,
-PR, remote CI, deployment or custody operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#app-recovery-end-to-end-permission-correction-2026-09-08).
 
 
 ## Durable private server signing claims checkpoint (2026-09-08)
 
-Video Cloud `f304ec1` adds pki_server_issuances with environment/domain/caller/
-request identity, original CSR and DNS set, context digest, pinned issuer,
-single-owner claim token and persisted result. Only the first committed claim
-receives signing ownership; pending retry never releases it. Completion and replay
-check the original request, approved server DNS policy, exact P-256 server leaf
-profile/key/SANs, bounded original-claim lifetime, current signed root/intermediate
-CRLs and registry lifecycle status. Claim tokens are not serialized.
-
-Scope and issuer/root row locks coordinate signing completion with lifecycle
-changes. Pending server work and unexpired leaves block CA retirement; locally
-revoked unexpired leaves conservatively remain blockers until server publication/
-consumer evidence is implemented. Exact database grants permit issuer claim/result
-writes and public CRL reads while withholding request/policy/context/revocation
-updates. Verifiers cannot read server claim tokens. Schema/grant migration is
-explicit; no runtime mode is enabled by this change.
-
-Validation: full Go suite; full PKI/PostgreSQL/controller/certissuer race suites
-with local PostgreSQL; focused vet. Concurrent requests yield one owner; timeout
-retry, changed context, wrong owner, incorrect SAN/EKU/lifetime, changed policy,
-wrong domain and disabled roots are denied. CRL revocation blocks replay and
-completion. Pending/live retirement checks pass. A restricted-role integration
-creates/completes/replays a real signed server certificate and denies immutable
-metadata/revocation writes and verifier token reads. App regression coverage also
-passes after sharing only the online lineage-lock helper. The local fixture was
-stopped/removed.
-
-Five broad milestones remain: legacy migration/device replacement; trust consumers/
-live sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Next: provider/HTTP gateway composition
-with the approved server issuer and durable claims, followed by uncertain-outcome
-recovery, revocation publication and host adoption. The legacy gateway handler is
-not yet switched; this checkpoint supplies registry primitives and does not claim
-end-to-end server issuance migration. No push, PR, remote CI, deployment or custody
-operation occurred. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#durable-private-server-signing-claims-checkpoint-2026-09-08).
 
 
 ## 2026-09-08 — Private server provider and gateway integration
 
-Video Cloud `6f5838e` adds `ServerIssuers` and the opt-in
-`CERT_ISSUER_SERVER_PKI_DOMAIN` (`service`, `mqtt`, `openbao_tls`, default empty).
-The gateway HTTP route uses direct authenticated caller identity and configured
-DNS allowlists, then pins the approved registry issuer before contacting OpenBao.
-The provider receives a fixed server role and explicit DNS SANs; completion checks
-its certificate against registry lineage, original CSR/lifetime and current CRLs.
-Pending provider failures or invalid certificates cannot release the claim or
-fall back to the legacy signer. Replays preserve certificate/time and recheck CRLs.
-Bootstrap requires an explicitly migrated registry and suppresses automatic schema
-migration in this mode; config/environment documentation records the opt-in.
-
-Validation: full Go suite; PKI/Postgres/certissuer/bootstrap/config/OpenBao race
-suites with disposable PostgreSQL; focused vet; actual OpenBao 2.5.5 restricted
-server-role test with explicit multi-name SANs. HTTP/PostgreSQL coverage proves
-identical replay, changed-purpose conflict, uncertain outcome held pending,
-incorrect EKU rejected, wrong-domain denial and revoked-leaf replay denial without
-another signing call. Existing Device/App tests passed. Local fixtures removed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next server work is durable
-uncertain-outcome reconciliation and revocation publication/consumer adoption.
-Service client identity, dynamic App root policy, real host/SDK adoption and live
-qualification remain unfinished. This is an implementation checkpoint, not a live
-rollout or completion of any broad gate. No push, PR, remote CI or deployment.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--private-server-provider-and-gateway-integration).
 
 
 ## 2026-09-08 — Server uncertain-outcome recovery
 
-Video Cloud `a5ad490` adds authenticated `reconcile-server` for a pinned private
-server issuer. Fresh pki_admin MFA and the existing Account Manager mTLS/assertion
-binding apply. The controller reconstructs exact DNS/CSR/TTL/context from the
-receipt and verifies its digest before provider reads. Known serial recovery uses
-one public certificate read; omitted serial discovers one unique stored CSR-key
-match under the exact service/mqtt/openbao_tls mount. Bounded paginated discovery
-rejects ambiguous, revoked, missing-status, malformed and incomplete inventories.
-The controller ACL adds only exact-mount certificate listing; it cannot sign.
-Recovery cannot release a pending claim or overwrite a different committed leaf.
-Final validation includes elapsed provider-read time and current issuer/CRL state.
-
-The final timing test exposed PostgreSQL microsecond precision differing from the
-initial nanosecond response. Follow-up `72df2ef` returns the timestamp persisted by
-SQL; a deterministic sub-microsecond regression test proves exact replay. The
-checkpoint includes both commits; the initial recovery commit alone was not the
-validated endpoint. All final checks passed: full Go suite; PKI/Postgres/OpenBao/
-controller race suites, rerun PKI/Postgres/certissuer race suites after the fix;
-focused vet; real local OpenBao 2.5.5 restricted controller recovery and signer
-listing denial. SQL integration recovers with the restricted controller role.
-Local discovery tests cover all three server domains plus App regressions, HTTP
-tests cover assertion/peer/environment/body binding and concurrent completion.
-Disposable local fixtures were removed; no external deployment or custody action.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next: server revocation
-receipts/publication/consumer acknowledgment and recovery verification, followed
-by actual host adoption. Read-only discovery requires writers/tidying fenced and
-does not establish complete external history, live RPO/RTO or restored-key use.
-Goal remains active. No push, PR or remote CI.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--server-uncertain-outcome-recovery).
 
 
 ## 2026-09-08 — Private server revocation publication protocol
 
-Video Cloud `742a768` adds durable server revocation work plus authenticated
-`revoke-server`, `publish-server-revocation`, and `finalize-server-revocation`
-controller routes. The original receipt is denied before provider work, including
-replay and recovery. Idempotent revocation returns the persisted timestamp;
-conflicting reasons are rejected. The publisher uses only the pinned independent
-server mount, validates the full signed CRL and target serial, and reuses fresh
-current evidence while consumers acknowledge it. The provider cannot create ACKs.
-Finalization checks signed current CRL metadata and every required consumer's exact
-digest; prior finalization does not bypass a new CRL or changed consumer policy.
-
-Explicit schema/grant refresh is required for `pki_server_revocations`; controllers
-can manage receipts and verifiers can read them, while issuer/verifier mutation
-is denied. Regenerate exact-mount OpenBao controller policies for revoke/rotate/read
-permissions. Signing tokens remain unable to revoke/list. No runtime mode enabled.
-Server retirement conservatively remains blocked by unexpired leaves until actual
-TLS consumer enforcement and session handling are integrated; publication receipts
-alone do not prove a host consumed the evidence or terminated existing connections.
-
-Validation passed: full Go suite; PKI/Postgres/OpenBao/controller/certissuer race
-suites with local PostgreSQL; focused vet; real OpenBao 2.5.5 revoke/rotate/read,
-restricted token boundaries and revoked-result recovery denial. Tests exercise
-failure-before-publication, retry/digest stability, missing serial in CRL, new and
-missing consumer ACKs, CRL advancement, corrupted restored metadata, HTTP assertion
-binding and restricted database roles. The later-CRL fixture preserves the original
-revocation timestamp, and metadata-corruption simulation disables the immutable
-trigger only inside its disposable SQL schema. Local fixtures removed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next: server TLS verification,
-CRL refresh/consumer integration and recovery verification, followed by real host
-adoption. No push, PR, remote CI, live deployment or custody operation. Goal active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--private-server-revocation-publication-protocol).
 
 
 ## 2026-09-08 — Private server registry verification and TLS admission
 
-Video Cloud `093bc79` adds `Store.VerifyServer` with independently configured
-private domain, exact DNS name and root fingerprint. A read-only repeatable-read
-snapshot checks the successful/unrevoked receipt, original CSR/DNS/TTL/context
-digest, approved issuer operation, exact active/retiring lineage, signed current
-root/intermediate CRLs and metadata, leaf profile/lifetime and hostname. Receipt
-revocation denies admission before publication. The existing verifier role has the
-necessary read access; no new schema/grants are introduced.
-
-`Store.ServerTLSConfig` clones an explicit-root/name client TLS configuration,
-preserves normal Go chain/hostname verification and prior callbacks, and adds a
-bounded registry check to every handshake including resumption. Independently
-reviewed root pins are not discovered from peer/database state. Invalid chains or
-registry failures deny admission. The helper does not yet wire workload transports,
-acknowledge CRLs or terminate existing connections; owners must implement those
-steps before claiming runtime adoption.
-
-Validation: full Go suite, PKI/Postgres/certissuer race suites with disposable
-PostgreSQL, focused vet and actual TLS handshake/resumption tests. New connections
-fail after receipt revocation. Wrong environment/domain/hostname/root pin, incomplete
-lineage, policy drift, request-context tampering and stale CRLs are rejected.
-Restricted verifier-role integration admits then denies the same server after
-revocation. Final focused verification passed after guarding malformed input
-certificate metadata. Disposable fixture removed. No push, PR, remote CI, live
-rollout or custody action.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next: connect concrete
-workload transports to server admission, revalidate/evict existing connections,
-and integrate CRL/policy refresh plus acknowledgment before real host adoption.
-Server recovery verification and live qualification also remain. Goal active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--private-server-registry-verification-and-tls-admission).
 
 
 ## 2026-09-08 — Established private server connection enforcement
 
-Video Cloud `243386e` adds `Store.ServerConnections`, an owner for independently
-pinned outbound TLS connections. Dial admission uses normal TLS plus registry
-verification. Normal close removes tracking; owner shutdown stops new admission
-and closes tracked sockets. `Sweep` revalidates established connections and closes
-those denied by registry/CRL policy or whose validation is unavailable/canceled.
-Socket closure precedes TLS cleanup to avoid a blocked close-notify delaying
-eviction. Sweeps use a 20-second context bound; no locks are held across database
-or network work. Active streams are terminated, not only idle pooled sockets.
-
-Validation: full Go suite; PKI/Postgres/certissuer race suites with disposable
-PostgreSQL; focused vet. Live TLS stream tests prove healthy streams survive a
-sweep, while receipt revocation, database failure and canceled validation terminate
-the connection and notify the server. Ordinary close cleans up tracking and owner
-shutdown denies new dials. Local fixture removed. No push/PR/remote CI/deployment.
-
-This is a tested connection lifecycle primitive, not completed process adoption.
-It does not replace existing transports, start a timer or manufacture exact-CRL
-acknowledgments. Concrete HTTP/MQTT/OpenBao host wiring, sweep scheduling, health/
-shutdown ownership and digest-bound policy installation remain next. Five acceptance
-milestones remain: legacy migration/device replacement; trust consumers/live
-sessions; backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--established-private-server-connection-enforcement).
 
 
 ## 2026-09-08 — API and log-ingester MQTT server trust integration
 
-Video Cloud `a17c4ff` wires the connection owner into all API MQTT subscriber and
-publisher shards and the dedicated log ingester subscriber. Opt-in settings are
-`VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256` plus `VIDEO_CLOUD_MQTT_SERVER_PKI_NAME`;
-both default empty. The domain is fixed to `mqtt`, normal TLS requires explicit
-roots, and startup checks existing registry table/read access. Configured mode
-suppresses automatic schema initialization, including partial configuration, and
-cannot fall back to legacy dialing if initialization is absent. Existing verifier
-read grants are required; no new schema is introduced.
-
-The runtime schedules bounded connection sweeps (default 10s, allowed 1s–1m), logs
-validation failures and closes denied/unverifiable connections. Reconnect loops
-retain handshake admission and cannot reconnect to a still-revoked certificate.
-Cancellation closes the connection owner and prevents replacement connections.
-Legacy behavior remains when both opt-in fields are empty. Config/deploy docs
-record the mode and its independent root pin/name requirements.
-
-Validation passed: full Go suite; MQTT/PKI/API/log-ingester/config race suites with
-local PostgreSQL; focused vet. A real TLS MQTT protocol fixture connects the API's
-three subscribers and one publisher plus the dedicated log subscriber, publishes
-a message, revokes the registered broker certificate, observes timer-driven closure
-of all five original connections and denies subscriber/publisher reconnects. The
-test waits for publisher CONNACK readiness and tracks original connection closures
-so handshake attempts cannot substitute for eviction evidence. Config tests cover
-partial/invalid trust settings and interval bounds. Disposable fixture removed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. This is actual local workload
-transport composition, but not a deployed broker cutover. Next: CRL refresh and
-exact-digest consumer evidence, remaining Service/OpenBao transports, recovery
-verification and real host adoption. No root-file/key rotation or broker deployment,
-no fabricated acknowledgment, no push/PR/remote CI. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--api-and-log-ingester-mqtt-server-trust-integration).
 
 
 ## 2026-09-08 — Domain-scoped server CRL maintenance worker
 
-Video Cloud `7869d5e` adds an opt-in server CRL worker selected by
-`PKI_SERVER_CRL_DOMAIN` (empty disables; service/mqtt/openbao_tls selects exactly
-one domain). It keyset-scans active/retiring intermediates and durable pending
-revocations in bounded pages, publishes existing authorized work, attempts exact-
-consumer finalization and refreshes intermediate CRLs before expiry. Fresh evidence
-is reused while awaiting ACKs. Offline root CRLs are checked but never generated.
-The worker cannot create a revocation, sign replacement identities or grant MFA.
-
-Existing controller worker health combines enabled App and server scan reports;
-missing evidence/ACKs, scan failure, stale results or shutdown remain unready. The
-same PKI_REQUIRED_CONSUMERS applies to enabled workers in a process; differing
-policies require separate deployment. SQL/provider operations are bounded and
-cancellable. Signed CRL digest/number/timestamp metadata is checked before treating
-current evidence as valid. No schema or live mode change is introduced; existing
-server registry grants and exact OpenBao controller ACLs are prerequisites.
-
-Validation passed: full Go suite; PKI/OpenBao/controller/Postgres race suites;
-focused vet; real OpenBao 2.5.5 rotate/read and scoped worker scans before/after
-explicit fixture acknowledgments. Tests cover publication retries, stable digest
-while waiting, finalization, scheduled refresh preserving prior revocations,
-33-issuer pagination, domain/environment isolation and offline-root absence without
-provider mutation. Final targeted tests passed after shared signed-metadata checking.
-Local fixtures removed. No push/PR/remote CI/deployment/custody operation.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next: bind MQTT consumer
-adoption and connection sweeps to exact installed CRL digests before automated ACKs;
-remaining Service/OpenBao transports, root-policy adoption, recovery verification
-and real rollout are still required. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--domain-scoped-server-crl-maintenance-worker).
 
 
 ## 2026-09-08 — MQTT exact-CRL consumer acknowledgments
 
-Video Cloud `57c68f6` adds a reviewed private-server CRL consumer and wires it into
-API/log-ingester MQTT startup and periodic sweeps. Optional manifest/controller/
-management-mTLS settings are all empty by default and require registry MQTT server
-trust. The consumer persists/reloads signed records with monotonic rollback floors,
-installs all manifest members, sweeps connections and only then acknowledges the
-same prepared digests. Failed preparation still triggers eviction; failed sweeps
-withhold ACKs until a later successful sweep. No newer record is fetched after the
-sweep. Changed current evidence or acknowledgment failure clears readiness.
-
-`VerifyServerWithCRLs` checks exact installed root/intermediate digests in the same
-snapshot as server admission. The connection owner accepts an additional check
-that can only restrict normal TLS/registry verification; it applies at handshake
-and sweep. Missing/stale bounds deny admission. Distinct per-process management
-identities and persistent paths are required; the controller authenticates the
-consumer CN. Existing verifier SQL grants suffice; no new schema is introduced.
-
-Validation passed: full Go suite; MQTT/pkitrust/PKI/API/log-ingester/Postgres race
-suites; focused vet. Actual controller CRL/ACK endpoints and separate consumer
-identities establish five TLS MQTT connections, publish, import the revoking CRL,
-verify original connection eviction before accepting new-digest ACKs, and record
-both exact consumer receipts. Tests also reject missing/stale bounds, registry
-advance after prepare, rollback and rollback after restart. An additional-denial
-connection test proves the installed-evidence check evicts an otherwise valid
-stream. Final checks passed. Disposable PostgreSQL fixture removed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next: remaining Service/
-OpenBao transport integration, server recovery verification and root-policy/key
-renewal adoption, followed by real rollout/qualification. MQTT acknowledgment
-protocol is implemented locally; no live fleet evidence is claimed. No push, PR,
-remote CI, live deployment or custody operation. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#2026-09-08--mqtt-exact-crl-consumer-acknowledgments).
 
 
 ### Private server recovery verification checkpoint (2026-09-08)
 
-Implemented `recovery-check-server DOMAIN ISSUER_ID EXPECTED_ROOT_SHA256
-[DNS_NAME LEAF_PEM]` for independent Service, MQTT and OpenBao TLS domains.
-The check validates restored public issuer indexes/CSR/certificate lineage,
-independent root pin and approved DNS-policy digest, and reads the provider's
-fixed server-role selection and public key binding. Optional leaf verification
-uses the same read-only repeatable-read snapshot for the original receipt,
-identity/profile and signed CRLs. Provider access is GET-only and rejects other
-domains. Writers must remain fenced across database/provider verification.
-
-Local PostgreSQL tests cover all three domains, pin/provider/policy/index/domain
-mismatches, revoked receipts/leaves, expired certificates and stale CRLs. HTTP
-provider tests cover role selection, key binding, malformed/oversized responses,
-redirects and mount isolation; CLI tests cover explicit domains and unsafe files.
-This is public recovery evidence, not private-key usability, complete issuance
-inventory, external-history reconciliation, or live RPO/RTO qualification.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Remaining server work
-includes complete recovery inventory, Service/OpenBao transport integration,
-root-policy/key renewal adoption, and live rollout qualification. No push, PR,
-remote CI, live deployment or custody operation. Goal remains active.
-
-Service commit: `d8a0e50`. Full Go suite with PostgreSQL, focused PKI/OpenBao/
-controller race tests, `go vet`, formatting and diff checks passed. An initially
-malformed policy-tampering fixture was corrected to use a valid-format incorrect
-digest before final validation and commit. Disposable database removed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#private-server-recovery-verification-checkpoint-2026-09-08).
 
 
 ### Private server restored-registry inventory checkpoint (2026-09-08)
 
-Implemented `recovery-inventory-server DOMAIN ISSUER_ID EXPECTED_ROOT_SHA256
-CONSUMER_IDS_CSV`. Explicit Service/MQTT/OpenBao TLS scope, independent root pin,
-approved DNS-policy digest, full public lineage, signed root/intermediate CRLs and
-exact current consumer ACKs are checked in one read-only repeatable-read snapshot.
-Every receipt attached to the issuer is scanned in 128-row keyset pages; scope
-mismatches remain visible. Original request/CSR/DNS/issuance metadata, pending
-claims, revocation records, historical publication and current CRL coverage are
-checked. Unexpired unrevoked leaves also pass current server admission. Reports
-contain public counts; no provider calls, signing, acknowledgments or repair occur.
-
-Tests cover all three domains, 129-row pending inventories and 385-row mixed-domain
-inventories with repeated caller/request keys; malformed context/DNS/digest/scope,
-missing ACKs, missing/unpublished/mismatched revocations and revoked intermediates.
-The restricted verifier SQL role runs the inventory and detects unresolved
-revocation. This proves restored-registry consistency only: provider completeness,
-post-backup external history, private-key usability and live recovery qualification
-remain separate evidence requirements.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next server work is remaining
-Service/OpenBao transport integration and root-policy/key renewal adoption, with
-external-history reconciliation and live qualification still required. Local only;
-no push, PR, remote CI, deployment or custody operation. Goal remains active.
-
-Service commit: `340aed2`. Full Go suite with PostgreSQL, PKI/controller/Postgres
-race tests, restricted SQL-role checks, vet, formatting and diff checks passed.
-Fixture corrections used a valid-but-wrong server domain and observation times
-after reconciliation; final checks passed before commit. Disposable PostgreSQL
-fixture removed. No production acceptance gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#private-server-restored-registry-inventory-checkpoint-2026-09-08).
 
 
 ### Controller OpenBao transport integration checkpoint (2026-09-08)
 
-Added an origin-bound registry-backed HTTP/1.1 connection owner and wired it into
-controller workload OpenBao construction before authentication. Opt-in requires
-an independently pinned OpenBao TLS root, reviewed server DNS name and dedicated
-CA file; optional sweep interval defaults to 10s (1s–1m). Startup validates registry
-schema access. Normal TLS and registry receipt/DNS/CRL checks gate handshakes;
-periodic sweeps evict active/idle connections on revocation or unavailable evidence.
-Shutdown stops admission. Alternate origins, plaintext, redirects and environment
-proxies cannot carry provider authentication through this configured transport.
-
-Local TLS/PostgreSQL tests cover Service and OpenBao TLS domains, real client
-Kubernetes login and definite-403 token renewal against a fixture provider,
-verified HTTP keep-alive, wrong pins/origins and active response eviction after
-revocation, database loss and cancellation. Controller partial-policy configuration
-fails closed. Default configuration remains unchanged. No actual OpenBao host
-rollout or production qualification is claimed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Certificate-issuer provider
-clients and other Service hosts still require adoption. Exact installed-CRL ACKs,
-root-policy and server key renewal, external recovery history and live qualification
-remain. Recovery commands retain independent recovery trust. No push, PR, remote
-CI, live deployment or custody operation. Goal remains active.
-
-Service commit: `43eb2ee`. Full Go suite with PostgreSQL, PKI/controller/OpenBao
-race tests, final focused authentication/eviction race checks, vet, formatting
-and diff checks passed. Disposable database removed. Host inventory updated to
-distinguish completed controller wiring from remaining client/renewal adoption.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#controller-openbao-transport-integration-checkpoint-2026-09-08).
 
 
 ### Certificate-issuer OpenBao transport adoption checkpoint (2026-09-08)
 
-Certificate-issuer configuration now loads and validates the independent OpenBao
-transport pin, DNS name and bounded sweep interval. Enabled mode creates one
-application-owned verified HTTP transport before signer setup and passes it to
-Product/App/server registry clients plus both legacy OpenBao signer adapters.
-Partial policy fails before database setup. Startup does not auto-migrate in this
-mode; shutdown and bootstrap failure close the transport before its registry DB.
-Defaults preserve existing transport behavior; secret/environment preparation
-retains independent bootstrap trust.
-
-Tests cover environment loading and invalid pins/DNS/origins/intervals, application
-bootstrap in legacy and combined registry modes, unmigrated-schema refusal without
-schema mutation, cleanup ordering and post-shutdown denial. Legacy signer tests
-prove custom transport rejection reaches both adapters. Existing provider TLS,
-authentication, renewal and stream-eviction tests remain part of the full suite.
-No deployed host or production qualification evidence is claimed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Remaining work includes
-other Service clients, exact installed-CRL ACKs for HTTP consumers, root-policy/key
-renewal, external recovery-history reconciliation and actual host qualification.
-No push, PR, remote CI, live deployment or custody operation. Goal remains active.
-
-Service commit: `58f8e47`. Full Go suite with PostgreSQL, config/certificate-issuer/
-bootstrap/PKI race tests, vet, formatting and diff checks passed. Disposable database
-removed. No production acceptance gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#certificate-issuer-openbao-transport-adoption-checkpoint-2026-09-08).
 
 
 ### HTTP consumer exact-CRL acknowledgment checkpoint (2026-09-08)
 
-Controller and certificate-issuer provider transports now optionally load the
-existing registry server CRL consumer using an explicit manifest and separate
-management mTLS identity. Configuration rejects partial policy. Startup prepares,
-sweeps and acknowledges before returning the provider transport; the management
-endpoint must already be reachable independently of the starting controller.
-Each timer cycle prepares installed CRLs, sweeps connections with exact digest
-bounds, then acknowledges only the prepared evidence. Failed preparation still
-sweeps; failed sweeps withhold ACKs. ACK failure clears consumer readiness and
-immediately sweeps again so pooled HTTP connections cannot bypass that denial.
-Consumer management resources close with the transport lifecycle.
-
-HTTP tests use actual registry CRLs/ACK rows with a test adapter and assert stream
-eviction before new-digest ACK, plus preparation/ACK-failure eviction and startup
-rejection. Existing production consumer tests separately cover management mTLS,
-persistence, rollback rejection and exact prepared-digest acknowledgment. This is
-composed local coverage; no live HTTP fleet/latency qualification is claimed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Remaining work includes
-other Service host adoption, root-policy/key renewal, external recovery history,
-legacy cohorts, hardware/platform evidence and live qualification. No push, PR,
-remote CI, live deployment or custody operation. Goal remains active.
-
-Service commit: `fc93e2f`. Full Go suite with PostgreSQL, PKI/consumer/config/host
-race tests, final focused startup/order checks, vet, formatting and diff checks
-passed. Disposable PostgreSQL fixture removed. No production acceptance gate closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#http-consumer-exact-crl-acknowledgment-checkpoint-2026-09-08).
 
 
 ### API Account Manager Service transport checkpoint (2026-09-08)
 
-Added opt-in Service-domain trust to API app-token authorization requests to
-Account Manager. Explicit root pin/DNS/CA configuration is validated before runtime
-setup; enabled mode requires the API registry and disables schema auto-initialization.
-The API owns the shared verified HTTP connection lifecycle and closes it before
-the database. The authorizer receives that client, preserves its configured timeout
-and bearer-token contract, and propagates transport denial without fallback.
-Optional exact-CRL management settings reuse installed-digest preparation/sweep/ACK.
-Domain selection remains fixed to `service`, independent of peer input.
-
-Local tests cover config/env mapping, early partial-policy rejection, unmigrated
-registry refusal without mutation, rejection of a CA-file-trusted but unregistered
-server before HTTP, authorization transport denial, and timeout preservation.
-Registered-Service TLS/eviction/ACK behavior is covered by the shared transport
-suite. These are composed local checks, not live Account Manager deployment proof.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Cross-service workers and
-other Service hosts still require adoption; Service clientAuth lifecycle, root/key
-renewal, external recovery history, legacy cohorts and live/hardware qualification
-remain. No push, PR, remote CI, live deployment or custody operation. Goal active.
-
-Service commit: `d612c1c`. Full Go suite with PostgreSQL, config/consumer/HTTP/API/
-PKI race tests, vet, formatting and diff checks passed. Disposable database removed.
-No production acceptance gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#api-account-manager-service-transport-checkpoint-2026-09-08).
 
 
 ### Factory certificate-issuer Service transport checkpoint (2026-09-08)
 
-An authoritative workspace search found no production constructor calls for the
-three cross-service workers; each already accepts an HTTP client. Work moved to
-the active factory-enrollment certificate-issuer client instead of inventing a
-worker executable. Opt-in factory Service trust now defers issuer construction
-until application-owned registry setup. Existing client certificate/key material
-is attached to the verified Service transport; a dedicated Service CA/pin controls
-server admission independently of legacy CA settings. Request timeout and refusal
-of issuance/cancellation redirects remain. Enabled mode rejects proxies, externally
-supplied issuer clients and missing registry/environment, and does not auto-migrate.
-Shutdown/bootstrap failure/listener failure close the owned transport and registry.
-
-Local tests cover mTLS through injected HTTP transport, timeout/redirect behavior,
-environment decoding, unsafe bootstrap rejection, schema non-mutation, transport
-ownership and listener-failure cleanup. Bootstrap tests use parseable identity
-fixtures without asserting peer admission; registered-Service admission and exact
-CRL behavior have shared local transport coverage. No live deployment is claimed.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next active host gap is
-factory Account Manager admission/recovery transport; Service clientAuth lifecycle,
-other hosts, root/key renewal, external recovery history and live/hardware evidence
-remain. No push, PR, remote CI, deployment or custody action. Goal remains active.
-
-Service commit: `184f422`. Full Go suite with PostgreSQL, factory/client/bootstrap/
-consumer/PKI race tests, vet, formatting and diff checks passed. Disposable database
-removed. No production acceptance gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#factory-certificate-issuer-service-transport-checkpoint-2026-09-08).
 
 ### Factory Account Manager Service transport checkpoint (2026-09-08)
 
-Factory enrollment now loads optional Account Manager Service trust under
-`FACTORY_ENROLL_ACCOUNT_MANAGER_` and injects the application-owned verified
-HTTP client into its existing admission adapter. Reservation, lookup, cancellation
-and result publication, including recovery coordination, share this transport.
-Dedicated bearer credentials, redirect refusal and uncertain-outcome semantics
-are preserved. Partial trust configuration, missing registry/environment/token
-and unmigrated PKI schemas fail startup. Either factory Service trust mode disables
-automatic schema creation. Owned connections close before the registry database.
-Optional exact CRL consumers use the existing prepare/sweep/ACK lifecycle.
-
-Service commit: `ea00d9e`. Full Go suite, targeted factory/PKI/consumer race suite,
-vet, formatting and diff checks passed. The disposable PostgreSQL fixture was
-removed. Bootstrap tests cover both issuer and admission ownership and schema
-non-mutation. Admission requests to an unregistered TLS peer remain unavailable
-for all four operations and never become non-issuance evidence. Positive registry
-TLS admission, eviction and exact CRL acknowledgement rely on shared transport
-coverage; this checkpoint does not claim live Account Manager qualification.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Factory admission transport
-is no longer an implementation gap. Service clientAuth issuance/verification and
-lifecycle, remaining host adoption, root/key renewal, external recovery history,
-and real hardware/staging/custody evidence remain. Next implementation focus is
-the Service clientAuth lifecycle, grounded in the original domain design.
-No push, PR, remote CI, deployment or custody action. Goal remains active.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#factory-account-manager-service-transport-checkpoint-2026-09-08).
 
 ### Approved Service client identity policy checkpoint (2026-09-08)
 
-Service intermediate requests now persist an exact `service_client_ids` policy
-bound to independent approval alongside optional server DNS policy. Canonical
-`service:<name>` identities are sorted/unique; other domains and issuer kinds
-reject the field. Empty existing policy grants no new rights. Policy tampering,
-removal and request reuse are rejected. Unsupported provider adapters cannot
-consume provisioning claims or import provider material for the new profile.
-
-A separate OpenBao `service-client` role uses P-256, digitalSignature and
-clientAuth only, a 90-day maximum TTL, exact common names, no alternative SANs
-and stored certificates. Its constrained signer ACL is emitted separately from
-server signing on dual-profile Service issuers. Controller/recovery permissions
-remain separate from signing. Local provider evidence checks certificate profile,
-unapproved names/extra SAN rejection and reciprocal server/client signer denial.
-This implements policy governance and provider provisioning, not completed
-Service client leaf lifecycle or production host qualification.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next is durable Service
-client issuance with strict CSR/provider validation and current receipt-based
-verification, followed by revocation/recovery, renewal and listener adoption.
-The original goal remains active. No push, PR, remote CI, deployment or real
-custody action is authorized or performed by this checkpoint.
-
-Service commit: `51709bb`. Full Go suite with local PostgreSQL/OpenBao,
-PKI/provider/controller race tests and vet passed. After tightening the client
-role maximum TTL to the design's 90-day target, affected policy/provider tests
-were rerun under race detection and passed. Disposable fixtures were removed.
-No production acceptance gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#approved-service-client-identity-policy-checkpoint-2026-09-08).
 
 ### Durable Service client issuance and verification checkpoint (2026-09-08)
 
-Implemented independent `pki_service_client_issuances` receipts with a single
-signing owner, immutable environment/caller/request/CSR/context binding, approved
-exact Service identity policy and a 1–90 day requested lifetime. Pending or
-uncertain outcomes cannot obtain a second signing claim. Completion/replay checks
-current issuer lineage, original CSR/key/profile and fresh signed root/intermediate
-CRLs. Both client-only and dual-profile Service issuers are supported; Device,
-App and server receipt paths remain separate. Stored PostgreSQL issuance precision
-is returned on completion/replay. Pending and unexpired client leaves, even locally
-revoked leaves, now conservatively block Service issuer retirement.
-
-Read-only repeatable-read verification requires an original successful unrevoked
-receipt, recomputed request digest, approved Service policy, exact stored lineage,
-independently supplied root pin, expected service identity and fresh signed CRLs.
-The installed-CRL variant additionally requires both exact current issuer digests.
-The verifier alone does not prove possession; callers must require authenticated
-TLS. Schema migration and database-role refresh are explicit prerequisites. The
-actual restricted issuer/controller/verifier roles preserve receipt/token/mutation
-boundaries in local tests.
-
-Local coverage includes concurrency, unknown outcomes, invalid CSR/leaf profiles,
-wrong identity/environment/root, unrecorded certificates, policy/context tampering,
-CRL advance/expiry/revocation, retirement accounting and real OpenBao sign/complete/
-verify/replay. OpenBao non-CA leaves omit optional Basic Constraints; validation
-accepts that standard encoding while rejecting CA=true, CA signing usage, non-client
-EKUs and every SAN extension. A root-disable fixture was corrected to update both
-indexed status and the canonical issuer document, as lifecycle writes do.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Next Service client work is
-authenticated issuance integration, operational uncertain-outcome reconciliation
-and revocation, TLS listener/consumer adoption and renewal/recovery qualification.
-No push, PR, remote CI, deployment or real custody action. Goal remains active.
-
-Service commit: `992e15d`. Full Go suite with PostgreSQL/OpenBao, targeted
-PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
-Disposable database/provider fixtures were removed. No production acceptance
-gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#durable-service-client-issuance-and-verification-checkpoint-2026-09-08).
 
 ### Service client reconciliation and revocation checkpoint (2026-09-08)
 
-Added issuer-scoped controller operations for Service client reconciliation,
-revocation, provider publication and finalization. They use the existing Account
-Manager mTLS/request-bound assertion boundary and require fresh MFA `pki_admin`.
-Recovery takes only caller/request/optional serial, revalidates durable request
-context and recovers a unique provider certificate without re-signing. Missing
-serial recovery uses bounded complete inventory; writers must be fenced. Owner
-completion and recovery share the same immutable completion transaction.
-
-Revocation commits receipt denial and a durable Service client revocation row
-atomically. Provider failure cannot restore access. Publication is scoped to the
-Service issuer mount and imports only a signed CRL covering the recorded serial;
-fresh covering evidence is reused. Finalization requires all configured consumers
-on the exact current digest and rechecks policy/CRL changes. No acknowledgment is
-manufactured by recovery or publication. Unexpired leaves still conservatively
-block issuer retirement until consumer/host acceptance exists.
-
-Tests cover request assertion binding, authorization, concurrent/uncertain recovery,
-missing serials and original-context tampering, publication failures, wrong domains,
-current-digest/consumer expansion gates, restricted SQL roles and local OpenBao
-lost-serial recovery plus revoke/publish/finalize. Real-provider fixture comparison
-allows equivalent surrounding PEM whitespace; acknowledgment time is sampled after
-provider publication, so a newly issued CRL is not tested against an older clock.
-Local fixture acknowledgments are not live listener-eviction evidence.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. Remaining Service client work
-includes authenticated issuance integration, periodic CRL publication/consumer work,
-TLS listener adoption, renewal and restored-inventory qualification. Explicit schema
-migration and refreshed role grants are required for the new revocation table.
-No push, PR, remote CI, deployment or custody action. Goal remains active.
-
-The expanded real-provider flow exposed a shared current-CRL query bug: selecting
-`number::text` and ordering by its unqualified output name used lexical ordering,
-so CRL 9 could outrank CRL 10. Current selection now orders the numeric table column
-explicitly. A regression imports 9, 10, 99 and 100 and checks current selection and
-rejection of stale-digest acknowledgments. This fixes CRL selection across domains;
-the earlier timestamp-fixture adjustment alone did not resolve the failure.
-
-Service commit: `9897894`. The full Go suite with PostgreSQL/OpenBao, the targeted
-PKI/PostgreSQL/controller race suite, vet, formatting and diff checks passed.
-Disposable PostgreSQL and OpenBao fixtures were removed. No production acceptance
-gate is claimed closed.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#service-client-reconciliation-and-revocation-checkpoint-2026-09-08).
 
 ### Authenticated Service client issuance checkpoint (2026-09-08)
 
@@ -2009,268 +600,34 @@ Full Go tests, the targeted race test, vet, formatting and diff checks passed.
 No production acceptance gate is claimed closed.
 # Service credential trust correction (2026-09-08)
 
-Service commit `bdd1070` corrects the host store introduced in `835d50d`.
-The previous installer verified against the response's own root and reload checked
-only subject/expiry. Opening now requires an independently configured root SHA-256
-pin. Installation and reload both enforce the pin, ordered chain signatures,
-P-256, exact CN-only clientAuth profile, validity, issuer margin and 90-day ceiling.
-Invalid installation retains the current credential and pending request.
-
-Full Go tests, targeted race tests and vet passed. Regression coverage rejects
-an untrusted response root, changed reload pin, expired leaf and incomplete saved
-chain. This is a prerequisite correction; host network orchestration, scheduling,
-runtime receipt/CRL checks and listener adoption remain unfinished.
-
-Five acceptance milestones remain: legacy migration/device replacement; trust
-consumers/live sessions; backup/recovery and SDK integration; provider/hardware
-compatibility; staging/custody/recovery qualification. No live qualification gate
-is closed. Local commits only.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#service-credential-trust-correction-2026-09-08).
 
 ### Service client integration milestone completed locally (2026-09-08)
 
-Video Cloud commit `0481e7a` completes all **5/5 work groups** in the current
-factory-to-certificate-issuer Service client integration milestone:
-
-1. **Issuance/renewal orchestration:** the host store drives authenticated initial
-   issuance and same-identity renewal. Durable request/CSR state survives lost
-   responses; replay does not create another signature.
-2. **Scheduling/restart ownership:** one manager holds the host state lease,
-   renews at two-thirds of actual validity and retries every minute. Initial
-   startup failure preserves the request for supervised restart; uncertain
-   provider claims require the existing reconciliation operation.
-3. **Runtime integration:** factory enrollment owns `service:factory-enroll`,
-   dynamically presents its installed credential through the verified Service
-   HTTP owner, and closes previous connections on replacement. The certificate
-   issuer owns Service listener admission and active/hijacked socket eviction.
-4. **Registry/CRL lifecycle:** current receipt/profile/root/CRL checks apply during
-   admission, requests and periodic sweeps. Durable installed CRLs bind exact
-   acknowledgments; failed sweeps do not acknowledge. The Service controller
-   worker now handles client-only and combined server/client issuer revocations.
-5. **Integration/recovery checks:** real PostgreSQL and mTLS exercise lost-response
-   restart, successor installation, active-stream eviction, new-handshake denial,
-   exact CRL acknowledgment and denial of a restored revoked host backup. A
-   read-only paginated Service client recovery inventory checks all receipts,
-   pending claims, lineage, publication and current consumer evidence.
-
-The host private key stays in its private persistent directory; the registry
-contains public receipts. Configuration examples and runbook document the
-dedicated initial provisioner, per-instance storage, route identity policy,
-explicit schema/grants, CRL manifests and restore command. An unfinished TLS
-handshake cannot block listener sweep/shutdown.
-
-Validation passed: full Go suite with disposable PostgreSQL; affected runtime and
-PKI race tests; local OpenBao 2.5.5 provisioning/signing/reconciliation/revocation
-integration; vet, formatting and diff checks. The new end-to-end host test uses a
-fixture OpenBao HTTP signing endpoint; the separate real-provider test validates
-OpenBao behavior. Host-backup restore and registry inventory checks do not
-substitute for matched production database/provider PITR or post-backup audit
-reconciliation.
-
-**Current integration milestone: 0 work groups unfinished.** Five broader
-acceptance milestones remain: (1) legacy migration/device replacement,
-(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
-(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
-This closes the concrete local factory-to-issuer slice; other service-host
-adoption and live/hardware/recovery acceptance are not claimed complete.
-No push, PR, remote CI, deployment or custody operation.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#service-client-integration-milestone-completed-locally-2026-09-08).
 
 ### Service client provider recovery checkpoint (2026-09-08)
 
-Video Cloud `4cac76a` adds
-`pkicontroller recovery-check-service-client ISSUER_ID EXPECTED_ROOT_SHA256 [SERVICE_SUBJECT LEAF_PEM]`.
-With writers fenced, it checks approved restored Service lineage against an
-independent root pin, then reads the separate OpenBao `service-client` role's
-selected issuer and public key binding. It cannot substitute the server role.
-An optional exact Service leaf must also pass its successful unrevoked receipt,
-profile, policy and current signed root/intermediate CRLs. Invalid local evidence
-fails before provider metadata reads. The registry transaction is read-only.
-
-Affected-package tests with PostgreSQL, targeted race tests, vet and diff checks
-passed. A disposable OpenBao 2.5.5 integration exercised the existing recovery-only
-ACL and verified that signing, revocation and key generation are denied. Its
-offline Service root fixture now supplies the serial metadata required by the
-strict recovery validator.
-
-This closes a provider-lineage verification item within backup/recovery work,
-not an additional completed acceptance milestone. Issuer-only success proves
-lineage matching, not CRL freshness. Neither this check nor registry inventory
-proves signing-key usability, full provider inventory/policy equivalence or
-post-backup security history. Other Service host adoption and live matched
-restore/audit reconciliation remain.
-
-Five broader acceptance milestones remain: legacy migration/device replacement;
-trust consumers/live sessions; backup/recovery and SDK integration;
-provider/hardware compatibility; staging/custody/recovery qualification.
-Local commits only; no push, PR, remote CI, deployment or custody action.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#service-client-provider-recovery-checkpoint-2026-09-08).
 
 ### Authenticated private-server renewal API milestone (2026-09-08)
 
-Video Cloud `aac4a46` completes the fixed **3/3** local API checklist:
-(1) authenticate current-certificate ownership and current registry/CRL admission;
-(2) issue an exact-CN/DNS replacement through durable claims and replay;
-(3) add regression coverage, configuration and recovery guidance.
-
-`POST /v1/certificates/gateway/renew` requires an authorized direct-mTLS
-management caller plus a versioned request proof signed by the current P-256
-server key. Server certificates stay serverAuth-only. The proof binds environment,
-domain, independent root pin, caller, predecessor, CSR, request ID and explicit TTL.
-Both predecessor verification and claimed replacement lineage enforce the pin.
-The separate initial route also enforces the pin when configured. There is no
-legacy fallback from renewal.
-
-Tests with disposable PostgreSQL and a fixture OpenBao signing endpoint cover
-successor key replacement, identical replay with a fresh randomized signature,
-changed request conflict, uncertain provider outcomes without re-signing, invalid
-caller/proof/domain/root/names, stale CRLs, expiry and revoked-predecessor replay.
-Affected-package tests, targeted race tests, vet and diff checks passed. This
-checkpoint did not run a real OpenBao instance or deploy a host.
-
-**Current API milestone: 0/3 items unfinished.** The next server-host implementation
-gap remains protected key/CSR state, durable scheduling and listener replacement;
-the API alone does not implement those. Five broader acceptance milestones remain:
-legacy migration/device replacement; trust consumers/live sessions;
-backup/recovery and SDK integration; provider/hardware compatibility;
-staging/custody/recovery qualification. No push, PR, remote CI or custody action.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#authenticated-private-server-renewal-api-milestone-2026-09-08).
 
 ### Managed certificate-issuer server-host milestone (2026-09-08)
 
-Video Cloud `bbbd902` completes the fixed **4/4** local host checklist:
-(1) protected server key/CSR storage; (2) durable renewal scheduling/restart retries;
-(3) actual certificate-issuer listener replacement and connection eviction;
-(4) integration/restore tests, configuration example and runbook.
-
-The opt-in Service server host imports an already registered three-certificate
-chain and matching key once, after current receipt/CRL verification. A private
-0700 directory, atomic 0600 state and manager lease protect host-owned state.
-Replacement keys/CSRs survive lost responses and restart. Renewal uses a separate
-authorized management mTLS identity plus current server-key proof; server leaves
-remain serverAuth-only. The worker checks on startup and every minute and renews
-at two-thirds of validity. The listener dynamically selects the installed leaf
-and checks current registry/CRL admission at handshake, requests and timed sweeps;
-installation and trust denial evict active connections.
-
-Full `GOWORK=off go test ./...` passed with disposable PostgreSQL. Race tests for
-serviceidentity, config, certissuerapp and pkitrust, `go vet ./...`, gofmt and diff
-checks passed. The PostgreSQL/mTLS integration proves pending-key replay without
-a second signature after a lost response, successor certificate selection,
-old-stream eviction, revocation eviction and rejection of restored predecessor
-state. Provider signing used an OpenBao HTTP fixture, not a real provider run.
-
-**Current host milestone: 0/4 work groups unfinished.** This closes certificate
-issuer host adoption; it does not close other Service/MQTT/OpenBao server hosts,
-dynamic root-policy migration, management credential lifecycle, matched provider/
-database restore or post-backup audit reconciliation. Local ownership checks do
-not themselves install or acknowledge CRLs.
-
-Five broader acceptance milestones remain: (1) legacy migration/device replacement,
-(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
-(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
-Local commits only; no push, PR, remote CI, deployment or custody operation.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#managed-certificate-issuer-server-host-milestone-2026-09-08).
 
 
 
 ### PKI controller managed server-host milestone (2026-09-08)
 
-Video Cloud `6d76748` completes the fixed **3/3** local adoption checklist:
-(1) share the managed Service server host owner; (2) integrate controller policy,
-listener and lifecycle; (3) validate compatibility/recovery behavior and document
-deployment configuration.
-
-Both certificate issuer and PKI controller now use `internal/pkitrust.ServerHost`.
-The controller's isolated `PKI_HOST_` configuration selects protected per-replica
-state, independent host root/name policy, separate renewal management identity and
-verified remote issuer transport. Initial registered chain/key files seed state
-once. Startup/shutdown own scheduling, lease and transport cleanup; the listener
-uses current credentials and evicts connections on replacement or trust denial.
-Static TLS remains the default; incomplete host policy fails closed. The existing
-controller production-qualification gate and account-manager authorization remain.
-
-Full Go tests passed with disposable PostgreSQL; affected-package race tests,
-`go vet ./...`, formatting and diff checks passed. The shared loader regression
-adds mTLS listener admission, exclusive ownership, worker shutdown, restart without
-seed files and revoked-state startup denial. Existing tests retain lost-response
-renewal replay and active-stream eviction coverage. Controller adapter tests verify
-static mTLS compatibility and reject partial configuration. Signing uses an OpenBao
-HTTP fixture; no actual controller deployment or real-provider run is claimed.
-
-**Current controller-host milestone: 0/3 items unfinished.** Other Service hosts,
-MQTT/OpenBao server-key lifecycle adoption, dynamic root migration, management
-credential renewal and matched recovery-history reconciliation remain. Optional
-remote CRL consumption needs an independently reachable management endpoint at
-startup; local host admission does not emit CRL acknowledgments.
-
-Five broader acceptance milestones remain: (1) legacy migration/device replacement,
-(2) trust consumers/live sessions, (3) backup/recovery and SDK integration,
-(4) provider/hardware compatibility, (5) staging/custody/recovery qualification.
-Local commits only; no push, PR, remote CI, deployment or custody operation.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#pki-controller-managed-server-host-milestone-2026-09-08).
 
 ### Managed EMQX host implementation (2026-09-08)
 
-Documentation was clarified first in workspace `95bbc11`. Video Cloud
-`0387086` completes the fixed **4/4** plan in
-[Managed EMQX host identity](production-pki-emqx-host.md):
-responsibility clarification; MQTT host identity/renewal;
-local EMQX installation and process ownership; tests/deployment/runbook.
-
-`emqxpkihost` supervises one native EMQX foreground node under a dedicated
-systemd control group. The MQTT leaf private key stays in protected local state
-and runtime files; the renewal origin uses independent Service trust and a
-separate management credential. Durable pending renewal survives restart/lost
-responses. The process owner stops before replacement, rechecks registry evidence,
-and denies serving on revocation, expiry or unavailable trust. Polling is every
-five seconds with five-second verification timeouts; process shutdown escalates
-from TERM to KILL. This replaces the full node and causes a reconnect outage.
-`pkibroker` remains an outbound session worker with no TLS listener.
-
-Full Go tests passed with disposable PostgreSQL. Affected-package race checks,
-vet, formatting and diff checks passed. Release verification passed with the
-normal PKCS#11-enabled build (an earlier build without PKCS#11 was correctly
-rejected by the release checker). The MQTT-domain integration uses distinct MQTT
-and Service roots, lost-response replay, restart without seed files and denial of
-restored revoked state. Its signing endpoint is an OpenBao HTTP fixture.
-
-A disposable real `emqx/emqx:5.9.0` test passed for replacement TLS certificates
-and established MQTT 3.1.1 session termination after replacement and simulated
-trust denial. The image digest is
-`sha256:c897388a3c628b684c064459a14c71b259317b044be02a586eaaab14916d755c`.
-Client authentication was disabled only in that isolated lifecycle fixture.
-Actual operator authentication/ACL policy, durable-session recovery, cluster
-rollout, physical custody and matched restore/security-history reconciliation
-remain acceptance work. No deployment or zero-downtime guarantee is claimed;
-local supervision does not emit CRL installation acknowledgments.
-
-**Current EMQX milestone: 0/4 items unfinished.** Five broader acceptance
-milestones remain: (1) legacy migration/device replacement, (2) trust consumers/
-live sessions, (3) backup/recovery and SDK integration, (4) provider/hardware
-compatibility, (5) staging/custody/recovery qualification.
-Local commits only; no push, PR, remote CI, deployment or custody operation.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#managed-emqx-host-implementation-2026-09-08).
 
 ### Milestone 1 local cohort reporting preparation (2026-09-08)
 
-Video Cloud `e6c17a4` adds `pkicontroller legacy-progress OPERATION_ID`.
-It reports the fixed cohort from a completed governed staging import using a
-read-only repeatable-read snapshot. The report validates operation/manifest scope
-and digest, tracks pending signing, awaiting acknowledgment and acknowledgment,
-retains missing/inconsistent entries, and reports current legacy registry
-acceptance independently from replacement status. Expiry/revocation is not
-counted as successful replacement. This is not global population inventory,
-current successor health, installed CRL evidence or live-session proof.
-
-The complete pki/pkicontrollerapp suites passed with disposable PostgreSQL.
-Legacy migration/replacement race tests, final progress race tests, vet, gofmt
-and diff checks passed. The new integration exercises approved import through
-actual replacement claim/completion/acknowledgment, residual accounting,
-expiry, revocation, changed/missing bindings and audit-write absence.
-
-The active milestone is now legacy migration/device replacement, with the fixed
-[five-item acceptance checklist](production-pki-legacy-rollout.md). Local reporting
-preparation is complete. **All five live checklist items remain open:** cohort
-inventory; approved canary import/trust deployment; measured replacement;
-expanded rollout/residual accounting; legacy-trust withdrawal. The target staging
-environment and cohort have been requested; no live inventory, approvals, device
-replacement or consumer trust change was performed.
-
-Five broader acceptance milestones remain: legacy migration/device replacement
-(active); trust consumers/live sessions; backup/recovery and SDK integration;
-provider/hardware compatibility; staging/custody/recovery qualification.
-Local commits only; no push, PR, remote CI, deployment or custody operation.
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#milestone-1-local-cohort-reporting-preparation-2026-09-08).

@@ -1,38 +1,16 @@
 # Production PKI domain and host inventory
 
-## Current execution scope (2026-09-08)
+## Current execution scope
 
-Fresh dev Device PKI is complete. **Remaining trust consumers/live sessions** is
-now active; see the [fixed work groups and management adoption design](production-pki-trust-consumers.md).
-Staging and legacy migration remain deferred. The dated staging and milestone
-counts below are historical, superseded by this section. Four broad milestones
-remain. Controller management Service-client registry admission, role binding
-and connection eviction are locally implemented in `9134882`; per-domain consumer
-gates are implemented in `8baa0e3`. Serving-listener Service bundle receipts and
-ready-CA bootstrap are implemented locally in `a857a1f`; managed callers and live
-Service adoption remain open. Account Manager `41f1294` and Video Cloud `72a9ccf`
-add locally tested Account Manager managed identity/egress through a private socket.
-The active milestone is approximately 50%, with 1/6 work groups complete and 5 open.
+Fresh dev Device PKI is complete. Other trust consumers/live sessions is active;
+the [current acceptance table](production-pki-trust-consumers.md#current-acceptance-status-2026-09-09-scope-review)
+owns progress reporting and remaining work. The [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09)
+separates implementation from verification and historical evidence.
 
-The independent Service Root is active in dev, with actual controller/certissuer
-bundle receipts and signed Root CRL 1. Both listeners run the current image;
-existing Device mTLS/MQTT baseline passed. Their governed server leaves are now
-live with seedless managed-state restarts. Managed Account Manager egress also
-passes initial adoption and bootstrap removal. See the
-[live Root checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-root-checkpoint)
-for exact evidence and limitations. The separate
-[intermediate checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-intermediate-checkpoint)
-now adds the active OpenBao Service intermediate, both real listener receipts,
-provider key-custody checks and signed CRL. The
-[managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint)
-records certissuer/controller serving and restart evidence plus fresh factory
-enrollment and Device mTLS/MQTT ACL/QoS1. Remaining host/caller lifecycle is open.
-
-The [Account Manager checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-account-manager-credential-checkpoint)
-records private key ownership, real human-asserted PKI calls, bootstrap-free
-restart, rejected bootstrap credential and Device mTLS/MQTT evidence. Next:
-Service CRL freshness/refresh recovery, credential renewal/revocation and actual
-installed-CRL receipts. Other callers and transport owners remain open.
+This inventory preserves domain/host design history. Dated percentages, migration
+priorities and milestone counts below are historical and superseded by the active
+plan. Four broad milestones remain. Staging and legacy migration remain deferred;
+MFA is optional future human login only.
 
 ## 2026-09-08 staging packaging checkpoint
 

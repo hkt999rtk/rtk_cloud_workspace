@@ -1,41 +1,17 @@
 # Production PKI implementation ledger
 
-## Current milestone: other trust consumers/live sessions (2026-09-08)
+## Current milestone and evidence authority
 
-The next milestone is now active. Its [six fixed work groups](production-pki-trust-consumers.md)
-track the remaining adoption and dev acceptance; controller management Service
-identity enforcement is locally implemented in Video Cloud `9134882`, and
-per-domain receipt permissions/completion gates in `8baa0e3`. Actual serving
-Service listener bundle receipts and ready-CA bootstrap are implemented in
-`a857a1f`, with local mTLS/registry integration and failure/restart tests.
-Account Manager `41f1294` and Video Cloud `72a9ccf` add a private-socket managed
-Service identity owner for Account Manager, including issuance/retry, renewal,
-verified remote connections and revocation cutoff. Initial managed dev adoption
-and bootstrap-free restart now pass; live renewal/revocation qualification remains.
-Inventory is complete (1/6 work groups); 5 work groups remain, with management
-adoption underway. Active milestone progress is approximately 50% (engineering
-estimate; managed caller lifecycle and remaining hosts still require adoption).
-Keep new commits local unless a backup push is requested. Create PRs only after
-all milestones are finished.
+The active milestone is other trust consumers/live sessions. Use its
+[current acceptance table](production-pki-trust-consumers.md#current-acceptance-status-2026-09-09-scope-review)
+for progress and next work; this ledger retains original dated implementation
+evidence. The [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09)
+records necessary implementation/test boundaries, duplicate-document consolidation
+and correction of earlier unsupported percentages.
 
-The first independent dev Service Root is now active with actual controller and
-certissuer receipts and a signed Root CRL. Missing receipts blocked activation;
-Device mTLS/MQTT baseline and final runtime/configuration audit passed. The
-[dated live checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-root-checkpoint)
-records the exact scope, CRL expiry, recovered import failure and evidence.
-The Service intermediate is now active with real controller/certissuer receipts,
-provider key-custody checks and a signed CRL; Device mTLS/MQTT baseline passed.
-See the [intermediate checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-service-intermediate-checkpoint).
-Certissuer/controller now serve governed server certificates and passed seedless
-managed-state restarts. Fresh factory enrollment and Device mTLS/MQTT ACL/QoS1
-passed. See the
-[managed host checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-managed-server-checkpoint).
-
-The [Account Manager checkpoint](production-pki-trust-consumers.md#2026-09-08-live-dev-account-manager-credential-checkpoint)
-records private key ownership, real human-asserted PKI calls, bootstrap-free
-restart, rejected bootstrap credential and Device mTLS/MQTT evidence. Next:
-Service CRL freshness/refresh recovery, credential renewal/revocation and actual
-installed-CRL receipts. Other callers and transport owners remain open.
+Keep commits local unless a branch backup push is requested. Create PRs after
+all milestones finish. Current execution is dev-only; legacy fleet migration and
+staging are deferred, and optional future MFA applies only to human login.
 
 ## Previous milestone status: complete (2026-09-08)
 
@@ -333,7 +309,7 @@ successor acknowledgment, preserved the successor, and denied old-token reconnec
 A stable-node restart preserved broker identity, images/PVC, cache policy and
 old/new authentication decisions. The Docker node-name override discovered during
 verification is fixed in the persisted isolated deployment. See the
-[fresh dev evidence](production-pki-fresh-dev-rehearsal.md#current-live-checkpoint-real-dev-mqtt-lifecycle).
+[fresh dev evidence](production-pki-fresh-dev-rehearsal.md#earlier-live-checkpoint-real-dev-mqtt-lifecycle).
 
 Dev MQTT behavior now has measured evidence. Broker Device trust-consumer
 acknowledgments/gating and a reproducible complete dev run still remain; controller

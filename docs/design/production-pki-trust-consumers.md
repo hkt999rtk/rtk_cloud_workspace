@@ -7,6 +7,58 @@ Live verification is dev-only.
 Legacy migration and staging remain deferred. MFA is optional future human
 login functionality and is never a Device authentication requirement.
 
+## Current acceptance status (2026-09-09 scope review)
+
+This section is the single current progress record for this milestone. Dated
+checkpoints below retain historical evidence; their percentages and group counts
+are superseded. In particular, activating Service Intermediate v2 does not finish
+management enforcement across all callers. Earlier 88–95% effort estimates have
+no fixed denominator and must not be used as completion percentages.
+
+| Fixed group | Status | Evidence and remaining exit criteria |
+| --- | --- | --- |
+| 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
+| 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners and v2 authority are live. Factory managed bootstrap/adoption, remaining Account Manager/MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
+| 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
+| 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
+| 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
+
+**Completion by closed work group: 1/6 (17%, rounded); 5/6 remain open.** This
+measures closed acceptance groups, not code written, effort spent or time remaining.
+Do not assign partial-group percentages without a fixed, evidence-linked checklist.
+The four broad milestones remain: this milestone; backup/recovery and SDK;
+provider/hardware compatibility; deferred staging/custody/recovery qualification.
+
+The immediate factory work package has six exit criteria:
+
+1. **Complete:** approve and activate Service v2 under the existing Root; retain v1
+   trust and obtain both listener bundle/CRL receipts.
+2. **Open:** issue exactly one initial managed factory identity on its retained PVC,
+   verify private state and registry admission, and close bootstrap permission.
+3. **Open:** adopt factory runtime, persist its configuration, and prove a restart
+   with no static client key mount plus actual factory enrollment/Device traffic.
+4. **Open:** install factory's dynamic CRL transport, authorize its exact consumer
+   identity/ingress and require real current receipts before changing completion gates.
+5. **Open:** qualify one SIGHUP renewal, a different key/leaf, restart persistence
+   and measured held-connection cutoff with unaffected traffic surviving.
+6. **Open:** revoke the replaced managed leaf with the required receipts; inventory
+   the legacy bootstrap leaf before selecting registry revocation or exact legacy
+   trust withdrawal, then remove its unreferenced Secret and verify the baseline.
+
+Factory package: **1/6 exit criteria complete (17%); 5 remain.** Intermediate v1
+retirement is a later consequence of inventorying all its descendants; it is not
+a prerequisite for factory's first adoption and must not be forced by this package.
+
+The interrupted `factory-seed-1` run is not a passing bootstrap. The PVC bound,
+but the seed Pod could not pull the private image without a registry credential;
+the registry has zero factory Service issuance rows. Bootstrap permission was
+closed (`^$`), certissuer is Ready, and the never-started Pod was deleted using
+the recorded UID/resourceVersion. PVC and failure evidence are retained. Resume
+must reconcile that PVC, use the existing pull credential by reference, and create
+a private directory below the volume mount (the identity store rejects a
+group-accessible volume root). Do not rerun the fresh-PVC phase blindly.
+
 ## Fixed acceptance work groups
 
 1. **Inventory and design reconciliation.** Identify actual listeners, callers,
@@ -45,7 +97,7 @@ record. "Local" means implementation/test evidence, not live qualification.
 | --- | --- | --- |
 | Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption, early renewal, replaced-leaf retirement, both listener CRL receipts and bootstrap-free restarts passed in dev. Active-session revocation and remaining failure cases still need live qualification. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
-| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed issuer server leaf, managed client adoption, fresh CRL receipts, client/host early renewal and seedless restarts passed in dev. Old-leaf revocation and selective active-session eviction remain. |
+| Factory enrollment → certissuer | Factory owns registered Service key/CSR renewal; issuer has Service admission, timed eviction and durable CRL consumption locally. | Governed certissuer server leaf is live. Factory still uses its static client Secret; managed bootstrap/adoption, factory CRL receipts, renewal, restart and retirement remain. Listener lifecycle evidence must not be counted as factory lifecycle evidence. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
 | Controller / certissuer → OpenBao | Both live workload constructions support registry-backed transport; recovery commands deliberately use separate restore trust. | Governed OpenBao TLS host renewal and root-policy adoption, actual dev transport replacement/denial. Recovery commands remain in the recovery milestone. |
 | API / log ingester → EMQX | Independent MQTT server registry verification, CRL receipts and connection eviction locally; native `emqxpkihost` owns keys and replacement. Device MQTT auth/ACL/session worker passed in dev. | Governed MQTT server-host and client rollout, root-policy adoption, actual authenticated reconnect/session behavior. |
@@ -58,12 +110,10 @@ provider seal/HSM custody are separate infrastructure/qualification boundaries,
 not additional Device/App identity consumers. Existing managed controller and
 certissuer server-host adapters now serve registered dev leaves and preserve
 private state across seedless restarts. Both listener client and host early-renewal
-paths now pass in dev; old-leaf revocation and active-session acceptance remain.
+paths and old-leaf retirement passed in dev; held-session acceptance remains.
 
-Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **88%**, an engineering estimate
-reflecting that the remaining runtime adoption and dev qualification dominate
-the work; it is not six equal-sized percentages.
+Inventory/design work group **1/6 complete**. Work groups 2–6 remain open; use
+the current acceptance table above for completion accounting.
 
 ## First implementation: controller management Service clients
 
