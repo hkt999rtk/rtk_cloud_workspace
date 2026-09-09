@@ -61,7 +61,7 @@ private state across seedless restarts. Both listener client and host early-rene
 paths now pass in dev; old-leaf revocation and active-session acceptance remain.
 
 Inventory/design work group **1/6 complete**. Work groups 2–6 remain open.
-Overall milestone progress is approximately **82%**, an engineering estimate
+Overall milestone progress is approximately **86%**, an engineering estimate
 reflecting that the remaining runtime adoption and dev qualification dominate
 the work; it is not six equal-sized percentages.
 
@@ -1321,3 +1321,46 @@ milestones remain: (1) trust consumers/live sessions, active; (2) matched
 backup/recovery and SDK integration; (3) provider/hardware compatibility; and
 (4) staging/independent custody/recovery qualification, deferred. No PR, remote
 CI dispatch or staging mutation occurred.
+
+### Replaced listener leaves retired in dev (2026-09-09)
+
+The maintained [listener retirement procedure](../../scripts/pki-service-dev/LISTENER_RETIREMENT.md)
+binds the two old managed-client leaves and two old server leaves to the exact
+successful renewal evidence. It first commits online registry denial without
+changing the provider CRL. It then publishes each matching provider revocation
+in sequence, waiting for both managed listeners to install and acknowledge every
+cumulative CRL before the next authenticated operation. This preserves the
+controller's fail-closed CRL floor during publication.
+
+Private evidence is retained under
+`~/.config/rtk_cloud/dev/pki/service-listener-retirement-20260909/`. Successful
+paths are `revocation-recovery`, `publication` and `verification`. The first
+revocation run failed before saving targets or calling any revocation endpoint
+because its evidence parser used the wrong server-state key; the corrected run
+revalidated all live state before mutation.
+
+All four old registry rows are revoked, while both current client and both current
+server successors remain unrevoked and registry-admitted. Four cumulative OpenBao
+publications completed with two exact listener receipts each. The final Service
+Intermediate CRL is number 25, digest
+`d73e0b4485920764f12d22eb0f04ab0e30efcb12f5139605b530f846b894392c`,
+and next update `2026-09-12T00:13:11Z`. It retains all previous entries and covers
+all four replaced serials. Every revocation finalized against that final digest.
+
+Both listener PVC states match the final registry CRL. Bootstrap-free restart of
+both listeners preserved their current client/server keys and registry state; the
+wire endpoints continued serving the replacement host leaves. Device direct mTLS
+and MQTT ACL/QoS1 passed after registry denial, after publication, and after the
+final restarts.
+
+The old private keys were destroyed during renewal, so a connection using those
+keys cannot be recreated after the fact. This evidence proves registry denial,
+CRL coverage, managed receipt installation and successor survival; it does not
+claim cutoff timing for a session opened before replacement. A future renewal
+test must open and hold that old session before it rotates the key.
+
+Current milestone estimate: **86%; 1/6 work groups complete, 5 open**. Next remove
+the residual legacy trust blocks and two unmounted bootstrap Secrets with a
+guarded inventory and restart audit, then continue with remaining caller/host,
+Root-policy and App/relay adoption. Four broad milestones remain; staging stays
+deferred and no PR or remote CI was triggered.

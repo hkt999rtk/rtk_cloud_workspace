@@ -102,8 +102,10 @@ registry rows, no static credential paths or mounts, disabled bootstrap policy,
 managed host-renewal authorization, and the existing Device baseline checks.
 Separate server/client key comparison and actual managed client/host renewal are
 qualified by the subsequent [listener renewal procedure](LISTENER_RENEWAL.md).
-Rejection of old credentials and residual trust/Secret cleanup still require
-recorded evidence. A fresh signed Service
+Registry denial and CRL coverage for the replaced leaves are qualified by the
+subsequent [listener retirement procedure](LISTENER_RETIREMENT.md). A pre-held
+old-key session and residual trust/Secret cleanup still require recorded evidence.
+A fresh signed Service
 CRL and new dynamic receipts are a later, separately recorded acceptance phase;
 this procedure does not claim them merely because historical receipt rows exist.
 
