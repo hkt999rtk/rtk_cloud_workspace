@@ -494,13 +494,120 @@ class AccountListenerAuthority(fa.FactoryAdoption):
             'v1_status': 'retiring', 'v2_status': 'retiring', 'v3_status': 'active',
             'device_baseline': 'passed'})
 
+    def install_listener_image(self, name, image):
+        m.require(name in r.SERVICE_CONSUMERS and re.fullmatch(
+            r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}',
+            image or ''), 'verified dev listener image required')
+        owner = self.obj('deployment', name)
+        containers = owner['spec']['template']['spec']['containers']
+        m.require(len(containers) == 1 and containers[0]['name'] == name,
+                  'listener container changed: ' + name)
+        if containers[0]['image'] != image:
+            self.observed_patch('deployment', name, owner, [
+                {'op': 'test', 'path': '/spec/template/spec/containers/0/image',
+                 'value': containers[0]['image']},
+                {'op': 'replace', 'path': '/spec/template/spec/containers/0/image',
+                 'value': image}])
+        self.kube(['-n', r.NS, 'rollout', 'status', 'deployment/' + name,
+                   '--timeout=300s'], timeout=310)
+        live = self.obj('deployment', name)
+        m.require(live['spec']['template']['spec']['containers'][0]['image'] == image,
+                  'listener image rollout differs: ' + name)
+        path = self.base / 'pki/controller-bootstrap/rollout' / (name + '-deployment.json')
+        desired = m.read(path)
+        desired_containers = desired['spec']['template']['spec']['containers']
+        m.require(desired['metadata']['name'] == name
+                  and desired['metadata']['namespace'] == r.NS
+                  and len(desired_containers) == 1
+                  and desired_containers[0]['name'] == name,
+                  'persisted listener scope changed: ' + name)
+        desired_containers[0]['image'] = image
+        m.write(path, desired)
+        key = 'PKI_CONTROLLER_IMAGE' if name == 'pki-controller' else 'PKI_CERTISSUER_IMAGE'
+        m.write(self.base / 'operator/env' / key, image + '\n')
+
+    def recover_activation(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed' and failed['phase'] == 'activate',
+                  'failed v3 activation evidence required')
+        root = self.active_root()
+        source = Path(self.args.prepared)
+        m.require(m.read(source / 'report.json')['status'] == 'passed',
+                  'successful Service v3 preparation required')
+        saved_old = [m.read(source / ('intermediate-v%d.json' % version))
+                     for version in (1, 2)]
+        saved_new = m.read(source / 'intermediate-ready.json')
+        old = [self.api('/issuers/' + issuer['issuer_id']) for issuer in saved_old]
+        new = self.api('/issuers/' + saved_new['issuer_id'])
+        operation = m.read(source / 'intermediate-operation.json')
+        current_operation = self.api('/operations/' + operation['operation_id'])
+        m.require([issuer['status'] for issuer in old] == ['retiring', 'retiring']
+                  and new['status'] == 'active' and current_operation['status'] == 'active'
+                  and [issuer['certificate_fingerprint_sha256'] for issuer in old]
+                  == [issuer['certificate_fingerprint_sha256'] for issuer in saved_old]
+                  and new['certificate_fingerprint_sha256']
+                  == saved_new['certificate_fingerprint_sha256']
+                  and new['service_client_ids'] == V3_CLIENT_IDS
+                  and new['server_dns_names'] == V3_DNS_NAMES,
+                  'exact activated Service v3 transition required')
+        bundle, refs = self.require_v3_bundle(root, old, new)
+        for listener in r.SERVICE_CONSUMERS:
+            m.require(self.current_bundle_for(listener) == bundle,
+                      'listener does not use Service v3: ' + listener)
+        bundle_receipts = self.wait_receipts(new['issuer_id'],
+                                            new['trust_bundle_version'],
+                                            r.SERVICE_CONSUMERS)
+        self.verify_v3_signer(new)
+        record = self.api('/issuers/' + new['issuer_id'] + '/crl')
+        provider_crl = json.loads(self.bao([
+            'read', '-format=json', new['signer_reference'] + '/cert/crl']))['data']['certificate']
+        m.require(record['crl_pem'] == provider_crl,
+                  'recovered v3 CRL differs from OpenBao')
+
+        manifest = self.obj('configmap', 'pki-service-client-crls')
+        entries = json.loads(manifest['data']['crls.json'])
+        updated = fa.crl_entries(root, *old, new)
+        ids = [entry['issuer']['issuer_id'] for entry in entries]
+        previous_ids = [issuer['issuer_id'] for issuer in [root] + old]
+        m.require(ids == previous_ids or entries == updated,
+                  'Service CRL manifest differs during v3 recovery')
+        if ids == previous_ids:
+            self.observed_patch('configmap', 'pki-service-client-crls', manifest, [
+                {'op': 'test', 'path': '/data/crls.json',
+                 'value': manifest['data']['crls.json']},
+                {'op': 'replace', 'path': '/data/crls.json',
+                 'value': json.dumps(updated)}])
+        desired_path = self.base / 'pki/controller-bootstrap/rollout/pki-service-client-crls-configmap.json'
+        desired = m.read(desired_path)
+        m.require(desired['metadata']['name'] == 'pki-service-client-crls'
+                  and desired['metadata']['namespace'] == r.NS,
+                  'persisted Service CRL manifest scope changed')
+        desired['data']['crls.json'] = json.dumps(updated)
+        m.write(desired_path, desired)
+        for listener in r.SERVICE_CONSUMERS:
+            self.install_listener_image(listener, self.args.image)
+        crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
+                                         r.SERVICE_CONSUMERS, kind='crl')
+        self.device_baseline()
+        self.save('intermediate-v3-active.json', new)
+        self.save('intermediate-v1-retiring.json', old[0])
+        self.save('intermediate-v2-retiring.json', old[1])
+        self.save('intermediate-v3-crl.json', record)
+        self.check('intermediate_v3_activation_recovered', {
+            'bundle': bundle, 'references': refs,
+            'bundle_consumers': bundle_receipts,
+            'crl_sha256': record['crl_sha256'], 'crl_consumers': crl_receipts,
+            'v1_status': 'retiring', 'v2_status': 'retiring', 'v3_status': 'active',
+            'listener_images': {name: self.args.image for name in r.SERVICE_CONSUMERS},
+            'device_baseline': 'passed', 'activation_replayed': False})
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=['prepare-intermediate-v3', 'controller',
                                            'recover-controller', 'certissuer',
                                            'controller-gate', 'recover-controller-gate',
-                                           'activate'],
+                                           'activate', 'recover-activation'],
                         default='prepare-intermediate-v3')
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -521,6 +628,8 @@ def main():
     m.require(args.phase not in ('controller-gate', 'recover-controller-gate')
               or (args.failed and args.image),
               'failed phase evidence and verified image required')
+    m.require(args.phase != 'recover-activation' or (args.failed and args.image),
+              'failed activation evidence and verified image required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -533,7 +642,8 @@ def main():
          'certissuer': runner.install_certissuer,
          'controller-gate': runner.install_controller_gate,
          'recover-controller-gate': runner.recover_controller_gate,
-         'activate': runner.activate_v3}[args.phase]()
+         'activate': runner.activate_v3,
+         'recover-activation': runner.recover_activation}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

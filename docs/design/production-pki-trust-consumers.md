@@ -1837,3 +1837,12 @@ Cloud `bb311ae` removes the outage window by separating the complete receipt
 sweep from per-peer CRL verification as specified above. A regression fixture
 requires the incomplete successor to suppress receipts while the retiring
 client remains admitted through its fully checked lineage.
+
+Dev recovery completed with image
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:14ab66dd0504d92d6a726842aab00e3c12cbd8badf1854f88c22a2032c43e18d`
+on both controller and certissuer. The recovery verified the existing operation
+as active without replay, matched the imported v3 CRL to OpenBao, installed and
+persisted the four-authority CRL manifest, received controller and certissuer CRL
+acknowledgments, and passed the Device mTLS/MQTT baseline. v1 and v2 are retiring;
+v3 is active. T7 remains open until the Account Manager listener, API caller and
+factory caller pass their managed lifecycle checks.

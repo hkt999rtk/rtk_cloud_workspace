@@ -69,6 +69,13 @@ If its final Device canary fails after the rollout, rerun with
 `--phase recover-controller-gate`, the failed gate evidence, the same verified
 image digest and a new output directory. Recovery only verifies retained state.
 
+If activation commits but a following read or CRL-manifest step fails, do not
+send activation again. Use `--phase recover-activation`, the failed activation
+evidence, the verified listener image digest and a new output directory. It
+requires the exact active v3/retiring v1+v2 transition, matches the imported CRL
+to OpenBao, installs the v3 CRL manifest, rolls out controller and certissuer,
+waits for both CRL receipts and reruns the Device baseline.
+
 The successor retains the exact v1/v2 policies, adds only
 `service:video-cloud-api` and
 `account-manager-internal.video-cloud-dev-account-manager.svc`, and keeps all
