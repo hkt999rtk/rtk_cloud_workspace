@@ -83,5 +83,14 @@ class ManagementTests(unittest.TestCase):
         owner['spec']['template'] = m.managed_template(owner, 'app', 'owner', 'a' * 64)
         with self.assertRaises(RuntimeError): m.managed_template(owner, 'app', 'owner', 'a' * 64)
 
+    def test_legacy_trust_split_retains_service_root(self):
+        legacy = '-----BEGIN CERTIFICATE-----\nlegacy\n-----END CERTIFICATE-----'
+        service = '-----BEGIN CERTIFICATE-----\nservice\n-----END CERTIFICATE-----'
+        old, retained = m.legacy_and_retained_trust(legacy + '\n' + service + '\n')
+        self.assertEqual(old, legacy)
+        self.assertEqual(retained, service + '\n')
+        with self.assertRaises(RuntimeError):
+            m.legacy_and_retained_trust(legacy + '\n')
+
 
 if __name__ == '__main__': unittest.main()

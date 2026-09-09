@@ -19,7 +19,7 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority and factory managed lifecycle are qualified in dev. Remaining Account Manager/MQTT/OpenBao transports/hosts, shared legacy CA withdrawal and public HTTPS evidence remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and Account Manager certissuer egress are qualified in dev. Remaining Account Manager listener/callers, MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
@@ -88,7 +88,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence.
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress and legacy CA withdrawal passed in [the managed egress checkpoint](#account-manager-certissuer-egress-verified-in-dev-2026-09-09); listener/callers remain.
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -240,8 +240,8 @@ record. "Local" means implementation/test evidence, not live qualification.
 | --- | --- | --- |
 | Account Manager → controller | `rtk_account_manager/internal/api/pki.go` retains signed human assertions and supports a private socket to the managed `pkimanagement` owner; controller admits registered Service clients. | Managed caller adoption, early renewal, replaced-leaf retirement, both listener CRL receipts and bootstrap-free restarts passed in dev. Active-session revocation and remaining failure cases still need live qualification. |
 | API / pkibroker / other consumers → controller | `pkitrust` owns separate static management TLS; Device API and broker receipts passed in dev. | Registered Service management credentials, renewal and revocation on actual callers. |
-| Factory enrollment → certissuer/controller | Factory owns the registered Service identity for issuer requests and CRL acknowledgments. | Dev adoption, renewal, old-leaf retirement, real held-socket cutoff, successor survival, restart and factory/Device/MQTT canaries passed. Shared legacy CA withdrawal depends on Account Manager egress adoption. |
-| Account Manager → certissuer | The active Account Manager deployment still mounts its legacy certissuer client credential, signed by the same CA as factory's old bootstrap leaf. | Adopt its managed Service egress, qualify lifecycle and remove the shared legacy CA after its last caller moves; tracked under T7. |
+| Factory enrollment → certissuer/controller | Factory owns the registered Service identity for issuer requests and CRL acknowledgments. | Dev adoption, renewal, old-leaf retirement, real held-socket cutoff, successor survival, restart and factory/Device/MQTT canaries passed. Its old bootstrap and the formerly shared legacy CA are removed. |
+| Account Manager → certissuer | Account Manager sends the single App issuance route through its existing private `pkimanagement` socket. The owner uses the same managed `service:account-manager` identity and certissuer client it already maintains. | Live dev issuance, exact caller audit, old-leaf denial and legacy Secret/CA removal passed. Remaining Account Manager listener/caller and broader lifecycle work stays under T7. |
 | API / factory → Account Manager | `pkitrust.LoadServerHTTPClient` supplies optional Service server verification and connection ownership. | Governed Account Manager TLS listener/renewal and actual caller adoption; server replacement/revocation tests in dev. |
 | Controller / certissuer → OpenBao | Both live workload constructions support registry-backed transport; recovery commands deliberately use separate restore trust. | Governed OpenBao TLS host renewal and root-policy adoption, actual dev transport replacement/denial. Recovery commands remain in the recovery milestone. |
 | API / log ingester → EMQX | Independent MQTT server registry verification, CRL receipts and connection eviction locally; native `emqxpkihost` owns keys and replacement. Device MQTT auth/ACL/session worker passed in dev. | Governed MQTT server-host and client rollout, root-policy adoption, actual authenticated reconnect/session behavior. |
@@ -462,6 +462,14 @@ routes outside `/v1/pki/issuers` and `/v1/pki/operations`. It preserves the exac
 request body, method, Authorization assertion and idempotency key. The controller
 still verifies signed human assertions and roles; local socket access cannot mint
 or change them. Account Manager's current human-login/MFA policy is unchanged.
+
+App certificate issuance reuses this same private socket and identity owner.
+`APP_CERT_ISSUER_SOCKET` is mutually exclusive with the legacy App issuer
+certificate, key and CA settings. The owner admits only the configured
+certissuer origin and exact `POST /v1/certificates/app/issue`; it rejects human
+Authorization headers on this service call. This adds no second manager, socket,
+key or listener. App private keys remain caller-generated, and the Account
+Manager login and human authentication paths are unchanged.
 
 The owner requires separate explicit verified Service server policies for the
 certificate issuer and controller. Reuse `ServerHTTPClient` for their registry,
@@ -1708,3 +1716,45 @@ issuance, certissuer requests and controller CRL acknowledgments. Before enablin
 the CRL consumer, controller receipt policy must explicitly add consumer ID
 `factory-enroll`; ingress uses workload label `factoryenroll`. All future Service
 CRL gates then require its real receipt.
+
+### Account Manager certissuer egress verified in dev (2026-09-09)
+
+Account Manager `01dc25f` routes App certificate issuance through its existing
+private Unix socket when `APP_CERT_ISSUER_SOCKET` is set. Video Cloud `0f92ae4`
+allows `pkimanagement` to forward only the exact certissuer origin and
+`POST /v1/certificates/app/issue` through its existing managed certissuer client.
+No second identity manager, key, socket, TCP listener or login flow was added.
+The controller routes retain their signed human assertions; the App service call
+rejects Authorization headers.
+
+The committed linux/amd64 images were pinned in dev at Account Manager digest
+`sha256:bdb63cd46a1a475da3229cb27504e7efa0be7a4cf8bfb0bbea90b567af6a4aff`
+and owner digest
+`sha256:d5f17cd57d4389faa98aef79b62d5bad559cb1f1fe1f08e3f93d428284db55e2`.
+Two fresh dev users obtained P-256 App certificates through the normal Account
+Manager login/API path. Certissuer's request-bound audit recorded caller
+`service:account-manager` and the expected App subject for both requests. The
+managed identity state hash stayed unchanged and human controller calls passed.
+
+Certissuer now accepts only `^service:account-manager$` for App issuance. The
+legacy `account-manager` leaf was explicitly rejected at TLS, its unmounted
+`account-manager-certissuer-client` Secret was deleted with UID/resource-version
+preconditions, and its self-signed CA was removed while retaining the Service
+Root. The existing dev `pki/app` signer needed one narrow temporary OpenBao policy:
+only `update` on `pki/app/sign/app-user`, with no key read, role, mount or CA
+administration. The future App hierarchy cutover must replace and remove this
+legacy signer policy.
+
+The final Device direct-mTLS and MQTT ACL/QoS1 baseline passed. Private successful
+evidence is under
+`~/.config/rtk_cloud/dev/pki/account-manager-issuer-egress-20260909-10/`.
+Earlier failed phase directories are retained: three stopped before mutation on
+stale evidence/initial-ledger assumptions; later recovery exposed the missing
+legacy App signer permission and an incorrect two-certificate bundle removal.
+The Service Root was restored before the successful final audit, and the saved
+runtime overlay now contains exactly that retained certificate.
+
+T7 remains open for the Account Manager listener and API/factory callers plus
+their lifecycle evidence. Fixed milestone accounting therefore remains
+**22/40 = 55%**, with **18 checkpoints open**. Staging, MFA, PR creation and remote
+CI were not changed or triggered.

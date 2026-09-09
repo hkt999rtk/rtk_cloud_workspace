@@ -10,6 +10,7 @@ from pathlib import Path
 import secrets
 import signal
 import sys
+import uuid
 from urllib.parse import urlsplit, urlunsplit
 
 spec = importlib.util.spec_from_file_location('managed_hosts', Path(__file__).with_name('hosts.py'))
@@ -37,6 +38,12 @@ def owner_settings(root):
             'SERVER_PKI_ROOT_SHA256': root, 'SERVER_PKI_NAME': name,
             'TLS_CA': '/run/pki-root/root.pem', 'SERVER_PKI_SWEEP_INTERVAL': '10s'}.items()})
     return settings
+
+
+def legacy_and_retained_trust(bundle):
+    certificates = h.h.re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', bundle, h.h.re.S)
+    m.require(len(certificates) == 2, 'expected legacy and Service caller roots')
+    return certificates[0], certificates[1] + '\n'
 
 
 def managed_template(owner, app_image, owner_image, root):
@@ -197,7 +204,7 @@ class ManagementRun(h.HostRun):
 
     def adopt(self):
         source = self.preparation()
-        root, _ = self.hierarchy()
+        self.hierarchy()
         current = self.obj('deployment', 'account-manager', AM_NS)
         saved = m.read(source / 'account-manager-before.json')
         m.require(current['metadata']['uid'] == saved['metadata']['uid'] and current['spec'] == saved['spec'],
@@ -257,6 +264,183 @@ class ManagementRun(h.HostRun):
                    'test', '!', '-e', '/run/pki-auth/jwt-access.key'])
         self.check('managed_human_api', {'service_subject': row['subject'], 'fingerprint': row['fingerprint'], 'human_roles': 3,
                                        'api_mounts_no_managed_or_static_controller_key': True, 'owner_mounts_no_human_assertion_key': True})
+
+    def verify_current_identity(self):
+        raw = self.sql("SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,status,fingerprint,certificate_pem,issued_at,revoked_at "
+                       "FROM pki_service_client_issuances WHERE environment='dev' AND subject='service:account-manager' "
+                       "AND status='succeeded' AND revoked_at IS NULL) t;")
+        rows = [json.loads(line) for line in raw.splitlines() if line]
+        m.require(len(rows) == 1, 'expected one current managed Account Manager identity')
+        for role in ('requester', 'approver', 'custodian'):
+            self.api('/issuers/search', {'limit': 1}, role=role)
+        self.kube(['-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'app', '--', 'sh', '-c',
+                   'test -S ' + SOCKET + ' && test ! -e /var/lib/account-pki/private/identity.json && test ! -e /run/pki-auth/account-manager.key'])
+        self.kube(['-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'pkimanagement', '--',
+                   'test', '!', '-e', '/run/pki-auth/jwt-access.key'])
+        return rows[0]
+
+    def app_issuance_canary(self, label):
+        email, password = 'pki-egress-' + uuid.uuid4().hex + '@users.local', secrets.token_urlsafe(24)
+        cloud = m.read(self.foundation / 'cloud.json')
+        created = self.http('/admin/brand-clouds/' + cloud['id'] + '/users',
+                            {'email': email, 'password': password, 'display_name': 'PKI egress canary',
+                             'role': 'member', 'rotate_password': False, 'activation_mode': 'immediate'},
+                            self.login(self.admin)[0], 201)
+        subject = 'app-user:' + created['user']['id']
+        first = self.http('/auth/login', {'email': email, 'password': password})
+        m.require(first['app_certificate']['status'] == 'csr_required', 'new user did not request a CSR')
+        key, csr = self.output / (label + '.key'), self.output / (label + '.csr')
+        m.command([self.openssl, 'genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', key])
+        m.command([self.openssl, 'req', '-new', '-key', key, '-subj', '/CN=' + subject, '-out', csr])
+        issued = self.http('/auth/login', {'email': email, 'password': password,
+                          'app_csr_pem': csr.read_text()})['app_certificate']
+        m.require(issued['status'] == 'issued' and issued['subject'] == subject, 'Account Manager returned another app identity')
+        certificate = self.output / (label + '.crt')
+        self.save(certificate.name, issued['certificate_pem'])
+        m.require(m.command([self.openssl, 'x509', '-in', certificate, '-pubkey', '-noout']) ==
+                  m.command([self.openssl, 'pkey', '-in', key, '-pubout']), 'issued app certificate does not match canary key')
+        request_id = issued['issuer_request_id']
+        m.require(h.h.re.fullmatch(r'[A-Za-z0-9:_-]{1,128}', request_id), 'unexpected issuer request id')
+        events = []
+        for line in self.kube(['-n', NS, 'logs', 'deployment/certissuer', '--since=10m']).splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if event.get('msg') == 'issued app certificate' and event.get('request_id') == request_id:
+                events.append({key: event.get(key) for key in ('request_id', 'caller_identity', 'subject')})
+        m.require(len(events) == 1 and events[0]['caller_identity'] == 'service:account-manager'
+                  and events[0]['subject'] == subject, 'managed app issuance audit differs')
+        self.save(label + '-issuance.json', events[0])
+        return events[0]
+
+    def issuer_egress(self):
+        self.hierarchy()
+        self.verify_current_identity()
+        current = self.obj('deployment', 'account-manager', AM_NS)
+        expected = render_management(self.base)
+        m.require(current['spec']['template'] == expected['spec']['template'], 'Account Manager differs from persisted managed deployment')
+        image, owner_image = self.args.image, self.args.owner_image
+        m.require(h.h.re.fullmatch(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/account-manager@sha256:[0-9a-f]{64}', image or ''),
+                  'verified dev Account Manager image required')
+        m.require(h.h.re.fullmatch(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}', owner_image or ''),
+                  'verified dev identity owner image required')
+        secret = self.obj('secret', 'account-manager-certissuer-client', AM_NS)
+        ca_bundle = base64.b64decode(secret['data']['ca.crt']).decode()
+        old_ca, retained_trust = legacy_and_retained_trust(ca_bundle)
+        self.save('legacy-client.crt', base64.b64decode(secret['data']['client.crt']).decode())
+        self.save('legacy-client.key', base64.b64decode(secret['data']['client.key']).decode())
+        self.save('legacy-ca.crt', old_ca + '\n')
+        m.command([self.openssl, 'verify', '-CAfile', self.output / 'legacy-ca.crt', self.output / 'legacy-client.crt'])
+        deployments = json.loads(self.kube(['get', 'deployments', '-A', '-o', 'json']))['items']
+        refs = [(d['metadata']['namespace'], d['metadata']['name']) for d in deployments
+                if any(v.get('secret', {}).get('secretName') == secret['metadata']['name']
+                       for v in d['spec']['template']['spec'].get('volumes', []))]
+        issuer = self.obj('deployment', 'certissuer')
+        env = {e['name']: e.get('value') for e in issuer['spec']['template']['spec']['containers'][0]['env']}
+        pattern = env.get('CERT_ISSUER_APP_CLIENT_CN_PATTERN', '^account-manager$')
+        state = self.state_digest()
+        if pattern == '^account-manager$':
+            m.require(refs == [(AM_NS, 'account-manager')], 'legacy Account Manager credential has another workload consumer')
+            self.rollout('certissuer', {'CERT_ISSUER_APP_CLIENT_CN_PATTERN': '^(?:account-manager|service:account-manager)$'})
+            template = json.loads(json.dumps(current['spec']['template']))
+            pod = template['spec']
+            app = next(c for c in pod['containers'] if c['name'] == 'app')
+            owner = next(c for c in pod['containers'] if c['name'] == 'pkimanagement')
+            app['image'], owner['image'] = image, owner_image
+            app['env'] = h.h.with_env(app['env'], {'APP_CERT_ISSUER_SOCKET': SOCKET,
+                                                   'APP_CERT_ISSUER_CLIENT_CERT': '',
+                                                   'APP_CERT_ISSUER_CLIENT_KEY': '',
+                                                   'APP_CERT_ISSUER_CA_FILE': ''})
+            app['volumeMounts'] = [v for v in app['volumeMounts'] if v['name'] != 'account-manager-certissuer-client']
+            pod['volumes'] = [v for v in pod['volumes'] if v['name'] != 'account-manager-certissuer-client']
+            template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/service-host-rollout'] = self.output.name
+            self.scoped_patch('deployment', current, [{'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
+                                                      {'op': 'replace', 'path': '/spec/template', 'value': template}])
+            m.write(self.base / 'operator/env/PKI_ACCOUNT_MANAGER_API_IMAGE', image)
+            m.write(self.base / 'operator/env/PKI_ACCOUNT_MANAGER_OWNER_IMAGE', owner_image)
+            settings = self.base / 'pki/controller-bootstrap/rollout/account-manager-service-settings.json'
+            m.write(settings, dict(m.read(settings), APP_CERT_ISSUER_SOCKET=SOCKET,
+                                   APP_CERT_ISSUER_CLIENT_CERT='', APP_CERT_ISSUER_CLIENT_KEY='', APP_CERT_ISSUER_CA_FILE=''))
+            self.kube(['-n', AM_NS, 'rollout', 'status', 'deployment/account-manager', '--timeout=360s'], timeout=370)
+            self.forward('am', AM_NS, 'account-manager', 80)
+        else:
+            m.require(pattern in ('^(?:account-manager|service:account-manager)$', '^service:account-manager$') and not refs,
+                      'issuer egress is not at its exact resumable transition')
+            app = next(c for c in current['spec']['template']['spec']['containers'] if c['name'] == 'app')
+            owner = next(c for c in current['spec']['template']['spec']['containers'] if c['name'] == 'pkimanagement')
+            app_env = {e['name']: e.get('value') for e in app['env']}
+            m.require(app['image'] == image and owner['image'] == owner_image and app_env.get('APP_CERT_ISSUER_SOCKET') == SOCKET
+                      and all(name in app_env and app_env[name] in ('', None)
+                              for name in ('APP_CERT_ISSUER_CLIENT_CERT', 'APP_CERT_ISSUER_CLIENT_KEY', 'APP_CERT_ISSUER_CA_FILE')),
+                      'resumable Account Manager egress differs')
+            self.report['reconciled_transition'] = True
+        app_policy_name = 'certissuer-app-dev-legacy'
+        app_policy = 'path "pki/app/sign/app-user" { capabilities = ["update"] }\n'
+        role = json.loads(self.bao(['read', '-format=json', 'auth/kubernetes/role/certissuer-pki-dev']))['data']
+        if app_policy_name not in role['token_policies']:
+            self.role_policy('certissuer-pki-dev', app_policy_name, app_policy)
+            self.rollout('certissuer')
+        else:
+            m.require(self.bao(['policy', 'read', app_policy_name]).strip() == app_policy.strip(),
+                      'existing App signer policy differs')
+        runtime = self.obj('secret', 'certissuer-runtime')
+        trust = base64.b64decode(runtime['data']['client-ca.crt']).decode()
+        if pattern == '^service:account-manager$' and trust.count('-----BEGIN CERTIFICATE-----') == 0:
+            self.scoped_patch('secret', runtime, [{'op': 'replace', 'path': '/data/client-ca.crt',
+                                                   'value': base64.b64encode(retained_trust.encode()).decode()}])
+            self.rollout('certissuer')
+            self.report['reconciled_empty_trust'] = True
+        self.verify_current_identity()
+        m.require(self.state_digest() == state, 'managed Account Manager identity changed during image rollout')
+        first = self.app_issuance_canary('before-legacy-removal')
+
+        runtime = self.obj('secret', 'certissuer-runtime')
+        trust = base64.b64decode(runtime['data']['client-ca.crt']).decode()
+        old_count = trust.count(old_ca)
+        if old_count == 1:
+            trust = trust.replace(old_ca, '').strip() + '\n'
+            m.require(trust.count('-----BEGIN CERTIFICATE-----') > 0, 'legacy CA removal would empty certissuer trust')
+            self.scoped_patch('secret', runtime, [{'op': 'replace', 'path': '/data/client-ca.crt',
+                                                   'value': base64.b64encode(trust.encode()).decode()}])
+            self.rollout('certissuer', {'CERT_ISSUER_APP_CLIENT_CN_PATTERN': '^service:account-manager$'})
+        else:
+            live_issuer = self.obj('deployment', 'certissuer')['spec']['template']['spec']['containers'][0]
+            live_env = {e['name']: e.get('value') for e in live_issuer['env']}
+            m.require(old_count == 0 and trust.count('-----BEGIN CERTIFICATE-----') > 0
+                      and live_env.get('CERT_ISSUER_APP_CLIENT_CN_PATTERN') == '^service:account-manager$',
+                      'certissuer is not at its exact post-removal state')
+            self.forward('issuer', NS, 'certissuer', 9443)
+        denied = json.loads(m.command([self.probe, 'tls-denial', self.output / 'root.pem', self.output / 'legacy-client.crt',
+                                      self.output / 'legacy-client.key', 'certissuer.' + NS + '.svc', self.ports['issuer'][0],
+                                      '/v1/certificates/app/issue']))
+        m.require(denied.get('status') == 0 and denied.get('remote_certificate_rejected') is True,
+                  'legacy Account Manager certificate was not rejected')
+        current = self.obj('deployment', 'account-manager', AM_NS)
+        m.require(not any(v.get('secret', {}).get('secretName') == secret['metadata']['name']
+                          for v in current['spec']['template']['spec'].get('volumes', [])), 'legacy credential remains mounted')
+        options = {'apiVersion': 'v1', 'kind': 'DeleteOptions', 'preconditions':
+                   {k: secret['metadata'][k] for k in ('uid', 'resourceVersion')}}
+        self.kube(['delete', '--raw', '/api/v1/namespaces/' + AM_NS + '/secrets/' + secret['metadata']['name'], '-f', '-'],
+                  json.dumps(options))
+        persisted = self.base / 'pki/controller-bootstrap/rollout/account-manager-certissuer-client-secret.json'
+        if persisted.exists():
+            persisted.unlink()
+        second = self.app_issuance_canary('after-legacy-removal')
+        runtime = self.obj('secret', 'certissuer-runtime')
+        final_trust = base64.b64decode(runtime['data']['client-ca.crt']).decode()
+        m.require(final_trust.count('-----BEGIN CERTIFICATE-----') == 1 and old_ca not in final_trust,
+                  'final certissuer trust differs')
+        desired = {key: runtime[key] for key in ('apiVersion', 'kind', 'data', 'type')}
+        desired['metadata'] = {key: runtime['metadata'][key] for key in ('name', 'namespace')}
+        m.write(self.base / 'pki/controller-bootstrap/rollout/certissuer-runtime-secret.json', desired)
+        m.require(self.kube(['-n', AM_NS, 'get', 'secret', 'account-manager-certissuer-client',
+                             '--ignore-not-found', '-o', 'name']).strip() == '', 'legacy credential Secret still exists')
+        self.device_baseline()
+        self.check('account_manager_certissuer_egress', {'managed_caller': 'service:account-manager',
+                   'issuance_request_ids': [first['request_id'], second['request_id']], 'managed_key_exported': False,
+                   'legacy_certificate_rejected': True, 'legacy_secret_and_ca_removed': True,
+                   'login_mfa_changed': False})
 
     def verify_bootstrap_denied(self):
         source = self.preparation()
@@ -365,11 +549,11 @@ class ManagementRun(h.HostRun):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', choices=['prepare', 'adopt', 'resume-adopt', 'seal', 'resume-seal', 'verify'], required=True)
+    parser.add_argument('--phase', choices=['prepare', 'adopt', 'resume-adopt', 'seal', 'resume-seal', 'verify', 'issuer-egress'], required=True)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     for arg in ('authority', 'intermediate', 'output'):
         parser.add_argument('--' + arg, required=True)
-    for arg in ('preparation', 'adoption', 'sealing', 'image'):
+    for arg in ('preparation', 'adoption', 'sealing', 'image', 'owner-image'):
         parser.add_argument('--' + arg)
     args = parser.parse_args()
     m.require(args.phase == 'prepare' or args.preparation, 'management preparation evidence required')
@@ -381,7 +565,9 @@ def main():
     runner = ManagementRun(args)
     try:
         runner.preflight()
-        {'prepare': runner.prepare_management, 'adopt': runner.adopt, 'resume-adopt': runner.resume_adopt, 'seal': runner.seal, 'resume-seal': runner.resume_seal, 'verify': runner.verify}[args.phase]()
+        {'prepare': runner.prepare_management, 'adopt': runner.adopt, 'resume-adopt': runner.resume_adopt,
+         'seal': runner.seal, 'resume-seal': runner.resume_seal, 'verify': runner.verify,
+         'issuer-egress': runner.issuer_egress}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'; runner.report['failure'] = str(error)

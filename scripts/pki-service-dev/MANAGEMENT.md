@@ -24,6 +24,10 @@ python3 scripts/pki-service-dev/management.py --phase seal \
 python3 scripts/pki-service-dev/management.py --phase verify \
   --authority ROOT_EVIDENCE --intermediate INTERMEDIATE_EVIDENCE \
   --preparation PREPARATION --adoption ADOPTION --output FINAL_VERIFICATION
+python3 scripts/pki-service-dev/management.py --phase issuer-egress \
+  --authority ROOT_EVIDENCE --intermediate INTERMEDIATE_EVIDENCE \
+  --preparation PREPARATION --image VERIFIED_ACCOUNT_MANAGER_DIGEST \
+  --owner-image VERIFIED_VIDEO_CLOUD_DIGEST --output ISSUER_EGRESS
 ```
 
 Preparation creates a dedicated verifier login inheriting the existing non-login
@@ -79,6 +83,22 @@ must never be treated as successful installation.
 This audit describes initial adoption and expects one successful issuance. After
 a later renewal or replacement, use that lifecycle's reviewed evidence rather
 than relaxing this phase's original-identity checks or treating it as a monitor.
+
+`issuer-egress` reuses the same private socket and managed identity for the one
+App issuance route. It first admits both the legacy and managed caller, updates
+only the Account Manager API and owner images, and proves a normal dev user
+certificate issuance records caller `service:account-manager`. It then removes
+the legacy CA and static credential Secret, narrows the caller policy to the
+managed identity, and repeats issuance plus the Device baseline. The canary keys,
+credentials and responses remain in the private phase output. This phase does
+not change human login or MFA behavior. If the first canary fails after the
+image switch, a new phase directory may resume only the exact saved transition;
+it does not repeat either rollout.
+
+The current dev App signer remains the existing `pki/app` OpenBao mount until the
+separate App hierarchy milestone. This phase gives the certissuer Kubernetes
+role only `update` on `pki/app/sign/app-user`; it grants no key, role, mount or CA
+administration. The later App hierarchy cutover removes this temporary policy.
 
 If sealing already restarted without bootstrap and removed issuer trust, but its
 certificate-denial probe failed, `--phase resume-seal --sealing FAILED_SEAL
