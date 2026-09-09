@@ -80,7 +80,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
-**Group 3 — transports and hosts (6/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
+**Group 3 — transports and hosts (7/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
 [host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
 linked above, the [transport inventory](production-pki-domain-host-inventory.md#current-entry-points)
 and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-checklist-four-items).
@@ -92,7 +92,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
 - [x] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, Account Manager client/listener renewal, retirement, held-connection cutoff, CRL fail-closed recovery and stale dev-record reconciliation have passed. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
-- [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated dev MQTT Root is prepared and inactive; managed host rollout and client evidence remain.
+- [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated dev MQTT Root is prepared and inactive. Actual client CA-installation receipts are implemented and tested locally; managed host rollout and client lifecycle evidence remain.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
 - [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
@@ -1923,6 +1923,39 @@ evidence is under `pki/t8-mqtt-authority-20260909` and
 `pki/t8-mqtt-authority-reconcile-20260909`. The next T8 work is the retained
 host identity, exact MQTT DNS/signing policy, then the supervised broker and
 actual API/log-ingester client rollout.
+
+### MQTT runtime CA-installation receipts (2026-09-09)
+
+The actual API and log-ingester MQTT runtime can now acknowledge reviewed MQTT
+Root/intermediate bundles using its connection owner's installed TLS pool and
+fingerprint pin. The receiver reuses the Service bundle verifier with the MQTT
+domain, exact approved DNS policy and serverAuth usage. It validates the whole
+manifest before each receipt over independently configured controller mTLS.
+A ready Root needs no CRL to earn an installation receipt; active authorities
+require current CRLs. Receipt failure evicts current MQTT connections, and the
+existing runtime timer retries delivery after sweeping connections. This adds
+no key generation or core login logic.
+
+Disposable PostgreSQL integration tests exercise both actual MQTT runtimes with
+a local TLS/MQTT broker and mTLS controller. Coverage includes valid receipts,
+wrong bundle version/domain, revoked authority, changed approved DNS policy,
+duplicate/non-hex manifest entries, ready-root preparation, missing active-root
+CRLs, a promoted-intermediate trust pool, delivery failure/retry, and existing
+revocation/session eviction. Focused MQTT and shared-verifier race tests and
+package vet passed. The complete affected-package suite also passed against the
+disposable database. Test fixtures preserve append-only PKI history and the
+single-active-authority constraint.
+
+The Dockerfile also preserves the API as its default final target; the managed
+broker image still requires explicit `--target emqx-pki`. Docker target discovery
+verified both targets; this checkpoint did not rebuild or deploy an image.
+
+This is local implementation evidence for T8. No dev authority was activated and
+no live workload was changed. The next step is dev client receipt configuration,
+then the reviewed MQTT authority/host rollout and actual reconnect, renewal,
+retirement and restart acceptance. Durable MQTT root-policy replacement remains
+R3. The active milestone stays **23/40 (57.5%), with 17 checkpoints open** until
+complete checkpoint exit criteria pass.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
