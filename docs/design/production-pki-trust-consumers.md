@@ -88,7 +88,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
-- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress and legacy CA withdrawal passed in [the managed egress checkpoint](#account-manager-certissuer-egress-verified-in-dev-2026-09-09); listener/callers remain.
+- [ ] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, the listener, and managed API/factory caller deployment have passed; an isolated authenticated app-token request and the remaining lifecycle/failure evidence are still required.
 - [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
@@ -1759,10 +1759,43 @@ legacy App signer permission and an incorrect two-certificate bundle removal.
 The Service Root was restored before the successful final audit, and the saved
 runtime overlay now contains exactly that retained certificate.
 
-T7 remains open for the Account Manager listener and API/factory callers plus
-their lifecycle evidence. Fixed milestone accounting therefore remains
-**22/40 = 55%**, with **18 checkpoints open**. Staging, MFA, PR creation and remote
-CI were not changed or triggered.
+T7 remains open for an authenticated API caller proof and the remaining
+lifecycle/failure evidence. The Account Manager listener and both managed callers
+are deployed in dev: `service:video-cloud-api` and `service:factory-enroll` retain
+their own Service identity state and use it for the internal listener transport;
+no static management client key is mounted for either caller. Fixed milestone
+accounting therefore remains **22/40 = 55%**, with **18 checkpoints open**.
+Staging, MFA, PR creation and remote CI were not changed or triggered.
+
+### Dev app-token caller qualification prerequisite (2026-09-09)
+
+The bounded T7 caller proof creates a run-scoped dev brand, one user and one
+device, then issues an App certificate and requests one App token through the
+Video Cloud API. This is the first request that proves the API's managed Service
+identity reaches the Account Manager internal listener and that Account Manager
+applies its normal bearer/subject authorization.
+
+The dev architecture policy must explicitly define
+`CERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256` and
+`CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256`. These are ordered
+preferences for new test credentials only; they do not rotate existing
+certificates. Regenerate the selected dev runtime through the deployment tooling;
+do not edit `runtime/env/stack.env` by hand. A persistent dev environment also
+needs its current validated Object Storage receipt before a broad deployment
+operation. Generate it using the targeted dev storage-bootstrap flow, which
+performs the configured scoped storage canary and writes the local receipt. It
+does not authorize a staging operation or a database reset.
+
+The 2026-09-09 bounded run created the isolated brand and user, issued its App
+certificate, and confirmed the API/factory Service identity deployments. It did
+not close T7. Factory enrollment reached certissuer but was denied with
+`product_issuer_denied` for the generated `runtime-e2e` profile; the fallback
+then correctly received a replay conflict for the same request. The API simulator
+also loaded a valid App certificate/login fixture but could not issue the App
+token because the newly generated dev runtime lacked its live MQTT endpoint
+state. Fix those dev configuration defects, then repeat the one-user, one-device
+proof and retain only redacted evidence. Neither failure permits a static
+management-key fallback or a policy bypass.
 
 ### Account Manager internal Service listener design (2026-09-09)
 
