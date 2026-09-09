@@ -1393,3 +1393,52 @@ listener egress lifecycle is complete except for a future pre-held session cutof
 test during the next rotation. Next prioritize remaining real caller/host adoption,
 then Root-policy and App/relay enforcement. Four broad milestones remain; staging
 is deferred and no PR or remote CI was triggered.
+
+### Factory enrollment adoption requires Service Intermediate v2 (2026-09-09)
+
+The factory enrollment binary already owns `service:factory-enroll` private state,
+creates its key and CSR locally, installs a registry-verified Service client chain,
+renews at two-thirds of leaf lifetime and evicts its owned issuer connections when
+the credential changes. Video Cloud `808e3dd` also exposes a coalesced `SIGHUP`
+renewal path so the operator can qualify an early rotation without exporting the
+key. The current dev Deployment still mounts the legacy static certissuer client
+Secret and has not enabled this managed state.
+
+The active dev Service Intermediate cannot issue this identity. Its independently
+approved immutable `service_client_ids` policy is exactly
+`service:account-manager`, `service:certissuer` and `service:pki-controller`.
+Adding `service:factory-enroll` to the current OpenBao role would bypass the
+approved request digest and is prohibited. The Service Root remains valid and
+does not need replacement.
+
+Adoption therefore uses a new version of the Service Intermediate under the same
+Root. Its approved policy retains all three current client subjects, adds only
+`service:factory-enroll`, and retains the two current listener DNS names. The
+transition must:
+
+1. create, independently approve, provision and offline-sign the new Intermediate;
+2. publish a valid CRL and install additive old-plus-new Intermediate trust on
+   certissuer and PKI controller before activation;
+3. require exact receipts from both listeners, then atomically activate v2 while
+   the registry changes v1 to `retiring`;
+4. grant certissuer only the v2 `sign/service-client` policy and preserve its
+   existing server signer boundaries during the overlap;
+5. create a dedicated retained PVC, generate the factory key and request inside
+   that volume, and use the current static credential only for the first request;
+6. switch factoryenroll to the registry-pinned managed identity, remove the static
+   key/certificate mount after a seedless restart succeeds, and verify issuance,
+   early renewal, connection eviction and the Device baseline;
+7. revoke and publish the retired factory bootstrap leaf, prove current managed
+   admission, then remove its residual public trust and unmounted Secret; and
+8. keep v1 trusted while its still-valid listener leaves exist. Retire or revoke
+   v1 only after those descendants have moved to v2 or expired and required CRL
+   receipts prove the cutoff.
+
+Every mutation is dev-only, uses observed resourceVersion/UID and saved operation
+evidence, and has an intent-bearing recovery path that never creates a second
+issuer, key or issuance request. No staging resource, PR or remote CI is involved.
+
+Current milestone estimate: **89%; 1/6 work groups complete, 5 open**. The next
+concrete task is the guarded Intermediate v2 preparation and additive listener
+trust phase, followed by factoryenroll managed-client adoption. Four broad
+milestones remain.
