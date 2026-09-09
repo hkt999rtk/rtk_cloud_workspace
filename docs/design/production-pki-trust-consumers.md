@@ -1805,3 +1805,20 @@ certissuer. It keeps preparation, each listener receipt, activation, initial CRL
 publication and CRL receipts as separate gates. The runner also persists each
 changed dev overlay. It does not issue leaves or deploy the Account Manager
 listener; those remain the next T7 phase.
+
+The first v3 activation attempt was correctly denied because the existing
+Service consumer policy also included `factory-enroll`, which consumes server
+CRLs but does not install listener client-CA bundles. One list cannot accurately
+describe both gates. The controller therefore uses a separate immutable-at-startup
+bundle-consumer policy for authority activation, while retaining the broader
+domain consumer policy for CRL/revocation finalization. Service activation
+requires `certissuer,pki-controller`; Service CRL/revocation remains gated by
+`certissuer,factory-enroll,pki-controller`. An absent bundle-specific setting
+falls back to the existing domain policy. This preserves current deployments and
+does not weaken revocation evidence.
+
+Video Cloud `dc211b1` implements this split with one optional per-domain startup
+setting and keeps the old policy as the fallback. Local full tests, focused race
+tests and vet passed. The denied dev activation remains ready for the same
+operation after the controller image/settings are updated; no replacement v3
+operation or key is permitted.
