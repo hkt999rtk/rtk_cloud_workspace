@@ -24,11 +24,110 @@ no fixed denominator and must not be used as completion percentages.
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Completion by closed work group: 1/6 (17%, rounded); 5/6 remain open.** This
-measures closed acceptance groups, not code written, effort spent or time remaining.
-Do not assign partial-group percentages without a fixed, evidence-linked checklist.
+**Current checkpoint completion: 20/40 = 50%.** The fixed decomposition below
+credits completed implementation and dev acceptance separately. Each checkpoint
+has equal weight and earns credit only when its stated scope is complete. It is
+not an effort-weighted estimate or a prediction of remaining time. Only **1/6
+whole work groups is closed**; that 17% closure ratio understates partial progress
+and must not be presented as the milestone's implementation/acceptance progress.
+Keep the 40-checkpoint denominator stable; document any future scope change before
+recalculating. Local-only checkpoints never substitute for corresponding dev checks.
 The four broad milestones remain: this milestone; backup/recovery and SDK;
 provider/hardware compatibility; deferred staging/custody/recovery qualification.
+
+### Progress calculation (2026-09-09)
+
+This is a new explicit accounting baseline for the existing six groups, not 40
+new features. Completed checkpoints use the retained evidence linked per group;
+this recalculation does not claim to have rerun those tests or live exercises.
+
+| Group | Completed / total | Checkpoint progress |
+| --- | ---: | ---: |
+| Inventory/design | 3/3 | 100% |
+| Management Service identities | 7/11 | 64% |
+| Transports and hosts | 5/11 | 45% |
+| Root-policy adoption | 0/4 | 0% |
+| App/relay enforcement | 3/6 | 50% |
+| Repeatable dev acceptance | 2/5 | 40% |
+| **Total** | **20/40** | **50%** |
+
+**Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
+below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
+
+- [x] I1: Identify actual listeners, callers, domains and key owners.
+- [x] I2: Map existing implementation and missing runtime adoption.
+- [x] I3: Reconcile current scope, authoritative documents and evidence attribution.
+
+**Group 2 — management Service identities (7/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
+[domain policy](#domain-policy-implementation-checkpoint), [Account Manager adoption](#2026-09-08-live-dev-account-manager-credential-checkpoint),
+[renewal](#dev-managed-early-renewal-checkpoint), [retirement](#dev-replaced-service-leaf-retirement-checkpoint),
+[listener egress](#managed-listener-egress-adoption-verified-in-dev-2026-09-09), [managed receipts](#fresh-managed-listener-crl-receipts-verified-in-dev-2026-09-09),
+[listener renewal](#managed-listener-client-and-host-renewal-verified-in-dev-2026-09-09),
+[retirement](#replaced-listener-leaves-retired-in-dev-2026-09-09) and [cleanup](#retired-listener-bootstrap-trust-removed-in-dev-2026-09-09).
+
+- [x] M1: Implement/test controller registry admission, role binding and eviction.
+- [x] M2: Implement/test domain-specific consumer permissions and receipt gates.
+- [x] M3: Adopt Account Manager's managed identity in dev, including bootstrap-free restart.
+- [x] M4: Qualify Account Manager renewal, old-leaf retirement and successor survival in dev.
+- [x] M5: Adopt managed outbound identities on certissuer and controller in dev.
+- [x] M6: Qualify those two client identities' renewal and old-leaf retirement in dev.
+- [x] M7: Verify both listeners' managed CRL receipts and remove retired bootstrap credentials/trust.
+- [ ] M8: Adopt and qualify the Device API consumer's managed controller credential.
+- [ ] M9: Adopt and qualify pkibroker's managed controller credential.
+- [ ] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts.
+- [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
+
+**Group 3 — transports and hosts (5/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
+[host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
+linked above, the [transport inventory](production-pki-domain-host-inventory.md#current-entry-points)
+and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-checklist-four-items).
+
+- [x] T1: Establish the independent dev Service Root/intermediates, trust receipts and v2 activation.
+- [x] T2: Adopt certissuer's managed server host and qualify renewal, retirement and restart in dev.
+- [x] T3: Adopt controller's managed server host and qualify renewal, retirement and restart in dev.
+- [x] T4: Implement/test reusable private HTTP and MQTT server verification/connection owners locally.
+- [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
+- [ ] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart.
+- [ ] T7: Adopt the Account Manager Service listener and API/factory callers, with dev lifecycle evidence.
+- [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev.
+- [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
+- [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
+- [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
+
+**Group 4 — root-policy adoption (0/4).** Evidence boundary: the audited inventory
+and fixed group definition below. Device root-policy evidence belongs to the
+completed Device milestone and is not counted again here.
+
+- [ ] R1: App consumers install reviewed root changes with rollback protection, receipts and cutoff.
+- [ ] R2: Service consumers install reviewed root changes with rollback protection, receipts and cutoff.
+- [ ] R3: MQTT consumers install reviewed root changes with rollback protection, receipts and cutoff.
+- [ ] R4: OpenBao transport consumers install reviewed root changes with rollback protection, receipts and cutoff.
+
+**Group 5 — App and relay (3/6).** Local evidence: [App API consumer](production-pki-implementation.md#app-only-api-crl-consumer-checkpoint-2026-09-08),
+[App broker/TURN consumers](production-pki-implementation.md#brokerturn-app-crl-consumer-checkpoint-2026-09-08),
+[TURN controller](production-pki-implementation.md#recurring-turn-controller-checkpoint-2026-09-08)
+and [signaling closure](production-pki-implementation.md#atomic-signaling-closure-checkpoint-2026-09-08).
+
+- [x] A1: Implement/test App registry verification and API CRL/session enforcement locally.
+- [x] A2: Implement/test App broker CRL/session enforcement locally.
+- [x] A3: Implement/test TURN/signaling authorization lifetime and closure locally.
+- [ ] A4: Qualify App API renewal/revocation, selective live cutoff and failure/restart in dev.
+- [ ] A5: Qualify App MQTT renewal/revocation, selective live cutoff and failure/restart in dev.
+- [ ] A6: Qualify TURN/signaling renewal/revocation, selective live cutoff and failure/restart in dev.
+
+**Group 6 — repeatable dev acceptance (2/5).** Evidence: maintained
+[Service procedures](../../scripts/pki-service-dev/README.md) and the Device
+regressions recorded in Service v2/renewal/retirement checkpoints above. This
+group measures repeatability and final coverage, not duplicate credit for each
+functional behavior in groups 2–5.
+
+- [x] V1: Retain executable Service acceptance procedures, tests and explicit pass/fail evidence for completed paths.
+- [x] V2: Run incremental Device mTLS/MQTT regression checks during completed Service rollouts.
+- [ ] V3: Extend maintained procedures/evidence to all newly adopted paths and their restart/trust-failure cases.
+- [ ] V4: Complete the full milestone's repeatable dev acceptance run and final Device lifecycle regression.
+- [ ] V5: Independently audit runtime, persisted configuration, receipts, cleanup and all remaining exit criteria.
+
+### Immediate factory work package
 
 The immediate factory work package has six exit criteria:
 
