@@ -9410,7 +9410,9 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
               value: "true"
             - name: SERVICE_LOGIN_URL
               value: %q
-`, firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"))
+            - name: GOOGLE_ANALYTICS_MEASUREMENT_ID
+              value: %q
+`, firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"), lkeEnvValue(env, "GOOGLE_ANALYTICS_MEASUREMENT_ID"))
 	}
 	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
 		envFrom = `          envFrom:
