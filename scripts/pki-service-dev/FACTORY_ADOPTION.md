@@ -114,3 +114,30 @@ python3 scripts/pki-service-dev/factory_identity.py --phase seed \
 
 The completed seed Pod remains present so the adoption phase can compare its UID
 and delete that exact bootstrap owner before mounting the PVC in the Deployment.
+It reuses the Deployment's registry pull references. Private state is created at
+`/state/identity/client.json` (0600) inside an owner-only directory on the retained PVC.
+For a failed seed that never ran, `--failed FAILED_SEED_EVIDENCE` permits reuse
+only after recorded cleanup and exact PVC/workload identity checks.
+
+Adopt that successful seed using the same verified image:
+
+```sh
+python3 scripts/pki-service-dev/factory_identity.py --phase adopt \
+  --authority SERVICE_ROOT_EVIDENCE --image VERIFIED_DEV_IMAGE_DIGEST \
+  --enrollment SUCCESSFUL_FACTORY_SEED_EVIDENCE \
+  --output NEW_PRIVATE_FACTORY_ADOPTION_EVIDENCE
+```
+
+The runner adds controller consumer `factory-enroll` and network workload label
+`factoryenroll`, mounts public CA/CRL data and the private PVC, and removes the
+static client key mount. It uses a single replica with Recreate, closes the old
+factory caller policy, and verifies restart, exact receipts for all three Service
+CRLs, a new factory enrollment, Device mTLS and MQTT QoS1. Renewal and old-leaf
+retirement are separate exit criteria; adoption alone does not close T6.
+
+CRL files use `/state/identity/crl-ISSUER_ID.json`; their parent directory must
+already exist before the CRL consumer opens its lock files. A failed initial
+factory rollout can use `--failed FAILED_ADOPTION_EVIDENCE` after reconciling the
+manifest. Recovery requires the original seed, exact Deployment/PVC identity,
+expected managed template and controller policy. It never seeds another key or
+repeats authority activation. The canary reopens its port-forward after restart.

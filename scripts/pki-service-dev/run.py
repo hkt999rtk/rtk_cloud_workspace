@@ -83,7 +83,8 @@ def render_persisted_listener(base, name):
     containers[0]['env'] = with_env(containers[0]['env'], settings)
     if name == 'pki-controller':
         env = {e['name']: e.get('value') for e in containers[0]['env']}
-        m.require(m.device_consumers(env) == m.CONSUMERS and env.get('PKI_REQUIRED_CONSUMERS_SERVICE') == ','.join(SERVICE_CONSUMERS), 'persisted domain gates changed')
+        m.require(m.device_consumers(env) == m.CONSUMERS and env.get('PKI_REQUIRED_CONSUMERS_SERVICE') in (
+            ','.join(SERVICE_CONSUMERS), 'certissuer,factory-enroll,pki-controller'), 'persisted domain gates changed')
     return desired
 
 

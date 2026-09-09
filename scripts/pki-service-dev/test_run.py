@@ -95,6 +95,15 @@ class RolloutTests(unittest.TestCase):
             rendered = m.render_persisted_listener(base, 'pki-controller')['spec']['template']['spec']['containers'][0]
             self.assertEqual(rendered['image'], image)
             self.assertEqual({e['name']: e['value'] for e in rendered['env']}, settings)
+            settings['PKI_REQUIRED_CONSUMERS_SERVICE'] = 'certissuer,factory-enroll,pki-controller'
+            m.m.write(path / 'pki-controller-service-settings.json', settings)
+            rendered = m.render_persisted_listener(base, 'pki-controller')['spec']['template']['spec']['containers'][0]
+            self.assertEqual({e['name']: e['value'] for e in rendered['env']}, settings)
+            settings['PKI_REQUIRED_CONSUMERS_SERVICE'] = 'certissuer,factoryenroll,pki-controller'
+            m.m.write(path / 'pki-controller-service-settings.json', settings)
+            with self.assertRaisesRegex(RuntimeError, 'persisted domain gates changed'):
+                m.render_persisted_listener(base, 'pki-controller')
+            settings['PKI_REQUIRED_CONSUMERS_SERVICE'] = 'certissuer,factory-enroll,pki-controller'
             settings['PKI_REQUIRED_CONSUMERS_DEVICE'] = 'video-cloud-api'
             m.m.write(path / 'pki-controller-service-settings.json', settings)
             with self.assertRaisesRegex(RuntimeError, 'persisted domain gates changed'):

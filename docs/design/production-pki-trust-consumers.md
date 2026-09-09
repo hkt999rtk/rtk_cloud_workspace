@@ -19,12 +19,12 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners and v2 authority are live. Factory managed bootstrap/adoption, remaining Account Manager/MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority and factory managed adoption are live. Factory renewal/retirement, remaining Account Manager/MQTT/OpenBao transports/hosts and public HTTPS evidence remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 20/40 = 50%.** The fixed decomposition below
+**Current checkpoint completion: 21/40 = 52.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **1/6
@@ -44,12 +44,12 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | Group | Completed / total | Checkpoint progress |
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
-| Management Service identities | 7/11 | 64% |
+| Management Service identities | 8/11 | 73% |
 | Transports and hosts | 5/11 | 45% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **20/40** | **50%** |
+| **Total** | **21/40** | **52.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -58,7 +58,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] I2: Map existing implementation and missing runtime adoption.
 - [x] I3: Reconcile current scope, authoritative documents and evidence attribution.
 
-**Group 2 — management Service identities (7/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
+**Group 2 — management Service identities (8/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
 [domain policy](#domain-policy-implementation-checkpoint), [Account Manager adoption](#2026-09-08-live-dev-account-manager-credential-checkpoint),
 [renewal](#dev-managed-early-renewal-checkpoint), [retirement](#dev-replaced-service-leaf-retirement-checkpoint),
 [listener egress](#managed-listener-egress-adoption-verified-in-dev-2026-09-09), [managed receipts](#fresh-managed-listener-crl-receipts-verified-in-dev-2026-09-09),
@@ -74,7 +74,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M7: Verify both listeners' managed CRL receipts and remove retired bootstrap credentials/trust.
 - [ ] M8: Adopt and qualify the Device API consumer's managed controller credential.
 - [ ] M9: Adopt and qualify pkibroker's managed controller credential.
-- [ ] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts.
+- [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
 **Group 3 — transports and hosts (5/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
@@ -133,30 +133,48 @@ The immediate factory work package has six exit criteria:
 
 1. **Complete:** approve and activate Service v2 under the existing Root; retain v1
    trust and obtain both listener bundle/CRL receipts.
-2. **Open:** issue exactly one initial managed factory identity on its retained PVC,
+2. **Complete:** issue exactly one initial managed factory identity on its retained PVC,
    verify private state and registry admission, and close bootstrap permission.
-3. **Open:** adopt factory runtime, persist its configuration, and prove a restart
+3. **Complete:** adopt factory runtime, persist its configuration, and prove a restart
    with no static client key mount plus actual factory enrollment/Device traffic.
-4. **Open:** install factory's dynamic CRL transport, authorize its exact consumer
-   identity/ingress and require real current receipts before changing completion gates.
+4. **Complete:** install factory's dynamic CRL transport, authorize its exact consumer
+   identity/ingress and require real current receipts before completing subsequent Service transitions.
 5. **Open:** qualify one SIGHUP renewal, a different key/leaf, restart persistence
    and measured held-connection cutoff with unaffected traffic surviving.
 6. **Open:** revoke the replaced managed leaf with the required receipts; inventory
    the legacy bootstrap leaf before selecting registry revocation or exact legacy
    trust withdrawal, then remove its unreferenced Secret and verify the baseline.
 
-Factory package: **1/6 exit criteria complete (17%); 5 remain.** Intermediate v1
+Factory package: **4/6 exit criteria complete (67%); 2 remain.** Intermediate v1
 retirement is a later consequence of inventorying all its descendants; it is not
 a prerequisite for factory's first adoption and must not be forced by this package.
 
-The interrupted `factory-seed-1` run is not a passing bootstrap. The PVC bound,
-but the seed Pod could not pull the private image without a registry credential;
-the registry has zero factory Service issuance rows. Bootstrap permission was
-closed (`^$`), certissuer is Ready, and the never-started Pod was deleted using
-the recorded UID/resourceVersion. PVC and failure evidence are retained. Resume
-must reconcile that PVC, use the existing pull credential by reference, and create
-a private directory below the volume mount (the identity store rejects a
-group-accessible volume root). Do not rerun the fresh-PVC phase blindly.
+The successful `factory-seed-2` run reconciled the retained PVC from the failed
+image-pull attempt, used the existing registry credential by reference, and issued
+exactly one Service v2 factory identity. Its private state is 0600 at
+`/state/identity/client.json` inside an owner-only directory; public inspection matched
+the registry fingerprint and state digest. Bootstrap permission is closed (`^$`).
+The completed seed Pod was deleted with UID/resourceVersion preconditions for
+runtime adoption. Private evidence is under
+`service-factory-adoption-20260909/factory-seed-2`; do not rerun initial issuance.
+
+`factory-adopt-3` passed the dev adoption on 2026-09-09. Factory uses the same
+PVC-owned identity for certissuer and controller CRL requests, with no static
+client or management key mount. The controller requires exactly `certissuer`,
+`factory-enroll` and `pki-controller`; ingress uses workload label `factoryenroll`.
+Adding that gate before factory starts keeps transitions closed until its receipts
+arrive. All three Service CRLs matched installed factory state and had all three
+receipts. Persisted deployment settings matched runtime, a bootstrap-free restart
+preserved the identity, and a new factory enrollment passed Device mTLS and MQTT
+ACL/QoS1 checks. The existing Device baseline also passed.
+
+The first adoption failed because its CRL state directory did not exist. Recovery
+used files directly inside the existing private directory, retained the original
+key/PVC and authority, and reconciled the exact failed rollout. The second attempt
+stopped at readiness preflight while that failed Pod was backing off; replacing
+that Pod cleared the backoff. These failed attempts are retained as evidence,
+not counted as passes. M10 is complete; T6 and held-session qualification remain
+open until renewal/retirement work passes. Core login code is unchanged.
 
 ## Fixed acceptance work groups
 
@@ -1660,5 +1678,6 @@ selection explicit and rejects a second static management key at startup.
 The dev adoption will therefore mount only public Service CA/manifests plus the
 factory-owned private PVC. The one managed identity authenticates initial/renewal
 issuance, certissuer requests and controller CRL acknowledgments. Before enabling
-the CRL consumer, controller receipt policy and ingress must explicitly add
-`factoryenroll`; all future Service CRL gates then require its real receipt.
+the CRL consumer, controller receipt policy must explicitly add consumer ID
+`factory-enroll`; ingress uses workload label `factoryenroll`. All future Service
+CRL gates then require its real receipt.
