@@ -5635,3 +5635,25 @@ Local runner tests total 87 and pass. Private dev evidence is under
 **26/40 = 65%, with 14 checkpoints open**. R3 still owns durable MQTT root-policy
 replacement and T11 owns the remaining cross-host outage matrix. Staging and
 human login/MFA were untouched.
+
+### Governed OpenBao transport owner implementation (2026-09-11)
+
+Video Cloud `709ca87` adds `openbaopkihost`, a narrow transport-key installer
+for the existing OpenBao process. OpenBao continues to own provider CA keys,
+storage, seal state and provider authentication. The new process owns only the
+`openbao_tls` server key and a separate managed `service:openbao` client used for
+renewal; static renewal-client key paths are rejected.
+
+The installer writes each certificate/key pair into a private generation,
+atomically changes the `current` link, and sends the OpenBao process `SIGHUP`.
+A failed reload restores the previous generation and removes the unused new key.
+Current registry and CRL admission controls a readiness marker, while provider
+clients retain exact-origin validation and connection eviction. Packaging adds a
+pinned OpenBao 2.5.4 image target containing only this transport helper.
+
+The full Video Cloud Go suite, focused race tests and vet passed. A complete
+binary build and the `openbao-pki` container target also passed. T9 remains open
+until the independent dev authority, managed host/client state, actual controller
+and certificate-issuer provider calls, replacement/revocation, failure recovery
+and seed-free restart are qualified. Fixed completion remains **26/40 = 65%**;
+active T9 implementation is approximately **35%**. Staging was untouched.

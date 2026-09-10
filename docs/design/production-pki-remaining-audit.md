@@ -636,3 +636,7 @@ Historical evidence is maintained in the [implementation ledger](production-pki-
 ### Governed MQTT host and actual-client checkpoint (2026-09-10)
 
 Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#governed-mqtt-host-and-actual-client-checkpoint-2026-09-10). This closes T8; MQTT root-policy replacement remains R3 and the remaining cross-host outage matrix remains T11.
+
+### Governed OpenBao transport owner implementation (2026-09-11)
+
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#governed-openbao-transport-owner-implementation-2026-09-11). T9 remains open for the dev authority, rollout and live lifecycle evidence.

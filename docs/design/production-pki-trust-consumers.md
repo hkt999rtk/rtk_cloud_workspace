@@ -2118,3 +2118,19 @@ Private evidence is under `pki/t8-rollout-20260911/host-renewal`,
 completes T8 and moves the fixed total to **26/40 = 65%, with 14 checkpoints
 open**. Durable MQTT root-policy replacement remains R3; broader cross-host
 trust-outage coverage remains T11. Staging and human login/MFA were untouched.
+
+### Governed OpenBao host owner prepared locally (2026-09-11)
+
+Video Cloud `709ca87` implements the `openbao_tls` host-side owner. It persists
+the server identity separately from OpenBao provider/seal state, uses a distinct
+managed `service:openbao` renewal caller, installs a private atomic runtime pair,
+and invokes the supported OpenBao `SIGHUP` listener reload. Registry/CRL denial
+removes the readiness marker, reload failure restores the previous pair, and
+static renewal-client keys are rejected. The controller and certificate-issuer
+provider clients already reuse their own managed Service identities.
+
+All Go tests, focused race tests, vet, binary packaging and the pinned OpenBao
+container target pass. T9 is approximately **35%** complete and remains open for
+dev authority/identity preparation, rollout, real provider calls, replacement,
+revocation, failure recovery and seed-free restart evidence. The fixed total is
+still **26/40 = 65%, with 14 checkpoints open**. Staging was untouched.
