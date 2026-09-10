@@ -98,7 +98,7 @@ class ManagedHostTests(unittest.TestCase):
             m.m.write(runner.foundation / 'device-root-active.json', {'issuer_id': 'device-root'})
             required = {
                 'VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE': '/var/lib/identity.json',
-                'VIDEO_CLOUD_CONTROLLER_ROOT_SHA256': 'a' * 64,
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256': 'a' * 64,
                 'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256': 'a' * 64,
                 'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_NAME': 'controller.example.test',
                 'VIDEO_CLOUD_CONTROLLER_IDENTITY_TLS_CA': '/run/controller/ca.pem',

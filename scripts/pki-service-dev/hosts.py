@@ -430,7 +430,7 @@ class HostRun(h.ServiceRun):
         app = next((c for c in pod['containers'] if c['name'] == 'app'), None)
         m.require(app is not None and len(pod['containers']) == 1, 'API controller identity topology changed')
         env = {entry['name']: entry.get('value', '') for entry in app.get('env', [])}
-        required = ('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', 'VIDEO_CLOUD_CONTROLLER_ROOT_SHA256',
+        required = ('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_NAME',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_TLS_CA', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_URL',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_ROOT_SHA256', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_NAME',

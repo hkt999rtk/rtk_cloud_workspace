@@ -161,13 +161,13 @@ class APILifecycle(h.HostRun):
         owner, _ = self.pod()
         app = owner['spec']['template']['spec']['containers'][0]
         env = {entry['name']: entry.get('value', '') for entry in app.get('env', [])}
-        required = ('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', 'VIDEO_CLOUD_CONTROLLER_ROOT_SHA256',
+        required = ('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_NAME', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_TLS_CA',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_URL',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_NAME',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_TLS_CA')
         m.require(all(env.get(key) for key in required) and env['VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE'] == STATE
-                  and env['VIDEO_CLOUD_CONTROLLER_ROOT_SHA256'] == root['certificate_fingerprint_sha256'],
+                  and env['VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256'] == root['certificate_fingerprint_sha256'],
                   'isolated API managed controller configuration changed')
         forbidden = ('VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_MANAGEMENT_CERT',
                      'VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_MANAGEMENT_KEY')
