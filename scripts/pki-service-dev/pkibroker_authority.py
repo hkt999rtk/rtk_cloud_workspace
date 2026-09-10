@@ -78,6 +78,14 @@ def bundle_references(root, predecessors, successor):
 
 
 class PKIBrokerAuthority(fa.FactoryAdoption):
+    target_version = 4
+    client_ids = V4_CLIENT_IDS
+    dns_names = V4_DNS_NAMES
+    predecessor_versions = (1, 2, 3)
+
+    def select_predecessors(self, items, root, transition_id=None):
+        return select_predecessors(items, root, transition_id)
+
     def __init__(self, args):
         m.Acceptance.__init__(self, args.config_root, 'lke649805-ctx', args.output,
                               resume='ready' if args.resume else False)
@@ -91,7 +99,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
     def inventory(self, transition_id=None):
         root = self.active_root()
         items = self.service_intermediates()
-        predecessors = select_predecessors(items, root, transition_id)
+        predecessors = self.select_predecessors(items, root, transition_id)
         return root, predecessors
 
     def prepare_v4(self):
@@ -100,7 +108,10 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
             self.save('intermediate-v%d.json' % issuer['issuer_version'], issuer)
             self.save('intermediate-v%d-crl.json' % issuer['issuer_version'],
                       self.api('/issuers/' + issuer['issuer_id'] + '/crl'))
-        request = v4_request(root)
+        request = {'environment': 'dev', 'trust_domain': 'service',
+                   'kind': 'intermediate', 'parent_issuer_id': root['issuer_id'],
+                   'service_client_ids': list(self.client_ids),
+                   'server_dns_names': list(self.dns_names)}
         self.save('intermediate-request.json', request)
         operation = self.api('/operations', request,
                              key='dev-service-intermediate-v4-' + uuid.uuid4().hex)
@@ -108,7 +119,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         self.approve_intermediate(operation)
         issuer = self.api('/issuers/' + operation['issuer_id'])
         m.require(issuer['status'] == 'approved' and issuer['signer_provider'] == 'openbao'
-                  and issuer['issuer_version'] == 4,
+                  and issuer['issuer_version'] == self.target_version,
                   'Service intermediate v4 reservation differs')
         m.require(issuer['signer_reference'] + '/' not in
                   json.loads(self.bao(['secrets', 'list', '-format=json'])),
@@ -119,15 +130,18 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         request = m.read(self.output / 'intermediate-request.json')
         operation = m.read(self.output / 'intermediate-operation.json')
         root, predecessors = self.inventory(operation['issuer_id'])
-        m.require(request == v4_request(root), 'saved Service v4 request changed')
+        m.require(request['parent_issuer_id'] == root['issuer_id']
+                  and request['service_client_ids'] == self.client_ids
+                  and request['server_dns_names'] == self.dns_names,
+                  'saved Service successor request changed')
         current = self.api('/operations/' + operation['operation_id'])
         m.require(current['issuer_id'] == operation['issuer_id']
                   and current['request_sha256'] == operation['request_sha256']
                   and current['status'] == 'approved', 'saved approved v4 operation differs')
         issuer = self.api('/issuers/' + operation['issuer_id'])
         m.require(issuer['status'] == 'approved'
-                  and issuer['service_client_ids'] == V4_CLIENT_IDS
-                  and issuer['server_dns_names'] == V4_DNS_NAMES,
+                  and issuer['service_client_ids'] == self.client_ids
+                  and issuer['server_dns_names'] == self.dns_names,
                   'approved Service v4 differs during recovery')
         m.require(not (self.output / 'provider-policies.json').exists()
                   and issuer['signer_reference'] + '/' not in
@@ -170,16 +184,18 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         self.api('/operations/' + operation['operation_id'] + '/import', {
             'certificate_pem': (self.output / 'intermediate-signed/certificate.pem').read_text()}, 204)
         issuer = self.api('/issuers/' + issuer['issuer_id'])
-        m.require(issuer['status'] == 'ready' and issuer['issuer_version'] == 4
-                  and issuer['service_client_ids'] == V4_CLIENT_IDS
-                  and issuer['server_dns_names'] == V4_DNS_NAMES,
+        m.require(issuer['status'] == 'ready'
+                  and issuer['issuer_version'] == self.target_version
+                  and issuer['service_client_ids'] == self.client_ids
+                  and issuer['server_dns_names'] == self.dns_names,
                   'ready Service v4 differs from approved policy')
         m.require([self.api('/issuers/' + old['issuer_id']) for old in predecessors]
                   == predecessors, 'Service predecessors changed before trust installation')
         self.save('intermediate-ready.json', issuer)
         self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
-        self.check('intermediate_v4_ready_gate_closed', {
-            'issuer_id': issuer['issuer_id'], 'issuer_version': 4,
+        self.check('intermediate_v%d_ready_gate_closed' % self.target_version, {
+            'issuer_id': issuer['issuer_id'],
+            'issuer_version': self.target_version,
             'activation_without_receipts': 409,
             'service_client_ids': issuer['service_client_ids'],
             'server_dns_names': issuer['server_dns_names'],
@@ -191,16 +207,16 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         m.require(m.read(source / 'report.json')['status'] == 'passed',
                   'successful Service v4 preparation required')
         predecessors = [m.read(source / ('intermediate-v%d.json' % version))
-                        for version in (1, 2, 3)]
+                        for version in self.predecessor_versions]
         successor = m.read(source / 'intermediate-ready.json')
-        current = select_predecessors(self.service_intermediates(), root,
-                                      successor['issuer_id'])
+        current = self.select_predecessors(self.service_intermediates(), root,
+                                           successor['issuer_id'])
         m.require(current == predecessors, 'Service predecessors changed')
         operation = m.read(source / 'intermediate-operation.json')
         m.require(self.api('/issuers/' + successor['issuer_id']) == successor
                   and successor['status'] == 'ready'
-                  and successor['service_client_ids'] == V4_CLIENT_IDS
-                  and successor['server_dns_names'] == V4_DNS_NAMES
+                  and successor['service_client_ids'] == self.client_ids
+                  and successor['server_dns_names'] == self.dns_names
                   and operation['issuer_id'] == successor['issuer_id'],
                   'ready Service v4 evidence changed')
         return root, predecessors, successor, operation
@@ -223,7 +239,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         return name
 
     def v4_bundle_name(self, successor):
-        return 'pki-service-bundles-v4-' + successor['issuer_id'][:8]
+        return ('pki-service-bundles-v%d-' % self.target_version) + successor['issuer_id'][:8]
 
     def persist_listener(self, name):
         path = self.base / 'pki/controller-bootstrap/rollout' / (name + '-deployment.json')
@@ -255,7 +271,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
                                       ['pki-controller'], absent='certissuer')
         self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
         self.device_baseline()
-        self.check('intermediate_v4_controller_receipt', {
+        self.check('intermediate_v%d_controller_receipt' % self.target_version, {
             'bundle': new_name, 'references': refs, 'consumers': receipts,
             'certissuer_absent': True, 'activation_denied': 409})
 
@@ -276,7 +292,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
         self.persist_listener('pki-controller')
         self.device_baseline()
-        self.check('intermediate_v4_controller_receipt_recovered', {
+        self.check('intermediate_v%d_controller_receipt_recovered' % self.target_version, {
             'bundle': bundle, 'references': refs, 'consumers': receipts,
             'certissuer_absent': True, 'activation_denied': 409,
             'authority_mutation_replayed': False})
@@ -309,15 +325,15 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         role = 'certissuer-pki-dev'
         self.save('certissuer-role-before.json', json.loads(self.bao([
             'read', '-format=json', 'auth/kubernetes/role/' + role]))['data'])
-        self.role_policy(role, 'pki-service-server-dev-v4-' + successor['issuer_id'],
+        self.role_policy(role, 'pki-service-server-dev-v%d-' % self.target_version + successor['issuer_id'],
                          policies['signer_policy'])
-        self.role_policy(role, 'pki-service-client-dev-v4-' + successor['issuer_id'],
+        self.role_policy(role, 'pki-service-client-dev-v%d-' % self.target_version + successor['issuer_id'],
                          policies['service_client_signer_policy'])
         self.verify_v4_signer(successor)
         m.require(self.api('/operations/' + operation['operation_id'])['status'] == 'ready',
                   'Service v4 operation changed before activation')
         self.device_baseline()
-        self.check('intermediate_v4_listener_receipts_and_signer', {
+        self.check('intermediate_v%d_listener_receipts_and_signer' % self.target_version, {
             'bundle': new_name, 'references': refs, 'consumers': receipts,
             'server_and_service_client_signing_only': True})
 
@@ -348,8 +364,8 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
                           'certissuer v4 capability differs: ' + path)
         finally:
             self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
-        for role_name, expected_names in (('server', V4_DNS_NAMES),
-                                          ('service-client', V4_CLIENT_IDS)):
+        for role_name, expected_names in (('server', self.dns_names),
+                                          ('service-client', self.client_ids)):
             data = json.loads(self.bao(['read', '-format=json',
                                         issuer['signer_reference'] + '/roles/' + role_name]))['data']
             m.require(data['allowed_domains'] == expected_names
@@ -378,7 +394,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         current = self.api('/issuers/' + successor['issuer_id'])
         old = [self.api('/issuers/' + i['issuer_id']) for i in predecessors]
         m.require(current['status'] == 'active'
-                  and [i['status'] for i in old] == ['retiring', 'retiring', 'retiring']
+                  and [i['status'] for i in old] == ['retiring'] * len(old)
                   and current['certificate_fingerprint_sha256'] == successor['certificate_fingerprint_sha256'],
                   'Service v4 activation transition differs')
         provider = json.loads(self.bao(['read', '-format=json',
@@ -406,17 +422,18 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         crl_receipts = self.wait_receipts(current['issuer_id'], record['crl_sha256'],
                                          r.SERVICE_CONSUMERS, kind='crl')
         self.device_baseline()
-        self.save('intermediate-v4-active.json', current)
-        self.save('intermediate-v1-retiring.json', old[0])
-        self.save('intermediate-v2-retiring.json', old[1])
-        self.save('intermediate-v3-retiring.json', old[2])
-        self.save('intermediate-v4-crl.json', record)
-        self.check('intermediate_v4_active_with_crl', {
+        self.save('intermediate-v%d-active.json' % self.target_version, current)
+        for version, item in zip(self.predecessor_versions, old):
+            self.save('intermediate-v%d-retiring.json' % version, item)
+        self.save('intermediate-v%d-crl.json' % self.target_version, record)
+        self.check('intermediate_v%d_active_with_crl' % self.target_version, {
             'bundle': bundle, 'references': refs,
             'bundle_consumers': bundle_receipts,
             'crl_sha256': record['crl_sha256'], 'crl_consumers': crl_receipts,
-            'v1_status': 'retiring', 'v2_status': 'retiring', 'v3_status': 'retiring',
-            'v4_status': 'active',
+            'predecessor_statuses': {str(v): 'retiring'
+                                     for v in self.predecessor_versions},
+            'successor_version': self.target_version,
+            'successor_status': 'active',
             'device_baseline': 'passed'})
 
     def install_listener_image(self, name, image):
@@ -460,20 +477,20 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         m.require(m.read(source / 'report.json')['status'] == 'passed',
                   'successful Service v4 preparation required')
         saved_old = [m.read(source / ('intermediate-v%d.json' % version))
-                     for version in (1, 2, 3)]
+                     for version in self.predecessor_versions]
         saved_new = m.read(source / 'intermediate-ready.json')
         old = [self.api('/issuers/' + issuer['issuer_id']) for issuer in saved_old]
         new = self.api('/issuers/' + saved_new['issuer_id'])
         operation = m.read(source / 'intermediate-operation.json')
         current_operation = self.api('/operations/' + operation['operation_id'])
-        m.require([issuer['status'] for issuer in old] == ['retiring', 'retiring', 'retiring']
+        m.require([issuer['status'] for issuer in old] == ['retiring'] * len(old)
                   and new['status'] == 'active' and current_operation['status'] == 'active'
                   and [issuer['certificate_fingerprint_sha256'] for issuer in old]
                   == [issuer['certificate_fingerprint_sha256'] for issuer in saved_old]
                   and new['certificate_fingerprint_sha256']
                   == saved_new['certificate_fingerprint_sha256']
-                  and new['service_client_ids'] == V4_CLIENT_IDS
-                  and new['server_dns_names'] == V4_DNS_NAMES,
+                  and new['service_client_ids'] == self.client_ids
+                  and new['server_dns_names'] == self.dns_names,
                   'exact activated Service v4 transition required')
         bundle, refs = self.require_v4_bundle(root, old, new)
         for listener in r.SERVICE_CONSUMERS:
@@ -519,17 +536,18 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
                                          r.SERVICE_CONSUMERS, kind='crl')
         self.device_baseline()
-        self.save('intermediate-v4-active.json', new)
-        self.save('intermediate-v1-retiring.json', old[0])
-        self.save('intermediate-v2-retiring.json', old[1])
-        self.save('intermediate-v3-retiring.json', old[2])
-        self.save('intermediate-v4-crl.json', record)
-        self.check('intermediate_v4_activation_recovered', {
+        self.save('intermediate-v%d-active.json' % self.target_version, new)
+        for version, item in zip(self.predecessor_versions, old):
+            self.save('intermediate-v%d-retiring.json' % version, item)
+        self.save('intermediate-v%d-crl.json' % self.target_version, record)
+        self.check('intermediate_v%d_activation_recovered' % self.target_version, {
             'bundle': bundle, 'references': refs,
             'bundle_consumers': bundle_receipts,
             'crl_sha256': record['crl_sha256'], 'crl_consumers': crl_receipts,
-            'v1_status': 'retiring', 'v2_status': 'retiring', 'v3_status': 'retiring',
-            'v4_status': 'active',
+            'predecessor_statuses': {str(v): 'retiring'
+                                     for v in self.predecessor_versions},
+            'successor_version': self.target_version,
+            'successor_status': 'active',
             'listener_images': {name: self.args.image for name in r.SERVICE_CONSUMERS},
             'device_baseline': 'passed', 'activation_replayed': False,
             'provider_crl_imported_during_recovery': imported_crl})
