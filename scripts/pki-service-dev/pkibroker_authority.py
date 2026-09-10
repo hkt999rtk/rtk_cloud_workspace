@@ -378,7 +378,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         current = self.api('/issuers/' + successor['issuer_id'])
         old = [self.api('/issuers/' + i['issuer_id']) for i in predecessors]
         m.require(current['status'] == 'active'
-                  and [i['status'] for i in old] == ['retiring', 'retiring', 'active']
+                  and [i['status'] for i in old] == ['retiring', 'retiring', 'retiring']
                   and current['certificate_fingerprint_sha256'] == successor['certificate_fingerprint_sha256'],
                   'Service v4 activation transition differs')
         provider = json.loads(self.bao(['read', '-format=json',
