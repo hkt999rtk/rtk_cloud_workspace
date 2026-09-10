@@ -10,6 +10,10 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_authority_loader_does_not_shadow_acceptance_root_state(self):
+        self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
+        self.assertTrue(callable(o.OpenBaoHostRun.openbao_root))
+
     def test_staged_template_preserves_listener_and_uses_managed_receipts(self):
         owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
             'metadata': {}, 'spec': {'containers': [{

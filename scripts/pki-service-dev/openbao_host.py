@@ -33,7 +33,7 @@ class OpenBaoHostRun(h.ServiceRun):
             Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
-    def root(self, status):
+    def openbao_root(self, status):
         source = Path(self.args.authority)
         saved = m.read(source / 'root-ready.json')
         root = self.api('/issuers/' + saved['issuer_id'])
@@ -188,7 +188,7 @@ class OpenBaoHostRun(h.ServiceRun):
         return ca_name, manifest_name
 
     def install_root_consumers(self):
-        root = self.root('ready')
+        root = self.openbao_root('ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
@@ -218,7 +218,7 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(failed['status'] == 'failed'
                   and failed['phase'] == 'install-root-consumers',
                   'failed OpenBao Root consumer phase required')
-        root = self.root('ready')
+        root = self.openbao_root('ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
@@ -249,7 +249,7 @@ class OpenBaoHostRun(h.ServiceRun):
             'image': self.args.image})
 
     def activate_root(self):
-        root = self.root('ready')
+        root = self.openbao_root('ready')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'], CONSUMERS)
