@@ -1192,8 +1192,7 @@ class MQTTHostRun(h.ServiceRun):
             'rtk.cloud/mqtt-callback-repair'] = self.output.name
         self.scoped_patch('deployment', owner, [{
             'op': 'replace', 'path': '/spec/template', 'value': template}])
-        self.kube(['-n', NS, 'rollout', 'status',
-                   'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        self.wait_available('mqtt-pki')
         self.verify_callback_clients()
 
     def verify_callback_clients(self):
@@ -1219,6 +1218,18 @@ class MQTTHostRun(h.ServiceRun):
             'runtime_secret_has_server_key': False,
             'actual_clients': MQTT_CONSUMERS,
             'device_mqtt_acl_qos1': 'passed'})
+
+    def wait_available(self, name):
+        self.kube(['-n', NS, 'wait', '--for=condition=Available',
+                   'deployment/' + name, '--timeout=300s'], timeout=310)
+        owner = self.obj('deployment', name)
+        m.require(owner['status'].get('observedGeneration') ==
+                  owner['metadata']['generation']
+                  and owner['status'].get('updatedReplicas') ==
+                  owner['spec']['replicas']
+                  and owner['status'].get('readyReplicas') ==
+                  owner['spec']['replicas'],
+                  'available deployment is not fully updated: ' + name)
 
     def finish_host_callback_recovery(self):
         failed = m.read(Path(self.args.failed) / 'report.json')
@@ -1248,8 +1259,7 @@ class MQTTHostRun(h.ServiceRun):
             'rtk.cloud/mqtt-callback-ca-recovery'] = self.output.name
         self.scoped_patch('deployment', owner, [{
             'op': 'replace', 'path': '/spec/template', 'value': template}])
-        self.kube(['-n', NS, 'rollout', 'status',
-                   'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        self.wait_available('mqtt-pki')
         self.report['reconciled_from'] = str(Path(self.args.failed))
         self.verify_callback_clients()
 
@@ -1266,9 +1276,7 @@ class MQTTHostRun(h.ServiceRun):
             'rtk.cloud/mqtt-tls-server-clients'] = self.output.name
         self.scoped_patch('deployment', owner, [{
             'op': 'replace', 'path': '/spec/template', 'value': template}])
-        self.kube(['-n', NS, 'rollout', 'status',
-                   'deployment/video-cloud-api-pki', '--timeout=300s'],
-                  timeout=310)
+        self.wait_available('video-cloud-api-pki')
 
 
 def main():
