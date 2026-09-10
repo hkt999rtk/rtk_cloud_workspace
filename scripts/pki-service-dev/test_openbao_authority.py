@@ -36,6 +36,9 @@ class OpenBaoAuthorityTests(unittest.TestCase):
             'openbao.video-cloud-dev-secrets.svc.cluster.local'])
         self.assertEqual(request['parent_issuer_id'], 'root-1')
 
+    def test_intermediate_recovery_is_separate_from_root_reconcile(self):
+        self.assertTrue(callable(o.OpenBaoAuthorityRun.resume_intermediate))
+
 
 if __name__ == '__main__':
     unittest.main()

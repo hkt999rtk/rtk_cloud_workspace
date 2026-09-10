@@ -239,6 +239,42 @@ class OpenBaoAuthorityRun(s.ServiceRun):
             'internal_key_count': 1,
             'activation_without_consumer_receipts_denied': True})
 
+    def resume_intermediate(self, failed):
+        failed = Path(failed)
+        report = m.read(failed / 'report.json')
+        m.require(report['status'] == 'failed'
+                  and report['phase'] ==
+                  'prepare-openbao-tls-intermediate',
+                  'failed OpenBao TLS intermediate evidence required')
+        root = self.active_root()
+        operation = m.read(failed / 'intermediate-operation.json')
+        saved = m.read(failed / 'intermediate-provisioning.json')
+        issuer = self.api('/issuers/' + operation['issuer_id'])
+        m.require(issuer == saved and issuer['status'] == 'provisioning'
+                  and issuer['parent_issuer_id'] == root['issuer_id']
+                  and issuer['service_client_ids'] == OPENBAO_CLIENT_IDS
+                  and issuer['server_dns_names'] == OPENBAO_DNS_NAMES,
+                  'provisioned OpenBao TLS intermediate changed')
+        certificate = (failed /
+                       'intermediate-signed/certificate.pem').read_text()
+        self.save('intermediate-operation.json', operation)
+        self.save('intermediate-provisioning.json', issuer)
+        self.verify_intermediate_custody(issuer)
+        self.api('/operations/' + operation['operation_id'] + '/import', {
+            'certificate_pem': certificate}, 204)
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'ready',
+                  'resumed OpenBao TLS intermediate did not become ready')
+        self.save('intermediate-ready.json', issuer)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409)
+        self.check('openbao_tls_intermediate_ready_gate_recovered', {
+            'issuer_id': issuer['issuer_id'],
+            'reconciled_from': str(failed),
+            'service_client_ids': issuer['service_client_ids'],
+            'server_dns_names': issuer['server_dns_names'],
+            'activation_without_consumer_receipts_denied': True})
+
     def reconcile(self, failed):
         failed = Path(failed)
         report = m.read(failed / 'report.json')
@@ -273,6 +309,7 @@ def main():
                         default='prepare-root')
     parser.add_argument('--root')
     parser.add_argument('--reconcile')
+    parser.add_argument('--resume-intermediate')
     args = parser.parse_args()
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
@@ -280,12 +317,17 @@ def main():
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     m.require(args.phase != 'prepare-intermediate' or args.root,
               'active OpenBao TLS Root evidence required')
+    m.require(not args.resume_intermediate
+              or args.phase == 'prepare-intermediate',
+              'intermediate recovery requires prepare-intermediate phase')
     args.phase = ('prepare-openbao-tls-root' if args.phase == 'prepare-root'
                   else 'prepare-openbao-tls-intermediate')
     runner = OpenBaoAuthorityRun(args)
     try:
         runner.preflight()
-        if args.reconcile:
+        if args.resume_intermediate:
+            runner.resume_intermediate(args.resume_intermediate)
+        elif args.reconcile:
             runner.reconcile(args.reconcile)
         elif args.phase == 'prepare-openbao-tls-intermediate':
             runner.prepare_intermediate()
