@@ -1199,9 +1199,15 @@ class MQTTHostRun(h.ServiceRun):
         deadline = time.monotonic() + 60
         clients = ''
         while time.monotonic() < deadline:
-            clients = self.kube(['-n', NS, 'exec', 'deployment/mqtt-pki',
-                                 '-c', 'mqtt', '--', '/usr/local/bin/emqx',
-                                 'ctl', 'clients', 'list'])
+            try:
+                clients = self.kube([
+                    '-n', NS, 'exec', 'deployment/mqtt-pki', '-c', 'mqtt',
+                    '--', '/usr/local/bin/emqx', 'ctl', 'clients', 'list'])
+            except RuntimeError as error:
+                m.require(str(error) == 'command failed: kubectl',
+                          'unexpected MQTT client inspection failure')
+                time.sleep(2)
+                continue
             if ('video-cloud-api-' in clients
                     and 'video-cloud-logingester-log-sub' in clients):
                 break
@@ -1258,11 +1264,13 @@ class MQTTHostRun(h.ServiceRun):
         m.require(callback.get('name') in (
                       'pki-mqtt-callback-ca', MQTT_CALLBACK_CA),
                   'failed callback CA source changed')
+        callback_changed = callback.get('name') != MQTT_CALLBACK_CA
         callback['name'] = MQTT_CALLBACK_CA
-        template.setdefault('metadata', {}).setdefault('annotations', {})[
-            'rtk.cloud/mqtt-callback-ca-recovery'] = self.output.name
-        self.scoped_patch('deployment', owner, [{
-            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        if callback_changed:
+            template.setdefault('metadata', {}).setdefault('annotations', {})[
+                'rtk.cloud/mqtt-callback-ca-recovery'] = self.output.name
+            self.scoped_patch('deployment', owner, [{
+                'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.wait_available('mqtt-pki')
         self.report['reconciled_from'] = str(Path(self.args.failed))
         self.verify_callback_clients()
@@ -1275,6 +1283,9 @@ class MQTTHostRun(h.ServiceRun):
         containers = template['spec']['containers']
         m.require(len(containers) == 1 and containers[0]['name'] == 'app',
                   'MQTT callback API topology changed')
+        if containers[0]['image'] == self.args.image:
+            self.wait_available('video-cloud-api-pki')
+            return
         containers[0]['image'] = self.args.image
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/mqtt-tls-server-clients'] = self.output.name
