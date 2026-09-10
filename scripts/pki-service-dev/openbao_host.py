@@ -358,6 +358,91 @@ class OpenBaoHostRun(h.ServiceRun):
             'crl_sha256': record['crl_sha256'],
             'existing_listener_preserved': True})
 
+    def ready_intermediate(self):
+        root = self.openbao_root('active')
+        source = Path(self.args.intermediate)
+        saved = m.read(source / 'intermediate-ready.json')
+        issuer = self.api('/issuers/' + saved['issuer_id'])
+        m.require(issuer == saved and issuer['status'] == 'ready'
+                  and issuer['parent_issuer_id'] == root['issuer_id']
+                  and issuer['service_client_ids'] == ['service:openbao'],
+                  'ready OpenBao TLS intermediate changed')
+        operation = m.read(source / 'intermediate-operation.json')
+        return root, issuer, operation
+
+    def intermediate_template(self, owner, image, manifest_name, run_name):
+        template = json.loads(json.dumps(owner['spec']['template']))
+        container = template['spec']['containers'][0]
+        m.require(container['name'] == owner['metadata']['name'],
+                  'provider container changed')
+        m.require(container['image'] == image,
+                  'verified provider image changed')
+        volumes = {item['name']: item for item in template['spec']['volumes']}
+        m.require('openbao-server-bundles' in volumes,
+                  'OpenBao manifest mount missing')
+        volumes['openbao-server-bundles']['configMap']['name'] = manifest_name
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/openbao-intermediate-staging'] = run_name
+        return template
+
+    def install_intermediate_consumers(self):
+        root, issuer, operation = self.ready_intermediate()
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        name = 'pki-openbao-tls-bundles-' + issuer['issuer_id'][:8]
+        refs = [{'issuer_id': item['issuer_id'],
+                 'trust_bundle_version': item['trust_bundle_version']}
+                for item in (root, issuer)]
+        raw = self.kube(['-n', NS, 'get', 'configmap', name,
+                         '--ignore-not-found', '-o', 'json'])
+        expected = {'issuers.json': json.dumps(refs)}
+        if not raw.strip():
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                         'metadata': {'name': name, 'namespace': NS},
+                         'immutable': True, 'data': expected})
+        else:
+            current = json.loads(raw)
+            m.require(current.get('immutable') is True
+                      and current.get('data') == expected,
+                      'OpenBao intermediate manifest changed')
+        for consumer in reversed(CONSUMERS):
+            owner = self.obj('deployment', consumer)
+            template = self.intermediate_template(
+                owner, self.args.image, name, self.output.name)
+            self.scoped_patch(consumer, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status',
+                       'deployment/' + consumer, '--timeout=300s'], timeout=310)
+            if consumer == 'pki-controller':
+                self.api('/operations/' + operation['operation_id'] +
+                         '/activate', {}, 409)
+        receipts = self.wait_receipts(
+            issuer['issuer_id'], issuer['trust_bundle_version'], CONSUMERS)
+        self.check('openbao_tls_intermediate_installed_by_actual_clients', {
+            'issuer_id': issuer['issuer_id'], 'consumers': receipts,
+            'manifest_configmap': name,
+            'missing_certissuer_activation_denied': True,
+            'existing_listener_preserved': True})
+
+    def activate_intermediate(self):
+        _, issuer, operation = self.ready_intermediate()
+        receipts = self.wait_receipts(
+            issuer['issuer_id'], issuer['trust_bundle_version'], CONSUMERS)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 204)
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'active',
+                  'OpenBao TLS intermediate did not activate')
+        self.save('openbao-tls-intermediate-active.json', issuer)
+        provider = json.loads(self.bao([
+            'read', '-format=json', issuer['signer_reference'] + '/cert/crl']))
+        record = self.api('/issuers/' + issuer['issuer_id'] + '/crl', {
+            'crl_pem': provider['data']['certificate']})
+        self.save('openbao-tls-intermediate-crl.json', record)
+        self.check('openbao_tls_intermediate_active_with_crl', {
+            'issuer_id': issuer['issuer_id'], 'consumers': receipts,
+            'crl_sha256': record['crl_sha256'],
+            'existing_listener_preserved': True})
+
 
 def main():
     os.umask(0o077)
@@ -365,14 +450,18 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--phase', required=True, choices=[
-        'install-root-consumers', 'finish-root-consumers', 'activate-root'])
+        'install-root-consumers', 'finish-root-consumers', 'activate-root',
+        'install-intermediate-consumers', 'activate-intermediate'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
+    parser.add_argument('--intermediate')
     parser.add_argument('--failed')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
+    m.require('intermediate' not in args.phase or args.intermediate,
+              'ready OpenBao TLS intermediate evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -385,7 +474,10 @@ def main():
             runner.preflight()
         {'install-root-consumers': runner.install_root_consumers,
          'finish-root-consumers': runner.finish_root_consumers,
-         'activate-root': runner.activate_root}[args.phase]()
+         'activate-root': runner.activate_root,
+         'install-intermediate-consumers':
+             runner.install_intermediate_consumers,
+         'activate-intermediate': runner.activate_intermediate}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
