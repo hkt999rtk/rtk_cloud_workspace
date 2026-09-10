@@ -409,13 +409,208 @@ class MQTTHostRun(h.ServiceRun):
             'issuer_id': issuer['issuer_id'],
             'server_dns_names': issuer['server_dns_names']})
 
+    def ready_intermediate(self, status='ready'):
+        root = self.mqtt_root('active')
+        source = Path(self.args.intermediate)
+        saved = m.read(source / 'intermediate-ready.json')
+        issuer = self.api('/issuers/' + saved['issuer_id'])
+        m.require(issuer['status'] == status
+                  and issuer['environment'] == 'dev'
+                  and issuer['trust_domain'] == 'mqtt'
+                  and issuer['kind'] == 'intermediate'
+                  and issuer['parent_issuer_id'] == root['issuer_id']
+                  and issuer['server_dns_names'] == [MQTT_HOST]
+                  and issuer['certificate_fingerprint_sha256'] ==
+                  saved['certificate_fingerprint_sha256'],
+                  'saved MQTT intermediate changed')
+        operation = m.read(source / 'intermediate-operation.json')
+        m.require(operation['issuer_id'] == issuer['issuer_id'],
+                  'saved MQTT intermediate operation changed')
+        self.save('mqtt-intermediate.json', issuer)
+        return root, issuer, operation
+
+    def switch_client_bundle(self, name, configmap):
+        owner = self.obj('deployment', name)
+        template = json.loads(json.dumps(owner['spec']['template']))
+        volumes = [v for v in template['spec']['volumes']
+                   if v['name'] == 'mqtt-pki-bundles']
+        m.require(len(volumes) == 1
+                  and volumes[0].get('configMap', {}).get('name') ==
+                  'pki-mqtt-bundles',
+                  'MQTT client bundle source changed: ' + name)
+        volumes[0]['configMap']['name'] = configmap
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-intermediate-rollout'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                   '--timeout=240s'], timeout=250)
+
+    def install_intermediate(self):
+        root, issuer, operation = self.ready_intermediate()
+        configmap = 'pki-mqtt-bundles-' + issuer['issuer_id'][:8]
+        refs = mqtt_intermediate_manifest(root, issuer)
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': configmap, 'namespace': NS},
+                     'immutable': True,
+                     'data': {'roots.pem': root['certificate_pem'],
+                              'issuers.json': json.dumps(refs)}})
+        self.switch_client_bundle('video-cloud-api', configmap)
+        first = self.wait_receipts(issuer['issuer_id'],
+                                   issuer['trust_bundle_version'],
+                                   ['video-cloud-api'],
+                                   absent='video-cloud-logingester')
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409, role='approver')
+        self.switch_client_bundle('video-cloud-logingester', configmap)
+        receipts = self.wait_receipts(issuer['issuer_id'],
+                                     issuer['trust_bundle_version'],
+                                     MQTT_CONSUMERS)
+        self.check('mqtt_intermediate_installed_by_actual_clients', {
+            'issuer_id': issuer['issuer_id'], 'first_consumer': first,
+            'consumers': receipts,
+            'single_consumer_activation_denied': True,
+            'configmap': configmap})
+
+    def add_client_crl_state(self, name, root, issuer, configmap):
+        pvc = name + '-mqtt-pki-state'
+        self.create({'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+                     'metadata': {'name': pvc, 'namespace': NS},
+                     'spec': {'accessModes': ['ReadWriteOnce'],
+                              'storageClassName': 'linode-block-storage-retain',
+                              'resources': {'requests': {'storage': '10Gi'}}}})
+        self.kube(['-n', NS, 'wait', '--for=jsonpath={.status.phase}=Bound',
+                   'persistentvolumeclaim/' + pvc, '--timeout=180s'], timeout=190)
+        owner = self.obj('deployment', name)
+        template = json.loads(json.dumps(owner['spec']['template']))
+        pod, container = template['spec'], template['spec']['containers'][0]
+        m.require(not any(v['name'] in ('mqtt-pki-crls', 'mqtt-pki-state')
+                          for v in pod['volumes']),
+                  'MQTT CRL state already configured: ' + name)
+        container['env'] = h.with_env(container['env'], {
+            'VIDEO_CLOUD_MQTT_SERVER_CRL_MANIFEST':
+                '/run/pki-mqtt-crls/crls.json',
+            'VIDEO_CLOUD_MQTT_PKI_CONTROLLER_URL':
+                'https://pki-controller.' + NS + '.svc:18446',
+            'VIDEO_CLOUD_MQTT_MANAGEMENT_CA':
+                '/run/pki-service-root/root.pem',
+            'VIDEO_CLOUD_MQTT_MANAGEMENT_CERT':
+                '/run/pki-mqtt-management/tls.crt',
+            'VIDEO_CLOUD_MQTT_MANAGEMENT_KEY':
+                '/run/pki-mqtt-management/tls.key'})
+        container['volumeMounts'].extend([
+            {'name': 'mqtt-pki-crls', 'mountPath': '/run/pki-mqtt-crls',
+             'readOnly': True},
+            {'name': 'mqtt-pki-state', 'mountPath': '/var/lib/mqtt-pki'}])
+        pod['volumes'].extend([
+            {'name': 'mqtt-pki-crls', 'configMap': {'name': configmap}},
+            {'name': 'mqtt-pki-state', 'persistentVolumeClaim': {
+                'claimName': pvc}}])
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-crl-rollout'] = self.output.name
+        changes = [{'op': 'replace', 'path': '/spec/template',
+                    'value': template}]
+        if name == 'video-cloud-logingester':
+            changes.insert(0, {'op': 'replace', 'path': '/spec/strategy',
+                               'value': {'type': 'Recreate'}})
+        self.scoped_patch('deployment', owner, changes)
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                   '--timeout=300s'], timeout=310)
+
+    def activate_intermediate(self):
+        root, issuer, operation = self.ready_intermediate()
+        receipts = self.wait_receipts(issuer['issuer_id'],
+                                     issuer['trust_bundle_version'],
+                                     MQTT_CONSUMERS)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 204, role='approver')
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'active',
+                  'MQTT intermediate did not activate')
+        provider = json.loads(self.bao([
+            'read', '-format=json', issuer['signer_reference'] + '/cert/crl']))
+        self.save('intermediate-provider-crl.json', provider)
+        record = self.api('/issuers/' + issuer['issuer_id'] + '/crl', {
+            'crl_pem': provider['data']['certificate']}, role='approver')
+        self.save('mqtt-intermediate-crl.json', record)
+        root_crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        crl_configmap = 'pki-mqtt-crls-' + issuer['issuer_id'][:8]
+        manifest = [{
+            'issuer': authority,
+            'state_path': '/var/lib/mqtt-pki/crls/' +
+                          authority['issuer_id'] + '.json'}
+            for authority in (root, issuer)]
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': crl_configmap, 'namespace': NS},
+                     'immutable': True,
+                     'data': {'crls.json': json.dumps(manifest)}})
+        for name in MQTT_CONSUMERS:
+            self.add_client_crl_state(name, root, issuer, crl_configmap)
+        crl_receipts = {}
+        for authority, crl in ((root, root_crl), (issuer, record)):
+            crl_receipts[authority['issuer_id']] = self.wait_receipts(
+                authority['issuer_id'], crl['crl_sha256'], MQTT_CONSUMERS,
+                kind='crl')
+        self.check('mqtt_intermediate_active_with_crl_consumers', {
+            'issuer_id': issuer['issuer_id'], 'bundle_consumers': receipts,
+            'crl_sha256': record['crl_sha256'],
+            'root_crl_sha256': root_crl['crl_sha256'],
+            'crl_consumers': crl_receipts,
+            'private_state': 'one retained PVC per actual client'})
+
+    def configure_certissuer(self):
+        root, issuer, _ = self.ready_intermediate(status='active')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        policies = m.read(Path(self.args.intermediate) / 'provider-policies.json')
+        m.require(policies['issuer_id'] == issuer['issuer_id']
+                  and '/sign/server' in policies['signer_policy'],
+                  'saved MQTT signer policy changed')
+        self.role_policy('certissuer-pki-dev',
+                         'pki-mqtt-server-dev-' + issuer['issuer_id'],
+                         policies['signer_policy'])
+        self.patch_ca('certissuer-runtime', 'client-ca.crt', [
+            (self.base / 'pki/consumers/emqx-pki/ca.crt').read_text()])
+        owner = self.obj('deployment', 'certissuer')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        container = template['spec']['containers'][0]
+        container['image'] = self.args.image
+        container['env'] = h.with_env(container['env'], {
+            'CERT_ISSUER_MQTT_SERVER_PKI_ROOT_SHA256':
+                root['certificate_fingerprint_sha256'],
+            'CERT_ISSUER_MQTT_SERVER_DNS_NAMES': MQTT_HOST,
+            'CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN': '^emqx-pki$'})
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-issuer-rollout'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.create({'apiVersion': 'networking.k8s.io/v1',
+                     'kind': 'NetworkPolicy',
+                     'metadata': {'name': 'allow-mqtt-host-renewal',
+                                  'namespace': NS},
+                     'spec': {
+                         'podSelector': {'matchLabels': {
+                             'app.kubernetes.io/name': 'certissuer'}},
+                         'policyTypes': ['Ingress'],
+                         'ingress': [{'from': [{'podSelector': {
+                             'matchLabels': {
+                                 'app.kubernetes.io/name': 'mqtt-pki'}}}],
+                                      'ports': [{'port': 9443,
+                                                 'protocol': 'TCP'}]}]}})
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/certissuer', '--timeout=240s'], timeout=250)
+        self.check('mqtt_named_issuance_route_enabled', {
+            'issuer_id': issuer['issuer_id'], 'dns_names': [MQTT_HOST],
+            'caller_pattern': '^emqx-pki$', 'image': self.args.image})
+
 
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=[
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
-        'prepare-intermediate'],
+        'prepare-intermediate', 'install-intermediate',
+        'activate-intermediate', 'configure-certissuer'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -423,9 +618,14 @@ def main():
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--failed')
+    parser.add_argument('--intermediate')
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
+    m.require(args.phase not in ('install-intermediate',
+                                 'activate-intermediate',
+                                 'configure-certissuer') or args.intermediate,
+              'prepared MQTT intermediate evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -435,7 +635,10 @@ def main():
         {'install-root-consumers': runner.install_root_consumers,
          'finish-root-consumers': runner.finish_root_consumers,
          'activate-root': runner.activate_root,
-         'prepare-intermediate': runner.prepare_intermediate}[args.phase]()
+         'prepare-intermediate': runner.prepare_intermediate,
+         'install-intermediate': runner.install_intermediate,
+         'activate-intermediate': runner.activate_intermediate,
+         'configure-certissuer': runner.configure_certissuer}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

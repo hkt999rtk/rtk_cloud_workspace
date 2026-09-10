@@ -245,10 +245,24 @@ python3 scripts/pki-service-dev/mqtt_host.py \
 python3 scripts/pki-service-dev/mqtt_host.py \
   --phase prepare-intermediate --authority MQTT_ROOT_EVIDENCE \
   --output INTERMEDIATE_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase install-intermediate --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --output INTERMEDIATE_CLIENT_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase activate-intermediate --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --output INTERMEDIATE_ACTIVATION_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase configure-certissuer --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --image VIDEO_CLOUD_IMAGE_DIGEST \
+  --output MQTT_ISSUER_EVIDENCE
 ```
 
 The two clients keep their existing MQTT username/password authorization while
 changing transport to TLS with an exact Root pin and DNS name. Their separate
 management certificates report trust installation over the existing managed
-Service channel. No MQTT server private key is created by these phases, and the
-runner refuses any environment other than the selected dev cluster.
+Service channel. Intermediate activation also installs signed Root/intermediate
+CRLs into one retained state volume per client and waits for exact CRL receipts.
+The certissuer phase grants only the generated MQTT server signer policy and
+enables only the named MQTT route for the `emqx-pki` caller. No MQTT server
+private key is created by these phases, and the runner refuses any environment
+other than the selected dev cluster.

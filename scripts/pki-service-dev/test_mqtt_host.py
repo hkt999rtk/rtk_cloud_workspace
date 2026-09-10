@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import Mock
 
 
 spec = importlib.util.spec_from_file_location(
@@ -81,6 +82,30 @@ class MQTTHostTests(unittest.TestCase):
         first = m.mqtt_intermediate_manifest(root, issuer)
         first.append({'issuer_id': 'unreviewed'})
         self.assertEqual(len(m.mqtt_intermediate_manifest(root, issuer)), 2)
+
+    def test_intermediate_switch_changes_only_selected_bundle_source(self):
+        owner = {'spec': {'template': {'metadata': {'annotations': {
+            'retained': 'yes'}}, 'spec': {'volumes': [
+                {'name': 'mqtt-pki-bundles', 'configMap': {
+                    'name': 'pki-mqtt-bundles'}},
+                {'name': 'private', 'secret': {'secretName': 'private'}}]}}}}
+        runner = object.__new__(m.MQTTHostRun)
+        runner.output = Path('/private/evidence/phase')
+        runner.obj = Mock(return_value=owner)
+        runner.scoped_patch, runner.kube = Mock(), Mock()
+        runner.switch_client_bundle('video-cloud-api', 'reviewed-successor')
+        changed = runner.scoped_patch.call_args.args[2][0]['value']
+        self.assertEqual(changed['spec']['volumes'][0]['configMap']['name'],
+                         'reviewed-successor')
+        self.assertEqual(changed['spec']['volumes'][1],
+                         owner['spec']['template']['spec']['volumes'][1])
+        self.assertEqual(owner['spec']['template']['spec']['volumes'][0]
+                         ['configMap']['name'], 'pki-mqtt-bundles')
+        owner['spec']['template'] = changed
+        runner.obj = Mock(return_value=owner)
+        with self.assertRaisesRegex(RuntimeError,
+                                    'MQTT client bundle source changed'):
+            runner.switch_client_bundle('video-cloud-api', 'another')
 
 
 if __name__ == '__main__':
