@@ -1222,14 +1222,18 @@ class MQTTHostRun(h.ServiceRun):
     def wait_available(self, name):
         self.kube(['-n', NS, 'wait', '--for=condition=Available',
                    'deployment/' + name, '--timeout=300s'], timeout=310)
-        owner = self.obj('deployment', name)
-        m.require(owner['status'].get('observedGeneration') ==
-                  owner['metadata']['generation']
-                  and owner['status'].get('updatedReplicas') ==
-                  owner['spec']['replicas']
-                  and owner['status'].get('readyReplicas') ==
-                  owner['spec']['replicas'],
-                  'available deployment is not fully updated: ' + name)
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline:
+            owner = self.obj('deployment', name)
+            if (owner['status'].get('observedGeneration') ==
+                    owner['metadata']['generation']
+                    and owner['status'].get('updatedReplicas') ==
+                    owner['spec']['replicas']
+                    and owner['status'].get('readyReplicas') ==
+                    owner['spec']['replicas']):
+                return
+            time.sleep(2)
+        raise RuntimeError('available deployment update timed out: ' + name)
 
     def finish_host_callback_recovery(self):
         failed = m.read(Path(self.args.failed) / 'report.json')
