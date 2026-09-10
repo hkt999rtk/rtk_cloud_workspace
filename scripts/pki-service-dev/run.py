@@ -313,7 +313,7 @@ class ServiceRun(m.Acceptance):
                 return self.auth(identity, device), attempts
             except RuntimeError as error:
                 message = str(error)
-                temporary = any(
+                temporary = message == 'command failed: pki-dev-probe' or any(
                     message == 'TLS /request_token: status %d, expected 200' % status
                     for status in (401, 403))
                 if not temporary or time.monotonic() >= deadline:

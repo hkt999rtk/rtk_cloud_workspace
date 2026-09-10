@@ -21,6 +21,12 @@ class RolloutTests(unittest.TestCase):
         self.assertEqual(result, {'access_token': 'ready'})
         self.assertEqual(attempts, 2)
         sleep.assert_called_once_with(2)
+        runner.auth = Mock(side_effect=[
+            RuntimeError('command failed: pki-dev-probe'),
+            {'access_token': 'tls-ready'}])
+        with patch.object(m.time, 'sleep'):
+            result, attempts = runner.wait_positive_auth('identity', 'device')
+        self.assertEqual((result, attempts), ({'access_token': 'tls-ready'}, 2))
         runner.auth = Mock(side_effect=RuntimeError(
             'TLS /request_token: status 500, expected 200'))
         with self.assertRaisesRegex(RuntimeError, 'status 500'):
