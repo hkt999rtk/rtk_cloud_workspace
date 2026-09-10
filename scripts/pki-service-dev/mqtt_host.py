@@ -1216,6 +1216,8 @@ class MQTTHostRun(h.ServiceRun):
         m.require('video-cloud-api-' in clients
                   and 'video-cloud-logingester-log-sub' in clients,
                   'actual MQTT clients did not authenticate')
+        m.write(self.base / 'pki/servers/mqtt-pki/ca.crt',
+                (self.output / 'mqtt-root.pem').read_text())
         self.forward('api', NS, 'video-cloud-api-pki', 8443)
         self.forward('mqtt', NS, 'mqtt-pki', 8883)
         self.device_baseline()
