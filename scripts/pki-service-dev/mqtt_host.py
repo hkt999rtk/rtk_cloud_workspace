@@ -1726,9 +1726,12 @@ class MQTTHostRun(h.ServiceRun):
                             pod['status'].get('containerStatuses', [])}
                 mqtt_status = statuses.get('mqtt', {})
                 endpoints = self.obj('endpoints', 'mqtt-pki')
+                ready_endpoints = sum(
+                    len(item.get('addresses', []))
+                    for item in endpoints.get('subsets', []))
                 if (pod['metadata']['uid'] != old_pod['uid']
                         and not mqtt_status.get('ready')
-                        and not endpoints.get('subsets')):
+                        and ready_endpoints == 0):
                     failure = {
                         'old_pod_uid': old_pod['uid'],
                         'failed_pod_uid': pod['metadata']['uid'],
