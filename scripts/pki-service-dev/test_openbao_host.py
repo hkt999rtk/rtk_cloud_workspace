@@ -10,6 +10,38 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_certissuer_route_is_exact_and_preserves_source(self):
+        owner = {'spec': {'template': {'metadata': {}, 'spec': {
+            'containers': [{
+                'name': 'certissuer', 'image': 'old',
+                'env': [{'name': 'EXISTING', 'value': 'kept'}]}]}}}}
+        root = {'certificate_fingerprint_sha256': 'a' * 64}
+        result = o.certissuer_route_template(owner, 'pinned', root)
+        container = result['spec']['containers'][0]
+        values = {item['name']: item.get('value')
+                  for item in container['env']}
+        self.assertEqual(container['image'], 'pinned')
+        self.assertEqual(values['EXISTING'], 'kept')
+        self.assertEqual(
+            values['CERT_ISSUER_OPENBAO_HOST_DNS_NAMES'],
+            ','.join(o.OPENBAO_HOST_NAMES))
+        self.assertEqual(
+            values['CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN'],
+            '^service:openbao$')
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['image'], 'old')
+
+    def test_certissuer_route_rejects_existing_configuration(self):
+        owner = {'spec': {'template': {'metadata': {}, 'spec': {
+            'containers': [{
+                'name': 'certissuer', 'image': 'old', 'env': [{
+                    'name': 'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256',
+                    'value': 'configured'}]}]}}}}
+        with self.assertRaises(RuntimeError):
+            o.certissuer_route_template(
+                owner, 'pinned',
+                {'certificate_fingerprint_sha256': 'a' * 64})
+
     def test_authority_loader_does_not_shadow_acceptance_root_state(self):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
         self.assertTrue(callable(o.OpenBaoHostRun.openbao_root))

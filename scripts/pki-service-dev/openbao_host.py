@@ -20,8 +20,36 @@ spec.loader.exec_module(h)
 m, NS = h.m, h.NS
 
 CONSUMERS = ['certissuer', 'pki-controller']
+OPENBAO_HOST_NAMES = [
+    'openbao.video-cloud-dev-secrets.svc',
+    'openbao.video-cloud-dev-secrets.svc.cluster.local']
 IMAGE_PATTERN = re.compile(
     r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
+
+
+def certissuer_route_template(owner, image, root):
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec']['containers']
+    m.require(len(containers) == 1
+              and containers[0]['name'] == 'certissuer',
+              'certissuer container changed')
+    container = containers[0]
+    values = {item['name']: item.get('value')
+              for item in container.get('env', [])}
+    m.require(not any(values.get(name) for name in (
+        'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256',
+        'CERT_ISSUER_OPENBAO_HOST_DNS_NAMES',
+        'CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN')),
+        'OpenBao host issuance route already configured; reconcile')
+    container['image'] = image
+    container['env'] = h.with_env(container.get('env', []), {
+        'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
+            root['certificate_fingerprint_sha256'],
+        'CERT_ISSUER_OPENBAO_HOST_DNS_NAMES':
+            ','.join(OPENBAO_HOST_NAMES),
+        'CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN':
+            '^service:openbao$'})
+    return template
 
 
 class OpenBaoHostRun(h.ServiceRun):
@@ -443,6 +471,65 @@ class OpenBaoHostRun(h.ServiceRun):
             'crl_sha256': record['crl_sha256'],
             'existing_listener_preserved': True})
 
+    def configure_certissuer(self):
+        root, issuer, _ = self.ready_intermediate()
+        m.require(issuer['status'] == 'active',
+                  'active OpenBao TLS intermediate required')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        policies = m.read(Path(self.args.policy_evidence) /
+                          'provider-policies.json')
+        m.require(policies['issuer_id'] == issuer['issuer_id']
+                  and policies['mount'] == issuer['signer_reference']
+                  and '/sign/server' in policies['signer_policy'],
+                  'saved OpenBao TLS signer policy changed')
+        self.role_policy(
+            'certissuer-pki-dev',
+            'pki-openbao-tls-server-dev-' + issuer['issuer_id'],
+            policies['signer_policy'])
+        owner = self.obj('deployment', 'certissuer')
+        template = certissuer_route_template(
+            owner, self.args.image, root)
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/openbao-host-issuer-rollout'] = self.output.name
+        self.scoped_patch('certissuer', owner, template)
+        self.create({
+            'apiVersion': 'networking.k8s.io/v1',
+            'kind': 'NetworkPolicy',
+            'metadata': {'name': 'allow-openbao-host-renewal',
+                         'namespace': NS},
+            'spec': {
+                'podSelector': {'matchLabels': {
+                    'app.kubernetes.io/name': 'certissuer'}},
+                'policyTypes': ['Ingress'],
+                'ingress': [{'from': [{
+                    'namespaceSelector': {'matchLabels': {
+                        'kubernetes.io/metadata.name':
+                            'video-cloud-dev-secrets'}},
+                    'podSelector': {'matchLabels': {
+                        'app.kubernetes.io/name': 'openbao'}}}],
+                    'ports': [{'port': 9443, 'protocol': 'TCP'}]}]}})
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/certissuer', '--timeout=300s'], timeout=310)
+        settings = {
+            'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
+                root['certificate_fingerprint_sha256'],
+            'CERT_ISSUER_OPENBAO_HOST_DNS_NAMES':
+                ','.join(OPENBAO_HOST_NAMES),
+            'CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN':
+                '^service:openbao$'}
+        m.write(self.base / 'operator/env/PKI_CERTISSUER_IMAGE',
+                self.args.image + '\n')
+        path = (self.base / 'pki/controller-bootstrap/rollout' /
+                'certissuer-service-settings.json')
+        m.write(path, dict(m.read(path), **settings))
+        self.check('openbao_host_named_issuance_route_enabled', {
+            'issuer_id': issuer['issuer_id'],
+            'dns_names': OPENBAO_HOST_NAMES,
+            'caller_pattern': '^service:openbao$',
+            'image': self.args.image,
+            'cross_namespace_ingress': 'openbao pods only'})
+
 
 def main():
     os.umask(0o077)
@@ -451,10 +538,12 @@ def main():
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--phase', required=True, choices=[
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
-        'install-intermediate-consumers', 'activate-intermediate'])
+        'install-intermediate-consumers', 'activate-intermediate',
+        'configure-certissuer'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
+    parser.add_argument('--policy-evidence')
     parser.add_argument('--failed')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
@@ -462,6 +551,9 @@ def main():
               'failed Root consumer evidence required')
     m.require('intermediate' not in args.phase or args.intermediate,
               'ready OpenBao TLS intermediate evidence required')
+    m.require(args.phase != 'configure-certissuer'
+              or (args.intermediate and args.policy_evidence and args.image),
+              'intermediate, signer policy and image required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -477,7 +569,8 @@ def main():
          'activate-root': runner.activate_root,
          'install-intermediate-consumers':
              runner.install_intermediate_consumers,
-         'activate-intermediate': runner.activate_intermediate}[args.phase]()
+         'activate-intermediate': runner.activate_intermediate,
+         'configure-certissuer': runner.configure_certissuer}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

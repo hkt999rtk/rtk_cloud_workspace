@@ -343,6 +343,23 @@ If the command reports failure after writing `root-ready.json`, keep that output
 and pass it to `--reconcile`; the runner accepts only the same registered ready
 Root and never creates another key or operation.
 
+After the OpenBao TLS intermediate is active, enable its exact named server
+issuance route without changing the live OpenBao listener:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase configure-certissuer \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_INTERMEDIATE_READY_EVIDENCE \
+  --policy-evidence OPENBAO_TLS_INTERMEDIATE_POLICY_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST \
+  --output OPENBAO_HOST_ISSUER_EVIDENCE
+```
+
+The route permits only the two reviewed OpenBao Service DNS names and the
+managed `service:openbao` caller. Its ingress policy admits only OpenBao-labelled
+pods from the dev secrets namespace.
+
 If adoption stops after the managed Deployment is installed but before it becomes
 ready, retain the failed evidence and run `--phase finish-host-adoption --failed
 FAILED_ADOPTION_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE` with the same
