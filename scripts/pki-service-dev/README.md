@@ -360,6 +360,27 @@ The route permits only the two reviewed OpenBao Service DNS names and the
 managed `service:openbao` caller. Its ingress policy admits only OpenBao-labelled
 pods from the dev secrets namespace.
 
+Bootstrap the retained Service client and server identities after building the
+dedicated `openbao-pki` image:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase bootstrap-host \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_INTERMEDIATE_READY_EVIDENCE \
+  --route OPENBAO_HOST_ISSUER_EVIDENCE \
+  --service SERVICE_V5_ACTIVATION_EVIDENCE \
+  --openbao-image OPENBAO_PKI_IMAGE_DIGEST \
+  --output OPENBAO_HOST_BOOTSTRAP_EVIDENCE
+```
+
+This phase creates the retained PVC, copies only the registry connection and
+public Service Root into the secrets namespace, and temporarily uses the
+existing certissuer management identity to enroll `service:openbao`. It closes
+the temporary provisioner and client CA, deletes the bootstrap pod and Secret,
+and accepts exactly one Service-client row and one `openbao_tls` server row.
+Both generated private keys remain only in the retained PVC.
+
 If adoption stops after the managed Deployment is installed but before it becomes
 ready, retain the failed evidence and run `--phase finish-host-adoption --failed
 FAILED_ADOPTION_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE` with the same
