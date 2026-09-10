@@ -502,9 +502,12 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         self.verify_v4_signer(new)
         provider_crl = json.loads(self.bao([
             'read', '-format=json', new['signer_reference'] + '/cert/crl']))['data']['certificate']
-        record = self.api('/issuers/' + new['issuer_id'] + '/crl', expected=503)
-        imported_crl = record is None
-        if imported_crl:
+        try:
+            record = self.api('/issuers/' + new['issuer_id'] + '/crl')
+            imported_crl = False
+        except RuntimeError:
+            self.api('/issuers/' + new['issuer_id'] + '/crl', expected=503)
+            imported_crl = True
             record = self.api('/issuers/' + new['issuer_id'] + '/crl',
                               {'crl_pem': provider_crl})
         m.require(record['crl_pem'] == provider_crl,
