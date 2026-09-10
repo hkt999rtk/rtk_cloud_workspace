@@ -91,6 +91,34 @@ class ManagedHostTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             m.managed_settings('unreviewed-host', 'a' * 64)
 
+    def test_api_controller_identity_verification_rejects_static_key_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = object.__new__(m.HostRun)
+            runner.foundation = Path(directory)
+            m.m.write(runner.foundation / 'device-root-active.json', {'issuer_id': 'device-root'})
+            required = {
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE': '/var/lib/identity.json',
+                'VIDEO_CLOUD_CONTROLLER_ROOT_SHA256': 'a' * 64,
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256': 'a' * 64,
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_NAME': 'controller.example.test',
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_TLS_CA': '/run/controller/ca.pem',
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_URL': 'https://issuer.example.test',
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_ROOT_SHA256': 'a' * 64,
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_NAME': 'issuer.example.test',
+                'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_TLS_CA': '/run/controller/ca.pem',
+            }
+            app = {'name': 'app', 'env': [{'name': name, 'value': value} for name, value in required.items()], 'volumeMounts': []}
+            deployment = {'spec': {'template': {'spec': {'containers': [app], 'volumes': []}}}}
+            runner.obj = Mock(side_effect=[deployment])
+            runner.api = Mock(return_value={'crl_sha256': 'digest'})
+            runner.kube = Mock(return_value='HTTP/1.1 200 OK\r\n\r\ndigest')
+            runner.check = Mock()
+            runner.verify_controller_callers({'issuer_id': 'root'})
+            app['volumeMounts'].append({'name': 'pki-management', 'mountPath': '/run/pki-management'})
+            runner.obj = Mock(side_effect=[deployment])
+            with self.assertRaisesRegex(RuntimeError, 'static controller credential mount remains'):
+                runner.verify_controller_callers({'issuer_id': 'root'})
+
     def test_private_volume_transition_preserves_existing_settings_and_rejects_replay(self):
         owner = {'spec': {'replicas': 1, 'template': {'spec': {
             'containers': [{'env': [{'name': 'DATABASE_URL', 'valueFrom': {'secretKeyRef': {'name': 'private', 'key': 'dsn'}}}],

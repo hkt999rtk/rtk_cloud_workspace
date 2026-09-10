@@ -415,7 +415,6 @@ class HostRun(h.ServiceRun):
         results = []
         for name, container, directory, authority in [('pki-controller', 'pki-controller', '/run/pki-service-consumer', root),
                 ('certissuer', 'certissuer', '/run/pki-service-consumer', root),
-                ('video-cloud-api-pki', 'app', '/run/pki-management', device_root),
                 ('mqtt-pki', 'pkibroker', '/run/pki-management', device_root)]:
             crl = self.api('/issuers/' + authority['issuer_id'] + '/crl')
             request = 'GET /v1/pki/issuers/' + authority['issuer_id'] + '/crl HTTP/1.1\r\nHost: ' + host + '\r\nConnection: close\r\n\r\n'
@@ -426,6 +425,23 @@ class HostRun(h.ServiceRun):
             m.require(response.startswith('HTTP/1.1 200 ') and crl['crl_sha256'] in response,
                       'pod authenticated controller CRL read failed: ' + name)
             results.append({'consumer': name, 'crl_sha256': crl['crl_sha256'], 'http_status': 200})
+        api = self.obj('deployment', 'video-cloud-api-pki')
+        pod = api['spec']['template']['spec']
+        app = next((c for c in pod['containers'] if c['name'] == 'app'), None)
+        m.require(app is not None and len(pod['containers']) == 1, 'API controller identity topology changed')
+        env = {entry['name']: entry.get('value', '') for entry in app.get('env', [])}
+        required = ('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', 'VIDEO_CLOUD_CONTROLLER_ROOT_SHA256',
+                    'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_NAME',
+                    'VIDEO_CLOUD_CONTROLLER_IDENTITY_TLS_CA', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_URL',
+                    'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_ROOT_SHA256', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_NAME',
+                    'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_TLS_CA')
+        m.require(all(env.get(name) for name in required), 'API managed controller identity settings incomplete')
+        forbidden = ('VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_MANAGEMENT_CERT', 'VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_MANAGEMENT_KEY')
+        m.require(not any(name in env for name in forbidden), 'API static controller credential setting remains')
+        m.require(not any(mount['name'] == 'pki-management' or mount['mountPath'] == '/run/pki-management' for mount in app.get('volumeMounts', [])),
+                  'API static controller credential mount remains')
+        m.require(not any(volume['name'] == 'pki-management' for volume in pod.get('volumes', [])), 'API static controller credential volume remains')
+        results.append({'consumer': 'video-cloud-api-pki', 'identity': 'managed', 'static_controller_key_mounted': False})
         self.check('controller_caller_transport', {'pod_mtls_crl_reads': results, 'account_manager': 'ordinary human API assertions passed'})
 
     def factory_canary(self):
