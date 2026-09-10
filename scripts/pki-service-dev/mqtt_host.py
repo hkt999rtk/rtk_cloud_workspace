@@ -1052,6 +1052,18 @@ class MQTTHostRun(h.ServiceRun):
                   self.context, 'canonical dev context mismatch')
         m.require(self.obj('namespace', NS)['metadata']['name'] == NS,
                   'wrong namespace')
+        self.forward('am', 'video-cloud-dev-account-manager',
+                     'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        for role in ('requester', 'approver', 'custodian'):
+            self.api('/issuers/search', {'limit': 1}, role=role)
+        result = m.subprocess.run(
+            ['go', 'build', '-o', str(self.probe), './pki-dev-probe'],
+            cwd=m.WORKSPACE / 'scripts/go',
+            env=dict(os.environ, GOWORK='off'), capture_output=True,
+            timeout=180)
+        m.require(result.returncode == 0,
+                  'recovery wire probe build failed')
         for name in ('pki-controller', 'certissuer', 'video-cloud-api',
                      'video-cloud-logingester'):
             owner = self.obj('deployment', name)
