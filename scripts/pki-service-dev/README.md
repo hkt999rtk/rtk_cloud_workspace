@@ -189,3 +189,36 @@ It uses operator SIGHUP and the existing guarded renewal path; no clock or priva
 state edits are used. Follow [RETIREMENT.md](RETIREMENT.md) to retire the replaced
 leaf, publish its signed CRL and require actual certissuer/controller receipts.
 Active-session revocation and managed consumer transport adoption remain open.
+
+## PKI broker identity authority
+
+`pkibroker_authority.py` advances the Service intermediate from V3 to V4 for
+the managed PKI broker. V4 keeps the V3 DNS policy unchanged and adds exactly
+`service:pkibroker` to the Service client policy. It first prepares and signs a
+ready intermediate, then installs the immutable trust bundle in `pki-controller`
+and `certissuer`, and finally activates only after both real bundle receipts.
+Activation publishes the V4 CRL, moves V3 to retiring, and requires both CRL
+receipts. Every phase writes private evidence and uses the shared Service
+rollout lock.
+
+Use a separate private output directory for every phase. `PREPARED` must be
+the successful preparation evidence; do not rerun preparation with a new
+directory after an uncertain mutation.
+
+```sh
+python3 scripts/pki-service-dev/pkibroker_authority.py \
+  --phase prepare-intermediate-v4 --authority SERVICE_ROOT_EVIDENCE \
+  --output PREPARED
+python3 scripts/pki-service-dev/pkibroker_authority.py \
+  --phase controller --authority SERVICE_ROOT_EVIDENCE --prepared PREPARED \
+  --output CONTROLLER_EVIDENCE
+python3 scripts/pki-service-dev/pkibroker_authority.py \
+  --phase certissuer --authority SERVICE_ROOT_EVIDENCE --prepared PREPARED \
+  --output CERTISSUER_EVIDENCE
+python3 scripts/pki-service-dev/pkibroker_authority.py \
+  --phase activate --authority SERVICE_ROOT_EVIDENCE --prepared PREPARED \
+  --output ACTIVATION_EVIDENCE
+```
+
+The runner is dev-only. It does not provision the broker leaf, remove the
+legacy broker management key, or modify staging.
