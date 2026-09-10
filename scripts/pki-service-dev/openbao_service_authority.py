@@ -31,9 +31,26 @@ class OpenBaoServiceAuthority(p.PKIBrokerAuthority):
         self.save('report.json', self.report)
 
     def select_predecessors(self, items, root, transition_id=None):
-        legacy = [item for item in items
-                  if item.get('issuer_version', 0) <= 3]
-        first = p.select_predecessors(legacy, root, transition_id)
+        live = sorted((item for item in items
+                       if item['environment'] == 'dev'
+                       and item['trust_domain'] == 'service'
+                       and item['kind'] == 'intermediate'
+                       and item['status'] in ('active', 'retiring')),
+                      key=lambda item: item['issuer_version'])
+        m.require([item['issuer_version'] for item in live] == [1, 2, 3, 4],
+                  'exact Service v1-v4 predecessors required')
+        policies = [
+            (p.fa.OLD_CLIENT_IDS, list(r.SERVICE_DNS_NAMES)),
+            (p.fa.V2_CLIENT_IDS, list(r.SERVICE_DNS_NAMES)),
+            (p.V3_CLIENT_IDS, p.V3_DNS_NAMES),
+            (p.V4_CLIENT_IDS, p.V4_DNS_NAMES)]
+        for number, (item, policy) in enumerate(zip(live, policies), 1):
+            expected_status = 'active' if number == 4 else 'retiring'
+            m.require(item['parent_issuer_id'] == root['issuer_id']
+                      and item['status'] == expected_status
+                      and item['service_client_ids'] == policy[0]
+                      and item['server_dns_names'] == policy[1],
+                      'Service v%d predecessor policy differs' % number)
         fourth = [item for item in items
                   if item['environment'] == 'dev'
                   and item['trust_domain'] == 'service'
@@ -45,7 +62,7 @@ class OpenBaoServiceAuthority(p.PKIBrokerAuthority):
                   and fourth[0]['service_client_ids'] == p.V4_CLIENT_IDS
                   and fourth[0]['server_dns_names'] == p.V4_DNS_NAMES,
                   'active Service v4 policy differs')
-        allowed = {item['issuer_id'] for item in first + fourth}
+        allowed = {item['issuer_id'] for item in live}
         if transition_id:
             allowed.add(transition_id)
         unfinished = [item for item in items
@@ -58,7 +75,7 @@ class OpenBaoServiceAuthority(p.PKIBrokerAuthority):
                                                  'failed')]
         m.require(not unfinished,
                   'another Service successor already exists; reconcile')
-        return first + fourth
+        return live
 
 
 def main():
