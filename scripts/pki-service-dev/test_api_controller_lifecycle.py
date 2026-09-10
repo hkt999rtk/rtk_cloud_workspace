@@ -43,6 +43,9 @@ class APIControllerLifecycleTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 m.replacement(before, after, [old], rows, issuer)
 
+    def test_service_crl_receipts_exclude_the_api_client(self):
+        self.assertEqual(m.RECEIPTS, ['certissuer', 'factory-enroll', 'pki-controller'])
+
 
 if __name__ == '__main__':
     unittest.main()

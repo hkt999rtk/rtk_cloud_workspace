@@ -16,8 +16,21 @@ python3 scripts/pki-service-dev/api_controller_lifecycle.py --phase lifecycle \
 
 `reconcile` can retire only active registry leaves for `service:video-cloud-api`
 that do not match the retained API state. It records each idempotent revocation,
-published CRL and actual receipt from certissuer, factory-enroll, pki-controller
-and the isolated API. It stops if the state lacks exactly one active admission.
+published CRL and actual receipt from certissuer, factory-enroll and
+pki-controller. The isolated API is a Service client whose controller admission
+checks revocation; it does not install a Service CRL. The runner stops if the
+state lacks exactly one active admission.
+
+If a reconciliation committed its revocations but failed before finalization,
+do not repeat it. Recover only the saved run with a new output directory:
+
+```sh
+python3 scripts/pki-service-dev/api_controller_lifecycle.py --phase recover-reconcile \
+  --authority "$ROOT" --reconcile "$RUN/failed-reconcile" --output "$RUN/reconcile-recovery"
+```
+
+Recovery accepts only the saved revoked leaves, the installed identity, and the
+current published CRL with real receipts; it creates no key or issuance.
 
 `lifecycle` sends one SIGHUP after persisting its intent. It requires one new
 Service issuance with a new public key and leaf, then keeps a held connection

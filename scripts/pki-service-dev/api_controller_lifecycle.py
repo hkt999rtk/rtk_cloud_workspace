@@ -24,7 +24,10 @@ SUBJECT = 'service:video-cloud-api'
 STATE = '/var/lib/video-cloud-api-pki-controller-identity/private/identity.json'
 ROOT_CA = '/run/pki-service-root/root.pem'
 CONTROLLER = 'pki-controller.' + NS + '.svc'
-RECEIPTS = ['certissuer', 'factory-enroll', 'pki-controller', 'video-cloud-api']
+# The isolated API is a Service *client*: the controller enforces revocation
+# during each admission.  It does not install a Service-issuer CRL, so only
+# the three actual Service CRL consumers may acknowledge this publication.
+RECEIPTS = ['certissuer', 'factory-enroll', 'pki-controller']
 
 
 def current_and_stale(rows, state):
@@ -210,6 +213,40 @@ class APILifecycle(h.HostRun):
                    'one_installed_active_identity': True, 'private_keys_exported': False,
                    'device_mtls_and_mqtt': 'passed'})
 
+    def recover_reconcile(self):
+        source = Path(self.args.reconcile)
+        previous = m.read(source / 'report.json')
+        m.require(previous['status'] == 'failed' and previous.get('phase') == 'reconcile',
+                  'failed API controller reconciliation evidence required')
+        baseline = m.read(source / 'baseline.json')
+        root = self.active_root()
+        self.check_runtime(root)
+        state, rows = self.inspect(root), self.rows()
+        current, stale = current_and_stale(rows, state)
+        m.require(current == baseline['current'] and not stale, 'API controller registry changed during reconciliation recovery')
+        targets = baseline['stale']
+        selected = {row['fingerprint']: row for row in rows}
+        m.require(all(fingerprint in selected and selected[fingerprint]['revoked_at'] is not None
+                      for fingerprint in (row['fingerprint'] for row in targets)),
+                  'saved stale API controller predecessor was not revoked')
+        issuer = self.active_issuer(root, current)
+        published = self.api('/issuers/' + issuer['issuer_id'] + '/crl')
+        self.wait_receipts(issuer['issuer_id'], published['crl_sha256'], RECEIPTS, 'crl')
+        finalized = []
+        for target in targets:
+            record = self.api('/issuers/' + issuer['issuer_id'] + '/finalize-service-client-revocation',
+                              {'certificate_sha256': target['fingerprint']})
+            m.require(record['crl_sha256'] == published['crl_sha256'],
+                      'API controller recovery finalized against another CRL')
+            finalized.append(target['fingerprint'])
+        self.save('reconciled.json', {'current': current, 'retired': finalized, 'rows': rows,
+                                      'crl_sha256': published['crl_sha256'], 'recovered_from': str(source)})
+        self.device_baseline()
+        self.check('api_controller_registry_reconciliation_recovered',
+                   {'retired_uninstalled_predecessors': len(finalized), 'service_crl_consumers': RECEIPTS,
+                    'one_installed_active_identity': True, 'private_keys_exported': False,
+                    'device_mtls_and_mqtt': 'passed'})
+
     def lifecycle(self):
         source = Path(self.args.reconcile)
         m.require(m.read(source / 'report.json')['status'] == 'passed', 'successful API registry reconciliation required')
@@ -268,20 +305,21 @@ class APILifecycle(h.HostRun):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--phase', required=True, choices=['reconcile', 'lifecycle'])
+    parser.add_argument('--phase', required=True, choices=['reconcile', 'recover-reconcile', 'lifecycle'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--reconcile')
     parser.add_argument('--output', required=True)
     parser.add_argument('--config-root', default=str(Path.home() / '.config/rtk_cloud'))
     args = parser.parse_args()
-    m.require(args.phase == 'reconcile' or args.reconcile, 'successful reconciliation evidence required')
+    m.require(args.phase == 'reconcile' or args.reconcile, 'reconciliation evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = APILifecycle(args)
     try:
         runner.preflight()
-        {'reconcile': runner.reconcile, 'lifecycle': runner.lifecycle}[args.phase]()
+        {'reconcile': runner.reconcile, 'recover-reconcile': runner.recover_reconcile,
+         'lifecycle': runner.lifecycle}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
