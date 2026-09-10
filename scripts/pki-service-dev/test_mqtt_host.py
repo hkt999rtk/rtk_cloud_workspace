@@ -190,6 +190,12 @@ class MQTTHostTests(unittest.TestCase):
                          m.MQTT_RUNTIME_SECRET)
         self.assertEqual(volumes['mqtt-host-runtime'], {
             'name': 'mqtt-host-runtime', 'emptyDir': {}})
+        initializer = next(item for item in pod['initContainers']
+                           if item['name'] == 'prepare-mqtt-host-state')
+        self.assertEqual(initializer['securityContext']['runAsUser'], 1000)
+        self.assertEqual(initializer['securityContext']['runAsGroup'], 1000)
+        self.assertIn('chmod 700 /var/lib/emqx-pki/identity',
+                      initializer['args'][0])
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
                          ['image'], 'static')
 

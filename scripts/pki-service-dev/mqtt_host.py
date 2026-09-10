@@ -100,6 +100,22 @@ def managed_runtime_data(source):
     return {name: source[name] for name in sorted(MQTT_RUNTIME_FIELDS)}
 
 
+def mqtt_host_state_initializer(image):
+    return {
+        'name': 'prepare-mqtt-host-state', 'image': image,
+        'command': ['sh', '-c'],
+        'args': ['set -eu; if [ -d /var/lib/emqx-pki/identity ]; then '
+                 'chmod 700 /var/lib/emqx-pki/identity; '
+                 'find /var/lib/emqx-pki/identity -type f '
+                 '-exec chmod 600 {} +; fi'],
+        'volumeMounts': [{'name': 'mqtt-host-state',
+                          'mountPath': '/var/lib/emqx-pki'}],
+        'securityContext': {'allowPrivilegeEscalation': False,
+                            'capabilities': {'drop': ['ALL']},
+                            'runAsUser': 1000, 'runAsGroup': 1000,
+                            'runAsNonRoot': True}}
+
+
 def managed_mqtt_template(owner, image, settings, output_name):
     template = json.loads(json.dumps(owner['spec']['template']))
     pod = template['spec']
@@ -141,6 +157,8 @@ def managed_mqtt_template(owner, image, settings, output_name):
         {'name': 'mqtt-host-management', 'secret': {
             'secretName': MQTT_MANAGEMENT_SECRET, 'defaultMode': 288}},
     ])
+    pod.setdefault('initContainers', []).append(
+        mqtt_host_state_initializer(image))
     template.setdefault('metadata', {}).setdefault('annotations', {})[
         'rtk.cloud/mqtt-host-rollout'] = output_name
     return template
@@ -1005,7 +1023,8 @@ class MQTTHostRun(h.ServiceRun):
     def finish_host_adoption_recovery(self):
         failed = m.read(Path(self.args.failed) / 'report.json')
         m.require(failed['status'] == 'failed'
-                  and failed['phase'] == 'adopt-host',
+                  and failed['phase'] in ('adopt-host',
+                                          'finish-host-adoption'),
                   'failed MQTT host adoption evidence required')
         _, issuer, _ = self.ready_intermediate(status='active')
         source = Path(self.args.prepared)
@@ -1029,14 +1048,27 @@ class MQTTHostRun(h.ServiceRun):
         m.require(env.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE
                   and mqtt['image'] == self.args.image,
                   'managed MQTT host deployment changed')
-        m.require(not any(item['name'] == 'mqtt-host-runtime'
-                          for item in pod.get('volumes', []))
-                  and not any(item['name'] == 'mqtt-host-runtime'
-                              for item in mqtt.get('volumeMounts', [])),
-                  'MQTT host runtime recovery already applied')
-        pod['volumes'].append({'name': 'mqtt-host-runtime', 'emptyDir': {}})
-        mqtt['volumeMounts'].append({
-            'name': 'mqtt-host-runtime', 'mountPath': '/run/emqx-pki'})
+        volumes = {item['name']: item for item in pod.get('volumes', [])}
+        if 'mqtt-host-runtime' not in volumes:
+            pod['volumes'].append({'name': 'mqtt-host-runtime',
+                                   'emptyDir': {}})
+        else:
+            m.require(volumes['mqtt-host-runtime'].get('emptyDir') == {},
+                      'MQTT host runtime volume changed')
+        mounts = {item['name']: item for item in mqtt.get('volumeMounts', [])}
+        if 'mqtt-host-runtime' not in mounts:
+            mqtt['volumeMounts'].append({
+                'name': 'mqtt-host-runtime', 'mountPath': '/run/emqx-pki'})
+        else:
+            m.require(mounts['mqtt-host-runtime'].get('mountPath') ==
+                      '/run/emqx-pki', 'MQTT host runtime mount changed')
+        initializers = [item for item in pod.get('initContainers', [])
+                        if item['name'] == 'prepare-mqtt-host-state']
+        m.require(len(initializers) <= 1,
+                  'duplicate MQTT host state initializer')
+        if not initializers:
+            pod.setdefault('initContainers', []).append(
+                mqtt_host_state_initializer(self.args.image))
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/mqtt-host-runtime-recovery'] = self.output.name
         self.scoped_patch('deployment', owner, [{
