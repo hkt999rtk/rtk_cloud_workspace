@@ -1005,12 +1005,20 @@ class MQTTHostRun(h.ServiceRun):
         return lines[2].split()[0]
 
     def served_fingerprint(self):
-        self.forward('mqtt-host', NS, 'mqtt-pki', 8883)
-        result = json.loads(m.command([
-            self.probe, 'tls-peer', self.output / 'mqtt-root.pem', MQTT_HOST,
-            self.ports['mqtt-host'][0]]))
-        m.require(result['peer_sha256'], 'MQTT listener certificate missing')
-        return result['peer_sha256']
+        deadline = time.monotonic() + 60
+        while True:
+            try:
+                self.forward('mqtt-host', NS, 'mqtt-pki', 8883)
+                result = json.loads(m.command([
+                    self.probe, 'tls-peer', self.output / 'mqtt-root.pem',
+                    MQTT_HOST, self.ports['mqtt-host'][0]]))
+                m.require(result['peer_sha256'],
+                          'MQTT listener certificate missing')
+                return result['peer_sha256']
+            except RuntimeError:
+                m.require(time.monotonic() < deadline,
+                          'MQTT listener certificate verification deadline')
+                time.sleep(2)
 
     def adopt_host(self):
         root, issuer, _ = self.ready_intermediate(status='active')
@@ -1405,6 +1413,9 @@ class MQTTHostRun(h.ServiceRun):
                       'MQTT interruption cannot be attributed to renewal')
             m.require(held.child.wait(timeout=5) == 0,
                       'held MQTT session probe failed')
+            self.save('session-closed.json', {
+                'event': closed, 'elapsed_seconds': elapsed,
+                'session_age_seconds': age})
         finally:
             held.close()
         deadline = time.monotonic() + 180
@@ -1463,6 +1474,97 @@ class MQTTHostRun(h.ServiceRun):
             'predecessor_session_age_seconds': age,
             'new_owner_key': True, 'private_key_exported': False,
             'restart_from_retained_successor': True,
+            'actual_clients_reconnected': list(MQTT_CONSUMERS),
+            'device_mqtt_acl_qos1': 'passed'})
+
+    def finish_host_renewal(self):
+        failed = Path(self.args.failed)
+        report = m.read(failed / 'report.json')
+        m.require(report['status'] == 'failed'
+                  and report['phase'] == 'renew-host'
+                  and report['failure'] == 'command failed: pki-dev-probe'
+                  and (failed / 'renewal-intent.json').is_file()
+                  and not (failed / 'renewed.json').exists(),
+                  'matching failed MQTT renewal evidence required')
+        traffic = m.read(Path(self.args.traffic) / 'report.json')
+        m.require(traffic['status'] == 'passed'
+                  and traffic['phase'] in ('repair-host-callback',
+                                            'finish-host-callback'),
+                  'successful actual MQTT client evidence required')
+        _, issuer, owner = self.lifecycle_prerequisites(
+            self.args.traffic, traffic['phase'])
+        before = m.read(failed / 'baseline.json')
+        intent = m.read(failed / 'renewal-intent.json')
+        m.require(intent['previous_fingerprint'] ==
+                  before['state']['fingerprint']
+                  and owner['metadata']['uid'] == before['deployment_uid']
+                  and self.obj('persistentvolumeclaim', MQTT_HOST_PVC)[
+                      'metadata']['uid'] == before['pvc_uid'],
+                  'failed MQTT renewal owner changed')
+        current = self.current_host(issuer, owner)
+        old_ids = {row['request_id'] for row in before['rows']}
+        added = [row for row in current['rows']
+                 if row['request_id'] not in old_ids]
+        m.require(len(current['rows']) == len(before['rows']) + 1
+                  and len(added) == 1
+                  and added[0]['fingerprint'] ==
+                  current['state']['fingerprint']
+                  and current['state']['fingerprint'] !=
+                  before['state']['fingerprint']
+                  and current['state']['public_key_sha256'] !=
+                  before['state']['public_key_sha256'],
+                  'failed MQTT renewal did not install one successor')
+        self.save('baseline.json', before)
+        self.save('renewal-intent.json', intent)
+        self.save('renewed.json', current)
+        device = m.read(self.foundation / 'device-2/enroll-request.json')['devid']
+        auth = self.auth(self.foundation / 'device-2/v4', device)
+        held, opened = self.mqtt(auth, device, 'hold')
+        try:
+            held.stable(3)
+            started = dt.datetime.now(dt.timezone.utc)
+            live = self.obj('deployment', 'mqtt-pki')
+            template = json.loads(json.dumps(live['spec']['template']))
+            template.setdefault('metadata', {}).setdefault('annotations', {})[
+                'rtk.cloud/mqtt-host-renewal-recovery'] = self.output.name
+            self.scoped_patch('deployment', live, [{
+                'op': 'replace', 'path': '/spec/template', 'value': template}])
+            closed = held.event(80)
+            m.require(closed.get('event') == 'closed',
+                      'MQTT session remained open across successor restart')
+            elapsed = (m.parse_time(closed['at']) - started).total_seconds()
+            age = (m.parse_time(closed['at']) -
+                   m.parse_time(opened['at'])).total_seconds()
+            m.require(0 <= elapsed < 80 and age < 90,
+                      'MQTT recovery interruption was not bounded')
+            m.require(held.child.wait(timeout=5) == 0,
+                      'held MQTT recovery probe failed')
+            self.save('session-closed.json', {
+                'event': closed, 'elapsed_seconds': elapsed,
+                'session_age_seconds': age})
+        finally:
+            held.close()
+        self.wait_available('mqtt-pki')
+        restarted = self.current_host(issuer)
+        m.require(restarted['state'] == current['state']
+                  and restarted['state_file_sha256'] ==
+                  current['state_file_sha256']
+                  and restarted['rows'] == current['rows'],
+                  'reconciled MQTT successor changed across restart')
+        self.wait_actual_clients()
+        self.forward('api', NS, 'video-cloud-api-pki', 8443)
+        self.forward('mqtt', NS, 'mqtt-pki', 8883)
+        self.device_baseline()
+        self.report['reconciled_from'] = str(failed)
+        self.check('mqtt_host_renewed_and_reconnected', {
+            'issuer_id': issuer['issuer_id'],
+            'predecessor_fingerprint': before['state']['fingerprint'],
+            'successor_fingerprint': current['state']['fingerprint'],
+            'renewal_interruption_bound_seconds': 80,
+            'successor_restart_session_closed_seconds': elapsed,
+            'new_owner_key': True, 'private_key_exported': False,
+            'restart_from_retained_successor': True,
+            'duplicate_renewal_avoided': True,
             'actual_clients_reconnected': list(MQTT_CONSUMERS),
             'device_mqtt_acl_qos1': 'passed'})
 
@@ -1745,7 +1847,7 @@ def main():
         'activate-intermediate', 'finish-intermediate-activation',
         'configure-certissuer', 'prepare-host', 'adopt-host',
         'finish-host-adoption', 'repair-host-callback',
-        'finish-host-callback', 'renew-host', 'revoke-host',
+        'finish-host-callback', 'renew-host', 'finish-host-renewal', 'revoke-host',
         'publish-host-revocation', 'verify-host-lifecycle'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
@@ -1773,7 +1875,8 @@ def main():
                                  'adopt-host', 'finish-host-adoption',
                                  'repair-host-callback',
                                  'finish-host-callback', 'renew-host',
-                                 'revoke-host', 'publish-host-revocation',
+                                 'finish-host-renewal', 'revoke-host',
+                                 'publish-host-revocation',
                                  'verify-host-lifecycle')
               or args.intermediate,
               'prepared MQTT intermediate evidence required')
@@ -1790,6 +1893,9 @@ def main():
               'failed MQTT callback repair and callback image required')
     m.require(args.phase != 'renew-host' or args.traffic,
               'successful actual MQTT client evidence required')
+    m.require(args.phase != 'finish-host-renewal'
+              or (args.traffic and args.failed),
+              'failed renewal and actual MQTT client evidence required')
     m.require(args.phase != 'revoke-host' or args.renewal,
               'successful MQTT host renewal evidence required')
     m.require(args.phase != 'publish-host-revocation' or args.revocation,
@@ -1823,6 +1929,7 @@ def main():
          'finish-host-callback':
              runner.finish_host_callback_recovery,
          'renew-host': runner.renew_host,
+         'finish-host-renewal': runner.finish_host_renewal,
          'revoke-host': runner.revoke_host,
          'publish-host-revocation': runner.publish_host_revocation,
          'verify-host-lifecycle': runner.verify_host_lifecycle}[args.phase]()

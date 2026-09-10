@@ -325,3 +325,9 @@ unavailable, verifies that the Pod and Service fail closed without changing
 issuance or acknowledgment state, restores the exact Deployment template, and
 repeats authenticated Device traffic. It also rejects the served broker with a
 wrong DNS name and an unrelated Root before MQTT credentials are sent.
+
+If renewal stops after `renewal-intent.json` was written and the successor was
+registered, retain that failed directory and run `--phase finish-host-renewal
+--failed FAILED_RENEWAL_EVIDENCE --traffic MQTT_TRAFFIC_EVIDENCE` with the same
+authority and intermediate arguments. Recovery accepts exactly one installed
+successor, does not signal renewal again, and proves its retained-state restart.
