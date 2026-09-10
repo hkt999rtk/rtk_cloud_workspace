@@ -187,13 +187,18 @@ class OpenBaoHostRun(h.ServiceRun):
                       'installed OpenBao Root ConfigMap changed: ' + name)
         return ca_name, manifest_name
 
+    def require_activation_blocked(self, operation):
+        # The operation requester owns activation. Approval accounts only supply
+        # the two distinct approvals recorded during authority preparation.
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409)
+
     def install_root_consumers(self):
         root = self.openbao_root('ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        self.api('/operations/' + operation['operation_id'] + '/activate', {},
-                 409, role='approver')
+        self.require_activation_blocked(operation)
         ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
         for name in reversed(CONSUMERS):
             owner = self.obj('deployment', name)
@@ -222,8 +227,7 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        self.api('/operations/' + operation['operation_id'] + '/activate', {},
-                 409, role='approver')
+        self.require_activation_blocked(operation)
         ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
         for name in reversed(CONSUMERS):
             owner = self.obj('deployment', name)
@@ -254,7 +258,7 @@ class OpenBaoHostRun(h.ServiceRun):
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'], CONSUMERS)
         self.api('/operations/' + operation['operation_id'] + '/activate', {},
-                 204, role='approver')
+                 204)
         root = self.api('/issuers/' + root['issuer_id'])
         m.require(root['status'] == 'active',
                   'OpenBao TLS Root did not activate')

@@ -14,6 +14,14 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
         self.assertTrue(callable(o.OpenBaoHostRun.openbao_root))
 
+    def test_activation_gate_uses_operation_requester(self):
+        calls = []
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.api = lambda *args, **kwargs: calls.append((args, kwargs))
+        runner.require_activation_blocked({'operation_id': 'operation-1'})
+        self.assertEqual(calls, [(('/operations/operation-1/activate', {}, 409),
+                                  {})])
+
     def test_staged_template_preserves_listener_and_uses_managed_receipts(self):
         owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
             'metadata': {}, 'spec': {'containers': [{
