@@ -70,7 +70,7 @@ class MQTTHostRun(h.ServiceRun):
         self.report['mqtt_host_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
-    def root(self, status=None):
+    def mqtt_root(self, status=None):
         saved = m.read(Path(self.args.authority) / 'root-ready.json')
         root = self.api('/issuers/' + saved['issuer_id'])
         m.require(root['environment'] == 'dev' and root['trust_domain'] == 'mqtt'
@@ -171,7 +171,7 @@ class MQTTHostRun(h.ServiceRun):
         return template
 
     def install_root_consumers(self):
-        root = self.root('ready')
+        root = self.mqtt_root('ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
@@ -229,7 +229,7 @@ class MQTTHostRun(h.ServiceRun):
             'client_image': self.args.image})
 
     def activate_root(self):
-        root = self.root('ready')
+        root = self.mqtt_root('ready')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'],
@@ -266,7 +266,7 @@ class MQTTHostRun(h.ServiceRun):
             'crl_sha256': record['crl_sha256']})
 
     def prepare_intermediate(self):
-        root = self.root('active')
+        root = self.mqtt_root('active')
         self.api('/issuers/' + root['issuer_id'] + '/crl')
         cursor = ''
         while True:
