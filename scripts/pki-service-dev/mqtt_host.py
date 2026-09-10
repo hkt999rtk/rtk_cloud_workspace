@@ -175,16 +175,9 @@ class MQTTHostRun(h.ServiceRun):
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        self.api('/operations/' + operation['operation_id'] + '/activate', {},
-                 409, role='approver')
         refs = [{'issuer_id': root['issuer_id'],
                  'trust_bundle_version': root['trust_bundle_version']}]
         configmap = 'pki-mqtt-bundles'
-        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
-                     'metadata': {'name': configmap, 'namespace': NS},
-                     'immutable': True,
-                     'data': {'roots.pem': root['certificate_pem'],
-                              'issuers.json': json.dumps(refs)}})
         cas = [(self.base / 'pki/consumers' / name / 'ca.crt').read_text()
                for name in MQTT_CONSUMERS]
         self.patch_ca('pki-controller-tls', 'ca.crt', cas)
@@ -198,6 +191,13 @@ class MQTTHostRun(h.ServiceRun):
             'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', NS, 'rollout', 'status',
                    'deployment/pki-controller', '--timeout=240s'], timeout=250)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409, role='approver')
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': configmap, 'namespace': NS},
+                     'immutable': True,
+                     'data': {'roots.pem': root['certificate_pem'],
+                              'issuers.json': json.dumps(refs)}})
         self.create({'apiVersion': 'networking.k8s.io/v1',
                      'kind': 'NetworkPolicy',
                      'metadata': {'name': 'allow-mqtt-trust-consumers',
