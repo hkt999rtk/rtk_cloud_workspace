@@ -109,6 +109,8 @@ class OpenBaoHostRun(h.ServiceRun):
                 '/run/pki-host-root/root.pem'})
         if owner['metadata']['name'] == 'pki-controller':
             container['env'] = h.with_env(container['env'], {
+                'PKI_REQUIRED_CONSUMERS_OPENBAO_TLS':
+                    ','.join(CONSUMERS),
                 'PKI_REQUIRED_BUNDLE_CONSUMERS_OPENBAO_TLS':
                     ','.join(CONSUMERS)})
         template.setdefault('metadata', {}).setdefault('annotations', {})[
@@ -127,6 +129,13 @@ class OpenBaoHostRun(h.ServiceRun):
                   'OpenBao recovery trust source changed')
         template = json.loads(json.dumps(owner['spec']['template']))
         template['spec']['containers'][0]['image'] = image
+        if owner['metadata']['name'] == 'pki-controller':
+            container = template['spec']['containers'][0]
+            container['env'] = h.with_env(container.get('env', []), {
+                'PKI_REQUIRED_CONSUMERS_OPENBAO_TLS':
+                    ','.join(CONSUMERS),
+                'PKI_REQUIRED_BUNDLE_CONSUMERS_OPENBAO_TLS':
+                    ','.join(CONSUMERS)})
         candidate = {'metadata': owner['metadata'],
                      'spec': {'template': template}}
         self.verify_staged_client(candidate, image, ca_configmap,
@@ -173,9 +182,12 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(all(env.get(key) == value for key, value in expected.items()),
                   'installed OpenBao bundle settings changed')
         if owner['metadata']['name'] == 'pki-controller':
-            m.require(env.get(
-                'PKI_REQUIRED_BUNDLE_CONSUMERS_OPENBAO_TLS') ==
-                ','.join(CONSUMERS), 'OpenBao activation gate changed')
+            m.require(
+                env.get('PKI_REQUIRED_CONSUMERS_OPENBAO_TLS') ==
+                ','.join(CONSUMERS)
+                and env.get(
+                    'PKI_REQUIRED_BUNDLE_CONSUMERS_OPENBAO_TLS') ==
+                ','.join(CONSUMERS), 'OpenBao consumer gates changed')
 
     def root_configmaps(self, root):
         legacy = self.obj('configmap', 'pki-openbao-transport-ca')

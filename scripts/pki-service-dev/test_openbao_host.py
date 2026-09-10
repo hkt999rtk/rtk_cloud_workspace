@@ -81,6 +81,10 @@ class OpenBaoHostTests(unittest.TestCase):
             owner, 'new', 'combined', 'manifest', root)
         runner.verify_staged_client(
             owner, 'new', 'combined', 'manifest', root)
+        env = {item['name']: item.get('value') for item in
+               owner['spec']['template']['spec']['containers'][0]['env']}
+        self.assertEqual(env['PKI_REQUIRED_CONSUMERS_OPENBAO_TLS'],
+                         'certissuer,pki-controller')
 
     def test_recovery_verifier_rejects_different_image(self):
         owner = {'metadata': {'name': 'certissuer'},
