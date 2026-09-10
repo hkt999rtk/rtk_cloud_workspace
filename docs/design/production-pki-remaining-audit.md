@@ -632,3 +632,7 @@ Historical evidence is maintained in the [implementation ledger](production-pki-
 ### Milestone 1 local cohort reporting preparation (2026-09-08)
 
 Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#milestone-1-local-cohort-reporting-preparation-2026-09-08).
+
+### Governed MQTT host and actual-client checkpoint (2026-09-10)
+
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#governed-mqtt-host-and-actual-client-checkpoint-2026-09-10). This closes T8; MQTT root-policy replacement remains R3 and the remaining cross-host outage matrix remains T11.

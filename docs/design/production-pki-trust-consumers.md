@@ -19,12 +19,12 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager, both listeners, the isolated Device API and pkibroker have dev adoption/renewal/retirement evidence. M11 retains the remaining cross-caller held-session and trust-failure matrix. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and complete Account Manager transport lifecycle are qualified in dev. MQTT/OpenBao transports and hosts, public HTTPS evidence, and cross-host held-session/trust-failure coverage remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory and MQTT managed lifecycles, and the complete Account Manager transport lifecycle are qualified in dev. OpenBao transport, public HTTPS evidence, and cross-host held-session/trust-failure coverage remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 25/40 = 62.5%.** The fixed decomposition below
+**Current checkpoint completion: 26/40 = 65%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **1/6
@@ -48,11 +48,11 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 10/11 | 91% |
-| Transports and hosts | 7/11 | 64% |
+| Transports and hosts | 8/11 | 73% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **25/40** | **62.5%** |
+| **Total** | **26/40** | **65%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -80,7 +80,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
-**Group 3 — transports and hosts (7/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
+**Group 3 — transports and hosts (8/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
 [host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
 linked above, the [transport inventory](production-pki-domain-host-inventory.md#current-entry-points)
 and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-checklist-four-items).
@@ -92,7 +92,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T5: Implement/test the EMQX host owner, including the disposable real-broker lifecycle fixture.
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
 - [x] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, Account Manager client/listener renewal, retirement, held-connection cutoff, CRL fail-closed recovery and stale dev-record reconciliation have passed. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
-- [ ] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated dev MQTT Root is prepared and inactive. Actual client CA-installation receipts are implemented and tested locally; managed host rollout and client lifecycle evidence remain.
+- [x] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated MQTT hierarchy, managed EMQX host, actual API/log-ingester clients, renewal, predecessor retirement, retained-state restart and fail-closed trust recovery passed in dev. Evidence: [governed MQTT checkpoint](#governed-mqtt-host-and-actual-clients-qualified-in-dev-2026-09-10).
 - [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
 - [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
@@ -2077,3 +2077,44 @@ Private evidence is under
 `v4-consumers`, `lifecycle-5`, and `static-cleanup`. This completes M9. M11
 still owns the broader cross-caller trust-failure matrix. Staging and human MFA
 were not changed.
+
+### Governed MQTT host and actual clients qualified in dev (2026-09-10)
+
+The dedicated dev MQTT Root and exact-name intermediate are active. The
+`mqtt-pki` Pod now runs the managed `emqxpkihost` owner with a retained identity
+PVC and private runtime directory. The broker generates its own key, stores it
+only in owner-local state, and serves a serverAuth leaf for
+`mqtt-pki.video-cloud-dev-video-cloud.svc`. Its Service management credential,
+callback trust and MQTT server credential remain separate. The old static
+server-key Secret and the first-install seed were removed after a seed-free
+restart.
+
+The actual `video-cloud-api` and `video-cloud-logingester` clients use TLS with
+the exact MQTT Root pin and DNS name while retaining their existing MQTT
+authentication, topic isolation and QoS 1 behavior. Both installed the reviewed
+Root/intermediate bundles and CRLs and recorded exact receipts. The broker's
+HTTPS authentication callback uses its separate managed Service client identity.
+
+SIGHUP created one successor key and leaf without exporting private material.
+The served fingerprint changed from `689566…a87e6` to `d05369…6af98`; the old
+authenticated session closed during replacement, actual clients reconnected,
+and a subsequent Pod replacement retained the same successor state. A transient
+wire check after renewal was reconciled from the saved intent and live registry
+state without another signal or issuance. The predecessor was then denied in
+the registry, published in the MQTT intermediate CRL, acknowledged by both
+actual clients and finalized. The successor and Device canary remained healthy.
+
+A controlled dev-only registry outage restarted only the broker with an
+unreachable registry connection. The broker stayed unready and the Service had
+zero ready endpoints; issuance and trust-acknowledgment rows did not change. The
+runner restored the exact saved Deployment template in all exit paths. The same
+successor returned, both actual clients reconnected, authenticated Device
+publish/subscribe, topic denials and QoS 1 passed, and wrong-name and unrelated-
+Root probes failed before MQTT credentials were sent.
+
+Private evidence is under `pki/t8-rollout-20260911/host-renewal`,
+`host-renewal-recovery-r2`, `host-revocation`,
+`host-revocation-publication`, and `host-lifecycle-verification-r2`. This
+completes T8 and moves the fixed total to **26/40 = 65%, with 14 checkpoints
+open**. Durable MQTT root-policy replacement remains R3; broader cross-host
+trust-outage coverage remains T11. Staging and human login/MFA were untouched.

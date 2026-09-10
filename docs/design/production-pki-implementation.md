@@ -5595,3 +5595,43 @@ Service CRL receipts, held predecessor socket cutoff, fresh predecessor denial,
 successor survival across restart, and unchanged Device mTLS/MQTT behavior. The
 Service V4 CRL manifests for factory and the isolated Device API were completed
 before finalization. This closes M9; staging and human login/MFA were untouched.
+
+### Governed MQTT host and actual-client checkpoint (2026-09-10)
+
+The dev MQTT hierarchy and dedicated broker are now fully adopted. EMQX runs
+under the `emqxpkihost` foreground owner, keeps its server private key in the
+retained `mqtt-pki-host-identity` PVC and exposes only private runtime copies.
+The exact server policy permits only
+`mqtt-pki.video-cloud-dev-video-cloud.svc`. The host renewal client and HTTPS
+authentication callback use the separately mounted `emqx-pki` Service
+credential. The runtime Secret contains only EMQX application settings; it no
+longer contains the server key or certificate.
+
+The real API and log-ingester MQTT connection owners install the independent
+MQTT Root/intermediate and CRLs, report exact receipts, verify the Root pin and
+DNS name, and retain existing username/token authorization. Live Device traffic
+passed publish/subscribe, forbidden-topic checks and QoS 1 roundtrip.
+
+The maintained `mqtt_host.py` phases qualified early host renewal, restart,
+retirement and trust recovery. SIGHUP replaced fingerprint `689566…a87e6` with
+`d05369…6af98` using a new owner-generated key and closed the held authenticated
+connection. Recovery from a transient post-renewal wire probe accepted exactly
+that successor and avoided duplicate issuance. A Pod replacement retained its
+state; both actual clients reconnected. The old leaf was revoked, added to the
+signed intermediate CRL, acknowledged by both consumers and finalized while the
+successor and Device canary remained admitted.
+
+For fail-closed evidence, only the broker's registry connection was temporarily
+made unreachable. The replacement Pod did not become ready and the Service had
+no ready endpoint. No issuance or trust-receipt row changed. A guaranteed restore
+reapplied the exact healthy template; the same successor and actual clients came
+back. Separate probes also rejected the broker under a wrong DNS name and an
+unrelated Root before MQTT credentials were sent.
+
+Local runner tests total 87 and pass. Private dev evidence is under
+`pki/t8-rollout-20260911/host-renewal`, `host-renewal-recovery-r2`,
+`host-revocation`, `host-revocation-publication`, and
+`host-lifecycle-verification-r2`. This closes T8. The fixed completion is
+**26/40 = 65%, with 14 checkpoints open**. R3 still owns durable MQTT root-policy
+replacement and T11 owns the remaining cross-host outage matrix. Staging and
+human login/MFA were untouched.
