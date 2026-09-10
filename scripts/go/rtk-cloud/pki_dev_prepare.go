@@ -33,7 +33,7 @@ func runPKIDevPrepare(args []string) error {
 	configRoot := fs.String("config-root", "", "canonical SecretStore base directory")
 	broker := fs.Bool("broker", false, "prepare isolated mqtt-pki runtime credentials without changing live services")
 	server := fs.String("server", "", "optional dev TLS server: video-cloud-api-pki or mqtt-pki")
-	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, certissuer, factoryenroll, pkibroker or emqx-pki")
+	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, video-cloud-logingester, certissuer, factoryenroll, pkibroker or emqx-pki")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

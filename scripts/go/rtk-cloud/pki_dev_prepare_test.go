@@ -336,3 +336,30 @@ func TestControllerConsumerHasIndependentReusableIdentity(t *testing.T) {
 		t.Fatal("controller identity rotated or reused another consumer name")
 	}
 }
+
+func TestPKIDevLogIngesterConsumerIsIndependent(t *testing.T) {
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	logs, err := preparePKIDevConsumer(store, "video-cloud-logingester", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api, err := preparePKIDevConsumer(store, "video-cloud-api", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logsCA, _ := os.ReadFile(filepath.Join(logs, "ca.crt"))
+	apiCA, _ := os.ReadFile(filepath.Join(api, "ca.crt"))
+	if bytes.Equal(logsCA, apiCA) {
+		t.Fatal("log ingester reused API management CA")
+	}
+	if err := validatePKIDevConsumer(logs, "video-cloud-logingester", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(logs, "ca.key")); !os.IsNotExist(err) {
+		t.Fatal("CA private key retained")
+	}
+}
