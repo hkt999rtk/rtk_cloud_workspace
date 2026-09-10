@@ -73,7 +73,7 @@ def mqtt_host_settings(mqtt_root, service_root):
     return {
         'PKI_ENVIRONMENT': 'dev',
         'EMQX_PKI_EXECUTABLE': '/usr/local/bin/emqx',
-        'EMQX_PKI_RUNTIME_DIR': '/run/emqx-pki',
+        'EMQX_PKI_RUNTIME_DIR': '/run/emqx-pki/private',
         'EMQX_PKI_HOST_IDENTITY_STATE': MQTT_HOST_STATE,
         'EMQX_PKI_HOST_NAME': MQTT_HOST,
         'EMQX_PKI_HOST_DNS_NAMES': MQTT_HOST,
@@ -104,7 +104,8 @@ def mqtt_host_state_initializer(image):
     return {
         'name': 'prepare-mqtt-host-state', 'image': image,
         'command': ['sh', '-c'],
-        'args': ['set -eu; chmod 700 /run/emqx-pki; '
+        'args': ['set -eu; umask 077; mkdir -p /run/emqx-pki/private; '
+                 'chmod 700 /run/emqx-pki/private; '
                  'if [ -d /var/lib/emqx-pki/identity ]; then '
                  'chmod 700 /var/lib/emqx-pki/identity; '
                  'find /var/lib/emqx-pki/identity -type f '
@@ -1050,6 +1051,8 @@ class MQTTHostRun(h.ServiceRun):
         m.require(env.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE
                   and mqtt['image'] == self.args.image,
                   'managed MQTT host deployment changed')
+        mqtt['env'] = h.with_env(mqtt['env'], {
+            'EMQX_PKI_RUNTIME_DIR': '/run/emqx-pki/private'})
         volumes = {item['name']: item for item in pod.get('volumes', [])}
         if 'mqtt-host-runtime' not in volumes:
             pod['volumes'].append({'name': 'mqtt-host-runtime',

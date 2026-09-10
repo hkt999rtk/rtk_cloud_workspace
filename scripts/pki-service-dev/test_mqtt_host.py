@@ -196,7 +196,8 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual(initializer['securityContext']['runAsGroup'], 1000)
         self.assertIn('chmod 700 /var/lib/emqx-pki/identity',
                       initializer['args'][0])
-        self.assertIn('chmod 700 /run/emqx-pki', initializer['args'][0])
+        self.assertIn('chmod 700 /run/emqx-pki/private',
+                      initializer['args'][0])
         self.assertEqual({item['name'] for item in
                           initializer['volumeMounts']},
                          {'mqtt-host-state', 'mqtt-host-runtime'})
