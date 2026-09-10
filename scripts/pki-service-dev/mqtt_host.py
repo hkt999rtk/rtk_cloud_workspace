@@ -175,7 +175,8 @@ class MQTTHostRun(h.ServiceRun):
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409, role='approver')
         refs = [{'issuer_id': root['issuer_id'],
                  'trust_bundle_version': root['trust_bundle_version']}]
         configmap = 'pki-mqtt-bundles'
@@ -234,7 +235,8 @@ class MQTTHostRun(h.ServiceRun):
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'],
                                      MQTT_CONSUMERS)
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 204)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 204, role='approver')
         root = self.api('/issuers/' + root['issuer_id'])
         m.require(root['status'] == 'active', 'MQTT Root did not activate')
         self.save('mqtt-root-active.json', root)
@@ -259,7 +261,7 @@ class MQTTHostRun(h.ServiceRun):
             '--out', self.output / 'root-crl'])
         raw = (self.output / 'root-crl/revocations.pem').read_text()
         record = self.api('/issuers/' + root['issuer_id'] + '/crl',
-                          {'crl_pem': raw})
+                          {'crl_pem': raw}, role='approver')
         self.save('mqtt-root-crl.json', record)
         self.check('mqtt_root_active_with_crl', {
             'issuer_id': root['issuer_id'], 'consumers': receipts,
@@ -322,13 +324,15 @@ class MQTTHostRun(h.ServiceRun):
             '--out', self.output / 'intermediate-signed'])
         self.api('/operations/' + operation['operation_id'] + '/import', {
             'certificate_pem': (self.output /
-                                'intermediate-signed/certificate.pem').read_text()}, 204)
+                                'intermediate-signed/certificate.pem').read_text()},
+                 204, role='approver')
         issuer = self.api('/issuers/' + issuer['issuer_id'])
         m.require(issuer['status'] == 'ready'
                   and issuer['server_dns_names'] == [MQTT_HOST],
                   'ready MQTT intermediate differs')
         self.save('intermediate-ready.json', issuer)
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409, role='approver')
         self.check('mqtt_intermediate_ready_gate_closed', {
             'issuer_id': issuer['issuer_id'],
             'server_dns_names': issuer['server_dns_names']})
