@@ -72,6 +72,7 @@ def crl_state_initializer(image):
                           'mountPath': '/var/lib/mqtt-pki'}],
         'securityContext': {'allowPrivilegeEscalation': False,
                             'capabilities': {'drop': ['ALL']},
+                            'runAsUser': 10001, 'runAsGroup': 10001,
                             'runAsNonRoot': True,
                             'readOnlyRootFilesystem': True}}
 
@@ -599,8 +600,27 @@ class MQTTHostRun(h.ServiceRun):
                     'op': 'replace', 'path': '/spec/template',
                     'value': template}])
             else:
-                m.require(existing == [crl_state_initializer(container['image'])],
-                          'MQTT CRL initializer changed: ' + name)
+                expected = crl_state_initializer(container['image'])
+                if existing != [expected]:
+                    prior = json.loads(json.dumps(existing[0]))
+                    security = prior.get('securityContext', {})
+                    m.require(name == 'video-cloud-logingester'
+                              and security.get('runAsUser') is None
+                              and security.get('runAsGroup') is None,
+                              'MQTT CRL initializer changed: ' + name)
+                    security['runAsUser'] = 10001
+                    security['runAsGroup'] = 10001
+                    m.require(prior == expected,
+                              'MQTT CRL initializer recovery differs: ' + name)
+                    pod['initContainers'] = [
+                        expected if item['name'] == 'mqtt-pki-state-init'
+                        else item for item in pod['initContainers']]
+                    annotations = template.setdefault(
+                        'metadata', {}).setdefault('annotations', {})
+                    annotations['rtk.cloud/mqtt-crl-recovery'] = self.output.name
+                    self.scoped_patch('deployment', owner, [{
+                        'op': 'replace', 'path': '/spec/template',
+                        'value': template}])
             self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
                        '--timeout=300s'], timeout=310)
         receipts = {}

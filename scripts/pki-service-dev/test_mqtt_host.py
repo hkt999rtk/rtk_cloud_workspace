@@ -90,6 +90,8 @@ class MQTTHostTests(unittest.TestCase):
             'name': 'mqtt-pki-state', 'mountPath': '/var/lib/mqtt-pki'}])
         self.assertIn('mkdir -p /var/lib/mqtt-pki/crls', init['args'][0])
         self.assertTrue(init['securityContext']['readOnlyRootFilesystem'])
+        self.assertEqual(init['securityContext']['runAsUser'], 10001)
+        self.assertEqual(init['securityContext']['runAsGroup'], 10001)
         self.assertEqual(init['securityContext']['capabilities']['drop'], ['ALL'])
 
     def test_intermediate_switch_changes_only_selected_bundle_source(self):
