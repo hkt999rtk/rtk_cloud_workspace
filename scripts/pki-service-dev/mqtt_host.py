@@ -604,7 +604,7 @@ class MQTTHostRun(h.ServiceRun):
                 if existing != [expected]:
                     prior = json.loads(json.dumps(existing[0]))
                     security = prior.get('securityContext', {})
-                    m.require(name == 'video-cloud-logingester'
+                    m.require(name in MQTT_CONSUMERS
                               and security.get('runAsUser') is None
                               and security.get('runAsGroup') is None,
                               'MQTT CRL initializer changed: ' + name)
