@@ -1,4 +1,6 @@
 import importlib.util
+import base64
+import json
 from pathlib import Path
 import unittest
 from unittest.mock import Mock
@@ -145,11 +147,23 @@ class MQTTHostTests(unittest.TestCase):
                   m.MQTT_RUNTIME_FIELDS | {
                       'tls.key', 'tls.crt', 'server-ca.crt',
                       'callback.key', 'callback.crt', 'callback-ca.crt'}}
+        source['authentication'] = base64.b64encode(json.dumps([{
+            'backend': 'http', 'ssl': {'enable': True,
+                                       'keyfile': '/legacy/callback.key',
+                                       'certfile': '/legacy/callback.crt',
+                                       'cacertfile': '/legacy/ca.crt'}}]).encode()).decode()
         result = m.managed_runtime_data(source)
         self.assertEqual(set(result), m.MQTT_RUNTIME_FIELDS)
         self.assertFalse(set(result) & {
             'tls.key', 'tls.crt', 'server-ca.crt',
             'callback.key', 'callback.crt', 'callback-ca.crt'})
+        ssl = json.loads(base64.b64decode(
+            result['authentication']).decode())[0]['ssl']
+        self.assertEqual(ssl, {
+            'enable': True,
+            'keyfile': '/run/emqx-pki-management/tls.key',
+            'certfile': '/run/emqx-pki-management/tls.crt',
+            'cacertfile': '/run/mqtt-callback-ca/ca.crt'})
         with self.assertRaisesRegex(RuntimeError,
                                     'existing MQTT runtime fields incomplete'):
             m.managed_runtime_data({'cookie': 'only'})
@@ -190,6 +204,8 @@ class MQTTHostTests(unittest.TestCase):
                          m.MQTT_RUNTIME_SECRET)
         self.assertEqual(volumes['mqtt-host-runtime'], {
             'name': 'mqtt-host-runtime', 'emptyDir': {}})
+        self.assertEqual(volumes['mqtt-callback-ca']['configMap']['name'],
+                         'pki-mqtt-callback-ca')
         initializer = next(item for item in pod['initContainers']
                            if item['name'] == 'prepare-mqtt-host-state')
         self.assertEqual(initializer['securityContext']['runAsUser'], 1000)

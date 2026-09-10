@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import signal
 import sys
+import time
 import uuid
 
 
@@ -97,7 +98,20 @@ def mqtt_host_settings(mqtt_root, service_root):
 def managed_runtime_data(source):
     m.require(set(source) >= MQTT_RUNTIME_FIELDS,
               'existing MQTT runtime fields incomplete')
-    return {name: source[name] for name in sorted(MQTT_RUNTIME_FIELDS)}
+    result = {name: source[name] for name in sorted(MQTT_RUNTIME_FIELDS)}
+    authentication = json.loads(base64.b64decode(
+        result['authentication']).decode())
+    m.require(isinstance(authentication, list) and len(authentication) == 1
+              and authentication[0].get('backend') == 'http'
+              and authentication[0].get('ssl', {}).get('enable') is True,
+              'existing MQTT callback authentication changed')
+    ssl = authentication[0]['ssl']
+    ssl['cacertfile'] = '/run/mqtt-callback-ca/ca.crt'
+    ssl['certfile'] = '/run/emqx-pki-management/tls.crt'
+    ssl['keyfile'] = '/run/emqx-pki-management/tls.key'
+    result['authentication'] = base64.b64encode(
+        json.dumps(authentication, separators=(',', ':')).encode()).decode()
+    return result
 
 
 def mqtt_host_state_initializer(image):
@@ -144,6 +158,8 @@ def managed_mqtt_template(owner, image, settings, output_name):
         {'name': 'mqtt-host-runtime', 'mountPath': '/run/emqx-pki'},
         {'name': 'mqtt-host-management',
          'mountPath': '/run/emqx-pki-management', 'readOnly': True},
+        {'name': 'mqtt-callback-ca', 'mountPath': '/run/mqtt-callback-ca',
+         'readOnly': True},
         {'name': 'pki-service-root', 'mountPath': '/run/pki-service-root',
          'readOnly': True},
     ])
@@ -159,6 +175,8 @@ def managed_mqtt_template(owner, image, settings, output_name):
         {'name': 'mqtt-host-runtime', 'emptyDir': {}},
         {'name': 'mqtt-host-management', 'secret': {
             'secretName': MQTT_MANAGEMENT_SECRET, 'defaultMode': 288}},
+        {'name': 'mqtt-callback-ca', 'configMap': {
+            'name': 'pki-mqtt-callback-ca'}},
     ])
     pod.setdefault('initContainers', []).append(
         mqtt_host_state_initializer(image))
@@ -1123,6 +1141,70 @@ class MQTTHostRun(h.ServiceRun):
                 'pki-controller', 'certissuer', 'video-cloud-api',
                 'video-cloud-logingester']})
 
+    def repair_host_callback(self):
+        adoption = m.read(Path(self.args.adoption) / 'report.json')
+        m.require(adoption['status'] == 'passed'
+                  and adoption['phase'] == 'finish-host-adoption',
+                  'successful MQTT host adoption required')
+        root, _, _ = self.ready_intermediate(status='active')
+        self.save('mqtt-root.pem', root['certificate_pem'])
+        secret = self.obj('secret', MQTT_RUNTIME_SECRET)
+        m.require(set(secret['data']) == MQTT_RUNTIME_FIELDS,
+                  'managed MQTT runtime Secret changed')
+        updated = managed_runtime_data(secret['data'])
+        self.scoped_patch('secret', secret, [
+            {'op': 'test', 'path': '/data/authentication',
+             'value': secret['data']['authentication']},
+            {'op': 'replace', 'path': '/data/authentication',
+             'value': updated['authentication']}])
+        owner = self.obj('deployment', 'mqtt-pki')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        pod = template['spec']
+        mqtt = next(item for item in pod['containers']
+                    if item['name'] == 'mqtt')
+        env = {item['name']: item.get('value')
+               for item in mqtt.get('env', [])}
+        m.require(env.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE,
+                  'managed MQTT host deployment changed')
+        volumes = {item['name']: item for item in pod.get('volumes', [])}
+        mounts = {item['name']: item for item in mqtt.get('volumeMounts', [])}
+        m.require('mqtt-callback-ca' not in volumes
+                  and 'mqtt-callback-ca' not in mounts,
+                  'MQTT callback CA repair already applied')
+        pod['volumes'].append({'name': 'mqtt-callback-ca', 'configMap': {
+            'name': 'pki-mqtt-callback-ca'}})
+        mqtt['volumeMounts'].append({
+            'name': 'mqtt-callback-ca',
+            'mountPath': '/run/mqtt-callback-ca', 'readOnly': True})
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-callback-repair'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        deadline = time.monotonic() + 60
+        clients = ''
+        while time.monotonic() < deadline:
+            clients = self.kube(['-n', NS, 'exec', 'deployment/mqtt-pki',
+                                 '-c', 'mqtt', '--', '/usr/local/bin/emqx',
+                                 'ctl', 'clients', 'list'])
+            if ('video-cloud-api-' in clients
+                    and 'video-cloud-logingester-log-sub' in clients):
+                break
+            time.sleep(2)
+        m.require('video-cloud-api-' in clients
+                  and 'video-cloud-logingester-log-sub' in clients,
+                  'actual MQTT clients did not authenticate')
+        self.forward('api', NS, 'video-cloud-api-pki', 8443)
+        self.forward('mqtt', NS, 'mqtt-pki', 8883)
+        self.device_baseline()
+        self.check('mqtt_callback_and_actual_clients_restored', {
+            'callback_client_key_source': MQTT_MANAGEMENT_SECRET,
+            'callback_ca_source': 'pki-mqtt-callback-ca',
+            'runtime_secret_has_server_key': False,
+            'actual_clients': MQTT_CONSUMERS,
+            'device_mqtt_acl_qos1': 'passed'})
+
 
 def main():
     os.umask(0o077)
@@ -1132,7 +1214,7 @@ def main():
         'prepare-intermediate', 'install-intermediate',
         'activate-intermediate', 'finish-intermediate-activation',
         'configure-certissuer', 'prepare-host', 'adopt-host',
-        'finish-host-adoption'],
+        'finish-host-adoption', 'repair-host-callback'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -1142,6 +1224,7 @@ def main():
     parser.add_argument('--failed')
     parser.add_argument('--intermediate')
     parser.add_argument('--prepared')
+    parser.add_argument('--adoption')
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
@@ -1151,7 +1234,8 @@ def main():
                                  'activate-intermediate',
                                  'finish-intermediate-activation',
                                  'configure-certissuer', 'prepare-host',
-                                 'adopt-host', 'finish-host-adoption')
+                                 'adopt-host', 'finish-host-adoption',
+                                 'repair-host-callback')
               or args.intermediate,
               'prepared MQTT intermediate evidence required')
     m.require(args.phase != 'adopt-host' or args.prepared,
@@ -1159,12 +1243,14 @@ def main():
     m.require(args.phase != 'finish-host-adoption'
               or (args.prepared and args.failed and args.image),
               'failed adoption, prepared host and image required')
+    m.require(args.phase != 'repair-host-callback' or args.adoption,
+              'successful MQTT host adoption evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = MQTTHostRun(args)
     try:
-        if args.phase == 'finish-host-adoption':
+        if args.phase in ('finish-host-adoption', 'repair-host-callback'):
             runner.recovery_preflight()
         else:
             runner.preflight()
@@ -1180,7 +1266,8 @@ def main():
          'prepare-host': runner.prepare_host,
          'adopt-host': runner.adopt_host,
          'finish-host-adoption':
-             runner.finish_host_adoption_recovery}[args.phase]()
+             runner.finish_host_adoption_recovery,
+         'repair-host-callback': runner.repair_host_callback}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
