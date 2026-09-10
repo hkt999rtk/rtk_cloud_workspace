@@ -263,6 +263,22 @@ python3 scripts/pki-service-dev/mqtt_host.py \
   --phase adopt-host --authority MQTT_ROOT_EVIDENCE \
   --intermediate INTERMEDIATE_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE \
   --image EMQX_HOST_IMAGE_DIGEST --output MQTT_HOST_ADOPTION_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase renew-host --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --traffic MQTT_TRAFFIC_EVIDENCE \
+  --output MQTT_HOST_RENEWAL_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase revoke-host --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --renewal MQTT_HOST_RENEWAL_EVIDENCE \
+  --output MQTT_HOST_REVOCATION_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase publish-host-revocation --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --revocation MQTT_HOST_REVOCATION_EVIDENCE \
+  --output MQTT_HOST_PUBLICATION_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase verify-host-lifecycle --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --publication MQTT_HOST_PUBLICATION_EVIDENCE \
+  --output MQTT_HOST_LIFECYCLE_EVIDENCE
 ```
 
 If intermediate activation succeeded but a client failed before recording CRL
@@ -299,3 +315,13 @@ adoption copied the callback paths from the removed static Secret, run
 VIDEO_CLOUD_IMAGE_DIGEST` with the same authority and intermediate arguments.
 The repair installs the reviewed callback policy, changes the paths, restarts the
 broker, waits for both actual service clients, and runs Device MQTT ACL/QoS1.
+
+The four lifecycle phases then rotate the broker-owned key and leaf with SIGHUP,
+measure closure of a held MQTT session, verify the served successor and restart
+from retained state. They revoke the predecessor in the registry, publish it in
+the MQTT intermediate CRL, wait for both actual client receipts, and finalize the
+revocation. The last phase temporarily makes only the broker's registry lookup
+unavailable, verifies that the Pod and Service fail closed without changing
+issuance or acknowledgment state, restores the exact Deployment template, and
+repeats authenticated Device traffic. It also rejects the served broker with a
+wrong DNS name and an unrelated Root before MQTT credentials are sent.

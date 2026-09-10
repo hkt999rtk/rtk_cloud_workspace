@@ -220,6 +220,32 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
                          ['image'], 'static')
 
+    def test_current_host_requires_one_unrevoked_registered_served_leaf(self):
+        runner = object.__new__(m.MQTTHostRun)
+        runner.inspect_host_state = Mock(return_value={
+            'pending': False, 'subject': m.MQTT_HOST,
+            'fingerprint': 'f' * 64})
+        row = {'fingerprint': 'f' * 64, 'issuer_id': 'issuer',
+               'caller': 'emqx-pki', 'status': 'succeeded',
+               'revoked_at': None}
+        runner.server_rows = Mock(return_value=[row])
+        runner.served_fingerprint = Mock(return_value='f' * 64)
+        runner.host_state_digest = Mock(return_value='s' * 64)
+        runner.obj = Mock(return_value={'metadata': {'uid': 'pvc'}})
+        owner = {'metadata': {'uid': 'deployment'}, 'spec': {'template': {
+            'spec': {'containers': [
+                {'name': 'mqtt', 'image': 'mqtt-image'},
+                {'name': 'pkibroker', 'image': 'worker-image'}]}}}}
+        current = runner.current_host({'issuer_id': 'issuer'}, owner)
+        self.assertEqual(current['row'], row)
+        self.assertEqual(current['pvc_uid'], 'pvc')
+        self.assertEqual(current['images'], {
+            'mqtt': 'mqtt-image', 'pkibroker': 'worker-image'})
+        runner.server_rows = Mock(return_value=[dict(row, revoked_at='now')])
+        with self.assertRaisesRegex(RuntimeError,
+                                    'current MQTT host is not admitted'):
+            runner.current_host({'issuer_id': 'issuer'}, owner)
+
 
 if __name__ == '__main__':
     unittest.main()
