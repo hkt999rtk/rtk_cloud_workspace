@@ -22,6 +22,14 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(calls, [(('/operations/operation-1/activate', {}, 409),
                                   {})])
 
+    def test_unconfigured_domain_denial_uses_operation_requester(self):
+        calls = []
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.api = lambda *args, **kwargs: calls.append((args, kwargs))
+        runner.require_activation_policy_absent({'operation_id': 'operation-1'})
+        self.assertEqual(calls, [(('/operations/operation-1/activate', {}, 403),
+                                  {})])
+
     def test_staged_template_preserves_listener_and_uses_managed_receipts(self):
         owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
             'metadata': {}, 'spec': {'containers': [{

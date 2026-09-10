@@ -193,12 +193,16 @@ class OpenBaoHostRun(h.ServiceRun):
         self.api('/operations/' + operation['operation_id'] + '/activate', {},
                  409)
 
+    def require_activation_policy_absent(self, operation):
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 403)
+
     def install_root_consumers(self):
         root = self.openbao_root('ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        self.require_activation_blocked(operation)
+        self.require_activation_policy_absent(operation)
         ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
         for name in reversed(CONSUMERS):
             owner = self.obj('deployment', name)
@@ -208,10 +212,13 @@ class OpenBaoHostRun(h.ServiceRun):
             self.scoped_patch(name, owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/' + name, '--timeout=300s'], timeout=310)
+            if name == 'pki-controller':
+                self.require_activation_blocked(operation)
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'], CONSUMERS)
         self.check('openbao_tls_root_installed_by_actual_clients', {
             'issuer_id': root['issuer_id'], 'consumers': receipts,
+            'activation_without_policy_denied': True,
             'activation_without_receipts_denied': True,
             'ca_configmap': ca_configmap,
             'manifest_configmap': manifest_configmap,
@@ -227,7 +234,6 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        self.require_activation_blocked(operation)
         ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
         for name in reversed(CONSUMERS):
             owner = self.obj('deployment', name)
@@ -244,11 +250,14 @@ class OpenBaoHostRun(h.ServiceRun):
             self.verify_staged_client(self.obj('deployment', name),
                                       self.args.image, ca_configmap,
                                       manifest_configmap, root)
+            if name == 'pki-controller':
+                self.require_activation_blocked(operation)
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'], CONSUMERS)
         self.check('openbao_tls_root_consumer_recovery', {
             'issuer_id': root['issuer_id'], 'consumers': receipts,
             'reconciled_from': str(Path(self.args.failed)),
+            'activation_without_receipts_denied': True,
             'existing_listener_preserved': True,
             'image': self.args.image})
 
