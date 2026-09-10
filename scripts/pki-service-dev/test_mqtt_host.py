@@ -205,7 +205,7 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual(volumes['mqtt-host-runtime'], {
             'name': 'mqtt-host-runtime', 'emptyDir': {}})
         self.assertEqual(volumes['mqtt-callback-ca']['configMap']['name'],
-                         'pki-mqtt-callback-ca')
+                         m.MQTT_CALLBACK_CA)
         initializer = next(item for item in pod['initContainers']
                            if item['name'] == 'prepare-mqtt-host-state')
         self.assertEqual(initializer['securityContext']['runAsUser'], 1000)

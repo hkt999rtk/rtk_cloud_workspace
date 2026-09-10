@@ -27,6 +27,7 @@ MQTT_HOST_PVC = 'mqtt-pki-host-identity'
 MQTT_HOST_STATE = '/var/lib/emqx-pki/identity/state.json'
 MQTT_RUNTIME_SECRET = 'mqtt-pki-runtime-managed'
 MQTT_MANAGEMENT_SECRET = 'pki-mqtt-host-management'
+MQTT_CALLBACK_CA = 'pki-mqtt-callback-server-ca'
 MQTT_RUNTIME_FIELDS = {
     'api-keys.conf', 'authentication', 'cookie', 'dashboard-password'}
 IMAGE_PATTERN = re.compile(
@@ -176,7 +177,7 @@ def managed_mqtt_template(owner, image, settings, output_name):
         {'name': 'mqtt-host-management', 'secret': {
             'secretName': MQTT_MANAGEMENT_SECRET, 'defaultMode': 288}},
         {'name': 'mqtt-callback-ca', 'configMap': {
-            'name': 'pki-mqtt-callback-ca'}},
+            'name': MQTT_CALLBACK_CA}},
     ])
     pod.setdefault('initContainers', []).append(
         mqtt_host_state_initializer(image))
@@ -974,6 +975,11 @@ class MQTTHostRun(h.ServiceRun):
                          name: base64.b64encode((identity / name).read_bytes()
                                                ).decode()
                          for name in ('tls.crt', 'tls.key')}})
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': MQTT_CALLBACK_CA, 'namespace': NS},
+                     'immutable': True, 'data': {
+                         'ca.crt': (self.base / 'pki/servers/'
+                                    'video-cloud-api-pki/ca.crt').read_text()}})
         legacy = self.obj('secret', 'mqtt-pki-runtime')
         self.create({'apiVersion': 'v1', 'kind': 'Secret',
                      'metadata': {'name': MQTT_RUNTIME_SECRET,
@@ -1148,6 +1154,11 @@ class MQTTHostRun(h.ServiceRun):
                   'successful MQTT host adoption required')
         root, _, _ = self.ready_intermediate(status='active')
         self.save('mqtt-root.pem', root['certificate_pem'])
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': MQTT_CALLBACK_CA, 'namespace': NS},
+                     'immutable': True, 'data': {
+                         'ca.crt': (self.base / 'pki/servers/'
+                                    'video-cloud-api-pki/ca.crt').read_text()}})
         secret = self.obj('secret', MQTT_RUNTIME_SECRET)
         m.require(set(secret['data']) == MQTT_RUNTIME_FIELDS,
                   'managed MQTT runtime Secret changed')
@@ -1172,7 +1183,7 @@ class MQTTHostRun(h.ServiceRun):
                   and 'mqtt-callback-ca' not in mounts,
                   'MQTT callback CA repair already applied')
         pod['volumes'].append({'name': 'mqtt-callback-ca', 'configMap': {
-            'name': 'pki-mqtt-callback-ca'}})
+            'name': MQTT_CALLBACK_CA}})
         mqtt['volumeMounts'].append({
             'name': 'mqtt-callback-ca',
             'mountPath': '/run/mqtt-callback-ca', 'readOnly': True})
@@ -1182,6 +1193,9 @@ class MQTTHostRun(h.ServiceRun):
             'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', NS, 'rollout', 'status',
                    'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        self.verify_callback_clients()
+
+    def verify_callback_clients(self):
         deadline = time.monotonic() + 60
         clients = ''
         while time.monotonic() < deadline:
@@ -1200,10 +1214,39 @@ class MQTTHostRun(h.ServiceRun):
         self.device_baseline()
         self.check('mqtt_callback_and_actual_clients_restored', {
             'callback_client_key_source': MQTT_MANAGEMENT_SECRET,
-            'callback_ca_source': 'pki-mqtt-callback-ca',
+            'callback_ca_source': MQTT_CALLBACK_CA,
             'runtime_secret_has_server_key': False,
             'actual_clients': MQTT_CONSUMERS,
             'device_mqtt_acl_qos1': 'passed'})
+
+    def finish_host_callback_recovery(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed'
+                  and failed['phase'] == 'repair-host-callback',
+                  'failed MQTT callback repair evidence required')
+        root, _, _ = self.ready_intermediate(status='active')
+        self.save('mqtt-root.pem', root['certificate_pem'])
+        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                     'metadata': {'name': MQTT_CALLBACK_CA, 'namespace': NS},
+                     'immutable': True, 'data': {
+                         'ca.crt': (self.base / 'pki/servers/'
+                                    'video-cloud-api-pki/ca.crt').read_text()}})
+        owner = self.obj('deployment', 'mqtt-pki')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        volumes = {item['name']: item
+                   for item in template['spec'].get('volumes', [])}
+        callback = volumes.get('mqtt-callback-ca', {}).get('configMap', {})
+        m.require(callback.get('name') == 'pki-mqtt-callback-ca',
+                  'failed callback CA source changed')
+        callback['name'] = MQTT_CALLBACK_CA
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-callback-ca-recovery'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        self.report['reconciled_from'] = str(Path(self.args.failed))
+        self.verify_callback_clients()
 
 
 def main():
@@ -1214,7 +1257,8 @@ def main():
         'prepare-intermediate', 'install-intermediate',
         'activate-intermediate', 'finish-intermediate-activation',
         'configure-certissuer', 'prepare-host', 'adopt-host',
-        'finish-host-adoption', 'repair-host-callback'],
+        'finish-host-adoption', 'repair-host-callback',
+        'finish-host-callback'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -1235,7 +1279,8 @@ def main():
                                  'finish-intermediate-activation',
                                  'configure-certissuer', 'prepare-host',
                                  'adopt-host', 'finish-host-adoption',
-                                 'repair-host-callback')
+                                 'repair-host-callback',
+                                 'finish-host-callback')
               or args.intermediate,
               'prepared MQTT intermediate evidence required')
     m.require(args.phase != 'adopt-host' or args.prepared,
@@ -1245,12 +1290,15 @@ def main():
               'failed adoption, prepared host and image required')
     m.require(args.phase != 'repair-host-callback' or args.adoption,
               'successful MQTT host adoption evidence required')
+    m.require(args.phase != 'finish-host-callback' or args.failed,
+              'failed MQTT callback repair evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = MQTTHostRun(args)
     try:
-        if args.phase in ('finish-host-adoption', 'repair-host-callback'):
+        if args.phase in ('finish-host-adoption', 'repair-host-callback',
+                          'finish-host-callback'):
             runner.recovery_preflight()
         else:
             runner.preflight()
@@ -1267,7 +1315,9 @@ def main():
          'adopt-host': runner.adopt_host,
          'finish-host-adoption':
              runner.finish_host_adoption_recovery,
-         'repair-host-callback': runner.repair_host_callback}[args.phase]()
+         'repair-host-callback': runner.repair_host_callback,
+         'finish-host-callback':
+             runner.finish_host_callback_recovery}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
