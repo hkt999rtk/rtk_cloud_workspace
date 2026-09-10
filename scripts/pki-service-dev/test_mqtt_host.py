@@ -1,0 +1,85 @@
+import importlib.util
+from pathlib import Path
+import unittest
+
+
+spec = importlib.util.spec_from_file_location(
+    'mqtt_host', Path(__file__).with_name('mqtt_host.py'))
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+
+
+class MQTTHostTests(unittest.TestCase):
+    def root(self, status='active'):
+        return {
+            'environment': 'dev', 'trust_domain': 'mqtt', 'kind': 'root',
+            'status': status, 'issuer_id': 'root',
+            'certificate_fingerprint_sha256': 'a' * 64,
+            'trust_bundle_version': 'b' * 64,
+        }
+
+    def test_intermediate_is_limited_to_one_dev_mqtt_host(self):
+        request = m.intermediate_request(self.root())
+        self.assertEqual(request, {
+            'environment': 'dev', 'trust_domain': 'mqtt',
+            'kind': 'intermediate', 'parent_issuer_id': 'root',
+            'server_dns_names': [m.MQTT_HOST]})
+        for field, value in [('environment', 'staging'),
+                             ('trust_domain', 'service'),
+                             ('status', 'ready'), ('kind', 'intermediate')]:
+            with self.assertRaisesRegex(RuntimeError,
+                                        'active dev MQTT Root required'):
+                m.intermediate_request(dict(self.root(), **{field: value}))
+
+    def test_actual_clients_use_pinned_tls_and_separate_receipt_transport(self):
+        settings = m.mqtt_client_settings(self.root())
+        self.assertEqual(settings['VIDEO_CLOUD_ENV'], 'dev')
+        self.assertEqual(settings['VIDEO_CLOUD_MQTT_ADDR'],
+                         m.MQTT_HOST + ':8883')
+        self.assertEqual(settings['VIDEO_CLOUD_MQTT_SERVER_PKI_NAME'],
+                         m.MQTT_HOST)
+        self.assertEqual(settings['VIDEO_CLOUD_MQTT_SERVER_PKI_ROOT_SHA256'],
+                         'a' * 64)
+        self.assertEqual(settings['VIDEO_CLOUD_MQTT_BUNDLE_MANAGEMENT_CA'],
+                         '/run/pki-service-root/root.pem')
+        self.assertNotIn('MFA', ''.join(settings))
+
+    def test_client_template_preserves_existing_private_settings(self):
+        owner = {'spec': {'template': {'metadata': {}, 'spec': {
+            'containers': [{'name': 'app', 'image': 'old', 'env': [{
+                'name': 'POSTGRES_PASSWORD', 'valueFrom': {
+                    'secretKeyRef': {'name': 'runtime', 'key': 'password'}}}],
+                'volumeMounts': [{'name': 'service-root',
+                                  'mountPath': '/run/pki-service-root',
+                                  'readOnly': True}]}],
+            'volumes': [{'name': 'service-root', 'configMap': {
+                'name': 'pki-service-host-root'}}]}}}}
+        runner = object.__new__(m.MQTTHostRun)
+        runner.args = type('Args', (), {'image':
+            'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
+            'c' * 64})()
+        runner.output = Path('/private/evidence/root')
+        result = runner.client_template(owner, self.root(), 'consumer', 'bundle')
+        container = result['spec']['containers'][0]
+        self.assertEqual(container['env'][0],
+                         owner['spec']['template']['spec']['containers'][0]['env'][0])
+        self.assertEqual(container['image'], runner.args.image)
+        self.assertEqual([v['name'] for v in result['spec']['volumes']],
+                         ['service-root', 'mqtt-pki-bundles',
+                          'mqtt-pki-management'])
+        self.assertEqual(len([v for v in container['volumeMounts']
+                              if v['name'] == 'service-root']), 1)
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['image'], 'old')
+
+    def test_intermediate_manifest_is_exact_and_fresh(self):
+        root = self.root()
+        issuer = {'issuer_id': 'intermediate',
+                  'trust_bundle_version': 'c' * 64}
+        first = m.mqtt_intermediate_manifest(root, issuer)
+        first.append({'issuer_id': 'unreviewed'})
+        self.assertEqual(len(m.mqtt_intermediate_manifest(root, issuer)), 2)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -222,3 +222,33 @@ python3 scripts/pki-service-dev/pkibroker_authority.py \
 
 The runner is dev-only. It does not provision the broker leaf, remove the
 legacy broker management key, or modify staging.
+
+## MQTT server authority and actual clients
+
+`mqtt_host.py` continues from the prepared MQTT Root. It installs the exact
+Root in the real `video-cloud-api` and `video-cloud-logingester` connection
+owners, configures those two identities as the MQTT activation gate, and then
+activates the Root with a signed initial CRL. The next phase prepares one
+OpenBao-backed MQTT intermediate limited to
+`mqtt-pki.video-cloud-dev-video-cloud.svc`.
+
+Use a new private evidence directory for each command and the pinned dev image
+digest produced from the reviewed source:
+
+```sh
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase install-root-consumers --authority MQTT_ROOT_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST --output ROOT_CONSUMER_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase activate-root --authority MQTT_ROOT_EVIDENCE \
+  --output ROOT_ACTIVATION_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase prepare-intermediate --authority MQTT_ROOT_EVIDENCE \
+  --output INTERMEDIATE_EVIDENCE
+```
+
+The two clients keep their existing MQTT username/password authorization while
+changing transport to TLS with an exact Root pin and DNS name. Their separate
+management certificates report trust installation over the existing managed
+Service channel. No MQTT server private key is created by these phases, and the
+runner refuses any environment other than the selected dev cluster.
