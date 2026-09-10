@@ -122,6 +122,7 @@ def managed_mqtt_template(owner, image, settings, output_name):
             reference['name'] = MQTT_RUNTIME_SECRET
     mqtt.setdefault('volumeMounts', []).extend([
         {'name': 'mqtt-host-state', 'mountPath': '/var/lib/emqx-pki'},
+        {'name': 'mqtt-host-runtime', 'mountPath': '/run/emqx-pki'},
         {'name': 'mqtt-host-management',
          'mountPath': '/run/emqx-pki-management', 'readOnly': True},
         {'name': 'pki-service-root', 'mountPath': '/run/pki-service-root',
@@ -136,6 +137,7 @@ def managed_mqtt_template(owner, image, settings, output_name):
     pod['volumes'].extend([
         {'name': 'mqtt-host-state', 'persistentVolumeClaim': {
             'claimName': MQTT_HOST_PVC}},
+        {'name': 'mqtt-host-runtime', 'emptyDir': {}},
         {'name': 'mqtt-host-management', 'secret': {
             'secretName': MQTT_MANAGEMENT_SECRET, 'defaultMode': 288}},
     ])
@@ -963,6 +965,9 @@ class MQTTHostRun(h.ServiceRun):
             {'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', NS, 'rollout', 'status',
                    'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        self.finish_host_adoption(issuer, issued)
+
+    def finish_host_adoption(self, issuer, issued):
         expected = m.digest(base64.b64decode(''.join(
             issued['certificate_pem'].strip().splitlines()[1:-1])))
         m.require(self.served_fingerprint() == expected,
@@ -997,6 +1002,73 @@ class MQTTHostRun(h.ServiceRun):
             'legacy_server_key_secret_removed': True,
             'actual_client_network_access': MQTT_CONSUMERS})
 
+    def finish_host_adoption_recovery(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed'
+                  and failed['phase'] == 'adopt-host',
+                  'failed MQTT host adoption evidence required')
+        _, issuer, _ = self.ready_intermediate(status='active')
+        source = Path(self.args.prepared)
+        m.require(m.read(source / 'report.json')['status'] == 'passed',
+                  'successful MQTT host preparation required')
+        reference = m.read(source / 'pod-reference.json')
+        m.require(self.obj('persistentvolumeclaim', MQTT_HOST_PVC)[
+                      'metadata']['uid'] == reference['pvc_uid'],
+                  'prepared MQTT host PVC changed')
+        self.obj('secret', MQTT_MANAGEMENT_SECRET)
+        runtime = self.obj('secret', MQTT_RUNTIME_SECRET)
+        m.require(set(runtime['data']) == MQTT_RUNTIME_FIELDS,
+                  'managed MQTT runtime Secret changed')
+        owner = self.obj('deployment', 'mqtt-pki')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        pod = template['spec']
+        mqtt = next(item for item in pod['containers']
+                    if item['name'] == 'mqtt')
+        env = {item['name']: item.get('value')
+               for item in mqtt.get('env', [])}
+        m.require(env.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE
+                  and mqtt['image'] == self.args.image,
+                  'managed MQTT host deployment changed')
+        m.require(not any(item['name'] == 'mqtt-host-runtime'
+                          for item in pod.get('volumes', []))
+                  and not any(item['name'] == 'mqtt-host-runtime'
+                              for item in mqtt.get('volumeMounts', [])),
+                  'MQTT host runtime recovery already applied')
+        pod['volumes'].append({'name': 'mqtt-host-runtime', 'emptyDir': {}})
+        mqtt['volumeMounts'].append({
+            'name': 'mqtt-host-runtime', 'mountPath': '/run/emqx-pki'})
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-host-runtime-recovery'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
+        self.save('mqtt-root.pem', self.mqtt_root('active')['certificate_pem'])
+        self.report['reconciled_from'] = str(Path(self.args.failed))
+        self.finish_host_adoption(issuer, m.read(source / 'issued.json'))
+
+    def recovery_preflight(self):
+        m.require(self.kube(['config', 'current-context']).strip() ==
+                  self.context, 'canonical dev context mismatch')
+        m.require(self.obj('namespace', NS)['metadata']['name'] == NS,
+                  'wrong namespace')
+        for name in ('pki-controller', 'certissuer', 'video-cloud-api',
+                     'video-cloud-logingester'):
+            owner = self.obj('deployment', name)
+            m.require(owner.get('status', {}).get('readyReplicas', 0) ==
+                      owner['spec']['replicas'] > 0,
+                      'dependency not ready: ' + name)
+        mqtt = self.obj('deployment', 'mqtt-pki')
+        m.require(mqtt['spec']['replicas'] == 1
+                  and mqtt['status'].get('observedGeneration') ==
+                  mqtt['metadata']['generation'],
+                  'failed MQTT deployment state is not observed')
+        self.check('recovery_preflight', {
+            'environment': 'dev', 'mqtt_fail_closed': True,
+            'healthy_dependencies': [
+                'pki-controller', 'certissuer', 'video-cloud-api',
+                'video-cloud-logingester']})
+
 
 def main():
     os.umask(0o077)
@@ -1005,7 +1077,8 @@ def main():
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'prepare-intermediate', 'install-intermediate',
         'activate-intermediate', 'finish-intermediate-activation',
-        'configure-certissuer', 'prepare-host', 'adopt-host'],
+        'configure-certissuer', 'prepare-host', 'adopt-host',
+        'finish-host-adoption'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -1024,16 +1097,23 @@ def main():
                                  'activate-intermediate',
                                  'finish-intermediate-activation',
                                  'configure-certissuer', 'prepare-host',
-                                 'adopt-host') or args.intermediate,
+                                 'adopt-host', 'finish-host-adoption')
+              or args.intermediate,
               'prepared MQTT intermediate evidence required')
     m.require(args.phase != 'adopt-host' or args.prepared,
               'prepared MQTT host evidence required')
+    m.require(args.phase != 'finish-host-adoption'
+              or (args.prepared and args.failed and args.image),
+              'failed adoption, prepared host and image required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = MQTTHostRun(args)
     try:
-        runner.preflight()
+        if args.phase == 'finish-host-adoption':
+            runner.recovery_preflight()
+        else:
+            runner.preflight()
         {'install-root-consumers': runner.install_root_consumers,
          'finish-root-consumers': runner.finish_root_consumers,
          'activate-root': runner.activate_root,
@@ -1044,7 +1124,9 @@ def main():
              runner.finish_intermediate_activation,
          'configure-certissuer': runner.configure_certissuer,
          'prepare-host': runner.prepare_host,
-         'adopt-host': runner.adopt_host}[args.phase]()
+         'adopt-host': runner.adopt_host,
+         'finish-host-adoption':
+             runner.finish_host_adoption_recovery}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

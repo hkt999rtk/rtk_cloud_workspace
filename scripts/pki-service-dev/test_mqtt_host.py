@@ -188,6 +188,8 @@ class MQTTHostTests(unittest.TestCase):
                          ['claimName'], m.MQTT_HOST_PVC)
         self.assertEqual(volumes['runtime']['secret']['secretName'],
                          m.MQTT_RUNTIME_SECRET)
+        self.assertEqual(volumes['mqtt-host-runtime'], {
+            'name': 'mqtt-host-runtime', 'emptyDir': {}})
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
                          ['image'], 'static')
 

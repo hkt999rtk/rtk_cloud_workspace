@@ -285,3 +285,9 @@ dedicated broker to the managed foreground supervisor, verifies the exact served
 certificate, removes the seed after a successful state import, and proves a
 seed-free restart. The live broker no longer mounts the legacy static TLS Secret.
 The runner refuses any environment other than the selected dev cluster.
+
+If adoption stops after the managed Deployment is installed but before it becomes
+ready, retain the failed evidence and run `--phase finish-host-adoption --failed
+FAILED_ADOPTION_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE` with the same
+Root, intermediate and image arguments. The recovery accepts only that failed
+state and reuses the existing registered identity; it never issues another leaf.
