@@ -483,9 +483,13 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
                                             new['trust_bundle_version'],
                                             r.SERVICE_CONSUMERS)
         self.verify_v4_signer(new)
-        record = self.api('/issuers/' + new['issuer_id'] + '/crl')
         provider_crl = json.loads(self.bao([
             'read', '-format=json', new['signer_reference'] + '/cert/crl']))['data']['certificate']
+        record = self.api('/issuers/' + new['issuer_id'] + '/crl', expected=503)
+        imported_crl = record is None
+        if imported_crl:
+            record = self.api('/issuers/' + new['issuer_id'] + '/crl',
+                              {'crl_pem': provider_crl})
         m.require(record['crl_pem'] == provider_crl,
                   'recovered v4 CRL differs from OpenBao')
 
@@ -527,7 +531,8 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
             'v1_status': 'retiring', 'v2_status': 'retiring', 'v3_status': 'retiring',
             'v4_status': 'active',
             'listener_images': {name: self.args.image for name in r.SERVICE_CONSUMERS},
-            'device_baseline': 'passed', 'activation_replayed': False})
+            'device_baseline': 'passed', 'activation_replayed': False,
+            'provider_crl_imported_during_recovery': imported_crl})
 
 
 def main():
