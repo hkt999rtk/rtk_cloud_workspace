@@ -1152,6 +1152,7 @@ class MQTTHostRun(h.ServiceRun):
         m.require(adoption['status'] == 'passed'
                   and adoption['phase'] == 'finish-host-adoption',
                   'successful MQTT host adoption required')
+        self.rollout_callback_api()
         root, _, _ = self.ready_intermediate(status='active')
         self.save('mqtt-root.pem', root['certificate_pem'])
         self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
@@ -1224,6 +1225,7 @@ class MQTTHostRun(h.ServiceRun):
         m.require(failed['status'] == 'failed'
                   and failed['phase'] == 'repair-host-callback',
                   'failed MQTT callback repair evidence required')
+        self.rollout_callback_api()
         root, _, _ = self.ready_intermediate(status='active')
         self.save('mqtt-root.pem', root['certificate_pem'])
         self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
@@ -1247,6 +1249,23 @@ class MQTTHostRun(h.ServiceRun):
                    'deployment/mqtt-pki', '--timeout=300s'], timeout=310)
         self.report['reconciled_from'] = str(Path(self.args.failed))
         self.verify_callback_clients()
+
+    def rollout_callback_api(self):
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev callback API image digest required')
+        owner = self.obj('deployment', 'video-cloud-api-pki')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        containers = template['spec']['containers']
+        m.require(len(containers) == 1 and containers[0]['name'] == 'app',
+                  'MQTT callback API topology changed')
+        containers[0]['image'] = self.args.image
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-tls-server-clients'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/video-cloud-api-pki', '--timeout=300s'],
+                  timeout=310)
 
 
 def main():
@@ -1288,10 +1307,12 @@ def main():
     m.require(args.phase != 'finish-host-adoption'
               or (args.prepared and args.failed and args.image),
               'failed adoption, prepared host and image required')
-    m.require(args.phase != 'repair-host-callback' or args.adoption,
-              'successful MQTT host adoption evidence required')
-    m.require(args.phase != 'finish-host-callback' or args.failed,
-              'failed MQTT callback repair evidence required')
+    m.require(args.phase != 'repair-host-callback'
+              or (args.adoption and args.image),
+              'successful MQTT host adoption and callback image required')
+    m.require(args.phase != 'finish-host-callback'
+              or (args.failed and args.image),
+              'failed MQTT callback repair and callback image required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)

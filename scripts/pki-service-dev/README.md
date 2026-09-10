@@ -295,6 +295,7 @@ state and reuses the existing registered identity; it never issues another leaf.
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run
-`--phase repair-host-callback --adoption MQTT_HOST_ADOPTION_EVIDENCE` with the
-same authority and intermediate arguments. The repair changes the paths, restarts
-the broker, waits for both actual service clients, and runs Device MQTT ACL/QoS1.
+`--phase repair-host-callback --adoption MQTT_HOST_ADOPTION_EVIDENCE --image
+VIDEO_CLOUD_IMAGE_DIGEST` with the same authority and intermediate arguments.
+The repair installs the reviewed callback policy, changes the paths, restarts the
+broker, waits for both actual service clients, and runs Device MQTT ACL/QoS1.
