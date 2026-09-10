@@ -511,6 +511,7 @@ class PKIBrokerAuthority(fa.FactoryAdoption):
         m.write(desired_path, desired)
         for listener in r.SERVICE_CONSUMERS:
             self.install_listener_image(listener, self.args.image)
+            self.rollout_listener_restart(listener)
         crl_receipts = self.wait_receipts(new['issuer_id'], record['crl_sha256'],
                                          r.SERVICE_CONSUMERS, kind='crl')
         self.device_baseline()
