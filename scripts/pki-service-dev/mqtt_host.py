@@ -104,12 +104,14 @@ def mqtt_host_state_initializer(image):
     return {
         'name': 'prepare-mqtt-host-state', 'image': image,
         'command': ['sh', '-c'],
-        'args': ['set -eu; if [ -d /var/lib/emqx-pki/identity ]; then '
+        'args': ['set -eu; chmod 700 /run/emqx-pki; '
+                 'if [ -d /var/lib/emqx-pki/identity ]; then '
                  'chmod 700 /var/lib/emqx-pki/identity; '
                  'find /var/lib/emqx-pki/identity -type f '
                  '-exec chmod 600 {} +; fi'],
-        'volumeMounts': [{'name': 'mqtt-host-state',
-                          'mountPath': '/var/lib/emqx-pki'}],
+        'volumeMounts': [
+            {'name': 'mqtt-host-state', 'mountPath': '/var/lib/emqx-pki'},
+            {'name': 'mqtt-host-runtime', 'mountPath': '/run/emqx-pki'}],
         'securityContext': {'allowPrivilegeEscalation': False,
                             'capabilities': {'drop': ['ALL']},
                             'runAsUser': 1000, 'runAsGroup': 1000,
@@ -1069,6 +1071,11 @@ class MQTTHostRun(h.ServiceRun):
         if not initializers:
             pod.setdefault('initContainers', []).append(
                 mqtt_host_state_initializer(self.args.image))
+        elif initializers[0] != mqtt_host_state_initializer(self.args.image):
+            pod['initContainers'] = [
+                mqtt_host_state_initializer(self.args.image)
+                if item['name'] == 'prepare-mqtt-host-state' else item
+                for item in pod['initContainers']]
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/mqtt-host-runtime-recovery'] = self.output.name
         self.scoped_patch('deployment', owner, [{
