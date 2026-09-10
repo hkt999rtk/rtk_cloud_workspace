@@ -296,11 +296,29 @@ class ServiceRun(m.Acceptance):
 
     def device_baseline(self):
         device = m.read(self.foundation / 'device-2/enroll-request.json')['devid']
-        auth = self.auth(self.foundation / 'device-2/v4', device)
+        auth, auth_attempts = self.wait_positive_auth(
+            self.foundation / 'device-2/v4', device)
         attempts = self.wait_positive_mqtt(auth, device)
         self.mqtt(auth, device, 'roundtrip')
         self.check('device_baseline_after_service_hierarchy', {'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
-                   'attempts': attempts, 'full_device_lifecycle_rerun': False})
+                   'auth_attempts': auth_attempts, 'attempts': attempts,
+                   'full_device_lifecycle_rerun': False})
+
+    def wait_positive_auth(self, identity, device):
+        deadline = time.monotonic() + 45
+        attempts = 0
+        while True:
+            attempts += 1
+            try:
+                return self.auth(identity, device), attempts
+            except RuntimeError as error:
+                message = str(error)
+                temporary = any(
+                    message == 'TLS /request_token: status %d, expected 200' % status
+                    for status in (401, 403))
+                if not temporary or time.monotonic() >= deadline:
+                    raise
+                time.sleep(2)
 
     def create(self, obj):
         self.save('create-' + obj['metadata']['name'] + '.json', obj)

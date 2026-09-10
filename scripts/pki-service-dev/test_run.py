@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 import base64
 import tempfile
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('service_rollout', Path(__file__).with_name('run.py'))
 m = importlib.util.module_from_spec(spec)
@@ -11,6 +11,21 @@ spec.loader.exec_module(m)
 
 
 class RolloutTests(unittest.TestCase):
+    def test_device_auth_waits_for_controller_trust_recovery(self):
+        runner = object.__new__(m.ServiceRun)
+        runner.auth = Mock(side_effect=[
+            RuntimeError('TLS /request_token: status 403, expected 200'),
+            {'access_token': 'ready'}])
+        with patch.object(m.time, 'sleep') as sleep:
+            result, attempts = runner.wait_positive_auth('identity', 'device')
+        self.assertEqual(result, {'access_token': 'ready'})
+        self.assertEqual(attempts, 2)
+        sleep.assert_called_once_with(2)
+        runner.auth = Mock(side_effect=RuntimeError(
+            'TLS /request_token: status 500, expected 200'))
+        with self.assertRaisesRegex(RuntimeError, 'status 500'):
+            runner.wait_positive_auth('identity', 'device')
+
     def test_provider_role_audit_rejects_expanded_names_and_wrong_eku(self):
         for client in (True, False):
             role = dict.fromkeys(('allow_any_name', 'allow_subdomains', 'allow_glob_domains', 'allow_wildcard_certificates',
