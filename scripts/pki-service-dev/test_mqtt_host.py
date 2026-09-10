@@ -93,6 +93,15 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual(init['securityContext']['runAsUser'], 10001)
         self.assertEqual(init['securityContext']['runAsGroup'], 10001)
         self.assertEqual(init['securityContext']['capabilities']['drop'], ['ALL'])
+        admitted = dict(init, imagePullPolicy='IfNotPresent', resources={})
+        self.assertTrue(m.valid_crl_state_initializer(admitted, 'pinned-image'))
+        legacy = dict(admitted, securityContext=dict(init['securityContext']))
+        legacy['securityContext'].pop('runAsUser')
+        legacy['securityContext'].pop('runAsGroup')
+        self.assertTrue(m.valid_crl_state_initializer(
+            legacy, 'pinned-image', numeric_identity=False))
+        self.assertFalse(m.valid_crl_state_initializer(
+            dict(admitted, image='other'), 'pinned-image'))
 
     def test_intermediate_switch_changes_only_selected_bundle_source(self):
         owner = {'spec': {'template': {'metadata': {'annotations': {

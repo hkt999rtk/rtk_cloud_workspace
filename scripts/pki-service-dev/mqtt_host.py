@@ -77,6 +77,21 @@ def crl_state_initializer(image):
                             'readOnlyRootFilesystem': True}}
 
 
+def valid_crl_state_initializer(value, image, numeric_identity=True):
+    expected = crl_state_initializer(image)
+    for field in ('name', 'image', 'command', 'args', 'volumeMounts'):
+        if value.get(field) != expected[field]:
+            return False
+    security = value.get('securityContext', {})
+    required = expected['securityContext']
+    for field in ('allowPrivilegeEscalation', 'capabilities', 'runAsNonRoot',
+                  'readOnlyRootFilesystem'):
+        if security.get(field) != required[field]:
+            return False
+    ids = (security.get('runAsUser'), security.get('runAsGroup'))
+    return ids == ((10001, 10001) if numeric_identity else (None, None))
+
+
 class MQTTHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -601,17 +616,12 @@ class MQTTHostRun(h.ServiceRun):
                     'value': template}])
             else:
                 expected = crl_state_initializer(container['image'])
-                if existing != [expected]:
-                    prior = json.loads(json.dumps(existing[0]))
-                    security = prior.get('securityContext', {})
+                if not valid_crl_state_initializer(
+                        existing[0], container['image']):
                     m.require(name in MQTT_CONSUMERS
-                              and security.get('runAsUser') is None
-                              and security.get('runAsGroup') is None,
+                              and valid_crl_state_initializer(
+                                  existing[0], container['image'], False),
                               'MQTT CRL initializer changed: ' + name)
-                    security['runAsUser'] = 10001
-                    security['runAsGroup'] = 10001
-                    m.require(prior == expected,
-                              'MQTT CRL initializer recovery differs: ' + name)
                     pod['initContainers'] = [
                         expected if item['name'] == 'mqtt-pki-state-init'
                         else item for item in pod['initContainers']]
