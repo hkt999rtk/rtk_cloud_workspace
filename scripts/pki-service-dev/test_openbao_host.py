@@ -39,6 +39,53 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['volumes'][0]
                          ['configMap']['name'], 'pki-openbao-transport-ca')
 
+    def test_staged_template_is_accepted_by_recovery_verifier(self):
+        owner = {'metadata': {'name': 'pki-controller'},
+                 'spec': {'template': {'metadata': {}, 'spec': {
+                     'containers': [{
+                         'name': 'pki-controller', 'image': 'old', 'env': [],
+                         'volumeMounts': [
+                             {'name': 'openbao-ca',
+                              'mountPath': '/run/openbao-ca'},
+                             {'name': 'host-root',
+                              'mountPath': '/run/pki-host-root'}]}],
+                     'volumes': [
+                         {'name': 'openbao-ca', 'configMap': {
+                             'name': 'pki-openbao-transport-ca'}},
+                         {'name': 'host-root', 'configMap': {
+                             'name': 'root'}}]}}}}
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.output = Path('/private/evidence')
+        root = {'certificate_fingerprint_sha256': 'a' * 64}
+        owner['spec']['template'] = runner.staged_client_template(
+            owner, 'new', 'combined', 'manifest', root)
+        runner.verify_staged_client(
+            owner, 'new', 'combined', 'manifest', root)
+
+    def test_recovery_verifier_rejects_different_image(self):
+        owner = {'metadata': {'name': 'certissuer'},
+                 'spec': {'template': {'metadata': {}, 'spec': {
+                     'containers': [{
+                         'name': 'certissuer', 'image': 'old', 'env': [],
+                         'volumeMounts': [
+                             {'name': 'openbao-ca',
+                              'mountPath': '/run/openbao-ca'},
+                             {'name': 'host-root',
+                              'mountPath': '/run/pki-host-root'}]}],
+                     'volumes': [
+                         {'name': 'openbao-ca', 'configMap': {
+                             'name': 'pki-openbao-transport-ca'}},
+                         {'name': 'host-root', 'configMap': {
+                             'name': 'root'}}]}}}}
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.output = Path('/private/evidence')
+        root = {'certificate_fingerprint_sha256': 'a' * 64}
+        owner['spec']['template'] = runner.staged_client_template(
+            owner, 'new', 'combined', 'manifest', root)
+        with self.assertRaises(RuntimeError):
+            runner.verify_staged_client(
+                owner, 'other', 'combined', 'manifest', root)
+
 
 if __name__ == '__main__':
     unittest.main()

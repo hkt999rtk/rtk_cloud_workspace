@@ -325,6 +325,20 @@ python3 scripts/pki-service-dev/openbao_host.py \
   --output OPENBAO_ROOT_ACTIVATION_EVIDENCE
 ```
 
+If client installation stops after either immutable ConfigMap or Deployment was
+created, retain the failed evidence and resume the exact image and Root:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase finish-root-consumers --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --failed FAILED_ROOT_CONSUMER_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST --output OPENBAO_ROOT_RECOVERY_EVIDENCE
+```
+
+Recovery accepts only the saved failed installation phase. It verifies or creates
+the two immutable public ConfigMaps, changes only a client that still references
+the legacy CA source, and verifies the exact final Deployment state and receipts.
+
 If the command reports failure after writing `root-ready.json`, keep that output
 and pass it to `--reconcile`; the runner accepts only the same registered ready
 Root and never creates another key or operation.

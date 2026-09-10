@@ -115,6 +115,78 @@ class OpenBaoHostRun(h.ServiceRun):
             'rtk.cloud/openbao-root-staging'] = self.output.name
         return template
 
+    def verify_staged_client(self, owner, image, ca_configmap,
+                             manifest_configmap, root):
+        pod = owner['spec']['template']['spec']
+        m.require(len(pod['containers']) == 1,
+                  'provider Deployment topology changed')
+        container = pod['containers'][0]
+        m.require(container['name'] == owner['metadata']['name']
+                  and container['image'] == image,
+                  'installed provider image changed')
+        volumes = {item['name']: item for item in pod.get('volumes', [])}
+        m.require(volumes.get('openbao-ca', {}).get('configMap', {}).get(
+                  'name') == ca_configmap
+                  and volumes.get('openbao-server-bundles', {}).get(
+                      'configMap', {}).get('name') == manifest_configmap,
+                  'installed OpenBao trust sources changed')
+        mounts = {item['name']: item
+                  for item in container.get('volumeMounts', [])}
+        m.require(mounts.get('openbao-ca', {}).get('mountPath') ==
+                  '/run/openbao-ca'
+                  and mounts.get('openbao-server-bundles', {}).get(
+                      'mountPath') == '/run/openbao-server-bundles'
+                  and mounts.get('host-root', {}).get('mountPath') ==
+                  '/run/pki-host-root',
+                  'installed OpenBao trust mounts changed')
+        env = {item['name']: item.get('value')
+               for item in container.get('env', [])}
+        expected = {
+            'OPENBAO_SERVER_BUNDLE_MANIFEST':
+                '/run/openbao-server-bundles/issuers.json',
+            'OPENBAO_SERVER_BUNDLE_ROOT_SHA256':
+                root['certificate_fingerprint_sha256'],
+            'OPENBAO_SERVER_BUNDLE_PKI_CONTROLLER_URL':
+                'https://pki-controller.' + NS + '.svc:18446',
+            'OPENBAO_SERVER_BUNDLE_MANAGEMENT_CA':
+                '/run/pki-host-root/root.pem'}
+        m.require(all(env.get(key) == value for key, value in expected.items()),
+                  'installed OpenBao bundle settings changed')
+        if owner['metadata']['name'] == 'pki-controller':
+            m.require(env.get(
+                'PKI_REQUIRED_BUNDLE_CONSUMERS_OPENBAO_TLS') ==
+                ','.join(CONSUMERS), 'OpenBao activation gate changed')
+
+    def root_configmaps(self, root):
+        legacy = self.obj('configmap', 'pki-openbao-transport-ca')
+        m.require(set(legacy.get('data', {})) == {'ca.crt'},
+                  'legacy OpenBao public CA source changed')
+        suffix = root['issuer_id'][:8]
+        ca_name = 'pki-openbao-transport-ca-' + suffix
+        manifest_name = 'pki-openbao-tls-bundles-' + suffix
+        refs = [{'issuer_id': root['issuer_id'],
+                 'trust_bundle_version': root['trust_bundle_version']}]
+        return ca_name, manifest_name, {
+            ca_name: {'ca.crt': h.append_pem(
+                legacy['data']['ca.crt'], root['certificate_pem'])},
+            manifest_name: {'issuers.json': json.dumps(refs)}}
+
+    def ensure_root_configmaps(self, root):
+        ca_name, manifest_name, expected = self.root_configmaps(root)
+        for name in (ca_name, manifest_name):
+            raw = self.kube(['-n', NS, 'get', 'configmap', name,
+                             '--ignore-not-found', '-o', 'json'])
+            if not raw.strip():
+                self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                             'metadata': {'name': name, 'namespace': NS},
+                             'immutable': True, 'data': expected[name]})
+                continue
+            current = json.loads(raw)
+            m.require(current.get('immutable') is True
+                      and current.get('data') == expected[name],
+                      'installed OpenBao Root ConfigMap changed: ' + name)
+        return ca_name, manifest_name
+
     def install_root_consumers(self):
         root = self.root('ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
@@ -122,23 +194,7 @@ class OpenBaoHostRun(h.ServiceRun):
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
         self.api('/operations/' + operation['operation_id'] + '/activate', {},
                  409, role='approver')
-        legacy = self.obj('configmap', 'pki-openbao-transport-ca')
-        m.require(set(legacy.get('data', {})) == {'ca.crt'},
-                  'legacy OpenBao public CA source changed')
-        combined = h.append_pem(legacy['data']['ca.crt'],
-                                root['certificate_pem'])
-        suffix = root['issuer_id'][:8]
-        ca_configmap = 'pki-openbao-transport-ca-' + suffix
-        manifest_configmap = 'pki-openbao-tls-bundles-' + suffix
-        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
-                     'metadata': {'name': ca_configmap, 'namespace': NS},
-                     'immutable': True, 'data': {'ca.crt': combined}})
-        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
-                     'metadata': {'name': manifest_configmap, 'namespace': NS},
-                     'immutable': True, 'data': {'issuers.json': json.dumps([{
-                         'issuer_id': root['issuer_id'],
-                         'trust_bundle_version':
-                             root['trust_bundle_version']}])}})
+        ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
         for name in reversed(CONSUMERS):
             owner = self.obj('deployment', name)
             template = self.staged_client_template(
@@ -154,6 +210,41 @@ class OpenBaoHostRun(h.ServiceRun):
             'activation_without_receipts_denied': True,
             'ca_configmap': ca_configmap,
             'manifest_configmap': manifest_configmap,
+            'existing_listener_preserved': True,
+            'image': self.args.image})
+
+    def finish_root_consumers(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed'
+                  and failed['phase'] == 'install-root-consumers',
+                  'failed OpenBao Root consumer phase required')
+        root = self.root('ready')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        operation = m.read(Path(self.args.authority) / 'root-operation.json')
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409, role='approver')
+        ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
+        for name in reversed(CONSUMERS):
+            owner = self.obj('deployment', name)
+            volumes = {item['name']: item for item in
+                       owner['spec']['template']['spec'].get('volumes', [])}
+            if volumes.get('openbao-ca', {}).get('configMap', {}).get(
+                    'name') == 'pki-openbao-transport-ca':
+                template = self.staged_client_template(
+                    owner, self.args.image, ca_configmap,
+                    manifest_configmap, root)
+                self.scoped_patch(name, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status',
+                       'deployment/' + name, '--timeout=300s'], timeout=310)
+            self.verify_staged_client(self.obj('deployment', name),
+                                      self.args.image, ca_configmap,
+                                      manifest_configmap, root)
+        receipts = self.wait_receipts(root['issuer_id'],
+                                     root['trust_bundle_version'], CONSUMERS)
+        self.check('openbao_tls_root_consumer_recovery', {
+            'issuer_id': root['issuer_id'], 'consumers': receipts,
+            'reconciled_from': str(Path(self.args.failed)),
             'existing_listener_preserved': True,
             'image': self.args.image})
 
@@ -204,11 +295,14 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--phase', required=True, choices=[
-        'install-root-consumers', 'activate-root'])
+        'install-root-consumers', 'finish-root-consumers', 'activate-root'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
+    parser.add_argument('--failed')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
+    m.require(args.phase != 'finish-root-consumers' or args.failed,
+              'failed Root consumer evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -217,6 +311,7 @@ def main():
     try:
         runner.preflight()
         {'install-root-consumers': runner.install_root_consumers,
+         'finish-root-consumers': runner.finish_root_consumers,
          'activate-root': runner.activate_root}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
