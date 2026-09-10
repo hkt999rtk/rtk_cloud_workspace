@@ -176,6 +176,10 @@ For the following managed controller/certissuer server rollout, see [HOSTS.md](H
 
 For managed Account Manager controller credentials after host adoption, follow [MANAGEMENT.md](MANAGEMENT.md).
 
+For the isolated Device API controller credential reconciliation, renewal,
+predecessor retirement and Device/MQTT canary, follow
+[API_CONTROLLER_LIFECYCLE.md](API_CONTROLLER_LIFECYCLE.md).
+
 Service CRL maintenance and publication-response-loss recovery are documented in
 [CRL.md](CRL.md). Run before the earliest applicable signed CRL expires; post-expiry
 management recovery remains unqualified.
