@@ -166,9 +166,36 @@ class MQTTHostRun(h.ServiceRun):
                            'mountPath': '/run/pki-service-root',
                            'readOnly': True})
         pod.setdefault('volumes', []).extend(additions)
+        security = pod.setdefault('securityContext', {})
+        m.require(security.get('fsGroup') in (None, 10001),
+                  'MQTT client filesystem group changed')
+        security['fsGroup'] = 10001
+        security['fsGroupChangePolicy'] = 'OnRootMismatch'
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/mqtt-client-rollout'] = self.output.name
         return template
+
+    def verify_installed_client(self, name, root, configmap):
+        owner = self.obj('deployment', name)
+        pod = owner['spec']['template']['spec']
+        m.require(len(pod['containers']) == 1 and
+                  pod['securityContext'].get('fsGroup') == 10001,
+                  'installed MQTT client security differs: ' + name)
+        container = pod['containers'][0]
+        current = {item['name']: item.get('value')
+                   for item in container.get('env', [])}
+        expected = mqtt_client_settings(root)
+        m.require(all(current.get(key) == value
+                      for key, value in expected.items()),
+                  'installed MQTT client settings differ: ' + name)
+        volumes = {item['name']: item for item in pod.get('volumes', [])}
+        m.require(volumes.get('mqtt-pki-bundles', {}).get(
+                      'configMap', {}).get('name') == configmap
+                  and volumes.get('mqtt-pki-management', {}).get(
+                      'secret', {}).get('secretName') ==
+                  'pki-mqtt-consumer-' + name,
+                  'installed MQTT client volumes differ: ' + name)
+        return owner
 
     def install_root_consumers(self):
         root = self.mqtt_root('ready')
@@ -228,6 +255,51 @@ class MQTTHostRun(h.ServiceRun):
             'issuer_id': root['issuer_id'], 'consumers': receipts,
             'activation_without_receipts_denied': True,
             'client_image': self.args.image})
+
+    def finish_root_consumers(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed'
+                  and failed['phase'] == 'install-root-consumers',
+                  'failed Root consumer phase required')
+        root = self.mqtt_root('ready')
+        configmap = self.obj('configmap', 'pki-mqtt-bundles')
+        expected = [{'issuer_id': root['issuer_id'],
+                     'trust_bundle_version': root['trust_bundle_version']}]
+        m.require(configmap.get('immutable')
+                  and configmap['data']['roots.pem'] == root['certificate_pem']
+                  and json.loads(configmap['data']['issuers.json']) == expected,
+                  'installed MQTT Root ConfigMap changed')
+        controller = self.obj('deployment', 'pki-controller')
+        values = {item['name']: item.get('value') for item in
+                  controller['spec']['template']['spec']['containers'][0]['env']}
+        m.require(values.get('PKI_REQUIRED_CONSUMERS_MQTT') ==
+                  ','.join(MQTT_CONSUMERS)
+                  and values.get('PKI_REQUIRED_BUNDLE_CONSUMERS_MQTT') ==
+                  ','.join(MQTT_CONSUMERS), 'MQTT activation gates changed')
+        for name in MQTT_CONSUMERS:
+            owner = self.obj('deployment', name)
+            pod = owner['spec']['template']['spec']
+            if pod.get('securityContext', {}).get('fsGroup') != 10001:
+                m.require(name == 'video-cloud-logingester'
+                          and pod.get('securityContext', {}).get('fsGroup') is None,
+                          'unexpected MQTT client permission recovery')
+                template = json.loads(json.dumps(owner['spec']['template']))
+                security = template['spec'].setdefault('securityContext', {})
+                security['fsGroup'] = 10001
+                security['fsGroupChangePolicy'] = 'OnRootMismatch'
+                self.scoped_patch('deployment', owner, [{
+                    'op': 'replace', 'path': '/spec/template',
+                    'value': template}])
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=240s'], timeout=250)
+            self.verify_installed_client(name, root, 'pki-mqtt-bundles')
+        receipts = self.wait_receipts(root['issuer_id'],
+                                     root['trust_bundle_version'],
+                                     MQTT_CONSUMERS)
+        self.check('mqtt_root_consumer_recovery', {
+            'issuer_id': root['issuer_id'], 'consumers': receipts,
+            'reconciled_from': str(Path(self.args.failed)),
+            'permission_change': 'pod fsGroup only'})
 
     def activate_root(self):
         root = self.mqtt_root('ready')
@@ -342,14 +414,18 @@ def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--phase', choices=[
-        'install-root-consumers', 'activate-root', 'prepare-intermediate'],
+        'install-root-consumers', 'finish-root-consumers', 'activate-root',
+        'prepare-intermediate'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
+    parser.add_argument('--failed')
     args = parser.parse_args()
+    m.require(args.phase != 'finish-root-consumers' or args.failed,
+              'failed Root consumer evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -357,6 +433,7 @@ def main():
     try:
         runner.preflight()
         {'install-root-consumers': runner.install_root_consumers,
+         'finish-root-consumers': runner.finish_root_consumers,
          'activate-root': runner.activate_root,
          'prepare-intermediate': runner.prepare_intermediate}[args.phase]()
         runner.report['status'] = 'passed'

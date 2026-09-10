@@ -67,6 +67,8 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual([v['name'] for v in result['spec']['volumes']],
                          ['service-root', 'mqtt-pki-bundles',
                           'mqtt-pki-management'])
+        self.assertEqual(result['spec']['securityContext'], {
+            'fsGroup': 10001, 'fsGroupChangePolicy': 'OnRootMismatch'})
         self.assertEqual(len([v for v in container['volumeMounts']
                               if v['name'] == 'service-root']), 1)
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
