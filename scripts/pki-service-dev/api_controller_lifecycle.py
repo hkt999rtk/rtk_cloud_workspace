@@ -24,10 +24,7 @@ SUBJECT = 'service:video-cloud-api'
 STATE = '/var/lib/video-cloud-api-pki-controller-identity/private/identity.json'
 ROOT_CA = '/run/pki-service-root/root.pem'
 CONTROLLER = 'pki-controller.' + NS + '.svc'
-# The isolated API is a Service *client*: the controller enforces revocation
-# during each admission.  It does not install a Service-issuer CRL, so only
-# the three actual Service CRL consumers may acknowledge this publication.
-RECEIPTS = ['certissuer', 'factory-enroll', 'pki-controller']
+RECEIPTS = ['certissuer', 'factory-enroll', 'pki-controller', 'video-cloud-api']
 
 
 def current_and_stale(rows, state):
@@ -168,7 +165,8 @@ class APILifecycle(h.HostRun):
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_NAME', 'VIDEO_CLOUD_CONTROLLER_IDENTITY_TLS_CA',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_URL',
                     'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_NAME',
-                    'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_TLS_CA')
+                    'VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_TLS_CA',
+                    'VIDEO_CLOUD_CONTROLLER_SERVER_CRL_MANIFEST')
         m.require(all(env.get(key) for key in required) and env['VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE'] == STATE
                   and env['VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256'] == root['certificate_fingerprint_sha256'],
                   'isolated API managed controller configuration changed')
