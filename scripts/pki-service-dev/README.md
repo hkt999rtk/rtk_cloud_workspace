@@ -302,6 +302,21 @@ certificate, removes the seed after a successful state import, and proves a
 seed-free restart. The live broker no longer mounts the legacy static TLS Secret.
 The runner refuses any environment other than the selected dev cluster.
 
+## OpenBao TLS authority preparation
+
+Prepare the independent `openbao_tls` Root before changing the existing OpenBao
+listener. This phase is dev-only, leaves the Root `ready`, and does not touch the
+StatefulSet, provider authentication, seal state, or provider CA keys:
+
+```sh
+python3 scripts/pki-service-dev/openbao_authority.py \
+  --output OPENBAO_TLS_ROOT_EVIDENCE
+```
+
+If the command reports failure after writing `root-ready.json`, keep that output
+and pass it to `--reconcile`; the runner accepts only the same registered ready
+Root and never creates another key or operation.
+
 If adoption stops after the managed Deployment is installed but before it becomes
 ready, retain the failed evidence and run `--phase finish-host-adoption --failed
 FAILED_ADOPTION_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE` with the same
