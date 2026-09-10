@@ -1331,8 +1331,10 @@ class MQTTHostRun(h.ServiceRun):
 
     def lifecycle_prerequisites(self, evidence, phase):
         prior = m.read(Path(evidence) / 'report.json')
-        m.require(prior['status'] == 'passed' and prior['phase'] == phase,
-                  'successful MQTT ' + phase + ' evidence required')
+        phases = (phase,) if isinstance(phase, str) else tuple(phase)
+        m.require(prior['status'] == 'passed' and prior['phase'] in phases,
+                  'successful MQTT ' + '/'.join(phases) +
+                  ' evidence required')
         root, issuer, _ = self.ready_intermediate(status='active')
         self.save('mqtt-root.pem', root['certificate_pem'])
         owner = self.obj('deployment', 'mqtt-pki')
@@ -1570,7 +1572,7 @@ class MQTTHostRun(h.ServiceRun):
 
     def revoke_host(self):
         _, issuer, _ = self.lifecycle_prerequisites(
-            self.args.renewal, 'renew-host')
+            self.args.renewal, ('renew-host', 'finish-host-renewal'))
         source = Path(self.args.renewal)
         before = m.read(source / 'baseline.json')
         renewed = m.read(source / 'renewed.json')
