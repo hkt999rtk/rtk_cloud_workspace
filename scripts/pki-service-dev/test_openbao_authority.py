@@ -26,6 +26,16 @@ class OpenBaoAuthorityTests(unittest.TestCase):
                     RuntimeError, 'independent dev OpenBao TLS Root differs'):
                 o.validate_root(self.root(**{field: value}), 'ready')
 
+    def test_intermediate_policy_uses_only_live_openbao_origins(self):
+        request = o.intermediate_request(self.root(
+            status='active', issuer_id='root-1'))
+        self.assertEqual(request['trust_domain'], 'openbao_tls')
+        self.assertEqual(request['service_client_ids'], ['service:openbao'])
+        self.assertEqual(request['server_dns_names'], [
+            'openbao.video-cloud-dev-secrets.svc',
+            'openbao.video-cloud-dev-secrets.svc.cluster.local'])
+        self.assertEqual(request['parent_issuer_id'], 'root-1')
+
 
 if __name__ == '__main__':
     unittest.main()

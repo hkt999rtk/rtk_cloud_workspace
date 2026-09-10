@@ -20,6 +20,11 @@ spec.loader.exec_module(s)
 m = s.m
 
 DOMAIN = 'openbao_tls'
+OPENBAO_NAMESPACE = 'video-cloud-dev-secrets'
+OPENBAO_CLIENT_IDS = ['service:openbao']
+OPENBAO_DNS_NAMES = [
+    'openbao.' + OPENBAO_NAMESPACE + '.svc',
+    'openbao.' + OPENBAO_NAMESPACE + '.svc.cluster.local']
 
 
 def validate_root(issuer, status):
@@ -28,6 +33,14 @@ def validate_root(issuer, status):
               and issuer['kind'] == 'root'
               and issuer['status'] == status,
               'independent dev OpenBao TLS Root differs')
+
+
+def intermediate_request(root):
+    validate_root(root, 'active')
+    return {'environment': 'dev', 'trust_domain': DOMAIN,
+            'kind': 'intermediate', 'parent_issuer_id': root['issuer_id'],
+            'service_client_ids': list(OPENBAO_CLIENT_IDS),
+            'server_dns_names': list(OPENBAO_DNS_NAMES)}
 
 
 class OpenBaoAuthorityRun(s.ServiceRun):
@@ -103,6 +116,129 @@ class OpenBaoAuthorityRun(s.ServiceRun):
             'key_custody': ('encrypted offline dev simulation; distinct '
                             'software approval accounts')})
 
+    def active_root(self):
+        source = Path(self.args.root)
+        saved = m.read(source / 'root-ready.json')
+        root = self.api('/issuers/' + saved['issuer_id'])
+        validate_root(root, 'active')
+        m.require(root['certificate_fingerprint_sha256'] ==
+                  saved['certificate_fingerprint_sha256']
+                  and root['trust_bundle_version'] ==
+                  saved['trust_bundle_version'],
+                  'active OpenBao TLS Root changed')
+        crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        self.save('openbao-tls-root.json', root)
+        self.save('openbao-tls-root-crl.json', crl)
+        return root
+
+    def verify_intermediate_custody(self, issuer):
+        keys = json.loads(self.bao([
+            'list', '-format=json', issuer['signer_reference'] + '/keys']))
+        m.require(len(keys) == 1,
+                  'OpenBao TLS intermediate must own exactly one internal key')
+        jwt = self.kube([
+            '-n', s.NS, 'create', 'token', 'pki-controller',
+            '--audience=openbao', '--duration=10m']).strip()
+        login = json.loads(self.bao([
+            'write', '-format=json', 'auth/kubernetes/login', '-'],
+            json.dumps({'role': 'pki-controller-dev', 'jwt': jwt})))
+        token = login['auth']['client_token']
+        try:
+            for suffix in ('keys', 'key/' + keys[0], 'sign/server',
+                           'sign/service-client', 'sign/default',
+                           'sign-verbatim/default',
+                           'intermediate/generate/exported'):
+                result = json.loads(self.bao([
+                    'write', '-format=json', 'sys/capabilities', '-'],
+                    json.dumps({'token': token, 'paths': [
+                        issuer['signer_reference'] + '/' + suffix]})))
+                expected = ['list'] if suffix == 'keys' else ['deny']
+                m.require(result['data']['capabilities'] == expected,
+                          'controller intermediate capability broadened')
+        finally:
+            self.bao(['write', 'auth/token/revoke', '-'],
+                     json.dumps({'token': token}))
+
+    def prepare_intermediate(self):
+        root = self.active_root()
+        for name in ('openbao', 'openbao-internal'):
+            service = self.obj('service', name, OPENBAO_NAMESPACE)
+            m.require(service['metadata']['namespace'] == OPENBAO_NAMESPACE
+                      and service['spec']['selector'].get(
+                          'app.kubernetes.io/name') == 'openbao',
+                      'OpenBao Service ownership changed')
+        cursor = ''
+        while True:
+            page = self.api('/issuers/search', {
+                'limit': 100, 'before': cursor})
+            m.require(not any(item['trust_domain'] == DOMAIN
+                              and item['kind'] == 'intermediate'
+                              for item in page['items']),
+                      'OpenBao TLS intermediate already exists; reconcile it')
+            cursor = page.get('next', '')
+            if not cursor:
+                break
+        request = intermediate_request(root)
+        self.save('intermediate-request.json', request)
+        operation = self.api('/operations', request,
+                             key='dev-openbao-tls-intermediate-' +
+                             uuid.uuid4().hex)
+        self.save('intermediate-operation.json', operation)
+        self.approval(operation)
+        issuer = self.api('/issuers/' + operation['issuer_id'])
+        m.require(issuer['status'] == 'approved'
+                  and issuer['signer_provider'] == 'openbao'
+                  and issuer['service_client_ids'] == OPENBAO_CLIENT_IDS
+                  and issuer['server_dns_names'] == OPENBAO_DNS_NAMES,
+                  'OpenBao TLS intermediate reservation differs')
+        policies = json.loads(self.kube([
+            '-n', s.NS, 'exec', 'deployment/pki-controller', '--',
+            '/app/pkicontroller', 'render-openbao-policy',
+            issuer['issuer_id']]))
+        m.require(policies['mount'] == issuer['signer_reference']
+                  and policies['environment'] == 'dev',
+                  'OpenBao TLS provider policy scope differs')
+        self.save('provider-policies.json', policies)
+        self.role_policy('pki-controller-dev',
+                         'pki-controller-dev-' + issuer['issuer_id'],
+                         policies['controller_policy'])
+        self.api('/operations/' + operation['operation_id'] + '/provision', {})
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'provisioning' and issuer['csr_pem'],
+                  'OpenBao TLS intermediate CSR was not registered')
+        self.save('intermediate-provisioning.json', issuer)
+        self.verify_intermediate_custody(issuer)
+        csr_hash = m.digest(base64.b64decode(
+            ''.join(issuer['csr_pem'].splitlines()[1:-1])))
+        source = Path(self.args.root)
+        self.ceremony_call([
+            'sign', '--issuer', self.output / 'intermediate-provisioning.json',
+            '--expected-request-sha256', operation['request_sha256'],
+            '--expected-csr-sha256', csr_hash,
+            '--parent', self.output / 'openbao-tls-root.json',
+            '--expected-parent-sha256',
+            root['certificate_fingerprint_sha256'],
+            '--key', source / 'root-offline-simulation/ca-key.encrypted.pem',
+            '--passphrase-file', m.read(
+                source / 'passphrase-reference.json')['path'],
+            '--out', self.output / 'intermediate-signed'])
+        self.api('/operations/' + operation['operation_id'] + '/import', {
+            'certificate_pem': (self.output /
+                                'intermediate-signed/certificate.pem').read_text()},
+                 204)
+        issuer = self.api('/issuers/' + issuer['issuer_id'])
+        m.require(issuer['status'] == 'ready',
+                  'OpenBao TLS intermediate did not become ready')
+        self.save('intermediate-ready.json', issuer)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 409)
+        self.check('openbao_tls_intermediate_ready_gate_closed', {
+            'issuer_id': issuer['issuer_id'],
+            'service_client_ids': issuer['service_client_ids'],
+            'server_dns_names': issuer['server_dns_names'],
+            'internal_key_count': 1,
+            'activation_without_consumer_receipts_denied': True})
+
     def reconcile(self, failed):
         failed = Path(failed)
         report = m.read(failed / 'report.json')
@@ -132,17 +268,29 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
+    parser.add_argument('--phase', choices=['prepare-root',
+                                           'prepare-intermediate'],
+                        default='prepare-root')
+    parser.add_argument('--root')
     parser.add_argument('--reconcile')
     args = parser.parse_args()
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    args.phase = 'prepare-openbao-tls-root'
+    m.require(args.phase != 'prepare-intermediate' or args.root,
+              'active OpenBao TLS Root evidence required')
+    args.phase = ('prepare-openbao-tls-root' if args.phase == 'prepare-root'
+                  else 'prepare-openbao-tls-intermediate')
     runner = OpenBaoAuthorityRun(args)
     try:
         runner.preflight()
-        runner.reconcile(args.reconcile) if args.reconcile else runner.prepare_root()
+        if args.reconcile:
+            runner.reconcile(args.reconcile)
+        elif args.phase == 'prepare-openbao-tls-intermediate':
+            runner.prepare_intermediate()
+        else:
+            runner.prepare_root()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
