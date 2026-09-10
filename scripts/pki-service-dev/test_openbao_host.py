@@ -46,6 +46,32 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
         self.assertTrue(callable(o.OpenBaoHostRun.openbao_root))
 
+    def test_intermediate_loader_accepts_requested_lifecycle_status(self):
+        saved = {
+            'issuer_id': 'issuer-1', 'environment': 'dev',
+            'trust_domain': 'openbao_tls', 'kind': 'intermediate',
+            'parent_issuer_id': 'root-1', 'issuer_version': 1,
+            'signer_provider': 'openbao', 'signer_reference': 'mount',
+            'certificate_fingerprint_sha256': 'a' * 64,
+            'certificate_pem': 'certificate',
+            'trust_bundle_version': 'bundle',
+            'service_client_ids': ['service:openbao'],
+            'server_dns_names': o.OPENBAO_HOST_NAMES, 'status': 'ready'}
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.args = type('Args', (), {'intermediate': '/evidence'})()
+        runner.openbao_root = lambda status: {'issuer_id': 'root-1'}
+        runner.api = lambda path: dict(saved, status='active')
+        runner.save = lambda *args: None
+        original = o.m.read
+        try:
+            o.m.read = lambda path: (saved if path.name ==
+                                      'intermediate-ready.json' else
+                                      {'operation_id': 'operation-1'})
+            _, issuer, _ = runner.ready_intermediate('active')
+        finally:
+            o.m.read = original
+        self.assertEqual(issuer['status'], 'active')
+
     def test_activation_gate_uses_operation_requester(self):
         calls = []
         runner = object.__new__(o.OpenBaoHostRun)

@@ -386,15 +386,22 @@ class OpenBaoHostRun(h.ServiceRun):
             'crl_sha256': record['crl_sha256'],
             'existing_listener_preserved': True})
 
-    def ready_intermediate(self):
+    def ready_intermediate(self, status='ready'):
         root = self.openbao_root('active')
         source = Path(self.args.intermediate)
         saved = m.read(source / 'intermediate-ready.json')
         issuer = self.api('/issuers/' + saved['issuer_id'])
-        m.require(issuer == saved and issuer['status'] == 'ready'
+        immutable = (
+            'issuer_id', 'environment', 'trust_domain', 'kind',
+            'parent_issuer_id', 'issuer_version', 'signer_provider',
+            'signer_reference', 'certificate_fingerprint_sha256',
+            'certificate_pem', 'trust_bundle_version',
+            'service_client_ids', 'server_dns_names')
+        m.require(all(issuer.get(key) == saved.get(key) for key in immutable)
+                  and issuer['status'] == status
                   and issuer['parent_issuer_id'] == root['issuer_id']
                   and issuer['service_client_ids'] == ['service:openbao'],
-                  'ready OpenBao TLS intermediate changed')
+                  'OpenBao TLS intermediate identity or policy changed')
         operation = m.read(source / 'intermediate-operation.json')
         return root, issuer, operation
 
@@ -472,9 +479,7 @@ class OpenBaoHostRun(h.ServiceRun):
             'existing_listener_preserved': True})
 
     def configure_certissuer(self):
-        root, issuer, _ = self.ready_intermediate()
-        m.require(issuer['status'] == 'active',
-                  'active OpenBao TLS intermediate required')
+        root, issuer, _ = self.ready_intermediate('active')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         policies = m.read(Path(self.args.policy_evidence) /
