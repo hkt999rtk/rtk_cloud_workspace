@@ -62,6 +62,20 @@ def mqtt_intermediate_manifest(root, issuer):
     ]
 
 
+def crl_state_initializer(image):
+    return {
+        'name': 'mqtt-pki-state-init', 'image': image,
+        'command': ['sh', '-c'],
+        'args': ['set -eu; umask 077; mkdir -p /var/lib/mqtt-pki/crls; '
+                 'chmod 700 /var/lib/mqtt-pki/crls'],
+        'volumeMounts': [{'name': 'mqtt-pki-state',
+                          'mountPath': '/var/lib/mqtt-pki'}],
+        'securityContext': {'allowPrivilegeEscalation': False,
+                            'capabilities': {'drop': ['ALL']},
+                            'runAsNonRoot': True,
+                            'readOnlyRootFilesystem': True}}
+
+
 class MQTTHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -506,6 +520,8 @@ class MQTTHostRun(h.ServiceRun):
             {'name': 'mqtt-pki-crls', 'configMap': {'name': configmap}},
             {'name': 'mqtt-pki-state', 'persistentVolumeClaim': {
                 'claimName': pvc}}])
+        pod.setdefault('initContainers', []).append(
+            crl_state_initializer(container['image']))
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/mqtt-crl-rollout'] = self.output.name
         changes = [{'op': 'replace', 'path': '/spec/template',
@@ -557,6 +573,45 @@ class MQTTHostRun(h.ServiceRun):
             'root_crl_sha256': root_crl['crl_sha256'],
             'crl_consumers': crl_receipts,
             'private_state': 'one retained PVC per actual client'})
+
+    def finish_intermediate_activation(self):
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed'
+                  and failed['phase'] == 'activate-intermediate',
+                  'failed intermediate activation phase required')
+        root, issuer, _ = self.ready_intermediate(status='active')
+        root_crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        issuer_crl = self.api('/issuers/' + issuer['issuer_id'] + '/crl')
+        configmap = 'pki-mqtt-crls-' + issuer['issuer_id'][:8]
+        self.obj('configmap', configmap)
+        for name in MQTT_CONSUMERS:
+            owner = self.obj('deployment', name)
+            template = json.loads(json.dumps(owner['spec']['template']))
+            pod, container = template['spec'], template['spec']['containers'][0]
+            existing = [item for item in pod.get('initContainers', [])
+                        if item['name'] == 'mqtt-pki-state-init']
+            if not existing:
+                pod.setdefault('initContainers', []).append(
+                    crl_state_initializer(container['image']))
+                template.setdefault('metadata', {}).setdefault('annotations', {})[
+                    'rtk.cloud/mqtt-crl-recovery'] = self.output.name
+                self.scoped_patch('deployment', owner, [{
+                    'op': 'replace', 'path': '/spec/template',
+                    'value': template}])
+            else:
+                m.require(existing == [crl_state_initializer(container['image'])],
+                          'MQTT CRL initializer changed: ' + name)
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+        receipts = {}
+        for authority, crl in ((root, root_crl), (issuer, issuer_crl)):
+            receipts[authority['issuer_id']] = self.wait_receipts(
+                authority['issuer_id'], crl['crl_sha256'], MQTT_CONSUMERS,
+                kind='crl')
+        self.check('mqtt_intermediate_activation_recovery', {
+            'issuer_id': issuer['issuer_id'], 'crl_consumers': receipts,
+            'reconciled_from': str(Path(self.args.failed)),
+            'permission_change': 'private CRL state directory initializer'})
 
     def configure_certissuer(self):
         root, issuer, _ = self.ready_intermediate(status='active')
@@ -610,7 +665,8 @@ def main():
     parser.add_argument('--phase', choices=[
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'prepare-intermediate', 'install-intermediate',
-        'activate-intermediate', 'configure-certissuer'],
+        'activate-intermediate', 'finish-intermediate-activation',
+        'configure-certissuer'],
         required=True)
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
@@ -622,8 +678,11 @@ def main():
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
+    m.require(args.phase != 'finish-intermediate-activation' or args.failed,
+              'failed intermediate activation evidence required')
     m.require(args.phase not in ('install-intermediate',
                                  'activate-intermediate',
+                                 'finish-intermediate-activation',
                                  'configure-certissuer') or args.intermediate,
               'prepared MQTT intermediate evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/mqtt-host-rollout.lock'
@@ -638,6 +697,8 @@ def main():
          'prepare-intermediate': runner.prepare_intermediate,
          'install-intermediate': runner.install_intermediate,
          'activate-intermediate': runner.activate_intermediate,
+         'finish-intermediate-activation':
+             runner.finish_intermediate_activation,
          'configure-certissuer': runner.configure_certissuer}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:

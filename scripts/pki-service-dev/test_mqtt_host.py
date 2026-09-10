@@ -83,6 +83,15 @@ class MQTTHostTests(unittest.TestCase):
         first.append({'issuer_id': 'unreviewed'})
         self.assertEqual(len(m.mqtt_intermediate_manifest(root, issuer)), 2)
 
+    def test_crl_initializer_only_creates_private_state_directory(self):
+        init = m.crl_state_initializer('pinned-image')
+        self.assertEqual(init['image'], 'pinned-image')
+        self.assertEqual(init['volumeMounts'], [{
+            'name': 'mqtt-pki-state', 'mountPath': '/var/lib/mqtt-pki'}])
+        self.assertIn('mkdir -p /var/lib/mqtt-pki/crls', init['args'][0])
+        self.assertTrue(init['securityContext']['readOnlyRootFilesystem'])
+        self.assertEqual(init['securityContext']['capabilities']['drop'], ['ALL'])
+
     def test_intermediate_switch_changes_only_selected_bundle_source(self):
         owner = {'spec': {'template': {'metadata': {'annotations': {
             'retained': 'yes'}}, 'spec': {'volumes': [

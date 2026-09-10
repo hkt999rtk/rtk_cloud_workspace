@@ -257,6 +257,13 @@ python3 scripts/pki-service-dev/mqtt_host.py \
   --output MQTT_ISSUER_EVIDENCE
 ```
 
+If intermediate activation succeeded but a client failed before recording CRL
+receipts, keep the failed evidence and run `--phase
+finish-intermediate-activation --failed FAILED_ACTIVATION_EVIDENCE` with the
+same Root and intermediate evidence. Recovery accepts only the already-active
+reviewed issuer and existing CRLs; it creates the missing private state
+directory and waits for both actual clients.
+
 The two clients keep their existing MQTT username/password authorization while
 changing transport to TLS with an exact Root pin and DNS name. Their separate
 management certificates report trust installation over the existing managed
