@@ -20,7 +20,7 @@ spec.loader.exec_module(fa)
 r, m = fa.r, fa.m
 
 V3_CLIENT_IDS = fa.V2_CLIENT_IDS + ['service:video-cloud-api']
-V4_CLIENT_IDS = V3_CLIENT_IDS + ['service:pkibroker']
+V4_CLIENT_IDS = sorted(V3_CLIENT_IDS + ['service:pkibroker'])
 V3_DNS_NAMES = sorted(list(r.SERVICE_DNS_NAMES) + [
     'account-manager-internal.video-cloud-dev-account-manager.svc'])
 V4_DNS_NAMES = list(V3_DNS_NAMES)
