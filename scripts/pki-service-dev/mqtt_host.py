@@ -1202,7 +1202,8 @@ class MQTTHostRun(h.ServiceRun):
             try:
                 clients = self.kube([
                     '-n', NS, 'exec', 'deployment/mqtt-pki', '-c', 'mqtt',
-                    '--', '/usr/local/bin/emqx', 'ctl', 'clients', 'list'])
+                    '--', 'sh', '-c',
+                    '/usr/local/bin/emqx ctl clients list || true'])
             except RuntimeError as error:
                 m.require(str(error) == 'command failed: kubectl',
                           'unexpected MQTT client inspection failure')
