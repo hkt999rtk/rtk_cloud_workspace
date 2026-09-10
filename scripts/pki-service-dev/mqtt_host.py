@@ -1223,22 +1223,25 @@ class MQTTHostRun(h.ServiceRun):
     def finish_host_callback_recovery(self):
         failed = m.read(Path(self.args.failed) / 'report.json')
         m.require(failed['status'] == 'failed'
-                  and failed['phase'] == 'repair-host-callback',
+                  and failed['phase'] in ('repair-host-callback',
+                                          'finish-host-callback'),
                   'failed MQTT callback repair evidence required')
         self.rollout_callback_api()
         root, _, _ = self.ready_intermediate(status='active')
         self.save('mqtt-root.pem', root['certificate_pem'])
-        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
-                     'metadata': {'name': MQTT_CALLBACK_CA, 'namespace': NS},
-                     'immutable': True, 'data': {
-                         'ca.crt': (self.base / 'pki/servers/'
-                                    'video-cloud-api-pki/ca.crt').read_text()}})
+        expected_ca = (self.base / 'pki/servers/'
+                       'video-cloud-api-pki/ca.crt').read_text()
+        callback_ca = self.obj('configmap', MQTT_CALLBACK_CA)
+        m.require(callback_ca.get('immutable') is True
+                  and callback_ca.get('data', {}).get('ca.crt') == expected_ca,
+                  'MQTT callback server CA changed')
         owner = self.obj('deployment', 'mqtt-pki')
         template = json.loads(json.dumps(owner['spec']['template']))
         volumes = {item['name']: item
                    for item in template['spec'].get('volumes', [])}
         callback = volumes.get('mqtt-callback-ca', {}).get('configMap', {})
-        m.require(callback.get('name') == 'pki-mqtt-callback-ca',
+        m.require(callback.get('name') in (
+                      'pki-mqtt-callback-ca', MQTT_CALLBACK_CA),
                   'failed callback CA source changed')
         callback['name'] = MQTT_CALLBACK_CA
         template.setdefault('metadata', {}).setdefault('annotations', {})[
