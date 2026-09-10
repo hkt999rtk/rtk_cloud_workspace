@@ -5578,3 +5578,20 @@ is estimated 98%, with one work package left: a fresh uninterrupted run of the
 committed tool and the five-item completion audit. See the current
 [fresh dev checkpoint](production-pki-fresh-dev-rehearsal.md). Five reporting areas
 remain open. No staging changes, Git push, PR or remote CI were performed.
+
+### Managed pkibroker controller identity (2026-09-10)
+
+The dev-only `mqtt-pki` worker now uses a retained registered
+`service:pkibroker` identity for controller CRL transport and certissuer renewal.
+The static broker management certificate/key mount and Secret were removed after
+an empty workload-reference audit. A startup initializer repairs owner-only state
+permissions before every restart, and `pkibroker watch` accepts `SIGHUP` for one
+early managed-identity renewal.
+
+Live qualification used image
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:bb9919884a643582cba0382796c775075a8c3c073c04c0da77ef4a34c60dd4f0`.
+It proved exact successor issuance, predecessor revocation, all four required
+Service CRL receipts, held predecessor socket cutoff, fresh predecessor denial,
+successor survival across restart, and unchanged Device mTLS/MQTT behavior. The
+Service V4 CRL manifests for factory and the isolated Device API were completed
+before finalization. This closes M9; staging and human login/MFA were untouched.

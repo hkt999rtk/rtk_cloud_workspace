@@ -1,6 +1,6 @@
 # Remaining trust consumers and live sessions
 
-Active milestone, 2026-09-09. Fresh dev Device PKI is complete; this milestone
+Active milestone, 2026-09-10. Fresh dev Device PKI is complete; this milestone
 extends the design to the other consumers and connections. Commits remain local
 unless a branch backup push is requested; PRs wait until all milestones finish.
 Live verification is dev-only.
@@ -18,13 +18,13 @@ no fixed denominator and must not be used as completion percentages.
 | Fixed group | Status | Evidence and remaining exit criteria |
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
-| 2. Management Service identity enforcement | Partial | Account Manager and both listeners have dev adoption/renewal/retirement evidence. Remaining consumers must adopt managed identities and prove real receipts, held-session cutoff and failure behavior. |
+| 2. Management Service identity enforcement | Partial | Account Manager, both listeners, the isolated Device API and pkibroker have dev adoption/renewal/retirement evidence. M11 retains the remaining cross-caller held-session and trust-failure matrix. |
 | 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory managed lifecycle and complete Account Manager transport lifecycle are qualified in dev. MQTT/OpenBao transports and hosts, public HTTPS evidence, and cross-host held-session/trust-failure coverage remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 23/40 = 57.5%.** The fixed decomposition below
+**Current checkpoint completion: 25/40 = 62.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **1/6
@@ -32,7 +32,7 @@ whole work groups is closed**; that 17% closure ratio understates partial progre
 and must not be presented as the milestone's implementation/acceptance progress.
 Keep the 40-checkpoint denominator stable; document any future scope change before
 recalculating. Local-only checkpoints never substitute for corresponding dev checks.
-The [detailed 18-checkpoint execution plan](production-pki-remaining-implementation-plan.md)
+The [remaining-checkpoint execution plan](production-pki-remaining-implementation-plan.md)
 specifies implementation steps, test steps, dependencies and completion criteria
 for every currently open ID. It expands this scope without adding checkpoints.
 The four broad milestones remain: this milestone; backup/recovery and SDK;
@@ -47,12 +47,12 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | Group | Completed / total | Checkpoint progress |
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
-| Management Service identities | 8/11 | 73% |
+| Management Service identities | 10/11 | 91% |
 | Transports and hosts | 7/11 | 64% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **23/40** | **57.5%** |
+| **Total** | **25/40** | **62.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -61,7 +61,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] I2: Map existing implementation and missing runtime adoption.
 - [x] I3: Reconcile current scope, authoritative documents and evidence attribution.
 
-**Group 2 — management Service identities (8/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
+**Group 2 — management Service identities (10/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
 [domain policy](#domain-policy-implementation-checkpoint), [Account Manager adoption](#2026-09-08-live-dev-account-manager-credential-checkpoint),
 [renewal](#dev-managed-early-renewal-checkpoint), [retirement](#dev-replaced-service-leaf-retirement-checkpoint),
 [listener egress](#managed-listener-egress-adoption-verified-in-dev-2026-09-09), [managed receipts](#fresh-managed-listener-crl-receipts-verified-in-dev-2026-09-09),
@@ -75,8 +75,8 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M5: Adopt managed outbound identities on certissuer and controller in dev.
 - [x] M6: Qualify those two client identities' renewal and old-leaf retirement in dev.
 - [x] M7: Verify both listeners' managed CRL receipts and remove retired bootstrap credentials/trust.
-- [ ] M8: Adopt and qualify the Device API consumer's managed controller credential.
-- [ ] M9: Adopt and qualify pkibroker's managed controller credential.
+- [x] M8: Adopt and qualify the Device API consumer's managed controller credential.
+- [x] M9: Adopt and qualify pkibroker's managed controller credential. Evidence: [managed broker checkpoint](#managed-pkibroker-controller-credential-qualified-in-dev-2026-09-10).
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
@@ -2037,3 +2037,43 @@ as active without replay, matched the imported v3 CRL to OpenBao, installed and
 persisted the four-authority CRL manifest, received controller and certissuer CRL
 acknowledgments, and passed the Device mTLS/MQTT baseline. v1 and v2 are retiring;
 v3 is active. The subsequent Account Manager listener, API caller and factory caller managed lifecycle checks have passed; their current final evidence is recorded above.
+
+### Managed pkibroker controller credential qualified in dev (2026-09-10)
+
+The isolated dev `mqtt-pki` worker now owns one registered
+`service:pkibroker` credential in its retained trust PVC. The broker uses that
+credential for controller Device-CRL reads and acknowledgments and uses a
+separately pinned certissuer origin for renewal. Its Deployment contains no
+static management certificate/key setting or mount. The obsolete
+`pki-pkibroker-management` Secret was deleted after a namespace-wide workload
+reference check returned empty. EMQX remains the MQTT TLS owner and does not
+receive this private key.
+
+Initial enrollment reconciled the already pending request and key. The first
+failed attempt had incorrectly used a hash of PEM file bytes as the Service Root
+pin; the corrected operation used the certificate DER fingerprint. Certissuer's
+normal client trust had already removed the old broker bootstrap CA, so the
+reconciliation temporarily installed the existing public controller client-CA
+bundle and the exact `^pkibroker$` provisioner name. Both were removed and the
+provisioner was closed immediately after the single issuance. No new pending key
+or request was created.
+
+The worker startup initializer restores mode 0700 on the private identity
+directories and 0600 on their files before `pkibroker` starts. A seed-free Pod
+replacement retained the same state hash, leaf and public-key fingerprints.
+`pkibroker watch` now treats `SIGHUP` as one early-renewal request. Live dev
+qualification observed exactly one successor issuance, a new leaf and public
+key, retained subject/root, and no pending request. After the predecessor was
+revoked and the signed V4 CRL reached `certissuer`, `factory-enroll`,
+`pki-controller`, and `video-cloud-api`, the held predecessor controller socket
+closed, a fresh connection with the predecessor was denied, and the successor
+remained admitted. Another seed-free restart preserved the successor. The
+Device direct-mTLS and MQTT QoS 1 roundtrip canary passed afterwards.
+
+The current dev broker image is
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:bb9919884a643582cba0382796c775075a8c3c073c04c0da77ef4a34c60dd4f0`.
+Private evidence is under
+`pki/pkibroker-identity-20260910/bootstrap-controller-ca-bundle`, `adoption`,
+`v4-consumers`, `lifecycle-5`, and `static-cleanup`. This completes M9. M11
+still owns the broader cross-caller trust-failure matrix. Staging and human MFA
+were not changed.
