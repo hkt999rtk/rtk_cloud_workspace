@@ -106,6 +106,32 @@ class OpenBaoHostTests(unittest.TestCase):
             runner.verify_staged_client(
                 owner, 'other', 'combined', 'manifest', root)
 
+    def test_recovery_changes_only_image_for_staged_client(self):
+        owner = {'metadata': {'name': 'certissuer'},
+                 'spec': {'template': {'metadata': {}, 'spec': {
+                     'containers': [{
+                         'name': 'certissuer', 'image': 'old', 'env': [],
+                         'volumeMounts': [
+                             {'name': 'openbao-ca',
+                              'mountPath': '/run/openbao-ca'},
+                             {'name': 'host-root',
+                              'mountPath': '/run/pki-host-root'}]}],
+                     'volumes': [
+                         {'name': 'openbao-ca', 'configMap': {
+                             'name': 'pki-openbao-transport-ca'}},
+                         {'name': 'host-root', 'configMap': {
+                             'name': 'root'}}]}}}}
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.output = Path('/private/evidence')
+        root = {'certificate_fingerprint_sha256': 'a' * 64}
+        owner['spec']['template'] = runner.staged_client_template(
+            owner, 'broken', 'combined', 'manifest', root)
+        recovered = runner.recovery_client_template(
+            owner, 'fixed', 'combined', 'manifest', root)
+        self.assertEqual(recovered['spec']['containers'][0]['image'], 'fixed')
+        self.assertEqual(recovered['spec']['volumes'],
+                         owner['spec']['template']['spec']['volumes'])
+
 
 if __name__ == '__main__':
     unittest.main()

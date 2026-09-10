@@ -115,6 +115,26 @@ class OpenBaoHostRun(h.ServiceRun):
             'rtk.cloud/openbao-root-staging'] = self.output.name
         return template
 
+    def recovery_client_template(self, owner, image, ca_configmap,
+                                 manifest_configmap, root):
+        pod = owner['spec']['template']['spec']
+        volumes = {item['name']: item for item in pod.get('volumes', [])}
+        source = volumes.get('openbao-ca', {}).get('configMap', {}).get('name')
+        if source == 'pki-openbao-transport-ca':
+            return self.staged_client_template(
+                owner, image, ca_configmap, manifest_configmap, root)
+        m.require(source == ca_configmap,
+                  'OpenBao recovery trust source changed')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        template['spec']['containers'][0]['image'] = image
+        candidate = {'metadata': owner['metadata'],
+                     'spec': {'template': template}}
+        self.verify_staged_client(candidate, image, ca_configmap,
+                                  manifest_configmap, root)
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/openbao-root-staging'] = self.output.name
+        return template
+
     def verify_staged_client(self, owner, image, ca_configmap,
                              manifest_configmap, root):
         pod = owner['spec']['template']['spec']
@@ -230,20 +250,22 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(failed['status'] == 'failed'
                   and failed['phase'] == 'install-root-consumers',
                   'failed OpenBao Root consumer phase required')
-        root = self.openbao_root('ready')
+        root = m.read(Path(self.args.authority) / 'root-ready.json')
+        m.require(root['environment'] == 'dev'
+                  and root['trust_domain'] == 'openbao_tls'
+                  and root['kind'] == 'root'
+                  and root['status'] == 'ready',
+                  'saved OpenBao TLS Root is not ready')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
         ca_configmap, manifest_configmap = self.ensure_root_configmaps(root)
         for name in reversed(CONSUMERS):
             owner = self.obj('deployment', name)
-            volumes = {item['name']: item for item in
-                       owner['spec']['template']['spec'].get('volumes', [])}
-            if volumes.get('openbao-ca', {}).get('configMap', {}).get(
-                    'name') == 'pki-openbao-transport-ca':
-                template = self.staged_client_template(
-                    owner, self.args.image, ca_configmap,
-                    manifest_configmap, root)
+            template = self.recovery_client_template(
+                owner, self.args.image, ca_configmap,
+                manifest_configmap, root)
+            if template != owner['spec']['template']:
                 self.scoped_patch(name, owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/' + name, '--timeout=300s'], timeout=310)
@@ -251,6 +273,7 @@ class OpenBaoHostRun(h.ServiceRun):
                                       self.args.image, ca_configmap,
                                       manifest_configmap, root)
             if name == 'pki-controller':
+                root = self.openbao_root('ready')
                 self.require_activation_blocked(operation)
         receipts = self.wait_receipts(root['issuer_id'],
                                      root['trust_bundle_version'], CONSUMERS)
@@ -260,6 +283,28 @@ class OpenBaoHostRun(h.ServiceRun):
             'activation_without_receipts_denied': True,
             'existing_listener_preserved': True,
             'image': self.args.image})
+
+    def recovery_preflight(self):
+        m.require(self.kube(['config', 'current-context']).strip() ==
+                  self.context, 'canonical dev context mismatch')
+        namespace = self.obj('namespace', NS)
+        m.require(namespace['metadata']['name'] == NS, 'wrong namespace')
+        account = self.obj('deployment', 'account-manager',
+                           'video-cloud-dev-account-manager')
+        m.require(account.get('status', {}).get('readyReplicas', 0) ==
+                  account['spec']['replicas'] > 0,
+                  'Account Manager unavailable during recovery')
+        self.forward('am', 'video-cloud-dev-account-manager',
+                     'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        identities = {name: self.login(credentials)[1]
+                      for name, credentials in self.accounts.items()}
+        m.require(len(set(identities.values())) == 3,
+                  'approval accounts are not distinct')
+        self.check('recovery_preflight', {
+            'context': self.context, 'namespace': NS,
+            'account_manager_ready': True,
+            'controller_may_be_unavailable': True})
 
     def activate_root(self):
         root = self.openbao_root('ready')
@@ -322,7 +367,10 @@ def main():
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = OpenBaoHostRun(args)
     try:
-        runner.preflight()
+        if args.phase == 'finish-root-consumers':
+            runner.recovery_preflight()
+        else:
+            runner.preflight()
         {'install-root-consumers': runner.install_root_consumers,
          'finish-root-consumers': runner.finish_root_consumers,
          'activate-root': runner.activate_root}[args.phase]()
