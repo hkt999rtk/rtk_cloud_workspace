@@ -2134,3 +2134,17 @@ container target pass. T9 is approximately **35%** complete and remains open for
 dev authority/identity preparation, rollout, real provider calls, replacement,
 revocation, failure recovery and seed-free restart evidence. The fixed total is
 still **26/40 = 65%, with 14 checkpoints open**. Staging was untouched.
+
+### OpenBao TLS Root prepared and staged receipt path implemented (2026-09-11)
+
+The independent dev `openbao_tls` Root is ready with public issuer ID
+`5ff9a3a4-5fde-4590-8841-58a1cf10843f`. The guarded preparation changed no
+OpenBao workload, listener, seal or provider credentials. Video Cloud `89604d6`
+adds pre-cutover bundle verification and receipt delivery inside both actual
+provider processes, using their current managed Service identities and the
+OpenBao CA pool they actually load. It also separates controller-origin CRL
+traffic from the certificate-issuer-origin renewal transport.
+
+T9 is approximately **50%** complete. The fixed total remains **26/40 = 65%**
+with the same 14 open checkpoints. The Root is not active and no host/client
+cutover has occurred yet. Staging was untouched.

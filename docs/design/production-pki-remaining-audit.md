@@ -640,3 +640,7 @@ Historical evidence is maintained in the [implementation ledger](production-pki-
 ### Governed OpenBao transport owner implementation (2026-09-11)
 
 Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#governed-openbao-transport-owner-implementation-2026-09-11). T9 remains open for the dev authority, rollout and live lifecycle evidence.
+
+### OpenBao TLS Root and staged provider trust (2026-09-11)
+
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#openbao-tls-root-and-staged-provider-trust-2026-09-11). The independent dev Root is ready; T9 remains open for actual-client installation, activation and host lifecycle qualification.

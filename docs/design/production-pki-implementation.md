@@ -5657,3 +5657,25 @@ until the independent dev authority, managed host/client state, actual controlle
 and certificate-issuer provider calls, replacement/revocation, failure recovery
 and seed-free restart are qualified. Fixed completion remains **26/40 = 65%**;
 active T9 implementation is approximately **35%**. Staging was untouched.
+
+### OpenBao TLS Root and staged provider trust (2026-09-11)
+
+The dev-only authority runner created exactly one independent `openbao_tls` Root
+and left it `ready` behind the actual-client activation gate. Its public issuer
+ID is `5ff9a3a4-5fde-4590-8841-58a1cf10843f` and Root fingerprint is
+`ac077a9611970f1000249f386f6986eff306222b40a09fee7f0b53143560c462`.
+The existing OpenBao StatefulSet, listener certificate, seal, provider login and
+provider CA keys were unchanged.
+
+Video Cloud `89604d6` lets controller and certificate-issuer load that reviewed
+Root into the same `OPENBAO_CACERT` pool used by their provider clients and
+acknowledge it using their managed Service identities before host cutover. This
+staged path does not enable registry-bound provider traffic. It also corrects the
+CRL transport to create a dedicated controller-origin connection from the managed
+key instead of reusing the certificate-issuer-origin renewal client.
+
+The full Go suite, focused race tests and vet pass; the maintained dev runner has
+88 passing tests. T9 is approximately **50%** complete and remains open for
+actual-client installation, Root/intermediate activation, managed host cutover,
+replacement/revocation, failure recovery and seed-free restart. Fixed completion
+remains **26/40 = 65%**. Staging was untouched.
