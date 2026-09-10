@@ -127,6 +127,70 @@ class MQTTHostTests(unittest.TestCase):
                                     'MQTT client bundle source changed'):
             runner.switch_client_bundle('video-cloud-api', 'another')
 
+    def test_host_settings_separate_mqtt_and_service_roots(self):
+        service = {'certificate_fingerprint_sha256': 'd' * 64}
+        settings = m.mqtt_host_settings(self.root(), service)
+        self.assertEqual(settings['EMQX_PKI_HOST_ROOT_SHA256'], 'a' * 64)
+        self.assertEqual(
+            settings['EMQX_PKI_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256'],
+            'd' * 64)
+        self.assertEqual(settings['EMQX_PKI_HOST_DNS_NAMES'], m.MQTT_HOST)
+        self.assertEqual(settings['EMQX_PKI_HOST_IDENTITY_STATE'],
+                         m.MQTT_HOST_STATE)
+        self.assertNotEqual(settings['EMQX_PKI_HOST_RENEWAL_CLIENT_KEY'],
+                            settings['EMQX_PKI_SEED_KEY'])
+
+    def test_managed_runtime_drops_all_tls_private_material(self):
+        source = {name: name + '-value' for name in
+                  m.MQTT_RUNTIME_FIELDS | {
+                      'tls.key', 'tls.crt', 'server-ca.crt',
+                      'callback.key', 'callback.crt', 'callback-ca.crt'}}
+        result = m.managed_runtime_data(source)
+        self.assertEqual(set(result), m.MQTT_RUNTIME_FIELDS)
+        self.assertFalse(set(result) & {
+            'tls.key', 'tls.crt', 'server-ca.crt',
+            'callback.key', 'callback.crt', 'callback-ca.crt'})
+        with self.assertRaisesRegex(RuntimeError,
+                                    'existing MQTT runtime fields incomplete'):
+            m.managed_runtime_data({'cookie': 'only'})
+
+    def test_managed_broker_template_preserves_worker_and_owns_host_state(self):
+        owner = {'spec': {'template': {'metadata': {}, 'spec': {
+            'securityContext': {'fsGroup': 1000},
+            'containers': [{
+                'name': 'mqtt', 'image': 'static',
+                'env': [{'name': 'EMQX_NODE__COOKIE', 'valueFrom': {
+                    'secretKeyRef': {'name': 'mqtt-pki-runtime',
+                                     'key': 'cookie'}}}],
+                'volumeMounts': [{'name': 'runtime',
+                                  'mountPath': '/run/mqtt-pki'}]}, {
+                'name': 'pkibroker', 'image': 'worker',
+                'env': [{'name': 'KEEP', 'value': 'yes'}],
+                'volumeMounts': []}],
+            'volumes': [
+                {'name': 'runtime', 'secret': {
+                    'secretName': 'mqtt-pki-runtime'}},
+                {'name': 'pki-service-root', 'configMap': {
+                    'name': 'pki-service-host-root'}}]}}}}
+        settings = {'EMQX_PKI_HOST_NAME': m.MQTT_HOST}
+        result = m.managed_mqtt_template(
+            owner, 'managed-image', settings, 'phase')
+        pod = result['spec']
+        containers = {item['name']: item for item in pod['containers']}
+        self.assertEqual(containers['mqtt']['image'], 'managed-image')
+        self.assertEqual(containers['pkibroker'],
+                         owner['spec']['template']['spec']['containers'][1])
+        refs = [item.get('valueFrom', {}).get('secretKeyRef', {}).get('name')
+                for item in containers['mqtt']['env']]
+        self.assertIn(m.MQTT_RUNTIME_SECRET, refs)
+        volumes = {item['name']: item for item in pod['volumes']}
+        self.assertEqual(volumes['mqtt-host-state']['persistentVolumeClaim']
+                         ['claimName'], m.MQTT_HOST_PVC)
+        self.assertEqual(volumes['runtime']['secret']['secretName'],
+                         m.MQTT_RUNTIME_SECRET)
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['image'], 'static')
+
 
 if __name__ == '__main__':
     unittest.main()

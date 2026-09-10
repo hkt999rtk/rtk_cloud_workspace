@@ -255,6 +255,14 @@ python3 scripts/pki-service-dev/mqtt_host.py \
   --phase configure-certissuer --authority MQTT_ROOT_EVIDENCE \
   --intermediate INTERMEDIATE_EVIDENCE --image VIDEO_CLOUD_IMAGE_DIGEST \
   --output MQTT_ISSUER_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase prepare-host --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --image EMQX_HOST_IMAGE_DIGEST \
+  --output MQTT_HOST_PREPARED_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase adopt-host --authority MQTT_ROOT_EVIDENCE \
+  --intermediate INTERMEDIATE_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE \
+  --image EMQX_HOST_IMAGE_DIGEST --output MQTT_HOST_ADOPTION_EVIDENCE
 ```
 
 If intermediate activation succeeded but a client failed before recording CRL
@@ -271,5 +279,9 @@ Service channel. Intermediate activation also installs signed Root/intermediate
 CRLs into one retained state volume per client and waits for exact CRL receipts.
 The certissuer phase grants only the generated MQTT server signer policy and
 enables only the named MQTT route for the `emqx-pki` caller. No MQTT server
-private key is created by these phases, and the runner refuses any environment
-other than the selected dev cluster.
+private key is created until `prepare-host`; that phase creates it inside the
+dedicated retained host PVC and exports only its CSR. `adopt-host` switches the
+dedicated broker to the managed foreground supervisor, verifies the exact served
+certificate, removes the seed after a successful state import, and proves a
+seed-free restart. The live broker no longer mounts the legacy static TLS Secret.
+The runner refuses any environment other than the selected dev cluster.
