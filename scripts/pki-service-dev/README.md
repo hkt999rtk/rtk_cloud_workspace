@@ -313,6 +313,18 @@ python3 scripts/pki-service-dev/openbao_authority.py \
   --output OPENBAO_TLS_ROOT_EVIDENCE
 ```
 
+Install that exact ready Root into both real provider processes without changing
+the current OpenBao listener, then activate it and publish its initial CRL:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase install-root-consumers --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST --output OPENBAO_ROOT_CONSUMER_EVIDENCE
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase activate-root --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --output OPENBAO_ROOT_ACTIVATION_EVIDENCE
+```
+
 If the command reports failure after writing `root-ready.json`, keep that output
 and pass it to `--reconcile`; the runner accepts only the same registered ready
 Root and never creates another key or operation.
