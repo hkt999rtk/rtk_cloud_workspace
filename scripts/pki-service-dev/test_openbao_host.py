@@ -159,9 +159,9 @@ class OpenBaoHostTests(unittest.TestCase):
         manifest = o.provider_crl_manifest(issuers)
         self.assertEqual([item['issuer'] for item in manifest], issuers)
         self.assertEqual([item['state_path'] for item in manifest], [
-            '/var/lib/pki-host/openbao-crls/root.json',
-            '/var/lib/pki-host/openbao-crls/v1.json',
-            '/var/lib/pki-host/openbao-crls/v2.json'])
+            '/var/lib/pki-host/identity/openbao-tls-crl-root.json',
+            '/var/lib/pki-host/identity/openbao-tls-crl-v1.json',
+            '/var/lib/pki-host/identity/openbao-tls-crl-v2.json'])
 
     def test_authority_loader_does_not_shadow_acceptance_root_state(self):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)

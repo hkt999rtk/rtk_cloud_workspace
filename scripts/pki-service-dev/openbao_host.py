@@ -200,7 +200,7 @@ def certissuer_route_template(owner, image, root):
 
 def provider_crl_manifest(authorities):
     return [{'issuer': issuer,
-             'state_path': '/var/lib/pki-host/openbao-crls/' +
+             'state_path': '/var/lib/pki-host/identity/openbao-tls-crl-' +
                            issuer['issuer_id'] + '.json'}
             for issuer in authorities]
 
@@ -1197,7 +1197,8 @@ class OpenBaoHostRun(h.ServiceRun):
                        self.api('/issuers/' + predecessor['issuer_id']),
                        issuer]
         manifest = provider_crl_manifest(authorities)
-        manifest_name = 'pki-openbao-tls-crls-' + issuer['issuer_id'][:8]
+        manifest_name = ('pki-openbao-tls-crls-identity-' +
+                         issuer['issuer_id'][:8])
         raw = self.kube(['-n', NS, 'get', 'configmap', manifest_name,
                          '--ignore-not-found', '-o', 'json'])
         expected = {'crls.json': json.dumps(manifest)}
