@@ -1250,11 +1250,135 @@ class OpenBaoHostRun(h.ServiceRun):
             'crl_consumers': receipts,
             'managed_service_identities': True,
             'static_management_credentials': False,
-            'private_crl_state': '/var/lib/pki-host/openbao-crls',
+            'private_crl_state': (
+                '/var/lib/pki-host/identity/openbao-tls-crl-<issuer-id>.json'),
             'image': self.args.image,
             'v1_finalized': True,
             'v1_certissuer_signer_removed': True,
             'v2_successor_sha256': current['state']['fingerprint']})
+
+    def exercise_provider_clients(self):
+        """Renew the active v2 host, then publish its replaced leaf's CRL.
+
+        The renewal enters Cert Issuer through its normal OpenBao provider
+        transport.  CRL publication enters PKI Controller through its normal
+        provider transport.  Both are deliberately limited to the current
+        OpenBao listener lifecycle, so no unrelated service identity changes.
+        """
+        _, _, issuer, _, pod = self.lifecycle_prerequisites()
+        verified = m.read(Path(self.args.provider_verification) / 'report.json')
+        m.require(verified['status'] == 'passed'
+                  and verified['phase'] == 'enable-provider-verification'
+                  and verified['checks'][
+                      'openbao_actual_clients_verify_registry_and_crls'][
+                          'status'] == 'passed',
+                  'successful actual OpenBao client verification required')
+        before = self.current_host({issuer['issuer_id']}, pod)
+        self.save('baseline.json', before)
+        processes = self.kube([
+            '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+            '-c', 'openbao-pki', '--', 'sh', '-ec',
+            "for f in /proc/[0-9]*/comm; do "
+            "[ \"$(cat \"$f\")\" = openbaopkihost ] && "
+            "basename \"$(dirname \"$f\")\"; done"]).splitlines()
+        m.require(len(processes) == 1 and processes[0].isdigit(),
+                  'expected one OpenBao TLS identity owner process')
+        self.save('renewal-intent.json', {
+            'pod_uid': pod['metadata']['uid'],
+            'previous_fingerprint': before['state']['fingerprint'],
+            'target_issuer_id': issuer['issuer_id'],
+            'at': m.stamp(dt.datetime.now(dt.timezone.utc))})
+        self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+                   '-c', 'openbao-pki', '--', 'kill', '-HUP', processes[0]])
+        deadline = time.monotonic() + 180
+        while True:
+            try:
+                state = self.inspect_host_state(pod)
+            except RuntimeError:
+                state = before['state']
+            if (not state['pending'] and state['fingerprint'] !=
+                    before['state']['fingerprint']):
+                break
+            m.require(time.monotonic() < deadline,
+                      'OpenBao provider renewal deadline; do not signal again')
+            time.sleep(2)
+        rows = self.server_rows()
+        old_ids = {row['request_id'] for row in before['rows']}
+        added = [row for row in rows if row['request_id'] not in old_ids]
+        m.require(len(rows) == len(before['rows']) + 1 and len(added) == 1
+                  and added[0]['fingerprint'] == state['fingerprint']
+                  and added[0]['issuer_id'] == issuer['issuer_id']
+                  and added[0]['caller'] == 'service:openbao'
+                  and added[0]['status'] == 'succeeded'
+                  and added[0]['revoked_at'] is None
+                  and state['public_key_sha256'] !=
+                  before['state']['public_key_sha256'],
+                  'OpenBao provider renewal registry evidence differs')
+        renewed = self.current_host({issuer['issuer_id']}, pod)
+        self.save('renewed.json', renewed)
+        self.openbao_peer('openbao-provider-renewed', renewed['row'])
+        target = before['row']
+        previous = self.api('/issuers/' + issuer['issuer_id'] + '/crl')
+        self.save('target.json', target)
+        self.save('previous-crl.json', previous)
+        body = {'certificate_sha256': target['fingerprint'],
+                'reason': 'Replaced by provider-client exercise ' +
+                added[0]['request_id']}
+        self.save('revocation-request.json', body)
+        revoked = self.api('/issuers/' + issuer['issuer_id'] +
+                           '/revoke-server', body)
+        m.require(self.api('/issuers/' + issuer['issuer_id'] +
+                           '/revoke-server', body) == revoked,
+                  'OpenBao provider revocation replay changed')
+        denied = [row for row in self.server_rows()
+                  if row['fingerprint'] == target['fingerprint']]
+        m.require(len(denied) == 1 and denied[0]['revoked_at'] is not None,
+                  'replaced OpenBao v2 leaf is not registry-denied')
+        published = self.api('/issuers/' + issuer['issuer_id'] +
+                             '/publish-server-revocation', {
+                                 'certificate_sha256': target['fingerprint']})
+        m.require(published['crl_sha256'] != previous['crl_sha256']
+                  and self.api('/issuers/' + issuer['issuer_id'] +
+                               '/publish-server-revocation', {
+                                   'certificate_sha256': target['fingerprint']
+                               }) == published,
+                  'OpenBao provider CRL publication replay changed')
+        self.save('published-crl.json', published)
+        receipts = self.wait_receipts(
+            issuer['issuer_id'], published['crl_sha256'], CONSUMERS,
+            kind='crl')
+        entries = json.loads(m.command(
+            [self.probe, 'crl'], published['crl_pem'])) or []
+        self.save('target.pem', target['certificate_pem'])
+        serial = m.command([
+            self.openssl, 'x509', '-in', self.output / 'target.pem',
+            '-noout', '-serial']).strip().split('=')[1]
+        m.require(any(int(item['serial_hex'], 16) == int(serial, 16)
+                      for item in entries),
+                  'published OpenBao v2 CRL omits replaced leaf')
+        finalized = self.api('/issuers/' + issuer['issuer_id'] +
+                             '/finalize-server-revocation', {
+                                 'certificate_sha256': target['fingerprint']})
+        m.require(finalized['crl_sha256'] == published['crl_sha256']
+                  and self.api('/issuers/' + issuer['issuer_id'] +
+                               '/finalize-server-revocation', {
+                                   'certificate_sha256': target['fingerprint']
+                               }) == finalized,
+                  'OpenBao provider revocation finalization replay changed')
+        self.save('finalized.json', finalized)
+        self.current_host({issuer['issuer_id']})
+        self.check('openbao_actual_provider_operations', {
+            'certissuer_renewal': 'passed',
+            'controller_revocation_and_publication': 'passed',
+            'predecessor_fingerprint': target['fingerprint'],
+            'successor_fingerprint': renewed['state']['fingerprint'],
+            'crl_sha256': published['crl_sha256'],
+            'consumers': receipts,
+            'registry_denial': True,
+            'crl_contains_predecessor': True,
+            'finalization_replay_identical': True,
+            'static_management_credentials': False,
+            'private_key_exported': False})
 
     def recover_bootstrap_resources(self, request_id, image, bootstrap,
                                     database):
@@ -1765,7 +1889,8 @@ def main():
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'install-intermediate-consumers', 'activate-intermediate',
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
-        'renew-host', 'retire-host', 'enable-provider-verification'])
+        'renew-host', 'retire-host', 'enable-provider-verification',
+        'exercise-provider-clients'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -1778,6 +1903,7 @@ def main():
     parser.add_argument('--signer')
     parser.add_argument('--renewal')
     parser.add_argument('--retirement')
+    parser.add_argument('--provider-verification')
     parser.add_argument('--failed')
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--output', required=True)
@@ -1809,6 +1935,10 @@ def main():
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.retirement and args.image),
               'server-only issuer and failed retirement evidence required')
+    m.require(args.phase != 'exercise-provider-clients'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer and args.provider_verification),
+              'server-only issuer and successful provider evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -1831,7 +1961,9 @@ def main():
          'renew-host': runner.renew_host,
          'retire-host': runner.retire_host_predecessor,
          'enable-provider-verification':
-             runner.enable_provider_verification}[args.phase]()
+             runner.enable_provider_verification,
+         'exercise-provider-clients':
+             runner.exercise_provider_clients}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

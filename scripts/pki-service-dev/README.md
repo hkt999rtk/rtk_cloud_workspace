@@ -513,6 +513,26 @@ each workload's existing retained host-state PVC. Each workload's managed
 Service identity performs CRL fetch and acknowledgment; static management keys
 are forbidden.
 
+Exercise the now-verified clients through the normal listener lifecycle before
+starting failure and recovery tests:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase exercise-provider-clients --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
+  --provider-verification OPENBAO_PROVIDER_VERIFICATION_EVIDENCE \
+  --output OPENBAO_PROVIDER_OPERATION_EVIDENCE
+```
+
+It sends one listener renewal through Cert Issuer, then asks PKI Controller to
+revoke and publish the replaced v2 leaf. The phase accepts exactly one successor,
+requires both retained CRL receipts, verifies the denied leaf is in the CRL and
+checks replay-safe finalization. It does not export private keys or alter any
+unrelated Service identity.
+
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run
