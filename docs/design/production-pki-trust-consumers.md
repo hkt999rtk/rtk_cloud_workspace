@@ -80,7 +80,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
-**Group 3 — transports and hosts (9/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
+**Group 3 — transports and hosts (10/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
 [host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
 linked above, the [transport inventory](production-pki-domain-host-inventory.md#current-entry-points)
 and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-checklist-four-items).
@@ -94,7 +94,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, Account Manager client/listener renewal, retirement, held-connection cutoff, CRL fail-closed recovery and stale dev-record reconciliation have passed. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [x] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated MQTT hierarchy, managed EMQX host, actual API/log-ingester clients, renewal, predecessor retirement, retained-state restart and fail-closed trust recovery passed in dev. Evidence: [governed MQTT checkpoint](#governed-mqtt-host-and-actual-clients-qualified-in-dev-2026-09-10).
 - [x] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence. Host replacement/restart, both real provider clients, retained-request recovery, predecessor revocation/CRL receipts and fresh Device/App canaries passed. Evidence: [T9 completion](#openbao-host-and-provider-recovery-qualified-2026-09-12).
-- [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
+- [x] T10: Record independent public HTTPS endpoint and renewal evidence. Evidence: [public HTTPS renewal](#public-https-renewal-qualified-in-dev-2026-09-12).
 - [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
 
 **Group 4 — root-policy adoption (0/4).** Evidence boundary: the audited inventory
@@ -2216,3 +2216,34 @@ Current checkpoint completion is **27/40 = 67.5%**; **13 remain**:
 T10, T11, M11, R1–R4, A4–A6 and V3–V5. The next checkpoint is T10, public HTTPS
 certificate/renewal evidence. The four broad milestones remain unchanged.
 Staging and user-login/MFA behavior were untouched.
+
+### Public HTTPS renewal qualified in dev (2026-09-12)
+
+T10 is complete. The workspace-owned `lke-renew-public-https` command performed
+one guarded ACME DNS-01 renewal for the ten Dev public names. It validates the
+successor key pair and all configured SANs before applying the existing shared
+Ingress Secret, re-reads that Secret, and records only public certificate metadata.
+The command does not use the private Device/App issuers and does not export the
+public HTTPS private key.
+
+The `video-cloud-dev-ingress/video-cloud-staging-public-tls` Secret advanced from
+resource version `5310` to `970439`. The old Let's Encrypt `YE2` leaf had serial
+`543E25EC1E3E4DBED45C6E5C4B1CC550798`, fingerprint
+`7f09cb30a058b5cc816df027bce445ba5351600f9f189a4be18895962dade7e4`, and expiry
+`2026-12-01T12:24:41Z`. The installed successor has serial
+`690180A6BFC6F028DCA4CBE0530DF5CD55D`, fingerprint
+`660ba4ff6fb32c1d306df4ec9006091f06298fa1d4fe1d010b33413ab929375d`, and expiry
+`2026-12-10T16:01:21Z`. It covers all ten configured public names and is served
+by each of the three existing Ingress objects.
+
+System-trust HTTPS checks returned `ssl_verify_result=0` for every configured
+name. The Device origin still returned `400` without a client certificate, while
+Account Manager and Frontend returned `200` and Admin redirected to its login
+flow (`302`). The Certissuer public route also presented the successor with valid
+system trust, but its application backend returned `502`; this is a backend-route
+condition, not a public TLS issuance, Secret-binding or client-certificate-policy
+failure, and remains outside T10's certificate renewal boundary. The public-only
+receipt is retained at `~/.config/rtk_cloud/dev/pki/t10-public-https-20260912/renewal.json`.
+
+Current checkpoint completion is **28/40 = 70%**; **12 remain**: T11, M11,
+R1–R4, A4–A6 and V3–V5. Staging and user-login/MFA behavior were untouched.

@@ -75,6 +75,7 @@ var commands = map[string]commandSpec{
 	"list-brandname-clouds":            {run: runListBrandnameClouds},
 	"logs-check":                       {run: runLogsCheck},
 	"lke-build-images":                 {run: runLKEBuildImages},
+	"lke-renew-public-https":           {run: runLKERenewPublicHTTPS},
 	"lke-capacity-run-summary":         {run: runLKECapacityRunSummary},
 	"lke-resolve-images":               {run: runLKEResolveImages},
 	"migrate-env":                      {run: runMigrateEnv},
@@ -201,7 +202,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "pki-dev-prepare" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "pki-dev-prepare" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" || args[0] == "lke-renew-public-https" {
 		return args, nil
 	}
 	var environment, workspace string

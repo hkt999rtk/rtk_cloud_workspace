@@ -5737,3 +5737,22 @@ remains pending under the existing V5 cleanup checkpoint.
 The current progress record is **27/40 = 67.5%, 13 checkpoints remaining**;
 T9 is **100%**, with T10 next. Local PostgreSQL-backed TLS/Service-client tests
 and 116 dev runner tests passed. No PR was created.
+
+### T10 public HTTPS renewal and installation completed (2026-09-12)
+
+The workspace now exposes `lke-renew-public-https` as the explicit owner action
+for public certificate renewal. It requires the exact stack confirmation and a
+new evidence directory, uses the existing ACME DNS-01/certbot path, validates the
+successor key pair and every configured public SAN, then applies only the shared
+TLS Secret. It confirms the installed Secret contains the issued successor and
+that its resource version changed before updating the canonical cache. The
+receipt contains public certificate and Ingress metadata only.
+
+The completed Dev renewal replaced the Let's Encrypt leaf in
+`video-cloud-dev-ingress/video-cloud-staging-public-tls` from resource version
+`5310` to `970439`; the served fingerprint changed from
+`7f09cb30a058b5cc816df027bce445ba5351600f9f189a4be18895962dade7e4` to
+`660ba4ff6fb32c1d306df4ec9006091f06298fa1d4fe1d010b33413ab929375d`. All ten
+public names passed system-trust HTTPS verification after installation. The
+Device origin continues to require its independent client certificate. The
+operation did not use a private PKI issuer, alter staging, or change login/MFA.

@@ -862,6 +862,14 @@ func lkePublicHTTPSHosts(routes []lkePublicHTTPSRoute) []string {
 }
 
 func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string) (string, string, error) {
+	return lkeIssuePublicHTTPSCertificateWithRenewal(paths, env, opts, hosts, false)
+}
+
+func lkeIssueForcedPublicHTTPSCertificate(paths provisionPaths, env map[string]string, hosts []string) (string, string, error) {
+	return lkeIssuePublicHTTPSCertificateWithRenewal(paths, env, provisionOptions{}, hosts, true)
+}
+
+func lkeIssuePublicHTTPSCertificateWithRenewal(paths provisionPaths, env map[string]string, opts provisionOptions, hosts []string, forceRenewal bool) (string, string, error) {
 	if len(hosts) == 0 {
 		return "", "", errors.New("public HTTPS certificate requires at least one hostname")
 	}
@@ -893,7 +901,7 @@ func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string,
 	if err := os.WriteFile(cleanupHook, []byte(certbotDNSHookScript(hookBinary, paths.EnvRoot, paths.OperatorEnv, "cleanup")), 0o700); err != nil {
 		return "", "", err
 	}
-	configDir := filepath.Join(paths.EnvRoot, "state", "acme")
+	configDir := sensitiveEnvironmentPath(paths, "public-https", "acme")
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		return "", "", err
 	}
@@ -909,6 +917,9 @@ func lkeIssuePublicHTTPSCertificate(paths provisionPaths, env map[string]string,
 		"--config-dir", configDir,
 		"--work-dir", filepath.Join(workDir, "work"),
 		"--logs-dir", filepath.Join(workDir, "logs"),
+	}
+	if forceRenewal {
+		args = append(args, "--force-renewal")
 	}
 	if server := os.Getenv("LKE_PUBLIC_HTTPS_ACME_SERVER"); server != "" {
 		args = append(args, "--server", server)

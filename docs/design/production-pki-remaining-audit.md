@@ -656,3 +656,14 @@ See the [current T9 acceptance evidence](production-pki-trust-consumers.md#openb
 The actual OpenBao host/provider lifecycle, retained-request recovery and fresh
 Device/App checks now pass. This supersedes the earlier open-T9 notes above;
 T10 and T11 remain open. The trust-consumer table remains the progress authority.
+
+### T10 completion (2026-09-12)
+
+The Dev public HTTPS certificate was renewed through the existing workspace
+ACME DNS-01 owner and installed in the shared Ingress TLS Secret. The saved
+public-only receipt proves the old/new leaf fingerprints, serials, validity,
+all ten public SANs, Secret resource-version transition and installed successor.
+Normal system-trust checks passed for every public hostname; the Device origin
+still rejects requests without its separate client certificate. T10 is closed;
+the trust-consumer ledger records the remaining 12 checkpoints and the separate
+Certissuer public-route backend `502` observation.
