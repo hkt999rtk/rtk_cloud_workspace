@@ -5756,3 +5756,19 @@ The completed Dev renewal replaced the Let's Encrypt leaf in
 public names passed system-trust HTTPS verification after installation. The
 Device origin continues to require its independent client certificate. The
 operation did not use a private PKI issuer, alter staging, or change login/MFA.
+
+### T11 held-session matrix completed (2026-09-12)
+
+The Dev Account Manager lifecycle now selects the active Service issuer for new
+leaves while retiring each predecessor through the issuer that originally signed
+it. The runner synchronizes stale Factory/API Service-CRL manifests from the
+canonical manifest with workload-specific private state paths, refreshes only
+changed Dev consumers, and reinstalls its ephemeral probe plus listener
+port-forward after a Recreate restart.
+
+The final lifecycle report records managed client and listener renewal, a held
+predecessor connection cutoff within 7.34 seconds, fresh predecessor denial,
+four consumer CRL receipts, successor admission, and seed-free restart
+persistence. It keeps private keys inside the workload state and records only
+public identity fingerprints in evidence. T11 is closed at **29/40 = 72.5%**;
+M11 is next.

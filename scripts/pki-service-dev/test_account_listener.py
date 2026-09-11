@@ -7,6 +7,10 @@ spec = importlib.util.spec_from_file_location('account_listener', Path(__file__)
 listener = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(listener)
 
+life_spec = importlib.util.spec_from_file_location('account_listener_lifecycle', Path(__file__).with_name('account_listener_lifecycle.py'))
+lifecycle = importlib.util.module_from_spec(life_spec)
+life_spec.loader.exec_module(lifecycle)
+
 
 class AccountListenerTests(unittest.TestCase):
     def owner(self):
@@ -39,6 +43,64 @@ class AccountListenerTests(unittest.TestCase):
         issuer['status'] = 'ready'
         with self.assertRaises(RuntimeError):
             listener.account_crls([{'issuer': issuer}])
+
+    def test_lifecycle_selects_the_current_service_issuer_not_a_historical_version(self):
+        active = {'environment': 'dev', 'trust_domain': 'service', 'kind': 'intermediate', 'status': 'active',
+                  'issuer_id': 'v5', 'service_client_ids': ['service:account-manager'],
+                  'server_dns_names': [listener.ACCOUNT_DNS]}
+        retiring = dict(active, issuer_id='v3', status='retiring')
+        self.assertEqual(lifecycle.current_service_issuer([retiring, active]), active)
+        with self.assertRaisesRegex(RuntimeError, 'one active Service intermediate'):
+            lifecycle.current_service_issuer([active, dict(active, issuer_id='v6')])
+        with self.assertRaisesRegex(RuntimeError, 'does not authorize Account Manager'):
+            lifecycle.current_service_issuer([dict(active, service_client_ids=[])])
+
+    def test_consumer_crl_entries_retain_all_service_issuers_with_consumer_state_paths(self):
+        issuer = {'issuer_id': 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12,
+                  'environment': 'dev', 'trust_domain': 'service', 'status': 'retiring'}
+        result = lifecycle.consumer_crl_entries([{'issuer': issuer}], '/state/crl-{issuer_id}.json')
+        self.assertEqual(result, [{'issuer': issuer, 'state_path': '/state/crl-' + issuer['issuer_id'] + '.json'}])
+        with self.assertRaisesRegex(RuntimeError, 'invalid issuer'):
+            lifecycle.consumer_crl_entries([{'issuer': dict(issuer, trust_domain='device')}], '/state/{issuer_id}')
+
+    def test_lifecycle_revokes_a_predecessor_through_its_own_issuer(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        calls = []
+
+        def api(path, body=None, role='requester'):
+            calls.append((path, body, role))
+            if path.endswith('/crl'):
+                return {'crl_sha256': 'old-crl'}
+            return {'crl_sha256': 'new-crl'}
+
+        runner.api = api
+        runner.save = lambda *_: None
+        runner.wait_receipts = lambda *args: calls.append(('wait', args, None))
+        runner.sync_service_crl_consumers = lambda issuer_id: calls.append(('sync', issuer_id, None))
+        predecessor = {'fingerprint': 'a' * 64, 'issuer_id': 'retiring-service-v3', 'revoked_at': None}
+        runner.revoke_and_publish('client', [predecessor], {}, predecessor)
+        paths = [call[0] for call in calls if call[0] not in ('wait', 'sync')]
+        self.assertEqual(paths, [
+            '/issuers/retiring-service-v3/crl',
+            '/issuers/retiring-service-v3/revoke-service-client',
+            '/issuers/retiring-service-v3/publish-service-client-revocation',
+            '/issuers/retiring-service-v3/finalize-service-client-revocation',
+        ])
+
+    def test_lifecycle_replays_only_publication_for_an_already_revoked_predecessor(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        paths = []
+        runner.api = lambda path, *args, **kwargs: (paths.append(path) or {'crl_sha256': 'crl'})
+        runner.save = lambda *_: None
+        runner.wait_receipts = lambda *_: None
+        runner.sync_service_crl_consumers = lambda *_: None
+        predecessor = {'fingerprint': 'b' * 64, 'issuer_id': 'retiring-service-v3', 'revoked_at': 'already'}
+        runner.revoke_and_publish('client', [predecessor], {}, predecessor)
+        self.assertEqual(paths, [
+            '/issuers/retiring-service-v3/crl',
+            '/issuers/retiring-service-v3/publish-service-client-revocation',
+            '/issuers/retiring-service-v3/finalize-service-client-revocation',
+        ])
 
 
 if __name__ == '__main__':

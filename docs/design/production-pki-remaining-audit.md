@@ -667,3 +667,13 @@ Normal system-trust checks passed for every public hostname; the Device origin
 still rejects requests without its separate client certificate. T10 is closed;
 the trust-consumer ledger records the remaining 12 checkpoints and the separate
 Certissuer public-route backend `502` observation.
+
+### T11 completion (2026-09-12)
+
+The final Dev Account Manager held-session lifecycle passed. It proved selective
+retirement of the predecessor client and listener through their original Service
+issuer, old-session closure/fresh denial, all required CRL receipts, successor
+survival, and a seed-free restart. Factory and API stale Service-CRL manifest
+copies were synchronized from the canonical manifest without changing their
+private-state paths. T11 is closed; **11 checkpoints remain**: M11, R1–R4,
+A4–A6 and V3–V5. No staging or human-login/MFA change was made.

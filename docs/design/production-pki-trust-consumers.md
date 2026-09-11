@@ -95,7 +95,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated MQTT hierarchy, managed EMQX host, actual API/log-ingester clients, renewal, predecessor retirement, retained-state restart and fail-closed trust recovery passed in dev. Evidence: [governed MQTT checkpoint](#governed-mqtt-host-and-actual-clients-qualified-in-dev-2026-09-10).
 - [x] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence. Host replacement/restart, both real provider clients, retained-request recovery, predecessor revocation/CRL receipts and fresh Device/App canaries passed. Evidence: [T9 completion](#openbao-host-and-provider-recovery-qualified-2026-09-12).
 - [x] T10: Record independent public HTTPS endpoint and renewal evidence. Evidence: [public HTTPS renewal](#public-https-renewal-qualified-in-dev-2026-09-12).
-- [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
+- [x] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts. The final Account Manager client/listener lifecycle closes the remaining row: held predecessor closure and fresh denial, v5 consumer CRL synchronization/receipts, successor acceptance and bootstrap-free restart all passed in Dev. See [T11 completion](#t11-held-session-and-trust-outage-matrix-qualified-2026-09-12).
 
 **Group 4 — root-policy adoption (0/4).** Evidence boundary: the audited inventory
 and fixed group definition below. Device root-policy evidence belongs to the
@@ -2247,3 +2247,28 @@ receipt is retained at `~/.config/rtk_cloud/dev/pki/t10-public-https-20260912/re
 
 Current checkpoint completion is **28/40 = 70%**; **12 remain**: T11, M11,
 R1–R4, A4–A6 and V3–V5. Staging and user-login/MFA behavior were untouched.
+
+### T11 held-session and trust-outage matrix qualified (2026-09-12)
+
+T11 is complete in Dev. The final Account Manager report at
+`~/.config/rtk_cloud/dev/pki/t11-held-account-manager-passed-20260912/report.json`
+rotated both the managed `service:account-manager` client and its internal
+listener. It closed the held predecessor client connection within 7.34 seconds,
+denied a fresh connection with the retired fingerprint, accepted both successors,
+finalized the client and listener revocations through Service v5, and preserved
+the successors through a seed-free Recreate restart. The report records all four
+required Service CRL consumer receipts.
+
+The run found stale Factory and API copies of the Service CRL manifest that
+omitted v5. The lifecycle helper now derives those consumer manifests from the
+canonical Service manifest while retaining each workload's private CRL-state
+path, then refreshes only the affected Dev consumers. The clean final run
+confirmed the steady-state path without another manifest change.
+
+The Factory, API-controller, MQTT and OpenBao rows reuse their already-passed
+live held-session or outage-recovery evidence. T11 does not close root-policy
+work (R1–R4), App/relay work (A4–A6), or backup/recovery work (V3–V5). Staging
+and human-login/MFA behavior were untouched.
+
+Current checkpoint completion is **29/40 = 72.5%**; **11 remain**: M11, R1–R4,
+A4–A6 and V3–V5.

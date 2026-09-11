@@ -22,6 +22,31 @@ HOST_STATE = a.STATE
 SUBJECT = 'service:account-manager'
 
 
+def current_service_issuer(items):
+    candidates = [item for item in items
+                  if item['environment'] == 'dev' and item['trust_domain'] == 'service'
+                  and item['kind'] == 'intermediate' and item['status'] == 'active']
+    m.require(len(candidates) == 1, 'one active Service intermediate is required')
+    issuer = candidates[0]
+    m.require(SUBJECT in issuer['service_client_ids'] and a.ACCOUNT_DNS in issuer['server_dns_names'],
+              'active Service issuer does not authorize Account Manager')
+    return issuer
+
+
+def consumer_crl_entries(entries, path):
+    result = []
+    for entry in entries:
+        issuer = entry.get('issuer', {})
+        issuer_id = issuer.get('issuer_id', '')
+        m.require(issuer.get('environment') == 'dev' and issuer.get('trust_domain') == 'service'
+                  and issuer.get('status') in ('active', 'retiring')
+                  and m.re.fullmatch('[0-9a-f-]{36}', issuer_id),
+                  'canonical Service CRL manifest contains an invalid issuer')
+        result.append({'issuer': issuer, 'state_path': path.format(issuer_id=issuer_id)})
+    m.require(result, 'canonical Service CRL manifest is empty')
+    return result
+
+
 def replacement(before, after, rows, issuer, kind):
     m.require(after['subject'] == before['subject'] and after['root_sha256'] == before['root_sha256']
               and not after['pending'] and before['fingerprint'] != after['fingerprint']
@@ -70,6 +95,21 @@ class AccountListenerLifecycle(a.ListenerRun):
                        "ORDER BY issued_at,request_id) t;")
         return [row for row in (json.loads(line) for line in raw.splitlines() if line)
                 if row['dns_names'] == [a.ACCOUNT_DNS]]
+
+    def v3(self):
+        # The listener was introduced with Service v3, but it must continue
+        # qualifying against the sole active Service issuer after later
+        # hierarchy rotations.  The activation record remains an audited
+        # lineage prerequisite; live policy is always selected from the
+        # registry rather than its historical version number.
+        source = Path(self.args.activation)
+        m.require(m.read(source / 'report.json')['status'] == 'passed',
+                  'successful Service activation evidence required')
+        page = self.api('/issuers/search', {'limit': 100})
+        issuer = current_service_issuer(page['items'])
+        m.require(self.api('/issuers/' + issuer['issuer_id']) == issuer,
+                  'active Service issuer changed during Account Manager lifecycle preflight')
+        return issuer
 
     def install_probe(self):
         binary = self.output / 'pki-dev-probe-linux'
@@ -121,17 +161,102 @@ class AccountListenerLifecycle(a.ListenerRun):
         peer = json.loads(m.command([self.probe, 'tls-peer', self.output / 'root.pem', a.ACCOUNT_DNS, self.ports['listener'][0]]))
         m.require(peer['peer_sha256'] == host['fingerprint'], 'Account Manager listener does not serve its successor')
 
+    def sync_service_crl_consumers(self, issuer_id):
+        source = self.obj('configmap', 'pki-service-client-crls')
+        entries = json.loads(source['data']['crls.json'])
+        m.require(any(entry['issuer']['issuer_id'] == issuer_id for entry in entries),
+                  'retired issuer is absent from canonical Service CRL manifest')
+        targets = (
+            ('factoryenroll-service-crls', 'crls.json', '/state/identity/crl-{issuer_id}.json'),
+            ('video-cloud-api-pki-trust', 'service-crls.json', '/run/pki-state/service-{issuer_id}-crl.json'),
+        )
+        changed = False
+        for name, key, state_path in targets:
+            before = self.obj('configmap', name)
+            m.require(key in before.get('data', {}), 'Service CRL consumer manifest key is missing: ' + name)
+            desired = json.dumps(consumer_crl_entries(entries, state_path))
+            if before['data'][key] != desired:
+                self.scoped_patch('configmap', before, [
+                    {'op': 'test', 'path': '/data/' + key, 'value': before['data'][key]},
+                    {'op': 'replace', 'path': '/data/' + key, 'value': desired},
+                ])
+                changed = True
+        if changed:
+            for name in ('factoryenroll', 'video-cloud-api-pki'):
+                before = self.obj('deployment', name)
+                m.require(before['spec']['replicas'] == 1 and before.get('status', {}).get('readyReplicas') == 1,
+                          'Service CRL consumer is not ready: ' + name)
+                template = json.loads(json.dumps(before['spec']['template']))
+                template.setdefault('metadata', {}).setdefault('annotations')[
+                    'rtk.cloud/pki-dev-acceptance'] = self.output.name
+                self.scoped_patch('deployment', before, [
+                    {'op': 'test', 'path': '/spec/template', 'value': before['spec']['template']},
+                    {'op': 'replace', 'path': '/spec/template', 'value': template},
+                ])
+                self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name, '--timeout=240s'], timeout=250)
+        self.save('service-crl-consumer-sync.json', {
+            'issuer_id': issuer_id, 'consumer_manifests_changed': changed,
+            'consumers': ['factory-enroll', 'video-cloud-api'],
+        })
+
+    def recover_interrupted_lifecycle(self):
+        source = Path(self.args.recover)
+        failed = m.read(source / 'report.json')
+        m.require(failed['status'] == 'failed' and failed['phase'] == 'lifecycle'
+                  and (('revoke-' in failed.get('failure', '') and 'status 403' in failed['failure'])
+                       or failed.get('failure') == 'consumer receipt deadline'),
+                  'recovery requires the recorded lifecycle interruption')
+        baseline, renewed = m.read(source / 'baseline.json'), m.read(source / 'renewed.json')
+        self.preflight_lifecycle()
+        self.root = self.active_root()
+        self.save('root.pem', self.root['certificate_pem'])
+        self.issuer = self.v3()
+        self.forward('listener', AM_NS, a.SERVICE_NAME, 8443)
+        self.install_probe()
+        client, host = self.inspect(CLIENT_STATE), self.inspect(HOST_STATE)
+        m.require(client == renewed['client'] and host == renewed['listener'],
+                  'Account Manager state changed after the interrupted lifecycle')
+        for rows, before, current, kind in ((self.client_rows(), baseline['client'], client, 'client'),
+                                            (self.server_rows(), baseline['listener'], host, 'listener')):
+            retired = [row for row in rows if row['fingerprint'] == before['fingerprint']]
+            admitted = [row for row in rows if row['fingerprint'] == current['fingerprint'] and row['revoked_at'] is None]
+            m.require(len(retired) == 1 and len(admitted) == 1,
+                      'recorded interrupted Account Manager ' + kind + ' pair no longer matches live registry state')
+        self.revocation_started = dt.datetime.now(dt.timezone.utc)
+        retired_clients = self.revoke_and_publish('client', self.client_rows(), client, baseline['client'])
+        retired_hosts = self.revoke_and_publish('server', self.server_rows(), host, baseline['listener'])
+        self.current_successors(client, host)
+        self.restart_account_manager()
+        # The probe is deliberately ephemeral in the sidecar's filesystem and
+        # is removed by the Recreate restart. Reinstall it before inspecting
+        # the persisted successor state.
+        self.install_probe()
+        self.forward('listener', AM_NS, a.SERVICE_NAME, 8443)
+        m.require(self.inspect(CLIENT_STATE) == client and self.inspect(HOST_STATE) == host,
+                  'Account Manager recovery restart changed successor state')
+        self.current_successors(client, host)
+        self.check('interrupted_account_manager_lifecycle_reconciled', {
+            'source': source.name, 'client_retired': len(retired_clients), 'listener_retired': len(retired_hosts),
+            'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
+
     def revoke_and_publish(self, kind, rows, current, predecessor, held=None):
         action = 'service-client' if kind == 'client' else 'server'
         targets = [row for row in rows if row['fingerprint'] == predecessor['fingerprint']]
         m.require(targets, 'no replaced Account Manager ' + kind + ' leaves to retire')
-        previous = self.api('/issuers/' + self.issuer['issuer_id'] + '/crl')
+        # A renewal can move the Account Manager identity to the current Service
+        # intermediate.  Its predecessor must still be revoked through the
+        # intermediate that issued it; sending an old fingerprint to the new
+        # issuer is correctly denied by the controller.
+        issuer_ids = {row['issuer_id'] for row in targets}
+        m.require(len(issuer_ids) == 1, 'replaced Account Manager ' + kind + ' leaves span multiple issuers')
+        issuer_id = issuer_ids.pop()
+        previous = self.api('/issuers/' + issuer_id + '/crl')
         self.save(kind + '-previous-crl.json', previous)
         for index, row in enumerate(targets):
             body = {'certificate_sha256': row['fingerprint'], 'reason': 'Replaced Account Manager ' + kind + ' leaf'}
             self.save(kind + '-revocation-' + str(index) + '-intent.json', body)
             if row['revoked_at'] is None:
-                self.api('/issuers/' + self.issuer['issuer_id'] + '/revoke-' + action, body, role='approver')
+                self.api('/issuers/' + issuer_id + '/revoke-' + action, body, role='approver')
         if held is not None:
             closed = self.session_command(held, 'closed', 'closed')
             delay = (m.parse_time(closed['at']) - self.revocation_started).total_seconds()
@@ -140,15 +265,18 @@ class AccountListenerLifecycle(a.ListenerRun):
             self.save('held-client-cutoff.json', {'cutoff_seconds_upper_bound': delay, 'fresh_old_denied': denied})
         final = previous
         for row in targets:
-            final = self.api('/issuers/' + self.issuer['issuer_id'] + '/publish-' + action + '-revocation',
+            final = self.api('/issuers/' + issuer_id + '/publish-' + action + '-revocation',
                              {'certificate_sha256': row['fingerprint']}, role='approver')
-            self.wait_receipts(self.issuer['issuer_id'], final['crl_sha256'],
+            self.sync_service_crl_consumers(issuer_id)
+            self.wait_receipts(issuer_id, final['crl_sha256'],
                                ['certissuer', 'factory-enroll', 'pki-controller', 'video-cloud-api'], 'crl')
         for row in targets:
-            result = self.api('/issuers/' + self.issuer['issuer_id'] + '/finalize-' + action + '-revocation',
+            result = self.api('/issuers/' + issuer_id + '/finalize-' + action + '-revocation',
                               {'certificate_sha256': row['fingerprint']}, role='approver')
             m.require(result['crl_sha256'] == final['crl_sha256'], 'Account Manager retirement finalization differs')
-        self.save(kind + '-retirement.json', {'targets': [row['fingerprint'] for row in targets], 'crl_sha256': final['crl_sha256']})
+        self.save(kind + '-retirement.json', {'issuer_id': issuer_id,
+                                              'targets': [row['fingerprint'] for row in targets],
+                                              'crl_sha256': final['crl_sha256']})
         return targets
 
     def lifecycle(self):
@@ -188,6 +316,8 @@ class AccountListenerLifecycle(a.ListenerRun):
                 process.child.stdin.close()
             m.require(process.child.wait(timeout=10) == 0, 'session probe did not stop')
         self.restart_account_manager()
+        self.install_probe()
+        self.forward('listener', AM_NS, a.SERVICE_NAME, 8443)
         m.require(self.inspect(CLIENT_STATE) == client_after and self.inspect(HOST_STATE) == host_after,
                   'Account Manager restart changed successor state')
         self.current_successors(client_after, host_after)
@@ -240,6 +370,8 @@ def main():
     parser.add_argument('--activation', required=True)
     parser.add_argument('--image', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--recover', type=Path,
+                        help='recover only the exact predecessor pair recorded by an unauthorized lifecycle interruption')
     args = parser.parse_args()
     args.resume = args.resume_after_deploy = args.resume_after_listener = False
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
@@ -247,7 +379,10 @@ def main():
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = AccountListenerLifecycle(args)
     try:
-        runner.lifecycle()
+        if args.recover:
+            runner.recover_interrupted_lifecycle()
+        else:
+            runner.lifecycle()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'; runner.report['failure'] = str(error)
