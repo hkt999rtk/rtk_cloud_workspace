@@ -459,6 +459,24 @@ stays available while v2 activates. Activation moves v1 to `retiring`. The v2
 certissuer policy permits only `/sign/server`; it does not create or grant a
 service-client role.
 
+Rotate the live listener once onto v2 and prove the retained successor survives
+an OpenBao Pod replacement:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase renew-host --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
+  --output OPENBAO_HOST_V2_RENEWAL_EVIDENCE
+```
+
+The runner sends one `SIGHUP` to the `openbaopkihost` process, requires exactly
+one new v2 registry row and a new public key, verifies the served fingerprint,
+then replaces and unseals the dev Pod. The same successor and retained PVC must
+return. Private keys are never copied into evidence.
+
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run

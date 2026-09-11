@@ -183,6 +183,14 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual([item['issuer_id'] for item in overlap],
                          ['root-1', 'issuer-v1', 'issuer-v2'])
 
+    def test_openbao_server_rows_keep_only_exact_host_names(self):
+        runner = object.__new__(o.OpenBaoHostRun)
+        exact = {'request_id': 'one', 'dns_names': o.OPENBAO_HOST_NAMES}
+        other = {'request_id': 'two', 'dns_names': ['other.example']}
+        runner.sql = lambda query: '\n'.join(
+            o.json.dumps(item) for item in (exact, other))
+        self.assertEqual(runner.server_rows(), [exact])
+
     def test_activation_gate_uses_operation_requester(self):
         calls = []
         runner = object.__new__(o.OpenBaoHostRun)

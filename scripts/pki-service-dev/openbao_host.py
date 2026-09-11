@@ -200,6 +200,7 @@ def certissuer_route_template(owner, image, root):
 class OpenBaoHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
+        self.probe_pods = {}
         self.report['foundation_scope'] = (
             'Dev-only OpenBao TLS host and actual provider clients')
         self.report['openbao_host_runner_sha256'] = m.digest(
@@ -842,6 +843,178 @@ class OpenBaoHostRun(h.ServiceRun):
                   'OpenBao serves another registered certificate')
         return peer
 
+    def install_host_probe(self, pod=None):
+        pod = pod or self.openbao_pod()
+        uid, name = pod['metadata']['uid'], pod['metadata']['name']
+        if uid not in self.probe_pods:
+            binary = self.output / 'pki-dev-probe-linux'
+            if not binary.exists():
+                result = m.subprocess.run([
+                    'go', 'build', '-trimpath', '-ldflags=-s -w', '-o',
+                    str(binary), './pki-dev-probe'],
+                    cwd=m.WORKSPACE / 'scripts/go',
+                    env=dict(os.environ, GOOS='linux', GOARCH='amd64',
+                             CGO_ENABLED='0', GOWORK='off'),
+                    capture_output=True, timeout=180)
+                m.require(result.returncode == 0,
+                          'OpenBao public state probe build failed')
+            remote = '/run/openbao-pki/pki-dev-probe'
+            self.kube([
+                '-n', SECRETS_NS, 'exec', '-i', name,
+                '-c', 'openbao-pki', '--', 'sh', '-ec',
+                'umask 077; base64 -d > ' + remote +
+                ' && chmod 700 ' + remote],
+                base64.b64encode(binary.read_bytes()).decode())
+            self.probe_pods[uid] = remote
+        return name, self.probe_pods[uid]
+
+    def inspect_host_state(self, pod=None):
+        name, probe = self.install_host_probe(pod)
+        return json.loads(self.kube([
+            '-n', SECRETS_NS, 'exec', name, '-c', 'openbao-pki', '--',
+            probe, 'service-state', OPENBAO_HOST_STATE]))
+
+    def server_rows(self):
+        raw = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,caller,"
+            "status,fingerprint,dns_names,issued_at,revoked_at "
+            "FROM pki_server_issuances WHERE environment='dev' "
+            "AND domain='openbao_tls' ORDER BY issued_at,request_id) t;")
+        return [row for row in (json.loads(line) for line in raw.splitlines()
+                                if line)
+                if row['dns_names'] == OPENBAO_HOST_NAMES]
+
+    def current_host(self, allowed_issuers, pod=None):
+        pod = pod or self.openbao_pod()
+        state = self.inspect_host_state(pod)
+        rows = self.server_rows()
+        selected = [row for row in rows
+                    if row['fingerprint'] == state['fingerprint']]
+        m.require(not state['pending']
+                  and state['subject'] == OPENBAO_HOST_NAMES[0]
+                  and len(selected) == 1
+                  and selected[0]['issuer_id'] in allowed_issuers
+                  and selected[0]['caller'] == 'service:openbao'
+                  and selected[0]['status'] == 'succeeded'
+                  and selected[0]['revoked_at'] is None,
+                  'current OpenBao host is not registry-admitted')
+        m.write(self.output / 'openbao-tls-root.pem',
+                self.openbao_root('active')['certificate_pem'])
+        peer = self.openbao_peer('openbao-current', selected[0])
+        return {'pod_uid': pod['metadata']['uid'], 'state': state,
+                'row': selected[0], 'rows': rows,
+                'peer_sha256': peer['peer_sha256'],
+                'pvc_uid': self.obj('persistentvolumeclaim',
+                                    OPENBAO_STATE_PVC,
+                                    SECRETS_NS)['metadata']['uid']}
+
+    def lifecycle_prerequisites(self):
+        adoption = m.read(Path(self.args.adoption) / 'report.json')
+        signer = m.read(Path(self.args.signer) / 'report.json')
+        m.require(adoption['status'] == 'passed'
+                  and adoption['phase'] == 'adopt-host'
+                  and adoption['checks']['openbao_managed_host_adopted'][
+                      'status'] == 'passed',
+                  'successful managed OpenBao adoption required')
+        m.require(signer['status'] == 'passed'
+                  and signer['phase'] == 'configure-certissuer'
+                  and signer['checks'][
+                      'openbao_tls_server_only_signer_enabled'][
+                      'status'] == 'passed',
+                  'successful server-only signer evidence required')
+        root, issuer, _ = self.ready_intermediate('active')
+        predecessor = m.read(Path(self.args.intermediate) /
+                             'intermediate-v1.json')
+        pod = self.wait_openbao()
+        owner = self.obj('statefulset', 'openbao', SECRETS_NS)
+        containers = {item['name']: item for item in owner['spec'][
+            'template']['spec']['containers']}
+        worker = containers.get('openbao-pki', {})
+        env = {item['name']: item for item in worker.get('env', [])}
+        m.require(owner['spec']['replicas'] == 1
+                  and owner['spec']['updateStrategy']['type'] == 'OnDelete'
+                  and env.get('OPENBAO_PKI_HOST_IDENTITY_STATE', {}).get(
+                      'value') == OPENBAO_HOST_STATE
+                  and 'OPENBAO_PKI_SEED_CERT' not in env,
+                  'managed OpenBao host ownership changed')
+        return root, predecessor, issuer, owner, pod
+
+    def renew_host(self):
+        _, predecessor, issuer, owner, pod = self.lifecycle_prerequisites()
+        before = self.current_host(
+            {predecessor['issuer_id'], issuer['issuer_id']}, pod)
+        m.require(before['row']['issuer_id'] == predecessor['issuer_id'],
+                  'OpenBao predecessor is not the installed v1 leaf')
+        self.save('baseline.json', before)
+        processes = self.kube([
+            '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+            '-c', 'openbao-pki', '--', 'sh', '-ec',
+            "for f in /proc/[0-9]*/comm; do "
+            "[ \"$(cat \"$f\")\" = openbaopkihost ] && "
+            "basename \"$(dirname \"$f\")\"; done"]).splitlines()
+        m.require(len(processes) == 1 and processes[0].isdigit(),
+                  'expected one OpenBao TLS identity owner process')
+        intent = {'pod_uid': pod['metadata']['uid'],
+                  'previous_fingerprint': before['state']['fingerprint'],
+                  'target_issuer_id': issuer['issuer_id'],
+                  'at': m.stamp(dt.datetime.now(dt.timezone.utc))}
+        self.save('renewal-intent.json', intent)
+        self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+                   '-c', 'openbao-pki', '--', 'kill', '-HUP', processes[0]])
+        deadline = time.monotonic() + 180
+        while True:
+            try:
+                state = self.inspect_host_state(pod)
+            except RuntimeError:
+                state = before['state']
+            if (not state['pending']
+                    and state['fingerprint'] !=
+                    before['state']['fingerprint']):
+                break
+            m.require(time.monotonic() < deadline,
+                      'OpenBao host renewal deadline; do not signal again')
+            time.sleep(2)
+        rows = self.server_rows()
+        old_ids = {row['request_id'] for row in before['rows']}
+        added = [row for row in rows if row['request_id'] not in old_ids]
+        m.require(len(rows) == len(before['rows']) + 1
+                  and len(added) == 1
+                  and added[0]['fingerprint'] == state['fingerprint']
+                  and added[0]['issuer_id'] == issuer['issuer_id']
+                  and added[0]['caller'] == 'service:openbao'
+                  and added[0]['status'] == 'succeeded'
+                  and added[0]['revoked_at'] is None
+                  and state['public_key_sha256'] !=
+                  before['state']['public_key_sha256'],
+                  'OpenBao host replacement registry evidence differs')
+        renewed = self.current_host({issuer['issuer_id']}, pod)
+        self.save('renewed.json', renewed)
+        self.delete_exact('pods', pod['metadata']['name'], SECRETS_NS, pod)
+        self.wait_openbao_replacement(pod['metadata']['uid'])
+        self.kube(['-n', SECRETS_NS, 'wait',
+                   '--for=jsonpath={.status.phase}=Running',
+                   'pod/openbao-0', '--timeout=300s'], timeout=310)
+        self.unseal_openbao()
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+                   'pod/openbao-0', '--timeout=120s'], timeout=130)
+        restarted_pod = self.wait_openbao()
+        restarted = self.current_host({issuer['issuer_id']}, restarted_pod)
+        m.require(restarted['state'] == renewed['state']
+                  and restarted['row'] == renewed['row']
+                  and restarted['pvc_uid'] == renewed['pvc_uid']
+                  and restarted_pod['metadata']['uid'] !=
+                  pod['metadata']['uid']
+                  and self.obj('statefulset', 'openbao', SECRETS_NS)[
+                      'metadata']['uid'] == owner['metadata']['uid'],
+                  'OpenBao successor changed across retained restart')
+        self.check('openbao_host_renewed_on_server_only_v2', {
+            'predecessor_fingerprint': before['state']['fingerprint'],
+            'successor_fingerprint': renewed['state']['fingerprint'],
+            'successor_issuer_id': issuer['issuer_id'],
+            'new_owner_key': True, 'private_key_exported': False,
+            'served_successor': True,
+            'retained_restart': True})
+
     def recover_bootstrap_resources(self, request_id, image, bootstrap,
                                     database):
         pod = self.obj('pod', OPENBAO_SEED_POD, SECRETS_NS)
@@ -1350,7 +1523,8 @@ def main():
     parser.add_argument('--phase', required=True, choices=[
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'install-intermediate-consumers', 'activate-intermediate',
-        'configure-certissuer', 'bootstrap-host', 'adopt-host'])
+        'configure-certissuer', 'bootstrap-host', 'adopt-host',
+        'renew-host'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -1359,6 +1533,8 @@ def main():
     parser.add_argument('--service')
     parser.add_argument('--openbao-image')
     parser.add_argument('--bootstrap')
+    parser.add_argument('--adoption')
+    parser.add_argument('--signer')
     parser.add_argument('--failed')
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--output', required=True)
@@ -1378,6 +1554,10 @@ def main():
               or (args.intermediate and args.service and args.bootstrap
                   and args.openbao_image),
               'active authorities, bootstrap and OpenBao image required')
+    m.require(args.phase != 'renew-host'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer),
+              'server-only issuer, adoption and signer evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -1396,7 +1576,8 @@ def main():
          'activate-intermediate': runner.activate_intermediate,
          'configure-certissuer': runner.configure_certissuer,
          'bootstrap-host': runner.bootstrap_host,
-         'adopt-host': runner.adopt_host}[args.phase]()
+         'adopt-host': runner.adopt_host,
+         'renew-host': runner.renew_host}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
