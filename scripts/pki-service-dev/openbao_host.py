@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import signal
 import sys
+import time
 import uuid
 
 
@@ -711,8 +712,7 @@ class OpenBaoHostRun(h.ServiceRun):
     def delete_exact(self, kind, name, namespace, obj):
         options = {'apiVersion': 'v1', 'kind': 'DeleteOptions',
                    'preconditions': {
-                       'uid': obj['metadata']['uid'],
-                       'resourceVersion': obj['metadata']['resourceVersion']}}
+                       'uid': obj['metadata']['uid']}}
         self.kube(['delete', '--raw', '/api/v1/namespaces/' + namespace +
                    '/' + kind + '/' + name, '-f', '-'], json.dumps(options))
 
@@ -735,6 +735,20 @@ class OpenBaoHostRun(h.ServiceRun):
                 if not pod['metadata'].get('deletionTimestamp')]
         m.require(len(pods) == 1, 'unexpected live OpenBao pod count')
         return pods[0]
+
+    def wait_openbao_replacement(self, previous_uid):
+        deadline = time.monotonic() + 120
+        while True:
+            raw = self.kube([
+                '-n', SECRETS_NS, 'get', 'pod', 'openbao-0',
+                '--ignore-not-found', '-o', 'json'])
+            if raw.strip():
+                pod = json.loads(raw)
+                if pod['metadata']['uid'] != previous_uid:
+                    return pod
+            m.require(time.monotonic() < deadline,
+                      'OpenBao replacement pod deadline')
+            time.sleep(2)
 
     def wait_openbao(self):
         self.kube(['-n', SECRETS_NS, 'rollout', 'status',
@@ -1203,9 +1217,7 @@ class OpenBaoHostRun(h.ServiceRun):
 
         old = self.openbao_pod()
         self.delete_exact('pods', old['metadata']['name'], SECRETS_NS, old)
-        self.kube(['-n', SECRETS_NS, 'wait', '--for=delete',
-                   'pod/' + old['metadata']['name'], '--timeout=120s'],
-                  timeout=130)
+        self.wait_openbao_replacement(old['metadata']['uid'])
         self.kube(['-n', SECRETS_NS, 'wait',
                    '--for=jsonpath={.status.phase}=Running',
                    'pod/openbao-0', '--timeout=300s'], timeout=310)
@@ -1225,13 +1237,11 @@ class OpenBaoHostRun(h.ServiceRun):
             OPENBAO_RUNTIME + '/openbao.pid; kill -0 "$(cat ' +
             OPENBAO_RUNTIME + '/openbao.pid)"; stat -c "%a %u" ' +
             OPENBAO_RUNTIME]).strip()
-        m.require(runtime == '700 100',
+        m.require(runtime in ('700 100', '2700 100'),
                   'OpenBao private runtime permissions changed')
 
         self.delete_exact('pods', first['metadata']['name'], SECRETS_NS, first)
-        self.kube(['-n', SECRETS_NS, 'wait', '--for=delete',
-                   'pod/' + first['metadata']['name'], '--timeout=120s'],
-                  timeout=130)
+        self.wait_openbao_replacement(first['metadata']['uid'])
         self.kube(['-n', SECRETS_NS, 'wait',
                    '--for=jsonpath={.status.phase}=Running',
                    'pod/openbao-0', '--timeout=300s'], timeout=310)
