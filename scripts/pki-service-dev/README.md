@@ -401,11 +401,29 @@ python3 scripts/pki-service-dev/openbao_host.py \
 Recovery verifies the failed pod, temporary Secrets and retained PVC before it
 recreates the pod. It refuses recovery if an issuance row already exists.
 
-If adoption stops after the managed Deployment is installed but before it becomes
-ready, retain the failed evidence and run `--phase finish-host-adoption --failed
-FAILED_ADOPTION_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE` with the same
-Root, intermediate and image arguments. The recovery accepts only that failed
-state and reuses the existing registered identity; it never issues another leaf.
+Adopt the retained identities in the live OpenBao StatefulSet:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase adopt-host \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_INTERMEDIATE_READY_EVIDENCE \
+  --service SERVICE_V5_ACTIVATION_EVIDENCE \
+  --bootstrap OPENBAO_HOST_BOOTSTRAP_EVIDENCE \
+  --openbao-image OPENBAO_PKI_IMAGE_DIGEST \
+  --output OPENBAO_HOST_ADOPTION_EVIDENCE
+```
+
+The adoption uses an init container for the first retained-state install and a
+sidecar for admission, renewal and `SIGHUP` reload. Both share a private runtime
+directory and process namespace with OpenBao. The runner verifies the served
+leaf, repeats a seed-free restart with the same retained state, and then deletes
+the unmounted legacy `openbao-tls` Secret. Saved desired objects make the phase
+safe to rerun after an interrupted rollout.
+
+If adoption stops, rerun the same `adopt-host` command with a new output
+directory. The runner accepts only its saved exact ConfigMap and StatefulSet,
+reuses the registered identities and retained PVC, and never issues another leaf.
 
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older

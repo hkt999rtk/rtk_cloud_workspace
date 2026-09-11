@@ -37,6 +37,7 @@ OPENBAO_BOOTSTRAP_SECRET = 'openbao-pki-bootstrap'
 OPENBAO_SEED_POD = 'openbao-pki-bootstrap'
 OPENBAO_CLIENT_STATE = '/var/lib/openbao-pki/service/client.json'
 OPENBAO_HOST_STATE = '/var/lib/openbao-pki/host/server.json'
+OPENBAO_RUNTIME = '/run/openbao-pki/private'
 
 
 def registry_network_policy():
@@ -55,6 +56,111 @@ def registry_network_policy():
                 'podSelector': {'matchLabels': {
                     'app.kubernetes.io/name': 'openbao'}}}],
                 'ports': [{'port': 5432, 'protocol': 'TCP'}]}]}}
+
+
+def managed_openbao_config(data):
+    key = 'extraconfig-from-values.hcl'
+    source = data.get(key, '')
+    cert = '/openbao/tls/tls.crt'
+    private_key = '/openbao/tls/tls.key'
+    m.require(source.count(cert) == 1 and source.count(private_key) == 1,
+              'legacy OpenBao listener paths changed')
+    return {key: source.replace(
+        cert, OPENBAO_RUNTIME + '/current/chain.pem').replace(
+        private_key, OPENBAO_RUNTIME + '/current/key.pem')}
+
+
+def managed_openbao_template(owner, image, host_root, service_root):
+    template = json.loads(json.dumps(owner['spec']['template']))
+    pod = template['spec']
+    m.require(owner['spec']['replicas'] == 1
+              and owner['spec']['updateStrategy']['type'] == 'OnDelete'
+              and len(pod.get('containers', [])) == 1
+              and not pod.get('initContainers')
+              and not pod.get('shareProcessNamespace'),
+              'legacy OpenBao StatefulSet topology changed')
+    main = pod['containers'][0]
+    m.require(main['name'] == 'openbao'
+              and main['image'] == 'quay.io/openbao/openbao:2.5.4'
+              and main['command'] == ['/bin/sh', '-ec']
+              and len(main['args']) == 1,
+              'legacy OpenBao container changed')
+    start = '/usr/local/bin/docker-entrypoint.sh bao server -config=/tmp/storageconfig.hcl \n'
+    m.require(main['args'][0].endswith(start),
+              'legacy OpenBao start command changed')
+    main['args'][0] = main['args'][0][:-len(start)] + (
+        '/usr/local/bin/docker-entrypoint.sh bao server '
+        '-config=/tmp/storageconfig.hcl &\n'
+        'openbao_pid=$!\n'
+        "printf '%s\\n' \"$openbao_pid\" > " +
+        OPENBAO_RUNTIME + '/openbao.pid\n'
+        'wait "$openbao_pid"\n')
+    main['image'] = image
+    main['readinessProbe']['exec']['command'][-1] = (
+        '[ -f ' + OPENBAO_RUNTIME + '/ready ] && '
+        'bao status -tls-skip-verify')
+    main['volumeMounts'] = [
+        item for item in main['volumeMounts'] if item['name'] != 'openbao-tls']
+    main['volumeMounts'].append({
+        'name': 'pki-runtime', 'mountPath': '/run/openbao-pki'})
+    issuer_name = 'certissuer.' + NS + '.svc'
+    settings = {
+        'PKI_ENVIRONMENT': 'dev',
+        'OPENBAO_PKI_RUNTIME_DIR': OPENBAO_RUNTIME,
+        'OPENBAO_PKI_PROCESS_PID_FILE':
+            OPENBAO_RUNTIME + '/openbao.pid',
+        'OPENBAO_PKI_SERVICE_CLIENT_IDENTITY_STATE': OPENBAO_CLIENT_STATE,
+        'OPENBAO_PKI_SERVICE_CLIENT_ROOT_SHA256':
+            service_root['certificate_fingerprint_sha256'],
+        'OPENBAO_PKI_HOST_IDENTITY_STATE': OPENBAO_HOST_STATE,
+        'OPENBAO_PKI_HOST_NAME': OPENBAO_HOST_NAMES[0],
+        'OPENBAO_PKI_HOST_DNS_NAMES': ','.join(OPENBAO_HOST_NAMES),
+        'OPENBAO_PKI_HOST_ROOT_SHA256':
+            host_root['certificate_fingerprint_sha256'],
+        'OPENBAO_PKI_HOST_RENEWAL_URL':
+            'https://' + issuer_name + ':9443',
+        'OPENBAO_PKI_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256':
+            service_root['certificate_fingerprint_sha256'],
+        'OPENBAO_PKI_HOST_RENEWAL_SERVER_PKI_NAME': issuer_name,
+        'OPENBAO_PKI_HOST_RENEWAL_TLS_CA': '/run/service-root/root.pem',
+        'OPENBAO_PKI_HOST_RENEWAL_SERVER_PKI_SWEEP_INTERVAL': '10s'}
+    env = [{'name': name, 'value': value}
+           for name, value in settings.items()]
+    env.append({'name': 'PKI_DATABASE_URL', 'valueFrom': {
+        'secretKeyRef': {'name': OPENBAO_REGISTRY_SECRET, 'key': 'url'}}})
+    mounts = [
+        {'name': 'pki-state', 'mountPath': '/var/lib/openbao-pki'},
+        {'name': 'pki-runtime', 'mountPath': '/run/openbao-pki'},
+        {'name': 'service-root', 'mountPath': '/run/service-root',
+         'readOnly': True}]
+    security = {
+        'allowPrivilegeEscalation': False,
+        'capabilities': {'drop': ['ALL']},
+        'readOnlyRootFilesystem': True,
+        'runAsNonRoot': True}
+    worker = {
+        'name': 'openbao-pki', 'image': image,
+        'imagePullPolicy': 'IfNotPresent', 'env': env,
+        'volumeMounts': mounts, 'securityContext': security}
+    init = json.loads(json.dumps(worker))
+    init['name'] = 'openbao-pki-install'
+    init['command'] = ['/usr/local/bin/openbaopkihost']
+    init['args'] = ['install']
+    worker['command'] = ['/usr/local/bin/openbaopkihost']
+    pod['initContainers'] = [init]
+    pod['containers'].append(worker)
+    pod['shareProcessNamespace'] = True
+    pod['volumes'] = [
+        item for item in pod['volumes'] if item['name'] != 'openbao-tls']
+    pod['volumes'].extend([
+        {'name': 'pki-state', 'persistentVolumeClaim': {
+            'claimName': OPENBAO_STATE_PVC}},
+        {'name': 'pki-runtime', 'emptyDir': {}},
+        {'name': 'service-root', 'configMap': {
+            'name': OPENBAO_SERVICE_ROOT}}])
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-managed-transport'] = image.split('@')[-1]
+    return template
 
 
 def certissuer_route_template(owner, image, root):
@@ -602,6 +708,50 @@ class OpenBaoHostRun(h.ServiceRun):
         self.kube(['delete', '--raw', '/api/v1/namespaces/' + namespace +
                    '/' + kind + '/' + name, '-f', '-'], json.dumps(options))
 
+    def patch_in(self, kind, name, namespace, before, patches):
+        self.save('before-' + name + '-' + kind + '.json', before)
+        changes = [{'op': 'test', 'path': '/metadata/resourceVersion',
+                    'value': before['metadata']['resourceVersion']}]
+        changes.extend(patches)
+        return json.loads(self.kube([
+            '-n', namespace, 'patch', kind, name, '--type=json',
+            '--patch-file=/dev/stdin', '-o', 'json'], json.dumps(changes)))
+
+    def openbao_pod(self):
+        pods = json.loads(self.kube([
+            '-n', SECRETS_NS, 'get', 'pods',
+            '-l', 'app.kubernetes.io/instance=openbao,'
+                  'app.kubernetes.io/name=openbao,component=server',
+            '-o', 'json']))['items']
+        pods = [pod for pod in pods
+                if not pod['metadata'].get('deletionTimestamp')]
+        m.require(len(pods) == 1, 'unexpected live OpenBao pod count')
+        return pods[0]
+
+    def wait_openbao(self):
+        self.kube(['-n', SECRETS_NS, 'rollout', 'status',
+                   'statefulset/openbao', '--timeout=300s'], timeout=310)
+        pod = self.openbao_pod()
+        statuses = {item['name']: item for item in
+                    pod['status'].get('containerStatuses', [])}
+        init = {item['name']: item for item in
+                pod['status'].get('initContainerStatuses', [])}
+        m.require(all(statuses.get(name, {}).get('ready')
+                      for name in ('openbao', 'openbao-pki'))
+                  and init.get('openbao-pki-install', {}).get(
+                      'state', {}).get('terminated', {}).get('exitCode') == 0,
+                  'managed OpenBao containers are not ready')
+        return pod
+
+    def openbao_peer(self, label, expected):
+        self.forward(label, SECRETS_NS, 'openbao', 8200)
+        peer = json.loads(m.command([
+            self.probe, 'tls-peer', self.output / 'openbao-tls-root.pem',
+            OPENBAO_HOST_NAMES[0], self.ports[label][0]]))
+        m.require(peer['peer_sha256'] == expected['fingerprint'],
+                  'OpenBao serves another registered certificate')
+        return peer
+
     def recover_bootstrap_resources(self, request_id, image, bootstrap,
                                     database):
         pod = self.obj('pod', OPENBAO_SEED_POD, SECRETS_NS)
@@ -922,6 +1072,168 @@ class OpenBaoHostRun(h.ServiceRun):
             'reconciled_from': str(failed) if failed else '',
             'private_keys_exported': False})
 
+    def adopt_host(self):
+        source = Path(self.args.bootstrap)
+        report = m.read(source / 'report.json')
+        client = m.read(source / 'service-client-issuance.json')
+        server = m.read(source / 'server-issuance.json')
+        m.require(report['status'] == 'passed'
+                  and report['phase'] == 'bootstrap-host'
+                  and client['subject'] == 'service:openbao'
+                  and server['caller'] == 'service:openbao'
+                  and server['dns_names'] == OPENBAO_HOST_NAMES,
+                  'successful OpenBao bootstrap evidence required')
+        root, issuer, _ = self.ready_intermediate('active')
+        service_root, service_v5 = self.service_v5()
+        m.require(client['issuer_id'] == service_v5['issuer_id']
+                  and server['issuer_id'] == issuer['issuer_id'],
+                  'OpenBao bootstrap lineage changed')
+        m.require(OPENBAO_IMAGE_PATTERN.fullmatch(
+                  self.args.openbao_image or ''),
+                  'verified dev OpenBao image digest required')
+        clients, servers = self.bootstrap_rows()
+        m.require(clients == [client] and servers == [server],
+                  'OpenBao bootstrap registry rows changed')
+        pvc = self.obj('persistentvolumeclaim', OPENBAO_STATE_PVC,
+                       SECRETS_NS)
+        saved_pvc = m.read(source / 'openbao-identity-pvc.json')
+        m.require(pvc['metadata']['uid'] == saved_pvc['uid']
+                  and pvc['status']['phase'] == 'Bound',
+                  'retained OpenBao identity PVC changed')
+        m.require(not self.kube([
+            '-n', SECRETS_NS, 'get', 'secret', OPENBAO_BOOTSTRAP_SECRET,
+            '--ignore-not-found', '-o', 'name']).strip(),
+            'temporary OpenBao bootstrap Secret remains')
+        self.obj('secret', OPENBAO_REGISTRY_SECRET, SECRETS_NS)
+        service_root_config = self.obj(
+            'configmap', OPENBAO_SERVICE_ROOT, SECRETS_NS)
+        m.require(service_root_config.get('immutable') is True
+                  and service_root_config.get('data', {}).get('root.pem') ==
+                  service_root['certificate_pem'],
+                  'OpenBao Service Root source changed')
+        m.write(self.output / 'openbao-tls-root.pem',
+                root['certificate_pem'])
+
+        rollout = self.base / 'pki/controller-bootstrap/rollout'
+        config_path = rollout / 'openbao-managed-configmap.json'
+        statefulset_path = rollout / 'openbao-managed-statefulset.json'
+        config = self.obj('configmap', 'openbao-config', SECRETS_NS)
+        owner = self.obj('statefulset', 'openbao', SECRETS_NS)
+        if config_path.is_file() or statefulset_path.is_file():
+            m.require(config_path.is_file() and statefulset_path.is_file(),
+                      'partial saved OpenBao adoption state')
+            desired_config = m.read(config_path)
+            desired_owner = m.read(statefulset_path)
+            m.require(desired_config['metadata']['name'] == 'openbao-config'
+                      and desired_owner['metadata']['name'] == 'openbao',
+                      'saved OpenBao adoption objects changed')
+            if config.get('data') != desired_config['data']:
+                m.require(managed_openbao_config(config['data']) ==
+                          desired_config['data'],
+                          'OpenBao listener differs from saved adoption')
+            if owner['spec']['template'] != desired_owner['spec']['template']:
+                m.require(managed_openbao_template(
+                    owner, self.args.openbao_image, root, service_root) ==
+                    desired_owner['spec']['template'],
+                    'OpenBao StatefulSet differs from saved adoption')
+        else:
+            desired_config = {
+                'apiVersion': config['apiVersion'], 'kind': config['kind'],
+                'metadata': {'name': 'openbao-config',
+                             'namespace': SECRETS_NS,
+                             'labels': config['metadata'].get('labels', {}),
+                             'annotations': config['metadata'].get(
+                                 'annotations', {})},
+                'data': managed_openbao_config(config['data'])}
+            desired_owner = {
+                'apiVersion': owner['apiVersion'], 'kind': owner['kind'],
+                'metadata': {'name': 'openbao', 'namespace': SECRETS_NS,
+                             'labels': owner['metadata'].get('labels', {}),
+                             'annotations': owner['metadata'].get(
+                                 'annotations', {})},
+                'spec': dict(owner['spec'], template=managed_openbao_template(
+                    owner, self.args.openbao_image, root, service_root))}
+            m.write(config_path, desired_config)
+            m.write(statefulset_path, desired_owner)
+        self.save('desired-openbao-configmap.json', desired_config)
+        self.save('desired-openbao-statefulset.json', desired_owner)
+        if config['data'] != desired_config['data']:
+            self.patch_in('configmap', 'openbao-config', SECRETS_NS,
+                          config, [{'op': 'replace', 'path': '/data',
+                                    'value': desired_config['data']}])
+        if owner['spec']['template'] != desired_owner['spec']['template']:
+            self.patch_in('statefulset', 'openbao', SECRETS_NS, owner, [{
+                'op': 'replace', 'path': '/spec/template',
+                'value': desired_owner['spec']['template']}])
+
+        old = self.openbao_pod()
+        self.delete_exact('pods', old['metadata']['name'], SECRETS_NS, old)
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=delete',
+                   'pod/' + old['metadata']['name'], '--timeout=120s'],
+                  timeout=130)
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+                   'pod/openbao-0', '--timeout=300s'], timeout=310)
+        first = self.wait_openbao()
+        peer = self.openbao_peer('openbao-peer-first', server)
+        state = self.kube([
+            '-n', SECRETS_NS, 'exec', 'pod/' + first['metadata']['name'],
+            '-c', 'openbao-pki', '--', 'sha256sum',
+            OPENBAO_CLIENT_STATE, OPENBAO_HOST_STATE]).strip()
+        runtime = self.kube([
+            '-n', SECRETS_NS, 'exec', 'pod/' + first['metadata']['name'],
+            '-c', 'openbao-pki', '--', 'sh', '-ec',
+            'test -s ' + OPENBAO_RUNTIME + '/ready; test -s ' +
+            OPENBAO_RUNTIME + '/openbao.pid; kill -0 "$(cat ' +
+            OPENBAO_RUNTIME + '/openbao.pid)"; stat -c "%a %u" ' +
+            OPENBAO_RUNTIME]).strip()
+        m.require(runtime == '700 100',
+                  'OpenBao private runtime permissions changed')
+
+        self.delete_exact('pods', first['metadata']['name'], SECRETS_NS, first)
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=delete',
+                   'pod/' + first['metadata']['name'], '--timeout=120s'],
+                  timeout=130)
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+                   'pod/openbao-0', '--timeout=300s'], timeout=310)
+        second = self.wait_openbao()
+        peer_after = self.openbao_peer('openbao-peer-second', server)
+        state_after = self.kube([
+            '-n', SECRETS_NS, 'exec', 'pod/' + second['metadata']['name'],
+            '-c', 'openbao-pki', '--', 'sha256sum',
+            OPENBAO_CLIENT_STATE, OPENBAO_HOST_STATE]).strip()
+        m.require(second['metadata']['uid'] != first['metadata']['uid']
+                  and state_after == state
+                  and peer_after['peer_sha256'] == peer['peer_sha256']
+                  and self.obj('persistentvolumeclaim', OPENBAO_STATE_PVC,
+                               SECRETS_NS)['metadata']['uid'] ==
+                  pvc['metadata']['uid'],
+                  'OpenBao seed-free restart changed retained identity')
+        live = self.obj('statefulset', 'openbao', SECRETS_NS)
+        m.require(live['spec']['template'] == desired_owner['spec']['template']
+                  and 'openbao-tls' not in json.dumps(
+                      live['spec']['template']),
+                  'legacy OpenBao TLS mount remains')
+        raw_legacy = self.kube([
+            '-n', SECRETS_NS, 'get', 'secret', 'openbao-tls',
+            '--ignore-not-found', '-o', 'json'])
+        if raw_legacy.strip():
+            self.delete_exact('secrets', 'openbao-tls', SECRETS_NS,
+                              json.loads(raw_legacy))
+        m.require(not self.kube([
+            '-n', SECRETS_NS, 'get', 'secret', 'openbao-tls',
+            '--ignore-not-found', '-o', 'name']).strip(),
+            'legacy OpenBao TLS Secret remains')
+        self.check('openbao_managed_host_adopted', {
+            'image': self.args.openbao_image,
+            'server_sha256': server['fingerprint'],
+            'service_client_sha256': client['fingerprint'],
+            'pvc_uid': pvc['metadata']['uid'],
+            'seed_free_restart': True,
+            'openbao_pid_shared': True,
+            'runtime_mode_owner': runtime,
+            'legacy_tls_secret_deleted': True,
+            'private_keys_exported': False})
+
 
 def main():
     os.umask(0o077)
@@ -931,7 +1243,7 @@ def main():
     parser.add_argument('--phase', required=True, choices=[
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'install-intermediate-consumers', 'activate-intermediate',
-        'configure-certissuer', 'bootstrap-host'])
+        'configure-certissuer', 'bootstrap-host', 'adopt-host'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -939,6 +1251,7 @@ def main():
     parser.add_argument('--route')
     parser.add_argument('--service')
     parser.add_argument('--openbao-image')
+    parser.add_argument('--bootstrap')
     parser.add_argument('--failed')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
@@ -953,6 +1266,10 @@ def main():
               or (args.intermediate and args.route and args.service
                   and args.openbao_image),
               'active authorities, route and OpenBao image required')
+    m.require(args.phase != 'adopt-host'
+              or (args.intermediate and args.service and args.bootstrap
+                  and args.openbao_image),
+              'active authorities, bootstrap and OpenBao image required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -970,7 +1287,8 @@ def main():
              runner.install_intermediate_consumers,
          'activate-intermediate': runner.activate_intermediate,
          'configure-certissuer': runner.configure_certissuer,
-         'bootstrap-host': runner.bootstrap_host}[args.phase]()
+         'bootstrap-host': runner.bootstrap_host,
+         'adopt-host': runner.adopt_host}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

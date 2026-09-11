@@ -10,6 +10,63 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_managed_openbao_config_replaces_only_listener_keys(self):
+        source = {'extraconfig-from-values.hcl': (
+            'listener "tcp" {\n'
+            ' tls_cert_file = "/openbao/tls/tls.crt"\n'
+            ' tls_key_file = "/openbao/tls/tls.key"\n}\n')}
+        result = o.managed_openbao_config(source)
+        self.assertIn('/run/openbao-pki/private/current/chain.pem',
+                      result['extraconfig-from-values.hcl'])
+        self.assertIn('/run/openbao-pki/private/current/key.pem',
+                      result['extraconfig-from-values.hcl'])
+        self.assertNotIn('/openbao/tls/',
+                         result['extraconfig-from-values.hcl'])
+
+    def test_managed_openbao_template_has_no_seed_or_static_tls(self):
+        start = ('prepare\n/usr/local/bin/docker-entrypoint.sh bao server '
+                 '-config=/tmp/storageconfig.hcl \n')
+        owner = {'spec': {
+            'replicas': 1, 'updateStrategy': {'type': 'OnDelete'},
+            'template': {'metadata': {}, 'spec': {
+                'containers': [{
+                    'name': 'openbao',
+                    'image': 'quay.io/openbao/openbao:2.5.4',
+                    'command': ['/bin/sh', '-ec'], 'args': [start],
+                    'readinessProbe': {'exec': {'command': [
+                        '/bin/sh', '-ec', 'bao status -tls-skip-verify']}},
+                    'volumeMounts': [
+                        {'name': 'data', 'mountPath': '/openbao/data'},
+                        {'name': 'openbao-tls',
+                         'mountPath': '/openbao/tls'}]}],
+                'volumes': [
+                    {'name': 'openbao-tls', 'secret': {
+                        'secretName': 'openbao-tls'}},
+                    {'name': 'home', 'emptyDir': {}}]}}}}
+        host_root = {'certificate_fingerprint_sha256': 'a' * 64}
+        service_root = {'certificate_fingerprint_sha256': 'b' * 64}
+        result = o.managed_openbao_template(
+            owner, 'openbao@sha256:' + 'c' * 64,
+            host_root, service_root)
+        pod = result['spec']
+        self.assertTrue(pod['shareProcessNamespace'])
+        self.assertEqual([item['name'] for item in pod['containers']],
+                         ['openbao', 'openbao-pki'])
+        self.assertEqual([item['name'] for item in pod['initContainers']],
+                         ['openbao-pki-install'])
+        self.assertNotIn('openbao-tls', str(pod))
+        self.assertIn('openbao_pid=$!', pod['containers'][0]['args'][0])
+        self.assertIn('/ready', pod['containers'][0]
+                      ['readinessProbe']['exec']['command'][-1])
+        env = {item['name']: item for item in pod['containers'][1]['env']}
+        self.assertNotIn(
+            'OPENBAO_PKI_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT', env)
+        self.assertNotIn('OPENBAO_PKI_SEED_CERT', env)
+        self.assertEqual(env['OPENBAO_PKI_HOST_ROOT_SHA256']['value'],
+                         'a' * 64)
+        self.assertEqual(env['OPENBAO_PKI_SERVICE_CLIENT_ROOT_SHA256']['value'],
+                         'b' * 64)
+
     def test_registry_network_policy_allows_only_openbao_from_secrets(self):
         policy = o.registry_network_policy()
         self.assertEqual(policy['metadata'], {
