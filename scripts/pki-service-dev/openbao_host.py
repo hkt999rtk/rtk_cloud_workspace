@@ -144,12 +144,17 @@ def managed_openbao_template(owner, image, host_root, service_root):
         'volumeMounts': mounts, 'securityContext': security}
     init = json.loads(json.dumps(worker))
     init['name'] = 'openbao-pki-install'
-    init['command'] = ['/usr/local/bin/openbaopkihost']
-    init['args'] = ['install']
+    init['command'] = ['/bin/sh', '-ec']
+    init['args'] = [
+        'chmod -R go-rwx /var/lib/openbao-pki/service '
+        '/var/lib/openbao-pki/host; '
+        'exec /usr/local/bin/openbaopkihost install']
     worker['command'] = ['/usr/local/bin/openbaopkihost']
     pod['initContainers'] = [init]
     pod['containers'].append(worker)
     pod['shareProcessNamespace'] = True
+    pod.setdefault('securityContext', {})[
+        'fsGroupChangePolicy'] = 'OnRootMismatch'
     m.require(not pod.get('imagePullSecrets'),
               'legacy OpenBao image pull settings changed')
     pod['imagePullSecrets'] = [{'name': 'ghcr-pull'}]

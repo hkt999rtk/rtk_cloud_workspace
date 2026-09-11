@@ -55,6 +55,10 @@ class OpenBaoHostTests(unittest.TestCase):
                          ['openbao', 'openbao-pki'])
         self.assertEqual([item['name'] for item in pod['initContainers']],
                          ['openbao-pki-install'])
+        self.assertIn('chmod -R go-rwx',
+                      pod['initContainers'][0]['args'][0])
+        self.assertEqual(pod['securityContext']['fsGroupChangePolicy'],
+                         'OnRootMismatch')
         self.assertNotIn('openbao-tls', str(pod))
         self.assertIn('openbao_pid=$!', pod['containers'][0]['args'][0])
         self.assertIn('/ready', pod['containers'][0]
