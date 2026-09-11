@@ -85,7 +85,11 @@ class OpenBaoAuthorityRun(s.ServiceRun):
         while True:
             page = self.api('/issuers/search', {
                 'limit': 100, 'before': cursor})
-            items.extend(page['items'])
+            items.extend(self.api('/issuers/' + item['issuer_id'])
+                         for item in page['items']
+                         if item['environment'] == 'dev'
+                         and item['trust_domain'] == DOMAIN
+                         and item['kind'] == 'intermediate')
             cursor = page.get('next', '')
             if not cursor:
                 return items
@@ -240,9 +244,14 @@ class OpenBaoAuthorityRun(s.ServiceRun):
         issuer = self.api('/issuers/' + operation['issuer_id'])
         m.require(issuer['status'] == 'approved'
                   and issuer['signer_provider'] == 'openbao'
-                  and issuer['service_client_ids'] == expected_ids
+                  and issuer.get('service_client_ids', []) == expected_ids
                   and issuer['server_dns_names'] == OPENBAO_DNS_NAMES,
                   'OpenBao TLS intermediate reservation differs')
+        self.provision_intermediate(
+            root, operation, issuer, expected_ids, predecessor)
+
+    def provision_intermediate(self, root, operation, issuer, expected_ids,
+                               predecessor=None):
         if self.args.server_only:
             m.require(issuer['issuer_version'] == 2,
                       'OpenBao TLS server-only successor must be v2')
@@ -296,7 +305,7 @@ class OpenBaoAuthorityRun(s.ServiceRun):
                  409)
         self.check('openbao_tls_intermediate_ready_gate_closed', {
             'issuer_id': issuer['issuer_id'],
-            'service_client_ids': issuer['service_client_ids'],
+            'service_client_ids': issuer.get('service_client_ids', []),
             'server_dns_names': issuer['server_dns_names'],
             'internal_key_count': 1,
             'activation_without_consumer_receipts_denied': True})
@@ -311,17 +320,32 @@ class OpenBaoAuthorityRun(s.ServiceRun):
         root = self.active_root()
         operation = m.read(failed / 'intermediate-operation.json')
         expected_ids = [] if self.args.server_only else OPENBAO_CLIENT_IDS
+        predecessor = None
         if self.args.server_only:
             predecessor = self.server_only_predecessor(
                 root, operation['issuer_id'])
             m.require(predecessor == m.read(failed / 'intermediate-v1.json'),
                       'saved OpenBao TLS v1 predecessor changed')
             self.save('intermediate-v1.json', predecessor)
-        saved = m.read(failed / 'intermediate-provisioning.json')
         issuer = self.api('/issuers/' + operation['issuer_id'])
+        if issuer['status'] == 'approved':
+            m.require(m.read(failed / 'intermediate-request.json') ==
+                      intermediate_request(root, expected_ids)
+                      and issuer['parent_issuer_id'] == root['issuer_id']
+                      and issuer.get('service_client_ids', []) == expected_ids
+                      and issuer['server_dns_names'] == OPENBAO_DNS_NAMES,
+                      'approved OpenBao TLS intermediate changed')
+            self.save('intermediate-request.json',
+                      m.read(failed / 'intermediate-request.json'))
+            self.save('intermediate-operation.json', operation)
+            self.report['reconciled_from'] = str(failed)
+            self.provision_intermediate(
+                root, operation, issuer, expected_ids, predecessor)
+            return
+        saved = m.read(failed / 'intermediate-provisioning.json')
         m.require(issuer == saved and issuer['status'] == 'provisioning'
                   and issuer['parent_issuer_id'] == root['issuer_id']
-                  and issuer['service_client_ids'] == expected_ids
+                  and issuer.get('service_client_ids', []) == expected_ids
                   and issuer['server_dns_names'] == OPENBAO_DNS_NAMES,
                   'provisioned OpenBao TLS intermediate changed')
         certificate = (failed /
@@ -340,7 +364,7 @@ class OpenBaoAuthorityRun(s.ServiceRun):
         self.check('openbao_tls_intermediate_ready_gate_recovered', {
             'issuer_id': issuer['issuer_id'],
             'reconciled_from': str(failed),
-            'service_client_ids': issuer['service_client_ids'],
+            'service_client_ids': issuer.get('service_client_ids', []),
             'server_dns_names': issuer['server_dns_names'],
             'activation_without_consumer_receipts_denied': True})
 

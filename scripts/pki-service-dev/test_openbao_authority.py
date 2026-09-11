@@ -58,6 +58,24 @@ class OpenBaoAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'successor already exists'):
             o.select_v1_predecessor([v1, v2], root)
 
+    def test_intermediate_inventory_hydrates_search_summaries(self):
+        runner = object.__new__(o.OpenBaoAuthorityRun)
+        calls = []
+
+        def api(path, query=None):
+            calls.append(path)
+            if path == '/issuers/search':
+                return {'items': [{
+                    'issuer_id': 'issuer-v1', 'environment': 'dev',
+                    'trust_domain': 'openbao_tls', 'kind': 'intermediate'}]}
+            return {'issuer_id': 'issuer-v1',
+                    'service_client_ids': ['service:openbao']}
+
+        runner.api = api
+        self.assertEqual(runner.intermediates()[0]['service_client_ids'],
+                         ['service:openbao'])
+        self.assertEqual(calls, ['/issuers/search', '/issuers/issuer-v1'])
+
     def test_intermediate_recovery_is_separate_from_root_reconcile(self):
         self.assertTrue(callable(o.OpenBaoAuthorityRun.resume_intermediate))
 

@@ -547,7 +547,7 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(all(issuer.get(key) == saved.get(key) for key in immutable)
                   and issuer['status'] == status
                   and issuer['parent_issuer_id'] == root['issuer_id']
-                  and issuer['service_client_ids'] == expected_ids
+                  and issuer.get('service_client_ids', []) == expected_ids
                   and (not server_only or issuer['issuer_version'] == 2),
                   'OpenBao TLS intermediate identity or policy changed')
         if server_only:
@@ -678,7 +678,7 @@ class OpenBaoHostRun(h.ServiceRun):
             self.check('openbao_tls_server_only_signer_enabled', {
                 'issuer_id': issuer['issuer_id'],
                 'server_dns_names': issuer['server_dns_names'],
-                'service_client_ids': issuer['service_client_ids'],
+                'service_client_ids': issuer.get('service_client_ids', []),
                 'existing_route_preserved': True})
             return
         owner = self.obj('deployment', 'certissuer')
