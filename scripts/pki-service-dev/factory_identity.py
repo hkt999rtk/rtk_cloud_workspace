@@ -473,6 +473,7 @@ class FactoryIdentityRun(fa.FactoryAdoption):
                             'factory_id': body['factory_id'], 'batch_id': batch, 'allowed_quantity': 1,
                             'valid_from': m.stamp(now - r.dt.timedelta(minutes=1)),
                             'valid_until': m.stamp(now + r.dt.timedelta(hours=1))}, self.login(self.admin)[0], 201)
+        self.save('canary-production-run.json', run)
         device = 'pki-factory-' + r.uuid.uuid4().hex
         body.update(request_id=r.uuid.uuid4().hex, devid=device, csr_pem=self.key('canary', device),
                     batch_id=batch, serial_number=batch, production_run_id=run['production_run']['id'])
@@ -480,11 +481,22 @@ class FactoryIdentityRun(fa.FactoryAdoption):
         result = self.http('/factory/enroll', body, run['factory_jwt'], service='factory')
         self.save('canary-response.json', result)
         self.save('canary-chain.pem', result['certificate_chain_pem'])
-        auth = self.auth(self.output / 'canary', device)
+        return FactoryIdentityRun.verify_factory_canary(self, self.output)
+
+    def verify_factory_canary(self, source):
+        """Reuse an issued canary after a downstream TLS/MQTT failure."""
+        source = Path(source)
+        body = m.read(source / 'canary-request.json')
+        result = m.read(source / 'canary-response.json')
+        m.require((source / 'canary-chain.pem').read_text() == result['certificate_chain_pem'],
+                  'retained canary chain differs')
+        device = body['devid']
+        auth = self.auth(source / 'canary', device)
         self.wait_positive_mqtt(auth, device)
         self.mqtt(auth, device, 'roundtrip')
         self.check('factory_canary', {'device': device, 'factory_enrollment': 'passed',
-                                      'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed'})
+                                      'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
+                                      'issuance_evidence': str(source)})
 
 
 def main():

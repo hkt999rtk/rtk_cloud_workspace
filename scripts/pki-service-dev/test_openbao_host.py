@@ -1,6 +1,12 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import datetime as dt
+import copy
+import json
+import tempfile
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -10,6 +16,87 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_recovery_discovers_before_signing_and_never_repeats_attempt(self):
+        for existing, attempted in [(True, False), (False, False), (False, True)]:
+            with self.subTest(existing=existing, attempted=attempted), tempfile.TemporaryDirectory() as directory:
+                base = Path(directory)
+                (base / 'pki').mkdir()
+                (base / 'report.json').write_text(json.dumps({
+                    'environment': 'dev', 'phase': 'exercise-provider-outage', 'status': 'failed'}))
+                (base / 'outage-policy.json').write_text(json.dumps({'metadata': {
+                    'namespace': o.NS, 'name': 'pki-openbao-certissuer-outage-test'}}))
+                request = 'fe4f7d98-ad49-4893-95a4-3179157bdb7a'
+                marker = base / 'pki' / ('openbao-recovery-' + request + '.json')
+                if attempted:
+                    marker.write_text('{}')
+                now = dt.datetime.now(dt.timezone.utc)
+                claim = {'issuer_id': request, 'created_at': (now - dt.timedelta(hours=2)).isoformat(),
+                         'status': 'issuing', 'revoked_at': None, 'ttl_days': 30,
+                         'subject': 'service:openbao', 'csr_pem': 'csr', 'request_digest': 'digest'}
+                issuer = {'signer_reference': 'pki-issuers/service/' + request + '/v5',
+                          'status': 'active', 'trust_domain': 'service',
+                          'not_after': (now + dt.timedelta(days=365)).isoformat()}
+                runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+                runner.base, runner.openssl = base, 'openssl'
+                runner.args = SimpleNamespace(request_id=request, failed=str(base))
+                runner.save, runner.check = Mock(), Mock()
+                runner.inspect_client_state = Mock(side_effect=[
+                    {'pending': True, 'pending_request_id': request, 'fingerprint': 'old'},
+                    {'pending': False, 'fingerprint': 'new'}])
+                runner.inspect_host_state = Mock(return_value={'fingerprint': 'host'})
+                runner.sql = Mock(side_effect=[json.dumps(claim)] +
+                    ([] if existing else [json.dumps(claim)]) +
+                    [json.dumps(dict(claim, status='succeeded'))])
+                runner.api = Mock(side_effect=[issuer, {}])
+                pods = {'items': [{'metadata': {'uid': 'new-pod'}, 'status': {'phase': 'Running',
+                    'startTime': (now - dt.timedelta(hours=1)).isoformat()}}]}
+                runner.kube = Mock(side_effect=[''] + ([] if existing else [json.dumps(pods), 'jwt']))
+                responses = [json.dumps(['ab:cd'] if existing else [])]
+                if existing:
+                    responses += [json.dumps({'data': {'certificate': 'cert', 'revocation_time': 0}})]
+                else:
+                    responses += [json.dumps({'auth': {'client_token': 'token'}})]
+                    if not attempted:
+                        responses += [json.dumps({'data': {'certificate': 'cert', 'serial_number': 'ab:cd'}})]
+                    responses += ['{}']
+                runner.bao = Mock(side_effect=responses)
+                with patch.object(o.m, 'command', return_value='same-public-key'):
+                    if attempted:
+                        with self.assertRaises(FileExistsError):
+                            runner.recover_provider_outage()
+                    else:
+                        runner.recover_provider_outage()
+                signs = [c for c in runner.bao.call_args_list if '/sign/service-client' in str(c)]
+                self.assertEqual(len(signs), int(not existing and not attempted))
+                self.assertEqual(runner.check.call_count, int(not attempted))
+
+    def test_recovery_retains_original_ttl_ceiling(self):
+        now = dt.datetime(2026, 9, 12, tzinfo=dt.timezone.utc)
+        claim = {'created_at': (now - dt.timedelta(hours=2)).isoformat(),
+                 'status': 'issuing', 'revoked_at': None,
+                 'subject': 'service:openbao', 'ttl_days': 30}
+        issuer = {'status': 'active', 'trust_domain': 'service',
+                  'not_after': (now + dt.timedelta(days=365)).isoformat()}
+        pods = [{'metadata': {}, 'status': {'phase': 'Running',
+                 'startTime': (now - dt.timedelta(hours=1)).isoformat()}}]
+        self.assertEqual(o.recovery_ttl(claim, issuer, pods, now),
+                         30 * 86400 - 2 * 3600 - 60)
+        issuer['not_after'] = (now + dt.timedelta(days=31)).isoformat()
+        self.assertEqual(o.recovery_ttl(claim, issuer, pods, now), 86400 - 60)
+        for invalid in ([], [dict(pods[0], metadata={'deletionTimestamp': now.isoformat()})],
+                        [{'metadata': {}, 'status': {'phase': 'Running',
+                          'startTime': claim['created_at']}}],
+                        [{'metadata': {}, 'status': {'phase': 'Running',
+                          'startTime': (now - dt.timedelta(seconds=10)).isoformat()}}]):
+            with self.subTest(pods=invalid), self.assertRaises(RuntimeError):
+                o.recovery_ttl(claim, issuer, invalid, now)
+        for field, value in [('status', 'succeeded'), ('revoked_at', now.isoformat()),
+                             ('subject', 'service:other'), ('ttl_days', 0)]:
+            invalid = copy.deepcopy(claim)
+            invalid[field] = value
+            with self.subTest(field=field), self.assertRaises(RuntimeError):
+                o.recovery_ttl(invalid, issuer, pods, now)
+
     def test_managed_openbao_config_replaces_only_listener_keys(self):
         source = {'extraconfig-from-values.hcl': (
             'listener "tcp" {\n'

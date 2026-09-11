@@ -19,12 +19,12 @@ no fixed denominator and must not be used as completion percentages.
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Partial | Account Manager, both listeners, the isolated Device API and pkibroker have dev adoption/renewal/retirement evidence. M11 retains the remaining cross-caller held-session and trust-failure matrix. |
-| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory and MQTT managed lifecycles, and the complete Account Manager transport lifecycle are qualified in dev. OpenBao transport, public HTTPS evidence, and cross-host held-session/trust-failure coverage remain. |
+| 3. Remaining transport and host adoption | Partial | Both Service listeners, v2 authority, factory and MQTT managed lifecycles, and the complete Account Manager transport lifecycle are qualified in dev. OpenBao host/provider recovery is also qualified. Public HTTPS evidence and cross-host held-session/trust-failure coverage remain. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 26/40 = 65%.** The fixed decomposition below
+**Current checkpoint completion: 27/40 = 67.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **1/6
@@ -48,11 +48,11 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 10/11 | 91% |
-| Transports and hosts | 8/11 | 73% |
+| Transports and hosts | 9/11 | 82% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **26/40** | **65%** |
+| **Total** | **27/40** | **67.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -80,7 +80,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
 - [ ] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers.
 
-**Group 3 — transports and hosts (8/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
+**Group 3 — transports and hosts (9/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
 [host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
 linked above, the [transport inventory](production-pki-domain-host-inventory.md#current-entry-points)
 and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-checklist-four-items).
@@ -93,7 +93,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T6: Adopt factory's managed certissuer client in dev and qualify enrollment, renewal, retirement and restart. Evidence: [factory work package](#immediate-factory-work-package).
 - [x] T7: Complete Account Manager Service transports: its listener, API/factory callers and certissuer egress, with dev lifecycle evidence. Certissuer egress, listener/caller deployment, actual factory enrollment, authorized/denied App-token requests, all three owner restarts, API caller early renewal, Account Manager client/listener renewal, retirement, held-connection cutoff, CRL fail-closed recovery and stale dev-record reconciliation have passed. See [caller acceptance](#account-manager-caller-acceptance-2026-09-09).
 - [x] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated MQTT hierarchy, managed EMQX host, actual API/log-ingester clients, renewal, predecessor retirement, retained-state restart and fail-closed trust recovery passed in dev. Evidence: [governed MQTT checkpoint](#governed-mqtt-host-and-actual-clients-qualified-in-dev-2026-09-10).
-- [ ] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence.
+- [x] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence. Host replacement/restart, both real provider clients, retained-request recovery, predecessor revocation/CRL receipts and fresh Device/App canaries passed. Evidence: [T9 completion](#openbao-host-and-provider-recovery-qualified-2026-09-12).
 - [ ] T10: Record independent public HTTPS endpoint and renewal evidence.
 - [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts.
 
@@ -129,6 +129,9 @@ functional behavior in groups 2–5.
 - [ ] V3: Extend maintained procedures/evidence to all newly adopted paths and their restart/trust-failure cases.
 - [ ] V4: Complete the full milestone's repeatable dev acceptance run and final Device lifecycle regression.
 - [ ] V5: Independently audit runtime, persisted configuration, receipts, cleanup and all remaining exit criteria.
+  The first T9 Device canary (`7d74e0de53eb42cf915df863d793600e`) stopped before
+  admission/signing. Cancellation is fenced (`prepared`, `cancellation_requested=true`)
+  but background settlement remains pending; inspect `pki/t9-rollout-20260912/failed-device-cleanup`.
 
 ### Immediate factory work package
 
@@ -2165,3 +2168,51 @@ wrong-trust/name/plaintext and provider-outage recovery, scoped provider calls
 from both actual workloads, and Device/App issuance canaries after recovery.
 Fixed completion remains **26/40 = 65%**, with 14 checkpoints open. Staging was
 untouched.
+
+
+### OpenBao host and provider recovery qualified (2026-09-12)
+
+T9 is complete. The independent server-only OpenBao TLS v2 hierarchy, retained
+host/client keys, live replacement/revocation and seed-free restart evidence are
+joined by successful recovery of the exact pending Service-client request and
+fresh provider, App and Device checks. The recovery preserved the request ID,
+CSR and private key; it did not delete the registry claim or reset retained state.
+
+The initial outage runner observed the wrong identity: HUP renews the host's
+Service client before the server leaf. The corrected runner retains that client
+request and does not blindly signal again. The no-result recovery checks that
+all original signer Pods are gone, discovers public provider results, and permits
+one guarded scoped signing attempt with the original validity ceiling. Existing
+results use the controller reconciliation endpoint. An exclusive durable marker
+prevents a repeat recovery signing attempt after a crash. The unshipped runtime
+pending-discard command was removed.
+
+Private dev evidence under `pki/t9-rollout-20260912/`:
+
+- `openbao-provider-recovery-r2`: original request completed and installed;
+  server identity unchanged; 1,684.84 seconds from claim to recovery. This includes
+  operator investigation time and is not a measure of fleet-wide availability.
+- `openbao-post-recovery-r1`: actual Certissuer renewal, controller revocation and
+  publication, both current CRL receipts and fresh App issuance passed.
+- `openbao-post-recovery-r2` and `openbao-post-recovery-r3`: fresh Device issuance,
+  then the same retained Device certificate passed mTLS and MQTT ACL/QoS1.
+- `device-active-crl-admin`: restored the expired active Product CRL through the
+  existing dev CA administrator and authenticated import. Revoked issuers stayed
+  revoked; no trust or authentication checks were disabled.
+- `openbao-final-audit-r3`: exact live/persisted OpenBao and both provider-client
+  specifications match, all are ready, and temporary outage policies are absent.
+- `failed-device-cleanup`: the initial unissued canary is fenced for cancellation;
+  its background settlement is still pending and remains a V5 cleanup item. The
+  successful canary and its credentials are retained as acceptance evidence.
+
+Database-backed local tests exercise the same registry-bound HTTP transport for
+wrong root/name, denied origins, redirect/plaintext rejection, credential
+non-forwarding and active connection eviction. These are local fault fixtures;
+real dev provider operations and receipts are separate evidence above. The
+focused Go suites, isolated PostgreSQL integration tests and 116 dev runner tests
+pass. No runtime feature image was needed for these runner/test changes.
+
+Current checkpoint completion is **27/40 = 67.5%**; **13 remain**:
+T10, T11, M11, R1–R4, A4–A6 and V3–V5. The next checkpoint is T10, public HTTPS
+certificate/renewal evidence. The four broad milestones remain unchanged.
+Staging and user-login/MFA behavior were untouched.

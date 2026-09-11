@@ -352,6 +352,7 @@ class Acceptance:
 
     def bao(self, args, body='', token=None):
         script = ('read -r BAO_TOKEN; export BAO_TOKEN; '
+                  'export BAO_MAX_RETRIES=0; '
                   'export BAO_ADDR=https://openbao.video-cloud-dev-secrets.svc:8200; '
                   'BAO_CACERT=/run/openbao-pki/private/current/chain.pem; '
                   '[ -r "$BAO_CACERT" ] || BAO_CACERT=/openbao/tls/ca.crt; '

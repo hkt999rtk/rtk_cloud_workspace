@@ -527,11 +527,10 @@ python3 scripts/pki-service-dev/openbao_host.py \
   --output OPENBAO_PROVIDER_OPERATION_EVIDENCE
 ```
 
-It sends one listener renewal through Cert Issuer, then asks PKI Controller to
+The owner first renews its Service client and then its server leaf through Cert Issuer. It asks PKI Controller to
 revoke and publish the replaced v2 leaf. The phase accepts exactly one successor,
 requires both retained CRL receipts, verifies the denied leaf is in the CRL and
-checks replay-safe finalization. It does not export private keys or alter any
-unrelated Service identity.
+checks replay-safe finalization. It does not export private keys.
 
 Run the scoped failure/recovery step with the successful operation evidence:
 
@@ -546,11 +545,65 @@ python3 scripts/pki-service-dev/openbao_host.py \
   --output OPENBAO_PROVIDER_OUTAGE_EVIDENCE
 ```
 
-The runner applies a temporary, zero-egress policy only to Cert Issuer, requests
-one OpenBao host renewal and requires the request to remain pending with the
-installed leaf unchanged. It removes the exact policy, retries once, and accepts
-only the retained request ID and one successor row. It also repeats the existing
-Device traffic baseline after recovery.
+The runner applies a temporary, zero-egress policy to Cert Issuer. This blocks
+all its outbound dependencies, including PostgreSQL; it is not an isolated
+OpenBao network fault. One HUP starts the Service-client renewal first. The
+runner observes that client's retained request for at least 50 seconds, checks
+that the installed identity is unchanged, and removes the exact policy by UID
+and resource version. It lets the normal client retry the same request. An
+uncertain `issuing` claim requires reconciliation; another HUP cannot repair it.
+
+For the dev-only no-result case, replace the original Certissuer signing Pod
+with the same desired deployment and wait at least five minutes. Preserve the
+failed evidence. Then run:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase recover-provider-outage \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --failed FAILED_OPENBAO_PROVIDER_OUTAGE_EVIDENCE \
+  --request-id EXACT_RETAINED_CLIENT_REQUEST_ID \
+  --output OPENBAO_PROVIDER_RECOVERY_EVIDENCE
+```
+
+Recovery compares the original CSR against the complete public certificate
+inventory. An existing unique result goes directly to the authenticated
+controller reconciliation endpoint. Only an absent result with all original
+signer Pods gone permits a scoped `certissuer-pki` signing attempt. The original
+request/CSR remains in the registry and private retained state. A durable,
+exclusive `pki/openbao-recovery-<request-id>.json` marker precedes signing;
+provider CLI retries are disabled. If the marker exists but discovery finds no
+result, stop and investigate rather than deleting the marker or signing again.
+Recovered validity cannot exceed the original request deadline or issuer margin.
+There is no runtime `abandon-pending` command.
+
+Complete qualification after successful recovery:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase verify-provider-recovery --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
+  --provider-verification OPENBAO_PROVIDER_VERIFICATION_EVIDENCE \
+  --recovery OPENBAO_PROVIDER_RECOVERY_EVIDENCE \
+  --output OPENBAO_POST_RECOVERY_EVIDENCE
+```
+
+This repeats actual provider renewal/revocation and both CRL receipts, then
+creates fresh App and factory Device certificates. The Device must pass mTLS
+and MQTT ACL/QoS1 checks. Wrong-root/name credential-forwarding, redirect,
+plaintext and eviction tests use the real transport code against an isolated
+local PostgreSQL/TLS fixture; configure `VIDEO_CLOUD_TEST_DSN` so they do not skip.
+
+If final qualification fails after provider/App success, add `--failed` pointing
+to that final report and select a new output directory. The phase revalidates
+the qualified host/CRL receipts and skips completed App issuance. If a Device
+certificate was already returned, it verifies that same retained certificate;
+it does not create another production run or key. Product CRLs must be fresh
+for Device mTLS/MQTT acceptance. Refresh only eligible active/retiring authorities;
+revoked issuers stay disabled.
 
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older

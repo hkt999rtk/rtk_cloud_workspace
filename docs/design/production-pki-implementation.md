@@ -5705,3 +5705,35 @@ server-only OpenBao TLS v2 correction, leaf replacement/revocation, negative and
 outage recovery tests, actual provider operations, and Device/App issuance
 canaries remain. Fixed completion remains **26/40 = 65%, with 14 checkpoints
 open**. Staging and human login/MFA were untouched.
+
+
+### T9 OpenBao recovery and acceptance completed (2026-09-12)
+
+The [T9 completion evidence](production-pki-trust-consumers.md#openbao-host-and-provider-recovery-qualified-2026-09-12)
+closes the governed OpenBao host/provider checkpoint. The dev recovery completed
+original Service-client request `fe4f7d98-ad49-4893-95a4-3179157bdb7a` without
+changing its CSR/key or deleting its durable issuance claim. Public provider
+inventory found no prior certificate; the original signer Pod had terminated.
+One guarded recovery signing attempt used the Certissuer workload identity,
+followed by the authenticated existing controller reconciliation endpoint.
+The recovery certificate fingerprint is
+`2570ade8b921496cd90df67c1fcd29ada3235fc808087a0d2b0c119943dea47a`.
+
+Video Cloud `93e26f4` removed the unshipped `abandon-pending` CLI, store discard primitive and unused
+provider absence sentinel. Core login and issuance logic remain unchanged.
+The maintained runner now watches the correct client identity during outage,
+retains a durable recovery-attempt marker, and can resume Device verification
+without creating another key/certificate. Provider CLI retries are disabled for
+these operational commands. Wrong-root/name tests explicitly assert that
+provider login credentials are not forwarded.
+
+Both real provider operations and App issuance passed after recovery. A fresh
+Device certificate was issued; its mTLS/MQTT checks initially exposed an expired
+active Product CRL. Administrative refresh plus normal controller import restored
+those checks with the same certificate. Historical failed reports remain saved.
+Exact persisted/live specifications and temporary-policy cleanup were verified.
+The initial unissued canary is fenced for cancellation; background settlement
+remains pending under the existing V5 cleanup checkpoint.
+The current progress record is **27/40 = 67.5%, 13 checkpoints remaining**;
+T9 is **100%**, with T10 next. Local PostgreSQL-backed TLS/Service-client tests
+and 116 dev runner tests passed. No PR was created.

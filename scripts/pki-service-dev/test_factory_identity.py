@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 import tempfile
 import json
+from unittest.mock import Mock
 
 
 spec = importlib.util.spec_from_file_location(
@@ -15,6 +16,20 @@ life_spec.loader.exec_module(life)
 
 
 class FactoryIdentityTests(unittest.TestCase):
+    def test_completed_issuance_canary_resumes_without_new_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / 'canary-request.json').write_text(json.dumps({'devid': 'retained-device'}))
+            (source / 'canary-response.json').write_text(json.dumps({'certificate_chain_pem': 'chain'}))
+            (source / 'canary-chain.pem').write_text('chain')
+            runner = Mock()
+            runner.auth.return_value = {'token': 'test-only'}
+            m.FactoryIdentityRun.verify_factory_canary(runner, source)
+            runner.auth.assert_called_once_with(source / 'canary', 'retained-device')
+            runner.http.assert_not_called()
+            runner.key.assert_not_called()
+            runner.mqtt.assert_called_once_with({'token': 'test-only'}, 'retained-device', 'roundtrip')
+
     def test_renewal_requires_one_new_key_and_exact_registry_receipt(self):
         before = dict(subject=m.SUBJECT, root_sha256='root', fingerprint='old', public_key_sha256='old-key', state_sha256='old-state')
         after = dict(before, fingerprint='new', public_key_sha256='new-key', state_sha256='new-state', pending=False)

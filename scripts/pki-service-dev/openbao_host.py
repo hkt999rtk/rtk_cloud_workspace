@@ -42,6 +42,30 @@ OPENBAO_HOST_STATE = '/var/lib/openbao-pki/host/server.json'
 OPENBAO_RUNTIME = '/run/openbao-pki/private'
 
 
+def recovery_ttl(claim, issuer, pods, now):
+    """Fence the dead signing owner and retain the original validity ceiling."""
+    parse = lambda value: dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+    created = parse(claim['created_at'])
+    m.require(claim['status'] == 'issuing' and not claim['revoked_at']
+              and claim['subject'] == 'service:openbao'
+              and issuer['status'] == 'active'
+              and issuer['trust_domain'] == 'service',
+              'recovery claim or issuer is not eligible')
+    # Existing claims never grant another sign attempt. All original Certissuer
+    # processes must be gone, with time for the provider request to drain.
+    m.require(pods and all(
+        not p['metadata'].get('deletionTimestamp')
+        and p['status']['phase'] == 'Running'
+        and parse(p['status']['startTime']) > created
+        and now - parse(p['status']['startTime']) > dt.timedelta(minutes=5)
+        for p in pods), 'original signing owner is not fenced')
+    end = min(created + dt.timedelta(days=claim['ttl_days']),
+              parse(issuer['not_after']) - dt.timedelta(days=30))
+    ttl = int((end - now).total_seconds()) - 60
+    m.require(ttl > 60, 'original certificate validity window has elapsed')
+    return ttl
+
+
 def registry_network_policy():
     return {
         'apiVersion': 'networking.k8s.io/v1',
@@ -949,6 +973,113 @@ class OpenBaoHostRun(h.ServiceRun):
             '-n', SECRETS_NS, 'exec', name, '-c', 'openbao-pki', '--',
             probe, 'service-state', OPENBAO_HOST_STATE]))
 
+    def inspect_client_state(self, pod=None):
+        name, probe = self.install_host_probe(pod)
+        return json.loads(self.kube([
+            '-n', SECRETS_NS, 'exec', name, '-c', 'openbao-pki', '--',
+            probe, 'service-state', OPENBAO_CLIENT_STATE]))
+
+    def recover_provider_outage(self):
+        """Reconcile the original dev-only client claim; never discard its key."""
+        request_id = str(uuid.UUID(self.args.request_id))
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        policy = m.read(Path(self.args.failed) / 'outage-policy.json')
+        m.require(failed['environment'] == 'dev'
+                  and failed['phase'] == 'exercise-provider-outage'
+                  and failed['status'] == 'failed'
+                  and policy['metadata']['namespace'] == NS
+                  and policy['metadata']['name'].startswith(
+                      'pki-openbao-certissuer-outage-'), 'wrong failed outage evidence')
+        m.require(not self.kube(['-n', NS, 'get', 'networkpolicy',
+                  policy['metadata']['name'], '--ignore-not-found', '-o', 'name']).strip(),
+                  'outage policy is still installed')
+        before = self.inspect_client_state()
+        host = self.inspect_host_state()
+        m.require(before['pending'] and before['pending_request_id'] == request_id,
+                  'retained client request differs')
+        query = ("SELECT row_to_json(t) FROM (SELECT issuer_id,subject,status,"
+                 "csr_pem,ttl_days,request_digest,created_at,revoked_at FROM "
+                 "pki_service_client_issuances WHERE environment='dev' AND "
+                 "caller='service:openbao' AND request_id='" + request_id + "') t;")
+        claim = json.loads(self.sql(query))
+        issuer = self.api('/issuers/' + claim['issuer_id'])
+        mount = issuer['signer_reference']
+        m.require(re.fullmatch(r'pki-issuers/service/[0-9a-f-]{36}/v[0-9]+', mount),
+                  'unexpected provider mount')
+        self.save('recovery-before.json', {'client': before, 'host': host,
+                                         'claim': claim})
+        public = lambda kind, pem: m.command(
+            [self.openssl, kind, '-pubkey', '-noout'], pem).strip()
+        expected = public('req', claim['csr_pem'])
+        serials = json.loads(self.bao(['list', '-format=json', mount + '/certs']))
+        m.require(isinstance(serials, list) and len(set(serials)) == len(serials),
+                  'invalid provider inventory')
+        matches = []
+        for serial in serials:
+            m.require(re.fullmatch(r'[0-9a-fA-F:-]+', serial), 'invalid serial')
+            record = json.loads(self.bao([
+                'read', '-format=json', mount + '/cert/' + serial]))['data']
+            if public('x509', record['certificate']) == expected:
+                m.require(record.get('revocation_time') == 0, 'matching leaf revoked')
+                matches.append(serial)
+        m.require(len(matches) <= 1, 'ambiguous provider result')
+        self.save('recovery-inventory.json', {'serials': serials, 'matches': matches})
+        if not matches:
+            pods = json.loads(self.kube(['-n', NS, 'get', 'pods', '-l',
+                'app.kubernetes.io/name=certissuer', '-o', 'json']))['items']
+            ttl = recovery_ttl(claim, issuer, pods, dt.datetime.now(dt.timezone.utc))
+            m.require(json.loads(self.sql(query)) == claim, 'claim changed during discovery')
+            # The lock shared by all phases and an exclusive, durable attempt
+            # marker prevent this recovery tool from re-signing after a crash.
+            jwt = self.kube(['-n', NS, 'create', 'token', 'certissuer-pki',
+                            '--audience=openbao', '--duration=10m']).strip()
+            login = json.loads(self.bao(['write', '-format=json', 'auth/kubernetes/login', '-'],
+                json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+            token = login['auth']['client_token']
+            try:
+                marker = self.base / 'pki' / ('openbao-recovery-' + request_id + '.json')
+                with marker.open('x') as stream:
+                    json.dump({'request_id': request_id, 'request_digest': claim['request_digest'],
+                               'at': m.stamp(), 'pod_uids': [p['metadata']['uid'] for p in pods]}, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                directory = os.open(marker.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+                signed = json.loads(self.bao(['write', '-format=json',
+                    mount + '/sign/service-client', '-'], json.dumps({
+                        'csr': claim['csr_pem'], 'common_name': claim['subject'],
+                        'exclude_cn_from_sans': True, 'ttl': str(ttl) + 's'}), token=token))['data']
+                m.require(public('x509', signed['certificate']) == expected,
+                          'provider returned another key')
+                matches = [signed['serial_number']]
+            finally:
+                self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
+        self.api('/issuers/' + claim['issuer_id'] + '/reconcile-service-client',
+                 {'caller': 'service:openbao', 'request_id': request_id,
+                  'serial_number': matches[0]}, role='approver')
+        deadline = time.monotonic() + 150
+        while True:
+            after = self.inspect_client_state()
+            if not after['pending'] and after['fingerprint'] != before['fingerprint']:
+                break
+            m.require(time.monotonic() < deadline, 'client has not installed reconciled result')
+            time.sleep(2)
+        m.require(self.inspect_host_state() == host, 'recovery changed the server identity')
+        final = json.loads(self.sql(query))
+        m.require(final['status'] == 'succeeded'
+                  and final['request_digest'] == claim['request_digest'],
+                  'original request was not reconciled')
+        self.save('recovery-after.json', after)
+        self.check('openbao_provider_outage_reconciled', {
+            'request_id': request_id, 'same_csr_and_request': True,
+            'provider_serial': matches[0], 'client_fingerprint': after['fingerprint'],
+            'server_identity_unchanged': True, 'private_key_exported': False,
+            'seconds_from_claim_to_recovery': (dt.datetime.now(dt.timezone.utc) -
+                dt.datetime.fromisoformat(claim['created_at'])).total_seconds()})
+
     def server_rows(self):
         raw = self.sql(
             "SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,caller,"
@@ -1269,8 +1400,8 @@ class OpenBaoHostRun(h.ServiceRun):
 
         The renewal enters Cert Issuer through its normal OpenBao provider
         transport.  CRL publication enters PKI Controller through its normal
-        provider transport.  Both are deliberately limited to the current
-        OpenBao listener lifecycle, so no unrelated service identity changes.
+        provider transport. The host owner renews its Service client first,
+        followed by the server certificate.
         """
         _, _, issuer, _, pod = self.lifecycle_prerequisites()
         verified = m.read(Path(self.args.provider_verification) / 'report.json')
@@ -1388,7 +1519,7 @@ class OpenBaoHostRun(h.ServiceRun):
             'private_key_exported': False})
 
     def exercise_provider_outage(self):
-        """Prove one blocked provider renewal resumes its retained request once."""
+        """Retain the client request under outage; recovery never blindly re-signs."""
         _, _, issuer, _, pod = self.lifecycle_prerequisites()
         source = m.read(Path(self.args.provider_operations) / 'report.json')
         m.require(source['status'] == 'passed'
@@ -1398,6 +1529,9 @@ class OpenBaoHostRun(h.ServiceRun):
                   'successful provider operation evidence required')
         before = self.current_host({issuer['issuer_id']}, pod)
         self.save('baseline.json', before)
+        client_before = self.inspect_client_state(pod)
+        m.require(not client_before['pending'], 'reconcile existing client request first')
+        self.save('client-baseline.json', client_before)
         processes = self.kube([
             '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
             '-c', 'openbao-pki', '--', 'sh', '-ec',
@@ -1414,17 +1548,17 @@ class OpenBaoHostRun(h.ServiceRun):
                 'app.kubernetes.io/name': 'certissuer'}},
                 'policyTypes': ['Egress'], 'egress': []}}
         self.save('outage-policy.json', policy)
-        self.kube(['-n', NS, 'create', '-f', '-'], json.dumps(policy))
-        created = self.obj('networkpolicy', policy['metadata']['name'])
+        created = json.loads(self.kube(['-n', NS, 'create', '-f', '-', '-o', 'json'], json.dumps(policy)))
         pending = None
         try:
             self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
                        '-c', 'openbao-pki', '--', 'kill', '-HUP',
                        processes[0]])
-            deadline = time.monotonic() + 75
+            started = time.monotonic()
+            deadline = started + 75
             while True:
-                state = self.inspect_host_state(pod)
-                if state['pending']:
+                state = self.inspect_client_state(pod)
+                if state['pending'] and time.monotonic() - started >= 50:
                     pending = state
                     break
                 m.require(time.monotonic() < deadline,
@@ -1433,50 +1567,77 @@ class OpenBaoHostRun(h.ServiceRun):
             rows = self.server_rows()
             self.save('outage-observed.json', {'state': pending, 'rows': rows})
             m.require(rows == before['rows']
-                      and pending['fingerprint'] == before['state']['fingerprint']
+                      and pending['fingerprint'] == client_before['fingerprint']
                       and pending['public_key_sha256'] ==
-                      before['state']['public_key_sha256'],
+                      client_before['public_key_sha256'],
                       'provider outage changed installed OpenBao identity')
             self.save('outage-pending.json', pending)
         finally:
-            self.delete_network_policy_exact(policy['metadata']['name'], NS,
-                                             created)
+            if created is not None:
+                self.delete_network_policy_exact(policy['metadata']['name'], NS, created)
         self.save('outage-policy-deleted.json', {
             'name': policy['metadata']['name'], 'uid': created['metadata']['uid']})
         m.require(pending is not None, 'OpenBao outage state was not recorded')
-        self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
-                   '-c', 'openbao-pki', '--', 'kill', '-HUP', processes[0]])
         deadline = time.monotonic() + 180
         while True:
-            state = self.inspect_host_state(pod)
-            if not state['pending'] and state['fingerprint'] != before['state']['fingerprint']:
+            state = self.inspect_client_state(pod)
+            if not state['pending'] and state['fingerprint'] != client_before['fingerprint']:
                 break
             m.require(time.monotonic() < deadline,
-                      'restored OpenBao renewal deadline; do not signal again')
+                      'client claim needs reconciliation; replace its original signer process, '
+                      'then use recover-provider-outage with the retained request ID')
             time.sleep(2)
-        rows = self.server_rows()
-        added = [row for row in rows if row['request_id'] not in {
-            row['request_id'] for row in before['rows']}]
-        m.require(len(rows) == len(before['rows']) + 1 and len(added) == 1
-                  and added[0]['request_id'] == pending['pending_request_id']
-                  and added[0]['fingerprint'] == state['fingerprint']
-                  and added[0]['issuer_id'] == issuer['issuer_id']
-                  and added[0]['status'] == 'succeeded'
-                  and added[0]['revoked_at'] is None,
-                  'restored OpenBao renewal did not reuse one retained request')
-        recovered = self.current_host({issuer['issuer_id']}, pod)
-        self.save('recovered.json', recovered)
-        self.openbao_peer('openbao-provider-outage-recovered', recovered['row'])
-        self.device_baseline()
+        clients, _ = self.bootstrap_rows()
+        matched = [row for row in clients if row['request_id'] == pending['pending_request_id']]
+        m.require(len(matched) == 1 and matched[0]['status'] == 'succeeded'
+                  and matched[0]['fingerprint'] == state['fingerprint'],
+                  'original client request was not completed')
+        m.require(self.inspect_host_state(pod) == before['state'],
+                  'blocked client renewal changed the host identity')
         self.check('openbao_provider_outage_reconciled', {
-            'blocked_renewal': 'pending',
-            'restored_renewal': 'passed',
             'retained_request_id': pending['pending_request_id'],
-            'exactly_one_successor': True,
-            'predecessor_fingerprint': before['state']['fingerprint'],
-            'successor_fingerprint': recovered['state']['fingerprint'],
-            'private_key_exported': False,
-            'device_baseline_after_restore': 'passed'})
+            'client_fingerprint': state['fingerprint'], 'same_request_completed': True})
+
+    def verify_provider_recovery(self):
+        recovery = m.read(Path(self.args.recovery) / 'report.json')
+        m.require(recovery['status'] == 'passed'
+                  and recovery['environment'] == 'dev'
+                  and recovery['checks']['openbao_provider_outage_reconciled']['status'] == 'passed',
+                  'successful outage recovery evidence required')
+        m.require(not self.inspect_client_state()['pending'], 'client renewal still pending')
+        # Exercise both deployed provider clients after recovery, including the
+        # latest CRL receipts, before issuing fresh Device and App certificates.
+        if self.args.failed:
+            prior = m.read(Path(self.args.failed) / 'report.json')
+            m.require(prior['status'] == 'failed' and prior['phase'] == 'verify-provider-recovery',
+                      'only failed final qualification may resume')
+            for check in ('openbao_actual_provider_operations', 'post_recovery_app_issuance_canary'):
+                m.require(prior['checks'][check]['status'] == 'passed', 'prior provider/App checks incomplete')
+                self.report['checks'][check] = prior['checks'][check]
+            evidence = prior['checks']['openbao_actual_provider_operations']['evidence']
+            _, _, issuer, _, pod = self.lifecycle_prerequisites()
+            m.require(self.current_host({issuer['issuer_id']}, pod)['state']['fingerprint'] ==
+                      evidence['successor_fingerprint'], 'qualified host changed')
+            self.wait_receipts(issuer['issuer_id'], evidence['crl_sha256'], CONSUMERS, kind='crl')
+            self.report['resumed_from'] = str(Path(self.args.failed))
+        else:
+            self.exercise_provider_clients()
+        for filename, class_name, method, args in (
+            ('management.py', 'ManagementRun', 'app_issuance_canary', ('post-recovery-app',)),
+            ('factory_identity.py', 'FactoryIdentityRun', 'factory_canary', ())):
+            if self.args.failed and method == 'app_issuance_canary':
+                continue
+            path = Path(__file__).with_name(filename)
+            spec = importlib.util.spec_from_file_location('canary_' + class_name, path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            if method == 'factory_canary' and self.args.failed and (
+                    Path(self.args.failed) / 'canary-response.json').exists():
+                result = module.FactoryIdentityRun.verify_factory_canary(self, self.args.failed)
+            else:
+                result = getattr(getattr(module, class_name), method)(self, *args)
+            self.check('post_recovery_' + method, {
+                'source_sha256': m.digest(path.read_bytes()), 'result': result})
 
     def recover_bootstrap_resources(self, request_id, image, bootstrap,
                                     database):
@@ -1988,7 +2149,8 @@ def main():
         'install-intermediate-consumers', 'activate-intermediate',
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
         'renew-host', 'retire-host', 'enable-provider-verification',
-        'exercise-provider-clients', 'exercise-provider-outage'])
+        'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
+        'verify-provider-recovery'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -2004,9 +2166,17 @@ def main():
     parser.add_argument('--provider-verification')
     parser.add_argument('--provider-operations')
     parser.add_argument('--failed')
+    parser.add_argument('--request-id')
+    parser.add_argument('--recovery')
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
+    m.require(args.phase != 'recover-provider-outage' or (args.failed and args.request_id),
+              'failed outage evidence and exact retained request ID required')
+    m.require(args.phase != 'verify-provider-recovery' or (
+        args.recovery and args.server_only and args.intermediate and args.adoption
+        and args.signer and args.provider_verification),
+        'recovery and original host/provider evidence required')
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
     m.require('intermediate' not in args.phase or args.intermediate,
@@ -2068,7 +2238,9 @@ def main():
          'exercise-provider-clients':
              runner.exercise_provider_clients,
          'exercise-provider-outage':
-             runner.exercise_provider_outage}[args.phase]()
+             runner.exercise_provider_outage,
+         'recover-provider-outage': runner.recover_provider_outage,
+         'verify-provider-recovery': runner.verify_provider_recovery}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

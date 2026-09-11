@@ -648,3 +648,11 @@ Historical evidence is maintained in the [implementation ledger](production-pki-
 ### Managed OpenBao host adoption checkpoint (2026-09-11)
 
 Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#managed-openbao-host-adopted-in-dev-2026-09-11). The retained managed host is active and passed two seed-free replacements. T9 remains open for the server-only v2 correction, replacement/revocation and the complete negative, recovery and issuance-canary matrix.
+
+
+### T9 completion (2026-09-12)
+
+See the [current T9 acceptance evidence](production-pki-trust-consumers.md#openbao-host-and-provider-recovery-qualified-2026-09-12).
+The actual OpenBao host/provider lifecycle, retained-request recovery and fresh
+Device/App checks now pass. This supersedes the earlier open-T9 notes above;
+T10 and T11 remain open. The trust-consumer table remains the progress authority.
