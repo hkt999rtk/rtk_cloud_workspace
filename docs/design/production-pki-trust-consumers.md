@@ -2148,3 +2148,20 @@ traffic from the certificate-issuer-origin renewal transport.
 T9 is approximately **50%** complete. The fixed total remains **26/40 = 65%**
 with the same 14 open checkpoints. The Root is not active and no host/client
 cutover has occurred yet. Staging was untouched.
+
+### Managed OpenBao host adoption checkpoint (2026-09-11)
+
+The dev controller and certificate-issuer now consume the active independent
+OpenBao TLS Root/intermediate through their existing provider trust paths and
+have recorded exact bundle and CRL receipts. The OpenBao StatefulSet serves its
+registry-issued listener identity from the retained host-identity PVC through
+the `openbaopkihost` owner; two unsealed Pod replacements preserved both host
+identities and the served certificate. The legacy static listener Secret is no
+longer present.
+
+T9 is approximately **75%** complete. Remaining consumer qualification covers a
+server-only OpenBao TLS v2, live leaf replacement and predecessor denial,
+wrong-trust/name/plaintext and provider-outage recovery, scoped provider calls
+from both actual workloads, and Device/App issuance canaries after recovery.
+Fixed completion remains **26/40 = 65%**, with 14 checkpoints open. Staging was
+untouched.

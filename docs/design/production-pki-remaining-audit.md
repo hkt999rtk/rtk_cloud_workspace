@@ -644,3 +644,7 @@ Historical evidence is maintained in the [implementation ledger](production-pki-
 ### OpenBao TLS Root and staged provider trust (2026-09-11)
 
 Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#openbao-tls-root-and-staged-provider-trust-2026-09-11). The independent dev Root is ready; T9 remains open for actual-client installation, activation and host lifecycle qualification.
+
+### Managed OpenBao host adoption checkpoint (2026-09-11)
+
+Historical evidence is maintained in the [implementation ledger](production-pki-implementation.md#managed-openbao-host-adopted-in-dev-2026-09-11). The retained managed host is active and passed two seed-free replacements. T9 remains open for the server-only v2 correction, replacement/revocation and the complete negative, recovery and issuance-canary matrix.

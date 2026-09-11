@@ -5679,3 +5679,29 @@ The full Go suite, focused race tests and vet pass; the maintained dev runner ha
 actual-client installation, Root/intermediate activation, managed host cutover,
 replacement/revocation, failure recovery and seed-free restart. Fixed completion
 remains **26/40 = 65%**. Staging was untouched.
+
+### Managed OpenBao host adopted in dev (2026-09-11)
+
+The dev OpenBao listener now uses the governed `openbaopkihost` owner. The
+server identity and the separate `service:openbao` renewal identity were issued
+through the registry, retained on the dedicated identity PVC and copied into an
+owner-private runtime directory. OpenBao still owns its provider CA keys, Raft
+storage and seal state. The legacy `openbao-tls` Secret was deleted after the
+managed listener passed two unsealed Pod replacements.
+
+The rollout keeps the existing OnDelete StatefulSet strategy and verifies Pod
+replacement by UID plus controller revision. Both retained identity hashes and
+the served certificate fingerprint remained stable across the replacements.
+The actual controller and certificate-issuer workloads accepted the active
+OpenBao Root/intermediate and recorded their receipts. The host bootstrap also
+proved exact failed-request reuse after a temporary PostgreSQL network-policy
+block, without duplicate issuance rows or leftover bootstrap credentials.
+
+The maintained runner has 14 passing tests. Dev evidence is stored under
+`pki/t9-rollout-20260911/openbao-bootstrap-recovery-59c68de-2` and
+`pki/t9-rollout-20260911/openbao-adoption-3b121ba`. T9 is recalculated at
+approximately **75%**: host adoption and seed-free restart are complete; the
+server-only OpenBao TLS v2 correction, leaf replacement/revocation, negative and
+outage recovery tests, actual provider operations, and Device/App issuance
+canaries remain. Fixed completion remains **26/40 = 65%, with 14 checkpoints
+open**. Staging and human login/MFA were untouched.
