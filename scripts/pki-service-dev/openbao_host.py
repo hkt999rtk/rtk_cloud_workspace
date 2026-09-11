@@ -150,6 +150,9 @@ def managed_openbao_template(owner, image, host_root, service_root):
     pod['initContainers'] = [init]
     pod['containers'].append(worker)
     pod['shareProcessNamespace'] = True
+    m.require(not pod.get('imagePullSecrets'),
+              'legacy OpenBao image pull settings changed')
+    pod['imagePullSecrets'] = [{'name': 'ghcr-pull'}]
     pod['volumes'] = [
         item for item in pod['volumes'] if item['name'] != 'openbao-tls']
     pod['volumes'].extend([
@@ -743,6 +746,20 @@ class OpenBaoHostRun(h.ServiceRun):
                   'managed OpenBao containers are not ready')
         return pod
 
+    def unseal_openbao(self):
+        path = self.base / 'openbao/unseal-key'
+        info = os.lstat(path)
+        m.require(not path.is_symlink() and info.st_mode & 0o077 == 0,
+                  'dev OpenBao unseal key permissions changed')
+        key = path.read_text().strip()
+        m.require(re.fullmatch(r'[A-Za-z0-9+/=_-]{32,256}', key) is not None,
+                  'invalid dev OpenBao unseal key')
+        self.kube([
+            '-n', SECRETS_NS, 'exec', '-i', 'pod/openbao-0',
+            '-c', 'openbao', '--', 'sh', '-ec',
+            'read -r key; BAO_SKIP_VERIFY=true '
+            'bao operator unseal "$key" >/dev/null'], key + '\n')
+
     def openbao_peer(self, label, expected):
         self.forward(label, SECRETS_NS, 'openbao', 8200)
         peer = json.loads(m.command([
@@ -1166,13 +1183,30 @@ class OpenBaoHostRun(h.ServiceRun):
                 'op': 'replace', 'path': '/spec/template',
                 'value': desired_owner['spec']['template']}])
 
+        installed_config = self.obj('configmap', 'openbao-config', SECRETS_NS)
+        installed_owner = self.obj('statefulset', 'openbao', SECRETS_NS)
+        m.require(installed_config['data'] == desired_config['data']
+                  and installed_owner['spec']['template'].get(
+                      'metadata', {}).get('annotations', {}).get(
+                          'rtk.cloud/openbao-managed-transport') ==
+                  self.args.openbao_image.split('@')[-1],
+                  'installed OpenBao adoption objects differ')
+        # Retain API-defaulted container fields as the exact recovery target.
+        desired_owner['spec']['template'] = installed_owner['spec']['template']
+        m.write(statefulset_path, desired_owner)
+        self.save('desired-openbao-statefulset.json', desired_owner)
+
         old = self.openbao_pod()
         self.delete_exact('pods', old['metadata']['name'], SECRETS_NS, old)
         self.kube(['-n', SECRETS_NS, 'wait', '--for=delete',
                    'pod/' + old['metadata']['name'], '--timeout=120s'],
                   timeout=130)
-        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+        self.kube(['-n', SECRETS_NS, 'wait',
+                   '--for=jsonpath={.status.phase}=Running',
                    'pod/openbao-0', '--timeout=300s'], timeout=310)
+        self.unseal_openbao()
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+                   'pod/openbao-0', '--timeout=120s'], timeout=130)
         first = self.wait_openbao()
         peer = self.openbao_peer('openbao-peer-first', server)
         state = self.kube([
@@ -1193,8 +1227,12 @@ class OpenBaoHostRun(h.ServiceRun):
         self.kube(['-n', SECRETS_NS, 'wait', '--for=delete',
                    'pod/' + first['metadata']['name'], '--timeout=120s'],
                   timeout=130)
-        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+        self.kube(['-n', SECRETS_NS, 'wait',
+                   '--for=jsonpath={.status.phase}=Running',
                    'pod/openbao-0', '--timeout=300s'], timeout=310)
+        self.unseal_openbao()
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+                   'pod/openbao-0', '--timeout=120s'], timeout=130)
         second = self.wait_openbao()
         peer_after = self.openbao_peer('openbao-peer-second', server)
         state_after = self.kube([

@@ -50,6 +50,7 @@ class OpenBaoHostTests(unittest.TestCase):
             host_root, service_root)
         pod = result['spec']
         self.assertTrue(pod['shareProcessNamespace'])
+        self.assertEqual(pod['imagePullSecrets'], [{'name': 'ghcr-pull'}])
         self.assertEqual([item['name'] for item in pod['containers']],
                          ['openbao', 'openbao-pki'])
         self.assertEqual([item['name'] for item in pod['initContainers']],
