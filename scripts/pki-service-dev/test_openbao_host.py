@@ -150,6 +150,39 @@ class OpenBaoHostTests(unittest.TestCase):
             o.m.read = original
         self.assertEqual(issuer['status'], 'active')
 
+    def test_server_only_v2_keeps_v1_during_trust_overlap(self):
+        common = {
+            'environment': 'dev', 'trust_domain': 'openbao_tls',
+            'kind': 'intermediate', 'parent_issuer_id': 'root-1',
+            'signer_provider': 'openbao', 'signer_reference': 'mount',
+            'server_dns_names': o.OPENBAO_HOST_NAMES}
+        v1 = dict(common, issuer_id='issuer-v1', issuer_version=1,
+                  certificate_fingerprint_sha256='1' * 64,
+                  certificate_pem='v1', trust_bundle_version='bundle-v1',
+                  service_client_ids=['service:openbao'], status='active')
+        v2 = dict(common, issuer_id='issuer-v2', issuer_version=2,
+                  certificate_fingerprint_sha256='2' * 64,
+                  certificate_pem='v2', trust_bundle_version='bundle-v2',
+                  service_client_ids=[], status='ready')
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.args = type('Args', (), {
+            'intermediate': '/evidence', 'server_only': True})()
+        runner.openbao_root = lambda status: {
+            'issuer_id': 'root-1', 'trust_bundle_version': 'bundle-root'}
+        runner.api = lambda path: v2 if path.endswith('issuer-v2') else v1
+        original = o.m.read
+        try:
+            o.m.read = lambda path: (
+                v2 if path.name == 'intermediate-ready.json' else
+                v1 if path.name == 'intermediate-v1.json' else
+                {'operation_id': 'operation-v2'})
+            root, issuer, _ = runner.ready_intermediate()
+            overlap = runner.intermediate_bundle_issuers(root, issuer)
+        finally:
+            o.m.read = original
+        self.assertEqual([item['issuer_id'] for item in overlap],
+                         ['root-1', 'issuer-v1', 'issuer-v2'])
+
     def test_activation_gate_uses_operation_requester(self):
         calls = []
         runner = object.__new__(o.OpenBaoHostRun)

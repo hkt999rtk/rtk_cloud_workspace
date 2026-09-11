@@ -36,6 +36,28 @@ class OpenBaoAuthorityTests(unittest.TestCase):
             'openbao.video-cloud-dev-secrets.svc.cluster.local'])
         self.assertEqual(request['parent_issuer_id'], 'root-1')
 
+    def test_server_only_successor_has_no_service_client_identity(self):
+        request = o.intermediate_request(
+            self.root(status='active', issuer_id='root-1'), [])
+        self.assertEqual(request['service_client_ids'], [])
+        self.assertEqual(request['server_dns_names'], o.OPENBAO_DNS_NAMES)
+
+    def test_server_only_successor_requires_exact_active_v1(self):
+        root = self.root(status='active', issuer_id='root-1')
+        v1 = dict(o.intermediate_request(root), issuer_id='v1',
+                  issuer_version=1, status='active')
+        self.assertEqual(o.select_v1_predecessor([v1], root), v1)
+        for changed in (
+                dict(v1, status='retiring'),
+                dict(v1, issuer_version=2),
+                dict(v1, service_client_ids=[])):
+            with self.assertRaises(RuntimeError):
+                o.select_v1_predecessor([changed], root)
+        v2 = dict(o.intermediate_request(root, []), issuer_id='v2',
+                  issuer_version=2, status='ready')
+        with self.assertRaisesRegex(RuntimeError, 'successor already exists'):
+            o.select_v1_predecessor([v1, v2], root)
+
     def test_intermediate_recovery_is_separate_from_root_reconcile(self):
         self.assertTrue(callable(o.OpenBaoAuthorityRun.resume_intermediate))
 

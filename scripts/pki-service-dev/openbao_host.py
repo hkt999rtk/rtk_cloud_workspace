@@ -536,6 +536,8 @@ class OpenBaoHostRun(h.ServiceRun):
         source = Path(self.args.intermediate)
         saved = m.read(source / 'intermediate-ready.json')
         issuer = self.api('/issuers/' + saved['issuer_id'])
+        server_only = getattr(self.args, 'server_only', False)
+        expected_ids = [] if server_only else ['service:openbao']
         immutable = (
             'issuer_id', 'environment', 'trust_domain', 'kind',
             'parent_issuer_id', 'issuer_version', 'signer_provider',
@@ -545,10 +547,32 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(all(issuer.get(key) == saved.get(key) for key in immutable)
                   and issuer['status'] == status
                   and issuer['parent_issuer_id'] == root['issuer_id']
-                  and issuer['service_client_ids'] == ['service:openbao'],
+                  and issuer['service_client_ids'] == expected_ids
+                  and (not server_only or issuer['issuer_version'] == 2),
                   'OpenBao TLS intermediate identity or policy changed')
+        if server_only:
+            predecessor = m.read(source / 'intermediate-v1.json')
+            current = self.api('/issuers/' + predecessor['issuer_id'])
+            expected_status = 'retiring' if status == 'active' else 'active'
+            m.require(all(current.get(key) == predecessor.get(key)
+                          for key in immutable)
+                      and current['status'] == expected_status
+                      and predecessor['issuer_version'] == 1
+                      and predecessor['service_client_ids'] ==
+                      ['service:openbao']
+                      and predecessor['server_dns_names'] ==
+                      OPENBAO_HOST_NAMES,
+                      'OpenBao TLS v1 predecessor changed')
         operation = m.read(source / 'intermediate-operation.json')
         return root, issuer, operation
+
+    def intermediate_bundle_issuers(self, root, issuer):
+        items = [root]
+        if getattr(self.args, 'server_only', False):
+            items.append(m.read(Path(self.args.intermediate) /
+                                'intermediate-v1.json'))
+        items.append(issuer)
+        return items
 
     def intermediate_template(self, owner, image, manifest_name, run_name):
         template = json.loads(json.dumps(owner['spec']['template']))
@@ -572,7 +596,7 @@ class OpenBaoHostRun(h.ServiceRun):
         name = 'pki-openbao-tls-bundles-' + issuer['issuer_id'][:8]
         refs = [{'issuer_id': item['issuer_id'],
                  'trust_bundle_version': item['trust_bundle_version']}
-                for item in (root, issuer)]
+                for item in self.intermediate_bundle_issuers(root, issuer)]
         raw = self.kube(['-n', NS, 'get', 'configmap', name,
                          '--ignore-not-found', '-o', 'json'])
         expected = {'issuers.json': json.dumps(refs)}
@@ -612,6 +636,17 @@ class OpenBaoHostRun(h.ServiceRun):
         issuer = self.api('/issuers/' + issuer['issuer_id'])
         m.require(issuer['status'] == 'active',
                   'OpenBao TLS intermediate did not activate')
+        if getattr(self.args, 'server_only', False):
+            predecessor = m.read(Path(self.args.intermediate) /
+                                 'intermediate-v1.json')
+            old = self.api('/issuers/' + predecessor['issuer_id'])
+            m.require(old['status'] == 'retiring'
+                      and old['certificate_fingerprint_sha256'] ==
+                      predecessor['certificate_fingerprint_sha256']
+                      and old['trust_bundle_version'] ==
+                      predecessor['trust_bundle_version'],
+                      'OpenBao TLS v1 did not enter retiring state')
+            self.save('openbao-tls-intermediate-v1-retiring.json', old)
         self.save('openbao-tls-intermediate-active.json', issuer)
         provider = json.loads(self.bao([
             'read', '-format=json', issuer['signer_reference'] + '/cert/crl']))
@@ -631,12 +666,21 @@ class OpenBaoHostRun(h.ServiceRun):
                           'provider-policies.json')
         m.require(policies['issuer_id'] == issuer['issuer_id']
                   and policies['mount'] == issuer['signer_reference']
-                  and '/sign/server' in policies['signer_policy'],
+                  and '/sign/server' in policies['signer_policy']
+                  and (not getattr(self.args, 'server_only', False)
+                       or not policies.get('service_client_signer_policy')),
                   'saved OpenBao TLS signer policy changed')
         self.role_policy(
             'certissuer-pki-dev',
             'pki-openbao-tls-server-dev-' + issuer['issuer_id'],
             policies['signer_policy'])
+        if getattr(self.args, 'server_only', False):
+            self.check('openbao_tls_server_only_signer_enabled', {
+                'issuer_id': issuer['issuer_id'],
+                'server_dns_names': issuer['server_dns_names'],
+                'service_client_ids': issuer['service_client_ids'],
+                'existing_route_preserved': True})
+            return
         owner = self.obj('deployment', 'certissuer')
         template = certissuer_route_template(
             owner, self.args.image, root)
@@ -1310,6 +1354,7 @@ def main():
     parser.add_argument('--openbao-image')
     parser.add_argument('--bootstrap')
     parser.add_argument('--failed')
+    parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,

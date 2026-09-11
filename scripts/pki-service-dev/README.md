@@ -425,6 +425,41 @@ If adoption stops, rerun the same `adopt-host` command with a new output
 directory. The runner accepts only its saved exact ConfigMap and StatefulSet,
 reuses the registered identities and retained PVC, and never issues another leaf.
 
+After adoption, replace the transitional v1 authority with a server-only v2.
+The `service:openbao` renewal identity remains under the Service hierarchy; the
+OpenBao TLS hierarchy contains only server names:
+
+```sh
+python3 scripts/pki-service-dev/openbao_authority.py \
+  --phase prepare-intermediate --server-only \
+  --root OPENBAO_TLS_ROOT_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --output OPENBAO_TLS_V2_READY_EVIDENCE
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase install-intermediate-consumers --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST \
+  --output OPENBAO_TLS_V2_CONSUMER_EVIDENCE
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase activate-intermediate --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --output OPENBAO_TLS_V2_ACTIVATION_EVIDENCE
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase configure-certissuer --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --policy-evidence OPENBAO_TLS_V2_READY_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST \
+  --output OPENBAO_TLS_V2_SIGNER_EVIDENCE
+```
+
+The consumer manifest overlaps Root, v1 and v2 so the currently served v1 leaf
+stays available while v2 activates. Activation moves v1 to `retiring`. The v2
+certissuer policy permits only `/sign/server`; it does not create or grant a
+service-client role.
+
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run
