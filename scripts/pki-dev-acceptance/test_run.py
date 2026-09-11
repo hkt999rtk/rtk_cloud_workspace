@@ -81,6 +81,27 @@ class AcceptanceTests(unittest.TestCase):
             m.command(['python3', '-c', 'import sys; print("private-token"); sys.exit(1)'])
         self.assertNotIn('private-token', str(error.exception))
 
+    def test_bao_prefers_managed_listener_chain_with_legacy_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = object.__new__(m.Acceptance)
+            runner.base = Path(directory)
+            (runner.base / 'openbao').mkdir()
+            (runner.base / 'openbao/root-token').write_text(
+                'secret-token-value')
+            captured = {}
+
+            def kube(args, body=None):
+                captured['args'] = args
+                captured['body'] = body
+                return 'ok'
+
+            runner.kube = kube
+            self.assertEqual(runner.bao(['status']), 'ok')
+            script = captured['args'][-1]
+            self.assertIn('/run/openbao-pki/private/current/chain.pem', script)
+            self.assertIn('/openbao/tls/ca.crt', script)
+            self.assertNotIn('secret-token-value', script)
+
     def test_receipt_identity_cannot_inject_sql(self):
         runner = object.__new__(m.Acceptance)
         for issuer, digest in [("x'; DROP TABLE x;--", 'a'*64), ('123e4567-e89b-12d3-a456-426614174000', "' OR TRUE")]:

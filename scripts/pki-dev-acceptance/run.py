@@ -353,7 +353,9 @@ class Acceptance:
     def bao(self, args, body='', token=None):
         script = ('read -r BAO_TOKEN; export BAO_TOKEN; '
                   'export BAO_ADDR=https://openbao.video-cloud-dev-secrets.svc:8200; '
-                  'export BAO_CACERT=/openbao/tls/ca.crt; exec bao ' + shlex.join(args))
+                  'BAO_CACERT=/run/openbao-pki/private/current/chain.pem; '
+                  '[ -r "$BAO_CACERT" ] || BAO_CACERT=/openbao/tls/ca.crt; '
+                  'export BAO_CACERT; exec bao ' + shlex.join(args))
         if token is None:
             token = (self.base / 'openbao/root-token').read_text().strip()
         return self.kube(['-n', 'video-cloud-dev-secrets', 'exec', '-i', 'openbao-0',
