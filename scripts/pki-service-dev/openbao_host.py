@@ -751,8 +751,7 @@ class OpenBaoHostRun(h.ServiceRun):
             time.sleep(2)
 
     def wait_openbao(self):
-        self.kube(['-n', SECRETS_NS, 'rollout', 'status',
-                   'statefulset/openbao', '--timeout=300s'], timeout=310)
+        owner = self.obj('statefulset', 'openbao', SECRETS_NS)
         pod = self.openbao_pod()
         statuses = {item['name']: item for item in
                     pod['status'].get('containerStatuses', [])}
@@ -761,7 +760,12 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(all(statuses.get(name, {}).get('ready')
                       for name in ('openbao', 'openbao-pki'))
                   and init.get('openbao-pki-install', {}).get(
-                      'state', {}).get('terminated', {}).get('exitCode') == 0,
+                      'state', {}).get('terminated', {}).get('exitCode') == 0
+                  and owner.get('status', {}).get('readyReplicas') == 1
+                  and owner.get('status', {}).get('updatedReplicas') == 1
+                  and pod['metadata'].get('labels', {}).get(
+                      'controller-revision-hash') ==
+                  owner.get('status', {}).get('updateRevision'),
                   'managed OpenBao containers are not ready')
         return pod
 
