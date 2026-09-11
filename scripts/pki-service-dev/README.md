@@ -502,13 +502,16 @@ python3 scripts/pki-service-dev/openbao_host.py \
   --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
   --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
   --retirement FAILED_OPENBAO_HOST_V1_RETIREMENT_EVIDENCE \
+  --image VIDEO_CLOUD_IMAGE_DIGEST \
   --output OPENBAO_PROVIDER_VERIFICATION_EVIDENCE
 ```
 
-Each workload keeps its current pinned image and exact OpenBao origin. The phase
-adds the independent Root pin, the origin's DNS name, the shared public manifest
-and a ten-second registry/CRL sweep. It uses each workload's managed Service
-identity for CRL fetch and acknowledgment; static management keys are forbidden.
+Both workloads move to the same committed image and keep their exact OpenBao
+origins. The phase adds the independent Root pin, the origin's DNS name, a full
+public CRL manifest and a ten-second registry/CRL sweep. CRL state stays under
+each workload's existing retained host-state PVC. Each workload's managed
+Service identity performs CRL fetch and acknowledgment; static management keys
+are forbidden.
 
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older

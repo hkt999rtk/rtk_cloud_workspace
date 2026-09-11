@@ -198,13 +198,23 @@ def certissuer_route_template(owner, image, root):
     return template
 
 
-def provider_verification_template(owner, root, run_name):
+def provider_crl_manifest(authorities):
+    return [{'issuer': issuer,
+             'state_path': '/var/lib/pki-host/openbao-crls/' +
+                           issuer['issuer_id'] + '.json'}
+            for issuer in authorities]
+
+
+def provider_verification_template(owner, root, manifest_name, image,
+                                   run_name):
     template = json.loads(json.dumps(owner['spec']['template']))
     containers = template['spec']['containers']
     m.require(len(containers) == 1
               and containers[0]['name'] == owner['metadata']['name'],
               'provider client container changed')
     container = containers[0]
+    m.require(IMAGE_PATTERN.fullmatch(image or ''),
+              'verified dev application image digest required')
     env = {item['name']: item.get('value')
            for item in container.get('env', [])}
     address = urllib.parse.urlparse(env.get('OPENBAO_ADDR', ''))
@@ -215,13 +225,30 @@ def provider_verification_template(owner, root, run_name):
               and env.get('OPENBAO_SERVER_BUNDLE_MANIFEST') ==
               '/run/openbao-server-bundles/issuers.json',
               'OpenBao provider origin or installed bundle changed')
+    volumes = {item['name']: item
+               for item in template['spec'].get('volumes', [])}
+    mounts = {item['name']: item
+              for item in container.get('volumeMounts', [])}
+    m.require(volumes.get('host-state', {}).get(
+                  'persistentVolumeClaim', {}).get('claimName')
+              and mounts.get('host-state', {}).get('mountPath') ==
+              '/var/lib/pki-host'
+              and 'openbao-server-crls' not in volumes
+              and 'openbao-server-crls' not in mounts,
+              'provider retained state or CRL manifest mount changed')
+    template['spec']['volumes'].append({
+        'name': 'openbao-server-crls',
+        'configMap': {'name': manifest_name}})
+    container.setdefault('volumeMounts', []).append({
+        'name': 'openbao-server-crls',
+        'mountPath': '/run/openbao-server-crls', 'readOnly': True})
     settings = {
         'OPENBAO_SERVER_PKI_ROOT_SHA256':
             root['certificate_fingerprint_sha256'],
         'OPENBAO_SERVER_PKI_NAME': address.hostname,
         'OPENBAO_SERVER_PKI_SWEEP_INTERVAL': '10s',
         'OPENBAO_SERVER_CRL_MANIFEST':
-            '/run/openbao-server-bundles/issuers.json',
+            '/run/openbao-server-crls/crls.json',
         'OPENBAO_PKI_CONTROLLER_URL':
             'https://pki-controller.' + NS + '.svc:18446',
         'OPENBAO_MANAGEMENT_CA': '/run/pki-host-root/root.pem'}
@@ -232,6 +259,7 @@ def provider_verification_template(owner, root, run_name):
               and not env.get('OPENBAO_MANAGEMENT_KEY'),
               'OpenBao provider verification retained static credentials')
     container['env'] = h.with_env(container.get('env', []), settings)
+    container['image'] = image
     template.setdefault('metadata', {}).setdefault('annotations', {})[
         'rtk.cloud/openbao-provider-verification'] = run_name
     return template
@@ -1163,10 +1191,31 @@ class OpenBaoHostRun(h.ServiceRun):
                   and self.api('/issuers/' + predecessor['issuer_id'] +
                                '/crl') == published,
                   'published OpenBao v1 revocation changed')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        authorities = [root,
+                       self.api('/issuers/' + predecessor['issuer_id']),
+                       issuer]
+        manifest = provider_crl_manifest(authorities)
+        manifest_name = 'pki-openbao-tls-crls-' + issuer['issuer_id'][:8]
+        raw = self.kube(['-n', NS, 'get', 'configmap', manifest_name,
+                         '--ignore-not-found', '-o', 'json'])
+        expected = {'crls.json': json.dumps(manifest)}
+        if raw.strip():
+            current_manifest = json.loads(raw)
+            m.require(current_manifest.get('immutable') is True
+                      and current_manifest.get('data') == expected,
+                      'OpenBao provider CRL manifest changed')
+        else:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                         'metadata': {'name': manifest_name,
+                                      'namespace': NS},
+                         'immutable': True, 'data': expected})
         for name in CONSUMERS:
             owner = self.obj('deployment', name)
             template = provider_verification_template(
-                owner, root, self.output.name)
+                owner, root, manifest_name, self.args.image,
+                self.output.name)
             self.scoped_patch(name, owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/' + name, '--timeout=300s'], timeout=310)
@@ -1200,6 +1249,8 @@ class OpenBaoHostRun(h.ServiceRun):
             'crl_consumers': receipts,
             'managed_service_identities': True,
             'static_management_credentials': False,
+            'private_crl_state': '/var/lib/pki-host/openbao-crls',
+            'image': self.args.image,
             'v1_finalized': True,
             'v1_certissuer_signer_removed': True,
             'v2_successor_sha256': current['state']['fingerprint']})
@@ -1755,7 +1806,7 @@ def main():
               'server-only issuer, adoption, signer and renewal required')
     m.require(args.phase != 'enable-provider-verification'
               or (args.server_only and args.intermediate and args.adoption
-                  and args.signer and args.retirement),
+                  and args.signer and args.retirement and args.image),
               'server-only issuer and failed retirement evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')

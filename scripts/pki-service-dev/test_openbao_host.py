@@ -122,27 +122,46 @@ class OpenBaoHostTests(unittest.TestCase):
 
     def test_provider_verification_uses_exact_origin_and_managed_identity(self):
         owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
-            'metadata': {}, 'spec': {'containers': [{
+            'metadata': {}, 'spec': {'volumes': [{
+                'name': 'host-state', 'persistentVolumeClaim': {
+                    'claimName': 'certissuer-state'}}], 'containers': [{
                 'name': 'certissuer', 'env': [
                     {'name': 'OPENBAO_ADDR', 'value':
                      'https://' + o.OPENBAO_HOST_NAMES[1] + ':8200'},
                     {'name': 'OPENBAO_CACERT', 'value':
                      '/run/openbao-ca/ca.crt'},
                     {'name': 'OPENBAO_SERVER_BUNDLE_MANIFEST', 'value':
-                     '/run/openbao-server-bundles/issuers.json'}]}]}}}}
+                     '/run/openbao-server-bundles/issuers.json'}],
+                'volumeMounts': [{'name': 'host-state',
+                                  'mountPath': '/var/lib/pki-host'}]}]}}}}
         result = o.provider_verification_template(
-            owner, {'certificate_fingerprint_sha256': 'a' * 64}, 'run-1')
+            owner, {'certificate_fingerprint_sha256': 'a' * 64},
+            'crl-manifest',
+            'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
+            'b' * 64, 'run-1')
         env = {item['name']: item.get('value')
                for item in result['spec']['containers'][0]['env']}
         self.assertEqual(env['OPENBAO_SERVER_PKI_NAME'],
                          o.OPENBAO_HOST_NAMES[1])
         self.assertEqual(env['OPENBAO_SERVER_PKI_ROOT_SHA256'], 'a' * 64)
         self.assertEqual(env['OPENBAO_SERVER_PKI_SWEEP_INTERVAL'], '10s')
+        self.assertEqual(env['OPENBAO_SERVER_CRL_MANIFEST'],
+                         '/run/openbao-server-crls/crls.json')
         self.assertNotIn('OPENBAO_MANAGEMENT_CERT', env)
         self.assertNotIn('OPENBAO_MANAGEMENT_KEY', env)
         self.assertNotIn('OPENBAO_SERVER_PKI_NAME', {
             item['name'] for item in owner['spec']['template']['spec'][
                 'containers'][0]['env']})
+
+    def test_provider_crl_manifest_uses_private_retained_state(self):
+        issuers = [{'issuer_id': 'root'}, {'issuer_id': 'v1'},
+                   {'issuer_id': 'v2'}]
+        manifest = o.provider_crl_manifest(issuers)
+        self.assertEqual([item['issuer'] for item in manifest], issuers)
+        self.assertEqual([item['state_path'] for item in manifest], [
+            '/var/lib/pki-host/openbao-crls/root.json',
+            '/var/lib/pki-host/openbao-crls/v1.json',
+            '/var/lib/pki-host/openbao-crls/v2.json'])
 
     def test_authority_loader_does_not_shadow_acceptance_root_state(self):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
