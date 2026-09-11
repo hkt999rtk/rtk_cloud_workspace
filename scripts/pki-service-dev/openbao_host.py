@@ -12,6 +12,7 @@ import re
 import signal
 import sys
 import time
+import urllib.parse
 import uuid
 
 
@@ -194,6 +195,45 @@ def certissuer_route_template(owner, image, root):
             ','.join(OPENBAO_HOST_NAMES),
         'CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN':
             '^service:openbao$'})
+    return template
+
+
+def provider_verification_template(owner, root, run_name):
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec']['containers']
+    m.require(len(containers) == 1
+              and containers[0]['name'] == owner['metadata']['name'],
+              'provider client container changed')
+    container = containers[0]
+    env = {item['name']: item.get('value')
+           for item in container.get('env', [])}
+    address = urllib.parse.urlparse(env.get('OPENBAO_ADDR', ''))
+    m.require(address.scheme == 'https'
+              and address.hostname in OPENBAO_HOST_NAMES
+              and address.port == 8200
+              and env.get('OPENBAO_CACERT') == '/run/openbao-ca/ca.crt'
+              and env.get('OPENBAO_SERVER_BUNDLE_MANIFEST') ==
+              '/run/openbao-server-bundles/issuers.json',
+              'OpenBao provider origin or installed bundle changed')
+    settings = {
+        'OPENBAO_SERVER_PKI_ROOT_SHA256':
+            root['certificate_fingerprint_sha256'],
+        'OPENBAO_SERVER_PKI_NAME': address.hostname,
+        'OPENBAO_SERVER_PKI_SWEEP_INTERVAL': '10s',
+        'OPENBAO_SERVER_CRL_MANIFEST':
+            '/run/openbao-server-bundles/issuers.json',
+        'OPENBAO_PKI_CONTROLLER_URL':
+            'https://pki-controller.' + NS + '.svc:18446',
+        'OPENBAO_MANAGEMENT_CA': '/run/pki-host-root/root.pem'}
+    for key, value in settings.items():
+        m.require(env.get(key) in (None, '', value),
+                  'OpenBao provider verification setting changed: ' + key)
+    m.require(not env.get('OPENBAO_MANAGEMENT_CERT')
+              and not env.get('OPENBAO_MANAGEMENT_KEY'),
+              'OpenBao provider verification retained static credentials')
+    container['env'] = h.with_env(container.get('env', []), settings)
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-provider-verification'] = run_name
     return template
 
 
@@ -1106,6 +1146,64 @@ class OpenBaoHostRun(h.ServiceRun):
             'v1_certissuer_signer_removed': True,
             'v2_successor_served': True})
 
+    def enable_provider_verification(self):
+        root, predecessor, issuer, _, _ = self.lifecycle_prerequisites()
+        source = Path(self.args.retirement)
+        report = m.read(source / 'report.json')
+        m.require(report['status'] == 'failed'
+                  and report['phase'] == 'retire-host'
+                  and report['failure'] == 'consumer receipt deadline',
+                  'failed OpenBao v1 receipt evidence required')
+        target = m.read(source / 'target.json')
+        published = m.read(source / 'published-crl.json')
+        rows = [row for row in self.server_rows()
+                if row['fingerprint'] == target['fingerprint']]
+        m.require(len(rows) == 1 and rows[0]['revoked_at'] is not None
+                  and rows[0]['issuer_id'] == predecessor['issuer_id']
+                  and self.api('/issuers/' + predecessor['issuer_id'] +
+                               '/crl') == published,
+                  'published OpenBao v1 revocation changed')
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            template = provider_verification_template(
+                owner, root, self.output.name)
+            self.scoped_patch(name, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status',
+                       'deployment/' + name, '--timeout=300s'], timeout=310)
+        receipts = {}
+        for item in (root, predecessor, issuer):
+            crl = self.api('/issuers/' + item['issuer_id'] + '/crl')
+            receipts[item['issuer_id']] = self.wait_receipts(
+                item['issuer_id'], crl['crl_sha256'], CONSUMERS, kind='crl')
+        body = {'certificate_sha256': target['fingerprint']}
+        finalized = self.api('/issuers/' + predecessor['issuer_id'] +
+                             '/finalize-server-revocation', body)
+        m.require(finalized['crl_sha256'] == published['crl_sha256']
+                  and self.api('/issuers/' + predecessor['issuer_id'] +
+                               '/finalize-server-revocation', body) ==
+                  finalized,
+                  'OpenBao v1 finalization differs after client recovery')
+        self.save('finalized.json', finalized)
+        policy = ('pki-openbao-tls-server-dev-' +
+                  predecessor['issuer_id'])
+        self.role_policy('certissuer-pki-dev', policy)
+        current = self.current_host({issuer['issuer_id']})
+        self.check('openbao_actual_clients_verify_registry_and_crls', {
+            'root_sha256': root['certificate_fingerprint_sha256'],
+            'server_name_by_consumer': {
+                name: urllib.parse.urlparse(next(
+                    item['value'] for item in self.obj(
+                        'deployment', name)['spec']['template']['spec'][
+                            'containers'][0]['env']
+                    if item['name'] == 'OPENBAO_ADDR')).hostname
+                for name in CONSUMERS},
+            'crl_consumers': receipts,
+            'managed_service_identities': True,
+            'static_management_credentials': False,
+            'v1_finalized': True,
+            'v1_certissuer_signer_removed': True,
+            'v2_successor_sha256': current['state']['fingerprint']})
+
     def recover_bootstrap_resources(self, request_id, image, bootstrap,
                                     database):
         pod = self.obj('pod', OPENBAO_SEED_POD, SECRETS_NS)
@@ -1615,7 +1713,7 @@ def main():
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'install-intermediate-consumers', 'activate-intermediate',
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
-        'renew-host', 'retire-host'])
+        'renew-host', 'retire-host', 'enable-provider-verification'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -1627,6 +1725,7 @@ def main():
     parser.add_argument('--adoption')
     parser.add_argument('--signer')
     parser.add_argument('--renewal')
+    parser.add_argument('--retirement')
     parser.add_argument('--failed')
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--output', required=True)
@@ -1654,6 +1753,10 @@ def main():
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.renewal),
               'server-only issuer, adoption, signer and renewal required')
+    m.require(args.phase != 'enable-provider-verification'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer and args.retirement),
+              'server-only issuer and failed retirement evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -1674,7 +1777,9 @@ def main():
          'bootstrap-host': runner.bootstrap_host,
          'adopt-host': runner.adopt_host,
          'renew-host': runner.renew_host,
-         'retire-host': runner.retire_host_predecessor}[args.phase]()
+         'retire-host': runner.retire_host_predecessor,
+         'enable-provider-verification':
+             runner.enable_provider_verification}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

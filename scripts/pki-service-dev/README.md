@@ -491,6 +491,25 @@ python3 scripts/pki-service-dev/openbao_host.py \
   --output OPENBAO_HOST_V1_RETIREMENT_EVIDENCE
 ```
 
+If the retirement run stops waiting for CRL receipts, enable registry and CRL
+verification in both actual provider clients and resume finalization:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase enable-provider-verification --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
+  --retirement FAILED_OPENBAO_HOST_V1_RETIREMENT_EVIDENCE \
+  --output OPENBAO_PROVIDER_VERIFICATION_EVIDENCE
+```
+
+Each workload keeps its current pinned image and exact OpenBao origin. The phase
+adds the independent Root pin, the origin's DNS name, the shared public manifest
+and a ten-second registry/CRL sweep. It uses each workload's managed Service
+identity for CRL fetch and acknowledgment; static management keys are forbidden.
+
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run
