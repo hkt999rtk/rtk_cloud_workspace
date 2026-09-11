@@ -477,6 +477,20 @@ one new v2 registry row and a new public key, verifies the served fingerprint,
 then replaces and unseals the dev Pod. The same successor and retained PVC must
 return. Private keys are never copied into evidence.
 
+Revoke the replaced v1 leaf, publish it through the v1 provider CRL, wait for
+both actual clients, finalize it and remove the old certissuer signer:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase retire-host --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
+  --renewal OPENBAO_HOST_V2_RENEWAL_EVIDENCE \
+  --output OPENBAO_HOST_V1_RETIREMENT_EVIDENCE
+```
+
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run
