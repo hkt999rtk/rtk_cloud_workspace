@@ -835,6 +835,13 @@ class OpenBaoHostRun(h.ServiceRun):
         self.kube(['delete', '--raw', '/api/v1/namespaces/' + namespace +
                    '/' + kind + '/' + name, '-f', '-'], json.dumps(options))
 
+    def delete_network_policy_exact(self, name, namespace, obj):
+        options = {'apiVersion': 'v1', 'kind': 'DeleteOptions',
+                   'preconditions': {'uid': obj['metadata']['uid']}}
+        self.kube(['delete', '--raw',
+                   '/apis/networking.k8s.io/v1/namespaces/' + namespace +
+                   '/networkpolicies/' + name, '-f', '-'], json.dumps(options))
+
     def patch_in(self, kind, name, namespace, before, patches):
         self.save('before-' + name + '-' + kind + '.json', before)
         changes = [{'op': 'test', 'path': '/metadata/resourceVersion',
@@ -1424,6 +1431,7 @@ class OpenBaoHostRun(h.ServiceRun):
                           'blocked OpenBao renewal did not retain a request')
                 time.sleep(2)
             rows = self.server_rows()
+            self.save('outage-observed.json', {'state': pending, 'rows': rows})
             m.require(rows == before['rows']
                       and pending['fingerprint'] == before['state']['fingerprint']
                       and pending['public_key_sha256'] ==
@@ -1431,8 +1439,8 @@ class OpenBaoHostRun(h.ServiceRun):
                       'provider outage changed installed OpenBao identity')
             self.save('outage-pending.json', pending)
         finally:
-            self.delete_exact('networkpolicies', policy['metadata']['name'],
-                              NS, created)
+            self.delete_network_policy_exact(policy['metadata']['name'], NS,
+                                             created)
         self.save('outage-policy-deleted.json', {
             'name': policy['metadata']['name'], 'uid': created['metadata']['uid']})
         m.require(pending is not None, 'OpenBao outage state was not recorded')
