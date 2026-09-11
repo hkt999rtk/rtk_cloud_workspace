@@ -1380,6 +1380,96 @@ class OpenBaoHostRun(h.ServiceRun):
             'static_management_credentials': False,
             'private_key_exported': False})
 
+    def exercise_provider_outage(self):
+        """Prove one blocked provider renewal resumes its retained request once."""
+        _, _, issuer, _, pod = self.lifecycle_prerequisites()
+        source = m.read(Path(self.args.provider_operations) / 'report.json')
+        m.require(source['status'] == 'passed'
+                  and source['phase'] == 'exercise-provider-clients'
+                  and source['checks']['openbao_actual_provider_operations'][
+                      'status'] == 'passed',
+                  'successful provider operation evidence required')
+        before = self.current_host({issuer['issuer_id']}, pod)
+        self.save('baseline.json', before)
+        processes = self.kube([
+            '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+            '-c', 'openbao-pki', '--', 'sh', '-ec',
+            "for f in /proc/[0-9]*/comm; do "
+            "[ \"$(cat \"$f\")\" = openbaopkihost ] && "
+            "basename \"$(dirname \"$f\")\"; done"]).splitlines()
+        m.require(len(processes) == 1 and processes[0].isdigit(),
+                  'expected one OpenBao TLS identity owner process')
+        policy = {
+            'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
+            'metadata': {'name': 'pki-openbao-certissuer-outage-' +
+                         self.output.name[-8:], 'namespace': NS},
+            'spec': {'podSelector': {'matchLabels': {
+                'app.kubernetes.io/name': 'certissuer'}},
+                'policyTypes': ['Egress'], 'egress': []}}
+        self.save('outage-policy.json', policy)
+        self.kube(['-n', NS, 'create', '-f', '-'], json.dumps(policy))
+        created = self.obj('networkpolicy', policy['metadata']['name'])
+        pending = None
+        try:
+            self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+                       '-c', 'openbao-pki', '--', 'kill', '-HUP',
+                       processes[0]])
+            deadline = time.monotonic() + 75
+            while True:
+                state = self.inspect_host_state(pod)
+                if state['pending']:
+                    pending = state
+                    break
+                m.require(time.monotonic() < deadline,
+                          'blocked OpenBao renewal did not retain a request')
+                time.sleep(2)
+            rows = self.server_rows()
+            m.require(rows == before['rows']
+                      and pending['fingerprint'] == before['state']['fingerprint']
+                      and pending['public_key_sha256'] ==
+                      before['state']['public_key_sha256'],
+                      'provider outage changed installed OpenBao identity')
+            self.save('outage-pending.json', pending)
+        finally:
+            self.delete_exact('networkpolicies', policy['metadata']['name'],
+                              NS, created)
+        self.save('outage-policy-deleted.json', {
+            'name': policy['metadata']['name'], 'uid': created['metadata']['uid']})
+        m.require(pending is not None, 'OpenBao outage state was not recorded')
+        self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
+                   '-c', 'openbao-pki', '--', 'kill', '-HUP', processes[0]])
+        deadline = time.monotonic() + 180
+        while True:
+            state = self.inspect_host_state(pod)
+            if not state['pending'] and state['fingerprint'] != before['state']['fingerprint']:
+                break
+            m.require(time.monotonic() < deadline,
+                      'restored OpenBao renewal deadline; do not signal again')
+            time.sleep(2)
+        rows = self.server_rows()
+        added = [row for row in rows if row['request_id'] not in {
+            row['request_id'] for row in before['rows']}]
+        m.require(len(rows) == len(before['rows']) + 1 and len(added) == 1
+                  and added[0]['request_id'] == pending['pending_request_id']
+                  and added[0]['fingerprint'] == state['fingerprint']
+                  and added[0]['issuer_id'] == issuer['issuer_id']
+                  and added[0]['status'] == 'succeeded'
+                  and added[0]['revoked_at'] is None,
+                  'restored OpenBao renewal did not reuse one retained request')
+        recovered = self.current_host({issuer['issuer_id']}, pod)
+        self.save('recovered.json', recovered)
+        self.openbao_peer('openbao-provider-outage-recovered', recovered['row'])
+        self.device_baseline()
+        self.check('openbao_provider_outage_reconciled', {
+            'blocked_renewal': 'pending',
+            'restored_renewal': 'passed',
+            'retained_request_id': pending['pending_request_id'],
+            'exactly_one_successor': True,
+            'predecessor_fingerprint': before['state']['fingerprint'],
+            'successor_fingerprint': recovered['state']['fingerprint'],
+            'private_key_exported': False,
+            'device_baseline_after_restore': 'passed'})
+
     def recover_bootstrap_resources(self, request_id, image, bootstrap,
                                     database):
         pod = self.obj('pod', OPENBAO_SEED_POD, SECRETS_NS)
@@ -1890,7 +1980,7 @@ def main():
         'install-intermediate-consumers', 'activate-intermediate',
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
         'renew-host', 'retire-host', 'enable-provider-verification',
-        'exercise-provider-clients'])
+        'exercise-provider-clients', 'exercise-provider-outage'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -1904,6 +1994,7 @@ def main():
     parser.add_argument('--renewal')
     parser.add_argument('--retirement')
     parser.add_argument('--provider-verification')
+    parser.add_argument('--provider-operations')
     parser.add_argument('--failed')
     parser.add_argument('--server-only', action='store_true')
     parser.add_argument('--output', required=True)
@@ -1939,6 +2030,10 @@ def main():
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_verification),
               'server-only issuer and successful provider evidence required')
+    m.require(args.phase != 'exercise-provider-outage'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer and args.provider_operations),
+              'server-only issuer and successful provider operation evidence required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/openbao-host-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -1963,7 +2058,9 @@ def main():
          'enable-provider-verification':
              runner.enable_provider_verification,
          'exercise-provider-clients':
-             runner.exercise_provider_clients}[args.phase]()
+             runner.exercise_provider_clients,
+         'exercise-provider-outage':
+             runner.exercise_provider_outage}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

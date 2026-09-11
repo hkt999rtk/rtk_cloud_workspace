@@ -533,6 +533,25 @@ requires both retained CRL receipts, verifies the denied leaf is in the CRL and
 checks replay-safe finalization. It does not export private keys or alter any
 unrelated Service identity.
 
+Run the scoped failure/recovery step with the successful operation evidence:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase exercise-provider-outage --server-only \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
+  --adoption OPENBAO_HOST_ADOPTION_EVIDENCE \
+  --signer OPENBAO_TLS_V2_SIGNER_EVIDENCE \
+  --provider-operations OPENBAO_PROVIDER_OPERATION_EVIDENCE \
+  --output OPENBAO_PROVIDER_OUTAGE_EVIDENCE
+```
+
+The runner applies a temporary, zero-egress policy only to Cert Issuer, requests
+one OpenBao host renewal and requires the request to remain pending with the
+installed leaf unchanged. It removes the exact policy, retries once, and accepts
+only the retained request ID and one successor row. It also repeats the existing
+Device traffic baseline after recovery.
+
 The broker's HTTPS authentication callback reuses the separately mounted
 `emqx-pki` client identity and mounts its callback CA as public trust. If an older
 adoption copied the callback paths from the removed static Secret, run
