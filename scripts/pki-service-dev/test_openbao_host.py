@@ -10,6 +10,22 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_registry_network_policy_allows_only_openbao_from_secrets(self):
+        policy = o.registry_network_policy()
+        self.assertEqual(policy['metadata'], {
+            'name': 'allow-openbao-pki-registry',
+            'namespace': 'video-cloud-dev-platform'})
+        self.assertEqual(policy['spec']['podSelector']['matchLabels'], {
+            'app.kubernetes.io/name': 'postgresql'})
+        source = policy['spec']['ingress'][0]['from']
+        self.assertEqual(len(source), 1)
+        self.assertEqual(source[0]['namespaceSelector']['matchLabels'], {
+            'kubernetes.io/metadata.name': 'video-cloud-dev-secrets'})
+        self.assertEqual(source[0]['podSelector']['matchLabels'], {
+            'app.kubernetes.io/name': 'openbao'})
+        self.assertEqual(policy['spec']['ingress'][0]['ports'], [
+            {'port': 5432, 'protocol': 'TCP'}])
+
     def test_certissuer_route_is_exact_and_preserves_source(self):
         owner = {'spec': {'template': {'metadata': {}, 'spec': {
             'containers': [{

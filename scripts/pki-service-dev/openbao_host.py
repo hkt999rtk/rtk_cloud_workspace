@@ -20,6 +20,7 @@ h = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(h)
 m, NS = h.m, h.NS
 SECRETS_NS = 'video-cloud-dev-secrets'
+PLATFORM_NS = 'video-cloud-dev-platform'
 
 CONSUMERS = ['certissuer', 'pki-controller']
 OPENBAO_HOST_NAMES = [
@@ -36,6 +37,24 @@ OPENBAO_BOOTSTRAP_SECRET = 'openbao-pki-bootstrap'
 OPENBAO_SEED_POD = 'openbao-pki-bootstrap'
 OPENBAO_CLIENT_STATE = '/var/lib/openbao-pki/service/client.json'
 OPENBAO_HOST_STATE = '/var/lib/openbao-pki/host/server.json'
+
+
+def registry_network_policy():
+    return {
+        'apiVersion': 'networking.k8s.io/v1',
+        'kind': 'NetworkPolicy',
+        'metadata': {'name': 'allow-openbao-pki-registry',
+                     'namespace': PLATFORM_NS},
+        'spec': {
+            'podSelector': {'matchLabels': {
+                'app.kubernetes.io/name': 'postgresql'}},
+            'policyTypes': ['Ingress'],
+            'ingress': [{'from': [{
+                'namespaceSelector': {'matchLabels': {
+                    'kubernetes.io/metadata.name': SECRETS_NS}},
+                'podSelector': {'matchLabels': {
+                    'app.kubernetes.io/name': 'openbao'}}}],
+                'ports': [{'port': 5432, 'protocol': 'TCP'}]}]}}
 
 
 def certissuer_route_template(owner, image, root):
@@ -561,6 +580,52 @@ class OpenBaoHostRun(h.ServiceRun):
                     (obj['metadata']['name'] + '-' +
                      obj['kind'].lower() + '.json'), obj)
 
+    def ensure_registry_network_policy(self):
+        expected = registry_network_policy()
+        name = expected['metadata']['name']
+        raw = self.kube(['-n', PLATFORM_NS, 'get', 'networkpolicy', name,
+                         '--ignore-not-found', '-o', 'json'])
+        if raw.strip():
+            current = json.loads(raw)
+            m.require(current.get('spec') == expected['spec'],
+                      'OpenBao registry NetworkPolicy changed')
+        else:
+            self.create_in(expected, PLATFORM_NS)
+        m.write(self.base / 'pki/controller-bootstrap/rollout' /
+                (name + '-networkpolicy.json'), expected)
+
+    def delete_exact(self, kind, name, namespace, obj):
+        options = {'apiVersion': 'v1', 'kind': 'DeleteOptions',
+                   'preconditions': {
+                       'uid': obj['metadata']['uid'],
+                       'resourceVersion': obj['metadata']['resourceVersion']}}
+        self.kube(['delete', '--raw', '/api/v1/namespaces/' + namespace +
+                   '/' + kind + '/' + name, '-f', '-'], json.dumps(options))
+
+    def recover_bootstrap_resources(self, request_id, image, bootstrap,
+                                    database):
+        pod = self.obj('pod', OPENBAO_SEED_POD, SECRETS_NS)
+        env = {item['name']: item.get('value') for item in
+               pod['spec']['containers'][0].get('env', [])}
+        m.require(pod.get('status', {}).get('phase') == 'Failed'
+                  and pod['metadata'].get('labels', {}).get(
+                      'rtk.cloud/purpose') == 'pki-bootstrap'
+                  and pod['spec']['containers'][0]['image'] == image
+                  and env.get('OPENBAO_PKI_BOOTSTRAP_REQUEST_ID') == request_id,
+                  'failed OpenBao bootstrap pod changed')
+        bootstrap_secret = self.obj(
+            'secret', OPENBAO_BOOTSTRAP_SECRET, SECRETS_NS)
+        registry_secret = self.obj(
+            'secret', OPENBAO_REGISTRY_SECRET, SECRETS_NS)
+        m.require(bootstrap_secret.get('data') == bootstrap['data']
+                  and registry_secret.get('data', {}).get('url') ==
+                  database['data']['url'],
+                  'failed OpenBao bootstrap secrets changed')
+        for name, obj in ((OPENBAO_BOOTSTRAP_SECRET, bootstrap_secret),
+                          (OPENBAO_REGISTRY_SECRET, registry_secret)):
+            self.delete_exact('secrets', name, SECRETS_NS, obj)
+        self.delete_exact('pods', OPENBAO_SEED_POD, SECRETS_NS, pod)
+
     def patch_provisioner(self, expected, replacement):
         owner = self.obj('deployment', 'certissuer')
         template = json.loads(json.dumps(owner['spec']['template']))
@@ -615,42 +680,63 @@ class OpenBaoHostRun(h.ServiceRun):
         clients, servers = self.bootstrap_rows()
         m.require(not clients and not servers,
                   'OpenBao managed identity already exists; reconcile')
-        self.create_in({
-            'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
-            'metadata': {'name': OPENBAO_STATE_PVC,
-                         'namespace': SECRETS_NS},
-            'spec': {'accessModes': ['ReadWriteOnce'],
-                     'storageClassName': 'linode-block-storage-retain',
-                     'resources': {'requests': {'storage': '10Gi'}}}},
-            SECRETS_NS)
-        self.kube(['-n', SECRETS_NS, 'wait',
-                   '--for=jsonpath={.status.phase}=Bound',
-                   'persistentvolumeclaim/' + OPENBAO_STATE_PVC,
-                   '--timeout=300s'], timeout=310)
+        failed = None
+        request_id = 'dev-openbao-host-' + uuid.uuid4().hex
+        if self.args.failed:
+            failed = Path(self.args.failed)
+            failed_report = m.read(failed / 'report.json')
+            public = m.read(failed / 'bootstrap-pod-public.json')
+            m.require(failed_report['status'] == 'failed'
+                      and failed_report['phase'] == 'bootstrap-host'
+                      and public['image'] == self.args.openbao_image
+                      and public['state_paths'] == [
+                          OPENBAO_CLIENT_STATE, OPENBAO_HOST_STATE]
+                      and public['request_id'].startswith(
+                          'dev-openbao-host-'),
+                      'failed OpenBao bootstrap evidence changed')
+            request_id = public['request_id']
+        else:
+            self.create_in({
+                'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+                'metadata': {'name': OPENBAO_STATE_PVC,
+                             'namespace': SECRETS_NS},
+                'spec': {'accessModes': ['ReadWriteOnce'],
+                         'storageClassName': 'linode-block-storage-retain',
+                         'resources': {'requests': {'storage': '10Gi'}}}},
+                SECRETS_NS)
+            self.kube(['-n', SECRETS_NS, 'wait',
+                       '--for=jsonpath={.status.phase}=Bound',
+                       'persistentvolumeclaim/' + OPENBAO_STATE_PVC,
+                       '--timeout=300s'], timeout=310)
         pvc = self.obj('persistentvolumeclaim', OPENBAO_STATE_PVC,
                        SECRETS_NS)
+        if failed:
+            saved_pvc = m.read(failed / 'openbao-identity-pvc.json')
+            m.require(saved_pvc['uid'] == pvc['metadata']['uid'],
+                      'retained OpenBao identity PVC changed')
+        m.require(pvc['spec']['storageClassName'] ==
+                  'linode-block-storage-retain'
+                  and pvc['status']['phase'] == 'Bound',
+                  'OpenBao identity PVC is not retained and bound')
         self.save('openbao-identity-pvc.json', {
             'name': OPENBAO_STATE_PVC, 'uid': pvc['metadata']['uid'],
             'storage_class': pvc['spec']['storageClassName'],
             'phase': pvc['status']['phase']})
-        self.create_in({
+        root_config = {
             'apiVersion': 'v1', 'kind': 'ConfigMap',
             'metadata': {'name': OPENBAO_SERVICE_ROOT,
                          'namespace': SECRETS_NS},
             'immutable': True,
-            'data': {'root.pem': service_root['certificate_pem']}},
-            SECRETS_NS)
+            'data': {'root.pem': service_root['certificate_pem']}}
+        if failed:
+            current_root = self.obj(
+                'configmap', OPENBAO_SERVICE_ROOT, SECRETS_NS)
+            m.require(current_root.get('immutable') is True
+                      and current_root.get('data') == root_config['data'],
+                      'OpenBao Service Root ConfigMap changed')
+        else:
+            self.create_in(root_config, SECRETS_NS)
         database = self.obj('secret', 'pki-controller-database')
-        self.create_in({
-            'apiVersion': 'v1', 'kind': 'Secret',
-            'metadata': {'name': OPENBAO_REGISTRY_SECRET,
-                         'namespace': SECRETS_NS},
-            'type': 'Opaque', 'data': {'url': database['data']['url']}},
-            SECRETS_NS, persist=False)
-        self.save('openbao-registry-secret.json', {
-            'name': OPENBAO_REGISTRY_SECRET,
-            'source_uid': database['metadata']['uid'],
-            'url_sha256': m.digest(base64.b64decode(database['data']['url']))})
         source = self.base / 'pki/consumers/certissuer'
         m.require(all((source / name).is_file()
                       for name in ('ca.crt', 'tls.crt', 'tls.key')),
@@ -662,6 +748,20 @@ class OpenBaoHostRun(h.ServiceRun):
             'type': 'Opaque', 'data': {
                 name: base64.b64encode((source / name).read_bytes()).decode()
                 for name in ('tls.crt', 'tls.key')}}
+        self.ensure_registry_network_policy()
+        if failed:
+            self.recover_bootstrap_resources(
+                request_id, self.args.openbao_image, bootstrap, database)
+        self.create_in({
+            'apiVersion': 'v1', 'kind': 'Secret',
+            'metadata': {'name': OPENBAO_REGISTRY_SECRET,
+                         'namespace': SECRETS_NS},
+            'type': 'Opaque', 'data': {'url': database['data']['url']}},
+            SECRETS_NS, persist=False)
+        self.save('openbao-registry-secret.json', {
+            'name': OPENBAO_REGISTRY_SECRET,
+            'source_uid': database['metadata']['uid'],
+            'url_sha256': m.digest(base64.b64decode(database['data']['url']))})
         self.create_in(bootstrap, SECRETS_NS, persist=False)
         tls = self.obj('secret', 'certissuer-runtime')
         original_ca = tls['data']['client-ca.crt']
@@ -673,7 +773,6 @@ class OpenBaoHostRun(h.ServiceRun):
             'value': original_ca}, {
             'op': 'replace', 'path': '/data/client-ca.crt',
             'value': base64.b64encode(combined.encode()).decode()}])
-        request_id = 'dev-openbao-host-' + uuid.uuid4().hex
         certissuer_open = False
         pod_created = False
         try:
@@ -819,6 +918,8 @@ class OpenBaoHostRun(h.ServiceRun):
             'temporary_bootstrap_secret_uid': secret['metadata']['uid'],
             'temporary_bootstrap_secret_deleted': True,
             'temporary_provisioner_closed': True,
+            'request_id': request_id,
+            'reconciled_from': str(failed) if failed else '',
             'private_keys_exported': False})
 
 

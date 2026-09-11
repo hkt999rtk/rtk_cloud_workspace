@@ -381,6 +381,26 @@ the temporary provisioner and client CA, deletes the bootstrap pod and Secret,
 and accepts exactly one Service-client row and one `openbao_tls` server row.
 Both generated private keys remain only in the retained PVC.
 
+The bootstrap also installs `allow-openbao-pki-registry` in the dev platform
+namespace. It permits PostgreSQL port 5432 only from OpenBao-labelled pods in
+the dev secrets namespace. If bootstrap fails before either registry row is
+created, retain the failed evidence and resume the same request ID and PVC:
+
+```sh
+python3 scripts/pki-service-dev/openbao_host.py \
+  --phase bootstrap-host \
+  --authority OPENBAO_TLS_ROOT_EVIDENCE \
+  --intermediate OPENBAO_TLS_INTERMEDIATE_READY_EVIDENCE \
+  --route OPENBAO_HOST_ISSUER_EVIDENCE \
+  --service SERVICE_V5_ACTIVATION_EVIDENCE \
+  --openbao-image OPENBAO_PKI_IMAGE_DIGEST \
+  --failed FAILED_OPENBAO_HOST_BOOTSTRAP_EVIDENCE \
+  --output OPENBAO_HOST_BOOTSTRAP_RECOVERY_EVIDENCE
+```
+
+Recovery verifies the failed pod, temporary Secrets and retained PVC before it
+recreates the pod. It refuses recovery if an issuance row already exists.
+
 If adoption stops after the managed Deployment is installed but before it becomes
 ready, retain the failed evidence and run `--phase finish-host-adoption --failed
 FAILED_ADOPTION_EVIDENCE --prepared MQTT_HOST_PREPARED_EVIDENCE` with the same
