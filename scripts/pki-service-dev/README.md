@@ -439,7 +439,6 @@ python3 scripts/pki-service-dev/openbao_host.py \
   --phase install-intermediate-consumers --server-only \
   --authority OPENBAO_TLS_ROOT_EVIDENCE \
   --intermediate OPENBAO_TLS_V2_READY_EVIDENCE \
-  --image VIDEO_CLOUD_IMAGE_DIGEST \
   --output OPENBAO_TLS_V2_CONSUMER_EVIDENCE
 python3 scripts/pki-service-dev/openbao_host.py \
   --phase activate-intermediate --server-only \

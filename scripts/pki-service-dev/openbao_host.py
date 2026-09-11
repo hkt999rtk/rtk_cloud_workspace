@@ -591,8 +591,10 @@ class OpenBaoHostRun(h.ServiceRun):
 
     def install_intermediate_consumers(self):
         root, issuer, operation = self.ready_intermediate()
-        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
-                  'verified dev application image digest required')
+        server_only = getattr(self.args, 'server_only', False)
+        if not server_only:
+            m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                      'verified dev application image digest required')
         name = 'pki-openbao-tls-bundles-' + issuer['issuer_id'][:8]
         refs = [{'issuer_id': item['issuer_id'],
                  'trust_bundle_version': item['trust_bundle_version']}
@@ -611,8 +613,12 @@ class OpenBaoHostRun(h.ServiceRun):
                       'OpenBao intermediate manifest changed')
         for consumer in reversed(CONSUMERS):
             owner = self.obj('deployment', consumer)
+            image = (owner['spec']['template']['spec']['containers'][0]
+                     ['image'] if server_only else self.args.image)
+            m.require(IMAGE_PATTERN.fullmatch(image or ''),
+                      'verified dev application image digest required')
             template = self.intermediate_template(
-                owner, self.args.image, name, self.output.name)
+                owner, image, name, self.output.name)
             self.scoped_patch(consumer, owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/' + consumer, '--timeout=300s'], timeout=310)
