@@ -435,7 +435,7 @@ class AppHierarchy(s.ServiceRun):
 
     def verify_signer_capability(self, issuer):
         jwt = self.kube([
-            '-n', NS, 'create', 'token', 'certissuer',
+            '-n', NS, 'create', 'token', 'certissuer-pki',
             '--audience=openbao', '--duration=10m']).strip()
         login = json.loads(self.bao([
             'write', '-format=json', 'auth/kubernetes/login', '-'],
@@ -500,7 +500,6 @@ class AppHierarchy(s.ServiceRun):
                   and current_env.get('CERT_ISSUER_APP_PKI_ENABLED') == 'true'
                   and not static.intersection(current_env),
                   'registry-backed App issuance rollout differs')
-        self.forward('issuer', NS, 'certissuer', 9443)
         self.verify_signer_capability(issuer)
         self.check('registry_app_issuance_enabled', {
             'issuer_id': issuer['issuer_id'], 'image': self.args.image,
