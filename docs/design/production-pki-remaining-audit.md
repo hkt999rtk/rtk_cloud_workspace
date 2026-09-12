@@ -701,3 +701,25 @@ readiness, current CRLs and the enabled immutable-history trigger.
 29/40 = 72.5%, with 11 remaining:** M11, R1–R4, A4–A6 and V3–V5. Next is M11,
 the cross-caller management held-session/selective-cutoff/trust-failure matrix.
 This is not documentation-only closure or the separate backup/recovery milestone.
+
+### T11 P1/P2 review closure (2026-09-12)
+
+Review reopened the completion claim for two concrete gaps. P1 found that the
+CertIssuer/controller rows relied on shared local fault tests instead of live
+Dev registry-loss and unusable-CRL recovery. P2 found that the OpenBao held probe
+constructed `ServerConnections` directly and bypassed the application provider
+transport.
+
+Both are resolved. `t11-service-trust-failure-r2-20260912` separately restarted
+CertIssuer and controller without registry access and with an unusable Service
+CRL manifest. All four cases reached zero ready replicas/endpoints within the
+bound, changed no issuance or CRL-acknowledgment counts, restored the exact prior
+Deployment template, and passed fresh Factory mTLS traffic. The corrected
+OpenBao probe now uses each application's real managed-identity, registry-CRL,
+ACK, sweep and pooled-HTTP constructor. `t11-openbao-full-provider-r7-20260912`
+passed actual provider operations and predecessor cutoffs of 2.88 s and 7.61 s
+while both successor sockets survived. Temporary identity copies stayed inside
+their Pods and were removed. Staging and login/MFA were untouched.
+
+The reviewed T11 result remains **complete at 29/40 = 72.5%**, with **11
+checkpoints remaining**: M11, R1–R4, A4–A6 and V3–V5.

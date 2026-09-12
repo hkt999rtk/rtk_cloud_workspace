@@ -294,6 +294,7 @@ class OpenBaoHostRun(h.ServiceRun):
         super().__init__(args)
         self.probe_pods = {}
         self.held_probe_paths = {}
+        self.held_state_paths = []
         self.report['foundation_scope'] = (
             'Dev-only OpenBao TLS host and actual provider clients')
         self.report['openbao_host_runner_sha256'] = m.digest(
@@ -302,40 +303,63 @@ class OpenBaoHostRun(h.ServiceRun):
 
     def close(self):
         try:
+            # Stop probe processes before deleting their state. Otherwise a
+            # final state read can recreate the lock file after cleanup.
+            super().close()
+        finally:
             for owner, path in self.held_probe_paths.items():
                 self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--', 'rm', '-f', path])
-        finally:
-            super().close()
+            for owner, path in self.held_state_paths:
+                self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--', 'rm', '-f',
+                           path, path + '.lock', path + '.owner'])
 
     def provider_session(self, owner, fingerprint):
-        """Hold one socket with the production registry connection owner."""
+        """Hold one socket through the provider's production transport."""
         if owner not in self.held_probe_paths:
-            binary = self.output / 'openbao-session.test'
+            package = './internal/certissuerapp' if owner == 'certissuer' else './internal/pkicontrollerapp'
+            binary = self.output / ('openbao-session-' + owner + '.test')
             if not binary.exists():
-                result = m.subprocess.run(['go', 'test', '-c', '-o', str(binary), './internal/pki'],
+                result = m.subprocess.run(['go', 'test', '-c', '-o', str(binary), package],
                     cwd=m.WORKSPACE / 'repos/rtk_video_cloud',
                     env=dict(os.environ, GOOS='linux', GOARCH='amd64', CGO_ENABLED='0', GOWORK='off'),
                     capture_output=True, timeout=180)
                 m.require(result.returncode == 0, 'held OpenBao probe build failed')
-                self.save('held-probe.json', {'binary_sha256': m.digest(binary.read_bytes()),
-                    'source_sha256': m.digest((m.WORKSPACE / 'repos/rtk_video_cloud/internal/pki/server_dev_session_test.go').read_bytes())})
+                package_dir = 'certissuerapp' if owner == 'certissuer' else 'pkicontrollerapp'
+                self.save('held-probe-' + owner + '.json', {'package': package,
+                    'binary_sha256': m.digest(binary.read_bytes()),
+                    'helper_source_sha256': m.digest((m.WORKSPACE / 'repos/rtk_video_cloud/internal/pkitest/held_http.go').read_bytes()),
+                    'package_source_sha256': m.digest((m.WORKSPACE / ('repos/rtk_video_cloud/internal/' + package_dir +
+                        '/provider_dev_session_test.go')).read_bytes())})
             path = '/var/lib/pki-host/identity/.t11-openbao-' + uuid.uuid4().hex
             self.kube(['-n', NS, 'exec', '-i', 'deployment/' + owner, '--', 'sh', '-ec',
                        'umask 077; base64 -d > ' + path + ' && chmod 700 ' + path],
                       base64.b64encode(binary.read_bytes()).decode())
             self.held_probe_paths[owner] = path
+        identity_name = ('CERT_ISSUER_SERVICE_CLIENT_IDENTITY_STATE' if owner == 'certissuer'
+                         else 'PKI_SERVICE_CLIENT_IDENTITY_STATE')
+        state_path = '/var/lib/pki-host/identity/.t11-openbao-state-' + uuid.uuid4().hex + '.json'
+        self.held_state_paths.append((owner, state_path))
+        # The application owns its state path exclusively. Keep that runtime
+        # protection intact while the probe uses an in-Pod 0600 copy of the
+        # same current registered identity, removed by close().
+        command = ('umask 077; source_path="$' + identity_name + '"; '
+                   'test -n "$source_path"; cp -- "$source_path" "$1"; '
+                   'exec env ' + identity_name + '="$1" '
+                   'PKI_DEV_HELD_SESSION=dev-openbao '
+                   'PKI_DEV_EXPECTED_SERVER_SHA256="$2" "$3" '
+                   '-test.run=^TestDevOpenBaoProviderHeldSession$')
         process = m.Process(self.k + ['-n', NS, 'exec', '-i', 'deployment/' + owner, '--',
-            'env', 'PKI_DEV_HELD_SESSION=dev-openbao', self.held_probe_paths[owner],
-            '-test.run=^TestDevOpenBaoHeldSession$'], keep_stdin=True)
+            'sh', '-ec', command, 'sh', state_path, fingerprint, self.held_probe_paths[owner]],
+            keep_stdin=True)
         self.children.append(process)
         line = process.line()
-        if line.startswith('--- FAIL: TestDevOpenBaoHeldSession'):
+        if line.startswith('--- FAIL: TestDevOpenBaoProviderHeldSession'):
             # The opt-in test emits fixed diagnostic strings, never environment
             # values, credentials or raw database errors.
             raise RuntimeError('held OpenBao probe: ' + process.line().strip())
         event = json.loads(line)
         m.require(event['event'] == 'ready' and event['server_fingerprint'] == fingerprint,
-                  'held OpenBao server identity differs')
+                  'full provider transport or held OpenBao server identity differs')
         return process
 
     def session_command(self, process, command, expected):
@@ -1523,12 +1547,15 @@ class OpenBaoHostRun(h.ServiceRun):
         for name, process in held.items():
             event = self.session_command(process, 'closed', 'closed')
             delay = (m.parse_time(event['at']) - revocation_started).total_seconds()
-            m.require(event['owner_denied'] and 0 <= delay <= 30, 'OpenBao held cutoff exceeded 30 seconds')
+            m.require(event.get('full_provider_transport') is True and 0 <= delay <= 30,
+                      'OpenBao held cutoff exceeded 30 seconds')
             self.session_command(successors[name], 'check', 'alive')
             self.save('held-cutoff-' + name + '.json', {'cutoff_seconds_upper_bound': delay,
                 'predecessor_fingerprint': before['state']['fingerprint'],
                 'successor_fingerprint': renewed['state']['fingerprint'],
-                'same_successor_socket_survived': True, 'owner_denied': True})
+                'same_successor_socket_survived': True,
+                'full_provider_transport': True,
+                'predecessor_socket_stopped_serving': True})
         m.require(self.api('/issuers/' + issuer['issuer_id'] +
                            '/revoke-server', body) == revoked,
                   'OpenBao provider revocation replay changed')

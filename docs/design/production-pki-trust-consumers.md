@@ -2305,18 +2305,21 @@ Evidence paths below are relative to `~/.config/rtk_cloud/dev/pki/`.
 | Private host / caller family | Held connection and replacement evidence | Failure, restart and recovery evidence |
 | --- | --- | --- |
 | Account Manager / Factory and API | `t11-corrected-held-listener-r4-20260912`: Factory-to-listener predecessor socket closed within 7.26 s; successor admitted; independent Factory-to-CertIssuer socket survived. Account Manager's outbound predecessor also closed within 6.67 s and was denied on a fresh connection. T7 retains actual Factory/API business-request acceptance. | Same run finalized both revocations with four CRL consumer receipts and retained successors across a seed-free restart. `t7-account-manager-crl-failure-20260909` records missing-manifest startup refusal; its `caller-recovery` report records restored real business calls. |
-| CertIssuer / Factory, Account Manager and host renewal callers | `t11-certissuer-held-listener-r2-20260912`: Factory held the exact predecessor server socket; cutoff within 7.79 s; successor and independent Account Manager control survived. Account Manager client lifecycle and `service-factory-adoption-20260909/factory-lifecycle-1` retain outbound caller evidence. | Both old client/server leaves finalized with current receipts; seed-free restart retained the successors. This recovery also repaired the malformed retained Service CRL metadata that had caused startup/handshake refusal. Shared deterministic failure checks are listed below. |
-| Controller / Service CRL and management callers | `t11-controller-held-listener-20260912`: Factory held the authorized Root CRL route; predecessor server socket closed within 7.53 s; successor and independent Account Manager control survived. `api-controller-lifecycle-20260910/controller-lifecycle-service-crl` and `pkibroker-identity-20260910/lifecycle-5` retain API/broker client cutoff evidence. | Both old client/server leaves finalized with current receipts; seed-free restart retained successors. The same malformed-CRL recovery and shared failure checks apply. Remaining cross-caller management qualification is M11. |
+| CertIssuer / Factory, Account Manager and host renewal callers | `t11-certissuer-held-listener-r2-20260912`: Factory held the exact predecessor server socket; cutoff within 7.79 s; successor and independent Account Manager control survived. Account Manager client lifecycle and `service-factory-adoption-20260909/factory-lifecycle-1` retain outbound caller evidence. | Both old client/server leaves finalized with current receipts; seed-free restart retained the successors. `t11-service-trust-failure-r2-20260912` separately removed registry access and made the CRL manifest unusable. Each restart produced zero ready replicas/endpoints and no issuance/ACK changes; exact-template restoration and fresh Factory mTLS passed. |
+| Controller / Service CRL and management callers | `t11-controller-held-listener-20260912`: Factory held the authorized Root CRL route; predecessor server socket closed within 7.53 s; successor and independent Account Manager control survived. `api-controller-lifecycle-20260910/controller-lifecycle-service-crl` and `pkibroker-identity-20260910/lifecycle-5` retain API/broker client cutoff evidence. | Both old client/server leaves finalized with current receipts; seed-free restart retained successors. `t11-service-trust-failure-r2-20260912` independently passed registry-loss and unusable-manifest failure, no-write, exact restoration and fresh Factory mTLS recovery. Remaining cross-caller management qualification is M11. |
 | Governed MQTT / API, log ingester and Device | `t8-rollout-20260911/host-renewal-recovery-r2`: existing connection interruption bounded by 80 s during owner/broker replacement; retained-successor restart closed its socket in 2.12 s. Actual API/log-ingester clients reconnected and Device ACL/QoS1 passed. | `host-lifecycle-verification-r2` in the same directory records registry outage, zero ready endpoints, unchanged issuance/ACK rows, retained-successor recovery, wrong-name/root rejection before credentials and actual client reconnect. This is broker/process replacement evidence, not selective MQTT session eviction. |
-| OpenBao / CertIssuer and controller providers | `t11-openbao-held-provider-r2-20260912`: both provider-Pod probes hold the production connection owner's original socket before renewal, then keep successor sockets through predecessor revocation and publication. Cutoff bounds were 7.43 s from CertIssuer and 8.71 s from controller; per-family files record registry denial and successor survival. The surrounding procedure uses the real provider clients for renewal/publication and obtains both CRL receipts. | `t9-rollout-20260911/openbao-v2-renewal-6e77e02` retains seed-free successor restart evidence; `t9-rollout-20260912/openbao-provider-recovery-r2` retains exact-request outage recovery; `openbao-post-recovery-r3` records real provider operations plus App/Device canaries. Provider outage blocked all CertIssuer egress, not only OpenBao. |
+| OpenBao / CertIssuer and controller providers | `t11-openbao-full-provider-r7-20260912`: both provider-Pod probes construct the real application provider transport, hold its original pooled socket before renewal, then keep successor sockets through predecessor revocation and publication. Cutoff bounds were 2.88 s from CertIssuer and 7.61 s from controller; both successor sockets survived. Actual renewal/revocation/publication and both CRL receipts passed. | `t9-rollout-20260911/openbao-v2-renewal-6e77e02` retains seed-free successor restart evidence; `t9-rollout-20260912/openbao-provider-recovery-r2` retains exact-request outage recovery; `openbao-post-recovery-r3` records real provider operations plus App/Device canaries. Provider outage blocked all CertIssuer egress, not only OpenBao. |
 
 The Account Manager `/healthz` probe expects an explicit HTTP 403 because that
 listener does not expose a health route. Its successful mTLS exchange proves
 socket continuity only; business authorization is evidenced separately by T7.
 An unchanged 403 cannot count as fresh certificate rejection. Both probe types
-prohibit silent reconnects. OpenBao probes use each Pod's configured sweep
-interval and existing production connection owner; they are separate test
-processes, not instrumentation inside the live provider HTTP pool.
+prohibit silent reconnects. OpenBao probes use each application's production
+provider constructor, including the managed Service identity, installed-CRL
+consumer, acknowledgment path, periodic sweep and HTTP pool. The live process
+exclusively owns its identity state, so each probe uses a private in-Pod copy of
+the same current registered identity and removes it on exit; no key leaves the
+Pod. The probe is a separate process and does not instrument the live pool.
 
 Local deterministic tests complement the Dev lifecycle evidence above:
 
@@ -2340,9 +2343,10 @@ Local deterministic tests complement the Dev lifecycle evidence above:
 Nine focused PostgreSQL-backed/related tests passed without skips against an
 isolated disposable local database. OpenBao installer tests, the Go session-probe
 suite, 14 Account Manager runner tests and 27 OpenBao runner tests also passed.
-These local fault fixtures are not presented as repeated live faults in every
-caller process. Root-policy replacement, the remaining management caller matrix,
-and final whole-milestone regression acceptance retain their own checkpoints.
+These local fixtures supplement the live `t11-service-trust-failure-r2-20260912`
+registry/CRL failures for both Service listeners. Root-policy replacement, the
+remaining management caller matrix, and final whole-milestone regression
+acceptance retain their own checkpoints.
 
 Dev recovery corrected one public Service CRL metadata number from 27 to its
 signed value 39 in the registry and the controller/CertIssuer caches. Signature,

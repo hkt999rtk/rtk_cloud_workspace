@@ -5818,3 +5818,24 @@ session-probe tests, and 14 Account Manager plus 27 OpenBao runner tests passed.
 T11 is complete at **29/40 = 72.5%**; **11 remain**: M11, R1–R4, A4–A6, V3–V5.
 M11 is management caller/session/failure qualification. Staging and MFA remain
 unchanged; the separate backup/recovery/SDK and hardware milestones remain open.
+
+### T11 P1/P2 review fixes completed (2026-09-12)
+
+The T11 review found two evidence gaps and the fixes keep runtime/login code
+unchanged. A new Dev-only runner independently replaces CertIssuer and
+controller registry DSNs with an unreachable loopback target, then independently
+replaces each required Service CRL manifest with a missing path. Every failed
+restart removed all ready endpoints within 90 seconds and left scoped issuance
+and CRL-acknowledgment counts unchanged. The runner restores the exact original
+template under resource-version/template guards and proves fresh Factory mTLS
+traffic after each recovery. The passing evidence is
+`t11-service-trust-failure-r2-20260912`.
+
+The OpenBao acceptance probe now calls the actual CertIssuer/controller provider
+constructors. This covers managed Service identity, installed registry CRLs,
+acknowledgments, periodic sweep, connection eviction and the HTTP pool. Since the
+live process exclusively owns its state file, the probe operates on a private
+in-Pod copy of the same current identity and removes its state/locks/binary on
+exit. `t11-openbao-full-provider-r7-20260912` passed actual provider operations,
+cut off the predecessor sockets within 2.88 s and 7.61 s, and preserved both
+successor sockets. T11 remains complete at **29/40 = 72.5%**; M11 is next.

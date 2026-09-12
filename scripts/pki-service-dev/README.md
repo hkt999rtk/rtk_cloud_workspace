@@ -208,6 +208,24 @@ one socket until explicit shutdown; they never silently reconnect on `check`.
 After a failure following `renewal-intent.json`, reconcile retained state and
 revocations before issuing another renewal.
 
+After all held-listener runs pass, qualify the remaining listener trust failures
+with a fresh private output directory:
+
+```sh
+python3 scripts/pki-service-dev/t11_trust_failure.py \
+  --authority SERVICE_ROOT_EVIDENCE \
+  --activation SERVICE_V3_ACTIVATION_EVIDENCE \
+  --output T11_SERVICE_TRUST_FAILURE_EVIDENCE
+```
+
+The Dev-only runner tests CertIssuer and controller sequentially. For each it
+first removes registry access, then makes the required Service CRL manifest
+unusable. Each restart must have zero ready endpoints within 90 seconds and must
+not change scoped issuance or CRL-acknowledgment counts. The runner restores the
+exact prior Deployment template under resource-version and template guards and
+requires fresh Factory mTLS traffic before continuing. It does not persist a
+fault template, expose database values, touch staging, or change login/MFA.
+
 ## PKI broker identity authority
 
 `pkibroker_authority.py` advances the Service intermediate from V3 to V4 for
@@ -551,14 +569,19 @@ requires both retained CRL receipts, verifies the denied leaf is in the CRL and
 checks replay-safe finalization. It does not export private keys.
 
 Add `--held-sessions` to that command for T11. It compiles the opt-in
-`TestDevOpenBaoHeldSession` fixture and runs it inside both provider Pods with
+`TestDevOpenBaoProviderHeldSession` fixture and runs it inside both provider Pods with
 their inherited Dev registry and public CA configuration. The fixture uses the
-production `ServerConnections` owner, sends only unauthenticated health GETs,
+real application provider constructor, including its managed Service identity,
+installed-CRL consumer, acknowledgment path, periodic sweep and HTTP pool. It
+sends only unauthenticated health GETs,
 and holds predecessor sockets before renewal plus successor sockets before
-revocation. Both predecessors must be denied and closed within 30 seconds while
+revocation. Both predecessor sockets must stop serving within 30 seconds while
 the same successor sockets survive publication. This is a probe of the shared
-connection owner in each provider Pod; real provider operations and installed
-CRL receipts are separately checked by the surrounding lifecycle procedure.
+application transport. Because each live application exclusively owns its
+identity-state path, the probe uses a private in-Pod copy of that same current
+registered identity and removes the copy, lock and test binary on exit. No key
+material leaves the Pod. Real provider operations and installed CRL receipts are
+also checked by the surrounding lifecycle procedure.
 
 Run the scoped failure/recovery step with the successful operation evidence:
 
