@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import signal
 import sys
+import time
+import uuid
 
 
 spec = importlib.util.spec_from_file_location(
@@ -82,6 +84,39 @@ class AppRuntime(h.ServiceRun):
                      'type': 'Opaque',
                      'data': {key: base64.b64encode(value.encode()).decode()
                               for key, value in values.items()}})
+
+    def receipts(self, root, kind):
+        issuer = root['issuer_id']
+        m.require(str(uuid.UUID(issuer)) == issuer, 'invalid App Root identifier')
+        if kind == 'bundle':
+            value = root['trust_bundle_version']
+            table, field = 'pki_bundle_acknowledgments', 'bundle_version'
+            scope = "issuer_id='" + issuer + "'"
+        else:
+            value = initial_state(root)
+            value = json.loads(value)['policy']['policy_sha256']
+            table, field = 'pki_root_distrust_acknowledgments', 'policy_sha256'
+            scope = "environment='dev' AND domain='app'"
+        m.require(re.fullmatch(r'[0-9a-f]{64}', value),
+                  'invalid App receipt version')
+        query = ("SELECT consumer_id FROM " + table + " WHERE " + scope
+                 + " AND " + field + "='" + value
+                 + "' ORDER BY consumer_id;")
+        return self.kube([
+            '-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0',
+            '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres',
+            '-d', 'video_cloud', '-At'], query).split()
+
+    def wait_receipts(self, root, expected):
+        deadline = time.monotonic() + 90
+        while True:
+            bundle = self.receipts(root, 'bundle')
+            policy = self.receipts(root, 'root_policy')
+            if all(name in bundle and name in policy for name in expected):
+                return bundle, policy
+            m.require(time.monotonic() < deadline,
+                      'App consumer receipt deadline')
+            time.sleep(3)
 
     def ensure(self, desired):
         kind = desired['kind'].lower()
@@ -286,10 +321,87 @@ class AppRuntime(h.ServiceRun):
         self.kube(['-n', NS, 'rollout', 'status',
                    'deployment/video-cloud-api-app-pki', '--timeout=240s'],
                   timeout=250)
+        bundle, policy = self.wait_receipts(root, ['video-cloud-api-app'])
         self.check('app_api_consumer_installed', {
             'root_id': root['issuer_id'], 'image': image,
             'device_listener_changed': False,
-            'dynamic_app_state': '/run/pki-state/app/root-policy.json'})
+            'dynamic_app_state': '/run/pki-state/app/root-policy.json',
+            'bundle_receipts': bundle, 'root_policy_receipts': policy})
+
+    def install_broker(self, image, root):
+        owner = self.obj('deployment', 'mqtt-pki')
+        template = copy.deepcopy(owner['spec']['template'])
+        containers = {item['name']: item
+                      for item in template['spec']['containers']}
+        m.require(set(containers) == {'mqtt', 'pkibroker'},
+                  'mqtt-pki container ownership changed')
+        mqtt_before = copy.deepcopy(containers['mqtt'])
+        broker = containers['pkibroker']
+        broker['image'] = image
+        broker['env'] = env_replace(broker.get('env', []), {
+            'PKI_BROKER_APP_PKI_ENABLED': 'true',
+            'PKI_BROKER_APP_CRL_MANIFEST': '/run/pki-app/crls.json',
+            'PKI_BROKER_APP_ROOT_ID': root['issuer_id'],
+            'PKI_BROKER_APP_ROOT_STATE':
+                '/run/pki-state/app/root-policy.json',
+            'PKI_BROKER_APP_ROOTS': '/run/pki-app/roots.pem',
+            'PKI_BROKER_APP_BUNDLE_ACK_ENABLED': 'true'}, ())
+        broker['volumeMounts'] = [
+            item for item in broker.get('volumeMounts', [])
+            if item['name'] != 'pki-app'] + [{
+                'name': 'pki-app', 'mountPath': '/run/pki-app',
+                'readOnly': True}]
+        pod = template['spec']
+        pod['volumes'] = [item for item in pod.get('volumes', [])
+                          if item['name'] != 'pki-app'] + [{
+                              'name': 'pki-app',
+                              'configMap': {'name': 'pki-app-trust'}}]
+        initializers = {item['name']: item
+                        for item in pod.get('initContainers', [])}
+        m.require('prepare-pki-state' in initializers,
+                  'mqtt-pki state initializer changed')
+        state_init = initializers['prepare-pki-state']
+        state_init['image'] = image
+        state_init['command'] = [
+            '/bin/sh', '-ec',
+            'umask 077; mkdir -p /run/pki-state/device '
+            '/run/pki-state/app /run/pki-state/broker-identity/private; '
+            'chmod 700 /run/pki-state/device /run/pki-state/app '
+            '/run/pki-state/broker-identity '
+            '/run/pki-state/broker-identity/private; '
+            'find /run/pki-state/device /run/pki-state/app '
+            '/run/pki-state/broker-identity/private -type f '
+            '-exec chmod 600 {} +']
+        template['metadata'].setdefault('annotations', {})[
+            'rtk.realtek.com/app-trust-sha256'] = m.digest(
+                (root['issuer_id'] + root['trust_bundle_version']
+                 + image).encode())
+        m.require(containers['mqtt'] == mqtt_before,
+                  'App rollout changed the EMQX container')
+        if template != owner['spec']['template']:
+            self.observed_patch('deployment', 'mqtt-pki', owner, [{
+                'op': 'replace', 'path': '/spec/template',
+                'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/mqtt-pki',
+                   '--timeout=300s'], timeout=310)
+        current = self.obj('deployment', 'mqtt-pki')
+        m.require(current.get('status', {}).get('readyReplicas') ==
+                  current['spec']['replicas'], 'mqtt-pki is not ready')
+        bundle, policy = self.wait_receipts(
+            root, ['video-cloud-api-app', 'pkibroker'])
+        self.check('app_broker_consumer_installed', {
+            'root_id': root['issuer_id'], 'image': image,
+            'emqx_container_unchanged': True,
+            'state': '/run/pki-state/app/root-policy.json',
+            'bundle_receipts': bundle, 'root_policy_receipts': policy})
+        device = m.read(self.foundation / 'device-2/enroll-request.json')['devid']
+        auth, auth_attempts = self.wait_positive_auth(
+            self.foundation / 'device-2/v4', device)
+        mqtt_attempts = self.wait_positive_mqtt(auth, device)
+        self.mqtt(auth, device, 'roundtrip')
+        self.check('device_baseline_after_app_broker', {
+            'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
+            'auth_attempts': auth_attempts, 'mqtt_attempts': mqtt_attempts})
 
     def install(self):
         m.require(IMAGE.fullmatch(self.args.image or ''),
@@ -312,6 +424,7 @@ class AppRuntime(h.ServiceRun):
                                    'pkiturn']}]}}],
                     'ports': [{'protocol': 'TCP', 'port': 18446}]}]}})
         self.install_api(self.args.image, root)
+        self.install_broker(self.args.image, root)
 
 
 def main():
