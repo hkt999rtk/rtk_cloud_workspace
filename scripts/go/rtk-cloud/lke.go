@@ -629,6 +629,9 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 			return err
 		}
 	}
+	if err := kubectlApply(lkeAppPublicTLSSecretManifest(env, certPEM, keyPEM)); err != nil {
+		return err
+	}
 	if err := lkeCopyExistingDeviceMTLSAppCASecret(env); err != nil {
 		return err
 	}
@@ -731,6 +734,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.targetPorts.https=https",
 		"--set", "controller.service.nodePorts.https=" + strconv.Itoa(lkeIngressHTTPSNodePort(env)),
 		"--set", "controller.service.enableHttp=false",
+		"--set-string", "controller.extraArgs.enable-ssl-passthrough=",
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
 		"--set-json", lkeIngressNoIndexHelmValue(),
@@ -772,6 +776,7 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	return []lkePublicHTTPSRoute{
 		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
+		{Host: firstNonEmpty(os.Getenv("LKE_APP_DOMAIN"), env["VIDEO_CLOUD_APP_DOMAIN"], "app."+videoDomain), Namespace: videoNS, Service: "video-cloud-api-app-pki", ServicePort: 8443, TargetPort: 8443, Protocol: "TLS_PASSTHROUGH"},
 		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
 		{Host: lkeTurnRegistryPublicDomain(env), Namespace: videoNS, Service: "video-cloud-turnregistry", ServicePort: 18190, TargetPort: 18190},
 		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
@@ -835,9 +840,16 @@ spec:
     - name: %s
       port: %d
       protocol: TCP
-`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], route.Service, route.Namespace, strings.ToLower(firstNonEmpty(route.Protocol, "HTTP")), route.ServicePort))
+`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], route.Service, route.Namespace, lkePublicHTTPSRoutePortName(route), route.ServicePort))
 	}
 	return manifests
+}
+
+func lkePublicHTTPSRoutePortName(route lkePublicHTTPSRoute) string {
+	if route.Protocol == "HTTPS" || route.Protocol == "TLS_PASSTHROUGH" {
+		return "https"
+	}
+	return "http"
 }
 
 func lkePublicHTTPSBridgeServiceName(env map[string]string, route lkePublicHTTPSRoute) string {
@@ -1151,6 +1163,24 @@ data:
 `, lkePublicHTTPSTLSSecretName(env), lkeIngressNamespace(env), lkePublicHTTPSTLSSecretName(env), env["CLOUD_STACK_NAME"], base64.StdEncoding.EncodeToString([]byte(certPEM)), base64.StdEncoding.EncodeToString([]byte(keyPEM)))
 }
 
+func lkeAppPublicTLSSecretManifest(env map[string]string, certPEM, keyPEM string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: video-cloud-api-app-public-tls
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-api-app-pki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+type: kubernetes.io/tls
+data:
+  tls.crt: %s
+  tls.key: %s
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], base64.StdEncoding.EncodeToString([]byte(certPEM)), base64.StdEncoding.EncodeToString([]byte(keyPEM)))
+}
+
 func lkeDeviceMTLSAppCASecretName(env map[string]string) string {
 	return lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")) + "-app-client-ca"
 }
@@ -1246,7 +1276,12 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	httpRoutes := []lkePublicHTTPSRoute{}
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
+	passthroughRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
+		if route.Protocol == "TLS_PASSTHROUGH" {
+			passthroughRoutes = append(passthroughRoutes, route)
+			continue
+		}
 		if strings.EqualFold(route.Protocol, "HTTPS") {
 			httpsRoutes = append(httpsRoutes, route)
 			continue
@@ -1266,6 +1301,9 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	}
 	if len(httpsRoutes) > 0 {
 		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", ""))
+	}
+	if len(passthroughRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-app-mtls", passthroughRoutes, "HTTPS", "    nginx.ingress.kubernetes.io/ssl-passthrough: \"true\"\n"))
 	}
 	return manifests
 }

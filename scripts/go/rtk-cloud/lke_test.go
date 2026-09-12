@@ -2015,6 +2015,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"--set controller.service.targetPorts.https=https",
 		"--set controller.service.nodePorts.https=30443",
 		"--set controller.service.enableHttp=false",
+		"--set-string controller.extraArgs.enable-ssl-passthrough=",
 		"--set controller.allowSnippetAnnotations=true",
 		"--set controller.config.annotations-risk-level=Critical",
 		"--set controller.replicaCount=1",
@@ -2031,7 +2032,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	kubectlCalls := readTestFile(t, kubectlLog)
 	for _, want := range []string{
 		"kind: Secret\nmetadata:\n  name: video-cloud-staging-public-tls\n  namespace: video-cloud-staging-ingress",
+		"kind: Secret\nmetadata:\n  name: video-cloud-api-app-public-tls\n  namespace: video-cloud-staging-video-cloud",
 		"kind: Service\nmetadata:\n  name: public-video-cloud-api-video-cloud",
+		"kind: Service\nmetadata:\n  name: public-video-cloud-api-app-pki-video-cloud",
 		"type: ExternalName",
 		"externalName: video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Service\nmetadata:\n  name: public-certissuer-video-cloud",
@@ -2041,6 +2044,8 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
+		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-app-mtls",
+		"nginx.ingress.kubernetes.io/ssl-passthrough: \"true\"",
 		"nginx.ingress.kubernetes.io/proxy-connect-timeout: \"60\"",
 		"nginx.ingress.kubernetes.io/proxy-read-timeout: \"3600\"",
 		"nginx.ingress.kubernetes.io/proxy-send-timeout: \"3600\"",
@@ -2054,12 +2059,14 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"ingressClassName: nginx",
 		"host: video-cloud-staging.realtekconnect.com",
 		"host: device.video-cloud-staging.realtekconnect.com",
+		"host: app.video-cloud-staging.realtekconnect.com",
 		"host: certissuer.video-cloud-staging.realtekconnect.com",
 		"host: turnregistry.video-cloud-staging.realtekconnect.com",
 		"host: account-manager.video-cloud-staging.realtekconnect.com",
 		"host: admin.video-cloud-staging.realtekconnect.com",
 		"host: frontend.video-cloud-staging.realtekconnect.com",
 		"name: public-video-cloud-api-video-cloud\n                port:\n                  number: 80",
+		"name: public-video-cloud-api-app-pki-video-cloud\n                port:\n                  number: 8443",
 		"name: public-certissuer-video-cloud\n                port:\n                  number: 9443",
 		"name: public-video-cloud-turnregistry-video-cloud\n                port:\n                  number: 18190",
 		"name: public-account-manager-account-manager\n                port:\n                  number: 80",
@@ -2102,6 +2109,9 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	if strings.Contains(publicIngress, "host: device.video-cloud-staging.realtekconnect.com") {
 		t.Fatalf("general public ingress must not include mTLS device host:\n%s", publicIngress)
 	}
+	if strings.Contains(publicIngress, "host: app.video-cloud-staging.realtekconnect.com") {
+		t.Fatalf("general public ingress must not terminate the App mTLS host:\n%s", publicIngress)
+	}
 	for _, forbidden := range []string{
 		"controller.service.ports.http=80",
 		"port: 3478",
@@ -2116,6 +2126,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 	for _, want := range []string{
 		"--name video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name device.video-cloud-staging --data 198.51.100.10 --ttl 600",
+		"--name app.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name certissuer.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name turnregistry.video-cloud-staging --data 198.51.100.10 --ttl 600",
 		"--name account-manager.video-cloud-staging --data 198.51.100.10 --ttl 600",
@@ -2589,6 +2600,18 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 		if !strings.Contains(chunk, "port: "+wantPort) {
 			t.Fatalf("public ingress policy for %s must allow backend pod port %s, got:\n%s", namespace, wantPort, chunk)
 		}
+	}
+	videoPolicy := "name: allow-public-ingress\n  namespace: video-cloud-staging-video-cloud"
+	idx := strings.Index(manifests, videoPolicy)
+	if idx < 0 {
+		t.Fatalf("video-cloud public ingress policy missing:\n%s", manifests)
+	}
+	chunk := manifests[idx:]
+	if next := strings.Index(chunk, "\n---\n"); next >= 0 {
+		chunk = chunk[:next]
+	}
+	if !strings.Contains(chunk, "port: 8443") {
+		t.Fatalf("App passthrough backend port is not admitted:\n%s", chunk)
 	}
 }
 

@@ -163,6 +163,9 @@ func lkeRenewPublicHTTPS(paths provisionPaths, env map[string]string, output str
 	if err := kubectlApply(lkePublicHTTPSTLSSecretManifest(env, certPEM, keyPEM)); err != nil {
 		return err
 	}
+	if err := kubectlApply(lkeAppPublicTLSSecretManifest(env, certPEM, keyPEM)); err != nil {
+		return err
+	}
 	installedPEM, newVersion, err := lkeReadPublicHTTPSTLSCertificate(env)
 	if err != nil {
 		return fmt.Errorf("read installed public HTTPS certificate: %w", err)
