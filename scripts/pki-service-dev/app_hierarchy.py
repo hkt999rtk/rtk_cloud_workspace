@@ -138,6 +138,8 @@ class AppHierarchy(s.ServiceRun):
             current = self.obj('deployment', name)
             m.require(current.get('status', {}).get('readyReplicas') == 1,
                       'App consumer did not restart: ' + name)
+            if name == 'mqtt-pki':
+                self.forward('mqtt', NS, 'mqtt-pki', 8883)
             restarted.append(name)
         return restarted
 
