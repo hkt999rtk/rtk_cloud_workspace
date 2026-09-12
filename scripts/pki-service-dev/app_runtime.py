@@ -9,9 +9,11 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import secrets
 import signal
 import sys
 import time
+from urllib.parse import quote, urlsplit, urlunsplit
 import uuid
 
 
@@ -117,6 +119,64 @@ class AppRuntime(h.ServiceRun):
             m.require(time.monotonic() < deadline,
                       'App consumer receipt deadline')
             time.sleep(3)
+
+    def sql(self, query):
+        return self.kube([
+            '-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0',
+            '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres',
+            '-d', 'video_cloud', '-At'], query).strip()
+
+    def turn_database(self):
+        role = 'rtk_pki_turn_dev'
+        raw = self.kube(['-n', NS, 'get', 'secret', 'pkiturn-database',
+                         '--ignore-not-found', '-o', 'json'])
+        exists = self.sql("SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='"
+                          + role + "');") == 't'
+        if raw.strip():
+            secret = json.loads(raw)
+            dsn = base64.b64decode(secret['data']['dsn']).decode()
+            parsed = urlsplit(dsn)
+            password = parsed.password or ''
+            m.require(parsed.username == role and password,
+                      'existing pkiturn verifier Secret differs')
+        else:
+            m.require(not exists,
+                      'pkiturn database role exists without its Secret')
+            source = self.obj('secret', 'pki-controller-database')
+            parsed = urlsplit(base64.b64decode(
+                source['data']['url']).decode())
+            m.require(parsed.scheme in ('postgres', 'postgresql')
+                      and parsed.path == '/video_cloud'
+                      and parsed.hostname in (
+                          'postgresql.video-cloud-dev-platform.svc',
+                          'postgresql.video-cloud-dev-platform.svc.cluster.local'),
+                      'unexpected Dev PKI database endpoint')
+            password = secrets.token_hex(32)
+            netloc = (role + ':' + quote(password, safe='') + '@'
+                      + parsed.hostname + ':' + str(parsed.port or 5432))
+            dsn = urlunsplit((parsed.scheme, netloc, parsed.path,
+                              parsed.query, ''))
+            self.secret('pkiturn-database', {'dsn': dsn})
+        if not exists:
+            m.require(re.fullmatch(r'[0-9a-f]{64}', password),
+                      'unsafe generated pkiturn database password')
+            self.sql('BEGIN; CREATE ROLE ' + role
+                     + ' LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE '
+                     'NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 4 PASSWORD \''
+                     + password + '\' IN ROLE rtk_pki_verifier; COMMIT;')
+        safe = self.sql(
+            "SELECT rolcanlogin AND NOT(rolsuper OR rolcreatedb OR rolcreaterole "
+            "OR rolreplication OR rolbypassrls) AND rolconnlimit=4 "
+            "FROM pg_roles WHERE rolname='" + role + "';")
+        memberships = self.sql(
+            "SELECT COALESCE(string_agg(parent.rolname,',' ORDER BY "
+            "parent.rolname),'') FROM pg_auth_members membership "
+            "JOIN pg_roles parent ON parent.oid=membership.roleid "
+            "JOIN pg_roles child ON child.oid=membership.member "
+            "WHERE child.rolname='" + role + "';")
+        m.require(safe == 't' and memberships == 'rtk_pki_verifier',
+                  'pkiturn database role is broader than verifier-only')
+        return role
 
     def ensure(self, desired):
         kind = desired['kind'].lower()
@@ -403,6 +463,190 @@ class AppRuntime(h.ServiceRun):
             'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
             'auth_attempts': auth_attempts, 'mqtt_attempts': mqtt_attempts})
 
+    def install_turn(self, image, root):
+        role = self.turn_database()
+        cli = self.base / 'pki/pkiturn/cli-password'
+        ssh_dir = self.base / 'pki/pkiturn-ssh'
+        key, known = ssh_dir / 'id_ed25519', ssh_dir / 'known_hosts'
+        for path in (cli, key, known):
+            m.require(path.is_file() and path.stat().st_mode & 0o777 == 0o600,
+                      'private pkiturn credential missing or unsafe')
+        m.require(re.fullmatch(r'[0-9a-f]{64}\n?', cli.read_text()),
+                  'unexpected pkiturn CLI credential')
+        host_keys = [line for line in known.read_text().splitlines()
+                     if line and not line.startswith('#')]
+        m.require('PRIVATE KEY' in key.read_text() and host_keys
+                  and all((line.split()[0] == '172.232.182.134'
+                           or line.startswith('|1|'))
+                          and len(line.split()) >= 3 for line in host_keys),
+                  'pkiturn SSH material differs from pinned hashed host keys')
+        self.secret('pkiturn-cli', {'password': cli.read_text()})
+        self.secret('pkiturn-ssh', {
+            'id_ed25519': key.read_text(), 'known_hosts': known.read_text()})
+        identity = self.private_material('consumers', 'pkiturn')
+        service_root = self.obj('configmap', 'pki-service-host-root')
+        management = dict(identity)
+        management['ca.crt'] = service_root['data']['root.pem']
+        self.secret('pki-app-consumer-pkiturn', management)
+        self.ensure({'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+                     'metadata': {'name': 'pkiturn-app-trust',
+                                  'namespace': NS},
+                     'spec': {'accessModes': ['ReadWriteOnce'],
+                              'storageClassName': 'linode-block-storage-retain',
+                              'resources': {'requests': {'storage': '10Gi'}}}})
+        labels = {'app.kubernetes.io/name': 'pkiturn',
+                  'app.kubernetes.io/part-of': 'rtk-cloud',
+                  'rtk.realtek.com/stack': 'video-cloud-dev'}
+        restricted = {
+            'runAsNonRoot': True, 'runAsUser': 10001, 'runAsGroup': 10001,
+            'allowPrivilegeEscalation': False,
+            'capabilities': {'drop': ['ALL']}}
+        env = [
+            {'name': 'PKI_ENVIRONMENT', 'value': 'dev'},
+            {'name': 'PKI_TURN_DEDICATED_RELAY', 'value': 'true'},
+            {'name': 'PKI_DATABASE_URL', 'valueFrom': {'secretKeyRef': {
+                'name': 'pkiturn-database', 'key': 'dsn'}}},
+            {'name': 'PKI_TURN_REDIS_ADDR', 'value':
+                'redis.video-cloud-dev-platform.svc.cluster.local:6379'},
+            {'name': 'PKI_TURN_REDIS_PREFIX', 'value': 'video_cloud:webrtc'},
+            {'name': 'PKI_TURN_CLI_ADDR', 'value': '127.0.0.1:5766'},
+            {'name': 'PKI_TURN_CLI_PASSWORD_FILE', 'value':
+                '/run/pkiturn-cli/password'},
+            {'name': 'PKI_TURN_HEALTH_FILE', 'value':
+                '/run/pkiturn-health/health.json'},
+            {'name': 'PKI_TURN_APP_CRL_MANIFEST', 'value':
+                '/run/pki-app/crls.json'},
+            {'name': 'PKI_TURN_APP_ROOT_ID', 'value': root['issuer_id']},
+            {'name': 'PKI_TURN_APP_ROOT_STATE', 'value':
+                '/run/pki-state/app/root-policy.json'},
+            {'name': 'PKI_TURN_APP_ROOTS', 'value': '/run/pki-app/roots.pem'},
+            {'name': 'PKI_TURN_APP_BUNDLE_ACK_ENABLED', 'value': 'true'},
+            {'name': 'PKI_TURN_PKI_CONTROLLER_URL', 'value':
+                'https://pki-controller.' + NS + '.svc:18446'},
+            {'name': 'PKI_TURN_MANAGEMENT_CA', 'value':
+                '/run/pki-management/ca.crt'},
+            {'name': 'PKI_TURN_MANAGEMENT_CERT', 'value':
+                '/run/pki-management/tls.crt'},
+            {'name': 'PKI_TURN_MANAGEMENT_KEY', 'value':
+                '/run/pki-management/tls.key'}]
+        private_init = {
+            'name': 'prepare-pkiturn-private', 'image': image,
+            'command': ['/bin/sh', '-ec'],
+            'args': [
+                'umask 077; mkdir -p /private/cli /private/ssh '
+                '/run/pki-state/app; '
+                'cp /source/cli/password /private/cli/password; '
+                'cp /source/ssh/id_ed25519 /private/ssh/id_ed25519; '
+                'cp /source/ssh/known_hosts /private/ssh/known_hosts; '
+                'chmod 400 /private/cli/password /private/ssh/id_ed25519; '
+                'chmod 444 /private/ssh/known_hosts; '
+                'chmod 700 /run/pki-state/app; '
+                'find /run/pki-state/app -type f -exec chmod 600 {} +'],
+            'securityContext': restricted,
+            'volumeMounts': [
+                {'name': 'cli-source', 'mountPath': '/source/cli',
+                 'readOnly': True},
+                {'name': 'ssh-source', 'mountPath': '/source/ssh',
+                 'readOnly': True},
+                {'name': 'cli-private', 'mountPath': '/private/cli'},
+                {'name': 'ssh-private', 'mountPath': '/private/ssh'},
+                {'name': 'pki-state', 'mountPath': '/run/pki-state'}]}
+        operator = {
+            'name': 'pkiturn', 'image': image,
+            'command': ['/app/pkiturn', 'watch'], 'env': env,
+            'securityContext': restricted,
+            'resources': {'requests': {'cpu': '50m', 'memory': '64Mi'},
+                          'limits': {'memory': '256Mi'}},
+            'startupProbe': {'exec': {'command': ['/app/pkiturn', 'health']},
+                             'periodSeconds': 5, 'timeoutSeconds': 3,
+                             'failureThreshold': 36},
+            'readinessProbe': {'exec': {'command': ['/app/pkiturn', 'health']},
+                               'periodSeconds': 10, 'timeoutSeconds': 3,
+                               'failureThreshold': 2},
+            'livenessProbe': {'exec': {'command': ['/app/pkiturn', 'health']},
+                              'periodSeconds': 10, 'timeoutSeconds': 3,
+                              'failureThreshold': 3},
+            'volumeMounts': [
+                {'name': 'cli-private', 'mountPath': '/run/pkiturn-cli',
+                 'readOnly': True},
+                {'name': 'health', 'mountPath': '/run/pkiturn-health'},
+                {'name': 'pki-app', 'mountPath': '/run/pki-app',
+                 'readOnly': True},
+                {'name': 'pki-state', 'mountPath': '/run/pki-state'},
+                {'name': 'pki-management', 'mountPath': '/run/pki-management',
+                 'readOnly': True}]}
+        tunnel = {
+            'name': 'coturn-cli-tunnel', 'image': image,
+            'command': ['/usr/bin/ssh', '-NT', '-o', 'BatchMode=yes', '-o',
+                        'ExitOnForwardFailure=yes', '-o',
+                        'ServerAliveInterval=15', '-o',
+                        'ServerAliveCountMax=3', '-o',
+                        'StrictHostKeyChecking=yes', '-o',
+                        'UserKnownHostsFile=/run/pkiturn-ssh/known_hosts',
+                        '-o', 'GlobalKnownHostsFile=/dev/null', '-i',
+                        '/run/pkiturn-ssh/id_ed25519', '-L',
+                        '127.0.0.1:5766:127.0.0.1:5766',
+                        'root@172.232.182.134'],
+            'securityContext': restricted,
+            'resources': {'requests': {'cpu': '10m', 'memory': '16Mi'},
+                          'limits': {'memory': '64Mi'}},
+            'volumeMounts': [{'name': 'ssh-private',
+                              'mountPath': '/run/pkiturn-ssh',
+                              'readOnly': True}]}
+        deployment = {
+            'apiVersion': 'apps/v1', 'kind': 'Deployment',
+            'metadata': {'name': 'pkiturn', 'namespace': NS},
+            'spec': {'replicas': 1, 'strategy': {'type': 'Recreate'},
+                     'selector': {'matchLabels': {
+                         'app.kubernetes.io/name': 'pkiturn'}},
+                     'template': {
+                         'metadata': {'labels': labels, 'annotations': {
+                             'rtk.realtek.com/app-trust-sha256': m.digest(
+                                 (root['issuer_id']
+                                  + root['trust_bundle_version']
+                                  + image).encode())}},
+                         'spec': {
+                             'securityContext': {
+                                 'fsGroup': 10001,
+                                 'fsGroupChangePolicy': 'OnRootMismatch'},
+                             'imagePullSecrets': [{'name': 'ghcr-pull'}],
+                             'terminationGracePeriodSeconds': 20,
+                             'initContainers': [private_init],
+                             'containers': [operator, tunnel],
+                             'volumes': [
+                                 {'name': 'cli-source', 'secret': {
+                                     'secretName': 'pkiturn-cli',
+                                     'defaultMode': 288}},
+                                 {'name': 'ssh-source', 'secret': {
+                                     'secretName': 'pkiturn-ssh',
+                                     'defaultMode': 288}},
+                                 {'name': 'cli-private', 'emptyDir': {}},
+                                 {'name': 'ssh-private', 'emptyDir': {}},
+                                 {'name': 'health', 'emptyDir': {}},
+                                 {'name': 'pki-app', 'configMap': {
+                                     'name': 'pki-app-trust'}},
+                                 {'name': 'pki-state',
+                                  'persistentVolumeClaim': {
+                                      'claimName': 'pkiturn-app-trust'}},
+                                 {'name': 'pki-management', 'secret': {
+                                     'secretName':
+                                         'pki-app-consumer-pkiturn',
+                                     'defaultMode': 288}}]}}}}
+        self.ensure(deployment)
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/pkiturn',
+                   '--timeout=300s'], timeout=310)
+        bundle, policy = self.wait_receipts(
+            root, ['video-cloud-api-app', 'pkibroker', 'pkiturn'])
+        current = self.obj('deployment', 'pkiturn')
+        m.require(current.get('status', {}).get('readyReplicas') == 1,
+                  'pkiturn is not ready')
+        self.check('app_turn_consumer_installed', {
+            'root_id': root['issuer_id'], 'image': image,
+            'database_role': role, 'database_scope': 'verifier-only',
+            'cli': 'SSH forwarded loopback; no Kubernetes Service',
+            'state': '/run/pki-state/app/root-policy.json',
+            'bundle_receipts': bundle, 'root_policy_receipts': policy})
+
     def install(self):
         m.require(IMAGE.fullmatch(self.args.image or ''),
                   'immutable Dev Video Cloud image required')
@@ -425,6 +669,7 @@ class AppRuntime(h.ServiceRun):
                     'ports': [{'protocol': 'TCP', 'port': 18446}]}]}})
         self.install_api(self.args.image, root)
         self.install_broker(self.args.image, root)
+        self.install_turn(self.args.image, root)
 
 
 def main():
