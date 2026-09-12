@@ -113,6 +113,11 @@ def resumable_approved_intermediate(saved, current, issuer, parent_id):
             and not issuer.get('csr_pem'))
 
 
+def retryable_device_mqtt_error(message):
+    return (message.startswith('probe failed:')
+            or message == 'MQTT authorization result differs: 5')
+
+
 class AppHierarchy(s.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -362,11 +367,12 @@ class AppHierarchy(s.ServiceRun):
                 self.mqtt(auth, device, 'roundtrip')
                 break
             except RuntimeError as error:
-                temporary = (str(error).startswith('probe failed:') or
-                             str(error) ==
-                             'MQTT authorization result differs: 5')
+                message = str(error)
+                temporary = retryable_device_mqtt_error(message)
                 if not temporary or time.monotonic() >= deadline:
                     raise
+                if message.startswith('probe failed:'):
+                    self.forward('mqtt', NS, 'mqtt-pki', 8883)
                 time.sleep(2)
         self.check('device_baseline_after_app_hierarchy', {
             'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',

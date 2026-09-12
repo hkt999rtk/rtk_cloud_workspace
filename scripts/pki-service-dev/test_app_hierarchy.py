@@ -138,6 +138,14 @@ class AppManifestTests(unittest.TestCase):
         self.assertFalse(a.resumable_approved_intermediate(
             saved, current, dict(issuer, csr_pem='generated'), 'root'))
 
+    def test_device_mqtt_retry_only_accepts_transient_failures(self):
+        self.assertTrue(a.retryable_device_mqtt_error(
+            'probe failed: verified MQTT TLS failed: connection refused'))
+        self.assertTrue(a.retryable_device_mqtt_error(
+            'MQTT authorization result differs: 5'))
+        self.assertFalse(a.retryable_device_mqtt_error(
+            'MQTT authorization result differs: 0'))
+
 
 if __name__ == '__main__':
     unittest.main()
