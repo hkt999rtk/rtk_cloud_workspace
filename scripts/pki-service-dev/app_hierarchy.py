@@ -85,6 +85,20 @@ def consumer_template(owner, name, image, marker):
     return template
 
 
+def controller_template(owner, image, marker):
+    m.require(IMAGE.fullmatch(image or ''),
+              'immutable Dev Video Cloud image required')
+    template = copy.deepcopy(owner['spec']['template'])
+    containers = template['spec']['containers']
+    m.require(len(containers) == 1
+              and containers[0]['name'] == 'pki-controller',
+              'PKI controller container ownership changed')
+    containers[0]['image'] = image
+    template['metadata'].setdefault('annotations', {})[
+        'rtk.realtek.com/app-hierarchy-controller'] = marker
+    return template
+
+
 class AppHierarchy(s.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -213,6 +227,22 @@ class AppHierarchy(s.ServiceRun):
                         'metadata': {'name': 'pki-app-trust', 'namespace': NS},
                         'data': desired})
         return self.restart_consumers(marker)
+
+    def rollout_controller(self, marker):
+        owner = self.obj('deployment', 'pki-controller')
+        template = controller_template(owner, self.args.image, marker)
+        self.observed_patch('deployment', 'pki-controller', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/pki-controller', '--timeout=300s'], timeout=310)
+        current = self.obj('deployment', 'pki-controller')
+        containers = current['spec']['template']['spec']['containers']
+        m.require(current.get('status', {}).get('readyReplicas') == 1
+                  and len(containers) == 1
+                  and containers[0]['name'] == 'pki-controller'
+                  and containers[0]['image'] == self.args.image,
+                  'PKI controller did not roll to reviewed App image')
+        return current['metadata']['generation']
 
     def sign_initial_root_crl(self, root):
         if self.crl_count(root['issuer_id']) == '1':
@@ -560,17 +590,42 @@ class AppHierarchy(s.ServiceRun):
 
     def prepare_intermediate(self):
         root = self.active_root()
-        m.require(not any(item['parent_issuer_id'] == root['issuer_id']
-                          for item in self.app_intermediates()),
-                  'App intermediate already exists for this Root; reconcile')
         request = {'environment': 'dev', 'trust_domain': 'app',
                    'kind': 'intermediate',
                    'parent_issuer_id': root['issuer_id']}
+        if self.args.resume:
+            source = Path(self.args.resume)
+            report = m.read(source / 'report.json')
+            saved_request = m.read(source / 'intermediate-request.json')
+            saved_operation = m.read(source / 'intermediate-operation.json')
+            m.require(report['environment'] == 'dev'
+                      and report['phase'] == 'prepare-intermediate'
+                      and report['status'] == 'failed'
+                      and saved_request == request,
+                      'failed Dev App intermediate evidence required')
+            operation = self.api('/operations/' +
+                                 saved_operation['operation_id'])
+            issuer = self.api('/issuers/' + operation['issuer_id'])
+            m.require(operation == {**saved_operation, 'status': 'approved'}
+                      and issuer['status'] == 'approved'
+                      and issuer['parent_issuer_id'] == root['issuer_id']
+                      and issuer['trust_domain'] == 'app'
+                      and issuer['kind'] == 'intermediate'
+                      and not issuer['csr_pem'],
+                      'failed App intermediate operation was not untouched')
+            self.save('intermediate-resume-source.json', {
+                'source': str(source),
+                'operation_id': operation['operation_id'],
+                'request_sha256': operation['request_sha256']})
+        else:
+            m.require(not any(item['parent_issuer_id'] == root['issuer_id']
+                              for item in self.app_intermediates()),
+                      'App intermediate already exists for this Root; reconcile')
+            operation = self.api('/operations', request,
+                                 key='dev-app-intermediate-' + uuid.uuid4().hex)
+            self.approval(operation)
         self.save('intermediate-request.json', request)
-        operation = self.api('/operations', request,
-                             key='dev-app-intermediate-' + uuid.uuid4().hex)
         self.save('intermediate-operation.json', operation)
-        self.approval(operation)
         issuer = self.api('/issuers/' + operation['issuer_id'])
         m.require(issuer['status'] == 'approved'
                   and issuer['signer_provider'] == 'openbao'
@@ -585,9 +640,11 @@ class AppHierarchy(s.ServiceRun):
                   and '/sign/app' in policies['signer_policy'],
                   'App provider policy differs')
         self.save('provider-policies.json', policies)
-        self.role_policy('pki-controller-dev',
-                         'pki-controller-dev-' + issuer['issuer_id'],
-                         policies['controller_policy'])
+        self.ensure_role_policy('pki-controller-dev',
+                                'pki-controller-dev-' + issuer['issuer_id'],
+                                policies['controller_policy'])
+        controller_generation = self.rollout_controller(
+            'app-intermediate-' + issuer['issuer_id'])
         self.api('/operations/' + operation['operation_id'] + '/provision', {})
         issuer = self.api('/issuers/' + issuer['issuer_id'])
         m.require(issuer['status'] == 'provisioning' and issuer['csr_pem'],
@@ -622,7 +679,9 @@ class AppHierarchy(s.ServiceRun):
         self.check('app_intermediate_ready_gate_closed', {
             'issuer_id': issuer['issuer_id'],
             'activation_without_bundle_receipts_denied': True,
-            'private_key_exported': False})
+            'private_key_exported': False,
+            'controller_generation': controller_generation,
+            'resumed_approved_operation': bool(self.args.resume)})
 
 
 def main():
@@ -640,14 +699,16 @@ def main():
     parser.add_argument('--output', required=True)
     parser.add_argument('--resume', help='Reuse signed evidence from a failed phase')
     args = parser.parse_args()
-    m.require(not args.resume or args.phase == 'activate-root',
-              '--resume currently applies only to activate-root')
+    m.require(not args.resume or args.phase in (
+        'activate-root', 'prepare-intermediate'),
+        '--resume applies only to Root activation or intermediate preparation')
     m.require(args.phase not in ('install-intermediate',
                                  'activate-intermediate',
                                  'enable-issuance') or args.intermediate,
               'App intermediate evidence is required')
-    m.require(args.phase != 'enable-issuance' or args.image,
-              'Dev image digest is required to enable issuance')
+    m.require(args.phase not in ('prepare-intermediate', 'enable-issuance')
+              or args.image,
+              'Dev image digest is required for controller or issuer rollout')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/app-hierarchy-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)

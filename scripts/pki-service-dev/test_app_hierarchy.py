@@ -97,6 +97,27 @@ class AppManifestTests(unittest.TestCase):
                 self.assertEqual(before['spec']['template']['spec']
                                  ['containers'][0]['image'], 'old-' + names[0])
 
+    def test_controller_rollout_preserves_template_and_selects_owned_binary(self):
+        image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:'
+                 + 'b' * 64)
+        owner = {'spec': {'template': {
+            'metadata': {'annotations': {'kept': 'true'}},
+            'spec': {'serviceAccountName': 'pki-controller', 'containers': [{
+                'name': 'pki-controller', 'image': 'old',
+                'env': [{'name': 'KEPT', 'value': 'true'}]}]}}}}
+
+        result = a.controller_template(owner, image, 'successor')
+
+        self.assertEqual(result['spec']['containers'][0]['image'], image)
+        self.assertEqual(result['spec']['containers'][0]['env'], [
+            {'name': 'KEPT', 'value': 'true'}])
+        self.assertEqual(result['spec']['serviceAccountName'], 'pki-controller')
+        self.assertEqual(result['metadata']['annotations'], {
+            'kept': 'true',
+            'rtk.realtek.com/app-hierarchy-controller': 'successor'})
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['image'], 'old')
+
 
 if __name__ == '__main__':
     unittest.main()

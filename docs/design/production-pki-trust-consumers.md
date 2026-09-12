@@ -2476,3 +2476,12 @@ bundles remain verifiable during overlap but receive no new activation receipt.
 Local regressions cover exact registry binding, successor persistence, restart,
 and attempted reintroduction of a distrusted key. Dev withdrawal qualification
 across API, MQTT and TURN remains required before R1 can close.
+
+The App intermediate preparation runner also owns the controller binary used for
+the irreversible OpenBao provision call. It rolls only the `pki-controller`
+container to the reviewed immutable image, preserving the Deployment template,
+and waits for readiness before provisioning. If provider availability fails
+before `BeginProvisioning`, a retry may reuse only the exact failed Dev evidence
+whose operation and issuer are still `approved`, have the same request digest
+and successor parent, and contain no CSR. This recovery path cannot create a
+second issuer or reuse evidence after key generation has begun.
