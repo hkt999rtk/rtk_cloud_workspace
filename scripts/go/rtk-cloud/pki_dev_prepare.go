@@ -33,7 +33,7 @@ func runPKIDevPrepare(args []string) error {
 	configRoot := fs.String("config-root", "", "canonical SecretStore base directory")
 	broker := fs.Bool("broker", false, "prepare isolated mqtt-pki runtime credentials without changing live services")
 	server := fs.String("server", "", "optional dev TLS server: video-cloud-api-pki or mqtt-pki")
-	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, video-cloud-logingester, certissuer, factoryenroll, pkibroker or emqx-pki")
+	consumer := fs.String("consumer", "", "optional management client: video-cloud-api, video-cloud-api-app, video-cloud-logingester, certissuer, factoryenroll, pkibroker, pkiturn or emqx-pki")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func runPKIDevPrepare(args []string) error {
 	if *consumer != "" && !validPKIDevConsumer(*consumer) {
 		return errors.New("unknown dev PKI consumer")
 	}
-	if *server != "" && *server != "video-cloud-api-pki" && *server != "mqtt-pki" {
+	if *server != "" && *server != "video-cloud-api-pki" && *server != "video-cloud-api-app-pki" && *server != "mqtt-pki" {
 		return errors.New("unknown dev PKI server")
 	}
 	store, err := newSecretStore(*configRoot, "dev")

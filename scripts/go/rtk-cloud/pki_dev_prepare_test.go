@@ -201,6 +201,15 @@ func TestPKIDevConsumerPersistenceAndFailures(t *testing.T) {
 			t.Fatal("invalid consumer accepted")
 		}
 	}
+	for _, name := range []string{"video-cloud-api-app", "pkiturn"} {
+		r1Dir, r1Err := preparePKIDevConsumer(store, name, now)
+		if r1Err != nil {
+			t.Fatalf("prepare R1 consumer %q: %v", name, r1Err)
+		}
+		if r1Err = validatePKIDevConsumer(r1Dir, name, now); r1Err != nil {
+			t.Fatalf("validate R1 consumer %q: %v", name, r1Err)
+		}
+	}
 	if err = validatePKIDevConsumer(dir, "pkibroker", now); err == nil {
 		t.Fatal("wrong workload accepted")
 	}
@@ -224,7 +233,7 @@ func TestPKIDevConsumerPersistenceAndFailures(t *testing.T) {
 }
 
 func TestPKIDevAPIServerTransport(t *testing.T) {
-	for _, serverName := range []string{"video-cloud-api-pki", "mqtt-pki"} {
+	for _, serverName := range []string{"video-cloud-api-pki", "video-cloud-api-app-pki", "mqtt-pki"} {
 		t.Run(serverName, func(t *testing.T) {
 			store, err := newSecretStore(t.TempDir(), "dev")
 			if err != nil {

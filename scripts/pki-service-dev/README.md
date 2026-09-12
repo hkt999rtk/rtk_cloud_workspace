@@ -6,6 +6,20 @@ private evidence helpers as `pki-dev-acceptance`. It only targets canonical dev
 context `lke649805-ctx` and namespace `video-cloud-dev-video-cloud`. Staging,
 legacy migration, hardware and independent human custody are excluded.
 
+## R1 App Root preparation
+
+Prepare the first Dev App Root without activating it:
+
+```sh
+python3 scripts/pki-service-dev/app_authority.py \
+  --output ~/.config/rtk_cloud/dev/pki/r1-app-root-YYYYMMDD
+```
+
+The phase creates an encrypted offline-simulation Root key, records the reviewed
+public Root in the registry, and proves activation remains blocked until the R1
+API, broker and TURN consumers install and acknowledge it. It does not change
+staging, deploy consumers, or create App leaf private keys.
+
 ## Account Manager caller acceptance
 
 `account_callers.py` proves actual factory admission and public App-token
