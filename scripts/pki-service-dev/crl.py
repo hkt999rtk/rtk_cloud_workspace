@@ -132,6 +132,61 @@ def drop_response(port, path, body, token):
 
 
 class CRLRun(r.RenewalRun):
+    def preflight(self):
+        """Capture a read-only maintenance baseline while a CRL outage is active.
+
+        The normal acceptance preflight requires every workload to be ready.  That
+        would make recovery impossible once an expired Service CRL has already
+        taken a Service consumer out of readiness.  CRL maintenance still gates
+        on a stable deployment spec/image and a healthy Account Manager API, but
+        records (rather than mutates) any unrelated or Service rollout outage.
+        """
+        m.require(self.kube(['config', 'current-context']).strip() == self.context,
+                  'canonical dev context mismatch')
+        namespace = self.obj('namespace', h.NS)
+        m.require(namespace['metadata']['name'] == h.NS, 'wrong namespace')
+        deployments = [('pki-controller', h.NS), ('mqtt-pki', h.NS), ('video-cloud-api-pki', h.NS),
+                       ('certissuer', h.NS), ('factoryenroll', h.NS),
+                       ('account-manager', h.AM_NS)]
+        images, readiness = {}, {}
+        for deployment, ns in deployments:
+            owner = self.obj('deployment', deployment, ns)
+            replicas = owner['spec'].get('replicas', 0)
+            m.require(replicas > 0, 'deployment disabled: ' + deployment)
+            m.require(owner.get('status', {}).get('observedGeneration') == owner['metadata']['generation']
+                      and owner.get('status', {}).get('updatedReplicas') == replicas,
+                      'deployment rollout is incomplete: ' + deployment)
+            containers = owner['spec']['template']['spec']['containers']
+            m.require(all('@sha256:' in c['image'] for c in containers), 'image not pinned: ' + deployment)
+            images[deployment] = {c['name']: c['image'] for c in containers}
+            ready = owner.get('status', {}).get('readyReplicas', 0)
+            readiness[deployment] = {'ready': ready == replicas, 'ready_replicas': ready, 'replicas': replicas}
+            if deployment == 'pki-controller':
+                env = {v['name']: v.get('value') for c in containers for v in c.get('env', [])}
+                m.require(m.device_consumers(env) == m.CONSUMERS, 'required consumer set changed')
+        m.require(readiness['account-manager']['ready'], 'Account Manager required for CRL publication')
+        broker_config = self.obj('configmap', 'mqtt-pki-config')['data']['base.hocon']
+        m.require(broker_config.count('dest_topic = "_bc/${username}/$1"') == 2,
+                  'broker publish/subscribe tenant rewrite differs from reviewed baseline')
+        self.forward('am', h.AM_NS, 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        identities = {name: self.login(credentials)[1] for name, credentials in self.accounts.items()}
+        m.require(len(set(identities.values())) == 3, 'approval accounts are not distinct')
+        for role in ('requester', 'approver', 'custodian'):
+            self.api('/issuers/search', {'limit': 1}, role=role)
+        # Build only the local, public-data helpers needed by the signed artifact
+        # and listener probes.  No private key or cluster Secret is exported.
+        env = dict(os.environ, GOWORK='off')
+        for directory, target, output in [(m.WORKSPACE / 'scripts/go', './pki-dev-probe', self.probe),
+                                           (m.WORKSPACE / 'repos/rtk_video_cloud', './cmd/pkiceremony', self.ceremony)]:
+            result = m.subprocess.run(['go', 'build', '-o', str(output), target], cwd=directory,
+                                      env=env, capture_output=True, timeout=180)
+            m.require(result.returncode == 0, 'CRL maintenance binary build failed')
+        self.check('preflight', {'images': images, 'readiness': readiness, 'approval_accounts': identities,
+                                 'service_crl_recovery_allows_unready_consumers': True,
+                                 'workspace_head': m.command(['git', 'rev-parse', 'HEAD'], cwd=m.WORKSPACE).strip(),
+                                 'service_head': m.command(['git', 'rev-parse', 'HEAD'], cwd=m.WORKSPACE / 'repos/rtk_video_cloud').strip()})
+
     def state_digest(self, name='account-manager'):
         if name in h.h.h.SERVICE_CONSUMERS:
             return h.h.HostRun.state_digest(self, name)
