@@ -2422,6 +2422,26 @@ is present in the consumer-installed pool. Dev has not been changed. R1 remains
 open for deployment configuration and Dev withdrawal evidence across API,
 broker and TURN.
 
+### R1 Dev runtime topology decision (2026-09-12)
+
+R1 uses three distinct App policy consumers. A new App-only direct-mTLS API
+Deployment owns the App TLS trust pool and held API connections; the existing
+Device-only API verifier remains independent. The existing `pkibroker` process
+adds App Root, bundle and CRL state beside its Device state and performs the App
+session sweep before receipts. A new `pkiturn` Deployment owns TURN/signaling
+authorization and receipts. The controller requires all three consumer IDs:
+`video-cloud-api-app`, `pkibroker` and `pkiturn`.
+
+Dev coturn remains on its dedicated VM and keeps the management CLI bound to
+`127.0.0.1:5766`. Because that VM cannot route to the private LKE PostgreSQL and
+Redis services, `pkiturn` runs in LKE. A sidecar with a workload-specific SSH key
+forwards Pod-local `127.0.0.1:5766` to the same loopback address on the coturn VM.
+The server key entry permits only that forwarding target and no shell; Kubernetes
+does not expose the CLI. The verifier DSN, coturn CLI password and SSH key are
+separate Secrets, while App Root/CRL policy state is persistent. This is a Dev
+transport bridge only; it does not change the App trust owner or make EMQX or
+coturn own App private keys.
+
 ### R1 review corrections (2026-09-12)
 
 The first R1 checkpoint left five enforcement defects. Dynamic App-root startup
