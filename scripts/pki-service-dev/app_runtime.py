@@ -5,6 +5,7 @@ import base64
 import copy
 import importlib.util
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -35,6 +36,15 @@ def env_replace(items, updates, remove):
 def append_ca(bundle, certificate):
     certificate = certificate.strip() + '\n'
     return bundle if certificate.strip() in bundle else bundle.rstrip() + '\n' + certificate
+
+
+def initial_state(root):
+    policy = {'environment': 'dev', 'trust_domain': 'app', 'version': 0,
+              'distrusted_roots': [], 'policy_sha256': ''}
+    canonical = json.dumps(policy, separators=(',', ':'))
+    policy['policy_sha256'] = hashlib.sha256(canonical.encode()).hexdigest()
+    return json.dumps({'policy': policy, 'roots_pem': root['certificate_pem']},
+                      separators=(',', ':'))
 
 
 class AppRuntime(h.ServiceRun):
@@ -87,14 +97,29 @@ class AppRuntime(h.ServiceRun):
                       and current.get('data') == desired.get('data'),
                       'existing R1 Secret differs')
         elif desired['kind'] == 'ConfigMap':
-            m.require(current.get('data') == desired.get('data'),
-                      'existing R1 ConfigMap differs')
+            if current.get('data') != desired.get('data'):
+                m.require(name == 'pki-app-trust',
+                          'existing R1 ConfigMap differs')
+                self.observed_patch('configmap', name, current, [{
+                    'op': 'replace', 'path': '/data',
+                    'value': desired['data']}])
         elif desired['kind'] == 'PersistentVolumeClaim':
             m.require(current['spec']['accessModes'] == ['ReadWriteOnce']
                       and current['spec']['storageClassName'] ==
                       'linode-block-storage-retain'
                       and current['spec']['resources']['requests']['storage'] ==
                       '10Gi', 'existing R1 PVC differs')
+        elif desired['kind'] == 'Deployment':
+            m.require(current['spec']['selector'] == desired['spec']['selector'],
+                      'existing R1 Deployment selector differs')
+            if current['spec']['template'] != desired['spec']['template']:
+                self.observed_patch('deployment', name, current, [{
+                    'op': 'replace', 'path': '/spec/template',
+                    'value': desired['spec']['template']}])
+        elif desired['kind'] == 'Service':
+            m.require(current['spec']['selector'] == desired['spec']['selector']
+                      and current['spec']['ports'][0]['port'] == 8443,
+                      'existing R1 Service differs')
         else:
             m.require(False, 'existing R1 workload requires explicit reconciliation')
         self.save('reused-' + name + '.json', {
@@ -138,6 +163,7 @@ class AppRuntime(h.ServiceRun):
                      'metadata': {'name': 'pki-app-trust', 'namespace': NS},
                      'data': {
                          'roots.pem': root['certificate_pem'],
+                         'root-trust.json': initial_state(root),
                          'crls.json': json.dumps([entry]),
                          'issuers.json': json.dumps([{
                              'issuer_id': root['issuer_id'],
@@ -175,7 +201,7 @@ class AppRuntime(h.ServiceRun):
             'VIDEO_CLOUD_AUTH_DISABLE_ACL': 'false',
             'VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS': 'false',
             'VIDEO_CLOUD_AUTH_ENABLE_LEGACY_CERT': 'false',
-            'VIDEO_CLOUD_AUTH_APP_CA_CERT': '/run/pki-app/roots.pem',
+            'VIDEO_CLOUD_AUTH_APP_CA_CERT': '',
             'VIDEO_CLOUD_AUTH_CRL_MANIFEST': '/run/pki-app/crls.json',
             'VIDEO_CLOUD_AUTH_ISSUER_TRUST_MANIFEST': '/run/pki-app/issuers.json',
             'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_STATE':
@@ -221,11 +247,19 @@ class AppRuntime(h.ServiceRun):
             'name': 'initialize-app-trust-state', 'image': image,
             'command': ['/bin/sh', '-ec',
                         'umask 077; mkdir -p /run/pki-state/app; '
-                        'chmod 700 /run/pki-state/app'],
-            'volumeMounts': [{'name': 'pki-state',
-                              'mountPath': '/run/pki-state'}]}]
-        self.create(deployment)
-        self.create({'apiVersion': 'v1', 'kind': 'Service',
+                        'chmod 700 /run/pki-state/app; '
+                        'if [ ! -e /run/pki-state/app/root-policy.json ]; then '
+                        'cp /run/pki-app/root-trust.json '
+                        '/run/pki-state/app/root-policy.json.new; '
+                        'chmod 600 /run/pki-state/app/root-policy.json.new; '
+                        'mv /run/pki-state/app/root-policy.json.new '
+                        '/run/pki-state/app/root-policy.json; fi'],
+            'volumeMounts': [
+                {'name': 'pki-state', 'mountPath': '/run/pki-state'},
+                {'name': 'pki-app', 'mountPath': '/run/pki-app',
+                 'readOnly': True}]}]
+        self.ensure(deployment)
+        self.ensure({'apiVersion': 'v1', 'kind': 'Service',
                      'metadata': {'name': 'video-cloud-api-app-pki',
                                   'namespace': NS},
                      'spec': {'selector': {'app.kubernetes.io/name':
