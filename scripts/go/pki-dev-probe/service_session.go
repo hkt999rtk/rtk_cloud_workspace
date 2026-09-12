@@ -21,14 +21,19 @@ import (
 // allowed for the explicit denial check, using the original key held in memory.
 func serviceSession(args []string, input io.Reader, output io.Writer) error {
 	if (len(args) != 6 && len(args) != 7) || !strings.HasPrefix(args[4], "/") {
-		return fmt.Errorf("service-session requires state, CA, host, port, path, fingerprint and optional expected status")
+		return fmt.Errorf("service-session requires state, CA, host, port, path, fingerprint and optional mode")
 	}
 	expectedStatus := http.StatusOK
+	allowPending := false
 	if len(args) == 7 {
-		if args[6] != "403" {
-			return fmt.Errorf("only an explicit 403 route-denial baseline is supported")
+		switch args[6] {
+		case "403":
+			expectedStatus = http.StatusForbidden
+		case "allow-pending":
+			allowPending = true
+		default:
+			return fmt.Errorf("only explicit 403 or allow-pending probe modes are supported")
 		}
-		expectedStatus = http.StatusForbidden
 	}
 	state, _, err := loadServiceState(args[0])
 	if err != nil {
@@ -39,7 +44,7 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 		return fmt.Errorf("invalid stored identity")
 	}
 	fingerprint := fmt.Sprintf("%x", sha256.Sum256(pair.Certificate[0]))
-	if state.Pending != nil || fingerprint != args[5] {
+	if (!allowPending && state.Pending != nil) || fingerprint != args[5] {
 		return fmt.Errorf("session identity changed")
 	}
 	ca, err := os.ReadFile(args[1])
@@ -75,9 +80,13 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 	}
 	c, err := dial()
 	if err != nil {
-		return fmt.Errorf("initial session TLS failed")
+		return fmt.Errorf("initial session TLS failed: %w", err)
 	}
 	defer c.Close()
+	_, localPort, err := net.SplitHostPort(c.LocalAddr().String())
+	if err != nil || localPort == "" {
+		return fmt.Errorf("initial session local address unavailable")
+	}
 	peer := c.ConnectionState().PeerCertificates
 	if len(peer) == 0 {
 		return fmt.Errorf("initial session server certificate unavailable")
@@ -92,7 +101,8 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 	emit := func(event string) error {
 		return enc.Encode(map[string]any{
 			"event": event, "at": time.Now().UTC(), "fingerprint": fingerprint,
-			"server_fingerprint": serverFingerprint, "expected_http_status": expectedStatus})
+			"server_fingerprint": serverFingerprint, "local_port": localPort,
+			"expected_http_status": expectedStatus})
 	}
 	if err = emit("ready"); err != nil {
 		return err

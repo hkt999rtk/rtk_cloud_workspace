@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import time
 import uuid
@@ -160,6 +161,47 @@ class AccountListenerLifecycle(a.ListenerRun):
         m.require(event['event'] == 'ready' and event['fingerprint'] == identity['fingerprint'],
                   'held Account Manager client session differs')
         return process
+
+    def controller_session(self, identity):
+        # This 403 is intentional: service:account-manager is authenticated at
+        # TLS but is not a CRL-consumer principal. Its real controller method
+        # carries a signed human assertion through the private Unix socket.
+        process = m.Process(self.k + ['-n', AM_NS, 'exec', '-i', 'deployment/account-manager', '-c', 'pkimanagement', '--',
+            self.remote_probe, 'service-session', CLIENT_STATE, '/run/pki-root/root.pem',
+            'pki-controller.' + NS + '.svc', '18446', '/v1/pki/issuers/' + self.issuer['issuer_id'] + '/crl',
+            identity['fingerprint'], '403'], keep_stdin=True)
+        self.children.append(process)
+        event = process.event()
+        m.require(event['event'] == 'ready' and event['fingerprint'] == identity['fingerprint'],
+                  'held Account Manager controller TLS session differs')
+        m.require(str(event.get('local_port', '')).isdigit(), 'held controller session local port missing')
+        process.local_port = int(event['local_port'])
+        return process
+
+    def controller_connection_count(self, ignored_local_port=None):
+        # 18446 is the controller's fixed Service port. Count only established
+        # sidecar egress sockets; addresses and credential material never leave
+        # the owner container.
+        excluded = ''
+        if ignored_local_port is not None:
+            m.require(isinstance(ignored_local_port, int) and 0 < ignored_local_port < 65536,
+                      'invalid controller probe local port')
+            excluded = ' && $2 !~ /:' + format(ignored_local_port, '04X') + '$/'
+        raw = self.kube(['-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'pkimanagement', '--', 'sh', '-c',
+                         "awk 'NR > 1 && $4 == \"01\" && $3 ~ /:480E$/" + excluded +
+                         " { count++ } END { print count + 0 }' /proc/net/tcp /proc/net/tcp6"])
+        return int(raw.strip())
+
+    def controller_management_request(self, ignored_local_port=None):
+        # This is the actual Account Manager management method. It causes the
+        # app to sign a human assertion, pass it through its private socket and
+        # use the sidecar's managed controller client; no probe receives a
+        # bearer token or private key.
+        record = self.api('/issuers/' + self.issuer['issuer_id'])
+        m.require(record['issuer_id'] == self.issuer['issuer_id'], 'Account Manager controller response differs')
+        connections = self.controller_connection_count(ignored_local_port)
+        m.require(connections > 0, 'signed Account Manager controller request left no held managed connection')
+        return connections
 
     def factory_session(self, host, port, expected_server=None, path='/healthz'):
         # Bind the held socket to the Factory identity currently owned by the
@@ -353,7 +395,8 @@ class AccountListenerLifecycle(a.ListenerRun):
         failed = m.read(source / 'report.json')
         m.require(failed['status'] == 'failed' and failed['phase'] == 'lifecycle'
                   and (('revoke-' in failed.get('failure', '') and 'status 403' in failed['failure'])
-                       or failed.get('failure') == 'consumer receipt deadline'),
+                       or failed.get('failure') == 'consumer receipt deadline'
+                       or failed.get('failure') == 'rotated Account Manager controller connection was not evicted'),
                   'recovery requires the recorded lifecycle interruption')
         baseline, renewed = m.read(source / 'baseline.json'), m.read(source / 'renewed.json')
         self.preflight_lifecycle()
@@ -389,7 +432,203 @@ class AccountListenerLifecycle(a.ListenerRun):
             'source': source.name, 'client_retired': len(retired_clients), 'listener_retired': len(retired_hosts),
             'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
 
-    def revoke_and_publish(self, kind, rows, current, predecessor, held=None, keepalive=None):
+    def recover_pending_client_issuance(self):
+        # A transport loss after the provider signs leaves the owner-local key
+        # and durable claim intact. Reconcile only that exact claim through the
+        # existing administrator-authorized controller route; restarting the
+        # owner then consumes its normal idempotent renewal receipt.
+        self.preflight_lifecycle()
+        self.root = self.active_root()
+        self.issuer = self.v3()
+        self.install_probe()
+        pending_state = self.managed_client_state()
+        installed_before_resume = not pending_state.get('pending')
+        if installed_before_resume:
+            identity = self.inspect(CLIENT_STATE)
+            m.require(self.sql("SELECT count(*) FROM pki_service_client_issuances WHERE environment='dev' AND subject='" +
+                               SUBJECT + "' AND status='issuing';") == '0',
+                      'another Account Manager client issuance is still pending')
+            pending = self.current_client_claim(identity['fingerprint'])
+        else:
+            pending = self.pending_client_claim(pending_state['pending_request_id'])
+        m.require(pending['issuer_id'] == self.issuer['issuer_id'],
+                  'recoverable Account Manager claim is not under the active issuer')
+        serial = None
+        if pending['status'] == 'issuing':
+            serial = self.provider_serial_for_pending_claim(pending)
+            self.api('/issuers/' + self.issuer['issuer_id'] + '/reconcile-service-client',
+                     {'caller': pending['caller'], 'request_id': pending['request_id'],
+                      'serial_number': serial}, role='approver')
+            pending = self.pending_client_claim(pending['request_id'])
+        m.require(pending['status'] == 'succeeded' and pending['fingerprint'] and pending['revoked_at'] is None,
+                  'Account Manager pending claim was not reconciled')
+        self.restart_account_manager()
+        self.install_probe()
+        identity = self.inspect(CLIENT_STATE)
+        rows = self.client_rows()
+        reconciled = [row for row in rows if row['request_id'] == pending['request_id']]
+        m.require(len(reconciled) == 1 and reconciled[0]['status'] == 'succeeded'
+                  and reconciled[0]['fingerprint'] == identity['fingerprint'] and reconciled[0]['revoked_at'] is None,
+                  'reconciled Account Manager successor was not installed')
+        self.check('pending_account_manager_client_issuance_reconciled', {
+            'request_id': pending['request_id'], 'provider_serial': serial,
+            'already_reconciled_before_resume': installed_before_resume,
+            'successor_fingerprint': identity['fingerprint'],
+            'bootstrap_free_restart': True, 'private_keys_exported': False})
+
+    def managed_client_state(self):
+        return json.loads(self.kube([
+            '-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'pkimanagement', '--',
+            self.remote_probe, 'service-state', CLIENT_STATE]))
+
+    def pending_client_state(self):
+        value = self.managed_client_state()
+        m.require(value.get('pending') and re.fullmatch(r'[0-9a-f-]{36}', value.get('pending_request_id', '')),
+                  'Account Manager has no recoverable pending client state')
+        return value
+
+    def current_client_claim(self, fingerprint):
+        m.require(re.fullmatch(r'[0-9a-f]{64}', fingerprint), 'invalid current Account Manager fingerprint')
+        raw = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,caller,status,"
+            "fingerprint,revoked_at FROM pki_service_client_issuances WHERE environment='dev' "
+            "AND subject='" + SUBJECT + "' AND fingerprint='" + fingerprint + "') t;")
+        rows = [json.loads(line) for line in raw.splitlines() if line]
+        m.require(len(rows) == 1 and rows[0]['caller'] == SUBJECT and rows[0]['status'] == 'succeeded'
+                  and rows[0]['revoked_at'] is None, 'current Account Manager state is not registry admitted')
+        return rows[0]
+
+    def pending_client_claim(self, request_id):
+        """Return the one retained claim, including its CSR only in owner memory."""
+        m.require(re.fullmatch(r'[0-9a-f-]{36}', request_id), 'invalid pending Account Manager request id')
+        raw = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,caller,status,"
+            "csr_pem,request_digest,ttl_days,created_at,fingerprint,revoked_at FROM "
+            "pki_service_client_issuances WHERE environment='dev' AND subject='" + SUBJECT + "' "
+            "AND request_id='" + request_id + "') t;")
+        rows = [json.loads(line) for line in raw.splitlines() if line]
+        m.require(len(rows) == 1 and rows[0]['caller'] == SUBJECT and rows[0]['revoked_at'] is None
+                  and rows[0]['status'] in ('issuing', 'succeeded') and rows[0]['csr_pem'],
+                  'one pending Account Manager claim is required')
+        return rows[0]
+
+    def provider_serial_for_pending_claim(self, claim):
+        """Match an already-signed provider leaf without exporting a key or certificate."""
+        m.require(claim['subject'] == SUBJECT and claim['status'] == 'issuing'
+                  and re.fullmatch(r'[0-9a-f-]{36}', claim['issuer_id'])
+                  and re.fullmatch(r'[0-9a-f-]{36}', claim['request_id']),
+                  'unexpected pending Account Manager claim')
+        issuer = self.api('/issuers/' + claim['issuer_id'])
+        mount = issuer.get('signer_reference', '')
+        m.require(re.fullmatch(r'pki-issuers/service/[0-9a-f-]{36}/v[0-9]+', mount),
+                  'unexpected Service provider mount')
+        expected = m.command([self.openssl, 'req', '-pubkey', '-noout'], claim['csr_pem']).strip()
+        serials = json.loads(self.bao(['list', '-format=json', mount + '/certs']))
+        m.require(isinstance(serials, list) and len(serials) == len(set(serials)),
+                  'invalid Service provider certificate inventory')
+        matches = []
+        for serial in serials:
+            m.require(re.fullmatch(r'[0-9a-fA-F:-]+', serial), 'invalid provider certificate serial')
+            record = json.loads(self.bao(['read', '-format=json', mount + '/cert/' + serial])).get('data', {})
+            actual = m.command([self.openssl, 'x509', '-pubkey', '-noout'], record.get('certificate', '')).strip()
+            if actual == expected:
+                m.require(record.get('revocation_time') == 0, 'matching provider certificate is revoked')
+                matches.append(serial)
+        # The serial is public certificate metadata. Keep the CSR, leaf and
+        # provider responses in process memory; evidence carries only counts.
+        inventory = {
+            'issuer_id': claim['issuer_id'], 'request_id': claim['request_id'],
+            'certificate_count': len(serials), 'matching_serials': matches,
+            'private_keys_exported': False}
+        if len(matches) == 1:
+            self.save('pending-provider-inventory.json', inventory)
+            return matches[0]
+        m.require(not matches, 'ambiguous pending Account Manager provider certificates')
+        # The provider has no record for the original CSR.  Re-sign exactly
+        # once only after all original Certissuer owners are fenced; the
+        # durable marker prevents a later interrupted invocation from issuing
+        # another certificate for this request.
+        serial = self.resign_missing_pending_claim(claim, issuer, mount, expected)
+        inventory.update({'recovery_signed': True, 'matching_serials': [serial]})
+        self.save('pending-provider-inventory.json', inventory)
+        return serial
+
+    def resign_missing_pending_claim(self, claim, issuer, mount, expected_public_key):
+        created = m.parse_time(claim['created_at'])
+        now = dt.datetime.now(dt.timezone.utc)
+        pods = json.loads(self.kube(['-n', NS, 'get', 'pods', '-l',
+                                     'app.kubernetes.io/name=certissuer', '-o', 'json']))['items']
+        m.require(pods and all(
+            not pod['metadata'].get('deletionTimestamp')
+            and pod['status']['phase'] == 'Running'
+            and m.parse_time(pod['status']['startTime']) > created
+            and now - m.parse_time(pod['status']['startTime']) > dt.timedelta(minutes=5)
+            for pod in pods), 'original Certissuer owner is not fenced for pending recovery')
+        expires = min(created + dt.timedelta(days=claim['ttl_days']),
+                      m.parse_time(issuer['not_after']) - dt.timedelta(days=30))
+        ttl = int((expires - now).total_seconds()) - 60
+        m.require(ttl > 60, 'pending Account Manager certificate validity window has elapsed')
+        marker = self.base / 'pki' / ('account-manager-provider-recovery-' + claim['request_id'] + '.json')
+        marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with marker.open('x') as stream:
+            json.dump({'request_id': claim['request_id'], 'request_digest': claim['request_digest'],
+                       'issuer_id': claim['issuer_id'], 'at': m.stamp(),
+                       'certissuer_pod_uids': [pod['metadata']['uid'] for pod in pods]}, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        directory = os.open(marker.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        jwt = self.kube(['-n', NS, 'create', 'token', 'certissuer-pki',
+                         '--audience=openbao', '--duration=10m']).strip()
+        login = json.loads(self.bao(['write', '-format=json', 'auth/kubernetes/login', '-'],
+                                    json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+        token = login['auth']['client_token']
+        try:
+            signed = json.loads(self.bao(['write', '-format=json', mount + '/sign/service-client', '-'],
+                                         json.dumps({'csr': claim['csr_pem'], 'common_name': SUBJECT,
+                                                     'exclude_cn_from_sans': True, 'ttl': str(ttl) + 's'}),
+                                         token=token))['data']
+            actual = m.command([self.openssl, 'x509', '-pubkey', '-noout'], signed['certificate']).strip()
+            m.require(actual == expected_public_key and re.fullmatch(r'[0-9a-fA-F:-]+', signed['serial_number']),
+                      'pending recovery provider result differs')
+            return signed['serial_number']
+        finally:
+            self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
+
+    def fence_pending_provider_signer(self):
+        """Replace the Dev signer before a one-time missing-provider recovery."""
+        self.preflight_lifecycle()
+        self.root = self.active_root()
+        self.issuer = self.v3()
+        self.install_probe()
+        claim = self.pending_client_claim(self.pending_client_state()['pending_request_id'])
+        m.require(claim['status'] == 'issuing', 'pending provider fence requires an unreconciled claim')
+        m.require(claim['issuer_id'] == self.issuer['issuer_id'],
+                  'pending Account Manager claim is not under the active issuer')
+        before = self.obj('deployment', 'certissuer', NS)
+        m.require(before['spec']['replicas'] == 1 and before.get('status', {}).get('readyReplicas') == 1,
+                  'certissuer is not ready for a controlled fence')
+        template = json.loads(json.dumps(before['spec']['template']))
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/pki-pending-provider-fence'] = self.output.name
+        self.scoped_patch('deployment', before, [
+            {'op': 'test', 'path': '/spec/template', 'value': before['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template},
+        ])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/certissuer', '--timeout=240s'], timeout=250)
+        after = self.obj('deployment', 'certissuer', NS)
+        m.require(after['metadata']['uid'] == before['metadata']['uid']
+                  and after['status'].get('readyReplicas') == 1
+                  and after['status'].get('observedGeneration') == after['metadata']['generation'],
+                  'certissuer fence rollout differs')
+        self.check('pending_provider_signer_fenced', {
+            'request_id': claim['request_id'], 'certissuer_restarted': True,
+            'drain_seconds_required_before_recovery': 300, 'staging_touched': False})
+
+    def revoke_and_publish(self, kind, rows, current, predecessor, held=(), keepalive=None):
         action = 'service-client' if kind == 'client' else 'server'
         targets = [row for row in rows if row['fingerprint'] == predecessor['fingerprint']]
         m.require(targets, 'no replaced Account Manager ' + kind + ' leaves to retire')
@@ -411,12 +650,15 @@ class AccountListenerLifecycle(a.ListenerRun):
                 self.api('/issuers/' + issuer_id + '/revoke-' + action, body, role='approver')
             if keepalive:
                 keepalive()
-        if held is not None:
-            closed = self.session_command(held, 'closed', 'closed')
-            delay = (m.parse_time(closed['at']) - self.revocation_started).total_seconds()
-            m.require(0 <= delay <= 30, 'replaced Account Manager client cutoff exceeded 30 seconds')
-            denied = self.session_command(held, 'denied', 'denied')
-            self.save('held-client-cutoff.json', {'cutoff_seconds_upper_bound': delay, 'fresh_old_denied': denied})
+        if held:
+            cutoffs = {}
+            for destination, process in held:
+                closed = self.session_command(process, 'closed', 'closed')
+                delay = (m.parse_time(closed['at']) - self.revocation_started).total_seconds()
+                m.require(0 <= delay <= 30, 'replaced Account Manager client cutoff exceeded 30 seconds: ' + destination)
+                denied = self.session_command(process, 'denied', 'denied')
+                cutoffs[destination] = {'cutoff_seconds_upper_bound': delay, 'fresh_old_denied': denied}
+            self.save('held-client-cutoff.json', cutoffs)
         final = previous
         for row in targets:
             final = self.api('/issuers/' + issuer_id + '/publish-' + action + '-revocation',
@@ -453,7 +695,9 @@ class AccountListenerLifecycle(a.ListenerRun):
         client_before, host_before = self.inspect(CLIENT_STATE), self.inspect(HOST_STATE)
         client_rows_before, host_rows_before = self.client_rows(), self.server_rows()
         self.save('baseline.json', {'client': client_before, 'listener': host_before})
+        controller_before = self.controller_management_request()
         held = self.session(client_before)
+        held_controller = self.controller_session(client_before)
         listener_held = self.factory_session(a.ACCOUNT_DNS, '8443', host_before)
         control_held = self.factory_session('certissuer.' + NS + '.svc', '9443')
         self.session_command(listener_held, 'check', 'alive')
@@ -470,6 +714,11 @@ class AccountListenerLifecycle(a.ListenerRun):
         host_receipt = replacement(host_before, host_after, host_rows_after, self.issuer, 'listener')
         self.save('renewed.json', {'client': client_after, 'listener': host_after,
                                    'client_request_id': client_receipt['request_id'], 'listener_request_id': host_receipt['request_id']})
+        deadline = time.monotonic() + 30
+        while self.controller_connection_count(held_controller.local_port) != 0:
+            m.require(time.monotonic() < deadline, 'rotated Account Manager controller connection was not evicted')
+            time.sleep(1)
+        controller_successor = self.controller_management_request(held_controller.local_port)
         listener_closed = self.session_command(listener_held, 'closed', 'closed')
         listener_cutoff = (m.parse_time(listener_closed['at']) - self.listener_rotation_started).total_seconds()
         m.require(0 <= listener_cutoff <= 30, 'replaced Account Manager listener cutoff exceeded 30 seconds')
@@ -484,15 +733,18 @@ class AccountListenerLifecycle(a.ListenerRun):
         })
         successor = self.session(client_after)
         self.session_command(held, 'check', 'alive')
+        self.session_command(held_controller, 'check', 'alive')
         self.session_command(successor, 'check', 'alive')
         self.current_successors(client_after, host_after)
         self.revocation_started = dt.datetime.now(dt.timezone.utc)
-        retired_clients = self.revoke_and_publish('client', client_rows_after, client_after, client_before, held)
+        retired_clients = self.revoke_and_publish('client', client_rows_after, client_after, client_before,
+                                                  (('certissuer', held), ('pki-controller', held_controller)))
         self.session_command(successor, 'check', 'alive')
+        m.require(self.controller_management_request() > 0, 'successor controller connection did not survive predecessor retirement')
         retired_hosts = self.revoke_and_publish('server', host_rows_after, host_after, host_before)
         self.current_successors(client_after, host_after)
         self.session_command(successor, 'check', 'alive')
-        for process in (held, successor, listener_held, listener_successor, control_held):
+        for process in (held, held_controller, successor, listener_held, listener_successor, control_held):
             self.stop_session(process)
         self.restart_account_manager()
         self.install_probe()
@@ -505,6 +757,9 @@ class AccountListenerLifecycle(a.ListenerRun):
         self.stop_session(restarted_listener)
         self.check('account_manager_listener_lifecycle', {'client_retired': len(retired_clients),
                    'listener_retired': len(retired_hosts), 'held_old_client_cutoff': True,
+                   'controller_signed_human_request': True,
+                   'controller_idle_connections_before_rotation': controller_before,
+                   'controller_idle_connections_after_rotation': controller_successor,
                    'held_old_listener_cutoff': True, 'factory_control_survived': True,
                    'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
 
@@ -641,6 +896,10 @@ def main():
     parser.add_argument('--target', choices=['account-manager', 'certissuer', 'pki-controller'], default='account-manager')
     parser.add_argument('--recover', type=Path,
                         help='recover only the exact predecessor pair recorded by an unauthorized lifecycle interruption')
+    parser.add_argument('--recover-pending', action='store_true',
+                        help='reconcile one current Account Manager pending client issuance through the controller')
+    parser.add_argument('--fence-pending-provider', action='store_true',
+                        help='restart Dev certissuer before one-time recovery of a provider-missing pending issuance')
     args = parser.parse_args()
     args.resume = args.resume_after_deploy = args.resume_after_listener = False
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
@@ -651,6 +910,12 @@ def main():
         if args.recover:
             m.require(args.target == 'account-manager', 'recorded recovery is Account Manager only')
             runner.recover_interrupted_lifecycle()
+        elif args.recover_pending:
+            m.require(args.target == 'account-manager', 'pending recovery is Account Manager only')
+            runner.recover_pending_client_issuance()
+        elif args.fence_pending_provider:
+            m.require(args.target == 'account-manager', 'pending provider fence is Account Manager only')
+            runner.fence_pending_provider_signer()
         elif args.target != 'account-manager':
             runner.host_lifecycle(args.target)
         else:

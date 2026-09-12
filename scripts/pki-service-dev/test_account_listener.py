@@ -3,6 +3,7 @@ import copy
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import Mock, patch
 
 
 spec = importlib.util.spec_from_file_location('account_listener', Path(__file__).with_name('account_listener.py'))
@@ -220,6 +221,24 @@ class AccountListenerTests(unittest.TestCase):
             '/issuers/retiring-service-v3/publish-service-client-revocation',
             '/issuers/retiring-service-v3/finalize-service-client-revocation',
         ])
+
+    def test_pending_recovery_matches_existing_provider_certificate_before_reconcile(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        issuer_id = 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12
+        request_id = 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12
+        claim = {'issuer_id': issuer_id, 'request_id': request_id,
+                 'subject': lifecycle.SUBJECT, 'caller': lifecycle.SUBJECT,
+                 'status': 'issuing', 'csr_pem': 'csr'}
+        runner.openssl = 'openssl'
+        runner.api = Mock(return_value={'signer_reference': 'pki-issuers/service/' + issuer_id + '/v5'})
+        runner.bao = Mock(side_effect=[json.dumps(['ab:cd']), json.dumps({
+            'data': {'certificate': 'certificate', 'revocation_time': 0}})])
+        saved = {}
+        runner.save = lambda name, value: saved.setdefault(name, value)
+        with patch.object(lifecycle.m, 'command', side_effect=['public-key', 'public-key']):
+            self.assertEqual(runner.provider_serial_for_pending_claim(claim), 'ab:cd')
+        self.assertEqual(saved['pending-provider-inventory.json']['matching_serials'], ['ab:cd'])
+        self.assertNotIn('csr_pem', saved['pending-provider-inventory.json'])
 
 
 if __name__ == '__main__':
