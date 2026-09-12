@@ -67,11 +67,39 @@ class AppRuntime(h.ServiceRun):
         return files
 
     def secret(self, name, values):
-        self.create({'apiVersion': 'v1', 'kind': 'Secret',
+        self.ensure({'apiVersion': 'v1', 'kind': 'Secret',
                      'metadata': {'name': name, 'namespace': NS},
                      'type': 'Opaque',
                      'data': {key: base64.b64encode(value.encode()).decode()
                               for key, value in values.items()}})
+
+    def ensure(self, desired):
+        kind = desired['kind'].lower()
+        name = desired['metadata']['name']
+        raw = self.kube(['-n', NS, 'get', kind, name,
+                         '--ignore-not-found', '-o', 'json'])
+        if not raw.strip():
+            self.create(desired)
+            return
+        current = json.loads(raw)
+        if desired['kind'] == 'Secret':
+            m.require(current.get('type') == desired.get('type')
+                      and current.get('data') == desired.get('data'),
+                      'existing R1 Secret differs')
+        elif desired['kind'] == 'ConfigMap':
+            m.require(current.get('data') == desired.get('data'),
+                      'existing R1 ConfigMap differs')
+        elif desired['kind'] == 'PersistentVolumeClaim':
+            m.require(current['spec']['accessModes'] == ['ReadWriteOnce']
+                      and current['spec']['storageClassName'] ==
+                      'linode-block-storage-retain'
+                      and current['spec']['resources']['requests']['storage'] ==
+                      '10Gi', 'existing R1 PVC differs')
+        else:
+            m.require(False, 'existing R1 workload requires explicit reconciliation')
+        self.save('reused-' + name + '.json', {
+            'kind': desired['kind'], 'uid': current['metadata']['uid'],
+            'resourceVersion': current['metadata']['resourceVersion']})
 
     def install_controller(self, image):
         app_identity = self.private_material('consumers', 'video-cloud-api-app')
@@ -106,7 +134,7 @@ class AppRuntime(h.ServiceRun):
             'tls.crt': server['tls.crt'], 'tls.key': server['tls.key']})
         entry = {'issuer': root,
                  'state_path': '/run/pki-state/app/' + root['issuer_id'] + '-crl.json'}
-        self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+        self.ensure({'apiVersion': 'v1', 'kind': 'ConfigMap',
                      'metadata': {'name': 'pki-app-trust', 'namespace': NS},
                      'data': {
                          'roots.pem': root['certificate_pem'],
@@ -114,7 +142,7 @@ class AppRuntime(h.ServiceRun):
                          'issuers.json': json.dumps([{
                              'issuer_id': root['issuer_id'],
                              'trust_bundle_version': root['trust_bundle_version']}])}})
-        self.create({'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+        self.ensure({'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
                      'metadata': {'name': 'video-cloud-api-app-pki-trust',
                                   'namespace': NS},
                      'spec': {'accessModes': ['ReadWriteOnce'],
@@ -189,6 +217,13 @@ class AppRuntime(h.ServiceRun):
                 'secretName': 'pki-app-consumer-video-cloud-api-app',
                 'defaultMode': 288}}]
         pod['volumes'] = volumes
+        pod['initContainers'] = [{
+            'name': 'initialize-app-trust-state', 'image': image,
+            'command': ['/bin/sh', '-ec',
+                        'umask 077; mkdir -p /run/pki-state/app; '
+                        'chmod 700 /run/pki-state/app'],
+            'volumeMounts': [{'name': 'pki-state',
+                              'mountPath': '/run/pki-state'}]}]
         self.create(deployment)
         self.create({'apiVersion': 'v1', 'kind': 'Service',
                      'metadata': {'name': 'video-cloud-api-app-pki',
@@ -209,11 +244,6 @@ class AppRuntime(h.ServiceRun):
         m.require(IMAGE.fullmatch(self.args.image or ''),
                   'immutable Dev Video Cloud image required')
         root = self.app_root()
-        for name in ('video-cloud-api-app-pki', 'pki-app-trust',
-                     'pki-app-consumer-video-cloud-api-app'):
-            result = self.kube(['-n', NS, 'get', 'deployment,service,configmap,secret',
-                                name, '--ignore-not-found', '-o', 'name'])
-            m.require(not result.strip(), 'R1 API runtime already exists; reconcile')
         self.install_controller(self.args.image)
         self.install_api(self.args.image, root)
 
