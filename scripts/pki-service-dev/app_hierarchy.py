@@ -99,6 +99,20 @@ def controller_template(owner, image, marker):
     return template
 
 
+def resumable_approved_intermediate(saved, current, issuer, parent_id):
+    stable = ('action', 'operation_id', 'issuer_id', 'request_sha256',
+              'created_by')
+    return (all(current.get(key) == saved.get(key) for key in stable)
+            and saved.get('status') in ('requested', 'approved')
+            and current.get('status') == 'approved'
+            and issuer.get('issuer_id') == current.get('issuer_id')
+            and issuer.get('status') == 'approved'
+            and issuer.get('parent_issuer_id') == parent_id
+            and issuer.get('trust_domain') == 'app'
+            and issuer.get('kind') == 'intermediate'
+            and not issuer.get('csr_pem'))
+
+
 class AppHierarchy(s.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -606,12 +620,8 @@ class AppHierarchy(s.ServiceRun):
             operation = self.api('/operations/' +
                                  saved_operation['operation_id'])
             issuer = self.api('/issuers/' + operation['issuer_id'])
-            m.require(operation == {**saved_operation, 'status': 'approved'}
-                      and issuer['status'] == 'approved'
-                      and issuer['parent_issuer_id'] == root['issuer_id']
-                      and issuer['trust_domain'] == 'app'
-                      and issuer['kind'] == 'intermediate'
-                      and not issuer['csr_pem'],
+            m.require(resumable_approved_intermediate(
+                saved_operation, operation, issuer, root['issuer_id']),
                       'failed App intermediate operation was not untouched')
             self.save('intermediate-resume-source.json', {
                 'source': str(source),

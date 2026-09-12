@@ -118,6 +118,26 @@ class AppManifestTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
                          ['image'], 'old')
 
+    def test_resume_compares_stable_operation_identity(self):
+        saved = {
+            'action': 'provision', 'operation_id': 'operation',
+            'issuer_id': 'issuer', 'request_sha256': 'a' * 64,
+            'created_by': 'requester', 'status': 'requested',
+            'created_at': 'first representation'}
+        current = dict(saved, status='approved',
+                       created_at='equivalent API representation', reason='')
+        issuer = {
+            'issuer_id': 'issuer', 'status': 'approved',
+            'parent_issuer_id': 'root', 'trust_domain': 'app',
+            'kind': 'intermediate'}
+
+        self.assertTrue(a.resumable_approved_intermediate(
+            saved, current, issuer, 'root'))
+        self.assertFalse(a.resumable_approved_intermediate(
+            saved, dict(current, request_sha256='b' * 64), issuer, 'root'))
+        self.assertFalse(a.resumable_approved_intermediate(
+            saved, current, dict(issuer, csr_pem='generated'), 'root'))
+
 
 if __name__ == '__main__':
     unittest.main()
