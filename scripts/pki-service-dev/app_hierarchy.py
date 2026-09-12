@@ -261,6 +261,9 @@ class AppHierarchy(s.ServiceRun):
     def activate_root(self):
         root = self.app_root('ready', 'active')
         operation = self.root_operation()
+        pre_restarted = self.install_manifest(
+            self.manifest_authorities(root),
+            'root-ready-' + root['trust_bundle_version'][:16])
         receipts = self.wait_receipts(
             root['issuer_id'], root['trust_bundle_version'], CONSUMERS)
         if root['status'] == 'ready':
@@ -270,7 +273,7 @@ class AppHierarchy(s.ServiceRun):
         self.save('root-active.json', root)
         crl = self.sign_initial_root_crl(root)
         self.save('root-crl.json', crl)
-        restarted = self.install_manifest(
+        post_restarted = self.install_manifest(
             self.manifest_authorities(root),
             'root-' + root['trust_bundle_version'][:16])
         crl_receipts = self.wait_receipts(
@@ -279,7 +282,7 @@ class AppHierarchy(s.ServiceRun):
             'issuer_id': root['issuer_id'], 'bundle_receipts': receipts,
             'crl_sha256': crl['crl_sha256'],
             'crl_receipts': crl_receipts,
-            'restarted_consumers': restarted})
+            'restarted_consumers': pre_restarted + post_restarted})
         self.device_baseline()
 
     def device_baseline(self):
