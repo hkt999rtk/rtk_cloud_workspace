@@ -46,7 +46,7 @@ class AppRuntime(h.ServiceRun):
             Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
-    def root(self):
+    def app_root(self):
         saved = m.read(Path(self.args.authority) / 'root-ready.json')
         current = self.api('/issuers/' + saved['issuer_id'])
         m.require(current == saved and current['environment'] == 'dev'
@@ -208,7 +208,7 @@ class AppRuntime(h.ServiceRun):
     def install(self):
         m.require(IMAGE.fullmatch(self.args.image or ''),
                   'immutable Dev Video Cloud image required')
-        root = self.root()
+        root = self.app_root()
         for name in ('video-cloud-api-app-pki', 'pki-app-trust',
                      'pki-app-consumer-video-cloud-api-app'):
             result = self.kube(['-n', NS, 'get', 'deployment,service,configmap,secret',
