@@ -319,6 +319,81 @@ class AppHierarchy(s.ServiceRun):
             if not cursor:
                 return items
 
+    def intermediate(self, *statuses):
+        source = Path(self.args.intermediate)
+        saved = m.read(source / 'intermediate-ready.json')
+        operation = m.read(source / 'intermediate-operation.json')
+        issuer = self.api('/issuers/' + saved['issuer_id'])
+        root = self.active_root()
+        m.require(operation['issuer_id'] == issuer['issuer_id']
+                  and issuer['environment'] == 'dev'
+                  and issuer['trust_domain'] == 'app'
+                  and issuer['kind'] == 'intermediate'
+                  and issuer['parent_issuer_id'] == root['issuer_id']
+                  and issuer['status'] in statuses
+                  and issuer['certificate_fingerprint_sha256'] ==
+                  saved['certificate_fingerprint_sha256']
+                  and issuer['trust_bundle_version'] ==
+                  saved['trust_bundle_version']
+                  and issuer['signer_reference'] ==
+                  saved['signer_reference'],
+                  'reviewed App intermediate changed')
+        return root, issuer, operation
+
+    def install_intermediate(self):
+        root, issuer, _ = self.intermediate('ready')
+        restarted = self.install_manifest(
+            [root, issuer], 'bundle-' + issuer['trust_bundle_version'][:16])
+        receipts = self.wait_receipts(
+            issuer['issuer_id'], issuer['trust_bundle_version'], CONSUMERS)
+        self.check('app_intermediate_installed', {
+            'issuer_id': issuer['issuer_id'],
+            'bundle_sha256': issuer['trust_bundle_version'],
+            'bundle_receipts': receipts,
+            'restarted_consumers': restarted,
+            'accepted_before_activation': False})
+        self.device_baseline()
+
+    def activate_intermediate(self):
+        root, issuer, operation = self.intermediate('ready', 'active')
+        receipts = self.wait_receipts(
+            issuer['issuer_id'], issuer['trust_bundle_version'], CONSUMERS)
+        if issuer['status'] == 'ready':
+            self.api('/operations/' + operation['operation_id'] + '/activate',
+                     {}, 204)
+            _, issuer, _ = self.intermediate('active')
+        self.save('intermediate-active.json', issuer)
+        if self.crl_count(issuer['issuer_id']) == '0':
+            provider = json.loads(self.bao([
+                'read', '-format=json',
+                issuer['signer_reference'] + '/cert/crl']))
+            raw = provider['data']['certificate']
+            record = self.api('/issuers/' + issuer['issuer_id'] + '/crl', {
+                'crl_pem': raw}, role='approver')
+        else:
+            m.require(self.crl_count(issuer['issuer_id']) == '1',
+                      'unexpected App intermediate CRL history')
+            record = self.api('/issuers/' + issuer['issuer_id'] + '/crl',
+                              role='approver')
+        self.save('intermediate-crl.json', record)
+        restarted = self.install_manifest(
+            [root, issuer], 'active-' + record['crl_sha256'][:16])
+        root_crl = self.api('/issuers/' + root['issuer_id'] + '/crl',
+                            role='approver')
+        root_receipts = self.wait_receipts(
+            root['issuer_id'], root_crl['crl_sha256'], CONSUMERS, kind='crl')
+        crl_receipts = self.wait_receipts(
+            issuer['issuer_id'], record['crl_sha256'], CONSUMERS, kind='crl')
+        self.verify_intermediate_custody(issuer)
+        self.check('app_intermediate_active_with_crl', {
+            'issuer_id': issuer['issuer_id'],
+            'bundle_receipts': receipts,
+            'root_crl_receipts': root_receipts,
+            'crl_sha256': record['crl_sha256'],
+            'crl_receipts': crl_receipts,
+            'restarted_consumers': restarted})
+        self.device_baseline()
+
     def prepare_intermediate(self):
         root = self.active_root()
         m.require(not self.app_intermediates(),
@@ -391,13 +466,18 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--phase', required=True,
-                        choices=('activate-root', 'prepare-intermediate'))
+                        choices=('activate-root', 'prepare-intermediate',
+                                 'install-intermediate',
+                                 'activate-intermediate'))
     parser.add_argument('--authority', required=True)
+    parser.add_argument('--intermediate')
     parser.add_argument('--output', required=True)
     parser.add_argument('--resume', help='Reuse signed evidence from a failed phase')
     args = parser.parse_args()
     m.require(not args.resume or args.phase == 'activate-root',
               '--resume currently applies only to activate-root')
+    m.require('intermediate' not in args.phase or args.intermediate,
+              'App intermediate evidence is required')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/app-hierarchy-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -406,7 +486,9 @@ def main():
     try:
         runner.preflight_app()
         {'activate-root': runner.activate_root,
-         'prepare-intermediate': runner.prepare_intermediate}[args.phase]()
+         'prepare-intermediate': runner.prepare_intermediate,
+         'install-intermediate': runner.install_intermediate,
+         'activate-intermediate': runner.activate_intermediate}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
