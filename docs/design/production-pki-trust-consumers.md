@@ -2421,3 +2421,21 @@ The new App regression proves CRL-valid App tokens are denied unless their Root
 is present in the consumer-installed pool. Dev has not been changed. R1 remains
 open for deployment configuration and Dev withdrawal evidence across API,
 broker and TURN.
+
+### R1 review corrections (2026-09-12)
+
+The first R1 checkpoint left five enforcement defects. Dynamic App-root startup
+now accepts the persisted App trust state in both configuration validation and
+application construction, and API CRL synchronization uses the independent App
+management transport. The API tracks direct TLS connections and closes only
+connections whose verified chain ends in a newly distrusted App Root before the
+policy consumer acknowledges the update; hijacked WebSocket connections remain
+tracked until close.
+
+Broker and TURN App consumers now reject any App-root settings without an App
+CRL manifest, persist terminal App lineage exclusions, and skip distrusted or
+terminal branches while continuing to sweep unaffected App lineages. Cross-domain
+App-root/Device-CRL state-file aliases are rejected. Focused package tests pass;
+the database-backed App-root pool regression requires `VIDEO_CLOUD_TEST_DSN` and
+remains an integration gate rather than claimed local evidence. R1 is still open
+for that integration test and Dev withdrawal qualification.
