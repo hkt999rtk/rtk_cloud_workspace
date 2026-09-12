@@ -256,7 +256,14 @@ class AppRuntime(h.ServiceRun):
 
     def install_api(self, image, root):
         identity = self.private_material('consumers', 'video-cloud-api-app')
-        server = self.private_material('servers', 'video-cloud-api-app-pki')
+        public_tls = self.obj('secret', 'video-cloud-api-app-public-tls')
+        m.require(public_tls.get('type') == 'kubernetes.io/tls'
+                  and set(public_tls.get('data', {})) >= {'tls.crt', 'tls.key'}
+                  and public_tls['metadata'].get('labels', {}).get(
+                      'rtk.realtek.com/stack') == 'video-cloud-dev',
+                  'validated Dev public App TLS Secret is missing')
+        public_cert_sha256 = m.digest(base64.b64decode(
+            public_tls['data']['tls.crt']))
         service_root = self.obj('configmap', 'pki-service-host-root')
         management_ca = service_root.get('data', {}).get('root.pem', '')
         m.require(management_ca.startswith('-----BEGIN CERTIFICATE-----'),
@@ -264,8 +271,6 @@ class AppRuntime(h.ServiceRun):
         management = dict(identity)
         management['ca.crt'] = management_ca
         self.secret('pki-app-consumer-video-cloud-api-app', management)
-        self.secret('video-cloud-api-app-pki-tls', {
-            'tls.crt': server['tls.crt'], 'tls.key': server['tls.key']})
         entry = {'issuer': root,
                  'state_path': '/run/pki-state/app/' + root['issuer_id'] + '-crl.json'}
         self.ensure({'apiVersion': 'v1', 'kind': 'ConfigMap',
@@ -296,6 +301,8 @@ class AppRuntime(h.ServiceRun):
         template['metadata'].setdefault('annotations', {})[
             'rtk.realtek.com/app-management-identity-sha256'] = m.digest(
                 ''.join(management[key] for key in sorted(management)).encode())
+        template['metadata']['annotations'][
+            'rtk.realtek.com/app-public-tls-sha256'] = public_cert_sha256
         pod = template['spec']
         container = pod['containers'][0]
         container['image'] = image
@@ -346,7 +353,8 @@ class AppRuntime(h.ServiceRun):
                                              'controller-identity')]
         for volume in volumes:
             if volume['name'] == 'pki-server':
-                volume['secret']['secretName'] = 'video-cloud-api-app-pki-tls'
+                volume['secret']['secretName'] = \
+                    'video-cloud-api-app-public-tls'
         volumes += [
             {'name': 'pki-app', 'configMap': {'name': 'pki-app-trust'}},
             {'name': 'pki-state', 'persistentVolumeClaim': {
@@ -385,6 +393,7 @@ class AppRuntime(h.ServiceRun):
         self.check('app_api_consumer_installed', {
             'root_id': root['issuer_id'], 'image': image,
             'device_listener_changed': False,
+            'public_tls_sha256': public_cert_sha256,
             'dynamic_app_state': '/run/pki-state/app/root-policy.json',
             'bundle_receipts': bundle, 'root_policy_receipts': policy})
 
