@@ -28,6 +28,18 @@ python3 scripts/pki-service-dev/app_authority.py \
   --reconcile PREVIOUS_FAILED_OUTPUT --output NEW_PRIVATE_OUTPUT
 ```
 
+Install the controller's exact App consumer policy and the separate App-only API
+listener from the reconciled Root and an immutable Dev image:
+
+```sh
+python3 scripts/pki-service-dev/app_runtime.py \
+  --authority RECONCILED_ROOT_OUTPUT --image VIDEO_CLOUD_IMAGE_DIGEST \
+  --output NEW_PRIVATE_OUTPUT
+```
+
+This phase patches only the Dev controller and creates new App API resources. It
+does not combine App and Device trust pools or modify the Device API Deployment.
+
 ## Account Manager caller acceptance
 
 `account_callers.py` proves actual factory admission and public App-token
