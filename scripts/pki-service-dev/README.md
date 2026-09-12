@@ -40,6 +40,33 @@ python3 scripts/pki-service-dev/app_runtime.py \
 This phase patches only the Dev controller and creates new App API resources. It
 does not combine App and Device trust pools or modify the Device API Deployment.
 
+After a successor App Root and intermediate are active, qualify both lineages
+before withdrawing the old Root, then run the guarded withdrawal with the passed
+preparation report:
+
+```sh
+python3 scripts/pki-service-dev/app_root_acceptance.py --phase prepare \
+  --authority SUCCESSOR_ROOT_EVIDENCE --old-authority OLD_ROOT_EVIDENCE \
+  --intermediate SUCCESSOR_INTERMEDIATE_EVIDENCE --database PRIVATE_TEST_DB \
+  --old-email OLD_APP_EMAIL --successor-email SUCCESSOR_APP_EMAIL \
+  --image VIDEO_CLOUD_IMAGE_DIGEST --output NEW_PRIVATE_OUTPUT
+
+python3 scripts/pki-service-dev/app_root_acceptance.py --phase withdraw \
+  --authority SUCCESSOR_ROOT_EVIDENCE --old-authority OLD_ROOT_EVIDENCE \
+  --intermediate SUCCESSOR_INTERMEDIATE_EVIDENCE --database PRIVATE_TEST_DB \
+  --old-email OLD_APP_EMAIL --successor-email SUCCESSOR_APP_EMAIL \
+  --image VIDEO_CLOUD_IMAGE_DIGEST --prepare PASSED_PREPARATION_OUTPUT \
+  --output NEW_PRIVATE_OUTPUT
+```
+
+The withdrawal publishes the cumulative Root policy, waits for API, broker and
+TURN enforcement receipts, installs the successor-only issuer manifest and
+switches every consumer's policy authority to the successor Root before restart.
+It then verifies the persistent state/PVC identities, old-lineage denial,
+successor API/MQTT/TURN traffic, Device traffic and Service management callers.
+If a run stops after execution, retain its failed output and pass it with
+`--resume`; recovery accepts only the exact saved operation and policy state.
+
 ## Account Manager caller acceptance
 
 `account_callers.py` proves actual factory admission and public App-token

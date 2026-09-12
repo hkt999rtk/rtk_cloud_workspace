@@ -97,6 +97,29 @@ class AppManifestTests(unittest.TestCase):
                 self.assertEqual(before['spec']['template']['spec']
                                  ['containers'][0]['image'], 'old-' + names[0])
 
+    def test_consumer_rollout_switches_each_root_policy_authority(self):
+        image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:'
+                 + 'a' * 64)
+        root = '00000000-0000-4000-8000-000000000002'
+        cases = {
+            'video-cloud-api-app-pki': (
+                'app', 'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOT_ID'),
+            'mqtt-pki': ('pkibroker', 'PKI_BROKER_APP_ROOT_ID'),
+            'pkiturn': ('pkiturn', 'PKI_TURN_APP_ROOT_ID')}
+        for deployment, (container, setting) in cases.items():
+            with self.subTest(deployment=deployment):
+                owner = {'spec': {'template': {
+                    'metadata': {}, 'spec': {'containers': [{
+                        'name': container, 'image': 'old', 'env': [
+                            {'name': setting, 'value': 'old'},
+                            {'name': 'KEPT', 'value': 'true'}]}]}}}}
+                result = a.consumer_template(
+                    owner, deployment, image, 'withdraw', root)
+                env = {item['name']: item['value'] for item in
+                       result['spec']['containers'][0]['env']}
+                self.assertEqual(env[setting], root)
+                self.assertEqual(env['KEPT'], 'true')
+
     def test_controller_rollout_preserves_template_and_selects_owned_binary(self):
         image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:'
                  + 'b' * 64)

@@ -7,7 +7,7 @@ Live verification is dev-only.
 Legacy migration and staging remain deferred. MFA is optional future human
 login functionality and is never a Device authentication requirement.
 
-## Current acceptance status (2026-09-12 M11 requalification)
+## Current acceptance status (2026-09-13 R1 completion)
 
 This section is the single current progress record for this milestone. Dated
 checkpoints below retain historical evidence; their percentages and group counts
@@ -20,11 +20,11 @@ no fixed denominator and must not be used as completion percentages.
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Complete | The repaired M11 Dev lifecycle run proves real Account Manager consumer eviction and successor-connection survival. Deterministic recovery regressions cover provider-login marker ordering and exact-request identity binding. |
 | 3. Remaining transport and host adoption | Complete | T1–T11 are qualified. The [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12) separates live host/caller lifecycle evidence, process replacement, and local deterministic failure tests. |
-| 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
+| 4. Root-policy adoption | Partial | R1 App root-policy adoption is complete. Service, MQTT and OpenBao root-policy adoption remain under R2–R4. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 30/40 = 75%.** The fixed decomposition below
+**Current checkpoint completion: 31/40 = 77.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **3/6
@@ -49,10 +49,10 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 11/11 | 100% |
 | Transports and hosts | 11/11 | 100% |
-| Root-policy adoption | 0/4 | 0% |
+| Root-policy adoption | 1/4 | 25% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **30/40** | **75%** |
+| **Total** | **31/40** | **77.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -97,11 +97,11 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T10: Record independent public HTTPS endpoint and renewal evidence. Evidence: [public HTTPS renewal](#public-https-renewal-qualified-in-dev-2026-09-12).
 - [x] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts. Corrected Service-listener and OpenBao held-session evidence, retained MQTT/provider recovery, and deterministic trust-failure tests are recorded in the [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12).
 
-**Group 4 — root-policy adoption (0/4).** Evidence boundary: the audited inventory
+**Group 4 — root-policy adoption (1/4).** Evidence boundary: the audited inventory
 and fixed group definition below. Device root-policy evidence belongs to the
 completed Device milestone and is not counted again here.
 
-- [ ] R1: App consumers install reviewed root changes with rollback protection, receipts and cutoff.
+- [x] R1: App consumers install reviewed root changes with rollback protection, receipts and cutoff. Evidence: [R1 closure](#r1-app-root-policy-adoption-closed-2026-09-13).
 - [ ] R2: Service consumers install reviewed root changes with rollback protection, receipts and cutoff.
 - [ ] R3: MQTT consumers install reviewed root changes with rollback protection, receipts and cutoff.
 - [ ] R4: OpenBao transport consumers install reviewed root changes with rollback protection, receipts and cutoff.
@@ -2485,3 +2485,27 @@ before `BeginProvisioning`, a retry may reuse only the exact failed Dev evidence
 whose operation and issuer are still `approved`, have the same request digest
 and successor parent, and contain no CSR. This recovery path cannot create a
 second issuer or reuse evidence after key generation has begun.
+
+### R1 App root-policy adoption closed (2026-09-13)
+
+R1 is complete. Dev evidence
+`r1-app-root-withdrawal-recover-r20-20260913` withdrew App Root
+`ed98a429-e17a-4935-911f-fead9f91719c` under operation
+`d2322c7d-6d52-4750-9d4c-e998a880f2a0`. Policy
+`c5ff0db1c8c5275a541d07284928176ade2b8127a38955c1879803761040e6c5`
+was installed and acknowledged by `video-cloud-api-app`, `pkibroker` and
+`pkiturn` with the same successor-only Root digest. The old public App mTLS
+handshake and real TURN allocation were denied, the held old MQTT session was
+closed, and the successor App API, MQTT and TURN paths remained healthy.
+
+Withdrawal now changes both parts of consumer authority atomically in the
+rollout: the static issuer manifest retains only the active successor lineage,
+and each consumer's Root-policy authority ID changes to successor Root
+`37620edf-b45a-4719-b6b6-507238cdd163`. This prevents a restart from rejecting
+the revoked policy authority or the retired manifest lineage. The API, broker
+and TURN consumers restarted with their original PVC UIDs and identical
+mode-0600 policy state. The Device mTLS/MQTT baseline and all three Service
+management callers passed afterward. Staging and login/MFA were untouched.
+
+**Active milestone: 31/40 = 77.5%; 9 checkpoints remain:** R2–R4, A4–A6 and
+V3–V5. The next checkpoint is R2, Service root-policy adoption.

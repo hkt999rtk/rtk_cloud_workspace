@@ -62,7 +62,7 @@ def app_manifest(authorities):
             for item in authorities])}
 
 
-def consumer_template(owner, name, image, marker):
+def consumer_template(owner, name, image, marker, root_id=None):
     template = copy.deepcopy(owner['spec']['template'])
     annotations = template['metadata'].setdefault('annotations', {})
     annotations['rtk.realtek.com/app-trust-revision'] = marker
@@ -78,6 +78,18 @@ def consumer_template(owner, name, image, marker):
     m.require(len(containers) == 1,
               'App consumer container ownership changed: ' + name)
     containers[0]['image'] = image
+    if root_id:
+        m.require(re.fullmatch(
+            r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-'
+            r'[0-9a-f]{4}-[0-9a-f]{12}', root_id),
+                  'invalid App Root consumer authority')
+        root_setting = {
+            'video-cloud-api-app-pki':
+                'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOT_ID',
+            'mqtt-pki': 'PKI_BROKER_APP_ROOT_ID',
+            'pkiturn': 'PKI_TURN_APP_ROOT_ID'}[name]
+        containers[0]['env'] = with_env(
+            containers[0].get('env', []), {root_setting: root_id})
     if name == 'video-cloud-api-app-pki':
         containers[0]['env'] = with_env(containers[0].get('env', []), {
             'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOTS':
@@ -131,12 +143,15 @@ class AppHierarchy(s.ServiceRun):
         self.preflight()
         repairing_missing_root_crl = (
             self.args.phase == 'activate-root' and bool(self.args.resume))
+        recovering_withdrawal = (
+            self.args.phase == 'withdraw' and bool(self.args.resume))
         readiness = {}
         for name in DEPLOYMENTS:
             owner = self.obj('deployment', name)
             ready = owner.get('status', {}).get('readyReplicas', 0)
             m.require(owner['spec']['replicas'] == 1
-                      and (ready == 1 or repairing_missing_root_crl),
+                      and (ready == 1 or repairing_missing_root_crl
+                           or recovering_withdrawal),
                       'App consumer is not ready: ' + name)
             readiness[name] = ready
         controller = self.obj('deployment', 'pki-controller')
@@ -154,6 +169,7 @@ class AppHierarchy(s.ServiceRun):
             'consumer_deployments': DEPLOYMENTS,
             'ready_replicas': readiness,
             'missing_root_crl_repair': repairing_missing_root_crl,
+            'withdrawal_recovery': recovering_withdrawal,
             'required_consumers': CONSUMERS,
             'staging_touched': False})
 
@@ -213,11 +229,12 @@ class AppHierarchy(s.ServiceRun):
             "SELECT count(*) FROM pki_crls WHERE issuer_id='" +
             issuer_id + "';").strip()
 
-    def restart_consumers(self, marker):
+    def restart_consumers(self, marker, root_id=None):
         restarted = []
         for name in DEPLOYMENTS:
             owner = self.obj('deployment', name)
-            template = consumer_template(owner, name, self.args.image, marker)
+            template = consumer_template(
+                owner, name, self.args.image, marker, root_id)
             self.observed_patch('deployment', name, owner, [{
                 'op': 'replace', 'path': '/spec/template',
                 'value': template}])
@@ -226,6 +243,12 @@ class AppHierarchy(s.ServiceRun):
             current = self.obj('deployment', name)
             m.require(current.get('status', {}).get('readyReplicas') == 1,
                       'App consumer did not restart: ' + name)
+            m.write(self.base / 'pki/controller-bootstrap/rollout' /
+                    (name + '-deployment.json'), {
+                        'apiVersion': current['apiVersion'],
+                        'kind': current['kind'],
+                        'metadata': {'name': name, 'namespace': NS},
+                        'spec': current['spec']})
             if name == 'mqtt-pki':
                 self.forward('mqtt', NS, 'mqtt-pki', 8883)
             restarted.append(name)
