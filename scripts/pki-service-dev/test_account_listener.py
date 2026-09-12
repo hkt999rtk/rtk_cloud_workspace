@@ -175,16 +175,36 @@ class AccountListenerTests(unittest.TestCase):
         runner.api = api
         runner.save = lambda *_: None
         runner.wait_receipts = lambda *args: calls.append(('wait', args, None))
-        runner.sync_service_crl_consumers = lambda issuer_id: calls.append(('sync', issuer_id, None))
+        runner.require_service_crl_consumers_current = lambda issuer_id: calls.append(('current', issuer_id, None))
         predecessor = {'fingerprint': 'a' * 64, 'issuer_id': 'retiring-service-v3', 'revoked_at': None}
         runner.revoke_and_publish('client', [predecessor], {}, predecessor)
-        paths = [call[0] for call in calls if call[0] not in ('wait', 'sync')]
+        paths = [call[0] for call in calls if call[0] not in ('wait', 'current')]
         self.assertEqual(paths, [
             '/issuers/retiring-service-v3/crl',
             '/issuers/retiring-service-v3/revoke-service-client',
             '/issuers/retiring-service-v3/publish-service-client-revocation',
             '/issuers/retiring-service-v3/finalize-service-client-revocation',
         ])
+        self.assertIn(('current', 'retiring-service-v3', None), calls)
+
+    def test_lifecycle_reconciles_consumers_before_opening_held_sessions(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        calls = []
+        runner.preflight_lifecycle = lambda: calls.append('preflight')
+        runner.active_root = lambda: {'certificate_pem': 'root'}
+        runner.save = lambda *_: None
+        runner.v3 = lambda: {'issuer_id': 'active'}
+
+        def reconciled():
+            calls.append('reconcile')
+            raise RuntimeError('stop after reconciliation')
+
+        runner.sync_service_crl_consumers = reconciled
+        runner.forward = lambda *_: self.fail('held-session setup began before consumer reconciliation')
+        runner.install_probe = lambda: self.fail('probe installed before consumer reconciliation')
+        with self.assertRaisesRegex(RuntimeError, 'stop after reconciliation'):
+            runner.lifecycle()
+        self.assertEqual(calls, ['preflight', 'reconcile'])
 
     def test_lifecycle_replays_only_publication_for_an_already_revoked_predecessor(self):
         runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
@@ -192,7 +212,7 @@ class AccountListenerTests(unittest.TestCase):
         runner.api = lambda path, *args, **kwargs: (paths.append(path) or {'crl_sha256': 'crl'})
         runner.save = lambda *_: None
         runner.wait_receipts = lambda *_: None
-        runner.sync_service_crl_consumers = lambda *_: None
+        runner.require_service_crl_consumers_current = lambda *_: None
         predecessor = {'fingerprint': 'b' * 64, 'issuer_id': 'retiring-service-v3', 'revoked_at': 'already'}
         runner.revoke_and_publish('client', [predecessor], {}, predecessor)
         self.assertEqual(paths, [

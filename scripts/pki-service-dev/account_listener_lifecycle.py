@@ -297,6 +297,43 @@ class AccountListenerLifecycle(a.ListenerRun):
             'consumers': ['factory-enroll', 'video-cloud-api', 'account-manager'],
         })
 
+    def require_service_crl_consumers_current(self, issuer_id):
+        source = self.obj('configmap', 'pki-service-client-crls')
+        entries = json.loads(source['data']['crls.json'])
+        m.require(any(entry['issuer']['issuer_id'] == issuer_id for entry in entries),
+                  'retired issuer is absent from canonical Service CRL manifest')
+        expected = []
+        for name, key, state_path, deployment in (
+                ('factoryenroll-service-crls', 'crls.json', '/state/identity/crl-{issuer_id}.json', 'factoryenroll'),
+                ('video-cloud-api-pki-trust', 'service-crls.json', '/run/pki-state/service-{issuer_id}-crl.json', 'video-cloud-api-pki')):
+            desired = json.dumps(consumer_crl_entries(entries, state_path))
+            current = self.obj('configmap', name)
+            m.require(current.get('data', {}).get(key) == desired,
+                      'Service CRL manifest drifted during held sessions: ' + name)
+            expected.append((NS, deployment, m.digest(desired.encode()), None))
+        account_desired = json.dumps(consumer_crl_entries(
+            entries, '/var/lib/account-pki/private/account-listener-crl-{issuer_id}.json'))
+        account_digest = m.digest(account_desired.encode())
+        account_manifest = 'account-manager-service-crls-' + account_digest[:12]
+        raw = self.kube(['-n', AM_NS, 'get', 'configmap', account_manifest, '-o', 'json', '--ignore-not-found'])
+        saved = json.loads(raw) if raw else {}
+        m.require(saved.get('immutable') and saved.get('data', {}).get('crls.json') == account_desired,
+                  'Account Manager Service CRL manifest drifted during held sessions')
+        expected.append((AM_NS, 'account-manager', account_digest, account_manifest))
+        for namespace, name, digest, manifest in expected:
+            deployment = self.obj('deployment', name, namespace)
+            m.require(deployment['spec']['replicas'] == 1 and deployment.get('status', {}).get('readyReplicas') == 1
+                      and deployment.get('status', {}).get('observedGeneration') == deployment['metadata'].get('generation'),
+                      'Service CRL consumer became unavailable during held sessions: ' + name)
+            annotations = deployment['spec']['template'].get('metadata', {}).get('annotations', {})
+            m.require(annotations.get(CONSUMER_MANIFEST_ANNOTATION) == digest,
+                      'Service CRL consumer template drifted during held sessions: ' + name)
+            if manifest:
+                volumes = deployment['spec']['template']['spec']['volumes']
+                selected = [volume for volume in volumes if volume['name'] == 'account-service-crls']
+                m.require(len(selected) == 1 and selected[0].get('configMap', {}).get('name') == manifest,
+                          'Account Manager Service CRL volume drifted during held sessions')
+
     def recover_interrupted_lifecycle(self):
         source = Path(self.args.recover)
         failed = m.read(source / 'report.json')
@@ -309,6 +346,7 @@ class AccountListenerLifecycle(a.ListenerRun):
         self.root = self.active_root()
         self.save('root.pem', self.root['certificate_pem'])
         self.issuer = self.v3()
+        self.sync_service_crl_consumers()
         self.forward('listener', AM_NS, a.SERVICE_NAME, 8443)
         self.install_probe()
         client, host = self.inspect(CLIENT_STATE), self.inspect(HOST_STATE)
@@ -365,7 +403,7 @@ class AccountListenerLifecycle(a.ListenerRun):
         for row in targets:
             final = self.api('/issuers/' + issuer_id + '/publish-' + action + '-revocation',
                              {'certificate_sha256': row['fingerprint']}, role='approver')
-            self.sync_service_crl_consumers(issuer_id)
+            self.require_service_crl_consumers_current(issuer_id)
             self.wait_receipts(issuer_id, final['crl_sha256'],
                                ['certissuer', 'factory-enroll', 'pki-controller', 'video-cloud-api'], 'crl')
         for row in targets:
@@ -382,6 +420,7 @@ class AccountListenerLifecycle(a.ListenerRun):
         self.root = self.active_root()
         self.save('root.pem', self.root['certificate_pem'])
         self.issuer = self.v3()
+        self.sync_service_crl_consumers()
         self.forward('listener', AM_NS, a.SERVICE_NAME, 8443)
         self.install_probe()
         self.install_factory_probe()
