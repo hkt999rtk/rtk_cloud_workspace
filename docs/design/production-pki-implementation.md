@@ -5786,3 +5786,35 @@ be ready before any manifest change and keeping preflight read-only.
 Fresh core Service handshakes are currently denied by the Dev listener, so the
 corrected live evidence remains pending. T11 is open and the checkpoint total is
 **28/40 = 70%**.
+
+### T11 corrected qualification completed (2026-09-12)
+
+The replacement evidence closes T11. Account Manager, CertIssuer and controller
+now have independently held listener sockets, measured predecessor cutoff
+(7.26 s, 7.79 s and 7.53 s), surviving successor/control connections, finalized
+revocations and seed-free restart evidence. OpenBao now has held sockets from
+both provider Pods across renewal and predecessor revocation: the production
+connection owner denied/closed them within 7.43 s and 8.71 s while the same
+successor sockets survived. Real provider operations and both CRL receipts passed.
+
+The maintained Service runner adds explicit target selection and probe shutdown;
+its explicit Account Manager HTTP 403 baseline proves mTLS socket continuity
+without adding a health route. OpenBao's existing provider exercise accepts
+`--held-sessions`, using an opt-in read-only Go test in the provider Pods. This
+adds verification code only; no runtime/login feature was added for closure.
+
+The authorized immutable Dev image is based on runtime source `d4fae38`, digest
+`sha256:0e527f0c06e66b334e6e1be02354571f88b1562ceff13943429aaaf2cd3d1e64`.
+Its five scoped rollout pins/overlays match running containers. Recovery fixed a
+public CRL metadata number (27 to signed 39) in the registry and two caches,
+without changing signed bytes/revocations, and refreshed the expired MQTT Root
+CRL with the existing offline authority. The immutable-history trigger remains
+enabled; the final audit found no expired latest active/retiring issuer CRL.
+
+See the [final T11 matrix](production-pki-trust-consumers.md#t11-final-evidence-and-correction-closure-2026-09-12)
+for exact retained evidence, local fault-test boundaries and failed-run history.
+Nine focused local database-backed/related tests, OpenBao installer checks, Go
+session-probe tests, and 14 Account Manager plus 27 OpenBao runner tests passed.
+T11 is complete at **29/40 = 72.5%**; **11 remain**: M11, R1–R4, A4–A6, V3–V5.
+M11 is management caller/session/failure qualification. Staging and MFA remain
+unchanged; the separate backup/recovery/SDK and hardware milestones remain open.

@@ -686,3 +686,18 @@ CRL-consumer update could skip rollout completion on retry. The runner now cover
 both cases, but the Dev Service listener rejects fresh core service connections;
 replacement live evidence is still required. The remaining count is therefore
 **12**: T11, M11, R1–R4, A4–A6 and V3–V5.
+
+### T11 corrected evidence accepted (2026-09-12)
+
+The [final T11 matrix](production-pki-trust-consumers.md#t11-final-evidence-and-correction-closure-2026-09-12)
+supersedes the premature completion and subsequent reopening above. The missing
+Account Manager, CertIssuer, controller and OpenBao held-server proofs now pass.
+It records which results are selective connection cutoff, broker/process
+replacement, actual provider traffic, and local deterministic fault fixtures.
+The final Dev audit checks the deployed image digests against persisted pins,
+readiness, current CRLs and the enabled immutable-history trigger.
+
+**T11 is complete; transport/host checkpoints are 11/11. Active milestone:
+29/40 = 72.5%, with 11 remaining:** M11, R1–R4, A4–A6 and V3–V5. Next is M11,
+the cross-caller management held-session/selective-cutoff/trust-failure matrix.
+This is not documentation-only closure or the separate backup/recovery milestone.

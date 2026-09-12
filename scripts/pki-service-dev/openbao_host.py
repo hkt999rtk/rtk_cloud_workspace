@@ -293,11 +293,57 @@ class OpenBaoHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
         self.probe_pods = {}
+        self.held_probe_paths = {}
         self.report['foundation_scope'] = (
             'Dev-only OpenBao TLS host and actual provider clients')
         self.report['openbao_host_runner_sha256'] = m.digest(
             Path(__file__).read_bytes())
         self.save('report.json', self.report)
+
+    def close(self):
+        try:
+            for owner, path in self.held_probe_paths.items():
+                self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--', 'rm', '-f', path])
+        finally:
+            super().close()
+
+    def provider_session(self, owner, fingerprint):
+        """Hold one socket with the production registry connection owner."""
+        if owner not in self.held_probe_paths:
+            binary = self.output / 'openbao-session.test'
+            if not binary.exists():
+                result = m.subprocess.run(['go', 'test', '-c', '-o', str(binary), './internal/pki'],
+                    cwd=m.WORKSPACE / 'repos/rtk_video_cloud',
+                    env=dict(os.environ, GOOS='linux', GOARCH='amd64', CGO_ENABLED='0', GOWORK='off'),
+                    capture_output=True, timeout=180)
+                m.require(result.returncode == 0, 'held OpenBao probe build failed')
+                self.save('held-probe.json', {'binary_sha256': m.digest(binary.read_bytes()),
+                    'source_sha256': m.digest((m.WORKSPACE / 'repos/rtk_video_cloud/internal/pki/server_dev_session_test.go').read_bytes())})
+            path = '/var/lib/pki-host/identity/.t11-openbao-' + uuid.uuid4().hex
+            self.kube(['-n', NS, 'exec', '-i', 'deployment/' + owner, '--', 'sh', '-ec',
+                       'umask 077; base64 -d > ' + path + ' && chmod 700 ' + path],
+                      base64.b64encode(binary.read_bytes()).decode())
+            self.held_probe_paths[owner] = path
+        process = m.Process(self.k + ['-n', NS, 'exec', '-i', 'deployment/' + owner, '--',
+            'env', 'PKI_DEV_HELD_SESSION=dev-openbao', self.held_probe_paths[owner],
+            '-test.run=^TestDevOpenBaoHeldSession$'], keep_stdin=True)
+        self.children.append(process)
+        line = process.line()
+        if line.startswith('--- FAIL: TestDevOpenBaoHeldSession'):
+            # The opt-in test emits fixed diagnostic strings, never environment
+            # values, credentials or raw database errors.
+            raise RuntimeError('held OpenBao probe: ' + process.line().strip())
+        event = json.loads(line)
+        m.require(event['event'] == 'ready' and event['server_fingerprint'] == fingerprint,
+                  'held OpenBao server identity differs')
+        return process
+
+    def session_command(self, process, command, expected):
+        process.child.stdin.write(command + '\n')
+        process.child.stdin.flush()
+        event = process.event(timeout=40)
+        m.require(event['event'] == expected, 'held OpenBao event differs')
+        return event
 
     def openbao_root(self, status):
         source = Path(self.args.authority)
@@ -1413,6 +1459,11 @@ class OpenBaoHostRun(h.ServiceRun):
                   'successful actual OpenBao client verification required')
         before = self.current_host({issuer['issuer_id']}, pod)
         self.save('baseline.json', before)
+        held = {}
+        if getattr(self.args, 'held_sessions', False):
+            held = {name: self.provider_session(name, before['state']['fingerprint']) for name in CONSUMERS}
+            for process in held.values():
+                self.session_command(process, 'check', 'alive')
         processes = self.kube([
             '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
             '-c', 'openbao-pki', '--', 'sh', '-ec',
@@ -1455,6 +1506,9 @@ class OpenBaoHostRun(h.ServiceRun):
         renewed = self.current_host({issuer['issuer_id']}, pod)
         self.save('renewed.json', renewed)
         self.openbao_peer('openbao-provider-renewed', renewed['row'])
+        successors = {name: self.provider_session(name, renewed['state']['fingerprint']) for name in held}
+        for process in list(held.values()) + list(successors.values()):
+            self.session_command(process, 'check', 'alive')
         target = before['row']
         previous = self.api('/issuers/' + issuer['issuer_id'] + '/crl')
         self.save('target.json', target)
@@ -1463,8 +1517,18 @@ class OpenBaoHostRun(h.ServiceRun):
                 'reason': 'Replaced by provider-client exercise ' +
                 added[0]['request_id']}
         self.save('revocation-request.json', body)
+        revocation_started = dt.datetime.now(dt.timezone.utc)
         revoked = self.api('/issuers/' + issuer['issuer_id'] +
                            '/revoke-server', body)
+        for name, process in held.items():
+            event = self.session_command(process, 'closed', 'closed')
+            delay = (m.parse_time(event['at']) - revocation_started).total_seconds()
+            m.require(event['owner_denied'] and 0 <= delay <= 30, 'OpenBao held cutoff exceeded 30 seconds')
+            self.session_command(successors[name], 'check', 'alive')
+            self.save('held-cutoff-' + name + '.json', {'cutoff_seconds_upper_bound': delay,
+                'predecessor_fingerprint': before['state']['fingerprint'],
+                'successor_fingerprint': renewed['state']['fingerprint'],
+                'same_successor_socket_survived': True, 'owner_denied': True})
         m.require(self.api('/issuers/' + issuer['issuer_id'] +
                            '/revoke-server', body) == revoked,
                   'OpenBao provider revocation replay changed')
@@ -1505,7 +1569,14 @@ class OpenBaoHostRun(h.ServiceRun):
                   'OpenBao provider revocation finalization replay changed')
         self.save('finalized.json', finalized)
         self.current_host({issuer['issuer_id']})
+        for process in successors.values():
+            self.session_command(process, 'check', 'alive')
+        for process in list(held.values()) + list(successors.values()):
+            self.session_command(process, 'quit', 'stopped')
+            process.child.stdin.close()
+            m.require(process.child.wait(timeout=20) == 0, 'held OpenBao probe did not stop')
         self.check('openbao_actual_provider_operations', {
+            'held_provider_families': sorted(held),
             'certissuer_renewal': 'passed',
             'controller_revocation_and_publication': 'passed',
             'predecessor_fingerprint': target['fingerprint'],
@@ -2169,8 +2240,12 @@ def main():
     parser.add_argument('--request-id')
     parser.add_argument('--recovery')
     parser.add_argument('--server-only', action='store_true')
+    parser.add_argument('--held-sessions', action='store_true',
+                        help='hold both provider-family sockets through host renewal and predecessor revocation')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
+    m.require(not args.held_sessions or args.phase == 'exercise-provider-clients',
+              'held sessions require the provider-client exercise')
     m.require(args.phase != 'recover-provider-outage' or (args.failed and args.request_id),
               'failed outage evidence and exact retained request ID required')
     m.require(args.phase != 'verify-provider-recovery' or (

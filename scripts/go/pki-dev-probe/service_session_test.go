@@ -16,15 +16,27 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestServiceSessionKeepsSocketAndRejectsReplacedCredential(t *testing.T) {
+	for _, status := range []int{http.StatusOK, http.StatusForbidden} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			testServiceSession(t, status)
+		})
+	}
+}
+
+func testServiceSession(t *testing.T, status int) {
 	var denied atomic.Bool
 	idle := make(chan net.Conn, 8)
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) }))
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		w.Write([]byte("response"))
+	}))
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)
 	server.Config.ConnState = func(c net.Conn, s http.ConnState) {
 		if s == http.StateIdle {
@@ -53,8 +65,12 @@ func TestServiceSessionKeepsSocketAndRejectsReplacedCredential(t *testing.T) {
 	defer commands.Close()
 	defer output.Close()
 	done := make(chan error, 1)
+	args := []string{filepath.Join(dir, "state"), filepath.Join(dir, "ca"), host, port, "/", fmt.Sprintf("%x", sha256.Sum256(pair.Certificate[0]))}
+	if status == http.StatusForbidden {
+		args = append(args, "403")
+	}
 	go func() {
-		done <- serviceSession([]string{filepath.Join(dir, "state"), filepath.Join(dir, "ca"), host, port, "/", fmt.Sprintf("%x", sha256.Sum256(pair.Certificate[0]))}, input, events)
+		done <- serviceSession(args, input, events)
 		events.Close()
 	}()
 	lines := make(chan string, 8)
@@ -96,8 +112,20 @@ func TestServiceSessionKeepsSocketAndRejectsReplacedCredential(t *testing.T) {
 	expect("closed")
 	fmt.Fprintln(commands, "denied")
 	expect("denied")
+	fmt.Fprintln(commands, "quit")
+	expect("stopped")
 	commands.Close()
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+	if status == http.StatusForbidden {
+		denied.Store(false)
+		os.WriteFile(filepath.Join(dir, "state"), raw, 0600)
+		if err := serviceSession(args, strings.NewReader("denied\n"), io.Discard); err == nil || !strings.Contains(err.Error(), "not explicitly denied") {
+			t.Fatalf("unchanged route denial counted as credential revocation: %v", err)
+		}
+		if err := serviceSession(args[:6], strings.NewReader(""), io.Discard); err == nil {
+			t.Fatal("403 accepted without an explicit route-denial baseline")
+		}
 	}
 }

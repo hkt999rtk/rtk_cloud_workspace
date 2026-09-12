@@ -190,6 +190,24 @@ state edits are used. Follow [RETIREMENT.md](RETIREMENT.md) to retire the replac
 leaf, publish its signed CRL and require actual certissuer/controller receipts.
 Active-session revocation and managed consumer transport adoption remain open.
 
+### T11 held Service listeners
+
+`account_listener_lifecycle.py` accepts `--target account-manager` (default),
+`--target certissuer`, or `--target pki-controller`, with the existing
+`--authority`, `--activation`, `--image`, and fresh `--output` arguments. Run
+targets sequentially under the Service rollout lock. The core-host targets hold
+Factory's original socket across one renewal, require cutoff within 30 seconds,
+keep an independent Account Manager control socket active, retire both replaced
+leaves with current receipts, and verify a seed-free restart.
+
+The Account Manager probe explicitly expects HTTP 403 on `/healthz`: this
+listener has no health route. It proves the mTLS connection, not authorization
+for a business operation. An unchanged 403 cannot count as certificate denial.
+The controller probe uses the authorized Service Root CRL route. Probes retain
+one socket until explicit shutdown; they never silently reconnect on `check`.
+After a failure following `renewal-intent.json`, reconcile retained state and
+revocations before issuing another renewal.
+
 ## PKI broker identity authority
 
 `pkibroker_authority.py` advances the Service intermediate from V3 to V4 for
@@ -531,6 +549,16 @@ The owner first renews its Service client and then its server leaf through Cert 
 revoke and publish the replaced v2 leaf. The phase accepts exactly one successor,
 requires both retained CRL receipts, verifies the denied leaf is in the CRL and
 checks replay-safe finalization. It does not export private keys.
+
+Add `--held-sessions` to that command for T11. It compiles the opt-in
+`TestDevOpenBaoHeldSession` fixture and runs it inside both provider Pods with
+their inherited Dev registry and public CA configuration. The fixture uses the
+production `ServerConnections` owner, sends only unauthenticated health GETs,
+and holds predecessor sockets before renewal plus successor sockets before
+revocation. Both predecessors must be denied and closed within 30 seconds while
+the same successor sockets survive publication. This is a probe of the shared
+connection owner in each provider Pod; real provider operations and installed
+CRL receipts are separately checked by the surrounding lifecycle procedure.
 
 Run the scoped failure/recovery step with the successful operation evidence:
 

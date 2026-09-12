@@ -20,8 +20,15 @@ import (
 // Keep one authenticated socket across operator actions. Reconnection is only
 // allowed for the explicit denial check, using the original key held in memory.
 func serviceSession(args []string, input io.Reader, output io.Writer) error {
-	if len(args) != 6 || !strings.HasPrefix(args[4], "/") {
-		return fmt.Errorf("service-session requires state, CA, host, port, path and fingerprint")
+	if (len(args) != 6 && len(args) != 7) || !strings.HasPrefix(args[4], "/") {
+		return fmt.Errorf("service-session requires state, CA, host, port, path, fingerprint and optional expected status")
+	}
+	expectedStatus := http.StatusOK
+	if len(args) == 7 {
+		if args[6] != "403" {
+			return fmt.Errorf("only an explicit 403 route-denial baseline is supported")
+		}
+		expectedStatus = http.StatusForbidden
 	}
 	state, _, err := loadServiceState(args[0])
 	if err != nil {
@@ -78,14 +85,14 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 	serverFingerprint := fmt.Sprintf("%x", sha256.Sum256(peer[0].Raw))
 	reader := bufio.NewReader(c)
 	status, err := exchange(c, reader)
-	if err != nil || status != 200 {
+	if err != nil || status != expectedStatus {
 		return fmt.Errorf("initial session not admitted: %d", status)
 	}
 	enc := json.NewEncoder(output)
 	emit := func(event string) error {
 		return enc.Encode(map[string]any{
 			"event": event, "at": time.Now().UTC(), "fingerprint": fingerprint,
-			"server_fingerprint": serverFingerprint})
+			"server_fingerprint": serverFingerprint, "expected_http_status": expectedStatus})
 	}
 	if err = emit("ready"); err != nil {
 		return err
@@ -93,9 +100,11 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 	commands := bufio.NewScanner(input)
 	for commands.Scan() {
 		switch commands.Text() {
+		case "quit":
+			return emit("stopped")
 		case "check":
 			status, err = exchange(c, reader)
-			if err != nil || status != 200 {
+			if err != nil || status != expectedStatus {
 				return fmt.Errorf("held session no longer admitted: %d", status)
 			}
 			err = emit("alive")
@@ -113,7 +122,7 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 				code, denied = exchange(next, bufio.NewReader(next))
 				next.Close()
 			}
-			if !certificateRejected(denied) && !(denied == nil && (code == 401 || code == 403)) {
+			if !certificateRejected(denied) && !(expectedStatus == http.StatusOK && denied == nil && (code == 401 || code == 403)) {
 				return fmt.Errorf("old credential not explicitly denied")
 			}
 			err = emit("denied")

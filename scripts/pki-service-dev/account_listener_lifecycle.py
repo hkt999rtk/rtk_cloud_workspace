@@ -68,6 +68,7 @@ class AccountListenerLifecycle(a.ListenerRun):
         self.factory_probe = '/state/identity/.pki-account-listener-lifecycle-' + uuid.uuid4().hex
         self.probe_installed = False
         self.factory_probe_installed = False
+        self.host_probe_owner = None
         self.report['phase'] = 'lifecycle'
         self.report['foundation_scope'] = 'Dev Account Manager managed client/listener renewal, held-session retirement and successor survival'
         self.report['account_listener_lifecycle_runner_sha256'] = m.digest(Path(__file__).read_bytes())
@@ -79,6 +80,8 @@ class AccountListenerLifecycle(a.ListenerRun):
                 self.kube(['-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'pkimanagement', '--', 'rm', '-f', self.remote_probe])
             if self.factory_probe_installed:
                 self.kube(['-n', NS, 'exec', 'deployment/factoryenroll', '-c', 'factoryenroll', '--', 'rm', '-f', self.factory_probe])
+            if self.host_probe_owner:
+                self.kube(['-n', NS, 'exec', 'deployment/' + self.host_probe_owner, '--', 'rm', '-f', self.host_probe])
         finally:
             super().close()
 
@@ -90,18 +93,19 @@ class AccountListenerLifecycle(a.ListenerRun):
                   'managed Account Manager state is not current')
         return value
 
-    def client_rows(self):
+    def client_rows(self, subject=SUBJECT):
+        m.require(subject in (SUBJECT, 'service:certissuer', 'service:pki-controller'), 'unexpected client scope')
         raw = self.sql("SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,caller,status,fingerprint,issued_at,revoked_at "
-                       "FROM pki_service_client_issuances WHERE environment='dev' AND subject='service:account-manager' "
+                       "FROM pki_service_client_issuances WHERE environment='dev' AND subject='" + subject + "' "
                        "ORDER BY issued_at,request_id) t;")
         return [json.loads(line) for line in raw.splitlines() if line]
 
-    def server_rows(self):
+    def server_rows(self, host=a.ACCOUNT_DNS):
         raw = self.sql("SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,caller,status,fingerprint,dns_names,issued_at,revoked_at "
                        "FROM pki_server_issuances WHERE environment='dev' AND domain='service' "
                        "ORDER BY issued_at,request_id) t;")
         return [row for row in (json.loads(line) for line in raw.splitlines() if line)
-                if row['dns_names'] == [a.ACCOUNT_DNS]]
+                if row['dns_names'] == [host]]
 
     def v3(self):
         # The listener was introduced with Service v3, but it must continue
@@ -157,7 +161,7 @@ class AccountListenerLifecycle(a.ListenerRun):
                   'held Account Manager client session differs')
         return process
 
-    def factory_session(self, host, port, expected_server=None):
+    def factory_session(self, host, port, expected_server=None, path='/healthz'):
         # Bind the held socket to the Factory identity currently owned by the
         # real Factory process. The probe loads the same private state without
         # exporting its key.
@@ -165,9 +169,12 @@ class AccountListenerLifecycle(a.ListenerRun):
                                          self.factory_probe, 'service-state', FACTORY_STATE]))
         m.require(identity['root_sha256'] == self.root['certificate_fingerprint_sha256'] and not identity['pending'],
                   'managed Factory identity is not current')
+        # This listener deliberately has no public health route. Its exact 403
+        # proves an established mTLS socket, not business-route authorization.
+        baseline = ['403'] if host == a.ACCOUNT_DNS else []
         process = m.Process(self.k + ['-n', NS, 'exec', '-i', 'deployment/factoryenroll', '-c', 'factoryenroll', '--',
             self.factory_probe, 'service-session', FACTORY_STATE, FACTORY_ROOT,
-            host, port, '/healthz', identity['fingerprint']], keep_stdin=True)
+            host, port, path, identity['fingerprint']] + baseline, keep_stdin=True)
         self.children.append(process)
         event = process.event()
         m.require(event['event'] == 'ready' and event['fingerprint'] == identity['fingerprint'],
@@ -183,6 +190,13 @@ class AccountListenerLifecycle(a.ListenerRun):
         event = process.event(timeout=35)
         m.require(event['event'] == expected, 'held Account Manager session event differs')
         return event
+
+    def stop_session(self, process):
+        # kubectl's exec stdin may not deliver EOF promptly. End the remote
+        # probe explicitly, then verify the owned command has actually exited.
+        self.session_command(process, 'quit', 'stopped')
+        process.child.stdin.close()
+        m.require(process.child.wait(timeout=20) == 0, 'session probe did not stop')
 
     def wait_changed(self, path, before):
         deadline = time.monotonic() + 90
@@ -375,7 +389,7 @@ class AccountListenerLifecycle(a.ListenerRun):
             'source': source.name, 'client_retired': len(retired_clients), 'listener_retired': len(retired_hosts),
             'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
 
-    def revoke_and_publish(self, kind, rows, current, predecessor, held=None):
+    def revoke_and_publish(self, kind, rows, current, predecessor, held=None, keepalive=None):
         action = 'service-client' if kind == 'client' else 'server'
         targets = [row for row in rows if row['fingerprint'] == predecessor['fingerprint']]
         m.require(targets, 'no replaced Account Manager ' + kind + ' leaves to retire')
@@ -387,12 +401,16 @@ class AccountListenerLifecycle(a.ListenerRun):
         m.require(len(issuer_ids) == 1, 'replaced Account Manager ' + kind + ' leaves span multiple issuers')
         issuer_id = issuer_ids.pop()
         previous = self.api('/issuers/' + issuer_id + '/crl')
+        if keepalive:
+            keepalive()
         self.save(kind + '-previous-crl.json', previous)
         for index, row in enumerate(targets):
             body = {'certificate_sha256': row['fingerprint'], 'reason': 'Replaced Account Manager ' + kind + ' leaf'}
             self.save(kind + '-revocation-' + str(index) + '-intent.json', body)
             if row['revoked_at'] is None:
                 self.api('/issuers/' + issuer_id + '/revoke-' + action, body, role='approver')
+            if keepalive:
+                keepalive()
         if held is not None:
             closed = self.session_command(held, 'closed', 'closed')
             delay = (m.parse_time(closed['at']) - self.revocation_started).total_seconds()
@@ -403,13 +421,21 @@ class AccountListenerLifecycle(a.ListenerRun):
         for row in targets:
             final = self.api('/issuers/' + issuer_id + '/publish-' + action + '-revocation',
                              {'certificate_sha256': row['fingerprint']}, role='approver')
+            if keepalive:
+                keepalive()
             self.require_service_crl_consumers_current(issuer_id)
+            if keepalive:
+                keepalive()
             self.wait_receipts(issuer_id, final['crl_sha256'],
                                ['certissuer', 'factory-enroll', 'pki-controller', 'video-cloud-api'], 'crl')
+            if keepalive:
+                keepalive()
         for row in targets:
             result = self.api('/issuers/' + issuer_id + '/finalize-' + action + '-revocation',
                               {'certificate_sha256': row['fingerprint']}, role='approver')
             m.require(result['crl_sha256'] == final['crl_sha256'], 'Account Manager retirement finalization differs')
+            if keepalive:
+                keepalive()
         self.save(kind + '-retirement.json', {'issuer_id': issuer_id,
                                               'targets': [row['fingerprint'] for row in targets],
                                               'crl_sha256': final['crl_sha256']})
@@ -467,9 +493,7 @@ class AccountListenerLifecycle(a.ListenerRun):
         self.current_successors(client_after, host_after)
         self.session_command(successor, 'check', 'alive')
         for process in (held, successor, listener_held, listener_successor, control_held):
-            if not process.child.stdin.closed:
-                process.child.stdin.close()
-            m.require(process.child.wait(timeout=10) == 0, 'session probe did not stop')
+            self.stop_session(process)
         self.restart_account_manager()
         self.install_probe()
         self.forward('listener', AM_NS, a.SERVICE_NAME, 8443)
@@ -478,13 +502,96 @@ class AccountListenerLifecycle(a.ListenerRun):
         self.current_successors(client_after, host_after)
         restarted_listener = self.factory_session(a.ACCOUNT_DNS, '8443', host_after)
         self.session_command(restarted_listener, 'check', 'alive')
-        if not restarted_listener.child.stdin.closed:
-            restarted_listener.child.stdin.close()
-        m.require(restarted_listener.child.wait(timeout=10) == 0, 'restarted listener probe did not stop')
+        self.stop_session(restarted_listener)
         self.check('account_manager_listener_lifecycle', {'client_retired': len(retired_clients),
                    'listener_retired': len(retired_hosts), 'held_old_client_cutoff': True,
                    'held_old_listener_cutoff': True, 'factory_control_survived': True,
                    'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
+
+    def host_lifecycle(self, name):
+        """Exercise the same held-listener contract on the two core hosts."""
+        m.require(name in ('certissuer', 'pki-controller'), 'unexpected host scope')
+        self.report['foundation_scope'] = 'Dev ' + name + ' held listener, renewal, retirement and restart'
+        self.preflight_lifecycle()
+        self.root = self.active_root()
+        self.save('root.pem', self.root['certificate_pem'])
+        self.issuer = self.v3()
+        self.sync_service_crl_consumers()
+        self.install_factory_probe()
+        self.host_probe = '/var/lib/pki-host/identity/.t11-probe-' + uuid.uuid4().hex
+        self.install_probe_at(NS, name, name, self.host_probe)
+        self.host_probe_owner = name
+        host, port = name + '.' + NS + '.svc', '9443' if name == 'certissuer' else '18446'
+        path = '/v1/pki/issuers/' + self.root['issuer_id'] + '/crl' if name == 'pki-controller' else '/healthz'
+        paths = {'client': '/var/lib/pki-host/identity/client.json', 'listener': '/var/lib/pki-host/identity/state.json'}
+
+        def inspect():
+            result = {}
+            for kind, path in paths.items():
+                result[kind] = json.loads(self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', self.host_probe, 'service-state', path]))
+                m.require(result[kind]['root_sha256'] == self.root['certificate_fingerprint_sha256'], 'host root differs')
+            return result
+
+        before = inspect()
+        m.require(not any(value['pending'] for value in before.values()), 'host has a pending renewal; reconcile first')
+        self.save('baseline.json', before)
+        held = self.factory_session(host, port, before['listener'], path)
+        control = self.factory_session(a.ACCOUNT_DNS, '8443')
+        self.session_command(held, 'check', 'alive')
+        self.session_command(control, 'check', 'alive')
+        owner = self.obj('deployment', name)
+        expected_process = 'pkicontroller' if name == 'pki-controller' else 'certissuer'
+        m.require(self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'cat', '/proc/1/comm']).strip() == expected_process,
+                  'unexpected host process')
+        started = dt.datetime.now(dt.timezone.utc)
+        self.save('renewal-intent.json', {'target': name, 'at': started.isoformat(), 'baseline': before})
+        self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c', 'kill -HUP 1'])
+        deadline = time.monotonic() + 180
+        while True:
+            after = inspect()
+            if all(not after[kind]['pending'] and after[kind]['fingerprint'] != before[kind]['fingerprint'] for kind in paths):
+                break
+            m.require(time.monotonic() < deadline, 'host renewal pending; retain intent and do not signal again')
+            time.sleep(2)
+        client_rows, host_rows = self.client_rows('service:' + name), self.server_rows(host)
+        replacement(before['client'], after['client'], client_rows, self.issuer, 'client')
+        replacement(before['listener'], after['listener'], host_rows, self.issuer, 'listener')
+        self.save('renewed.json', after)
+        closed = self.session_command(held, 'closed', 'closed')
+        delay = (m.parse_time(closed['at']) - started).total_seconds()
+        m.require(0 <= delay <= 30, 'host listener cutoff exceeded 30 seconds')
+        successor = self.factory_session(host, port, after['listener'], path)
+        self.session_command(successor, 'check', 'alive')
+        self.session_command(control, 'check', 'alive')
+        self.save('held-listener-cutoff.json', {'target': name, 'cutoff_seconds_upper_bound': delay,
+            'old_server_fingerprint': before['listener']['fingerprint'], 'successor_server_fingerprint': after['listener']['fingerprint'],
+            'account_manager_control_survived': True})
+        self.revocation_started = dt.datetime.now(dt.timezone.utc)
+        def keepalive():
+            # Account Manager has a 30-second idle timeout. Keep the same
+            # control socket active while publication and receipts complete.
+            self.session_command(successor, 'check', 'alive')
+            self.session_command(control, 'check', 'alive')
+        self.revoke_and_publish('client', client_rows, after['client'], before['client'], keepalive=keepalive)
+        self.revoke_and_publish('server', host_rows, after['listener'], before['listener'], keepalive=keepalive)
+        for process in (held, successor, control):
+            self.stop_session(process)
+        current = self.obj('deployment', name)
+        m.require(current['metadata']['uid'] == owner['metadata']['uid'] and current['spec'] == owner['spec'], 'host changed during qualification')
+        m.require(current['spec']['strategy']['type'] == 'Recreate' and current['spec']['replicas'] == 1, 'expected one Recreate owner')
+        self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c', 'test ! -s /var/lib/pki-host/seed/key.pem'])
+        template = json.loads(json.dumps(current['spec']['template']))
+        template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/pki-dev-acceptance'] = self.output.name
+        self.scoped_patch('deployment', current, [{'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
+                                                 {'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name, '--timeout=240s'], timeout=250)
+        m.require(inspect() == after, 'host restart changed successor state')
+        restarted = self.factory_session(host, port, after['listener'], path)
+        self.session_command(restarted, 'check', 'alive')
+        self.stop_session(restarted)
+        self.check('core_host_listener_lifecycle', {'target': name, 'held_old_listener_cutoff': True,
+            'account_manager_control_survived': True, 'client_and_server_retired': True,
+            'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
 
     def restart_account_manager(self):
         before = self.obj('deployment', 'account-manager', AM_NS)
@@ -531,6 +638,7 @@ def main():
     parser.add_argument('--activation', required=True)
     parser.add_argument('--image', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--target', choices=['account-manager', 'certissuer', 'pki-controller'], default='account-manager')
     parser.add_argument('--recover', type=Path,
                         help='recover only the exact predecessor pair recorded by an unauthorized lifecycle interruption')
     args = parser.parse_args()
@@ -541,7 +649,10 @@ def main():
     runner = AccountListenerLifecycle(args)
     try:
         if args.recover:
+            m.require(args.target == 'account-manager', 'recorded recovery is Account Manager only')
             runner.recover_interrupted_lifecycle()
+        elif args.target != 'account-manager':
+            runner.host_lifecycle(args.target)
         else:
             runner.lifecycle()
         runner.report['status'] = 'passed'
