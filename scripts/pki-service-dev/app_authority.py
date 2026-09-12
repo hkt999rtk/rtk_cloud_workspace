@@ -88,12 +88,34 @@ class AppAuthorityRun(s.ServiceRun):
                   and issuer['trust_domain'] == 'app',
                   'App Root import differs')
         self.save('root-ready.json', issuer)
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 403)
         self.check('app_root_ready_gate_closed', {
             'issuer_id': issuer['issuer_id'],
-            'activation_without_consumer_receipts': 409,
+            'activation_without_registered_consumer_policy': 403,
             'key_custody': ('encrypted offline Dev simulation; distinct software '
                             'approval accounts')})
+
+    def reconcile(self, failed):
+        source = Path(failed).resolve()
+        report = m.read(source / 'report.json')
+        m.require(report['status'] == 'failed'
+                  and report.get('phase') == 'prepare-app-root',
+                  'failed App Root preparation evidence required')
+        saved = m.read(source / 'root-ready.json')
+        operation = m.read(source / 'root-operation.json')
+        current = self.api('/issuers/' + saved['issuer_id'])
+        m.require(current == saved and current['status'] == 'ready'
+                  and current['trust_domain'] == 'app'
+                  and operation['issuer_id'] == current['issuer_id'],
+                  'saved ready App Root changed; do not recreate it')
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 403)
+        self.save('root-ready.json', current)
+        self.save('root-operation.json', operation)
+        self.save('reconciled-from.json', {'report': str(source / 'report.json')})
+        self.check('app_root_ready_gate_closed', {
+            'issuer_id': current['issuer_id'],
+            'activation_without_registered_consumer_policy': 403,
+            'reused_saved_root': True})
 
 
 def main():
@@ -102,6 +124,7 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
+    parser.add_argument('--reconcile')
     args = parser.parse_args()
     args.phase = 'prepare-app-root'
     lock = (Path(args.config_root).expanduser()
@@ -111,7 +134,10 @@ def main():
     runner = AppAuthorityRun(args)
     try:
         runner.preflight()
-        runner.prepare_root()
+        if args.reconcile:
+            runner.reconcile(args.reconcile)
+        else:
+            runner.prepare_root()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

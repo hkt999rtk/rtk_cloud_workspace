@@ -20,6 +20,14 @@ public Root in the registry, and proves activation remains blocked until the R1
 API, broker and TURN consumers install and acknowledge it. It does not change
 staging, deploy consumers, or create App leaf private keys.
 
+If the process stops after `root-ready.json` is written, reconcile that immutable
+Root into a new evidence directory instead of creating another Root:
+
+```sh
+python3 scripts/pki-service-dev/app_authority.py \
+  --reconcile PREVIOUS_FAILED_OUTPUT --output NEW_PRIVATE_OUTPUT
+```
+
 ## Account Manager caller acceptance
 
 `account_callers.py` proves actual factory admission and public App-token
