@@ -6,6 +6,7 @@ and certissuer listeners persist and enforce the active Service root policy
 without changing their managed identity or unrelated workload configuration.
 """
 import argparse
+import base64
 import copy
 import fcntl
 import importlib.util
@@ -14,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import subprocess
 import sys
 import time
 
@@ -100,7 +102,6 @@ class RootPolicyRun(s.ServiceRun):
         return root
 
     def preflight_root_policy(self, root):
-        self.preflight()
         for name in NAMES:
             owner = self.obj('deployment', name)
             m.require(owner['spec'].get('replicas') == 1
@@ -128,11 +129,50 @@ class RootPolicyRun(s.ServiceRun):
         self.save('root-configmap.json', obj)
         self.kube(['-n', NS, 'create', '-f', '-'], json.dumps(obj))
 
+    def provision_state(self, root, name):
+        """Seed verified policy state through the healthy predecessor owner.
+
+        A controller cannot fetch its first policy through the listener it has
+        not started yet.  This uses the already healthy predecessor only to
+        write public, authenticated policy state to its own existing PVC; it
+        never copies a client key or changes a credential.
+        """
+        policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
+        m.require(policy['environment'] == 'dev' and policy['trust_domain'] == 'service'
+                  and re.fullmatch(r'[0-9a-f]{64}', policy['policy_sha256']),
+                  'Service Root policy differs before bootstrap state')
+        root_pem = self.output / (name + '-roots.pem')
+        policy_path = self.output / (name + '-policy.json')
+        state_path = self.output / (name + '-state.json')
+        root_pem.write_text(root['certificate_pem'])
+        m.write(policy_path, policy)
+        result = subprocess.run(
+            ['go', 'run', './cmd/pkitrust', 'apply', str(policy_path),
+             str(root_pem), str(state_path)],
+            cwd=str(m.WORKSPACE / 'repos/rtk_video_cloud'),
+            env=dict(os.environ, GOWORK='off', GOCACHE='/private/tmp/r2-go-cache'),
+            capture_output=True, text=True, timeout=120)
+        m.require(result.returncode == 0, 'Service Root state preparation failed')
+        state = state_path.read_text()
+        # Existing state may be reused only when it is byte-for-byte the
+        # reviewed state. A drifted or stale state must be reconciled manually.
+        quoted = base64.b64encode(state.encode()).decode()
+        check = self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c',
+                           'if test -e ' + ROOT_STATE + '; then cat ' + ROOT_STATE + '; fi'])
+        if check:
+            m.require(check == state, 'existing Service Root state differs: ' + name)
+        else:
+            command = ('umask 077; mkdir -p /var/lib/pki-host/identity; '
+                       'printf %s ' + quoted + ' | base64 -d > ' + ROOT_STATE +
+                       '; chmod 600 ' + ROOT_STATE)
+            self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c', command])
+        self.save(name + '-prepared-state.json', json.loads(state))
+
     def rollout(self, name, root):
         owner = self.obj('deployment', name)
         template = root_template(owner, name, root, self.args.image)
         self.save(name + '-template.json', template)
-        self.scoped_patch('deployment', owner, [
+        self.observed_patch('deployment', name, owner, [
             {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
             {'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name, '--timeout=240s'], timeout=250)
@@ -152,7 +192,13 @@ class RootPolicyRun(s.ServiceRun):
         policy = None
         while time.monotonic() < deadline:
             policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
-            rows = self.sql("SELECT loaded_roots_sha256 FROM pki_root_distrust_acknowledgments WHERE environment='dev' AND domain='service' AND policy_sha256='" + policy['policy_sha256'] + "' AND consumer_id='" + name + "';")
+            rows = self.kube([
+                '-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--',
+                'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d',
+                'video_cloud', '-At'],
+                "SELECT loaded_roots_sha256 FROM pki_root_distrust_acknowledgments "
+                "WHERE environment='dev' AND domain='service' AND policy_sha256='" +
+                policy['policy_sha256'] + "' AND consumer_id='" + name + "';")
             if rows:
                 raw = self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'cat', ROOT_STATE])
                 state = json.loads(raw)
@@ -163,8 +209,13 @@ class RootPolicyRun(s.ServiceRun):
         raise RuntimeError('Service Root policy receipt deadline: ' + name)
 
     def install(self):
+        # The shared Dev acceptance preflight initializes the authenticated API
+        # accounts before this runner can read the Service authority.
+        self.preflight()
         root = self.active_root()
         self.preflight_root_policy(root)
+        for name in NAMES:
+            self.provision_state(root, name)
         self.create_root_config(root)
         # Controller first: its policy API must itself enforce the durable
         # Service listener state before any other listener acknowledges it.
@@ -184,6 +235,8 @@ def main():
     parser.add_argument('--root-id', required=True)
     parser.add_argument('--image')
     args = parser.parse_args()
+    # ServiceRun owns common Dev evidence plumbing and records the phase.
+    args.phase = 'install'
     m.require(re.fullmatch(r'[0-9a-f-]{36}', args.root_id), 'canonical Service Root ID required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
