@@ -62,11 +62,16 @@ class AppHierarchy(s.ServiceRun):
 
     def preflight_app(self):
         self.preflight()
+        repairing_missing_root_crl = (
+            self.args.phase == 'activate-root' and bool(self.args.resume))
+        readiness = {}
         for name in DEPLOYMENTS:
             owner = self.obj('deployment', name)
-            m.require(owner.get('status', {}).get('readyReplicas') ==
-                      owner['spec']['replicas'] == 1,
+            ready = owner.get('status', {}).get('readyReplicas', 0)
+            m.require(owner['spec']['replicas'] == 1
+                      and (ready == 1 or repairing_missing_root_crl),
                       'App consumer is not ready: ' + name)
+            readiness[name] = ready
         controller = self.obj('deployment', 'pki-controller')
         env = {entry['name']: entry.get('value', '')
                for container in controller['spec']['template']['spec']['containers']
@@ -80,6 +85,8 @@ class AppHierarchy(s.ServiceRun):
                   'App consumer policy differs')
         self.check('app_preflight', {
             'consumer_deployments': DEPLOYMENTS,
+            'ready_replicas': readiness,
+            'missing_root_crl_repair': repairing_missing_root_crl,
             'required_consumers': CONSUMERS,
             'staging_touched': False})
 
@@ -236,6 +243,30 @@ class AppHierarchy(s.ServiceRun):
             'crl_receipts': crl_receipts,
             'restarted_consumers': restarted})
         self.device_baseline()
+
+    def device_baseline(self):
+        device = m.read(
+            self.foundation / 'device-2/enroll-request.json')['devid']
+        auth, auth_attempts = self.wait_positive_auth(
+            self.foundation / 'device-2/v4', device)
+        deadline = time.monotonic() + 45
+        mqtt_attempts = 0
+        while True:
+            mqtt_attempts += 1
+            try:
+                self.mqtt(auth, device, 'roundtrip')
+                break
+            except RuntimeError as error:
+                temporary = (str(error).startswith('probe failed:') or
+                             str(error) ==
+                             'MQTT authorization result differs: 5')
+                if not temporary or time.monotonic() >= deadline:
+                    raise
+                time.sleep(2)
+        self.check('device_baseline_after_app_hierarchy', {
+            'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
+            'auth_attempts': auth_attempts,
+            'mqtt_attempts': mqtt_attempts})
 
     def active_root(self):
         root = self.app_root('active')
