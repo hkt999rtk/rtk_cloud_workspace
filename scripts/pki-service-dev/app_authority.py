@@ -29,16 +29,28 @@ class AppAuthorityRun(s.ServiceRun):
             Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
-    def prepare_root(self):
+    def app_issuers(self):
         cursor = ''
+        items = []
         while True:
             page = self.api('/issuers/search', {'limit': 100, 'before': cursor})
-            m.require(not any(item['trust_domain'] == 'app'
-                              for item in page['items']),
-                      'App authority already exists; reconcile instead of creating another')
+            items += [item for item in page['items']
+                      if item['trust_domain'] == 'app']
             cursor = page.get('next', '')
             if not cursor:
-                break
+                return items
+
+    def prepare_root(self):
+        existing = self.app_issuers()
+        if self.args.successor:
+            roots = [item for item in existing if item['kind'] == 'root'
+                     and item['status'] in ('active', 'retiring')]
+            m.require(len(roots) == 1,
+                      'successor App Root requires exactly one current Root')
+            self.save('predecessor-root.json', roots[0])
+        else:
+            m.require(not existing,
+                      'App authority already exists; use --successor or reconcile')
         operation = self.api(
             '/operations',
             {'environment': 'dev', 'trust_domain': 'app', 'kind': 'root'},
@@ -88,10 +100,13 @@ class AppAuthorityRun(s.ServiceRun):
                   and issuer['trust_domain'] == 'app',
                   'App Root import differs')
         self.save('root-ready.json', issuer)
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 403)
+        gate_status = 409 if self.args.successor else 403
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 gate_status)
         self.check('app_root_ready_gate_closed', {
             'issuer_id': issuer['issuer_id'],
-            'activation_without_registered_consumer_policy': 403,
+            'activation_without_bundle_receipts': gate_status,
+            'successor': self.args.successor,
             'key_custody': ('encrypted offline Dev simulation; distinct software '
                             'approval accounts')})
 
@@ -99,7 +114,8 @@ class AppAuthorityRun(s.ServiceRun):
         source = Path(failed).resolve()
         report = m.read(source / 'report.json')
         m.require(report['status'] == 'failed'
-                  and report.get('phase') == 'prepare-app-root',
+                  and report.get('phase') in (
+                      'prepare-app-root', 'prepare-app-root-successor'),
                   'failed App Root preparation evidence required')
         saved = m.read(source / 'root-ready.json')
         operation = m.read(source / 'root-operation.json')
@@ -108,13 +124,17 @@ class AppAuthorityRun(s.ServiceRun):
                   and current['trust_domain'] == 'app'
                   and operation['issuer_id'] == current['issuer_id'],
                   'saved ready App Root changed; do not recreate it')
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 403)
+        successor = report.get('phase') == 'prepare-app-root-successor'
+        gate_status = 409 if successor else 403
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 gate_status)
         self.save('root-ready.json', current)
         self.save('root-operation.json', operation)
         self.save('reconciled-from.json', {'report': str(source / 'report.json')})
         self.check('app_root_ready_gate_closed', {
             'issuer_id': current['issuer_id'],
-            'activation_without_registered_consumer_policy': 403,
+            'activation_without_bundle_receipts': gate_status,
+            'successor': successor,
             'reused_saved_root': True})
 
 
@@ -125,8 +145,12 @@ def main():
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--reconcile')
+    parser.add_argument('--successor', action='store_true')
     args = parser.parse_args()
-    args.phase = 'prepare-app-root'
+    m.require(not args.reconcile or not args.successor,
+              '--successor cannot be combined with --reconcile')
+    args.phase = ('prepare-app-root-successor' if args.successor
+                  else 'prepare-app-root')
     lock = (Path(args.config_root).expanduser()
             / 'dev/pki/app-root-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)

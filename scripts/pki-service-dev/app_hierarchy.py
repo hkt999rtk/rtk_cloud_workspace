@@ -116,6 +116,30 @@ class AppHierarchy(s.ServiceRun):
                   'reviewed App Root changed')
         return root
 
+    def manifest_authorities(self, *extra):
+        cursor, items = '', []
+        while True:
+            page = self.api('/issuers/search', {
+                'limit': 100, 'before': cursor})
+            items += [item for item in page['items']
+                      if item['environment'] == 'dev'
+                      and item['trust_domain'] == 'app'
+                      and item['kind'] in ('root', 'intermediate')
+                      and item['status'] in ('ready', 'active', 'retiring')]
+            cursor = page.get('next', '')
+            if not cursor:
+                break
+        by_id = {item['issuer_id']: item for item in items}
+        by_id.update({item['issuer_id']: item for item in extra})
+        authorities = list(by_id.values())
+        roots = {item['issuer_id'] for item in authorities
+                 if item['kind'] == 'root'}
+        m.require(roots and all(item['kind'] == 'root'
+                               or item['parent_issuer_id'] in roots
+                               for item in authorities),
+                  'App manifest contains an incomplete lineage')
+        return authorities
+
     def root_operation(self):
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
         m.require(operation['issuer_id'] ==
@@ -247,7 +271,8 @@ class AppHierarchy(s.ServiceRun):
         crl = self.sign_initial_root_crl(root)
         self.save('root-crl.json', crl)
         restarted = self.install_manifest(
-            [root], 'root-' + root['trust_bundle_version'][:16])
+            self.manifest_authorities(root),
+            'root-' + root['trust_bundle_version'][:16])
         crl_receipts = self.wait_receipts(
             root['issuer_id'], crl['crl_sha256'], CONSUMERS, kind='crl')
         self.check('app_root_active_with_crl', {
@@ -356,7 +381,8 @@ class AppHierarchy(s.ServiceRun):
     def install_intermediate(self):
         root, issuer, _ = self.intermediate('ready')
         restarted = self.install_manifest(
-            [root, issuer], 'bundle-' + issuer['trust_bundle_version'][:16])
+            self.manifest_authorities(root, issuer),
+            'bundle-' + issuer['trust_bundle_version'][:16])
         receipts = self.wait_receipts(
             issuer['issuer_id'], issuer['trust_bundle_version'], CONSUMERS)
         self.check('app_intermediate_installed', {
@@ -390,7 +416,8 @@ class AppHierarchy(s.ServiceRun):
                               role='approver')
         self.save('intermediate-crl.json', record)
         restarted = self.install_manifest(
-            [root, issuer], 'active-' + record['crl_sha256'][:16])
+            self.manifest_authorities(root, issuer),
+            'active-' + record['crl_sha256'][:16])
         root_crl = self.api('/issuers/' + root['issuer_id'] + '/crl',
                             role='approver')
         root_receipts = self.wait_receipts(
@@ -510,8 +537,9 @@ class AppHierarchy(s.ServiceRun):
 
     def prepare_intermediate(self):
         root = self.active_root()
-        m.require(not self.app_intermediates(),
-                  'App intermediate already exists; reconcile saved evidence')
+        m.require(not any(item['parent_issuer_id'] == root['issuer_id']
+                          for item in self.app_intermediates()),
+                  'App intermediate already exists for this Root; reconcile')
         request = {'environment': 'dev', 'trust_domain': 'app',
                    'kind': 'intermediate',
                    'parent_issuer_id': root['issuer_id']}
