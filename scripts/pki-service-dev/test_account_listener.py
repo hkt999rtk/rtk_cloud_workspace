@@ -1,7 +1,9 @@
 import importlib.util
 import copy
+import datetime as dt
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -239,6 +241,62 @@ class AccountListenerTests(unittest.TestCase):
             self.assertEqual(runner.provider_serial_for_pending_claim(claim), 'ab:cd')
         self.assertEqual(saved['pending-provider-inventory.json']['matching_serials'], ['ab:cd'])
         self.assertNotIn('csr_pem', saved['pending-provider-inventory.json'])
+
+    def test_provider_recovery_does_not_mark_claim_before_provider_authenticates(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        now = dt.datetime.now(dt.timezone.utc)
+        issuer_id = 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12
+        request_id = 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12
+        claim = {
+            'created_at': (now - dt.timedelta(hours=2)).isoformat(),
+            'ttl_days': 30,
+            'request_id': request_id,
+            'request_digest': 'digest',
+            'issuer_id': issuer_id,
+            'csr_pem': 'csr',
+        }
+        issuer = {'not_after': (now + dt.timedelta(days=365)).isoformat()}
+        pods = {'items': [{'metadata': {'uid': 'new-signer'}, 'status': {
+            'phase': 'Running', 'startTime': (now - dt.timedelta(minutes=10)).isoformat(),
+        }}]}
+        with tempfile.TemporaryDirectory() as directory:
+            runner.base = Path(directory)
+            runner.kube = Mock(side_effect=[json.dumps(pods), RuntimeError('token unavailable')])
+            runner.bao = Mock()
+            with self.assertRaisesRegex(RuntimeError, 'token unavailable'):
+                runner.resign_missing_pending_claim(claim, issuer, 'pki-issuers/service/' + issuer_id + '/v5', 'public-key')
+            marker = runner.base / 'pki' / ('account-manager-provider-recovery-' + request_id + '.json')
+            self.assertFalse(marker.exists())
+            runner.bao.assert_not_called()
+
+    def test_pending_recovery_rejects_an_unrelated_installed_identity(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        issuer_id = 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12
+        request_id = 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12
+        runner.preflight_lifecycle = Mock()
+        runner.active_root = Mock(return_value={'certificate_pem': 'root'})
+        runner.v3 = Mock(return_value={'issuer_id': issuer_id})
+        runner.install_probe = Mock()
+        runner.managed_client_state = Mock(return_value={'pending': False})
+        runner.pending_client_claim = Mock(return_value={
+            'request_id': request_id, 'issuer_id': issuer_id, 'status': 'succeeded',
+            'fingerprint': 'different-identity', 'revoked_at': None,
+        })
+        runner.inspect = Mock(return_value={'fingerprint': 'installed-identity'})
+        runner.restart_account_manager = Mock()
+        with self.assertRaisesRegex(RuntimeError, 'not the installed Account Manager identity'):
+            runner.recover_pending_client_issuance(request_id)
+        runner.pending_client_claim.assert_called_once_with(request_id)
+        runner.restart_account_manager.assert_not_called()
+
+    def test_controller_connection_tracking_excludes_the_direct_probe_socket(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        runner.kube = Mock(return_value='0100007F:ABCD\n0000000000000000FFFF00000100007F:CAFE\n')
+        ports = runner.controller_connection_ports(0xABCD)
+        self.assertEqual(ports, {'0100007F:ABCD', '0000000000000000FFFF00000100007F:CAFE'})
+        command = runner.kube.call_args.args[0][-1]
+        self.assertIn('$2 !~ /:ABCD$/', command)
+        self.assertEqual(runner.controller_connection_count(0xABCD), 2)
 
 
 if __name__ == '__main__':

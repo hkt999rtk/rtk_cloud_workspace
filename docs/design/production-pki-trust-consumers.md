@@ -7,7 +7,7 @@ Live verification is dev-only.
 Legacy migration and staging remain deferred. MFA is optional future human
 login functionality and is never a Device authentication requirement.
 
-## Current acceptance status (2026-09-12 M11 closure)
+## Current acceptance status (2026-09-12 M11 review reopening)
 
 This section is the single current progress record for this milestone. Dated
 checkpoints below retain historical evidence; their percentages and group counts
@@ -18,16 +18,16 @@ no fixed denominator and must not be used as completion percentages.
 | Fixed group | Status | Evidence and remaining exit criteria |
 | --- | --- | --- |
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
-| 2. Management Service identity enforcement | Complete | The [M11 matrix](#m11-management-held-session-and-recovery-closure-2026-09-12) completes the Account Manager signed-controller held-session/recovery row and consolidates the prior Factory, Device API, pkibroker, listener and OpenBao evidence. |
+| 2. Management Service identity enforcement | Partial | M1–M10 remain qualified. M11 is reopened after review found that its deployed Account Manager consumer did not implement the listener eviction hook, and its lifecycle/recovery checks were insufficiently exact. The source fixes and deterministic regressions are complete; a fresh Dev M11 lifecycle run remains. |
 | 3. Remaining transport and host adoption | Complete | T1–T11 are qualified. The [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12) separates live host/caller lifecycle evidence, process replacement, and local deterministic failure tests. |
 | 4. Root-policy adoption | Open | App/Service/MQTT/OpenBao reviewed root changes, durable rollback protection, installation receipts and connection eviction remain. Fixed root pins do not satisfy this criterion. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 30/40 = 75%.** The fixed decomposition below
+**Current checkpoint completion: 29/40 = 72.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
-not an effort-weighted estimate or a prediction of remaining time. Only **3/6
+not an effort-weighted estimate or a prediction of remaining time. Only **2/6
 whole work groups are closed**; that 50% closure ratio understates partial progress
 and must not be presented as the milestone's implementation/acceptance progress.
 Keep the 40-checkpoint denominator stable; document any future scope change before
@@ -47,12 +47,12 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | Group | Completed / total | Checkpoint progress |
 | --- | ---: | ---: |
 | Inventory/design | 3/3 | 100% |
-| Management Service identities | 11/11 | 100% |
+| Management Service identities | 10/11 | 90.9% |
 | Transports and hosts | 11/11 | 100% |
 | Root-policy adoption | 0/4 | 0% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **30/40** | **75%** |
+| **Total** | **29/40** | **72.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -61,7 +61,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] I2: Map existing implementation and missing runtime adoption.
 - [x] I3: Reconcile current scope, authoritative documents and evidence attribution.
 
-**Group 2 — management Service identities (11/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
+**Group 2 — management Service identities (10/11).** Evidence: [controller admission](#controller-management-implementation-checkpoint),
 [domain policy](#domain-policy-implementation-checkpoint), [Account Manager adoption](#2026-09-08-live-dev-account-manager-credential-checkpoint),
 [renewal](#dev-managed-early-renewal-checkpoint), [retirement](#dev-replaced-service-leaf-retirement-checkpoint),
 [listener egress](#managed-listener-egress-adoption-verified-in-dev-2026-09-09), [managed receipts](#fresh-managed-listener-crl-receipts-verified-in-dev-2026-09-09),
@@ -78,7 +78,7 @@ below and the [scope review](production-pki-remaining-audit.md#scope-review-comp
 - [x] M8: Adopt and qualify the Device API consumer's managed controller credential.
 - [x] M9: Adopt and qualify pkibroker's managed controller credential. Evidence: [managed broker checkpoint](#managed-pkibroker-controller-credential-qualified-in-dev-2026-09-10).
 - [x] M10: Adopt factory's managed controller CRL transport, exact permissions and receipts. Evidence: [factory work package](#immediate-factory-work-package).
-- [x] M11: Qualify pre-held management sessions, selective cutoff and remaining trust-failure cases across callers. Evidence: [M11 closure](#m11-management-held-session-and-recovery-closure-2026-09-12).
+- [ ] M11: Requalify pre-held management sessions, selective cutoff and exact-request recovery in Dev after the [review reopening](#m11-management-held-session-and-recovery-review-reopening-2026-09-12). The local consumer, lifecycle and recovery regressions pass; the fresh Dev lifecycle evidence remains.
 
 **Group 3 — transports and hosts (11/11).** Evidence: [Service v2 activation](#service-intermediate-v2-activated-in-dev-2026-09-09),
 [host rollout](#2026-09-08-live-dev-managed-server-checkpoint), listener renewal/retirement
@@ -2363,50 +2363,32 @@ MQTT/OpenBao are ready, the CRL history trigger is enabled, and no active/retiri
 issuer's latest CRL is expired. Only the two explicitly authorized Dev GHCR pull
 secrets were refreshed. No staging, MFA, PR or branch-push operation was performed.
 
-### M11 management held-session and recovery closure (2026-09-12)
+### M11 management held-session and recovery review reopening (2026-09-12)
 
-M11 is complete in Dev. The final Account Manager run is
-`m11-account-manager-controller-r9-20260912`. It held the owner-local
-CertIssuer connection and the real signed human-assertion controller path before
-rotation. The controller probe itself intentionally received `403`: that proves
-its mTLS socket but is not the management method. The actual Account Manager
-request opened one sidecar controller connection; after client rotation the old
-application connection was absent before the successor request opened its own
-connection. The probe's deliberately held control socket is excluded from that
-count and remains available until the old credential is retired.
+M11 is reopened. Review of the `m11-account-manager-controller-r9-20260912`
+implementation found four defects: the deployed `RegistryServerConsumer` did
+not implement the listener's transport-eviction hook; the successor check could
+open a replacement controller connection after predecessor retirement; the
+provider-recovery marker could be persisted before provider authentication; and
+pending recovery could accept an unrelated installed identity.
 
-The predecessor client was cut off from CertIssuer within 6.25 seconds and from
-controller within 6.62 seconds; each fresh old-credential connection was denied.
-The predecessor Account Manager listener connection closed within 12.11 seconds.
-The unaffected Factory-to-CertIssuer control, the successors, current CRL
-receipts and a seed-free Account Manager restart all passed. The runner uses the
-normal Account Manager signed request and the existing controller route; it does
-not export a bearer token or private key.
+The repaired source now closes the real consumer's owned transports through the
+listener hook, tracks the successor connection's local socket through retirement,
+creates the recovery marker only after the short-lived provider login succeeds,
+and accepts `--recover-pending` only with a canonical exact request ID that
+matches the installed identity. The local Go PKI trust suite, adjacent PKI and
+management-app suites, and deterministic lifecycle regression tests pass.
 
-The recovery evidence is retained in
-`m11-account-manager-pending-recovery-r2-20260912`,
-`m11-account-manager-pending-fence-20260912`,
-`m11-account-manager-pending-recovery-r4-20260912`, and
-`m11-account-manager-pending-recovery-r6-20260912`. It found no provider record
-for the retained CSR, fenced the original Dev CertIssuer owner for five minutes,
-persisted an exclusive request marker, signed that exact CSR once with its
-original validity ceiling, reconciled through the existing controller API, and
-verified the installed successor through a seed-free restart. The provider
-inventory, CSR and certificate stayed owner-local; the evidence records only
-public request/fingerprint metadata.
+A fresh Dev Account Manager image rollout and M11 lifecycle/recovery run must
+produce replacement evidence before this checkpoint can close. That run must
+show real consumer eviction before successor creation, successor socket survival
+without a new request after retirement, retryable failed provider authentication
+without a marker, and rejection of an unrelated successful request. Historical
+M11 evidence remains useful context but no longer closes the checkpoint. Staging
+and human-login/MFA behavior remain out of scope.
 
-The M11 coverage matrix combines this Account Manager result with the already
-passed Factory, Device API, pkibroker, CertIssuer/controller listener and
-OpenBao provider rows in the [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12).
-Its independent registry-unavailable and unusable/missing CRL evidence remains
-`t11-service-trust-failure-r2-20260912`: both Service listeners failed closed,
-made no issuance or acknowledgment change, and recovered using the current
-receipts. Readiness and a fresh handshake are not used as substitutes for held
-session evidence. Staging and human-login/MFA behavior were untouched.
-
-**M11: complete. Active milestone: 30/40 = 75%; 10 checkpoints remain.**
-Inventory/design, management Service identities and transports/hosts are 3/6
-closed work groups. The remaining checkpoints are R1–R4, A4–A6 and V3–V5; the
-next priority is R1, App root-policy adoption. Backup/recovery and SDK,
-provider/hardware, and deferred staging/custody/recovery qualification remain
-outside this closure.
+**M11: reopened. Active milestone: 29/40 = 72.5%; 11 checkpoints remain.**
+Inventory/design and transports/hosts are 2/6 closed work groups. The remaining
+checkpoints are M11, R1–R4, A4–A6 and V3–V5. M11 is the current priority;
+backup/recovery and SDK, provider/hardware, and deferred staging/custody/recovery
+qualification remain outside this closure.
