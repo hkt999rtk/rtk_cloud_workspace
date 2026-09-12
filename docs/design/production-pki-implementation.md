@@ -5772,3 +5772,17 @@ four consumer CRL receipts, successor admission, and seed-free restart
 persistence. It keeps private keys inside the workload state and records only
 public identity fingerprints in evidence. T11 is closed at **29/40 = 72.5%**;
 M11 is next.
+
+### T11 correction: held-server proof and retry-safe consumer reconciliation (2026-09-12)
+
+This completion claim is superseded. Review found that the Account Manager
+lifecycle did not hold an independent Factory-to-listener connection, so it did
+not prove server-side predecessor cutoff. The runner now records that held
+listener session, its public server fingerprint, successor admission and the
+survival of Factory's CertIssuer control connection. It also retries consumer
+rollouts after an interrupted ConfigMap patch, while requiring every consumer to
+be ready before any manifest change and keeping preflight read-only.
+
+Fresh core Service handshakes are currently denied by the Dev listener, so the
+corrected live evidence remains pending. T11 is open and the checkpoint total is
+**28/40 = 70%**.

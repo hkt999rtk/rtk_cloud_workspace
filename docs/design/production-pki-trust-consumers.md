@@ -95,7 +95,7 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T8: Adopt the governed MQTT host and actual clients with authenticated reconnect/lifecycle evidence in dev. The dedicated MQTT hierarchy, managed EMQX host, actual API/log-ingester clients, renewal, predecessor retirement, retained-state restart and fail-closed trust recovery passed in dev. Evidence: [governed MQTT checkpoint](#governed-mqtt-host-and-actual-clients-qualified-in-dev-2026-09-10).
 - [x] T9: Adopt the governed OpenBao TLS host and provider clients with dev replacement/denial evidence. Host replacement/restart, both real provider clients, retained-request recovery, predecessor revocation/CRL receipts and fresh Device/App canaries passed. Evidence: [T9 completion](#openbao-host-and-provider-recovery-qualified-2026-09-12).
 - [x] T10: Record independent public HTTPS endpoint and renewal evidence. Evidence: [public HTTPS renewal](#public-https-renewal-qualified-in-dev-2026-09-12).
-- [x] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts. The final Account Manager client/listener lifecycle closes the remaining row: held predecessor closure and fresh denial, v5 consumer CRL synchronization/receipts, successor acceptance and bootstrap-free restart all passed in Dev. See [T11 completion](#t11-held-session-and-trust-outage-matrix-qualified-2026-09-12).
+- [ ] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts. The earlier Account Manager client/listener evidence is retained, but T11 was reopened after review found it lacked a held connection to the Account Manager server listener. See [T11 correction](#t11-correction-held-server-proof-and-consumer-retry-2026-09-12).
 
 **Group 4 — root-policy adoption (0/4).** Evidence boundary: the audited inventory
 and fixed group definition below. Device root-policy evidence belongs to the
@@ -2270,5 +2270,21 @@ live held-session or outage-recovery evidence. T11 does not close root-policy
 work (R1–R4), App/relay work (A4–A6), or backup/recovery work (V3–V5). Staging
 and human-login/MFA behavior were untouched.
 
-Current checkpoint completion is **29/40 = 72.5%**; **11 remain**: M11, R1–R4,
-A4–A6 and V3–V5.
+### T11 correction: held-server proof and consumer retry (2026-09-12)
+
+Review reopened T11. The earlier lifecycle report proved the Account Manager's
+outbound client connection, but not a pre-held connection from an independent
+Service client to the Account Manager listener. The runner now uses Factory's
+private managed identity in-place, records the listener leaf fingerprint, proves
+the held socket is closed after listener renewal, proves a fresh successor
+connection, and checks that Factory's CertIssuer control connection survives.
+
+The review also found that a retry after ConfigMaps were patched but before a
+consumer rollout could skip the rollout. Consumer synchronization now reconciles
+the Factory, API and Account Manager template digest on every retry. It first
+requires all three workloads to be ready and keeps the lifecycle preflight
+read-only, so an unhealthy consumer cannot be restarted by a preliminary repair.
+
+The Dev Service listener currently rejects fresh core service connections, so
+this corrected runner has not yet produced replacement T11 evidence. T11 remains
+open at **28/40 = 70%**; **12 remain**: T11, M11, R1–R4, A4–A6 and V3–V5.

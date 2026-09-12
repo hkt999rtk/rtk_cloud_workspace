@@ -69,8 +69,11 @@ func TestServiceSessionKeepsSocketAndRejectsReplacedCredential(t *testing.T) {
 		t.Helper()
 		select {
 		case line := <-lines:
-			var event struct{ Event string }
-			if json.Unmarshal([]byte(line), &event) != nil || event.Event != want {
+			var event struct {
+				Event             string `json:"event"`
+				ServerFingerprint string `json:"server_fingerprint"`
+			}
+			if json.Unmarshal([]byte(line), &event) != nil || event.Event != want || event.ServerFingerprint != fmt.Sprintf("%x", sha256.Sum256(pair.Certificate[0])) {
 				t.Fatalf("event: %s", line)
 			}
 		case <-time.After(5 * time.Second):

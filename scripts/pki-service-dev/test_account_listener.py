@@ -1,4 +1,6 @@
 import importlib.util
+import copy
+import json
 from pathlib import Path
 import unittest
 
@@ -62,6 +64,103 @@ class AccountListenerTests(unittest.TestCase):
         self.assertEqual(result, [{'issuer': issuer, 'state_path': '/state/crl-' + issuer['issuer_id'] + '.json'}])
         with self.assertRaisesRegex(RuntimeError, 'invalid issuer'):
             lifecycle.consumer_crl_entries([{'issuer': dict(issuer, trust_domain='device')}], '/state/{issuer_id}')
+
+    def test_consumer_sync_reconciles_rollouts_after_configmap_only_interruption(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        runner.output = Path('/tmp/t11-consumer-sync')
+        issuer = {'issuer_id': 'a' * 8 + '-aaaa-aaaa-aaaa-' + 'a' * 12,
+                  'environment': 'dev', 'trust_domain': 'service', 'status': 'active'}
+        objects = {
+            ('configmap', 'pki-service-client-crls'): {'metadata': {'name': 'pki-service-client-crls'},
+                'data': {'crls.json': json.dumps([{'issuer': issuer}])}},
+            ('configmap', 'factoryenroll-service-crls'): {'metadata': {'name': 'factoryenroll-service-crls'}, 'data': {'crls.json': '[]'}},
+            ('configmap', 'video-cloud-api-pki-trust'): {'metadata': {'name': 'video-cloud-api-pki-trust'}, 'data': {'service-crls.json': '[]'}},
+            ('configmap', 'account-manager-service-crls-old'): {'metadata': {'name': 'account-manager-service-crls-old'},
+                'immutable': True, 'data': {'crls.json': '[]'}},
+        }
+        for name in ('factoryenroll', 'video-cloud-api-pki'):
+            objects[('deployment', name)] = {'metadata': {'name': name}, 'spec': {'replicas': 1,
+                'template': {'metadata': {'annotations': {}}, 'spec': {}}}, 'status': {'readyReplicas': 1}}
+        objects[('deployment', 'account-manager')] = {
+            'metadata': {'name': 'account-manager'},
+            'spec': {'replicas': 1, 'template': {
+                'metadata': {'annotations': {}},
+                'spec': {'volumes': [
+                    {'name': 'account-service-crls', 'configMap': {'name': 'account-manager-service-crls-old'}},
+                ]},
+            }},
+            'status': {'readyReplicas': 1},
+        }
+        interrupted = [True]
+        rollouts = []
+
+        def obj(kind, name, namespace=None):
+            if kind == 'deployment' and interrupted[0]:
+                interrupted[0] = False
+                raise RuntimeError('interrupted after ConfigMap updates')
+            return copy.deepcopy(objects[(kind, name)])
+
+        def patch(kind, before, changes):
+            current = objects[(kind, before['metadata']['name'])]
+            for change in changes:
+                if change['op'] != 'replace':
+                    continue
+                if kind == 'configmap':
+                    current['data'][change['path'].split('/')[-1]] = change['value']
+                else:
+                    current['spec']['template'] = change['value']
+
+        def create(value):
+            objects[('configmap', value['metadata']['name'])] = copy.deepcopy(value)
+
+        runner.obj = obj
+        runner.scoped_patch = patch
+        runner.create = create
+        runner.save = lambda *_: None
+        def kube(args, **_):
+            if args[:3] == ['-n', listener.AM_NS, 'get']:
+                name = args[4]
+                value = objects.get(('configmap', name))
+                return '' if value is None else json.dumps(value)
+            rollouts.append(args)
+            return ''
+        runner.kube = kube
+        with self.assertRaisesRegex(RuntimeError, 'interrupted after ConfigMap updates'):
+            runner.sync_service_crl_consumers(issuer['issuer_id'])
+        runner.sync_service_crl_consumers(issuer['issuer_id'])
+        self.assertEqual(len(rollouts), 3)
+        for name in ('factoryenroll', 'video-cloud-api-pki', 'account-manager'):
+            annotations = objects[('deployment', name)]['spec']['template']['metadata']['annotations']
+            self.assertIn(lifecycle.CONSUMER_MANIFEST_ANNOTATION, annotations)
+        selected = objects[('deployment', 'account-manager')]['spec']['template']['spec']['volumes'][0]
+        self.assertNotEqual(selected['configMap']['name'], 'account-manager-service-crls-old')
+
+    def test_consumer_sync_leaves_manifests_unchanged_when_a_target_is_unready(self):
+        runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
+        issuer = {'issuer_id': 'b' * 8 + '-bbbb-bbbb-bbbb-' + 'b' * 12,
+                  'environment': 'dev', 'trust_domain': 'service', 'status': 'active'}
+        objects = {
+            ('configmap', 'pki-service-client-crls'): {'metadata': {'name': 'pki-service-client-crls'},
+                'data': {'crls.json': json.dumps([{'issuer': issuer}])}},
+            ('configmap', 'factoryenroll-service-crls'): {'metadata': {'name': 'factoryenroll-service-crls'}, 'data': {'crls.json': 'old'}},
+            ('configmap', 'video-cloud-api-pki-trust'): {'metadata': {'name': 'video-cloud-api-pki-trust'}, 'data': {'service-crls.json': 'old'}},
+        }
+        for name, ready in (('factoryenroll', 1), ('video-cloud-api-pki', 0)):
+            objects[('deployment', name)] = {'metadata': {'name': name, 'generation': 1}, 'spec': {'replicas': 1,
+                'template': {'metadata': {'annotations': {}}, 'spec': {}}},
+                'status': {'readyReplicas': ready, 'observedGeneration': 1}}
+        objects[('deployment', 'account-manager')] = {'metadata': {'name': 'account-manager', 'generation': 1},
+            'spec': {'replicas': 1, 'template': {'metadata': {'annotations': {}}, 'spec': {'volumes': [
+                {'name': 'account-service-crls', 'configMap': {'name': 'account-manager-service-crls-old'}},
+            ]}}}, 'status': {'readyReplicas': 1, 'observedGeneration': 1}}
+        runner.obj = lambda kind, name, namespace=None: copy.deepcopy(objects[(kind, name)])
+        patches = []
+        runner.scoped_patch = lambda *args: patches.append(args)
+        runner.create = lambda *_: self.fail('unready preflight must not create a ConfigMap')
+        with self.assertRaisesRegex(RuntimeError, 'video-cloud-api-pki'):
+            runner.sync_service_crl_consumers()
+        self.assertEqual(patches, [])
+        self.assertEqual(objects[('configmap', 'factoryenroll-service-crls')]['data']['crls.json'], 'old')
 
     def test_lifecycle_revokes_a_predecessor_through_its_own_issuer(self):
         runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)

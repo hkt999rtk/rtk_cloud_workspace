@@ -71,6 +71,11 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 		return fmt.Errorf("initial session TLS failed")
 	}
 	defer c.Close()
+	peer := c.ConnectionState().PeerCertificates
+	if len(peer) == 0 {
+		return fmt.Errorf("initial session server certificate unavailable")
+	}
+	serverFingerprint := fmt.Sprintf("%x", sha256.Sum256(peer[0].Raw))
 	reader := bufio.NewReader(c)
 	status, err := exchange(c, reader)
 	if err != nil || status != 200 {
@@ -79,7 +84,8 @@ func serviceSession(args []string, input io.Reader, output io.Writer) error {
 	enc := json.NewEncoder(output)
 	emit := func(event string) error {
 		return enc.Encode(map[string]any{
-			"event": event, "at": time.Now().UTC(), "fingerprint": fingerprint})
+			"event": event, "at": time.Now().UTC(), "fingerprint": fingerprint,
+			"server_fingerprint": serverFingerprint})
 	}
 	if err = emit("ready"); err != nil {
 		return err

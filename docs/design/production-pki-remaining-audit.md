@@ -677,3 +677,12 @@ survival, and a seed-free restart. Factory and API stale Service-CRL manifest
 copies were synchronized from the canonical manifest without changing their
 private-state paths. T11 is closed; **11 checkpoints remain**: M11, R1–R4,
 A4–A6 and V3–V5. No staging or human-login/MFA change was made.
+
+### T11 correction (2026-09-12)
+
+T11 is reopened. Review found that its evidence did not include a held Factory
+connection to the Account Manager server listener, and that a partially applied
+CRL-consumer update could skip rollout completion on retry. The runner now covers
+both cases, but the Dev Service listener rejects fresh core service connections;
+replacement live evidence is still required. The remaining count is therefore
+**12**: T11, M11, R1–R4, A4–A6 and V3–V5.
