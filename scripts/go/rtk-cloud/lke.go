@@ -2569,6 +2569,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/pkicontroll
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/pkimanagement ./cmd/pkimanagement
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/serviceidentity-bootstrap ./cmd/serviceidentity-bootstrap
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/pkibroker ./cmd/pkibroker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/pkiturn ./cmd/pkiturn
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/cleaner ./cmd/cleaner
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/statistics ./cmd/statistics
@@ -2583,7 +2584,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconci
 FROM debian:bookworm-slim
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -u 10001 app \
     && chown app:app /app
@@ -2593,6 +2594,7 @@ COPY --from=builder /out/pkicontroller /app/pkicontroller
 COPY --from=builder /out/pkimanagement /app/pkimanagement
 COPY --from=builder /out/serviceidentity-bootstrap /app/serviceidentity-bootstrap
 COPY --from=builder /out/pkibroker /app/pkibroker
+COPY --from=builder /out/pkiturn /app/pkiturn
 COPY --from=builder /out/factoryenroll /app/factoryenroll
 COPY --from=builder /out/cleaner /app/cleaner
 COPY --from=builder /out/statistics /app/statistics

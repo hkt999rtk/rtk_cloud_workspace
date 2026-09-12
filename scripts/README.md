@@ -146,7 +146,10 @@ The manifest includes all `LKE_*_IMAGE` mappings above. On LKE, `scripts/run-sta
 
 ### `go run ./scripts/go/rtk-cloud -- lke-build-images`
 
-Legacy helper retained only for building and pushing the PostgreSQL staging image. Service images are not built by the workspace. Normal LKE staging uses `lke-resolve-images` and images published by each service repository.
+Normal LKE staging uses `lke-resolve-images` and images published by each service
+repository. The helper also supports explicit, locally committed service-image
+builds for Dev qualification; those builds require `--workloads` plus an exact
+Dev registry image and must be deployed by digest.
 
 ## Runtime Dependency Policy
 

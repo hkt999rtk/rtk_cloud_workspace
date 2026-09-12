@@ -5203,7 +5203,7 @@ func TestCloudAdminImageBuildContextUsesProductionWebImage(t *testing.T) {
 	}
 }
 
-func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T) {
+func TestVideoCloudDockerfileIncludesRuntimeAndPKIBinaries(t *testing.T) {
 	contextDir := t.TempDir()
 	writeTestFile(t, filepath.Join(contextDir, "go.mod"), "module video_cloud\n\ngo 1.25.1\n")
 
@@ -5216,13 +5216,14 @@ func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T)
 	body := readTestFile(t, dockerfile)
 	for _, want := range []string{
 		"FROM golang:1.25-bookworm AS builder",
-		"apt-get install -y --no-install-recommends ca-certificates",
+		"apt-get install -y --no-install-recommends ca-certificates openssh-client",
 		"go build -trimpath -o /out/api ./cmd/api",
 		"go build -trimpath -o /out/certissuer ./cmd/certissuer",
 		"go build -trimpath -o /out/pkicontroller ./cmd/pkicontroller",
 		"go build -trimpath -o /out/pkimanagement ./cmd/pkimanagement",
 		"go build -trimpath -o /out/serviceidentity-bootstrap ./cmd/serviceidentity-bootstrap",
 		"go build -trimpath -o /out/pkibroker ./cmd/pkibroker",
+		"go build -trimpath -o /out/pkiturn ./cmd/pkiturn",
 		"go build -trimpath -o /out/factoryenroll ./cmd/factoryenroll",
 		"go build -trimpath -o /out/cleaner ./cmd/cleaner",
 		"go build -trimpath -o /out/statistics ./cmd/statistics",
@@ -5238,6 +5239,7 @@ func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T)
 		"COPY --from=builder /out/pkimanagement /app/pkimanagement",
 		"COPY --from=builder /out/serviceidentity-bootstrap /app/serviceidentity-bootstrap",
 		"COPY --from=builder /out/pkibroker /app/pkibroker",
+		"COPY --from=builder /out/pkiturn /app/pkiturn",
 		"COPY --from=builder /out/factoryenroll /app/factoryenroll",
 		"COPY --from=builder /out/cleaner /app/cleaner",
 		"COPY --from=builder /out/statistics /app/statistics",
