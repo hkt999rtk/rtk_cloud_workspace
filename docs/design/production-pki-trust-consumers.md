@@ -2459,3 +2459,20 @@ App-root/Device-CRL state-file aliases are rejected. Focused package tests pass;
 the database-backed App-root pool regression requires `VIDEO_CLOUD_TEST_DSN` and
 remains an integration gate rather than claimed local evidence. R1 is still open
 for that integration test and Dev withdrawal qualification.
+
+### R1 successor App Root provisioning correction (2026-09-13)
+
+Successor installation is now an explicit operation separate from Root distrust.
+The API reads `VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOTS`; broker and TURN use their
+existing `*_APP_ROOTS` paths. Before changing persistent state, each consumer
+requires the complete self-signed Root set to match the exact App registry
+versions in its reviewed issuer manifest. Unreviewed, incomplete, cross-domain,
+changed or non-self-signed bundles fail without changing trust.
+
+The approved bundle is merged atomically before TLS and App bundle verification.
+The stored cumulative distrust policy filters every merge by Root public-key
+fingerprint, so a stale ConfigMap cannot restore a withdrawn lineage. Retiring
+bundles remain verifiable during overlap but receive no new activation receipt.
+Local regressions cover exact registry binding, successor persistence, restart,
+and attempted reintroduction of a distrusted key. Dev withdrawal qualification
+across API, MQTT and TURN remains required before R1 can close.

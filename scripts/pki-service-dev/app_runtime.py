@@ -325,6 +325,8 @@ class AppRuntime(h.ServiceRun):
             'VIDEO_CLOUD_AUTH_ISSUER_TRUST_MANIFEST': '/run/pki-app/issuers.json',
             'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_STATE':
                 '/run/pki-state/app/root-policy.json',
+            'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOTS':
+                '/run/pki-app/roots.pem',
             'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOT_ID': root['issuer_id'],
             'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_CONTROLLER_URL':
                 'https://pki-controller.' + NS + '.svc:18446',
