@@ -93,9 +93,14 @@ class AppRuntime(h.ServiceRun):
             return
         current = json.loads(raw)
         if desired['kind'] == 'Secret':
-            m.require(current.get('type') == desired.get('type')
-                      and current.get('data') == desired.get('data'),
-                      'existing R1 Secret differs')
+            m.require(current.get('type') == desired.get('type'),
+                      'existing R1 Secret type differs')
+            if current.get('data') != desired.get('data'):
+                m.require(name == 'pki-app-consumer-video-cloud-api-app',
+                          'existing R1 Secret differs')
+                self.observed_patch('secret', name, current, [{
+                    'op': 'replace', 'path': '/data',
+                    'value': desired['data']}])
         elif desired['kind'] == 'ConfigMap':
             if current.get('data') != desired.get('data'):
                 m.require(name == 'pki-app-trust',
@@ -120,6 +125,9 @@ class AppRuntime(h.ServiceRun):
             m.require(current['spec']['selector'] == desired['spec']['selector']
                       and current['spec']['ports'][0]['port'] == 8443,
                       'existing R1 Service differs')
+        elif desired['kind'] == 'NetworkPolicy':
+            m.require(current['spec'] == desired['spec'],
+                      'existing R1 NetworkPolicy differs')
         else:
             m.require(False, 'existing R1 workload requires explicit reconciliation')
         self.save('reused-' + name + '.json', {
@@ -154,7 +162,13 @@ class AppRuntime(h.ServiceRun):
     def install_api(self, image, root):
         identity = self.private_material('consumers', 'video-cloud-api-app')
         server = self.private_material('servers', 'video-cloud-api-app-pki')
-        self.secret('pki-app-consumer-video-cloud-api-app', identity)
+        service_root = self.obj('configmap', 'pki-service-host-root')
+        management_ca = service_root.get('data', {}).get('root.pem', '')
+        m.require(management_ca.startswith('-----BEGIN CERTIFICATE-----'),
+                  'Dev controller serving root is missing')
+        management = dict(identity)
+        management['ca.crt'] = management_ca
+        self.secret('pki-app-consumer-video-cloud-api-app', management)
         self.secret('video-cloud-api-app-pki-tls', {
             'tls.crt': server['tls.crt'], 'tls.key': server['tls.key']})
         entry = {'issuer': root,
@@ -184,6 +198,9 @@ class AppRuntime(h.ServiceRun):
         template = deployment['spec']['template']
         template['metadata']['labels']['app.kubernetes.io/name'] = \
             'video-cloud-api-app-pki'
+        template['metadata'].setdefault('annotations', {})[
+            'rtk.realtek.com/app-management-identity-sha256'] = m.digest(
+                ''.join(management[key] for key in sorted(management)).encode())
         pod = template['spec']
         container = pod['containers'][0]
         container['image'] = image
@@ -279,6 +296,21 @@ class AppRuntime(h.ServiceRun):
                   'immutable Dev Video Cloud image required')
         root = self.app_root()
         self.install_controller(self.args.image)
+        self.ensure({
+            'apiVersion': 'networking.k8s.io/v1',
+            'kind': 'NetworkPolicy',
+            'metadata': {'name': 'allow-app-trust-consumers', 'namespace': NS},
+            'spec': {
+                'podSelector': {'matchLabels': {
+                    'app.kubernetes.io/name': 'pki-controller'}},
+                'policyTypes': ['Ingress'],
+                'ingress': [{
+                    'from': [{'podSelector': {'matchExpressions': [{
+                        'key': 'app.kubernetes.io/name',
+                        'operator': 'In',
+                        'values': ['video-cloud-api-app-pki', 'mqtt-pki',
+                                   'pkiturn']}]}}],
+                    'ports': [{'protocol': 'TCP', 'port': 18446}]}]}})
         self.install_api(self.args.image, root)
 
 
