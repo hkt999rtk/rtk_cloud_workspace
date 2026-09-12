@@ -818,6 +818,9 @@ func lkePublicHTTPSBridgeServiceManifests(env map[string]string, routes []lkePub
 	manifests := []string{}
 	seen := map[string]bool{}
 	for _, route := range routes {
+		if route.Protocol == "TLS_PASSTHROUGH" {
+			continue
+		}
 		name := lkePublicHTTPSBridgeServiceName(env, route)
 		if seen[name] {
 			continue
@@ -1303,9 +1306,47 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", ""))
 	}
 	if len(passthroughRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-app-mtls", passthroughRoutes, "HTTPS", "    nginx.ingress.kubernetes.io/ssl-passthrough: \"true\"\n"))
+		manifests = append(manifests, lkeAppMTLSIngressManifest(env, passthroughRoutes))
 	}
 	return manifests
+}
+
+func lkeAppMTLSIngressManifest(env map[string]string, routes []lkePublicHTTPSRoute) string {
+	var rules strings.Builder
+	for _, route := range routes {
+		fmt.Fprintf(&rules, `    - host: %s
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: %s
+                port:
+                  number: %d
+`, route.Host, route.Service, route.ServicePort)
+	}
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: video-cloud-staging-app-mtls
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-staging-app-mtls
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: nginx
+  tls:
+    - secretName: video-cloud-api-app-public-tls
+      hosts:
+%s
+  rules:
+%s`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkePublicHTTPSTLSHostsYAML(routes), rules.String())
 }
 
 func lkeIsDeviceMTLSRoute(env map[string]string, route lkePublicHTTPSRoute) bool {
@@ -1402,11 +1443,15 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	}
 	byNamespace := map[string][]int{}
 	for _, route := range routes {
+		if route.Protocol == "TLS_PASSTHROUGH" {
+			continue
+		}
 		byNamespace[route.Namespace] = append(byNamespace[route.Namespace], firstNonZero(route.TargetPort, route.ServicePort))
 	}
 	for namespace, ports := range byNamespace {
 		manifests = append(manifests, lkeAllowPublicIngressNetworkPolicyManifest(env, namespace, ports))
 	}
+	manifests = append(manifests, lkeAllowAppMTLSIngressNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowPostgresClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowOpenBaoClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
@@ -1433,6 +1478,31 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 		manifests = append(manifests, lkeAccountManagerHandoffNetworkPolicyManifests(env)...)
 	}
 	return manifests
+}
+
+func lkeAllowAppMTLSIngressNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-public-app-mtls
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: video-cloud-api-app-pki
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+      ports:
+        - { protocol: TCP, port: 8443 }
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeIngressNamespace(env))
 }
 
 func lkeAccountManagerHandoffNetworkPolicyManifests(env map[string]string) []string {

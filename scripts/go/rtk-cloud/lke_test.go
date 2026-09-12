@@ -2034,7 +2034,6 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: Secret\nmetadata:\n  name: video-cloud-staging-public-tls\n  namespace: video-cloud-staging-ingress",
 		"kind: Secret\nmetadata:\n  name: video-cloud-api-app-public-tls\n  namespace: video-cloud-staging-video-cloud",
 		"kind: Service\nmetadata:\n  name: public-video-cloud-api-video-cloud",
-		"kind: Service\nmetadata:\n  name: public-video-cloud-api-app-pki-video-cloud",
 		"type: ExternalName",
 		"externalName: video-cloud-api.video-cloud-staging-video-cloud.svc.cluster.local",
 		"kind: Service\nmetadata:\n  name: public-certissuer-video-cloud",
@@ -2044,7 +2043,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-public",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-device-mtls",
 		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-certissuer",
-		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-app-mtls",
+		"kind: Ingress\nmetadata:\n  name: video-cloud-staging-app-mtls\n  namespace: video-cloud-staging-video-cloud",
 		"nginx.ingress.kubernetes.io/ssl-passthrough: \"true\"",
 		"nginx.ingress.kubernetes.io/proxy-connect-timeout: \"60\"",
 		"nginx.ingress.kubernetes.io/proxy-read-timeout: \"3600\"",
@@ -2066,7 +2065,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"host: admin.video-cloud-staging.realtekconnect.com",
 		"host: frontend.video-cloud-staging.realtekconnect.com",
 		"name: public-video-cloud-api-video-cloud\n                port:\n                  number: 80",
-		"name: public-video-cloud-api-app-pki-video-cloud\n                port:\n                  number: 8443",
+		"name: video-cloud-api-app-pki\n                port:\n                  number: 8443",
 		"name: public-certissuer-video-cloud\n                port:\n                  number: 9443",
 		"name: public-video-cloud-turnregistry-video-cloud\n                port:\n                  number: 18190",
 		"name: public-account-manager-account-manager\n                port:\n                  number: 80",
@@ -2601,10 +2600,10 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 			t.Fatalf("public ingress policy for %s must allow backend pod port %s, got:\n%s", namespace, wantPort, chunk)
 		}
 	}
-	videoPolicy := "name: allow-public-ingress\n  namespace: video-cloud-staging-video-cloud"
+	videoPolicy := "name: allow-public-app-mtls\n  namespace: video-cloud-staging-video-cloud"
 	idx := strings.Index(manifests, videoPolicy)
 	if idx < 0 {
-		t.Fatalf("video-cloud public ingress policy missing:\n%s", manifests)
+		t.Fatalf("App mTLS ingress policy missing:\n%s", manifests)
 	}
 	chunk := manifests[idx:]
 	if next := strings.Index(chunk, "\n---\n"); next >= 0 {
@@ -2612,6 +2611,9 @@ func TestLKEPublicHTTPSNetworkPolicyAllowsBackendTargetPorts(t *testing.T) {
 	}
 	if !strings.Contains(chunk, "port: 8443") {
 		t.Fatalf("App passthrough backend port is not admitted:\n%s", chunk)
+	}
+	if !strings.Contains(chunk, "app.kubernetes.io/name: video-cloud-api-app-pki") {
+		t.Fatalf("App passthrough policy is not limited to the App API:\n%s", chunk)
 	}
 }
 
