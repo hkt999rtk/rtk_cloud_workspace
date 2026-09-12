@@ -152,9 +152,12 @@ class AppHierarchy(s.ServiceRun):
 
     def sign_initial_root_crl(self, root):
         if self.crl_count(root['issuer_id']) == '1':
-            return self.api('/issuers/' + root['issuer_id'] + '/crl')
+            return self.api('/issuers/' + root['issuer_id'] + '/crl',
+                            role='approver')
         m.require(self.crl_count(root['issuer_id']) == '0',
                   'unexpected App Root CRL history')
+        if self.args.resume:
+            return self.import_saved_root_crl(root, Path(self.args.resume))
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
         request = {
             'issuer_id': root['issuer_id'],
@@ -175,10 +178,38 @@ class AppHierarchy(s.ServiceRun):
             '--passphrase-file', m.read(
                 source / 'passphrase-reference.json')['path'],
             '--out', self.output / 'root-crl'])
-        raw = (self.output / 'root-crl/revocations.pem').read_text()
+        return self.import_saved_root_crl(root, self.output)
+
+    def import_saved_root_crl(self, root, source):
+        report = m.read(source / 'report.json')
+        m.require(report['environment'] == 'dev'
+                  and report['phase'] == 'activate-root'
+                  and report['status'] == (
+                      'running' if source.resolve() == self.output.resolve()
+                      else 'failed'),
+                  'current or failed Dev App Root evidence required')
+        saved_root = m.read(source / 'root-active.json')
+        request = m.read(source / 'root-crl-request.json')
+        manifest = m.read(source / 'root-crl/public-manifest.json')
+        raw = (source / 'root-crl/revocations.pem').read_text()
+        der = base64.b64decode(''.join(raw.splitlines()[1:-1]), validate=True)
+        expected = self.ceremony_call([
+            'crl-digest', source / 'root-crl-request.json']).strip()
+        m.require(saved_root == root
+                  and request['issuer_id'] == root['issuer_id']
+                  and request['issuer_fingerprint_sha256'] ==
+                  root['certificate_fingerprint_sha256']
+                  and request['crl_number'] == '1'
+                  and not request['revocations']
+                  and manifest['request'] == request
+                  and manifest['request_sha256'] == expected
+                  and manifest['crl_sha256'] == m.digest(der),
+                  'saved App Root CRL evidence changed')
+        self.save('root-crl-source.json', {
+            'source': str(source), 'request_sha256': expected,
+            'crl_sha256': manifest['crl_sha256']})
         record = self.api('/issuers/' + root['issuer_id'] + '/crl', {
-            'crl_pem': raw})
-        manifest = m.read(self.output / 'root-crl/public-manifest.json')
+            'crl_pem': raw}, role='approver')
         m.require(record['crl_sha256'] == manifest['crl_sha256'],
                   'imported App Root CRL differs')
         return record
@@ -208,7 +239,8 @@ class AppHierarchy(s.ServiceRun):
 
     def active_root(self):
         root = self.app_root('active')
-        crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        crl = self.api('/issuers/' + root['issuer_id'] + '/crl',
+                       role='approver')
         m.require(dt.datetime.fromisoformat(
             crl['next_update'].replace('Z', '+00:00')) >
             dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1),
@@ -331,7 +363,10 @@ def main():
                         choices=('activate-root', 'prepare-intermediate'))
     parser.add_argument('--authority', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--resume', help='Reuse signed evidence from a failed phase')
     args = parser.parse_args()
+    m.require(not args.resume or args.phase == 'activate-root',
+              '--resume currently applies only to activate-root')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/app-hierarchy-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
