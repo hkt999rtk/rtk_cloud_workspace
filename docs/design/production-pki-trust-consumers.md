@@ -2397,3 +2397,27 @@ closed work groups. The remaining checkpoints are R1–R4, A4–A6 and V3–V5; 
 next priority is R1, App root-policy adoption. Backup/recovery and SDK,
 provider/hardware, and deferred staging/custody/recovery qualification remain
 outside this closure.
+
+### R1 App root-policy code checkpoint (2026-09-12)
+
+App session consumers now use the same durable Root-policy lifecycle as Device
+consumers. `RegistryAppConsumer` accepts a reviewed App Root ID, provisioned
+self-signed roots and a separate persisted state path. It installs the exact
+policy and Root pool before a broker or TURN sweep, verifies every App token
+against that installed pool and policy, then acknowledges the Root policy only
+after the CRL-backed sweep succeeds. Incomplete configuration, cross-domain
+manifest use and state-path aliases fail during startup.
+
+The public API now has independent `VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_*` settings.
+When configured, its direct mTLS listener loads only the durable App Root state,
+disables TLS resumption and denies new handshakes until App Root synchronization
+succeeds. Device and App dynamic state are intentionally rejected together for
+now: their TLS pools need one atomic combined installer, which is a separate
+follow-up rather than a partially ordered pair of reloaders.
+
+Local validation passed: `go test ./internal/config ./internal/apiapp
+./internal/pki ./internal/pkitrust ./internal/pkibrokerapp ./internal/pkiturnapp`.
+The new App regression proves CRL-valid App tokens are denied unless their Root
+is present in the consumer-installed pool. Dev has not been changed. R1 remains
+open for deployment configuration and Dev withdrawal evidence across API,
+broker and TURN.
