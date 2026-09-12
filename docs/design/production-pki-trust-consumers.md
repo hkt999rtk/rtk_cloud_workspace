@@ -414,6 +414,43 @@ a reviewed restart; removed or invalid entries deny acceptance until reconciled.
 Persistent Root-policy updates and selective terminal-issuer retention remain
 in the existing root-policy work group, not claimed by bundle installation.
 
+## Service Root-policy installation
+
+Service trust now uses the same durable root-policy model as Device and App
+consumers. A Service listener or caller enables it only by supplying all three
+settings beside its existing Service CRL manifest:
+
+| Setting | Purpose |
+| --- | --- |
+| `*_SERVICE_ROOT_ID` | reviewed Service Root authority used to read and acknowledge policy |
+| `*_SERVICE_ROOT_STATE` | private, persistent policy-state file owned by the workload |
+| `*_SERVICE_ROOTS` | read-only provisioned PEM bundle containing the approved overlap roots |
+
+The CRL management path remains the policy management path. A consumer fetches
+and persists the Service Root policy, removes distrusted root keys from the
+provisioned bundle, verifies the policy against the registry, replaces its live
+TLS root pool, sweeps current connections, and only then acknowledges the exact
+policy digest. The persisted state is reloaded for controlled restart recovery;
+it never restores bootstrap credentials or sends an acknowledgement until a
+normal management sweep succeeds.
+
+For inbound Service mTLS, each new handshake reads the current installed client
+root pool and the listener rechecks established sockets after a policy update.
+For outbound Service callers, the HTTP connection owner swaps its TLS root pool
+and evicts all existing connections. Both paths re-verify the registered
+three-certificate lineage, current root/intermediate CRLs, installed root pool,
+and the distrust policy. This checks every verified path, including a
+cross-signed chain or resumed connection, so a withdrawn root cannot re-enter
+through a static pin or an old socket.
+
+The controller's management handler uses the listener's same Service consumer;
+it does not fall back to `PKI_SERVICE_CLIENT_ROOT_SHA256` after dynamic root
+policy adoption. Existing root pins remain a bootstrap constraint until the
+durable configuration is installed. The Dev rollout starts with
+`service_root_policy.py`, which adds the state and read-only bundle only to the
+controller and certificate-issuer listener owners. Outbound callers are added
+after their separate state owners and recovery paths are verified.
+
 
 ## Service listener bundle checkpoint
 

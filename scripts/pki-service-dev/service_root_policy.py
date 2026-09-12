@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Install durable Service Root policy state on the two Service listeners.
+
+Dev-only. This is deliberately a narrow first rollout: it makes the controller
+and certissuer listeners persist and enforce the active Service root policy
+without changing their managed identity or unrelated workload configuration.
+"""
+import argparse
+import copy
+import fcntl
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import sys
+import time
+
+spec = importlib.util.spec_from_file_location('service_hierarchy', Path(__file__).with_name('run.py'))
+s = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(s)
+m, NS = s.m, s.NS
+
+NAMES = ('pki-controller', 'certissuer')
+ROOT_CONFIG = 'pki-service-root-policy'
+ROOT_MOUNT = '/run/pki-service-root-policy'
+ROOT_STATE = '/var/lib/pki-host/identity/service-root-policy.json'
+IMAGE = re.compile(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
+
+
+def env_map(container):
+    values = {entry['name']: entry.get('value') for entry in container.get('env', [])}
+    m.require(len(values) == len(container.get('env', [])), 'duplicate environment setting')
+    return values
+
+
+def with_env(entries, updates):
+    return [entry for entry in entries if entry['name'] not in updates] + [
+        {'name': key, 'value': value} for key, value in updates.items()]
+
+
+def prefix(name):
+    m.require(name in NAMES, 'unknown Service listener')
+    return 'PKI_SERVICE_CLIENT' if name == 'pki-controller' else 'CERT_ISSUER_SERVICE_CLIENT'
+
+
+def root_template(owner, name, root, image=None):
+    """Return the exact listener patch, retaining only the owned additions."""
+    template = copy.deepcopy(owner['spec']['template'])
+    pod, containers = template['spec'], template['spec']['containers']
+    m.require(len(containers) == 1 and containers[0]['name'] == name,
+              'listener container ownership changed')
+    container = containers[0]
+    values = env_map(container)
+    selected = prefix(name)
+    required = (selected + '_ROOT_SHA256', selected + '_SERVER_CRL_MANIFEST',
+                selected + '_PKI_CONTROLLER_URL', selected + '_MANAGEMENT_CA')
+    m.require(all(values.get(key) for key in required),
+              'listener CRL management path is incomplete')
+    for suffix in ('SERVICE_ROOT_ID', 'SERVICE_ROOT_STATE', 'SERVICE_ROOTS'):
+        m.require(not values.get(selected + '_' + suffix),
+                  'Service Root policy is already configured; reconcile')
+    mounts = {item['name']: item for item in container.get('volumeMounts', [])}
+    volumes = {item['name']: item for item in pod.get('volumes', [])}
+    m.require('service-root-policy' not in mounts and 'service-root-policy' not in volumes,
+              'Service Root policy mount already exists')
+    container['env'] = with_env(container['env'], {
+        selected + '_SERVICE_ROOT_ID': root['issuer_id'],
+        selected + '_SERVICE_ROOT_STATE': ROOT_STATE,
+        selected + '_SERVICE_ROOTS': ROOT_MOUNT + '/roots.pem'})
+    container['volumeMounts'].append({'name': 'service-root-policy',
+                                      'mountPath': ROOT_MOUNT,
+                                      'readOnly': True})
+    pod['volumes'].append({'name': 'service-root-policy',
+                           'configMap': {'name': ROOT_CONFIG, 'defaultMode': 292}})
+    if image:
+        m.require(IMAGE.fullmatch(image), 'immutable Dev Video Cloud image required')
+        container['image'] = image
+    template['metadata'].setdefault('annotations', {})[
+        'rtk.realtek.com/service-root-policy'] = root['issuer_id']
+    return template
+
+
+class RootPolicyRun(s.ServiceRun):
+    def __init__(self, args):
+        super().__init__(args)
+        self.report['foundation_scope'] = 'Dev durable Service Root policy listener adoption'
+        self.report['service_root_policy_runner_sha256'] = m.digest(Path(__file__).read_bytes())
+        self.save('report.json', self.report)
+
+    def active_root(self):
+        root = self.api('/issuers/' + self.args.root_id)
+        m.require(root['environment'] == 'dev' and root['trust_domain'] == 'service'
+                  and root['kind'] == 'root' and root['status'] == 'active',
+                  'active Service Root changed')
+        crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
+        self.save('root.json', root)
+        self.save('root-crl.json', crl)
+        return root
+
+    def preflight_root_policy(self, root):
+        self.preflight()
+        for name in NAMES:
+            owner = self.obj('deployment', name)
+            m.require(owner['spec'].get('replicas') == 1
+                      and owner.get('status', {}).get('readyReplicas') == 1,
+                      'listener is not ready: ' + name)
+            values = env_map(owner['spec']['template']['spec']['containers'][0])
+            m.require(values.get(prefix(name) + '_ROOT_SHA256') == root['certificate_fingerprint_sha256'],
+                      'listener static root baseline differs: ' + name)
+        self.check('preflight_service_root_policy', {
+            'root_id': root['issuer_id'], 'listeners': list(NAMES),
+            'staging_touched': False})
+
+    def create_root_config(self, root):
+        try:
+            obj = self.obj('configmap', ROOT_CONFIG)
+        except RuntimeError:
+            obj = None
+        if obj:
+            m.require(obj.get('data', {}).get('roots.pem') == root['certificate_pem'],
+                      'existing Service Root policy bundle differs')
+            return
+        obj = {'apiVersion': 'v1', 'kind': 'ConfigMap',
+               'metadata': {'name': ROOT_CONFIG, 'namespace': NS},
+               'immutable': True, 'data': {'roots.pem': root['certificate_pem']}}
+        self.save('root-configmap.json', obj)
+        self.kube(['-n', NS, 'create', '-f', '-'], json.dumps(obj))
+
+    def rollout(self, name, root):
+        owner = self.obj('deployment', name)
+        template = root_template(owner, name, root, self.args.image)
+        self.save(name + '-template.json', template)
+        self.scoped_patch('deployment', owner, [
+            {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name, '--timeout=240s'], timeout=250)
+        persisted = self.base / 'pki/controller-bootstrap/rollout' / (name + '-service-settings.json')
+        settings = m.read(persisted)
+        updates = {prefix(name) + '_SERVICE_ROOT_ID': root['issuer_id'],
+                   prefix(name) + '_SERVICE_ROOT_STATE': ROOT_STATE,
+                   prefix(name) + '_SERVICE_ROOTS': ROOT_MOUNT + '/roots.pem'}
+        settings.update(updates)
+        m.write(persisted, settings)
+        self.check(name + '_service_root_policy_installed', {
+            'root_id': root['issuer_id'], 'state_path': ROOT_STATE,
+            'configmap': ROOT_CONFIG, 'image': template['spec']['containers'][0]['image']})
+
+    def receipt(self, root, name):
+        deadline = time.monotonic() + 90
+        policy = None
+        while time.monotonic() < deadline:
+            policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
+            rows = self.sql("SELECT loaded_roots_sha256 FROM pki_root_distrust_acknowledgments WHERE environment='dev' AND domain='service' AND policy_sha256='" + policy['policy_sha256'] + "' AND consumer_id='" + name + "';")
+            if rows:
+                raw = self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'cat', ROOT_STATE])
+                state = json.loads(raw)
+                m.require(state['policy_sha256'] == policy['policy_sha256'],
+                          'persisted Service Root policy differs from receipt')
+                return {'policy': policy, 'loaded_roots_sha256': rows, 'state': state}
+            time.sleep(3)
+        raise RuntimeError('Service Root policy receipt deadline: ' + name)
+
+    def install(self):
+        root = self.active_root()
+        self.preflight_root_policy(root)
+        self.create_root_config(root)
+        # Controller first: its policy API must itself enforce the durable
+        # Service listener state before any other listener acknowledges it.
+        for name in NAMES:
+            self.rollout(name, root)
+        receipts = {name: self.receipt(root, name) for name in NAMES}
+        self.check('service_root_policy_receipts', {
+            'root_id': root['issuer_id'], 'policy_sha256': receipts['pki-controller']['policy']['policy_sha256'],
+            'consumers': list(NAMES), 'state_paths': {name: ROOT_STATE for name in NAMES}})
+
+
+def main():
+    os.umask(0o077)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
+    parser.add_argument('--output', required=True)
+    parser.add_argument('--root-id', required=True)
+    parser.add_argument('--image')
+    args = parser.parse_args()
+    m.require(re.fullmatch(r'[0-9a-f-]{36}', args.root_id), 'canonical Service Root ID required')
+    lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
+    owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    runner = RootPolicyRun(args)
+    try:
+        runner.install()
+        runner.report['status'] = 'passed'
+    except Exception as error:
+        runner.report['status'] = 'failed'
+        runner.report['failure'] = str(error)
+        raise
+    finally:
+        runner.save('report.json', runner.report)
+        runner.close()
+        os.close(owner)
+        print(json.dumps({'status': runner.report['status'], 'report': str(runner.output / 'report.json')}), flush=True)
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(RuntimeError('interrupted')))
+    signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(RuntimeError('interrupted')))
+    try:
+        main()
+    except Exception as error:
+        print(json.dumps({'error': str(error)}), file=sys.stderr)
+        sys.exit(1)
