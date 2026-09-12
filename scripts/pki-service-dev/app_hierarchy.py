@@ -24,6 +24,17 @@ m, NS = s.m, s.NS
 
 CONSUMERS = ['pkibroker', 'pkiturn', 'video-cloud-api-app']
 DEPLOYMENTS = ['video-cloud-api-app-pki', 'mqtt-pki', 'pkiturn']
+IMAGE = re.compile(
+    r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
+
+
+def with_env(entries, updates, remove=()):
+    names = [entry['name'] for entry in entries]
+    m.require(len(names) == len(set(names)), 'duplicate environment setting')
+    return [entry for entry in entries
+            if entry['name'] not in updates and entry['name'] not in remove] + [
+                {'name': name, 'value': value}
+                for name, value in updates.items()]
 
 
 def app_manifest(authorities):
@@ -396,6 +407,108 @@ class AppHierarchy(s.ServiceRun):
             'restarted_consumers': restarted})
         self.device_baseline()
 
+    def ensure_role_policy(self, role_name, policy_name, policy):
+        role_path = 'auth/kubernetes/role/' + role_name
+        before = json.loads(self.bao([
+            'read', '-format=json', role_path]))['data']
+        m.require(before['token_no_default_policy']
+                  and before['audience'] == 'openbao'
+                  and before['bound_service_account_namespaces'] == [NS],
+                  'unexpected App signer workload binding')
+        available = json.loads(self.bao(['policy', 'list', '-format=json']))
+        if policy_name in available:
+            m.require(self.bao(['policy', 'read', policy_name]).strip() ==
+                      policy.strip(), 'existing App signer policy differs')
+        else:
+            self.bao(['policy', 'write', policy_name, '-'], policy)
+        desired = copy.deepcopy(before)
+        if policy_name not in desired['token_policies']:
+            desired['token_policies'].append(policy_name)
+            m.require(json.loads(self.bao([
+                'read', '-format=json', role_path]))['data'] == before,
+                'App signer workload binding changed concurrently')
+            self.bao(['write', role_path, '-'], json.dumps(desired))
+        m.require(json.loads(self.bao([
+            'read', '-format=json', role_path]))['data'] == desired,
+            'App signer workload policy was not installed')
+        self.save('role-' + role_name + '.json', desired)
+
+    def verify_signer_capability(self, issuer):
+        jwt = self.kube([
+            '-n', NS, 'create', 'token', 'certissuer',
+            '--audience=openbao', '--duration=10m']).strip()
+        login = json.loads(self.bao([
+            'write', '-format=json', 'auth/kubernetes/login', '-'],
+            json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+        token = login['auth']['client_token']
+        try:
+            result = json.loads(self.bao([
+                'write', '-format=json', 'sys/capabilities', '-'],
+                json.dumps({'token': token, 'paths': [
+                    issuer['signer_reference'] + '/sign/app']})))
+            m.require(result['data']['capabilities'] == ['update'],
+                      'certissuer App signing capability differs')
+        finally:
+            self.bao(['write', 'auth/token/revoke', '-'],
+                     json.dumps({'token': token}))
+
+    def enable_issuance(self):
+        m.require(IMAGE.fullmatch(self.args.image or ''),
+                  'immutable Dev Video Cloud image is required')
+        _, issuer, _ = self.intermediate('active')
+        policy = m.read(Path(self.args.intermediate) / 'provider-policies.json')
+        m.require(policy['issuer_id'] == issuer['issuer_id']
+                  and policy['mount'] == issuer['signer_reference']
+                  and '/sign/app' in policy['signer_policy'],
+                  'saved App signer policy differs')
+        policy_name = 'certissuer-app-' + issuer['issuer_id']
+        self.ensure_role_policy('certissuer-pki-dev', policy_name,
+                                policy['signer_policy'])
+        owner = self.obj('deployment', 'certissuer')
+        template = copy.deepcopy(owner['spec']['template'])
+        containers = template['spec']['containers']
+        m.require(len(containers) == 1
+                  and containers[0]['name'] == 'certissuer',
+                  'certissuer ownership changed')
+        container = containers[0]
+        static = {
+            'CERT_ISSUER_APP_CA_CERT_PATH',
+            'CERT_ISSUER_APP_CA_KEY_PATH',
+            'CERT_ISSUER_APP_CA_KEY_PASSPHRASE',
+            'CERT_ISSUER_APP_SIGNER_PROVIDER',
+            'CERT_ISSUER_APP_OPENBAO_PKI_MOUNT',
+            'CERT_ISSUER_APP_OPENBAO_PKI_ROLE',
+            'CERT_ISSUER_APP_PKCS11_MODULE_PATH',
+            'CERT_ISSUER_APP_PKCS11_TOKEN_LABEL',
+            'CERT_ISSUER_APP_PKCS11_SLOT_ID',
+            'CERT_ISSUER_APP_PKCS11_PIN',
+            'CERT_ISSUER_APP_PKCS11_KEY_LABEL',
+            'CERT_ISSUER_APP_PKCS11_EXPECTED_ALGORITHM'}
+        container['image'] = self.args.image
+        container['env'] = with_env(container.get('env', []), {
+            'CERT_ISSUER_APP_PKI_ENABLED': 'true'}, static)
+        self.observed_patch('deployment', 'certissuer', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status',
+                   'deployment/certissuer', '--timeout=300s'], timeout=310)
+        current = self.obj('deployment', 'certissuer')
+        current_container = current['spec']['template']['spec']['containers'][0]
+        current_env = {entry['name']: entry.get('value', '')
+                       for entry in current_container.get('env', [])}
+        m.require(current.get('status', {}).get('readyReplicas') == 1
+                  and current_container['image'] == self.args.image
+                  and current_env.get('CERT_ISSUER_APP_PKI_ENABLED') == 'true'
+                  and not static.intersection(current_env),
+                  'registry-backed App issuance rollout differs')
+        self.forward('issuer', NS, 'certissuer', 9443)
+        self.verify_signer_capability(issuer)
+        self.check('registry_app_issuance_enabled', {
+            'issuer_id': issuer['issuer_id'], 'image': self.args.image,
+            'openbao_policy': policy_name,
+            'static_app_signer_settings_present': False,
+            'account_manager_transport_changed': False})
+        self.device_baseline()
+
     def prepare_intermediate(self):
         root = self.active_root()
         m.require(not self.app_intermediates(),
@@ -470,16 +583,21 @@ def main():
     parser.add_argument('--phase', required=True,
                         choices=('activate-root', 'prepare-intermediate',
                                  'install-intermediate',
-                                 'activate-intermediate'))
+                                 'activate-intermediate', 'enable-issuance'))
     parser.add_argument('--authority', required=True)
     parser.add_argument('--intermediate')
+    parser.add_argument('--image')
     parser.add_argument('--output', required=True)
     parser.add_argument('--resume', help='Reuse signed evidence from a failed phase')
     args = parser.parse_args()
     m.require(not args.resume or args.phase == 'activate-root',
               '--resume currently applies only to activate-root')
-    m.require('intermediate' not in args.phase or args.intermediate,
+    m.require(args.phase not in ('install-intermediate',
+                                 'activate-intermediate',
+                                 'enable-issuance') or args.intermediate,
               'App intermediate evidence is required')
+    m.require(args.phase != 'enable-issuance' or args.image,
+              'Dev image digest is required to enable issuance')
     lock = (Path(args.config_root).expanduser() /
             'dev/pki/app-hierarchy-rollout.lock')
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -490,7 +608,8 @@ def main():
         {'activate-root': runner.activate_root,
          'prepare-intermediate': runner.prepare_intermediate,
          'install-intermediate': runner.install_intermediate,
-         'activate-intermediate': runner.activate_intermediate}[args.phase]()
+         'activate-intermediate': runner.activate_intermediate,
+         'enable-issuance': runner.enable_issuance}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

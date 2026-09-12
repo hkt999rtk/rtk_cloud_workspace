@@ -52,6 +52,16 @@ class AppManifestTests(unittest.TestCase):
             runner.api = lambda path: saved
             self.assertEqual(runner.app_root('ready'), saved)
 
+    def test_registry_issuance_env_removes_static_app_signer(self):
+        result = a.with_env([
+            {'name': 'CERT_ISSUER_APP_CA_CERT_PATH', 'value': '/old'},
+            {'name': 'CERT_ISSUER_APP_CLIENT_CN_PATTERN', 'value': '^caller$'},
+        ], {'CERT_ISSUER_APP_PKI_ENABLED': 'true'}, {
+            'CERT_ISSUER_APP_CA_CERT_PATH'})
+        self.assertEqual(result, [
+            {'name': 'CERT_ISSUER_APP_CLIENT_CN_PATTERN', 'value': '^caller$'},
+            {'name': 'CERT_ISSUER_APP_PKI_ENABLED', 'value': 'true'}])
+
 
 if __name__ == '__main__':
     unittest.main()
