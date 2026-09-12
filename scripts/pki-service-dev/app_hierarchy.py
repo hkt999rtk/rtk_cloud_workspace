@@ -62,6 +62,29 @@ def app_manifest(authorities):
             for item in authorities])}
 
 
+def consumer_template(owner, name, image, marker):
+    template = copy.deepcopy(owner['spec']['template'])
+    annotations = template['metadata'].setdefault('annotations', {})
+    annotations['rtk.realtek.com/app-trust-revision'] = marker
+    if not image:
+        return template
+    m.require(IMAGE.fullmatch(image), 'immutable Dev Video Cloud image required')
+    selected = {
+        'video-cloud-api-app-pki': 'app',
+        'mqtt-pki': 'pkibroker',
+        'pkiturn': 'pkiturn'}[name]
+    containers = [item for item in template['spec']['containers']
+                  if item['name'] == selected]
+    m.require(len(containers) == 1,
+              'App consumer container ownership changed: ' + name)
+    containers[0]['image'] = image
+    if name == 'video-cloud-api-app-pki':
+        containers[0]['env'] = with_env(containers[0].get('env', []), {
+            'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOTS':
+                '/run/pki-app/roots.pem'})
+    return template
+
+
 class AppHierarchy(s.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -161,13 +184,10 @@ class AppHierarchy(s.ServiceRun):
         restarted = []
         for name in DEPLOYMENTS:
             owner = self.obj('deployment', name)
-            annotations = copy.deepcopy(owner['spec']['template']['metadata'].get(
-                'annotations', {}))
-            annotations['rtk.realtek.com/app-trust-revision'] = marker
-            path = '/spec/template/metadata/annotations'
-            op = 'replace' if 'annotations' in owner['spec']['template']['metadata'] else 'add'
+            template = consumer_template(owner, name, self.args.image, marker)
             self.observed_patch('deployment', name, owner, [{
-                'op': op, 'path': path, 'value': annotations}])
+                'op': 'replace', 'path': '/spec/template',
+                'value': template}])
             self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
                        '--timeout=300s'], timeout=310)
             current = self.obj('deployment', name)

@@ -62,6 +62,41 @@ class AppManifestTests(unittest.TestCase):
             {'name': 'CERT_ISSUER_APP_CLIENT_CN_PATTERN', 'value': '^caller$'},
             {'name': 'CERT_ISSUER_APP_PKI_ENABLED', 'value': 'true'}])
 
+    def test_consumer_rollout_selects_only_owned_binary_and_app_roots(self):
+        image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:'
+                 + 'a' * 64)
+        owner = lambda names: {'spec': {'template': {
+            'metadata': {'annotations': {'kept': 'true'}},
+            'spec': {'containers': [
+                {'name': name, 'image': 'old-' + name, 'env': [
+                    {'name': 'KEPT', 'value': name}]}
+                for name in names]}}}}
+        cases = {
+            'video-cloud-api-app-pki': (['app'], 'app'),
+            'mqtt-pki': (['mqtt', 'pkibroker'], 'pkibroker'),
+            'pkiturn': (['pkiturn', 'coturn-cli-tunnel'], 'pkiturn')}
+        for deployment, (names, selected) in cases.items():
+            with self.subTest(deployment=deployment):
+                before = owner(names)
+                result = a.consumer_template(
+                    before, deployment, image, 'successor')
+                containers = {item['name']: item
+                              for item in result['spec']['containers']}
+                self.assertEqual(containers[selected]['image'], image)
+                for name in set(names) - {selected}:
+                    self.assertEqual(containers[name]['image'], 'old-' + name)
+                self.assertEqual(result['metadata']['annotations'], {
+                    'kept': 'true',
+                    'rtk.realtek.com/app-trust-revision': 'successor'})
+                roots = [item for item in containers[selected]['env']
+                         if item['name'] ==
+                         'VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOTS']
+                self.assertEqual(len(roots),
+                                 1 if deployment ==
+                                 'video-cloud-api-app-pki' else 0)
+                self.assertEqual(before['spec']['template']['spec']
+                                 ['containers'][0]['image'], 'old-' + names[0])
+
 
 if __name__ == '__main__':
     unittest.main()
