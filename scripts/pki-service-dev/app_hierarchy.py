@@ -83,7 +83,7 @@ class AppHierarchy(s.ServiceRun):
             'required_consumers': CONSUMERS,
             'staging_touched': False})
 
-    def root(self, *statuses):
+    def app_root(self, *statuses):
         source = Path(self.args.authority)
         saved = m.read(source / 'root-ready.json')
         root = self.api('/issuers/' + saved['issuer_id'])
@@ -100,7 +100,8 @@ class AppHierarchy(s.ServiceRun):
 
     def root_operation(self):
         operation = m.read(Path(self.args.authority) / 'root-operation.json')
-        m.require(operation['issuer_id'] == self.root('ready', 'active')['issuer_id'],
+        m.require(operation['issuer_id'] ==
+                  self.app_root('ready', 'active')['issuer_id'],
                   'App Root operation differs')
         return operation
 
@@ -183,14 +184,14 @@ class AppHierarchy(s.ServiceRun):
         return record
 
     def activate_root(self):
-        root = self.root('ready', 'active')
+        root = self.app_root('ready', 'active')
         operation = self.root_operation()
         receipts = self.wait_receipts(
             root['issuer_id'], root['trust_bundle_version'], CONSUMERS)
         if root['status'] == 'ready':
             self.api('/operations/' + operation['operation_id'] + '/activate',
                      {}, 204)
-            root = self.root('active')
+            root = self.app_root('active')
         self.save('root-active.json', root)
         crl = self.sign_initial_root_crl(root)
         self.save('root-crl.json', crl)
@@ -206,7 +207,7 @@ class AppHierarchy(s.ServiceRun):
         self.device_baseline()
 
     def active_root(self):
-        root = self.root('active')
+        root = self.app_root('active')
         crl = self.api('/issuers/' + root['issuer_id'] + '/crl')
         m.require(dt.datetime.fromisoformat(
             crl['next_update'].replace('Z', '+00:00')) >

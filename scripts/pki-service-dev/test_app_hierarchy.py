@@ -1,5 +1,8 @@
 import importlib.util
 from pathlib import Path
+import json
+import tempfile
+from types import SimpleNamespace
 import unittest
 
 
@@ -34,6 +37,20 @@ class AppManifestTests(unittest.TestCase):
         foreign = self.issuer('b', 'intermediate', 'missing')
         with self.assertRaises(RuntimeError):
             a.app_manifest([root, foreign])
+
+    def test_app_root_lookup_does_not_collide_with_device_preflight_root(self):
+        saved = {
+            'issuer_id': '00000000-0000-4000-8000-000000000001',
+            'environment': 'dev', 'trust_domain': 'app', 'kind': 'root',
+            'status': 'ready', 'certificate_fingerprint_sha256': 'a' * 64,
+            'trust_bundle_version': 'b' * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, 'root-ready.json').write_text(json.dumps(saved))
+            runner = object.__new__(a.AppHierarchy)
+            runner.args = SimpleNamespace(authority=directory)
+            runner.root = {'trust_domain': 'device'}
+            runner.api = lambda path: saved
+            self.assertEqual(runner.app_root('ready'), saved)
 
 
 if __name__ == '__main__':
