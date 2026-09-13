@@ -1,0 +1,8 @@
+{
+  "name": "rtk-localization",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test localization.test.mjs"
+  }
+}
