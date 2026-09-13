@@ -307,6 +307,14 @@ class FactoryFinalLeaf(r.ServiceRun):
             'request_id': request_id, 'certissuer_restarted': True,
             'drain_seconds_required_before_recovery': 300, 'staging_touched': False})
 
+    def finish_recovery(self, request_id, serial, provider_discovery_only):
+        self.api('/issuers/' + FINAL_ISSUER + '/reconcile-service-client', {
+            'caller': SUBJECT, 'request_id': request_id, 'serial_number': serial}, role='approver')
+        reconciled = self.pending_claim(request_id)
+        m.require(reconciled['status'] == 'succeeded' and re.fullmatch(r'[0-9a-f]{64}', reconciled['fingerprint']),
+                  'Factory provider recovery did not reconcile the retained claim')
+        self.complete_pending(request_id, provider_discovery_only=provider_discovery_only)
+
     def recover_missing_provider(self, request_id, fence_run_id):
         m.require(re.fullmatch(r'[A-Za-z0-9._-]+', fence_run_id or ''), 'Factory fence run id required')
         self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
@@ -315,6 +323,7 @@ class FactoryFinalLeaf(r.ServiceRun):
         claim = self.full_pending_claim(request_id)
         m.require(claim['status'] == 'issuing', 'Factory claim is already reconciled')
         issuer, mount, expected_public_key, serial = self.provider_serial_for_claim(claim)
+        signed_during_recovery = serial is None
         if serial is None:
             deployment = self.obj('deployment', 'certissuer')
             m.require(deployment['spec']['template']['metadata'].get('annotations', {}).get(
@@ -366,17 +375,98 @@ class FactoryFinalLeaf(r.ServiceRun):
             self.save('factory-pending-provider-recovery.json', {
                 'request_id': request_id, 'issuer_id': FINAL_ISSUER, 'provider_serial': serial,
                 'same_csr_and_request': True, 'recovery_signed': True, 'private_keys_exported': False})
-        self.api('/issuers/' + FINAL_ISSUER + '/reconcile-service-client', {
-            'caller': SUBJECT, 'request_id': request_id, 'serial_number': serial}, role='approver')
-        reconciled = self.pending_claim(request_id)
-        m.require(reconciled['status'] == 'succeeded' and re.fullmatch(r'[0-9a-f]{64}', reconciled['fingerprint']),
-                  'Factory provider recovery did not reconcile the retained claim')
-        self.complete_pending(request_id)
+        self.finish_recovery(request_id, serial, provider_discovery_only=not signed_during_recovery)
         self.check('factory_missing_provider_claim_recovered', {
             'request_id': request_id, 'same_csr_and_request': True,
             'provider_serial': serial, 'private_keys_exported': False})
 
-    def complete_pending(self, request_id):
+    def retry_missing_provider(self, request_id, fence_run_id, policy_repair, inventory_evidence):
+        """Retry only a proved policy-rejected attempt with a second durable marker."""
+        policy_repair, inventory_evidence = Path(policy_repair), Path(inventory_evidence)
+        original = self.base / 'pki' / ('factory-provider-recovery-' + request_id + '.json')
+        retry = self.base / 'pki' / ('factory-provider-recovery-retry-' + request_id + '.json')
+        m.require(original.is_file() and not retry.exists(),
+                  'Factory retry requires one original marker and no prior retry marker')
+        source = m.read(policy_repair / 'report.json')
+        repaired = m.read(policy_repair / 'final-signer-policy-repair.json')
+        inventory_report = m.read(inventory_evidence / 'report.json')
+        inventory = m.read(inventory_evidence / 'factory-pending-provider-inventory.json')
+        m.require(source['status'] == 'passed'
+                  and source['checks'].get('final_service_certissuer_signer_repaired', {}).get('status') == 'passed'
+                  and repaired['issuer_id'] == FINAL_ISSUER
+                  and inventory_report['status'] == 'passed'
+                  and inventory_report['checks'].get('factory_pending_provider_inventory', {}).get('status') == 'passed'
+                  and inventory['request_id'] == request_id and inventory['issuer_id'] == FINAL_ISSUER
+                  and inventory['certificate_count'] == 0 and inventory['matching_serials'] == [],
+                  'Factory retry evidence is incomplete or changed')
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        self.transition_owner()
+        claim = self.full_pending_claim(request_id)
+        m.require(claim['status'] == 'issuing', 'Factory claim is already reconciled')
+        issuer, mount, expected_public_key, serial = self.provider_serial_for_claim(claim)
+        if serial is not None:
+            self.finish_recovery(request_id, serial, provider_discovery_only=True)
+            return
+        deployment = self.obj('deployment', 'certissuer')
+        m.require(deployment['spec']['template']['metadata'].get('annotations', {}).get(
+            'rtk.cloud/pki-factory-pending-provider-fence') == fence_run_id,
+            'Factory retry requires the recorded policy-repair CertIssuer fence')
+        role = json.loads(self.bao(['read', '-format=json', 'auth/kubernetes/role/certissuer-pki-dev']))['data']
+        m.require(all(name in role['token_policies'] for name in repaired['policy_names'].values()),
+                  'final Service signer policies are no longer attached to CertIssuer')
+        pods = json.loads(self.kube(['-n', NS, 'get', 'pods', '-l',
+            'app.kubernetes.io/name=certissuer', '-o', 'json']))['items']
+        pods = [pod for pod in pods if not pod['metadata'].get('deletionTimestamp')]
+        now, created = dt.datetime.now(dt.timezone.utc), m.parse_time(claim['created_at'])
+        m.require(pods and all(pod['status'].get('phase') == 'Running'
+                  and m.parse_time(pod['status']['startTime']) > created
+                  and now - m.parse_time(pod['status']['startTime']) > dt.timedelta(minutes=5)
+                  for pod in pods), 'CertIssuer policy-repair fence has not drained for five minutes')
+        m.require(self.full_pending_claim(request_id) == claim, 'Factory claim changed during retry discovery')
+        expires = min(created + dt.timedelta(days=claim['ttl_days']),
+                      m.parse_time(issuer['not_after']) - dt.timedelta(days=30))
+        ttl = int((expires - now).total_seconds()) - 60
+        m.require(ttl > 60, 'Factory retained certificate validity window has elapsed')
+        jwt = self.kube(['-n', NS, 'create', 'token', 'certissuer-pki',
+                         '--audience=openbao', '--duration=10m']).strip()
+        login = json.loads(self.bao(['write', '-format=json', 'auth/kubernetes/login', '-'],
+                                    json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+        token = login['auth']['client_token']
+        try:
+            with retry.open('x') as stream:
+                json.dump({'request_id': request_id, 'issuer_id': FINAL_ISSUER, 'at': m.stamp(),
+                           'fence_run_id': fence_run_id, 'original_marker_sha256': m.digest(original.read_bytes()),
+                           'policy_repair_report_sha256': m.digest((policy_repair / 'report.json').read_bytes()),
+                           'inventory_report_sha256': m.digest((inventory_evidence / 'report.json').read_bytes()),
+                           'certissuer_pod_uids': [pod['metadata']['uid'] for pod in pods]}, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            directory = os.open(retry.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+            signed = json.loads(self.bao(['write', '-format=json', mount + '/sign/service-client', '-'],
+                                         json.dumps({'csr': claim['csr_pem'], 'common_name': SUBJECT,
+                                                     'exclude_cn_from_sans': True, 'ttl': str(ttl) + 's'}),
+                                         token=token))['data']
+            actual = m.command([self.openssl, 'x509', '-pubkey', '-noout'], signed['certificate']).strip()
+            m.require(actual == expected_public_key and re.fullmatch(r'[0-9a-fA-F:-]+', signed['serial_number']),
+                      'Factory retry provider result differs')
+            serial = signed['serial_number']
+        finally:
+            self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
+        self.save('factory-pending-provider-retry.json', {
+            'request_id': request_id, 'issuer_id': FINAL_ISSUER, 'provider_serial': serial,
+            'same_csr_and_request': True, 'policy_rejected_attempt_retried_once': True,
+            'private_keys_exported': False})
+        self.finish_recovery(request_id, serial, provider_discovery_only=False)
+        self.check('factory_policy_rejected_provider_claim_recovered', {
+            'request_id': request_id, 'provider_serial': serial, 'same_csr_and_request': True,
+            'private_keys_exported': False})
+
+    def complete_pending(self, request_id, provider_discovery_only=True):
         # The controller discovers an already signed result by the original
         # stored CSR.  It has no signing input and cannot replace the claim.
         self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
@@ -405,7 +495,7 @@ class FactoryFinalLeaf(r.ServiceRun):
         factory.FactoryIdentityRun.factory_canary(self)
         self.check('factory_final_service_leaf_recovered', {
             'request_id': request_id, 'final_issuer_id': FINAL_ISSUER,
-            'provider_discovery_only': True, 'bootstrap_transition_removed': True,
+            'provider_discovery_only': provider_discovery_only, 'bootstrap_transition_removed': True,
             'restart_preserved_identity': True, 'factory_canary': 'passed',
             'private_keys_exported': False, 'predecessor_revocation': 'deferred to R2 retirement'})
 
@@ -436,16 +526,24 @@ def main():
     parser.add_argument('--fence-pending-request-id', help='restart CertIssuer after a missing-provider inventory result')
     parser.add_argument('--recover-missing-request-id', help='one-time recovery of a fenced missing-provider claim')
     parser.add_argument('--fence-run-id', help='run id produced by --fence-pending-request-id')
+    parser.add_argument('--retry-missing-request-id', help='retry one marker-recorded policy-rejected provider request')
+    parser.add_argument('--policy-repair', help='successful final signer-policy repair evidence directory')
+    parser.add_argument('--inventory-evidence', help='successful zero-result provider inventory evidence directory')
     args = parser.parse_args()
     args.phase, args.authority = 'factory-final-service-leaf', None
     m.require(IMAGE.fullmatch(args.image), 'immutable Dev video-cloud image digest required')
     selected = [value for value in (args.recover_request_id, args.inspect_pending_request_id,
-                args.fence_pending_request_id, args.recover_missing_request_id) if value]
+                args.fence_pending_request_id, args.recover_missing_request_id,
+                args.retry_missing_request_id) if value]
     m.require(len(selected) <= 1, 'select at most one Factory recovery action')
-    m.require(not args.fence_run_id or args.recover_missing_request_id,
+    m.require(not args.fence_run_id or args.recover_missing_request_id or args.retry_missing_request_id,
               'Factory fence run id applies only to missing-provider recovery')
     m.require(not args.recover_missing_request_id or args.fence_run_id,
               'missing-provider recovery requires the recorded Factory fence run id')
+    m.require(not args.retry_missing_request_id or (args.fence_run_id and args.policy_repair and args.inventory_evidence),
+              'policy-rejected Factory retry requires fence, policy, and inventory evidence')
+    m.require(not (args.policy_repair or args.inventory_evidence) or args.retry_missing_request_id,
+              'policy and inventory evidence apply only to the explicit Factory retry')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -459,6 +557,9 @@ def main():
             runner.fence_pending_provider(args.fence_pending_request_id)
         elif args.recover_missing_request_id:
             runner.recover_missing_provider(args.recover_missing_request_id, args.fence_run_id)
+        elif args.retry_missing_request_id:
+            runner.retry_missing_provider(args.retry_missing_request_id, args.fence_run_id,
+                                          args.policy_repair, args.inventory_evidence)
         else:
             runner.rotate()
         runner.report['status'] = 'passed'
