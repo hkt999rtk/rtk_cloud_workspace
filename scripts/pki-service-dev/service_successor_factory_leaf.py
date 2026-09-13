@@ -177,6 +177,47 @@ class FactoryFinalLeaf(r.ServiceRun):
         self.save('factory-final-issuance.json', result)
         return result
 
+    def pending_claim(self, request_id):
+        m.require(re.fullmatch(r'[0-9a-f-]{36}', request_id), 'canonical pending Factory request ID required')
+        query = ("SELECT issuer_id,subject,caller,status,fingerprint FROM pki_service_client_issuances "
+                 "WHERE environment='dev' AND request_id='" + request_id + "' LIMIT 1;")
+        row = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1',
+                         '-U', 'postgres', '-d', 'video_cloud', '-At', '-F', '|'], query).strip().split('|')
+        m.require(len(row) == 5 and row[0] == FINAL_ISSUER and row[1] == SUBJECT and row[2] == SUBJECT and
+                  row[3] in ('issuing', 'succeeded'), 'Factory pending claim differs')
+        return dict(zip(('issuer_id', 'subject', 'caller', 'status', 'fingerprint'), row))
+
+    def complete_pending(self, request_id):
+        # The controller discovers an already signed result by the original
+        # stored CSR.  It has no signing input and cannot replace the claim.
+        super().preflight()
+        self.issuer()
+        pending = self.pending_claim(request_id)
+        self.save('factory-pending-before.json', pending)
+        if pending['status'] == 'issuing':
+            self.api('/issuers/' + FINAL_ISSUER + '/reconcile-service-client', {
+                'caller': pending['caller'], 'request_id': request_id}, role='approver')
+            pending = self.pending_claim(request_id)
+        m.require(pending['status'] == 'succeeded' and re.fullmatch(r'[0-9a-f]{64}', pending['fingerprint']),
+                  'Factory pending claim was not recovered from an existing provider certificate')
+        self.save('factory-pending-reconciled.json', pending)
+        self.kube(['-n', NS, 'rollout', 'restart', 'deployment/' + NAME])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
+        identity = self.inspect()
+        m.require(identity['fingerprint'] == pending['fingerprint'], 'Factory did not install recovered final leaf')
+        self.save('factory-transition-identity.json', identity)
+        self.issuance(identity['fingerprint'])
+        factory.FactoryIdentityRun.factory_canary(self)
+        current = self.obj('deployment', NAME)
+        self.rollout_template(current, steady_template(current, self.args.image), 'factory-steady')
+        m.require(self.inspect() == identity, 'Factory restart changed recovered final Service identity')
+        factory.FactoryIdentityRun.factory_canary(self)
+        self.check('factory_final_service_leaf_recovered', {
+            'request_id': request_id, 'final_issuer_id': FINAL_ISSUER,
+            'provider_discovery_only': True, 'bootstrap_transition_removed': True,
+            'restart_preserved_identity': True, 'factory_canary': 'passed',
+            'private_keys_exported': False, 'predecessor_revocation': 'deferred to R2 retirement'})
+
     def rotate(self):
         before = self.preflight()
         self.rollout_template(before, transition_template(before, self.args.image), 'factory-transition')
@@ -199,6 +240,7 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--image', required=True)
+    parser.add_argument('--recover-request-id')
     args = parser.parse_args()
     args.phase, args.authority = 'factory-final-service-leaf', None
     m.require(IMAGE.fullmatch(args.image), 'immutable Dev video-cloud image digest required')
@@ -207,7 +249,10 @@ def main():
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = FactoryFinalLeaf(args)
     try:
-        runner.rotate()
+        if args.recover_request_id:
+            runner.complete_pending(args.recover_request_id)
+        else:
+            runner.rotate()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error)
