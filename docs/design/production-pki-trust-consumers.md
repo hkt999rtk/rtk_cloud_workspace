@@ -2771,8 +2771,10 @@ CertIssuer now holds final-intermediate client and server leaves under
 retained request exactly once; a separate `SIGUSR1` server-only operation then
 issued the server leaf without changing the client state or creating another
 client receipt. Both Service root policy mounts retain the immutable two-root
-overlap bundle, while CertIssuer's client and server verification pins now
-select the active successor Root.
+overlap bundle. Its own client and server verification pins select the active
+successor Root. The Service-client renewal handler retains the predecessor
+verification pin while governed predecessor clients still need their one
+authenticated transition; its issuer pin remains on the successor Root.
 
 The server-only operation restarted CertIssuer and passed Factory enrollment,
 Device mTLS and MQTT QoS1 canaries before and after the restart. Public
@@ -2801,3 +2803,31 @@ is `r2-service-pki-controller-final-client-recovery-retry-20260913`; it records
 only request IDs, public fingerprints, root-policy metadata and rollout checks.
 No private key, CSR, certificate, token, staging resource or login/MFA setting
 was exposed or changed.
+
+### R2 ordinary Video Cloud API final Service client (2026-09-13)
+
+The ordinary `video-cloud-api` Deployment has completed its Account Manager
+Service-client transition to final intermediate
+`d61845ca-6b85-4f11-920b-f2f9685b0c13`. Its retained predecessor state remains
+on the PVC but is not mounted as the active identity: the active state is
+`identity-root-697e8e86.json`, pinned to successor Root fingerprint
+`32bbbfd2…f073704eb`. The one-time predecessor-state settings were removed
+before the final restart. The Account Manager listener remains pinned to its
+predecessor server leaf for R4, while the CertIssuer renewal server pin is the
+successor Root.
+
+The transition used the predecessor certificate only to authenticate its normal
+renewal request; it then installed one new P-256 key and final-authority leaf.
+The actual registry receipt is request `c490e13c-e97b-4b21-b71c-f2f903b09522`.
+It is matched by the public state fingerprint `71652997…36af9a2f`; no key, CSR,
+certificate body or token was exported. The recovery path matched the installed
+state fingerprint rather than the caller text because managed clients normalize
+that field to `service:video-cloud-api`.
+
+Dev evidence `r2-video-cloud-api-final-client-recover-r3-20260913` passed the
+public App-token authorization canary, Factory enrollment, Device direct mTLS
+and MQTT QoS1 both before and after a bootstrap-free API restart. CertIssuer's
+Service-client verifier deliberately remains on the predecessor Root until
+OpenBao, pkibroker and the isolated API controller client complete their
+transitions. No predecessor root withdrawal, staging change or login/MFA change
+was made.
