@@ -24,6 +24,13 @@ class AuthorityCutoverTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             r.canonical_manifest([self.entry(NEW)], OLD, NEW)
 
+    def test_seeded_state_binds_only_the_signed_successor_record(self):
+        record = {'issuer_id': NEW['issuer_id'], 'crl_sha256': 'a' * 64, 'crl_pem': '-----BEGIN X509 CRL-----\nX\n-----END X509 CRL-----'}
+        state = r.crl_state(dict(NEW, certificate_fingerprint_sha256='b' * 64), record)
+        self.assertEqual(__import__('json').loads(state)['issuer_fingerprint'], 'b' * 64)
+        with self.assertRaises(RuntimeError):
+            r.crl_state(dict(NEW, certificate_fingerprint_sha256='b' * 64), dict(record, issuer_id=OLD['issuer_id']))
+
     def owner(self, target):
         env = []
         for prefix in target['prefixes']:

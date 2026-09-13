@@ -71,6 +71,14 @@ def manifest_name(prefix, raw):
     return prefix + '-' + hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
+def crl_state(successor, record):
+    m.require(record.get('issuer_id') == successor['issuer_id']
+              and re.fullmatch(r'[0-9a-f]{64}', record.get('crl_sha256', ''))
+              and isinstance(record.get('crl_pem'), str), 'successor Service Root CRL differs')
+    return json.dumps({'issuer_fingerprint': successor['certificate_fingerprint_sha256'], 'crl': record},
+                      separators=(',', ':'))
+
+
 def authority_template(owner, target, predecessor_id, successor_id, replacements):
     """Patch a single known owner after every replacement is already created."""
     template = copy.deepcopy(owner['spec']['template'])
@@ -124,6 +132,7 @@ class Cutover(s.ServiceRun):
         crl = self.api('/issuers/' + successor['issuer_id'] + '/crl')
         m.require(crl.get('issuer_id') == successor['issuer_id'] and re.fullmatch(r'[0-9a-f]{64}', crl.get('crl_sha256', '')),
                   'active successor Service Root CRL is missing')
+        self.successor_crl = crl
         for target in o.TARGETS:
             owner = self.obj('deployment', target['name'], target['namespace'])
             m.require(owner['spec'].get('replicas') == 1 and owner.get('status', {}).get('readyReplicas') == 1
@@ -167,8 +176,35 @@ class Cutover(s.ServiceRun):
                 self.save('create-' + namespace + '-' + name + '.json', obj)
             replacements[live_prefix] = name
             evidence[live_prefix] = {'source': source_name, 'replacement': name,
-                                     'sha256': hashlib.sha256(raw.encode()).hexdigest(), 'entries': len(desired)}
+                                     'sha256': hashlib.sha256(raw.encode()).hexdigest(), 'entries': len(desired),
+                                     'manifest': desired}
         return replacements, evidence
+
+    def seed_successor_crls(self, successor, record, manifests):
+        state = crl_state(successor, record)
+        encoded = __import__('base64').b64encode(state.encode()).decode()
+        paths = {}
+        for target in o.TARGETS:
+            for _, prefix in VOLUMES[(target['name'], target['namespace'])].items():
+                entries = manifests[prefix]['manifest']
+                match = [entry['state_path'] for entry in entries
+                         if entry['issuer']['issuer_id'] == successor['issuer_id']]
+                m.require(len(match) == 1, 'successor Service Root CRL path is missing: ' + prefix)
+                path = match[0]
+                # This is private workload state, not a projected ConfigMap.
+                # An existing state is accepted only when it exactly matches the
+                # signed successor CRL record; a different cached authority is
+                # never overwritten by this transition.
+                command = ('if test -e ' + path + '; then cat ' + path + '; else '
+                           'umask 077; mkdir -p ' + str(Path(path).parent) + '; printf %s ' + encoded +
+                           ' | base64 -d > ' + path + '; chmod 600 ' + path + '; cat ' + path + '; fi')
+                actual = self.kube(['-n', target['namespace'], 'exec', 'deployment/' + target['name'], '-c',
+                                    target['container'], '--', 'sh', '-c', command])
+                m.require(actual == state, 'successor Service Root CRL state differs: ' + target['name'] + '/' + path)
+                paths.setdefault(target['consumer'], []).append(path)
+        self.check('service_root_successor_crl_seeded', {
+            'successor_root_id': successor['issuer_id'], 'crl_sha256': record['crl_sha256'],
+            'state_paths': paths, 'staging_touched': False})
 
     def rollout(self, target, predecessor, successor, replacements):
         owner = self.obj('deployment', target['name'], target['namespace'])
@@ -198,6 +234,7 @@ class Cutover(s.ServiceRun):
         successor = self.evidence(self.args.successor, ('successor-active.json', 'service-root.json', 'root-ready.json'))
         self.preflight(predecessor, successor)
         replacements, manifests = self.create_manifests(predecessor, successor)
+        self.seed_successor_crls(successor, self.successor_crl, manifests)
         for target in o.TARGETS:
             self.rollout(target, predecessor, successor, replacements)
         self.verify(successor, replacements)
