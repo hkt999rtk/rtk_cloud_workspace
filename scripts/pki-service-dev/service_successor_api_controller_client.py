@@ -140,6 +140,14 @@ class APIControllerFinalClient(r.ServiceRun):
                   and values.get('CERT_ISSUER_SERVICE_CLIENT_ISSUER_ROOT_SHA256', {}).get('value') == ROOT,
                   'CertIssuer must retain predecessor verification for remaining R2 callers')
 
+    def control_plane(self):
+        # Recovery can repair this workload before it is ready, so it cannot use
+        # the full preflight yet. Only initialize the authenticated management
+        # client needed to read the final issuer and preserve the saved state.
+        m.require(self.kube(['config', 'current-context']).strip() == self.context, 'canonical dev context mismatch')
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+
     def replacement(self, before, after, rows_before, rows_after):
         predecessor = self.admission(rows_before, before)
         successor = self.admission(rows_after, after)
@@ -176,6 +184,7 @@ class APIControllerFinalClient(r.ServiceRun):
         baseline = m.read(source / 'baseline.json')
         m.require(saved.get('status') in ('failed', 'interrupted') and baseline.get('identity') and baseline.get('rows'),
                   'interrupted isolated API transition evidence required')
+        self.control_plane()
         self.issuer()
         before, rows_before = baseline['identity'], baseline['rows']
         m.require(self.rows() == rows_before, 'isolated API registry changed before startup recovery')
@@ -206,6 +215,7 @@ class APIControllerFinalClient(r.ServiceRun):
         self.save('baseline.json', {'identity': before, 'rows': rows_before, 'recovered_from': str(source)})
         self.save('renewed.json', {'identity': after, 'rows': rows_after, 'request_id': successor['request_id'],
                                    'recovered_from': str(source)})
+        super().preflight()
         self.finish(after, rows_after, successor)
 
     def rotate(self):
