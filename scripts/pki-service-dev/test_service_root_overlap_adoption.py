@@ -18,7 +18,7 @@ class OverlapAdoptionTests(unittest.TestCase):
     def test_successor_template_updates_only_policy_scope(self):
         old, new = '00000000-0000-4000-8000-000000000001', '11111111-1111-4000-8000-000000000002'
         for target in r.TARGETS:
-            template = r.successor_template(self.owner(target), target, old, new)
+            template = r.successor_template(self.owner(target), target, old, new, 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' + 'a' * 64)
             env = r.env_map(template['spec']['containers'][0])
             for n, prefix in enumerate(target['prefixes']):
                 self.assertEqual(env[prefix + '_SERVICE_ROOT_ID'], old)

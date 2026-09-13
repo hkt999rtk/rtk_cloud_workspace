@@ -18,6 +18,7 @@ s = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(s)
 m, NS = s.m, s.NS
 AM_NS = 'video-cloud-dev-account-manager'
+IMAGE = re.compile(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
 
 # Each entry owns only one Deployment, its public root ConfigMap, and its
 # already-adopted policy settings. The successor state is separate so the
@@ -75,7 +76,7 @@ def pem_blocks(value):
 
 
 
-def successor_template(owner, target, predecessor_id, successor_id):
+def successor_template(owner, target, predecessor_id, successor_id, image):
     """Return the exact, narrow overlap template for one known consumer."""
     template = copy.deepcopy(owner['spec']['template'])
     selected = [c for c in template['spec'].get('containers', []) if c.get('name') == target['container']]
@@ -107,6 +108,8 @@ def successor_template(owner, target, predecessor_id, successor_id):
                   'Service bundle receipt mount differs: ' + target['name'])
         bundle['configMap']['name'] = target['new_bundle_config'].format(suffix=suffix)
     container['env'] = with_env(container.get('env', []), updates)
+    m.require(IMAGE.fullmatch(image), 'immutable Dev image required')
+    container['image'] = image
     annotations = template.setdefault('metadata', {}).setdefault('annotations', {})
     annotations['rtk.realtek.com/service-root-policy'] = predecessor_id
     annotations['rtk.realtek.com/service-root-overlap'] = successor_id
@@ -178,7 +181,7 @@ class OverlapAdoption(s.ServiceRun):
 
     def rollout(self, target, predecessor, successor):
         owner = self.obj('deployment', target['name'], target['namespace'])
-        template = successor_template(owner, target, predecessor['issuer_id'], successor['issuer_id'])
+        template = successor_template(owner, target, predecessor['issuer_id'], successor['issuer_id'], self.args.image)
         self.save(target['name'] + '-template.json', template)
         patch = [{'op': 'test', 'path': '/metadata/resourceVersion', 'value': owner['metadata']['resourceVersion']},
                  {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
@@ -238,7 +241,9 @@ def main():
     parser.add_argument('--predecessor', required=True)
     parser.add_argument('--successor', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--image', required=True)
     args = parser.parse_args(); args.phase = 'adopt-service-root-overlap'
+    m.require(IMAGE.fullmatch(args.image), 'immutable Dev image required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = OverlapAdoption(args)
