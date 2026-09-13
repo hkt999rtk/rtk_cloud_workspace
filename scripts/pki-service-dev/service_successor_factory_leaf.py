@@ -190,7 +190,8 @@ class FactoryFinalLeaf(r.ServiceRun):
     def complete_pending(self, request_id):
         # The controller discovers an already signed result by the original
         # stored CSR.  It has no signing input and cannot replace the claim.
-        super().preflight()
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
         self.issuer()
         pending = self.pending_claim(request_id)
         self.save('factory-pending-before.json', pending)
@@ -203,6 +204,7 @@ class FactoryFinalLeaf(r.ServiceRun):
         self.save('factory-pending-reconciled.json', pending)
         self.kube(['-n', NS, 'rollout', 'restart', 'deployment/' + NAME])
         self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
+        super().preflight()
         identity = self.inspect()
         m.require(identity['fingerprint'] == pending['fingerprint'], 'Factory did not install recovered final leaf')
         self.save('factory-transition-identity.json', identity)
