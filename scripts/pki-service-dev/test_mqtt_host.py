@@ -409,6 +409,15 @@ class MQTTHostTests(unittest.TestCase):
             runner.current_host_with_caller({'issuer_id': 'issuer'},
                                             'emqx-pki', owner)
 
+    def test_root_fingerprints_are_certificate_der_digests(self):
+        roots = ('-----BEGIN CERTIFICATE-----\n'
+                 'YQ==\n-----END CERTIFICATE-----\n'
+                 '-----BEGIN CERTIFICATE-----\nYg==\n'
+                 '-----END CERTIFICATE-----\n')
+        self.assertEqual(m.MQTTHostRun.root_fingerprints(roots), {
+            __import__('hashlib').sha256(b'a').hexdigest(),
+            __import__('hashlib').sha256(b'b').hexdigest()})
+
 
 if __name__ == '__main__':
     unittest.main()

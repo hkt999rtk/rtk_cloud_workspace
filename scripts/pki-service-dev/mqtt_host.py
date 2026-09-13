@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -2051,6 +2052,196 @@ class MQTTHostRun(h.ServiceRun):
             'actual_clients_authenticated': clients,
             'staging_touched': False})
 
+    @staticmethod
+    def root_fingerprints(roots_pem):
+        blocks = re.findall(
+            r'-----BEGIN CERTIFICATE-----\s+([A-Za-z0-9+/=\s]+?)'
+            r'-----END CERTIFICATE-----', roots_pem)
+        return {hashlib.sha256(base64.b64decode(
+            ''.join(block.split()), validate=True)).hexdigest()
+                for block in blocks}
+
+    def mqtt_consumer_state(self, name):
+        owner = self.obj('deployment', name)
+        containers = {item['name']: item for item in
+                      owner['spec']['template']['spec']['containers']}
+        m.require(set(containers) == {'app'},
+                  'MQTT consumer topology changed: ' + name)
+        env = {item['name']: item.get('value') for item in
+               containers['app'].get('env', [])}
+        state_path = env.get('VIDEO_CLOUD_MQTT_ROOT_STATE', '')
+        m.require(env.get('VIDEO_CLOUD_MQTT_ROOT_ID')
+                  and env.get('VIDEO_CLOUD_MQTT_ROOTS') ==
+                  '/run/pki-mqtt/roots.pem'
+                  and state_path.startswith('/var/lib/mqtt-pki/identity/'),
+                  'MQTT root-policy settings changed: ' + name)
+        mounts = {item['name']: item for item in
+                  containers['app'].get('volumeMounts', [])}
+        volumes = {item['name']: item for item in
+                   owner['spec']['template']['spec'].get('volumes', [])}
+        state_mount = mounts.get('mqtt-pki-state', {})
+        claim = volumes.get(state_mount.get('name', ''), {}).get(
+            'persistentVolumeClaim', {}).get('claimName', '')
+        m.require(claim, 'MQTT root-policy state PVC changed: ' + name)
+        raw = self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', 'app',
+                         '--', 'cat', state_path])
+        mode = self.kube(['-n', NS, 'exec', 'deployment/' + name, '-c', 'app',
+                          '--', 'stat', '-c', '%a %u', state_path]).strip()
+        state = json.loads(raw)
+        m.require(set(state) == {'policy', 'roots_pem'},
+                  'MQTT root-policy state schema changed: ' + name)
+        return {'deployment': name, 'pvc': claim,
+                'pvc_uid': self.obj('persistentvolumeclaim', claim)[
+                    'metadata']['uid'], 'mode_owner': mode,
+                'sha256': m.digest(raw.encode()), 'state': state}
+
+    def mqtt_root_receipts(self, policy_sha256):
+        m.require(re.fullmatch(r'[0-9a-f]{64}', policy_sha256),
+                  'invalid MQTT root-policy digest')
+        raw = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT consumer_id,"
+            "loaded_roots_sha256,acknowledged_at FROM "
+            "pki_root_distrust_acknowledgments WHERE environment='dev' "
+            "AND domain='mqtt' AND policy_sha256='" + policy_sha256 +
+            "' ORDER BY consumer_id,loaded_roots_sha256) t;")
+        return [json.loads(line) for line in raw.splitlines() if line]
+
+    def wait_mqtt_root_policy(self, policy, predecessor, successor):
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            states = {name: self.mqtt_consumer_state(name)
+                      for name in MQTT_CONSUMERS}
+            valid = all(
+                item['state']['policy'] == policy
+                and self.root_fingerprints(item['state']['roots_pem']) == {
+                    successor['certificate_fingerprint_sha256']}
+                and predecessor['certificate_fingerprint_sha256'] not in
+                self.root_fingerprints(item['state']['roots_pem'])
+                for item in states.values())
+            digests = {hashlib.sha256(
+                item['state']['roots_pem'].encode()).hexdigest()
+                for item in states.values()}
+            receipts = self.mqtt_root_receipts(policy['policy_sha256'])
+            expected = set(MQTT_CONSUMERS)
+            receipt_ok = (len(receipts) == len(expected)
+                          and {row['consumer_id'] for row in receipts} == expected
+                          and len(digests) == 1
+                          and all(row['loaded_roots_sha256'] in digests
+                                  for row in receipts))
+            if valid and receipt_ok:
+                return states, receipts
+            time.sleep(3)
+        raise RuntimeError('MQTT Root distrust installation receipt deadline')
+
+    def restart_mqtt_consumers(self, suffix):
+        before = {name: self.mqtt_consumer_state(name) for name in MQTT_CONSUMERS}
+        for name in MQTT_CONSUMERS:
+            owner = self.obj('deployment', name)
+            template = json.loads(json.dumps(owner['spec']['template']))
+            template.setdefault('metadata', {}).setdefault('annotations', {})[
+                'rtk.cloud/mqtt-root-distrust-restart'] = suffix
+            self.scoped_patch('deployment', owner, [{
+                'op': 'replace', 'path': '/spec/template', 'value': template}])
+            self.wait_available(name)
+        return before
+
+    def withdraw_mqtt_root(self):
+        """Withdraw the retiring MQTT root after its actual clients adopt policy."""
+        predecessor_source = Path(self.args.predecessor_authority)
+        predecessor_saved = m.read(predecessor_source / 'root-ready.json')
+        predecessor = self.api('/issuers/' + predecessor_saved['issuer_id'])
+        successor = self.mqtt_root('active')
+        root, issuer, _ = self.ready_intermediate(status='active')
+        m.require(root == successor
+                  and predecessor.get('status') == 'retiring'
+                  and predecessor.get('trust_domain') == 'mqtt'
+                  and predecessor.get('kind') == 'root'
+                  and predecessor['certificate_fingerprint_sha256'] ==
+                  predecessor_saved['certificate_fingerprint_sha256']
+                  and issuer['parent_issuer_id'] == successor['issuer_id'],
+                  'reviewed MQTT predecessor/successor lineage changed')
+        before_policy = self.api('/issuers/' + successor['issuer_id'] +
+                                 '/distrust')
+        before_states = {name: self.mqtt_consumer_state(name)
+                         for name in MQTT_CONSUMERS}
+        m.require(before_policy.get('version') == 0
+                  and not before_policy.get('distrusted_roots')
+                  and all(predecessor['certificate_fingerprint_sha256'] in
+                          self.root_fingerprints(item['state']['roots_pem'])
+                          and successor['certificate_fingerprint_sha256'] in
+                          self.root_fingerprints(item['state']['roots_pem'])
+                          for item in before_states.values()),
+                  'MQTT predecessor overlap is not installed')
+        self.save('predecessor-root.json', predecessor)
+        self.save('successor-root.json', successor)
+        self.save('before-policy.json', before_policy)
+        self.save('before-consumers.json', before_states)
+        operation = self.api('/issuers/' + predecessor['issuer_id'] +
+                             '/operations', {
+                                 'issuer_id': predecessor['issuer_id'],
+                                 'action': 'revoke',
+                                 'reason': ('Withdraw superseded Dev MQTT Root '
+                                            'after actual client successor adoption.')},
+                             key='dev-r3-mqtt-root-withdraw-' +
+                             predecessor['issuer_id'])
+        self.save('withdrawal-operation.json', operation)
+        if operation['status'] == 'requested':
+            self.approval(operation)
+        else:
+            m.require(operation['status'] == 'approved',
+                      'existing MQTT Root withdrawal operation changed')
+        operation_path = '/operations/' + operation['operation_id']
+        self.api(operation_path + '/execute', {}, 204)
+        policy = self.api('/issuers/' + successor['issuer_id'] + '/distrust')
+        m.require(policy.get('environment') == 'dev'
+                  and policy.get('trust_domain') == 'mqtt'
+                  and policy.get('version') == 1
+                  and len(policy.get('distrusted_roots', [])) == 1
+                  and policy['distrusted_roots'][0]['issuer_id'] ==
+                  predecessor['issuer_id'],
+                  'MQTT Root distrust policy differs after withdrawal')
+        self.save('distrust-policy.json', policy)
+        states, receipts = self.wait_mqtt_root_policy(policy, predecessor,
+                                                       successor)
+        self.save('installed-consumers.json', states)
+        self.save('root-distrust-receipts.json', receipts)
+        self.save('old-mqtt-root.pem', predecessor['certificate_pem'])
+        self.forward('mqtt-old-root', NS, 'mqtt-pki', 8883)
+        old_root = m.subprocess.run([
+            str(self.probe), 'tls-peer', str(self.output / 'old-mqtt-root.pem'),
+            MQTT_HOST, self.ports['mqtt-old-root'][0]], capture_output=True,
+            text=True, timeout=15)
+        m.require(old_root.returncode != 0,
+                  'old MQTT Root established TLS before credentials')
+        self.api(operation_path + '/revocation-complete', {}, 204)
+        m.require(self.api(operation_path)['status'] == 'completed'
+                  and self.api('/issuers/' + predecessor['issuer_id'])[
+                      'status'] == 'revoked',
+                  'MQTT Root withdrawal did not complete')
+        restarted = self.restart_mqtt_consumers(
+            'withdraw-' + policy['policy_sha256'][:16])
+        after, repeat_receipts = self.wait_mqtt_root_policy(policy, predecessor,
+                                                            successor)
+        m.require(all(after[name]['pvc_uid'] == before_states[name]['pvc_uid']
+                      and after[name]['state'] == states[name]['state']
+                      and after[name]['mode_owner'] == '600 10001'
+                      for name in MQTT_CONSUMERS)
+                  and repeat_receipts == receipts,
+                  'MQTT Root distrust state did not survive restart')
+        clients = self.wait_actual_clients()
+        self.forward('api', NS, 'video-cloud-api-pki', 8443)
+        self.forward('mqtt', NS, 'mqtt-pki', 8883)
+        self.device_baseline()
+        self.check('mqtt_root_withdrawal_enforced', {
+            'operation_id': operation['operation_id'],
+            'policy_sha256': policy['policy_sha256'],
+            'policy_version': policy['version'], 'receipts': receipts,
+            'restarted_consumers': sorted(restarted),
+            'old_root_denied_before_credentials': True,
+            'persisted_successor_only_roots': True,
+            'actual_clients_reconnected': clients,
+            'device_mqtt_acl_qos1': 'passed', 'staging_touched': False})
+
     def renew_host(self):
         traffic = m.read(Path(self.args.traffic) / 'report.json')
         m.require(traffic['status'] == 'passed'
@@ -2530,6 +2721,7 @@ def main():
         'configure-certissuer', 'prepare-host', 'transition-host-root',
         'recover-host-transition', 'bootstrap-emqx-service-client',
         'verify-managed-emqx-bootstrap',
+        'withdraw-mqtt-root',
         'adopt-host',
         'finish-host-adoption', 'repair-host-callback',
         'finish-host-callback', 'renew-host', 'finish-host-renewal', 'revoke-host',
@@ -2549,6 +2741,7 @@ def main():
     parser.add_argument('--revocation')
     parser.add_argument('--publication')
     parser.add_argument('--service-authority')
+    parser.add_argument('--predecessor-authority')
     parser.add_argument('--certissuer-image')
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
@@ -2564,6 +2757,7 @@ def main():
                                  'transition-host-root',
                                  'recover-host-transition', 'bootstrap-emqx-service-client',
                                  'verify-managed-emqx-bootstrap',
+                                 'withdraw-mqtt-root',
                                  'adopt-host', 'finish-host-adoption',
                                  'repair-host-callback',
                                  'finish-host-callback', 'renew-host',
@@ -2578,6 +2772,9 @@ def main():
     m.require(args.phase != 'verify-managed-emqx-bootstrap'
               or args.service_authority,
               'active EMQX Service authority evidence required')
+    m.require(args.phase != 'withdraw-mqtt-root'
+              or args.predecessor_authority,
+              'reviewed MQTT predecessor authority evidence required')
     m.require(args.phase != 'adopt-host' or args.prepared,
               'prepared MQTT host evidence required')
     m.require(args.phase != 'finish-host-adoption'
@@ -2608,7 +2805,7 @@ def main():
         if args.phase in ('finish-host-adoption', 'repair-host-callback',
                           'finish-host-callback', 'recover-host-transition',
                           'bootstrap-emqx-service-client',
-                          'verify-managed-emqx-bootstrap'):
+                          'verify-managed-emqx-bootstrap', 'withdraw-mqtt-root'):
             runner.recovery_preflight()
         else:
             runner.preflight()
@@ -2626,6 +2823,7 @@ def main():
          'recover-host-transition': runner.recover_host_transition,
          'bootstrap-emqx-service-client': runner.bootstrap_emqx_service_client,
          'verify-managed-emqx-bootstrap': runner.verify_managed_emqx_bootstrap,
+         'withdraw-mqtt-root': runner.withdraw_mqtt_root,
          'adopt-host': runner.adopt_host,
          'finish-host-adoption':
              runner.finish_host_adoption_recovery,
