@@ -174,8 +174,9 @@ class ServiceRun(m.Acceptance):
         cursor = ''
         while True:
             page = self.api('/issuers/search', {'limit': 100, 'before': cursor})
-            m.require(not any(i['trust_domain'] == 'service' and i['kind'] == 'intermediate' for i in page['items']),
-                      'Service intermediate already exists; reconcile')
+            m.require(not any(i['trust_domain'] == 'service' and i['kind'] == 'intermediate' and
+                              i.get('parent_issuer_id') == root['issuer_id'] for i in page['items']),
+                      'Service intermediate already exists under this Root; reconcile')
             cursor = page.get('next', '')
             if not cursor:
                 break
