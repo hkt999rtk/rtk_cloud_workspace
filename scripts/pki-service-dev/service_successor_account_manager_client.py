@@ -60,7 +60,7 @@ class AccountManagerFinalClient(r.ServiceRun):
         return [json.loads(line) for line in raw.splitlines() if line]
 
     def preflight_retry(self):
-        deadline, successes = time.monotonic() + 60, 0
+        recovery_deadline, successes = None, 0
         attempts = 0
         while successes < 3:
             attempts += 1
@@ -69,13 +69,15 @@ class AccountManagerFinalClient(r.ServiceRun):
                 successes += 1
             except RuntimeError as error:
                 successes = 0
-                if 'status 503' not in str(error) or time.monotonic() >= deadline:
+                if 'status 503' not in str(error):
+                    raise
+                if recovery_deadline is None:
+                    recovery_deadline = time.monotonic() + 60
+                if time.monotonic() >= recovery_deadline:
                     raise
                 time.sleep(2)
                 continue
             if successes < 3:
-                if time.monotonic() >= deadline:
-                    raise RuntimeError('control plane did not remain readable after 503 recovery')
                 time.sleep(2)
         self.report['control_plane_preflight'] = {
             'consecutive_successes': successes,

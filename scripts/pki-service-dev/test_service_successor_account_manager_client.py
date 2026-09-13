@@ -62,6 +62,32 @@ class PreflightStabilityTests(unittest.TestCase):
             'transient_503_recovered': True,
         })
 
+    def test_three_complete_preflights_do_not_share_a_recovery_deadline(self):
+        runner = object.__new__(mod.AccountManagerFinalClient)
+        runner.report = {}
+        runner.save = lambda *_: None
+        original, sleep = mod.r.ServiceRun.preflight, mod.time.sleep
+        now = [0]
+
+        def preflight(_):
+            now[0] += 61
+
+        def monotonic():
+            return now[0]
+
+        original_monotonic = mod.time.monotonic
+        try:
+            mod.r.ServiceRun.preflight = preflight
+            mod.time.sleep = lambda _: None
+            mod.time.monotonic = monotonic
+            runner.preflight_retry()
+        finally:
+            mod.r.ServiceRun.preflight, mod.time.sleep = original, sleep
+            mod.time.monotonic = original_monotonic
+
+        self.assertEqual(runner.report['control_plane_preflight']['attempts'], 3)
+        self.assertFalse(runner.report['control_plane_preflight']['transient_503_recovered'])
+
 
 if __name__ == '__main__':
     unittest.main()
