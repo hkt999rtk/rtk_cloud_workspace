@@ -1,4 +1,5 @@
 import copy
+import datetime as dt
 import importlib.util
 from pathlib import Path
 import unittest
@@ -47,6 +48,25 @@ class OpenBaoTransitionTemplateTests(unittest.TestCase):
         previous = {'fingerprint': 'old', 'issuer_id': 'old-issuer', 'subject': mod.SUBJECT, 'caller': mod.SUBJECT, 'status': 'succeeded'}
         successor = {'fingerprint': 'new', 'issuer_id': mod.FINAL, 'subject': mod.SUBJECT, 'caller': mod.SUBJECT, 'status': 'succeeded'}
         self.assertEqual(mod.OpenBaoFinalClient.replacement(before, after, [previous], [previous, successor]), successor)
+
+    def test_recovery_ttl_keeps_original_request_validity_window(self):
+        claim = {'status': 'issuing', 'revoked_at': None, 'subject': mod.SUBJECT,
+                 'ttl_days': 90, 'created_at': '2026-09-13T13:12:23Z'}
+        issuer = {'status': 'active', 'trust_domain': 'service',
+                  'not_after': '2026-10-20T00:00:00Z'}
+        ttl, end = mod.OpenBaoFinalClient.recovery_ttl(
+            claim, issuer, dt.datetime(2026, 9, 13, 13, 13, tzinfo=dt.timezone.utc))
+        self.assertEqual(end, dt.datetime(2026, 9, 20, tzinfo=dt.timezone.utc))
+        self.assertEqual(ttl, int((end - dt.datetime(2026, 9, 13, 13, 13, tzinfo=dt.timezone.utc)).total_seconds()) - 60)
+
+    def test_recovery_ttl_rejects_elapsed_original_window(self):
+        claim = {'status': 'issuing', 'revoked_at': None, 'subject': mod.SUBJECT,
+                 'ttl_days': 1, 'created_at': '2026-09-01T00:00:00Z'}
+        issuer = {'status': 'active', 'trust_domain': 'service',
+                  'not_after': '2027-01-01T00:00:00Z'}
+        with self.assertRaises(RuntimeError):
+            mod.OpenBaoFinalClient.recovery_ttl(
+                claim, issuer, dt.datetime(2026, 9, 13, tzinfo=dt.timezone.utc))
 
 
 if __name__ == '__main__':
