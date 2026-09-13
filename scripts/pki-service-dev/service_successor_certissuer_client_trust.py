@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair CertIssuer Dev managed-egress trust during the Service Root overlap."""
+"""Repair CertIssuer Dev renewal trust during the Service Root overlap."""
 import argparse
 import copy
 import fcntl
@@ -16,6 +16,8 @@ m, NS = r.m, r.NS
 NAME = 'certissuer'
 CM = 'pki-service-managed-egress-certissuer-ca'
 ROOT_POLICY = 'pki-service-root-policy-697e8e86-5af'
+HOST_CM = 'pki-service-host-root'
+HOST_TARGET = 'pki-service-host-root-697e8e86-5af'
 OLD = '87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2'
 NEW = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 
@@ -23,7 +25,7 @@ NEW = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 class CertIssuerTrustRepair(r.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
-        self.report['foundation_scope'] = 'Dev CertIssuer managed-egress dual-Service-Root trust repair'
+        self.report['foundation_scope'] = 'Dev CertIssuer managed-egress and host-renewal dual-Service-Root trust repair'
         self.report['service_successor_certissuer_client_trust_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
@@ -37,6 +39,8 @@ class CertIssuerTrustRepair(r.ServiceRun):
                   'CertIssuer managed egress baseline changed')
         roots = self.obj('configmap', ROOT_POLICY)
         ca = self.obj('configmap', CM)
+        host_ca = self.obj('configmap', HOST_CM)
+        host_target = self.obj('configmap', HOST_TARGET)
         expected = roots['data'].get('roots.pem', '')
         m.require(expected.count('-----BEGIN CERTIFICATE-----') == 2
                   and OLD not in expected and NEW not in expected,
@@ -45,6 +49,9 @@ class CertIssuerTrustRepair(r.ServiceRun):
         # file is the sole source of the exact overlapping trust bundle.
         m.require(ca.get('immutable') is True and ca['data'].get('ca.crt') != expected,
                   'CertIssuer egress trust baseline is not the expected immutable predecessor bundle')
+        m.require(host_ca.get('immutable') is True and host_ca['data'].get('root.pem') != expected
+                  and host_target.get('immutable') is True and host_target['data'].get('root.pem') == expected,
+                  'CertIssuer host renewal trust baseline is not the expected immutable overlap bundle')
         target = CM + '-r2-' + m.digest(expected.encode())[:8]
         self.save('before-managed-egress-ca.json', {'name': CM, 'resource_version': ca['metadata']['resourceVersion'],
                                                     'previous_pem_certificates': ca['data'].get('ca.crt', '').count('-----BEGIN CERTIFICATE-----'),
@@ -59,10 +66,13 @@ class CertIssuerTrustRepair(r.ServiceRun):
                          'immutable': True, 'data': {'ca.crt': expected}})
         current = self.obj('deployment', NAME)
         template = copy.deepcopy(current['spec']['template'])
-        volumes = [v for v in template['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
-        m.require(len(volumes) == 1 and volumes[0].get('configMap', {}).get('name') == CM,
-                  'CertIssuer egress trust volume changed')
-        volumes[0]['configMap']['name'] = target
+        egress_volumes = [v for v in template['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
+        host_volumes = [v for v in template['spec']['volumes'] if v['name'] == 'host-root']
+        m.require(len(egress_volumes) == 1 and egress_volumes[0].get('configMap', {}).get('name') in (CM, target)
+                  and len(host_volumes) == 1 and host_volumes[0].get('configMap', {}).get('name') == HOST_CM,
+                  'CertIssuer renewal trust volume changed')
+        egress_volumes[0]['configMap']['name'] = target
+        host_volumes[0]['configMap']['name'] = HOST_TARGET
         template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-certissuer-egress-roots'] = self.output.name
         self.observed_patch('deployment', NAME, current, [
             {'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
@@ -72,11 +82,14 @@ class CertIssuerTrustRepair(r.ServiceRun):
         installed = self.obj('configmap', target)
         live = self.obj('deployment', NAME)
         selected = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
+        selected_host = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'host-root']
         m.require(installed.get('immutable') and installed['data'].get('ca.crt') == expected
-                  and len(selected) == 1 and selected[0].get('configMap', {}).get('name') == target,
-                  'CertIssuer egress trust did not persist')
-        self.check('certissuer_managed_egress_dual_root_trust', {
+                  and len(selected) == 1 and selected[0].get('configMap', {}).get('name') == target
+                  and len(selected_host) == 1 and selected_host[0].get('configMap', {}).get('name') == HOST_TARGET,
+                  'CertIssuer renewal trust did not persist')
+        self.check('certissuer_dual_root_renewal_trust', {
             'roots': [OLD, NEW], 'source_configmap': ROOT_POLICY,
+            'host_renewal_configmap': HOST_TARGET,
             'restart_completed': True, 'private_keys_exported': False, 'staging_touched': False})
 
 
