@@ -2546,3 +2546,27 @@ management callers passed afterward. Staging and login/MFA were untouched.
 
 **Active milestone: 31/40 = 77.5%; 9 checkpoints remain:** R2–R4, A4–A6 and
 V3–V5. The next checkpoint is R2, Service root-policy adoption.
+
+### R2 API Account Manager caller adoption (2026-09-13)
+
+The ordinary API-to–Account Manager authorization client and its renewal client
+now share the active Service Root policy authority. The dedicated Dev helper
+`scripts/pki-service-dev/service_api_root_policy.py` validates the existing
+managed API identity, the public Service Root mount, both CRL-management paths
+and the controller's `video-cloud-api` receipt gate. It rejects partial or
+different settings, writes the exact root ID, state path and Root PEM path for
+both callers, waits for readiness and saves the resulting Deployment template
+and settings in the Dev operator rollout directory.
+
+Dev verification used API image
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:10698fcbd8cf2ee2ebe75928dfd116bca394835e8c5d9ada057b7018e95527d0`.
+The helper recorded durable normal and renewal policy state and receipt for
+Service Root `59c37a28-7016-4706-ae93-e3da7746615d`, policy
+`0682126da62ff17ca432414b88d02cbfe7e9cafc46a18dee9285ccef928aa422`.
+Focused deterministic rollout tests passed. An earlier malformed, unreferenced
+Dev CRL ConfigMap was removed after the validated immutable manifest had rolled
+out. Staging and login/MFA were untouched.
+
+This is an R2 partial checkpoint, not closure: successor-root preparation and
+withdrawal, old-session cutoff/reconnect denial, and the remaining Service
+callers still require the full two-direction acceptance matrix.

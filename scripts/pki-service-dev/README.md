@@ -106,6 +106,31 @@ do not create replacement credentials or replay uncertain mutations blindly.
 Renewal, retirement, held connections and trust-outage qualification remain
 separate T7 checks.
 
+## API Account Manager Service Root policy
+
+The API has two authenticated Service callers for Account Manager: ordinary
+authorization and renewal. Install their common Service Root policy with the
+following Dev-only helper after the controller includes `video-cloud-api` in
+its Service receipt gate:
+
+```sh
+python3 scripts/pki-service-dev/service_api_root_policy.py \
+  --root-id ACTIVE_SERVICE_ROOT_ID --output NEW_PRIVATE_OUTPUT
+```
+
+The helper accepts only the existing managed API identity, public
+`pki-service-host-root` mount, complete Account Manager CRL paths, and either
+no policy settings or the exact active policy settings. It then waits for the
+API's Service receipt and writes its complete Deployment template plus
+`video-cloud-api-account-manager-service-settings.json` under
+`dev/pki/controller-bootstrap/rollout`. The file is the replayable Dev overlay;
+do not replace it with a generic renderer that omits the policy settings.
+
+It is safe to use the helper to verify an exact prior adoption. A partial,
+different, or stale policy stops before mutating the Deployment. This helper
+does not qualify Service Root successor withdrawal, held-session cutoff, or
+other Service callers; those remain R2 completion work.
+
 ## Authority rollout
 
 First run Device preflight. Build the selected Video Cloud revision using
