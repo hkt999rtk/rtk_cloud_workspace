@@ -68,7 +68,15 @@ def intermediate_template(owner, target, replacements, intermediate_id):
     volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
     for volume, prefix in c.VOLUMES[(target['name'], target['namespace'])].items():
         current = volumes.get(volume, {}).get('configMap', {}).get('name', '')
-        m.require(current == prefix or current.startswith(prefix + '-'),
+        accepted_prefixes = (prefix,)
+        # Account Manager originally projected one immutable Service CRL
+        # manifest into both its listener and egress mounts.  Both mounts use
+        # the same CRL schema and private state validation, so accept that
+        # historical shared source and split it into the reviewed manifests
+        # during this successor-CRL rollout.
+        if target['name'] == 'account-manager' and volume == 'management-egress-service-crls':
+            accepted_prefixes += ('account-manager-service-crls',)
+        m.require(any(current == item or current.startswith(item + '-') for item in accepted_prefixes),
                   'Service CRL mount ownership changed: ' + target['name'] + '/' + volume)
         volumes[volume]['configMap']['name'] = replacements[prefix]
     annotations = template.setdefault('metadata', {}).setdefault('annotations', {})

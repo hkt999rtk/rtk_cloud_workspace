@@ -104,6 +104,68 @@ class MQTTHostTests(unittest.TestCase):
             legacy, 'pinned-image', numeric_identity=False))
         self.assertFalse(m.valid_crl_state_initializer(
             dict(admitted, image='other'), 'pinned-image'))
+        prior_image = dict(admitted, image='prior-image')
+        self.assertFalse(m.valid_crl_state_initializer(
+            prior_image, 'pinned-image'))
+        self.assertTrue(m.compatible_crl_state_initializer(prior_image))
+        nonnumeric = dict(prior_image,
+                          securityContext=dict(init['securityContext']))
+        nonnumeric['securityContext'].pop('runAsUser')
+        nonnumeric['securityContext'].pop('runAsGroup')
+        self.assertTrue(m.compatible_crl_state_initializer(
+            nonnumeric, numeric_identity=False))
+        legacy = dict(prior_image, args=[
+            'set -eu; umask 077; mkdir -p /var/lib/mqtt-pki/crls '
+            '/var/lib/mqtt-pki/identity/service-crls; chmod 700 '
+            '/var/lib/mqtt-pki/crls /var/lib/mqtt-pki/identity '
+            '/var/lib/mqtt-pki/identity/service-crls'])
+        self.assertTrue(m.compatible_crl_state_initializer(legacy))
+        self.assertFalse(m.compatible_crl_state_initializer(
+            dict(prior_image, args=['mkdir -p /tmp'])))
+
+    def test_existing_crl_source_must_be_an_immutable_dev_mqtt_manifest(self):
+        valid = {'immutable': True, 'data': {'crls.json': json.dumps([{
+            'issuer': {'issuer_id': '00000000-0000-4000-8000-000000000001',
+                       'environment': 'dev', 'trust_domain': 'mqtt'},
+            'state_path': '/var/lib/mqtt-pki/crls/current.json'}])}}
+        self.assertTrue(m.valid_mqtt_crl_manifest(valid))
+        self.assertFalse(m.valid_mqtt_crl_manifest(
+            dict(valid, immutable=False)))
+        invalid = json.loads(json.dumps(valid))
+        invalid['data']['crls.json'] = json.dumps([{
+            'issuer': {'issuer_id': 'not-an-issuer', 'environment': 'dev',
+                       'trust_domain': 'mqtt'},
+            'state_path': '/tmp/current.json'}])
+        self.assertFalse(m.valid_mqtt_crl_manifest(invalid))
+
+    def test_successor_root_id_replaces_only_the_policy_authority(self):
+        env = [{'name': 'VIDEO_CLOUD_MQTT_ROOT_ID', 'value': 'predecessor'},
+               {'name': 'VIDEO_CLOUD_MQTT_ROOT_STATE', 'value': '/private/state'},
+               {'name': 'VIDEO_CLOUD_MQTT_ROOTS',
+                'value': '/run/pki-mqtt/roots.pem'},
+               {'name': 'RETAINED', 'value': 'yes'}]
+        updated = m.h.with_env(env, {'VIDEO_CLOUD_MQTT_ROOT_ID': 'successor'})
+        self.assertEqual({item['name']: item['value'] for item in updated}, {
+            'VIDEO_CLOUD_MQTT_ROOT_ID': 'successor',
+            'VIDEO_CLOUD_MQTT_ROOT_STATE': '/private/state',
+            'VIDEO_CLOUD_MQTT_ROOTS': '/run/pki-mqtt/roots.pem',
+            'RETAINED': 'yes'})
+
+    def test_managed_host_settings_use_the_selected_mqtt_root_only(self):
+        root = dict(self.root(), certificate_fingerprint_sha256='b' * 64)
+        service = {'certificate_fingerprint_sha256': 'c' * 64}
+        settings = m.mqtt_host_settings(root, service)
+        self.assertEqual(settings['EMQX_PKI_HOST_ROOT_SHA256'], 'b' * 64)
+        self.assertEqual(settings['EMQX_PKI_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256'],
+                         'c' * 64)
+        self.assertEqual(settings['EMQX_PKI_SERVICE_CLIENT_ROOT_SHA256'],
+                         'c' * 64)
+        self.assertEqual(settings['EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE'],
+                         m.EMQX_SERVICE_STATE)
+        self.assertEqual(settings['EMQX_PKI_HOST_IDENTITY_STATE'],
+                         m.MQTT_HOST_STATE)
+        self.assertNotIn('EMQX_PKI_HOST_RENEWAL_CLIENT_CERT', settings)
+        self.assertNotIn('EMQX_PKI_HOST_RENEWAL_CLIENT_KEY', settings)
 
     def test_intermediate_switch_changes_only_selected_bundle_source(self):
         owner = {'spec': {'template': {'metadata': {'annotations': {
@@ -136,11 +198,91 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual(
             settings['EMQX_PKI_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256'],
             'd' * 64)
+        self.assertEqual(settings['EMQX_PKI_SERVICE_CLIENT_ROOT_SHA256'],
+                         'd' * 64)
+        self.assertEqual(settings['EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE'],
+                         m.EMQX_SERVICE_STATE)
         self.assertEqual(settings['EMQX_PKI_HOST_DNS_NAMES'], m.MQTT_HOST)
         self.assertEqual(settings['EMQX_PKI_HOST_IDENTITY_STATE'],
                          m.MQTT_HOST_STATE)
-        self.assertNotEqual(settings['EMQX_PKI_HOST_RENEWAL_CLIENT_KEY'],
-                            settings['EMQX_PKI_SEED_KEY'])
+        self.assertNotIn('EMQX_PKI_HOST_RENEWAL_CLIENT_KEY', settings)
+
+    def test_emqx_bootstrap_is_one_use_and_normal_settings_stay_keyless(self):
+        normal = m.mqtt_host_settings(self.root(), {
+            'certificate_fingerprint_sha256': 'd' * 64})
+        seeded = m.emqx_bootstrap_settings(normal)
+        self.assertNotIn('EMQX_PKI_HOST_RENEWAL_CLIENT_KEY', normal)
+        self.assertEqual(seeded['EMQX_PKI_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY'],
+                         '/run/emqx-bootstrap/client.key')
+        self.assertEqual(normal['EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE'],
+                         m.EMQX_SERVICE_STATE)
+        self.assertNotIn('EMQX_PKI_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY', normal)
+
+    def test_emqx_bootstrap_pod_has_ephemeral_ca_and_no_exported_key(self):
+        settings = m.mqtt_host_settings(self.root(), {
+            'certificate_fingerprint_sha256': 'd' * 64})
+        pod = m.emqx_bootstrap_pod('ghcr.io/hkt999rtk/rtk_cloud_dev/emqx-pki@sha256:' +
+                                   'c' * 64, settings, 'pki-service-host-root',
+                                   [{'name': 'registry'}])
+        container = pod['spec']['containers'][0]
+        env = {item['name']: item for item in container['env']}
+        self.assertEqual(env['EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE']['value'],
+                         m.EMQX_SERVICE_STATE)
+        self.assertIn('EMQX_PKI_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY', env)
+        self.assertNotIn('EMQX_PKI_HOST_RENEWAL_CLIENT_KEY', env)
+        self.assertEqual(pod['spec']['volumes'][-1], {'name': 'bootstrap', 'emptyDir': {}})
+        self.assertNotIn('PRIVATE KEY', str(pod))
+        self.assertIn('service:emqx-pki', container['args'][0])
+
+    def test_certissuer_bootstrap_policy_is_exact_and_closes_cleanly(self):
+        owner = {'spec': {'template': {'spec': {'containers': [{
+            'name': 'certissuer', 'env': [
+                {'name': 'CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN',
+                 'value': '^emqx-pki$'},
+                {'name': 'CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN',
+                 'value': '^service-provisioner$'}]}]}}}}
+        opened = m.certissuer_emqx_bootstrap_template(owner, '^service:emqx-pki$', True)
+        values = {item['name']: item['value'] for item in
+                  opened['spec']['containers'][0]['env']}
+        self.assertEqual(values['CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN'],
+                         '^service:emqx-pki$')
+        self.assertEqual(values['CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER'],
+                         m.EMQX_SERVICE_SUBJECT)
+        closed = m.certissuer_emqx_bootstrap_template(
+            {'spec': {'template': opened}}, '^service:emqx-pki$', False)
+        values = {item['name']: item['value'] for item in
+                  closed['spec']['containers'][0]['env']}
+        self.assertEqual(values['CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN'],
+                         '^service-provisioner$')
+        self.assertNotIn('CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER', values)
+
+    def test_reconfigure_managed_broker_removes_static_renewal_credentials(self):
+        owner = {'spec': {'template': {'metadata': {}, 'spec': {
+            'containers': [{'name': 'mqtt', 'image': 'old', 'env': [
+                {'name': 'EMQX_PKI_HOST_IDENTITY_STATE', 'value': m.MQTT_HOST_STATE},
+                {'name': 'EMQX_PKI_HOST_NAME', 'value': m.MQTT_HOST},
+                {'name': 'EMQX_PKI_HOST_DNS_NAMES', 'value': m.MQTT_HOST},
+                {'name': 'EMQX_PKI_HOST_RENEWAL_CLIENT_CERT', 'value': '/old/cert'},
+                {'name': 'EMQX_PKI_HOST_RENEWAL_CLIENT_KEY', 'value': '/old/key'},
+                {'name': 'PKI_DATABASE_URL', 'valueFrom': {'secretKeyRef': {
+                    'name': 'pki-controller-database', 'key': 'url'}}}],
+                'volumeMounts': []}, {'name': 'pkibroker', 'image': 'worker',
+                'env': [], 'volumeMounts': []}],
+            'volumes': [
+                {'name': 'mqtt-host-state', 'persistentVolumeClaim': {'claimName': m.MQTT_HOST_PVC}},
+                {'name': 'mqtt-host-runtime', 'emptyDir': {}},
+                {'name': 'mqtt-host-management', 'secret': {'secretName': m.MQTT_MANAGEMENT_SECRET}},
+                {'name': 'pki-service-root', 'configMap': {'name': 'pki-service-host-root'}}]}}}}
+        settings = m.mqtt_host_settings(self.root(), {
+            'certificate_fingerprint_sha256': 'd' * 64})
+        result = m.reconfigure_managed_mqtt_template(owner, 'new-image', settings, 'phase')
+        values = {item['name']: item.get('value') for item in
+                  result['spec']['containers'][0]['env']}
+        self.assertEqual(values['EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE'],
+                         m.EMQX_SERVICE_STATE)
+        self.assertNotIn('EMQX_PKI_HOST_RENEWAL_CLIENT_KEY', values)
+        self.assertNotIn('EMQX_PKI_SEED_KEY', values)
+        self.assertIn('PKI_DATABASE_URL', values)
 
     def test_managed_runtime_drops_all_tls_private_material(self):
         source = {name: name + '-value' for name in

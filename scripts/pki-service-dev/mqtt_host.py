@@ -25,6 +25,8 @@ MQTT_CONSUMERS = ['video-cloud-api', 'video-cloud-logingester']
 MQTT_HOST = 'mqtt-pki.' + NS + '.svc'
 MQTT_HOST_PVC = 'mqtt-pki-host-identity'
 MQTT_HOST_STATE = '/var/lib/emqx-pki/identity/state.json'
+EMQX_SERVICE_SUBJECT = 'service:emqx-pki'
+EMQX_SERVICE_STATE = '/var/lib/emqx-pki/identity/service-client.json'
 MQTT_RUNTIME_SECRET = 'mqtt-pki-runtime-managed'
 MQTT_MANAGEMENT_SECRET = 'pki-mqtt-host-management'
 MQTT_CALLBACK_CA = 'pki-mqtt-callback-server-ca'
@@ -32,6 +34,8 @@ MQTT_RUNTIME_FIELDS = {
     'api-keys.conf', 'authentication', 'cookie', 'dashboard-password'}
 IMAGE_PATTERN = re.compile(
     r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
+EMQX_IMAGE_PATTERN = re.compile(
+    r'ghcr\.io/hkt999rtk/rtk_cloud_dev/emqx-pki@sha256:[0-9a-f]{64}')
 
 
 def intermediate_request(root):
@@ -81,19 +85,160 @@ def mqtt_host_settings(mqtt_root, service_root):
         'EMQX_PKI_HOST_DNS_NAMES': MQTT_HOST,
         'EMQX_PKI_HOST_ROOT_SHA256':
             mqtt_root['certificate_fingerprint_sha256'],
-        'EMQX_PKI_HOST_RENEWAL_CLIENT_CERT':
-            '/run/emqx-pki-management/tls.crt',
-        'EMQX_PKI_HOST_RENEWAL_CLIENT_KEY':
-            '/run/emqx-pki-management/tls.key',
+        # The broker server leaf and its renewal caller have separate
+        # state and keys.  The callback-management Secret is intentionally
+        # excluded: it authenticates EMQX callbacks only.
+        'EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE': EMQX_SERVICE_STATE,
+        'EMQX_PKI_SERVICE_CLIENT_ROOT_SHA256':
+            service_root['certificate_fingerprint_sha256'],
         'EMQX_PKI_HOST_RENEWAL_URL': 'https://' + issuer + ':9443',
         'EMQX_PKI_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256':
             service_root['certificate_fingerprint_sha256'],
         'EMQX_PKI_HOST_RENEWAL_SERVER_PKI_NAME': issuer,
         'EMQX_PKI_HOST_RENEWAL_TLS_CA': '/run/pki-service-root/root.pem',
         'EMQX_PKI_HOST_RENEWAL_SERVER_PKI_SWEEP_INTERVAL': '10s',
-        'EMQX_PKI_SEED_CERT': '/var/lib/emqx-pki/seed/chain.pem',
-        'EMQX_PKI_SEED_KEY': '/var/lib/emqx-pki/seed/key.pem',
     }
+
+
+def emqx_bootstrap_settings(settings):
+    """Add one-use bootstrap files without contaminating broker settings."""
+    m.require('EMQX_PKI_HOST_RENEWAL_CLIENT_CERT' not in settings
+              and 'EMQX_PKI_HOST_RENEWAL_CLIENT_KEY' not in settings,
+              'managed EMQX settings retain a static renewal credential')
+    return dict(settings,
+                EMQX_PKI_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT='/run/emqx-bootstrap/client.crt',
+                EMQX_PKI_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY='/run/emqx-bootstrap/client.key')
+
+
+def emqx_bootstrap_pod(image, settings, service_root_configmap, pull_secrets):
+    """Build a one-shot Pod whose ephemeral cert may enroll one Service client.
+
+    The generated CA and client key live only in ``emptyDir``. The controller
+    reads the public CA after the Pod is ready, then opens CertIssuer's exact
+    temporary route. The Pod waits for that gate before it runs bootstrap.
+    """
+    m.require(EMQX_IMAGE_PATTERN.fullmatch(image), 'verified dev EMQX image digest required')
+    m.require(service_root_configmap and all(set(item) == {'name'} and item['name']
+                                             for item in pull_secrets),
+              'reviewed Service root and registry pull references required')
+    values = emqx_bootstrap_settings(settings)
+    values.update({
+        'PKI_DATABASE_URL': None,
+        'EMQX_PKI_BOOTSTRAP_REQUEST_ID': 'dev-emqx-service-bootstrap-' + uuid.uuid4().hex,
+    })
+    command = '''set -eu; umask 077; mkdir -p /run/emqx-bootstrap;
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /run/emqx-bootstrap/ca.key;
+openssl req -x509 -new -key /run/emqx-bootstrap/ca.key -sha256 -days 1 \
+  -subj /CN=dev-emqx-service-bootstrap-ca -out /run/emqx-bootstrap/ca.crt;
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /run/emqx-bootstrap/client.key;
+openssl req -new -key /run/emqx-bootstrap/client.key -subj /CN=service:emqx-pki \
+  -out /run/emqx-bootstrap/client.csr;
+printf 'basicConstraints=CA:FALSE\\nextendedKeyUsage=clientAuth\\nkeyUsage=digitalSignature\\n' \
+  > /run/emqx-bootstrap/client.ext;
+openssl x509 -req -in /run/emqx-bootstrap/client.csr -CA /run/emqx-bootstrap/ca.crt \
+  -CAkey /run/emqx-bootstrap/ca.key -CAcreateserial -days 1 -sha256 \
+  -extfile /run/emqx-bootstrap/client.ext -out /run/emqx-bootstrap/client.crt;
+chmod 600 /run/emqx-bootstrap/*; touch /run/emqx-bootstrap/ready;
+while test ! -f /run/emqx-bootstrap/issue; do sleep 1; done;
+exec /usr/local/bin/emqxpkihost bootstrap'''
+    env = []
+    for name, value in values.items():
+        if name == 'PKI_DATABASE_URL':
+            env.append({'name': name, 'valueFrom': {'secretKeyRef': {
+                'name': 'pki-controller-database', 'key': 'url'}}})
+        else:
+            env.append({'name': name, 'value': value})
+    return {
+        'apiVersion': 'v1', 'kind': 'Pod',
+        'metadata': {'name': 'emqx-service-bootstrap', 'namespace': NS,
+                     'labels': {'app.kubernetes.io/name': 'mqtt-pki',
+                                'rtk.cloud/purpose': 'emqx-service-bootstrap'}},
+        'spec': {'restartPolicy': 'Never', 'automountServiceAccountToken': False,
+                 'imagePullSecrets': pull_secrets,
+                 'securityContext': {'runAsUser': 1000, 'runAsGroup': 1000,
+                                     'fsGroup': 1000,
+                                     'fsGroupChangePolicy': 'OnRootMismatch'},
+                 'containers': [{'name': 'bootstrap', 'image': image,
+                                 'command': ['sh', '-c'], 'args': [command], 'env': env,
+                                 'volumeMounts': [
+                                     {'name': 'state', 'mountPath': '/var/lib/emqx-pki'},
+                                     {'name': 'service-root', 'mountPath': '/run/pki-service-root',
+                                      'readOnly': True},
+                                     {'name': 'bootstrap', 'mountPath': '/run/emqx-bootstrap'}],
+                                 'securityContext': {'allowPrivilegeEscalation': False,
+                                                     'capabilities': {'drop': ['ALL']},
+                                                     'runAsNonRoot': True,
+                                                     'readOnlyRootFilesystem': True}}],
+                 'volumes': [
+                     {'name': 'state', 'persistentVolumeClaim': {'claimName': MQTT_HOST_PVC}},
+                     {'name': 'service-root', 'configMap': {'name': service_root_configmap,
+                                                            'defaultMode': 0o444}},
+                     {'name': 'bootstrap', 'emptyDir': {}}]}}
+
+
+def certissuer_emqx_bootstrap_template(owner, pattern, bootstrap=False):
+    """Open exactly one Service client enrollment, or restore its closed policy."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec'].get('containers', [])
+    m.require(len(containers) == 1 and containers[0].get('name') == 'certissuer',
+              'CertIssuer container ownership changed')
+    values = {item['name']: item.get('value') for item in containers[0].get('env', [])}
+    m.require(len(values) == len(containers[0].get('env', [])),
+              'duplicate CertIssuer environment setting')
+    expected = '^service-provisioner$' if bootstrap else '^service:emqx-pki$'
+    replacement = '^service:emqx-pki$' if bootstrap else '^service-provisioner$'
+    m.require(values.get('CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN') in
+              ('^emqx-pki$', '^service:emqx-pki$')
+              and values.get('CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN') == expected,
+              'CertIssuer bootstrap policy changed')
+    updates = {'CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN': pattern,
+               'CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN': replacement}
+    remove = ()
+    if bootstrap:
+        updates.update({'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER': EMQX_SERVICE_SUBJECT,
+                        'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT': EMQX_SERVICE_SUBJECT})
+    else:
+        remove = ('CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER',
+                  'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT')
+    containers[0]['env'] = [item for item in containers[0]['env']
+                            if item['name'] not in remove]
+    containers[0]['env'] = h.with_env(containers[0]['env'], updates)
+    return template
+
+
+def reconfigure_managed_mqtt_template(owner, image, settings, output_name):
+    """Replace only EMQX host identity settings on the already-managed Pod."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    pod = template['spec']
+    containers = {item['name']: item for item in pod.get('containers', [])}
+    m.require(set(containers) == {'mqtt', 'pkibroker'}, 'dedicated MQTT Pod topology changed')
+    mqtt = containers['mqtt']
+    current = {item['name']: item.get('value') for item in mqtt.get('env', [])}
+    m.require(len(current) == len(mqtt.get('env', []))
+              and current.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE
+              and current.get('EMQX_PKI_HOST_NAME') == MQTT_HOST
+              and current.get('EMQX_PKI_HOST_DNS_NAMES') == MQTT_HOST
+              and current.get('EMQX_PKI_HOST_RENEWAL_CLIENT_CERT')
+              and current.get('EMQX_PKI_HOST_RENEWAL_CLIENT_KEY'),
+              'managed MQTT predecessor configuration changed')
+    m.require(not ({'EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE',
+                    'EMQX_PKI_SERVICE_CLIENT_ROOT_SHA256'} & set(current)),
+              'managed EMQX Service client state already configured')
+    mqtt['image'] = image
+    mqtt['env'] = [item for item in mqtt['env']
+                   if not item['name'].startswith('EMQX_PKI_')]
+    mqtt['env'] = h.with_env(mqtt['env'], settings)
+    volumes = {item['name']: item for item in pod.get('volumes', [])}
+    m.require(volumes.get('mqtt-host-state', {}).get('persistentVolumeClaim', {}).get(
+                  'claimName') == MQTT_HOST_PVC
+              and volumes.get('mqtt-host-runtime', {}).get('emptyDir') == {}
+              and volumes.get('mqtt-host-management', {}).get('secret', {}).get(
+                  'secretName') == MQTT_MANAGEMENT_SECRET
+              and volumes.get('pki-service-root', {}).get('configMap', {}).get('name'),
+              'managed MQTT volume ownership changed')
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/emqx-service-client-adoption'] = output_name
+    return template
 
 
 def managed_runtime_data(source):
@@ -190,8 +335,9 @@ def crl_state_initializer(image):
     return {
         'name': 'mqtt-pki-state-init', 'image': image,
         'command': ['sh', '-c'],
-        'args': ['set -eu; umask 077; mkdir -p /var/lib/mqtt-pki/crls; '
-                 'chmod 700 /var/lib/mqtt-pki/crls'],
+        'args': ['set -eu; umask 077; mkdir -p /var/lib/mqtt-pki/crls '
+                 '/var/lib/mqtt-pki/identity; chmod 700 '
+                 '/var/lib/mqtt-pki/crls /var/lib/mqtt-pki/identity'],
         'volumeMounts': [{'name': 'mqtt-pki-state',
                           'mountPath': '/var/lib/mqtt-pki'}],
         'securityContext': {'allowPrivilegeEscalation': False,
@@ -214,6 +360,55 @@ def valid_crl_state_initializer(value, image, numeric_identity=True):
             return False
     ids = (security.get('runAsUser'), security.get('runAsGroup'))
     return ids == ((10001, 10001) if numeric_identity else (None, None))
+
+
+def compatible_crl_state_initializer(value, numeric_identity=True):
+    """Accept only the two hardened initializer forms emitted before recovery.
+
+    A later Dev application-image rollout can leave this init container at an
+    older image digest.  Its image is intentionally replaced during recovery,
+    but the mount, command and non-root security contract must still be one of
+    the reviewed forms below.
+    """
+    image = value.get('image')
+    if not isinstance(image, str) or not image:
+        return False
+    if valid_crl_state_initializer(value, image, numeric_identity):
+        return True
+    legacy = crl_state_initializer(image)
+    legacy['args'] = [
+        'set -eu; umask 077; mkdir -p /var/lib/mqtt-pki/crls '
+        '/var/lib/mqtt-pki/identity/service-crls; chmod 700 '
+        '/var/lib/mqtt-pki/crls /var/lib/mqtt-pki/identity '
+        '/var/lib/mqtt-pki/identity/service-crls']
+    for field in ('name', 'image', 'command', 'args', 'volumeMounts'):
+        if value.get(field) != legacy[field]:
+            return False
+    security = value.get('securityContext', {})
+    required = legacy['securityContext']
+    for field in ('allowPrivilegeEscalation', 'capabilities', 'runAsNonRoot',
+                  'readOnlyRootFilesystem'):
+        if security.get(field) != required[field]:
+            return False
+    ids = (security.get('runAsUser'), security.get('runAsGroup'))
+    return ids == ((10001, 10001) if numeric_identity else (None, None))
+
+
+def valid_mqtt_crl_manifest(configmap):
+    """Return whether an existing CRL source is a reviewed Dev MQTT manifest."""
+    try:
+        entries = json.loads(configmap['data']['crls.json'])
+    except (KeyError, TypeError, json.JSONDecodeError):
+        return False
+    return (configmap.get('immutable') is True and bool(entries)
+            and all(isinstance(entry, dict)
+                    and isinstance(entry.get('state_path'), str)
+                    and entry['state_path'].startswith('/var/lib/mqtt-pki/crls/')
+                    and entry.get('issuer', {}).get('environment') == 'dev'
+                    and entry['issuer'].get('trust_domain') == 'mqtt'
+                    and re.fullmatch(r'[0-9a-f-]{36}',
+                                     entry['issuer'].get('issuer_id', ''))
+                    for entry in entries))
 
 
 class MQTTHostRun(h.ServiceRun):
@@ -801,33 +996,59 @@ class MQTTHostRun(h.ServiceRun):
             owner = self.obj('deployment', name)
             template = json.loads(json.dumps(owner['spec']['template']))
             pod, container = template['spec'], template['spec']['containers'][0]
+            changed = False
+            env = {item['name']: item.get('value')
+                   for item in container.get('env', [])}
+            m.require(env.get('VIDEO_CLOUD_MQTT_ROOT_ID')
+                      and env.get('VIDEO_CLOUD_MQTT_ROOT_STATE')
+                      and env.get('VIDEO_CLOUD_MQTT_ROOTS') ==
+                      '/run/pki-mqtt/roots.pem',
+                      'MQTT dynamic Root policy settings changed: ' + name)
+            if env['VIDEO_CLOUD_MQTT_ROOT_ID'] != root['issuer_id']:
+                # The existing private state remains in place: it contains the
+                # reviewed overlap roots.  Changing only its governing Root ID
+                # makes the active successor's policy authoritative before the
+                # predecessor CRL manifest is withdrawn.
+                container['env'] = h.with_env(container['env'], {
+                    'VIDEO_CLOUD_MQTT_ROOT_ID': root['issuer_id']})
+                changed = True
+            volumes = [item for item in pod['volumes']
+                       if item['name'] == 'mqtt-pki-crls']
+            m.require(len(volumes) == 1 and volumes[0].get('configMap', {}).get('name'),
+                      'MQTT CRL volume changed: ' + name)
+            current_manifest = volumes[0]['configMap']['name']
+            if current_manifest != configmap:
+                m.require(valid_mqtt_crl_manifest(
+                              self.obj('configmap', current_manifest)),
+                          'MQTT CRL source is not a reviewed Dev manifest: ' + name)
+                volumes[0]['configMap']['name'] = configmap
+                changed = True
             existing = [item for item in pod.get('initContainers', [])
                         if item['name'] == 'mqtt-pki-state-init']
             if not existing:
                 pod.setdefault('initContainers', []).append(
                     crl_state_initializer(container['image']))
-                template.setdefault('metadata', {}).setdefault('annotations', {})[
-                    'rtk.cloud/mqtt-crl-recovery'] = self.output.name
-                self.scoped_patch('deployment', owner, [{
-                    'op': 'replace', 'path': '/spec/template',
-                    'value': template}])
+                changed = True
             else:
                 expected = crl_state_initializer(container['image'])
                 if not valid_crl_state_initializer(
                         existing[0], container['image']):
                     m.require(name in MQTT_CONSUMERS
-                              and valid_crl_state_initializer(
-                                  existing[0], container['image'], False),
+                              and (compatible_crl_state_initializer(existing[0])
+                                   or compatible_crl_state_initializer(
+                                       existing[0], False)),
                               'MQTT CRL initializer changed: ' + name)
                     pod['initContainers'] = [
                         expected if item['name'] == 'mqtt-pki-state-init'
                         else item for item in pod['initContainers']]
-                    annotations = template.setdefault(
-                        'metadata', {}).setdefault('annotations', {})
-                    annotations['rtk.cloud/mqtt-crl-recovery'] = self.output.name
-                    self.scoped_patch('deployment', owner, [{
-                        'op': 'replace', 'path': '/spec/template',
-                        'value': template}])
+                    changed = True
+            if changed:
+                annotations = template.setdefault('metadata', {}).setdefault(
+                    'annotations', {})
+                annotations['rtk.cloud/mqtt-crl-recovery'] = self.output.name
+                self.scoped_patch('deployment', owner, [{
+                    'op': 'replace', 'path': '/spec/template',
+                    'value': template}])
             self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
                        '--timeout=300s'], timeout=310)
         receipts = {}
@@ -861,7 +1082,7 @@ class MQTTHostRun(h.ServiceRun):
             'CERT_ISSUER_MQTT_SERVER_PKI_ROOT_SHA256':
                 root['certificate_fingerprint_sha256'],
             'CERT_ISSUER_MQTT_SERVER_DNS_NAMES': MQTT_HOST,
-            'CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN': '^emqx-pki$'})
+            'CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN': '^service:emqx-pki$'})
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/mqtt-issuer-rollout'] = self.output.name
         self.scoped_patch('deployment', owner, [{
@@ -883,7 +1104,7 @@ class MQTTHostRun(h.ServiceRun):
                    'deployment/certissuer', '--timeout=240s'], timeout=250)
         self.check('mqtt_named_issuance_route_enabled', {
             'issuer_id': issuer['issuer_id'], 'dns_names': [MQTT_HOST],
-            'caller_pattern': '^emqx-pki$', 'image': self.args.image})
+            'caller_pattern': '^service:emqx-pki$', 'image': self.args.image})
 
     def mqtt_issuer_http(self, body, ca):
         identity = self.base / 'pki/consumers/emqx-pki'
@@ -929,7 +1150,8 @@ class MQTTHostRun(h.ServiceRun):
             '-subj /CN=' + MQTT_HOST + ' -addext subjectAltName=DNS:' +
             MQTT_HOST + ' -out /state/seed/csr.pem; exec sleep 3600')
         pod = {'apiVersion': 'v1', 'kind': 'Pod',
-               'metadata': {'name': podname, 'namespace': NS},
+               'metadata': {'name': podname, 'namespace': NS,
+                            'labels': {'app.kubernetes.io/name': 'mqtt-pki'}},
                'spec': {'restartPolicy': 'Never',
                         'automountServiceAccountToken': False,
                         'imagePullSecrets': podspec.get('imagePullSecrets', []),
@@ -990,6 +1212,376 @@ class MQTTHostRun(h.ServiceRun):
         self.check('mqtt_host_seed_issued', {
             'issuer_id': issuer['issuer_id'], 'dns_names': [MQTT_HOST],
             'key_exported': False, 'pvc_uid': reference['pvc_uid']})
+
+    def bootstrap_emqx_service_client(self):
+        """Seed the one managed Service client and MQTT leaf on the broker PVC."""
+        m.require(EMQX_IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified managed EMQX image digest required')
+        source = Path(self.args.service_authority)
+        evidence = m.read(source / 'report.json')
+        service = m.read(source / 'intermediate-active.json')
+        m.require(evidence.get('status') == 'passed' and service.get('status') == 'active'
+                  and service.get('environment') == 'dev'
+                  and service.get('trust_domain') == 'service'
+                  and EMQX_SERVICE_SUBJECT in service.get('service_client_ids', []),
+                  'active Service v9 evidence for EMQX is required')
+        m.require(self.api('/issuers/' + service['issuer_id']) == service,
+                  'active Service v9 authority changed')
+        mqtt_root, mqtt_issuer, _ = self.ready_intermediate(status='active')
+        root = self.api('/issuers/' + service['parent_issuer_id'])
+        m.require(root.get('status') == 'active' and root.get('kind') == 'root'
+                  and root.get('trust_domain') == 'service',
+                  'active Service Root changed')
+        owner = self.obj('deployment', 'mqtt-pki')
+        m.require(owner['spec'].get('replicas') == 0
+                  and owner['spec'].get('strategy', {}).get('type') == 'Recreate',
+                  'MQTT broker must remain stopped for Service bootstrap')
+        pvc = self.obj('persistentvolumeclaim', MQTT_HOST_PVC)
+        m.require(pvc.get('status', {}).get('phase') == 'Bound',
+                  'fresh MQTT host state PVC is required')
+        volumes = {item['name']: item for item in owner['spec']['template']['spec'].get('volumes', [])}
+        root_volume = volumes.get('pki-service-root', {}).get('configMap', {})
+        root_map = self.obj('configmap', root_volume.get('name', ''))
+        m.require(root_map.get('immutable') is True
+                  and root_map.get('data', {}).get('root.pem') == root['certificate_pem'],
+                  'broker Service Root projection changed')
+        settings = mqtt_host_settings(mqtt_root, root)
+        requested = emqx_bootstrap_pod(
+            self.args.image, settings, root_volume['name'],
+            owner['spec']['template']['spec'].get('imagePullSecrets', []))
+        m.require(not self.kube(['-n', NS, 'get', 'pod', 'emqx-service-bootstrap',
+                                 '--ignore-not-found', '-o', 'name']).strip(),
+                  'EMQX Service bootstrap Pod already exists; reconcile')
+        self.save('emqx-service-bootstrap-pod.json', requested)
+        self.create(requested)
+        self.kube(['-n', NS, 'wait', '--for=condition=Ready',
+                   'pod/emqx-service-bootstrap', '--timeout=180s'], timeout=190)
+        self.kube(['-n', NS, 'exec', 'emqx-service-bootstrap', '--', 'test', '-f',
+                   '/run/emqx-bootstrap/ready'])
+        bootstrap_ca = self.kube(['-n', NS, 'exec', 'emqx-service-bootstrap', '--',
+                                  'cat', '/run/emqx-bootstrap/ca.crt'])
+        # Public bootstrap CA is recorded solely for exact removal after this
+        # enrollment. The private CA/client keys never leave emptyDir.
+        self.save('emqx-bootstrap-ca.pem', bootstrap_ca)
+        initial_ca = base64.b64decode(self.obj('secret', 'certissuer-runtime')['data']['client-ca.crt']).decode()
+        opened, ca_added = False, False
+        try:
+            self.patch_ca('certissuer-runtime', 'client-ca.crt', [bootstrap_ca])
+            ca_added = True
+            certissuer = self.obj('deployment', 'certissuer')
+            template = certissuer_emqx_bootstrap_template(
+                certissuer, '^service:emqx-pki$', bootstrap=True)
+            template.setdefault('metadata', {}).setdefault('annotations', {})[
+                'rtk.cloud/emqx-service-bootstrap'] = self.output.name
+            self.scoped_patch('deployment', certissuer, [{
+                'op': 'replace', 'path': '/spec/template', 'value': template}])
+            opened = True
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/certissuer',
+                       '--timeout=300s'], timeout=310)
+            self.kube(['-n', NS, 'exec', 'emqx-service-bootstrap', '--', 'touch',
+                       '/run/emqx-bootstrap/issue'])
+            self.kube(['-n', NS, 'wait', '--for=jsonpath={.status.phase}=Succeeded',
+                       'pod/emqx-service-bootstrap', '--timeout=300s'], timeout=310)
+        finally:
+            # Close both the listener exception and its CA even if enrollment
+            # fails. A failed Pod can be examined without retaining authority.
+            if opened:
+                certissuer = self.obj('deployment', 'certissuer')
+                template = certissuer_emqx_bootstrap_template(
+                    certissuer, '^service:emqx-pki$', bootstrap=False)
+                template.setdefault('metadata', {}).setdefault('annotations', {})[
+                    'rtk.cloud/emqx-service-bootstrap-closed'] = self.output.name
+                self.scoped_patch('deployment', certissuer, [{
+                    'op': 'replace', 'path': '/spec/template', 'value': template}])
+                self.kube(['-n', NS, 'rollout', 'status', 'deployment/certissuer',
+                           '--timeout=300s'], timeout=310)
+            secret = self.obj('secret', 'certissuer-runtime')
+            current = base64.b64decode(secret['data']['client-ca.crt']).decode()
+            m.require(current == h.append_pem(initial_ca, bootstrap_ca),
+                      'CertIssuer bootstrap CA changed during enrollment')
+            self.scoped_patch('secret', secret, [{
+                'op': 'test', 'path': '/data/client-ca.crt', 'value': secret['data']['client-ca.crt']},
+                {'op': 'replace', 'path': '/data/client-ca.crt',
+                 'value': base64.b64encode(initial_ca.encode()).decode()}])
+            if ca_added:
+                certissuer = self.obj('deployment', 'certissuer')
+                template = json.loads(json.dumps(certissuer['spec']['template']))
+                template.setdefault('metadata', {}).setdefault('annotations', {})[
+                    'rtk.cloud/emqx-bootstrap-ca-removed'] = self.output.name
+                self.scoped_patch('deployment', certissuer, [{
+                    'op': 'replace', 'path': '/spec/template', 'value': template}])
+                self.kube(['-n', NS, 'rollout', 'status', 'deployment/certissuer',
+                           '--timeout=300s'], timeout=310)
+        rows = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--',
+                          'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d',
+                          'video_cloud', '-At'],
+                         "SELECT row_to_json(t) FROM (SELECT issuer_id,subject,caller,status,fingerprint,revoked_at "
+                         "FROM pki_service_client_issuances WHERE environment='dev' AND subject='service:emqx-pki' "
+                         "ORDER BY issued_at DESC LIMIT 1) t;").strip()
+        issued = json.loads(rows)
+        m.require(issued['issuer_id'] == service['issuer_id']
+                  and issued['subject'] == EMQX_SERVICE_SUBJECT
+                  and issued['caller'] == EMQX_SERVICE_SUBJECT
+                  and issued['status'] == 'succeeded' and issued['revoked_at'] is None,
+                  'EMQX managed Service client issuance differs')
+        self.save('emqx-service-client-issuance.json', issued)
+        current = self.obj('deployment', 'mqtt-pki')
+        template = reconfigure_managed_mqtt_template(current, self.args.image, settings,
+                                                      self.output.name)
+        self.scoped_patch('deployment', current, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template},
+            {'op': 'replace', 'path': '/spec/replicas', 'value': 1}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/mqtt-pki',
+                   '--timeout=300s'], timeout=310)
+        self.save('mqtt-root.pem', mqtt_root['certificate_pem'])
+        state = self.inspect_host_state()
+        rows = [row for row in self.server_rows() if row['fingerprint'] == state['fingerprint']]
+        m.require(not state['pending'] and len(rows) == 1
+                  and rows[0]['issuer_id'] == mqtt_issuer['issuer_id']
+                  and rows[0]['caller'] == EMQX_SERVICE_SUBJECT
+                  and rows[0]['status'] == 'succeeded' and rows[0]['revoked_at'] is None
+                  and self.served_fingerprint() == state['fingerprint'],
+                  'managed EMQX server leaf was not issued and served')
+        self.kube(['-n', NS, 'delete', 'pod', 'emqx-service-bootstrap', '--wait=true',
+                   '--timeout=90s'])
+        self.check('emqx_service_client_and_server_bootstrapped', {
+            'service_issuer_id': service['issuer_id'], 'service_client_fingerprint': issued['fingerprint'],
+            'mqtt_issuer_id': mqtt_issuer['issuer_id'], 'mqtt_server_fingerprint': state['fingerprint'],
+            'bootstrap_ca_removed': True, 'bootstrap_policy_closed': True,
+            'private_key_exported': False, 'staging_touched': False})
+
+    def transition_host_root(self):
+        """Move an already managed broker to the reviewed successor authority."""
+        root, issuer, _ = self.ready_intermediate(status='active')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev EMQX host image digest required')
+        owner = self.obj('deployment', 'mqtt-pki')
+        m.require(owner['spec'].get('replicas') == 1
+                  and owner['spec'].get('strategy', {}).get('type') == 'Recreate'
+                  and self.obj('persistentvolumeclaim', MQTT_HOST_PVC),
+                  'managed MQTT host ownership changed')
+        template = json.loads(json.dumps(owner['spec']['template']))
+        mqtt = next((item for item in template['spec']['containers']
+                     if item['name'] == 'mqtt'), None)
+        m.require(mqtt is not None, 'managed MQTT host container missing')
+        env = {item['name']: item.get('value') for item in mqtt.get('env', [])}
+        prior_root = env.get('EMQX_PKI_HOST_ROOT_SHA256', '')
+        m.require(re.fullmatch(r'[0-9a-f]{64}', prior_root)
+                  and prior_root != root['certificate_fingerprint_sha256']
+                  and env.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE
+                  and env.get('EMQX_PKI_HOST_NAME') == MQTT_HOST
+                  and env.get('EMQX_PKI_HOST_DNS_NAMES') == MQTT_HOST,
+                  'managed MQTT predecessor configuration changed')
+        self.save('mqtt-root.pem', root['certificate_pem'])
+        before = self.inspect_host_state()
+        rows = self.server_rows()
+        old = [row for row in rows if row['fingerprint'] == before['fingerprint']]
+        m.require(not before['pending'] and len(old) == 1
+                  and old[0]['issuer_id'] != issuer['issuer_id']
+                  and old[0]['status'] == 'succeeded'
+                  and old[0]['revoked_at'] is None,
+                  'managed MQTT predecessor state differs')
+        self.save('predecessor.json', {'state': before, 'row': old[0]})
+        mqtt['image'] = self.args.image
+        mqtt['env'] = h.with_env(mqtt['env'], {
+            'EMQX_PKI_HOST_ROOT_SHA256':
+                root['certificate_fingerprint_sha256']})
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-host-root-transition'] = self.output.name
+        self.scoped_patch('deployment', owner, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.wait_available('mqtt-pki')
+        after = self.inspect_host_state()
+        rows = self.server_rows()
+        successor = [row for row in rows if row['fingerprint'] == after['fingerprint']]
+        m.require(not after['pending']
+                  and after['fingerprint'] != before['fingerprint']
+                  and len(successor) == 1
+                  and successor[0]['issuer_id'] == issuer['issuer_id']
+                  and successor[0]['caller'] == 'emqx-pki'
+                  and successor[0]['status'] == 'succeeded'
+                  and successor[0]['revoked_at'] is None
+                  and self.served_fingerprint() == after['fingerprint'],
+                  'MQTT successor host was not issued and served')
+        clients = self.wait_actual_clients()
+        self.forward('api', NS, 'video-cloud-api-pki', 8443)
+        self.forward('mqtt', NS, 'mqtt-pki', 8883)
+        self.device_baseline()
+        self.save('successor.json', {'state': after, 'row': successor[0]})
+        self.check('mqtt_managed_host_transitioned_to_successor', {
+            'issuer_id': issuer['issuer_id'],
+            'predecessor_fingerprint': before['fingerprint'],
+            'successor_fingerprint': after['fingerprint'],
+            'private_key_exported': False,
+            'actual_clients_reconnected': clients,
+            'device_mqtt_acl_qos1': 'passed'})
+
+    def recover_host_transition(self):
+        """Dev-only recovery for a predecessor-bound managed host state."""
+        failed = m.read(Path(self.args.failed) / 'report.json')
+        m.require(failed['status'] == 'failed'
+                  and failed['phase'] in ('transition-host-root',
+                                          'recover-host-transition'),
+                  'failed managed-host transition evidence required')
+        root, issuer, _ = self.ready_intermediate(status='active')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev EMQX host image digest required')
+        owner = self.obj('deployment', 'mqtt-pki')
+        m.require(owner['spec'].get('replicas') in (0, 1)
+                  and owner['spec'].get('strategy', {}).get('type') == 'Recreate',
+                  'managed MQTT recovery ownership changed')
+        mqtt = next((item for item in owner['spec']['template']['spec']['containers']
+                     if item['name'] == 'mqtt'), None)
+        env = {item['name']: item.get('value') for item in mqtt.get('env', [])}
+        m.require(mqtt is not None
+                  and env.get('EMQX_PKI_HOST_ROOT_SHA256') ==
+                  root['certificate_fingerprint_sha256']
+                  and env.get('EMQX_PKI_HOST_IDENTITY_STATE') == MQTT_HOST_STATE,
+                  'successor MQTT host transition is not installed')
+        previous_pvc = self.obj('persistentvolumeclaim', MQTT_HOST_PVC)
+        resuming = (failed['phase'] == 'recover-host-transition'
+                    and previous_pvc.get('status', {}).get('phase') == 'Bound')
+        self.save('replaced-host-pvc.json', {
+            'uid': previous_pvc['metadata']['uid'], 'spec': previous_pvc['spec']})
+        if not resuming and owner['spec']['replicas'] == 1:
+            self.scoped_patch('deployment', owner, [{
+                'op': 'replace', 'path': '/spec/replicas', 'value': 0}])
+            deadline = time.monotonic() + 120
+            while self.obj('deployment', 'mqtt-pki').get('status', {}).get('replicas', 0):
+                m.require(time.monotonic() < deadline,
+                          'MQTT host did not stop before Dev state reset')
+                time.sleep(2)
+        # Retain volumes keep their old claim UID.  A reset must request a new
+        # volume, never force a replacement claim onto predecessor storage.
+        if not resuming and (previous_pvc.get('status', {}).get('phase') != 'Bound' or \
+                previous_pvc['spec'].get('volumeName')):
+            self.kube(['-n', NS, 'delete', 'persistentvolumeclaim', MQTT_HOST_PVC,
+                       '--wait=true', '--timeout=180s'], timeout=190)
+        if not resuming:
+            spec = json.loads(json.dumps(previous_pvc['spec']))
+            spec.pop('volumeName', None)
+            self.create({'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+                         'metadata': {'name': MQTT_HOST_PVC, 'namespace': NS},
+                         'spec': spec})
+            self.kube(['-n', NS, 'wait', '--for=jsonpath={.status.phase}=Bound',
+                       'persistentvolumeclaim/' + MQTT_HOST_PVC,
+                       '--timeout=180s'], timeout=190)
+        volumes = {item['name']: item for item in
+                   owner['spec']['template']['spec']['volumes']}
+        service_volume = volumes.get('pki-service-root', {}).get('configMap', {})
+        m.require(service_volume.get('name'),
+                  'managed MQTT Service root source changed')
+        service_root = self.obj('configmap', service_volume['name'])['data']['root.pem']
+        self.save('service-root.pem', service_root)
+        podname = 'pki-host-seed-mqtt-recovery-' + uuid.uuid4().hex[:8]
+        script = (
+            'set -eu; umask 077; mkdir -p /state/seed; '
+            'openssl genpkey -algorithm EC -pkeyopt '
+            'ec_paramgen_curve:P-256 -out /state/seed/key.pem; '
+            'openssl req -new -key /state/seed/key.pem '
+            '-subj /CN=' + MQTT_HOST + ' -addext subjectAltName=DNS:' +
+            MQTT_HOST + ' -out /state/seed/csr.pem; exec sleep 3600')
+        pod = {'apiVersion': 'v1', 'kind': 'Pod',
+               'metadata': {'name': podname, 'namespace': NS,
+                            'labels': {'app.kubernetes.io/name': 'mqtt-pki'}},
+               'spec': {'restartPolicy': 'Never',
+                        'automountServiceAccountToken': False,
+                        'imagePullSecrets': owner['spec']['template']['spec'].get(
+                            'imagePullSecrets', []),
+                        'securityContext': {'runAsUser': 1000,
+                                            'runAsGroup': 1000,
+                                            'fsGroup': 1000,
+                                            'fsGroupChangePolicy': 'OnRootMismatch'},
+                        'containers': [{'name': 'seed', 'image': self.args.image,
+                                        'command': ['sh', '-c', script],
+                                        'volumeMounts': [
+                                            {'name': 'state', 'mountPath': '/state'},
+                                            {'name': 'management', 'mountPath': '/run/mqtt-management', 'readOnly': True},
+                                            {'name': 'service-root', 'mountPath': '/run/service-root', 'readOnly': True}]}],
+                        'volumes': [{'name': 'state', 'persistentVolumeClaim': {
+                            'claimName': MQTT_HOST_PVC}},
+                                    {'name': 'management', 'secret': {
+                                        'secretName': MQTT_MANAGEMENT_SECRET,
+                                        'defaultMode': 288}},
+                                    {'name': 'service-root', 'configMap': {
+                                        'name': service_volume['name']}}]}}
+        if resuming:
+            items = json.loads(self.kube([
+                '-n', NS, 'get', 'pods', '-o', 'json']))['items']
+            matches = [item['metadata']['name'] for item in items
+                       if item['metadata']['name'].startswith(
+                           'pki-host-seed-mqtt-recovery-')
+                       and item['status'].get('phase') == 'Running']
+            m.require(len(matches) == 1, 'recoverable MQTT seed Pod changed')
+            self.kube(['-n', NS, 'delete', 'pod', matches[0], '--wait=true',
+                       '--timeout=90s'])
+        self.create(pod)
+        self.kube(['-n', NS, 'wait', '--for=condition=Ready',
+                   'pod/' + podname, '--timeout=240s'], timeout=250)
+        csr = self.kube(['-n', NS, 'exec', podname, '--',
+                         'cat', '/state/seed/csr.pem'])
+        request = {'request_id': 'dev-mqtt-server-recovery-' + uuid.uuid4().hex,
+                   'csr_pem': csr, 'ttl_days': 30, 'purpose': 'server'}
+        issued = json.loads(self.kube([
+            '-n', NS, 'exec', '-i', podname, '--', 'sh', '-c',
+            'curl --fail-with-body --silent --show-error '
+            '--cacert /run/service-root/root.pem '
+            '--cert /run/mqtt-management/tls.crt '
+            '--key /run/mqtt-management/tls.key '
+            '-H Content-Type:application/json --data-binary @- '
+            'https://certissuer.' + NS + '.svc:9443/v1/certificates/mqtt/issue'],
+            json.dumps(request)))
+        self.save('issued.json', issued)
+        self.save('mqtt-root.pem', root['certificate_pem'])
+        self.save('mqtt-intermediate.pem', issuer['certificate_pem'])
+        self.save('leaf.pem', issued['certificate_pem'])
+        m.require(issued['dns_names'] == [MQTT_HOST]
+                  and issued['caller_identity'] == 'emqx-pki',
+                  'recovery MQTT server issuance identity differs')
+        m.command([self.openssl, 'verify', '-CAfile', self.output / 'mqtt-root.pem',
+                   '-untrusted', self.output / 'mqtt-intermediate.pem',
+                   '-purpose', 'sslserver', '-verify_hostname', MQTT_HOST,
+                   self.output / 'leaf.pem'])
+        self.kube(['-n', NS, 'exec', '-i', podname, '--', 'sh', '-c',
+                   'set -eu; umask 077; cat > /state/seed/chain.pem'],
+                  issued['certificate_chain_pem'])
+        self.kube(['-n', NS, 'delete', 'pod', podname, '--wait=true',
+                   '--timeout=90s'])
+        current = self.obj('deployment', 'mqtt-pki')
+        self.scoped_patch('deployment', current, [{
+            'op': 'replace', 'path': '/spec/replicas', 'value': 1}])
+        self.wait_available('mqtt-pki')
+        state = self.inspect_host_state()
+        rows = [row for row in self.server_rows()
+                if row['fingerprint'] == state['fingerprint']]
+        m.require(not state['pending'] and len(rows) == 1
+                  and rows[0]['issuer_id'] == issuer['issuer_id']
+                  and rows[0]['caller'] == 'emqx-pki'
+                  and self.served_fingerprint() == state['fingerprint'],
+                  'recovered MQTT successor is not served')
+        digest = self.host_state_digest()
+        self.kube(['-n', NS, 'exec', 'deployment/mqtt-pki', '-c', 'mqtt', '--',
+                   'sh', '-c', 'set -eu; rm /var/lib/emqx-pki/seed/key.pem '
+                   '/var/lib/emqx-pki/seed/csr.pem /var/lib/emqx-pki/seed/chain.pem'])
+        current = self.obj('deployment', 'mqtt-pki')
+        template = json.loads(json.dumps(current['spec']['template']))
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/mqtt-host-reset-seedless-restart'] = self.output.name
+        self.scoped_patch('deployment', current, [{
+            'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.wait_available('mqtt-pki')
+        m.require(self.host_state_digest() == digest
+                  and self.served_fingerprint() == state['fingerprint'],
+                  'recovered MQTT successor changed across seed-free restart')
+        clients = self.wait_actual_clients()
+        self.forward('api', NS, 'video-cloud-api-pki', 8443)
+        self.forward('mqtt', NS, 'mqtt-pki', 8883)
+        self.device_baseline()
+        self.check('mqtt_host_transition_recovered_from_dev_reset', {
+            'issuer_id': issuer['issuer_id'], 'successor_fingerprint': state['fingerprint'],
+            'predecessor_pvc_replaced': True, 'private_key_exported': False,
+            'seed_removed': True, 'restart_without_seed': True,
+            'actual_clients_reconnected': clients, 'device_mqtt_acl_qos1': 'passed'})
 
     def host_state_digest(self):
         value = self.kube([
@@ -1218,9 +1810,11 @@ class MQTTHostRun(h.ServiceRun):
                       owner['spec']['replicas'] > 0,
                       'dependency not ready: ' + name)
         mqtt = self.obj('deployment', 'mqtt-pki')
-        m.require(mqtt['spec']['replicas'] == 1
-                  and mqtt['status'].get('observedGeneration') ==
-                  mqtt['metadata']['generation'],
+        replicas = mqtt['spec']['replicas']
+        observed = mqtt['status'].get('observedGeneration')
+        m.require((replicas == 1 and observed == mqtt['metadata']['generation'])
+                  or (replicas == 0
+                      and mqtt['status'].get('replicas', 0) == 0),
                   'failed MQTT deployment state is not observed')
         self.check('recovery_preflight', {
             'environment': 'dev', 'mqtt_fail_closed': True,
@@ -1850,7 +2444,9 @@ def main():
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'prepare-intermediate', 'install-intermediate',
         'activate-intermediate', 'finish-intermediate-activation',
-        'configure-certissuer', 'prepare-host', 'adopt-host',
+        'configure-certissuer', 'prepare-host', 'transition-host-root',
+        'recover-host-transition', 'bootstrap-emqx-service-client',
+        'adopt-host',
         'finish-host-adoption', 'repair-host-callback',
         'finish-host-callback', 'renew-host', 'finish-host-renewal', 'revoke-host',
         'publish-host-revocation', 'verify-host-lifecycle'],
@@ -1868,15 +2464,20 @@ def main():
     parser.add_argument('--renewal')
     parser.add_argument('--revocation')
     parser.add_argument('--publication')
+    parser.add_argument('--service-authority')
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
     m.require(args.phase != 'finish-intermediate-activation' or args.failed,
               'failed intermediate activation evidence required')
+    m.require(args.phase != 'recover-host-transition' or args.failed,
+              'failed managed MQTT host transition evidence required')
     m.require(args.phase not in ('install-intermediate',
                                  'activate-intermediate',
                                  'finish-intermediate-activation',
                                  'configure-certissuer', 'prepare-host',
+                                 'transition-host-root',
+                                 'recover-host-transition', 'bootstrap-emqx-service-client',
                                  'adopt-host', 'finish-host-adoption',
                                  'repair-host-callback',
                                  'finish-host-callback', 'renew-host',
@@ -1885,6 +2486,9 @@ def main():
                                  'verify-host-lifecycle')
               or args.intermediate,
               'prepared MQTT intermediate evidence required')
+    m.require(args.phase != 'bootstrap-emqx-service-client'
+              or (args.service_authority and args.image),
+              'active Service v9 evidence and managed EMQX image required')
     m.require(args.phase != 'adopt-host' or args.prepared,
               'prepared MQTT host evidence required')
     m.require(args.phase != 'finish-host-adoption'
@@ -1913,7 +2517,8 @@ def main():
     runner = MQTTHostRun(args)
     try:
         if args.phase in ('finish-host-adoption', 'repair-host-callback',
-                          'finish-host-callback'):
+                          'finish-host-callback', 'recover-host-transition',
+                          'bootstrap-emqx-service-client'):
             runner.recovery_preflight()
         else:
             runner.preflight()
@@ -1927,6 +2532,9 @@ def main():
              runner.finish_intermediate_activation,
          'configure-certissuer': runner.configure_certissuer,
          'prepare-host': runner.prepare_host,
+         'transition-host-root': runner.transition_host_root,
+         'recover-host-transition': runner.recover_host_transition,
+         'bootstrap-emqx-service-client': runner.bootstrap_emqx_service_client,
          'adopt-host': runner.adopt_host,
          'finish-host-adoption':
              runner.finish_host_adoption_recovery,

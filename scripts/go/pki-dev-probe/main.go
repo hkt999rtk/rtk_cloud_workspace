@@ -383,7 +383,7 @@ func runTLS(args []string, denialOnly bool) error {
 	if err != nil || len(body) > 65536 {
 		return fmt.Errorf("invalid request size")
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: args[3], Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, ServerName: args[3], Certificates: []tls.Certificate{pair}, GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &pair, nil }, MinVersion: tls.VersionTLS12}, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort("127.0.0.1", args[4]))
 	}}
 	defer transport.CloseIdleConnections()
