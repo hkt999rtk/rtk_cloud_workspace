@@ -73,6 +73,11 @@ class CertIssuerTrustRepair(r.ServiceRun):
                   'CertIssuer renewal trust volume changed')
         egress_volumes[0]['configMap']['name'] = target
         host_volumes[0]['configMap']['name'] = HOST_TARGET
+        verification_roots = [entry for entry in template['spec']['containers'][0].get('env', [])
+                              if entry['name'] == 'CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256']
+        m.require(len(verification_roots) == 1 and verification_roots[0].get('value') == OLD,
+                  'CertIssuer Service client verification-root baseline changed')
+        verification_roots[0]['value'] = NEW
         template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-certissuer-egress-roots'] = self.output.name
         self.observed_patch('deployment', NAME, current, [
             {'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
@@ -83,13 +88,16 @@ class CertIssuerTrustRepair(r.ServiceRun):
         live = self.obj('deployment', NAME)
         selected = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
         selected_host = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'host-root']
+        live_env = {entry['name']: entry.get('value') for entry in live['spec']['template']['spec']['containers'][0].get('env', [])}
         m.require(installed.get('immutable') and installed['data'].get('ca.crt') == expected
                   and len(selected) == 1 and selected[0].get('configMap', {}).get('name') == target
-                  and len(selected_host) == 1 and selected_host[0].get('configMap', {}).get('name') == HOST_TARGET,
+                  and len(selected_host) == 1 and selected_host[0].get('configMap', {}).get('name') == HOST_TARGET
+                  and live_env.get('CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256') == NEW,
                   'CertIssuer renewal trust did not persist')
         self.check('certissuer_dual_root_renewal_trust', {
             'roots': [OLD, NEW], 'source_configmap': ROOT_POLICY,
             'host_renewal_configmap': HOST_TARGET,
+            'service_client_verification_root': NEW,
             'restart_completed': True, 'private_keys_exported': False, 'staging_touched': False})
 
 
