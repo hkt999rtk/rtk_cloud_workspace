@@ -2626,3 +2626,23 @@ approved operation and its retained mode-0600 passphrase. The successor is
 receipts have yet been installed. This is preparation evidence only. Overlap
 rollout, activation, predecessor withdrawal, connection cutoff, restart and
 canary verification remain required for R2.
+
+### R2 active successor intermediate CRL adoption (2026-09-13)
+
+The successor Service Root is now active and the predecessor remains retiring.
+Its active Service intermediate `240f6264-fde4-44af-81fe-1abe4aa13e06` is
+installed at every Service-policy consumer through
+`scripts/pki-service-dev/service_successor_intermediate_adoption.py`. The
+runner derives immutable CRL manifests from each effective consumer mount,
+retains the predecessor Root and all existing intermediate entries, adds only
+the active successor intermediate, and derives its private cache path from the
+already-installed successor Root path.
+
+Before changing any workload mount, it writes and digest-checks the signed
+intermediate CRL cache on controller, certissuer, factory, API and Account
+Manager state volumes. It then rolls each owner one at a time and rechecks the
+unchanged Service Root policy, immutable ConfigMap references, live CRL record
+and private cache digest. Dev evidence
+`r2-service-successor-intermediate-crl-adoption-retry-20260913` passed; an
+idempotent replay created no second lineage or changed Root authority. This
+does not rotate leaf identities or withdraw the predecessor lineage.
