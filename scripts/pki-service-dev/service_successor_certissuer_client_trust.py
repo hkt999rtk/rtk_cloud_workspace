@@ -43,24 +43,38 @@ class CertIssuerTrustRepair(r.ServiceRun):
                   'Service root policy bundle differs')
         # Fingerprints are public metadata, not PEM content.  The mounted policy
         # file is the sole source of the exact overlapping trust bundle.
-        m.require(ca['data'].get('ca.crt') != expected, 'CertIssuer egress trust is already reconciled')
+        m.require(ca.get('immutable') is True and ca['data'].get('ca.crt') != expected,
+                  'CertIssuer egress trust baseline is not the expected immutable predecessor bundle')
+        target = CM + '-r2-' + m.digest(expected.encode())[:8]
         self.save('before-managed-egress-ca.json', {'name': CM, 'resource_version': ca['metadata']['resourceVersion'],
                                                     'previous_pem_certificates': ca['data'].get('ca.crt', '').count('-----BEGIN CERTIFICATE-----'),
-                                                    'target_pem_certificates': 2, 'source': ROOT_POLICY})
-        self.observed_patch('configmap', CM, ca, [
-            {'op': 'test', 'path': '/data/ca.crt', 'value': ca['data'].get('ca.crt', '')},
-            {'op': 'replace', 'path': '/data/ca.crt', 'value': expected},
-        ])
+                                                    'target_name': target, 'target_pem_certificates': 2, 'source': ROOT_POLICY})
+        raw = self.kube(['-n', NS, 'get', 'configmap', target, '--ignore-not-found', '-o', 'json'])
+        if raw.strip():
+            present = json.loads(raw)
+            m.require(present.get('immutable') and present.get('data', {}).get('ca.crt') == expected,
+                      'existing CertIssuer overlap trust ConfigMap differs')
+        else:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': target, 'namespace': NS},
+                         'immutable': True, 'data': {'ca.crt': expected}})
         current = self.obj('deployment', NAME)
         template = copy.deepcopy(current['spec']['template'])
+        volumes = [v for v in template['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
+        m.require(len(volumes) == 1 and volumes[0].get('configMap', {}).get('name') == CM,
+                  'CertIssuer egress trust volume changed')
+        volumes[0]['configMap']['name'] = target
         template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-certissuer-egress-roots'] = self.output.name
         self.observed_patch('deployment', NAME, current, [
             {'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
             {'op': 'replace', 'path': '/spec/template', 'value': template},
         ])
         self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
-        installed = self.obj('configmap', CM)
-        m.require(installed['data'].get('ca.crt') == expected, 'CertIssuer egress trust did not persist')
+        installed = self.obj('configmap', target)
+        live = self.obj('deployment', NAME)
+        selected = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
+        m.require(installed.get('immutable') and installed['data'].get('ca.crt') == expected
+                  and len(selected) == 1 and selected[0].get('configMap', {}).get('name') == target,
+                  'CertIssuer egress trust did not persist')
         self.check('certissuer_managed_egress_dual_root_trust', {
             'roots': [OLD, NEW], 'source_configmap': ROOT_POLICY,
             'restart_completed': True, 'private_keys_exported': False, 'staging_touched': False})
