@@ -36,7 +36,7 @@ def listener_bundle_template(owner, configmap):
     template = json.loads(json.dumps(owner['spec']['template']))
     volumes = template['spec']['volumes']
     selected = [v for v in volumes if v['name'] == 'service-bundles']
-    m.require(len(selected) == 1 and selected[0].get('configMap', {}).get('name') == 'pki-service-bundles',
+    m.require(len(selected) == 1 and selected[0].get('configMap', {}).get('name', '').startswith('pki-service-bundles'),
               'listener bundle source changed; reconcile')
     selected[0]['configMap']['name'] = configmap
     return template
