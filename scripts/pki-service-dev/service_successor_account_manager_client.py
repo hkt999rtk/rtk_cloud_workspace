@@ -237,6 +237,35 @@ class AccountManagerFinalClient(r.ServiceRun):
             'predecessor_listener_and_controller_retained_for_r4': True, 'restart_preserved_identity': True,
             'factory_device_and_app_canaries': 'passed', 'private_keys_exported': False, 'staging_touched': False})
 
+    def recover(self, source):
+        """Finish post-renewal checks without sending a second renewal signal."""
+        self.preflight_retry()
+        self.issuer()
+        baseline, renewed = m.read(source / 'baseline.json'), m.read(source / 'renewed.json')
+        current = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+        m.require(current == renewed and current['client']['fingerprint'] != baseline['client']['fingerprint'],
+                  'Account Manager renewal state changed; do not replay recovery')
+        self.save('reconciled-renewal.json', current)
+        factory.FactoryIdentityRun.factory_canary(self)
+        self.device_baseline()
+        self.app_canary('public-app-canary-before-restart')
+        owner = self.obj('deployment', NAME, AM_NS)
+        restart = copy.deepcopy(owner['spec']['template'])
+        restart.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-account-manager-final-client-recovery-restart'] = self.output.name
+        self.observed_patch('deployment', NAME, owner, [
+            {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': restart},
+        ])
+        self.kube(['-n', AM_NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
+        after = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+        m.require(after == current, 'Account Manager restart changed recovered client-only state')
+        factory.FactoryIdentityRun.factory_canary(self)
+        self.device_baseline()
+        self.app_canary('public-app-canary-after-restart')
+        self.check('account_manager_final_service_client_recovered', {
+            'final_issuer_id': FINAL, 'renewal_source': str(source), 'restart_preserved_identity': True,
+            'factory_device_and_app_canaries': 'passed', 'private_keys_exported': False, 'staging_touched': False})
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -245,6 +274,7 @@ def main():
     parser.add_argument('--app-database', required=True, type=Path)
     parser.add_argument('--app-email', required=True)
     parser.add_argument('--app-owner-identity', required=True, type=Path)
+    parser.add_argument('--recover-from', type=Path)
     args = parser.parse_args(); args.phase = 'account-manager-final-service-client'; args.authority = None
     m.require(args.app_database.is_file() and args.app_owner_identity.is_dir()
               and (args.app_owner_identity / 'owner-chain.pem').is_file()
@@ -254,7 +284,13 @@ def main():
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = AccountManagerFinalClient(args)
     try:
-        runner.rotate(); runner.report['status'] = 'passed'
+        if args.recover_from:
+            m.require((args.recover_from / 'baseline.json').is_file() and (args.recover_from / 'renewed.json').is_file(),
+                      'failed Account Manager renewal evidence is incomplete')
+            runner.recover(args.recover_from)
+        else:
+            runner.rotate()
+        runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error); raise
     finally:
