@@ -27,12 +27,16 @@ TARGETS = (
      'consumer': 'pki-controller', 'volume': 'service-root-policy',
      'old_config': 'pki-service-root-policy', 'new_config': 'pki-service-root-policy-{suffix}',
      'prefixes': ('PKI_SERVICE_CLIENT',), 'state_indexes': (0,),
-     'states': ('/var/lib/pki-host/identity/service-root-policy-{suffix}.json',)},
+     'states': ('/var/lib/pki-host/identity/service-root-policy-{suffix}.json',),
+     'bundle_volume': 'service-bundles', 'old_bundle_config': 'pki-service-bundles',
+     'new_bundle_config': 'pki-service-bundles-{suffix}'},
     {'name': 'certissuer', 'namespace': NS, 'container': 'certissuer',
      'consumer': 'certissuer', 'volume': 'service-root-policy',
      'old_config': 'pki-service-root-policy', 'new_config': 'pki-service-root-policy-{suffix}',
      'prefixes': ('CERT_ISSUER_SERVICE_CLIENT',), 'state_indexes': (0,),
-     'states': ('/var/lib/pki-host/identity/service-root-policy-{suffix}.json',)},
+     'states': ('/var/lib/pki-host/identity/service-root-policy-{suffix}.json',),
+     'bundle_volume': 'service-bundles', 'old_bundle_config': 'pki-service-bundles',
+     'new_bundle_config': 'pki-service-bundles-{suffix}'},
     {'name': 'factoryenroll', 'namespace': NS, 'container': 'factoryenroll',
      'consumer': 'factory-enroll', 'volume': 'service-root',
      'old_config': 'pki-service-host-root', 'new_config': 'pki-service-host-root-{suffix}',
@@ -89,7 +93,7 @@ def successor_template(owner, target, predecessor_id, successor_id):
         current = {key: values.get(prefix + key) for key in ('_SERVICE_ROOT_ID', '_SERVICE_ROOT_STATE', '_SERVICE_ROOTS')}
         m.require(current['_SERVICE_ROOT_ID'] == predecessor_id and current['_SERVICE_ROOT_STATE'] and current['_SERVICE_ROOTS'],
                   'existing Service Root policy differs: ' + target['name'] + '/' + prefix)
-        updates.update({prefix + '_SERVICE_ROOT_ID': successor_id,
+        updates.update({prefix + '_SERVICE_ROOT_ID': predecessor_id,
                         prefix + '_SERVICE_ROOT_STATE': state,
                         prefix + '_SERVICE_ROOTS': current['_SERVICE_ROOTS']})
     volumes = {volume['name']: volume for volume in template['spec'].get('volumes', [])}
@@ -97,9 +101,15 @@ def successor_template(owner, target, predecessor_id, successor_id):
     m.require(volume.get('configMap', {}).get('name') == target['old_config'],
               'public Service Root mount differs: ' + target['name'])
     volume['configMap']['name'] = target['new_config'].format(suffix=suffix)
+    if target.get('bundle_volume'):
+        bundle = volumes.get(target['bundle_volume'], {})
+        m.require(bundle.get('configMap', {}).get('name') == target['old_bundle_config'],
+                  'Service bundle receipt mount differs: ' + target['name'])
+        bundle['configMap']['name'] = target['new_bundle_config'].format(suffix=suffix)
     container['env'] = with_env(container.get('env', []), updates)
-    template.setdefault('metadata', {}).setdefault('annotations', {})[
-        'rtk.realtek.com/service-root-policy'] = successor_id
+    annotations = template.setdefault('metadata', {}).setdefault('annotations', {})
+    annotations['rtk.realtek.com/service-root-policy'] = predecessor_id
+    annotations['rtk.realtek.com/service-root-overlap'] = successor_id
     return template
 
 
@@ -177,28 +187,36 @@ class OverlapAdoption(s.ServiceRun):
                    '--patch-file=/dev/stdin'], json.dumps(patch))
         self.kube(['-n', target['namespace'], 'rollout', 'status', 'deployment/' + target['name'], '--timeout=300s'], timeout=310)
 
-    def receipt(self, target, policy, state, suffix):
-        deadline = time.monotonic() + 120
-        loaded = m.digest(json.loads(state)['roots_pem'].encode())
+    def receipt(self, target, policy, state, suffix, successor):
         state_path = target['states'][0].format(suffix=suffix)
+        deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
-            rows = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X',
-                              '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'video_cloud', '-At'],
-                             "SELECT loaded_roots_sha256 FROM pki_root_distrust_acknowledgments WHERE environment='dev' "
-                             "AND domain='service' AND policy_sha256='" + policy['policy_sha256'] + "' AND consumer_id='" +
-                             target['consumer'] + "';")
             raw = self.kube(['-n', target['namespace'], 'exec', 'deployment/' + target['name'], '-c', target['container'], '--',
                              'cat', state_path])
-            if rows.strip() == loaded and raw == state:
-                return loaded
+            if raw != state:
+                time.sleep(3)
+                continue
+            # The predecessor policy digest is unchanged during overlap, so its
+            # existing durable receipt is intentionally immutable. The two
+            # listener bundle acknowledgments are the new, activation-gating
+            # proof that the ready successor is installed in their live pools.
+            if target['consumer'] not in ('pki-controller', 'certissuer'):
+                return {'state_verified': True}
+            rows = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X',
+                              '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'video_cloud', '-At'],
+                             "SELECT consumer_id FROM pki_bundle_acknowledgments WHERE issuer_id='" + successor['issuer_id'] +
+                             "' AND bundle_version='" + successor['trust_bundle_version'] + "' AND consumer_id='" +
+                             target['consumer'] + "';")
+            if rows.strip() == target['consumer']:
+                return {'state_verified': True, 'bundle_acknowledged': True}
             time.sleep(3)
-        raise RuntimeError('successor overlap receipt deadline: ' + target['consumer'])
+        raise RuntimeError('successor overlap evidence deadline: ' + target['consumer'])
 
     def adopt(self):
         self.preflight()
         predecessor = self.evidence_root(self.args.predecessor, 'active')
         successor = self.evidence_root(self.args.successor, 'ready')
-        policy = self.api('/issuers/' + successor['issuer_id'] + '/distrust')
+        policy = self.api('/issuers/' + predecessor['issuer_id'] + '/distrust')
         m.require(policy.get('environment') == 'dev' and policy.get('trust_domain') == 'service' and
                   re.fullmatch(r'[0-9a-f]{64}', policy.get('policy_sha256', '')), 'successor policy differs')
         roots = predecessor['certificate_pem'].rstrip() + '\n' + successor['certificate_pem'].rstrip() + '\n'
@@ -206,10 +224,11 @@ class OverlapAdoption(s.ServiceRun):
         paths = {target['consumer']: self.write_state(target, state, suffix) for target in TARGETS}
         for target in TARGETS:
             self.rollout(target, predecessor, successor)
-        receipts = {target['consumer']: self.receipt(target, policy, state, suffix) for target in TARGETS}
+        receipts = {target['consumer']: self.receipt(target, policy, state, suffix, successor) for target in TARGETS}
         self.check('service_successor_overlap_receipts', {
             'predecessor_root_id': predecessor['issuer_id'], 'successor_root_id': successor['issuer_id'],
-            'policy_sha256': policy['policy_sha256'], 'state_paths': paths, 'loaded_roots_sha256': receipts,
+            'policy_authority_root_id': predecessor['issuer_id'], 'policy_sha256': policy['policy_sha256'],
+            'state_paths': paths, 'loaded_roots_sha256': receipts,
             'activation': 'not_attempted', 'withdrawal': 'not_attempted'})
 
 

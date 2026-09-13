@@ -29,6 +29,7 @@ def overlap_pem(predecessor, successor):
 def overlap_configs(predecessor, successor):
     suffix = successor['issuer_id'][:12]
     roots = overlap_pem(predecessor, successor)
+    bundle = json.dumps([{'issuer_id': successor['issuer_id'], 'trust_bundle_version': successor['trust_bundle_version']}]) + '\n'
     return [
         {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'pki-service-root-policy-' + suffix, 'namespace': NS},
          'immutable': True, 'data': {'roots.pem': roots}},
@@ -36,6 +37,8 @@ def overlap_configs(predecessor, successor):
          'immutable': True, 'data': {'root.pem': roots}},
         {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'account-manager-service-root-' + suffix, 'namespace': AM_NS},
          'immutable': True, 'data': {'root.pem': roots}},
+        {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'pki-service-bundles-' + suffix, 'namespace': NS},
+         'immutable': True, 'data': {'issuers.json': bundle}},
     ]
 
 
