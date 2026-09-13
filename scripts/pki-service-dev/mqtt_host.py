@@ -2147,55 +2147,72 @@ class MQTTHostRun(h.ServiceRun):
 
     def withdraw_mqtt_root(self):
         """Withdraw the retiring MQTT root after its actual clients adopt policy."""
+        resuming = bool(self.args.failed)
         predecessor_source = Path(self.args.predecessor_authority)
         predecessor_saved = m.read(predecessor_source / 'root-ready.json')
         predecessor = self.api('/issuers/' + predecessor_saved['issuer_id'])
         successor = self.mqtt_root('active')
         root, issuer, _ = self.ready_intermediate(status='active')
         m.require(root == successor
-                  and predecessor.get('status') == 'retiring'
+                  and predecessor.get('status') in (
+                      ('revoked', 'compromised') if resuming else ('retiring',))
                   and predecessor.get('trust_domain') == 'mqtt'
                   and predecessor.get('kind') == 'root'
                   and predecessor['certificate_fingerprint_sha256'] ==
                   predecessor_saved['certificate_fingerprint_sha256']
                   and issuer['parent_issuer_id'] == successor['issuer_id'],
                   'reviewed MQTT predecessor/successor lineage changed')
-        before_policy = self.api('/issuers/' + successor['issuer_id'] +
-                                 '/distrust')
-        before_states = {name: self.mqtt_consumer_state(name)
-                         for name in MQTT_CONSUMERS}
-        m.require(before_policy.get('version') == 0
-                  and not before_policy.get('distrusted_roots')
-                  and all(predecessor['certificate_fingerprint_sha256'] in
-                          self.root_fingerprints(item['state']['roots_pem'])
-                          and successor['certificate_fingerprint_sha256'] in
-                          self.root_fingerprints(item['state']['roots_pem'])
-                          for item in before_states.values()),
-                  'MQTT predecessor overlap is not installed')
+        prior = Path(self.args.failed) if resuming else None
+        if resuming:
+            failed = m.read(prior / 'report.json')
+            m.require(failed.get('status') == 'failed'
+                      and failed.get('phase') == 'withdraw-mqtt-root'
+                      and failed.get('failure') ==
+                      'MQTT Root distrust policy differs after withdrawal',
+                      'recoverable MQTT Root withdrawal evidence required')
+            before_policy = m.read(prior / 'before-policy.json')
+            before_states = m.read(prior / 'before-consumers.json')
+        else:
+            before_policy = self.api('/issuers/' + successor['issuer_id'] +
+                                     '/distrust')
+            before_states = {name: self.mqtt_consumer_state(name)
+                             for name in MQTT_CONSUMERS}
+            m.require(before_policy.get('version') == 0
+                      and not before_policy.get('distrusted_roots')
+                      and all(predecessor['certificate_fingerprint_sha256'] in
+                              self.root_fingerprints(item['state']['roots_pem'])
+                              and successor['certificate_fingerprint_sha256'] in
+                              self.root_fingerprints(item['state']['roots_pem'])
+                              for item in before_states.values()),
+                      'MQTT predecessor overlap is not installed')
         self.save('predecessor-root.json', predecessor)
         self.save('successor-root.json', successor)
         self.save('before-policy.json', before_policy)
         self.save('before-consumers.json', before_states)
-        operation = self.api('/issuers/' + predecessor['issuer_id'] +
-                             '/operations', {
-                                 'issuer_id': predecessor['issuer_id'],
-                                 'action': 'revoke',
-                                 'reason': ('Withdraw superseded Dev MQTT Root '
-                                            'after actual client successor adoption.')},
-                             key='dev-r3-mqtt-root-withdraw-' +
-                             predecessor['issuer_id'])
+        operation = (m.read(prior / 'withdrawal-operation.json') if resuming
+                     else self.api('/issuers/' + predecessor['issuer_id'] +
+                                   '/operations', {
+                                       'issuer_id': predecessor['issuer_id'],
+                                       'action': 'revoke',
+                                       'reason': ('Withdraw superseded Dev MQTT Root '
+                                                  'after actual client successor adoption.')},
+                                   key='dev-r3-mqtt-root-withdraw-' +
+                                   predecessor['issuer_id']))
         self.save('withdrawal-operation.json', operation)
-        if operation['status'] == 'requested':
-            self.approval(operation)
-        else:
-            m.require(operation['status'] == 'approved',
-                      'existing MQTT Root withdrawal operation changed')
         operation_path = '/operations/' + operation['operation_id']
-        self.api(operation_path + '/execute', {}, 204)
+        current_operation = self.api(operation_path)
+        if current_operation['status'] == 'requested':
+            self.approval(operation)
+            current_operation = self.api(operation_path)
+        if current_operation['status'] == 'approved':
+            self.api(operation_path + '/execute', {}, 204)
+        else:
+            m.require(current_operation['status'] == 'revocation_pending',
+                      'existing MQTT Root withdrawal operation changed')
         policy = self.api('/issuers/' + successor['issuer_id'] + '/distrust')
         m.require(policy.get('environment') == 'dev'
                   and policy.get('trust_domain') == 'mqtt'
-                  and policy.get('version') == 1
+                  and policy.get('version', 0) > before_policy.get('version', 0)
                   and len(policy.get('distrusted_roots', [])) == 1
                   and policy['distrusted_roots'][0]['issuer_id'] ==
                   predecessor['issuer_id'],
@@ -2721,7 +2738,7 @@ def main():
         'configure-certissuer', 'prepare-host', 'transition-host-root',
         'recover-host-transition', 'bootstrap-emqx-service-client',
         'verify-managed-emqx-bootstrap',
-        'withdraw-mqtt-root',
+        'withdraw-mqtt-root', 'finish-withdraw-mqtt-root',
         'adopt-host',
         'finish-host-adoption', 'repair-host-callback',
         'finish-host-callback', 'renew-host', 'finish-host-renewal', 'revoke-host',
@@ -2757,7 +2774,7 @@ def main():
                                  'transition-host-root',
                                  'recover-host-transition', 'bootstrap-emqx-service-client',
                                  'verify-managed-emqx-bootstrap',
-                                 'withdraw-mqtt-root',
+                                 'withdraw-mqtt-root', 'finish-withdraw-mqtt-root',
                                  'adopt-host', 'finish-host-adoption',
                                  'repair-host-callback',
                                  'finish-host-callback', 'renew-host',
@@ -2775,6 +2792,9 @@ def main():
     m.require(args.phase != 'withdraw-mqtt-root'
               or args.predecessor_authority,
               'reviewed MQTT predecessor authority evidence required')
+    m.require(args.phase != 'finish-withdraw-mqtt-root'
+              or (args.predecessor_authority and args.failed),
+              'failed MQTT withdrawal and predecessor authority evidence required')
     m.require(args.phase != 'adopt-host' or args.prepared,
               'prepared MQTT host evidence required')
     m.require(args.phase != 'finish-host-adoption'
@@ -2805,7 +2825,8 @@ def main():
         if args.phase in ('finish-host-adoption', 'repair-host-callback',
                           'finish-host-callback', 'recover-host-transition',
                           'bootstrap-emqx-service-client',
-                          'verify-managed-emqx-bootstrap', 'withdraw-mqtt-root'):
+                          'verify-managed-emqx-bootstrap', 'withdraw-mqtt-root',
+                          'finish-withdraw-mqtt-root'):
             runner.recovery_preflight()
         else:
             runner.preflight()
@@ -2824,6 +2845,7 @@ def main():
          'bootstrap-emqx-service-client': runner.bootstrap_emqx_service_client,
          'verify-managed-emqx-bootstrap': runner.verify_managed_emqx_bootstrap,
          'withdraw-mqtt-root': runner.withdraw_mqtt_root,
+         'finish-withdraw-mqtt-root': runner.withdraw_mqtt_root,
          'adopt-host': runner.adopt_host,
          'finish-host-adoption':
              runner.finish_host_adoption_recovery,
