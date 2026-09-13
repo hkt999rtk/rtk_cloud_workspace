@@ -2597,3 +2597,22 @@ This advances the R2 caller inventory but does not close R2. A successor-root
 transition must still demonstrate both directions' updated receipts, old socket
 cutoff and reconnect denial, then run the required restart and Device/App
 canaries.
+
+### R2 Service Root successor prepared (2026-09-13)
+
+Dev Service Root successor preparation is now executable through
+`scripts/pki-service-dev/service_root_successor.py`. It verifies the current
+Dev Service owners, obtains the existing distinct approval roles, and uses the
+offline Dev ceremony to prepare a successor Root without activating or
+withdrawing either lineage. If failure occurs before a CSR is registered, the
+runner can resume only the exact still-approved operation; after a CSR it does
+not recreate key material.
+
+Evidence `r2-service-root-successor-20260913-recover2` prepared successor Root
+from the predecessor `59c37a28-7016-4706-ae93-e3da7746615d`. The first local
+run stopped before ceremony-binary creation, and recovery reused that exact
+approved operation and its retained mode-0600 passphrase. The successor is
+`ready`; activation returned the expected `409` because no successor consumer
+receipts have yet been installed. This is preparation evidence only. Overlap
+rollout, activation, predecessor withdrawal, connection cutoff, restart and
+canary verification remain required for R2.

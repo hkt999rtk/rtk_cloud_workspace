@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import subprocess
 import sys
 import uuid
 
@@ -49,6 +50,10 @@ class ServiceRootSuccessor(s.ServiceRun):
                       'required Dev deployment is not ready: ' + name)
         self.forward('am', AM_NS, 'account-manager', 80)
         self.accounts = m.read(self.foundation / 'accounts.json')
+        result = subprocess.run(['go', 'build', '-o', str(self.ceremony), './cmd/pkiceremony'],
+                                cwd=str(m.WORKSPACE / 'repos/rtk_video_cloud'),
+                                env=dict(os.environ, GOWORK='off'), capture_output=True, timeout=180)
+        m.require(result.returncode == 0, 'Service successor ceremony build failed')
         self.check('service_successor_preflight', {
             'deployments': ['pki-controller', 'certissuer', 'factoryenroll', 'video-cloud-api', 'account-manager'],
             'staging_touched': False})
@@ -108,19 +113,58 @@ class ServiceRootSuccessor(s.ServiceRun):
 
     def reconcile(self, source):
         source = Path(source).resolve()
-        report, saved = m.read(source / 'report.json'), m.read(source / 'root-ready.json')
+        report, operation = m.read(source / 'report.json'), m.read(source / 'root-operation.json')
         m.require(report.get('status') == 'failed' and report.get('phase') == 'prepare-service-root-successor',
                   'failed Service successor preparation evidence required')
-        operation = m.read(source / 'root-operation.json')
-        current = self.api('/issuers/' + saved['issuer_id'])
-        m.require(current == saved and current['status'] == 'ready' and
-                  operation['issuer_id'] == current['issuer_id'], 'saved Service successor changed')
-        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
-        self.save('root-ready.json', current)
+        predecessor = m.read(source / 'predecessor-root.json')
+        current = self.api('/issuers/' + operation['issuer_id'])
+        m.require(current['trust_domain'] == 'service' and current['kind'] == 'root' and
+                  current['issuer_id'] == operation['issuer_id'], 'saved Service successor changed')
+        if current['status'] == 'ready':
+            self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
+            self.save('root-ready.json', current)
+            self.save('root-operation.json', operation)
+            self.check('service_successor_ready_gate_closed', {
+                'successor_root_id': current['issuer_id'], 'activation_without_receipts': 409,
+                'reused_saved_root': True})
+            return
+        m.require(current['status'] == 'approved' and not current.get('csr_pem'),
+                  'only a pre-key approved Service successor may resume')
+        self.save('predecessor-root.json', predecessor)
         self.save('root-operation.json', operation)
+        self.save('root-approved.json', current)
+        passfile = self.base / 'pki/rehearsal-passphrases' / ('service-root-' + current['issuer_id'])
+        if passfile.exists():
+            m.require(passfile.is_file() and not passfile.is_symlink() and
+                      passfile.stat().st_mode & 0o777 == 0o600,
+                      'saved Service successor passphrase differs')
+        else:
+            m.write(passfile, secrets.token_urlsafe(48))
+        self.save('passphrase-reference.json', {'path': str(passfile)})
+        keydir = self.output / 'root-offline-simulation'
+        self.ceremony_call(['generate', '--issuer', self.output / 'root-approved.json',
+                            '--passphrase-file', passfile,
+                            '--expected-request-sha256', operation['request_sha256'], '--out', keydir])
+        csr = (keydir / 'csr.pem').read_text()
+        self.api('/operations/' + operation['operation_id'] + '/provision', {'csr_pem': csr})
+        current = self.api('/issuers/' + current['issuer_id'])
+        m.require(current['status'] == 'provisioning' and current['csr_pem'] == csr,
+                  'resumed Service successor Root CSR differs')
+        self.save('root-provisioning.json', current)
+        csr_sha = m.digest(base64.b64decode(''.join(csr.splitlines()[1:-1])))
+        self.ceremony_call(['sign', '--issuer', self.output / 'root-provisioning.json',
+                            '--passphrase-file', passfile, '--key', keydir / 'ca-key.encrypted.pem',
+                            '--expected-request-sha256', operation['request_sha256'],
+                            '--expected-csr-sha256', csr_sha, '--out', self.output / 'root-signed'])
+        self.api('/operations/' + operation['operation_id'] + '/import', {
+            'certificate_pem': (self.output / 'root-signed/certificate.pem').read_text()}, 204)
+        current = self.api('/issuers/' + current['issuer_id'])
+        m.require(current['status'] == 'ready', 'resumed Service successor Root import differs')
+        self.save('root-ready.json', current)
+        self.api('/operations/' + operation['operation_id'] + '/activate', {}, 409)
         self.check('service_successor_ready_gate_closed', {
-            'successor_root_id': current['issuer_id'], 'activation_without_receipts': 409,
-            'reused_saved_root': True})
+            'predecessor_root_id': predecessor['issuer_id'], 'successor_root_id': current['issuer_id'],
+            'activation_without_receipts': 409, 'reused_approved_operation': True})
 
 
 def main():
