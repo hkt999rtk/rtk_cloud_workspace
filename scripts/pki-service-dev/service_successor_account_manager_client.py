@@ -24,7 +24,7 @@ ROOT = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 OLD = '87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2'
 FINAL = 'd61845ca-6b85-4f11-920b-f2f9685b0c13'
 HOST = 'account-manager-internal.' + AM_NS + '.svc'
-OWNER = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:f37f50731edb184212b6ae1fc153f3014f58448c6d310ef58e17984d89916ec3'
+OWNER = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:bba34225ae40c47a3ce8444c61f5d568a87f700fa1b117e4a631e308dbf7ad58'
 OWNER_PIN = 'PKI_ACCOUNT_MANAGER_OWNER_IMAGE'
 PERSISTED = Path('pki/controller-bootstrap/rollout/account-manager-deployment.json')
 
