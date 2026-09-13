@@ -2725,3 +2725,41 @@ intermediate, including Account Manager under version 6. Each of the seven
 clients must receive and prove a final-intermediate credential before version 6
 can be withdrawn. No root withdrawal, client revocation, or old-session cutoff
 was performed by this activation recovery.
+
+### R2 Factory final Service leaf recovery (2026-09-13)
+
+Factory Enrollment now uses the final successor-root Service authority. Its
+successor state is `/state/identity/client-root-697e8e86.json`, pinned to Root
+fingerprint `32bbbfd2…f073704eb`; the temporary predecessor-state bootstrap
+settings were removed after the successful install. The public identity
+inspection records `service:factory-enroll`, a non-pending final-authority leaf
+and fingerprint `9ee6a676…e2df9ffc7c`. The predecessor state was retained on
+the PVC but never read, copied or exported by the rollout.
+
+The initial authenticated renewal retained its original request when final
+provider signing was unavailable. Investigation found that the active final
+intermediate's `certissuer-pki-dev` role lacked its exact server and
+Service-client signer policies. The Dev-only repair rendered those policies
+from the controller, attached only the two final-issuer policy names, and
+verified that a CertIssuer token has `update` only for the approved
+`sign/server` and `sign/service-client` paths. A restarted CertIssuer signer was
+then fenced for five minutes before recovery.
+
+The first provider attempt was rejected before signing and left an immutable
+attempt marker. A post-fence inventory proved that the provider still held zero
+certificates for the retained CSR. The recovery therefore required that marker,
+the successful signer-policy repair evidence, the zero-result inventory and a
+second five-minute signer fence before recording one separate retry marker and
+signing the same CSR exactly once. It reconciled the original request rather
+than creating another claim. Private keys, CSRs, certificates and OpenBao tokens
+remain in process memory only; evidence contains public fingerprints, policy
+names, metadata and marker digests.
+
+The resulting Factory restart preserved the final identity, removed transition
+bootstrap settings and passed two real Factory enrollment/Device mTLS/MQTT
+canaries. Evidence is under `r2-service-factory-policy-retry-20260913`,
+`r2-service-final-signer-policy-repair-retry-20260913` and the paired
+provider-inventory/fence runs. This completes Factory's final-authority leaf
+transition, but R2 remains open until the other governed Service clients
+transition and the documented predecessor-withdrawal, cutoff, restart and
+cross-client canaries pass. Staging and login/MFA were untouched.
