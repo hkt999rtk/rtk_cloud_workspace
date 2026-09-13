@@ -15,6 +15,10 @@ class CallerProofTest(unittest.TestCase):
             'VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_STATE', 'VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_ROOT_SHA256',
             c.SERVICE_SUCCESSOR_ROOT, 'VIDEO_CLOUD_ACCOUNT_MANAGER_'))
 
+    def test_api_identity_defaults_to_the_active_successor_root(self):
+        self.assertEqual(c.caller_identity_fields('video-cloud-api', 'VIDEO_CLOUD_ACCOUNT_MANAGER_')[2],
+                         c.SERVICE_SUCCESSOR_ROOT)
+
     def test_factory_identity_uses_the_successor_service_root(self):
         self.assertEqual(c.caller_identity_fields('factoryenroll', 'FACTORY_ENROLL_ACCOUNT_MANAGER_'), (
             'FACTORY_ENROLL_SERVICE_IDENTITY_STATE',

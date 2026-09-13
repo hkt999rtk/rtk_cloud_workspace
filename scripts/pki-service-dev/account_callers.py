@@ -27,7 +27,7 @@ SERVICE_ROOT = '87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2
 SERVICE_SUCCESSOR_ROOT = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 
 
-def caller_identity_fields(name, prefix, api_root=SERVICE_ROOT):
+def caller_identity_fields(name, prefix, api_root=SERVICE_SUCCESSOR_ROOT):
     if name == 'video-cloud-api':
         return prefix + 'IDENTITY_STATE', prefix + 'IDENTITY_ROOT_SHA256', api_root, prefix
     m.require(name == 'factoryenroll', 'unknown managed Account Manager caller')
@@ -70,7 +70,7 @@ class CallerRun(m.Acceptance):
             if name != 'account-manager':
                 env = {e['name']: e.get('value') for c in obj['spec']['template']['spec']['containers'] for e in c.get('env', [])}
                 prefix = 'VIDEO_CLOUD_ACCOUNT_MANAGER_' if name == 'video-cloud-api' else 'FACTORY_ENROLL_ACCOUNT_MANAGER_'
-                expected_root = SERVICE_ROOT if name == 'video-cloud-api' else SERVICE_SUCCESSOR_ROOT
+                expected_root = SERVICE_SUCCESSOR_ROOT
                 m.require(env.get(prefix + ('INTERNAL_URL' if name == 'video-cloud-api' else 'URL')) == 'https://' + ACCOUNT_HOST + ':8443'
                           and env.get(prefix + 'SERVER_PKI_NAME') == ACCOUNT_HOST
                           and env.get(prefix + 'SERVER_PKI_ROOT_SHA256') == expected_root,
@@ -272,8 +272,8 @@ def main():
     parser.add_argument('--skip-factory-replay', action='store_true',
                         help='Use a retained bound fixture for App verification when its one-time Factory JWT has expired')
     parser.add_argument('--owner-identity', type=Path, help='Retained owner App identity directory; never rotate it implicitly')
-    parser.add_argument('--api-service-root', choices=(SERVICE_ROOT, SERVICE_SUCCESSOR_ROOT), default=SERVICE_ROOT,
-                        help='Expected Video Cloud API Service identity root; the default preserves the predecessor canary')
+    parser.add_argument('--api-service-root', choices=(SERVICE_ROOT, SERVICE_SUCCESSOR_ROOT), default=SERVICE_SUCCESSOR_ROOT,
+                        help='Expected Video Cloud API Service identity root')
     parser.add_argument('--restart', choices=('video-cloud-api', 'factoryenroll', 'account-manager'),
                         help='Restart one existing identity owner, verify unchanged state, then repeat caller checks')
     args = parser.parse_args()

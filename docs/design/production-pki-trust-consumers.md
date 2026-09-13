@@ -2902,7 +2902,7 @@ enrollment and Device direct mTLS/MQTT QoS1:
 Service client that must transition before the predecessor-root withdrawal
 matrix can begin.
 
-### R2 Service Root withdrawal completed (2026-09-13)
+### R2 Service Root withdrawal state and closure correction (2026-09-14)
 
 The retiring Dev Service Root `59c37a28-7016-4706-ae93-e3da7746615d` has
 completed its governed withdrawal. Operation
@@ -2922,10 +2922,26 @@ After completion, pki-controller, CertIssuer, Factory Enrollment, the isolated
 PKI API owner, the ordinary Video Cloud API, and Account Manager were all
 Ready at their current Deployment generation. A fresh Dev Factory enrollment
 then passed Device direct mTLS and MQTT QoS1. The private evidence directory
-`r2-service-root-withdrawal-factory-device-20260913` contains only test-run
-metadata and public result digests. Staging and login/MFA were untouched.
+`r2-service-root-withdrawal-factory-device-20260913` also contains short-lived
+test identity material and must remain private. Staging and login/MFA were
+untouched.
 
-The Video Cloud API MQTT CRL refresh warning remains outside this result: it is
-a separate MQTT transport caller that lacks its managed client identity for a
-controller request. It belongs to R3 and does not alter the completed Service
-Root receipt or withdrawal state.
+The withdrawal operation is final, but the R2 milestone was reopened after a
+2026-09-14 review found that the ordinary Video Cloud API still used a static
+client key for MQTT trust-management calls to pki-controller. Once the retired
+Service Root was removed, those CRL reads failed with a client-certificate TLS
+error and the MQTT server-trust owner failed closed. R2 cannot close until that
+controller transport uses the API's existing managed Service identity, its
+static key mount is removed, the corrected Deployment is persisted, and the
+post-change authenticated App and Device checks pass. The log ingester's MQTT
+broker connection remains part of R3; that separate broker-client result does
+not excuse a failed Service-authenticated controller call.
+
+The same review found that the persisted pki-controller and CertIssuer overlays
+lagged behind their live successor-only settings. Final R2 verification must
+render those overlays byte-for-byte to the live Pod templates, retain all five
+Service policy consumers, and reject every predecessor Root pin. The connection
+test must establish a predecessor stream before Root replacement, record its
+bounded cutoff, deny a new predecessor connection, admit the successor, and
+repeat predecessor denial with a reconstructed owner. Historical leaf-revocation
+tests alone are insufficient evidence for this Root-policy condition.

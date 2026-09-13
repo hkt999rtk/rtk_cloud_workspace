@@ -20,6 +20,8 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 NS = m.NS
 SERVICE_CONSUMERS = ['certissuer', 'pki-controller']
+SERVICE_POLICY_CONSUMERS = ['account-manager', 'certissuer', 'factory-enroll',
+                            'pki-controller', 'video-cloud-api']
 SERVICE_CLIENT_IDS = ['service:account-manager', 'service:certissuer', 'service:pki-controller']
 SERVICE_DNS_NAMES = [name + '.' + NS + '.svc' for name in SERVICE_CONSUMERS]
 
@@ -83,8 +85,9 @@ def render_persisted_listener(base, name):
     containers[0]['env'] = with_env(containers[0]['env'], settings)
     if name == 'pki-controller':
         env = {e['name']: e.get('value') for e in containers[0]['env']}
-        m.require(m.device_consumers(env) == m.CONSUMERS and env.get('PKI_REQUIRED_CONSUMERS_SERVICE') in (
-            ','.join(SERVICE_CONSUMERS), 'certissuer,factory-enroll,pki-controller'), 'persisted domain gates changed')
+        m.require(m.device_consumers(env) == m.CONSUMERS
+                  and env.get('PKI_REQUIRED_CONSUMERS_SERVICE') == ','.join(SERVICE_POLICY_CONSUMERS),
+                  'persisted domain gates changed')
     return desired
 
 
