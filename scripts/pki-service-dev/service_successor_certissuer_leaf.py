@@ -31,10 +31,11 @@ class CertIssuerFinalLeaf(r.ServiceRun):
         self.report['service_successor_certissuer_leaf_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
-    def state(self):
+    def state(self, allow_pending=False):
         value = json.loads(self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--',
                                       '/app/serviceidentity-bootstrap', 'inspect', STATE, SUBJECT, ROOT]))
-        m.require(value.get('subject') == SUBJECT and value.get('root_sha256') == ROOT and not value.get('pending')
+        m.require(value.get('subject') == SUBJECT and value.get('root_sha256') == ROOT
+                  and (allow_pending or not value.get('pending'))
                   and re.fullmatch(r'[0-9a-f]{64}', value.get('fingerprint', ''))
                   and re.fullmatch(r'[0-9a-f]{64}', value.get('public_key_sha256', '')),
                   'CertIssuer client state differs')
@@ -68,7 +69,7 @@ class CertIssuerFinalLeaf(r.ServiceRun):
         m.require(owner.get('status', {}).get('readyReplicas') == 1
                   and self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'cat', '/proc/1/comm']).strip() == NAME,
                   'CertIssuer is not ready to receive one renewal signal')
-        current = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+        current = {'client': self.state(allow_pending=resume), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
         if resume:
             failed = Path(self.args.failed)
             report = m.read(failed / 'report.json')
@@ -96,10 +97,10 @@ class CertIssuerFinalLeaf(r.ServiceRun):
         self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c', 'kill -HUP 1'])
         deadline = time.monotonic() + 180
         while True:
-            after = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+            after = {'client': self.state(allow_pending=True), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
             added_client = [row for row in after['client_rows'] if row not in before['client_rows']]
             added_server = [row for row in after['server_rows'] if row not in before['server_rows']]
-            if (after['client']['fingerprint'] != before['client']['fingerprint'] and len(added_client) == 1
+            if (not after['client']['pending'] and after['client']['fingerprint'] != before['client']['fingerprint'] and len(added_client) == 1
                     and len(added_server) == 1):
                 break
             m.require(time.monotonic() < deadline, 'CertIssuer renewal incomplete; retain evidence and do not signal again')
