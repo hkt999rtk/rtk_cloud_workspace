@@ -449,7 +449,8 @@ class MQTTHostRun(h.ServiceRun):
         pods = json.loads(self.kube([
             '-n', NS, 'get', 'pods', '-l', selector, '-o', 'json']))['items']
         pods = [pod for pod in pods
-                if not pod['metadata'].get('deletionTimestamp')]
+                if not pod['metadata'].get('deletionTimestamp')
+                and pod.get('status', {}).get('phase') not in ('Succeeded', 'Failed')]
         m.require(len(pods) == 1, 'expected one MQTT identity owner')
         if ready:
             statuses = {item['name']: item for item in
