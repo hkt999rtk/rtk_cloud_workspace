@@ -68,6 +68,20 @@ class AccountListenerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'invalid issuer'):
             lifecycle.consumer_crl_entries([{'issuer': dict(issuer, trust_domain='device')}], '/state/{issuer_id}')
 
+    def test_factory_account_manager_manifest_appends_the_current_host_issuer_once(self):
+        old = {'issuer_id': 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+               'environment': 'dev', 'trust_domain': 'service', 'status': 'retiring'}
+        current = {'issuer_id': 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                   'environment': 'dev', 'trust_domain': 'service', 'status': 'active'}
+        entries = [{'issuer': old,
+                    'state_path': lifecycle.FACTORY_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=old['issuer_id'])}]
+        updated = lifecycle.factory_account_manager_crl_entries(entries, current)
+        self.assertEqual([entry['issuer']['issuer_id'] for entry in updated], [old['issuer_id'], current['issuer_id']])
+        self.assertEqual(updated[-1]['state_path'], lifecycle.FACTORY_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=current['issuer_id']))
+        self.assertEqual(lifecycle.factory_account_manager_crl_entries(updated, current), updated)
+        with self.assertRaisesRegex(RuntimeError, 'manifest is invalid'):
+            lifecycle.factory_account_manager_crl_entries([{'issuer': old, 'state_path': '/wrong'}], current)
+
     def test_consumer_sync_reconciles_rollouts_after_configmap_only_interruption(self):
         runner = lifecycle.AccountListenerLifecycle.__new__(lifecycle.AccountListenerLifecycle)
         runner.output = Path('/tmp/t11-consumer-sync')

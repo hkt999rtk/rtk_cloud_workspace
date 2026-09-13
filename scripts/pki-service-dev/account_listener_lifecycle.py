@@ -24,6 +24,8 @@ SUBJECT = 'service:account-manager'
 FACTORY_STATE = '/state/identity/client.json'
 FACTORY_ROOT = '/run/service-root/root.pem'
 CONSUMER_MANIFEST_ANNOTATION = 'rtk.cloud/pki-service-crl-manifest-sha256'
+FACTORY_ACCOUNT_MANAGER_MANIFEST_ANNOTATION = 'rtk.cloud/pki-account-manager-server-crl-manifest-sha256'
+FACTORY_ACCOUNT_MANAGER_CRL_STATE = '/state/identity/account-manager-crl-{issuer_id}.json'
 
 
 def current_service_issuer(items):
@@ -48,6 +50,29 @@ def consumer_crl_entries(entries, path):
                   'canonical Service CRL manifest contains an invalid issuer')
         result.append({'issuer': issuer, 'state_path': path.format(issuer_id=issuer_id)})
     m.require(result, 'canonical Service CRL manifest is empty')
+    return result
+
+
+def factory_account_manager_crl_entries(entries, issuer):
+    """Append the current Account Manager server issuer without dropping lineage."""
+    m.require(issuer.get('environment') == 'dev' and issuer.get('trust_domain') == 'service'
+              and issuer.get('status') == 'active' and m.re.fullmatch('[0-9a-f-]{36}', issuer.get('issuer_id', '')),
+              'active Account Manager Service issuer is invalid')
+    result, ids = [], set()
+    for entry in entries:
+        current = entry.get('issuer', {})
+        issuer_id = current.get('issuer_id', '')
+        m.require(current.get('environment') == 'dev' and current.get('trust_domain') == 'service'
+                  and current.get('status') in ('active', 'retiring')
+                  and m.re.fullmatch('[0-9a-f-]{36}', issuer_id) and issuer_id not in ids
+                  and entry.get('state_path') == FACTORY_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=issuer_id),
+                  'Factory Account Manager CRL manifest is invalid')
+        result.append(entry)
+        ids.add(issuer_id)
+    m.require(result, 'Factory Account Manager CRL manifest is empty')
+    if issuer['issuer_id'] not in ids:
+        result.append({'issuer': issuer,
+                       'state_path': FACTORY_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=issuer['issuer_id'])})
     return result
 
 
@@ -356,6 +381,47 @@ class AccountListenerLifecycle(a.ListenerRun):
             'consumer_rollouts_started': rollouts,
             'consumers': ['factory-enroll', 'video-cloud-api', 'account-manager'],
         })
+
+    def sync_factory_account_manager_server_crls(self, issuer):
+        """Install the listener's current server issuer for Factory admission TLS."""
+        factory = self.obj('deployment', 'factoryenroll', NS)
+        m.require(factory['spec']['replicas'] == 1 and factory.get('status', {}).get('readyReplicas') == 1
+                  and factory.get('status', {}).get('observedGeneration') == factory['metadata'].get('generation'),
+                  'Factory is not ready for Account Manager CRL update')
+        volumes = factory['spec']['template']['spec']['volumes']
+        selected = [volume for volume in volumes if volume['name'] == 'account-manager-crls']
+        m.require(len(selected) == 1 and selected[0].get('configMap', {}).get('name'),
+                  'Factory Account Manager CRL volume differs')
+        current_name = selected[0]['configMap']['name']
+        current = self.obj('configmap', current_name, NS)
+        entries = json.loads(current.get('data', {}).get('crls.json', ''))
+        desired = json.dumps(factory_account_manager_crl_entries(entries, issuer))
+        digest = m.digest(desired.encode())
+        name = 'factoryenroll-account-manager-crls-' + digest[:12]
+        existing = self.kube(['-n', NS, 'get', 'configmap', name, '-o', 'json', '--ignore-not-found'])
+        if existing:
+            saved = json.loads(existing)
+            m.require(saved.get('immutable') and saved.get('data', {}).get('crls.json') == desired,
+                      'Factory Account Manager CRL manifest name is already bound to other data')
+        else:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': name, 'namespace': NS},
+                         'immutable': True, 'data': {'crls.json': desired}})
+        annotations = factory['spec']['template'].get('metadata', {}).get('annotations', {})
+        if current_name != name or annotations.get(FACTORY_ACCOUNT_MANAGER_MANIFEST_ANNOTATION) != digest:
+            template = json.loads(json.dumps(factory['spec']['template']))
+            target = next(volume for volume in template['spec']['volumes'] if volume['name'] == 'account-manager-crls')
+            target['configMap']['name'] = name
+            template.setdefault('metadata', {}).setdefault('annotations', {})[
+                FACTORY_ACCOUNT_MANAGER_MANIFEST_ANNOTATION] = digest
+            self.scoped_patch('deployment', factory, [
+                {'op': 'test', 'path': '/spec/template', 'value': factory['spec']['template']},
+                {'op': 'replace', 'path': '/spec/template', 'value': template},
+            ])
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/factoryenroll', '--timeout=240s'], timeout=250)
+        self.save('factory-account-manager-server-crl-sync.json', {
+            'issuer_id': issuer['issuer_id'], 'manifest': name, 'sha256': digest,
+        })
+        return name, digest
 
     def require_service_crl_consumers_current(self, issuer_id):
         source = self.obj('configmap', 'pki-service-client-crls')
@@ -749,6 +815,7 @@ class AccountListenerLifecycle(a.ListenerRun):
         m.require(self.inspect(CLIENT_STATE) == client_after and self.inspect(HOST_STATE) == host_after,
                   'Account Manager restart changed successor state')
         self.current_successors(client_after, host_after)
+        factory_manifest, factory_manifest_digest = self.sync_factory_account_manager_server_crls(self.issuer)
         restarted_listener = self.factory_session(a.ACCOUNT_DNS, '8443', host_after)
         self.session_command(restarted_listener, 'check', 'alive')
         self.stop_session(restarted_listener)
@@ -759,7 +826,9 @@ class AccountListenerLifecycle(a.ListenerRun):
                    'controller_successor_connection_count': len(controller_successor),
                    'controller_successor_connection_survived_retirement': True,
                    'held_old_listener_cutoff': True, 'factory_control_survived': True,
-                   'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False})
+                   'successor_survived': True, 'bootstrap_free_restart': True, 'private_keys_exported': False,
+                   'factory_account_manager_crl_manifest': factory_manifest,
+                   'factory_account_manager_crl_manifest_sha256': factory_manifest_digest})
 
     def host_lifecycle(self, name):
         """Exercise the same held-listener contract on the two core hosts."""
