@@ -10,6 +10,11 @@ spec.loader.exec_module(c)
 
 
 class CallerProofTest(unittest.TestCase):
+    def test_api_identity_root_can_be_selected_for_a_successor_transition(self):
+        self.assertEqual(c.caller_identity_fields('video-cloud-api', 'VIDEO_CLOUD_ACCOUNT_MANAGER_', c.SERVICE_SUCCESSOR_ROOT), (
+            'VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_STATE', 'VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_ROOT_SHA256',
+            c.SERVICE_SUCCESSOR_ROOT, 'VIDEO_CLOUD_ACCOUNT_MANAGER_'))
+
     def test_factory_identity_uses_the_successor_service_root(self):
         self.assertEqual(c.caller_identity_fields('factoryenroll', 'FACTORY_ENROLL_ACCOUNT_MANAGER_'), (
             'FACTORY_ENROLL_SERVICE_IDENTITY_STATE',
