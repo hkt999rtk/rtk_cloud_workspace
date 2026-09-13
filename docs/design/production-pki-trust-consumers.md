@@ -2570,3 +2570,30 @@ out. Staging and login/MFA were untouched.
 This is an R2 partial checkpoint, not closure: successor-root preparation and
 withdrawal, old-session cutoff/reconnect denial, and the remaining Service
 callers still require the full two-direction acceptance matrix.
+
+### R2 Account Manager paired Service-caller adoption (2026-09-13)
+
+Account Manager's `certissuer` and `pki-controller` management clients now use
+one Service Root policy state. The existing Dev Account Manager root-policy
+runner validates both client baselines, converts the canonical public Service
+CRL manifest to Account Manager-owned state paths, and installs the two client
+configurations, CRL mount and immutable image in one guarded Deployment
+patch. It refuses partial policy settings, a changed CRL manifest, a changed
+root, or a controller receipt gate that omits an already-required consumer.
+
+Dev evidence `r2-account-manager-paired-policy-20260913-retry3` passed with
+Service Root `59c37a28-7016-4706-ae93-e3da7746615d`, policy
+`0682126da62ff17ca432414b88d02cbfe7e9cafc46a18dee9285ccef928aa422`, and
+image digest `sha256:1ed34f668a2b57226e3bce04fbceb8ecfc922afcc01751364580d5adca98a1e6`.
+The live `account-manager` receipt and both durable Account Manager policy
+states matched the policy. The immutable CRL ConfigMap is
+`account-manager-egress-service-crls-6eb91fd941af`; its payload digest is
+`6eb91fd941af9bf3fb07d77e4f0fc739b40ecfb6db6f87648775f7fdadcc1e0b`.
+The runner persists the replayable egress settings in the Dev operator rollout
+directory and its scoped preflight touches only Dev Account Manager, controller
+and certissuer dependencies. Staging and login/MFA were untouched.
+
+This advances the R2 caller inventory but does not close R2. A successor-root
+transition must still demonstrate both directions' updated receipts, old socket
+cutoff and reconnect denial, then run the required restart and Device/App
+canaries.

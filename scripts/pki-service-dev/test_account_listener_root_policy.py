@@ -22,11 +22,39 @@ class AccountListenerRootPolicyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): r.listener_template(before,self.root)
         self.assertNotEqual(before,original)
         clean=self.owner(); original=copy.deepcopy(clean); r.listener_template(clean,self.root); self.assertEqual(clean,original)
+
+    def test_egress_template_is_paired_and_uses_hashed_manifest(self):
+        owner = self.owner()
+        sidecar = owner['spec']['template']['spec']['containers'][1]
+        for prefix in r.EGRESS_PREFIXES:
+            sidecar['env'] += [
+                {'name': prefix + '_URL', 'value': 'https://service.example'},
+                {'name': prefix + '_SERVER_PKI_ROOT_SHA256', 'value': 'a' * 64},
+                {'name': prefix + '_SERVER_PKI_NAME', 'value': 'service.example'},
+                {'name': prefix + '_TLS_CA', 'value': '/run/pki-root/root.pem'},
+            ]
+        manifest, raw, name = r.egress_manifest([{'issuer': {'issuer_id': self.root['issuer_id'], 'environment': 'dev', 'trust_domain': 'service'}}])
+        result = r.egress_template(owner, self.root, name)
+        values = {item['name']: item['value'] for item in result['spec']['containers'][1]['env']}
+        self.assertEqual(values[r.EGRESS_PREFIXES[0] + '_SERVICE_ROOT_STATE'], r.EGRESS_STATE)
+        self.assertEqual(values[r.EGRESS_PREFIXES[1] + '_SERVICE_ROOT_STATE'], r.EGRESS_STATE)
+        self.assertEqual(manifest[0]['state_path'], '/var/lib/account-pki/private/service-crl-' + self.root['issuer_id'] + '.json')
+        self.assertEqual(name, r.EGRESS_CRL_CONFIG + __import__('hashlib').sha256(raw.encode()).hexdigest()[:12])
+        self.assertEqual(result['spec']['volumes'][-1]['configMap']['name'], name)
+        adopted = {'spec': {'template': result}}
+        self.assertEqual(r.egress_template(adopted, self.root, name), result)
+        values = {item['name']: item['value'] for item in result['spec']['containers'][1]['env']}
+        for item in adopted['spec']['template']['spec']['containers'][1]['env']:
+            if item['name'] == r.EGRESS_PREFIXES[1] + '_SERVICE_ROOT_STATE':
+                item['value'] = '/wrong'
+        with self.assertRaises(RuntimeError):
+            r.egress_template(adopted, self.root, name)
+
     def test_requires_policy_envelope(self):
         self.assertEqual(r.policy_sha({'policy':{'policy_sha256':'b'*64}}),'b'*64)
         with self.assertRaises(RuntimeError): r.policy_sha({})
     def test_controller_authorization_adds_only_account_manager(self):
-        owner={'spec':{'replicas':1,'template':{'spec':{'containers':[{'name':'pki-controller','env':[{'name':'PKI_REQUIRED_CONSUMERS_SERVICE','value':'certissuer,factory-enroll,pki-controller'},{'name':'KEPT','value':'true'}]}]}}}}
+        owner={'spec':{'replicas':1,'template':{'spec':{'containers':[{'name':'pki-controller','env':[{'name':'PKI_REQUIRED_CONSUMERS_SERVICE','value':'account-manager,certissuer,factory-enroll,pki-controller,video-cloud-api'},{'name':'KEPT','value':'true'}]}]}}}}
         result=r.controller_template(owner); env={x['name']:x['value'] for x in result['spec']['containers'][0]['env']}
         self.assertEqual(env['PKI_REQUIRED_CONSUMERS_SERVICE'],r.CONTROLLER_CONSUMERS); self.assertEqual(env['KEPT'],'true')
         self.assertEqual(r.controller_template({'spec':{'replicas':1,'template':result}}),result)

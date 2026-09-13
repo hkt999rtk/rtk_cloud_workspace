@@ -4,6 +4,7 @@ import argparse
 import base64
 import copy
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -22,7 +23,17 @@ PREFIX = 'PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT'
 STATE = '/var/lib/account-pki/private/account-service-root-policy.json'
 ROOTS = '/run/pki-root/root.pem'
 IMAGE = re.compile(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
-CONTROLLER_CONSUMERS = 'account-manager,certissuer,factory-enroll,pki-controller'
+CONTROLLER_CONSUMERS = 'account-manager,certissuer,factory-enroll,pki-controller,video-cloud-api'
+LEGACY_CONTROLLER_CONSUMERS = ('certissuer,factory-enroll,pki-controller',
+                               'account-manager,certissuer,factory-enroll,pki-controller')
+EGRESS_PREFIXES = ('PKI_MANAGEMENT_ISSUER', 'PKI_MANAGEMENT_CONTROLLER')
+EGRESS_STATE = '/var/lib/account-pki/private/service-root-policy.json'
+EGRESS_ROOTS = '/run/pki-root/root.pem'
+EGRESS_CRL_MOUNT = '/run/pki-management-service-crls'
+EGRESS_CRL_VOLUME = 'management-egress-service-crls'
+EGRESS_CRL_CONFIG = 'account-manager-egress-service-crls-'
+EGRESS_CONTROLLER_URL = 'https://pki-controller.video-cloud-dev-video-cloud.svc:18446'
+EGRESS_SETTINGS_FILE = 'account-manager-management-service-settings.json'
 
 
 def env_map(container):
@@ -34,6 +45,76 @@ def env_map(container):
 def with_env(entries, updates):
     return [entry for entry in entries if entry['name'] not in updates] + [
         {'name': key, 'value': value} for key, value in updates.items()]
+
+
+def egress_settings(root):
+    settings = {}
+    for prefix in EGRESS_PREFIXES:
+        settings.update({
+            prefix + '_SERVER_CRL_MANIFEST': EGRESS_CRL_MOUNT + '/crls.json',
+            prefix + '_PKI_CONTROLLER_URL': EGRESS_CONTROLLER_URL,
+            prefix + '_MANAGEMENT_CA': EGRESS_ROOTS,
+            prefix + '_SERVICE_ROOT_ID': root['issuer_id'],
+            prefix + '_SERVICE_ROOT_STATE': EGRESS_STATE,
+            prefix + '_SERVICE_ROOTS': EGRESS_ROOTS,
+        })
+    return settings
+
+
+def egress_manifest(source):
+    # Copy only public Service CRL metadata into Account Manager's PVC paths.
+    m.require(isinstance(source, list) and source, 'canonical Service CRL manifest is empty')
+    copied = copy.deepcopy(source)
+    for item in copied:
+        issuer = item.get('issuer', {})
+        issuer_id = issuer.get('issuer_id', '')
+        m.require(issuer.get('environment') == 'dev' and issuer.get('trust_domain') == 'service'
+                  and re.fullmatch(r'[0-9a-f-]{36}', issuer_id), 'canonical Service CRL entry differs')
+        item['state_path'] = '/var/lib/account-pki/private/service-crl-' + issuer_id + '.json'
+    raw = json.dumps(copied, separators=(',', ':')) + '\n'
+    return copied, raw, EGRESS_CRL_CONFIG + hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+def egress_template(owner, root, config_name, image=None):
+    # Install the paired issuer/controller policy as one all-or-nothing template.
+    template = copy.deepcopy(owner['spec']['template'])
+    pod, containers = template['spec'], template['spec'].get('containers', [])
+    selected = [c for c in containers if c.get('name') == 'pkimanagement']
+    m.require(len(selected) == 1, 'Account Manager egress container ownership changed')
+    sidecar = selected[0]
+    values = env_map(sidecar)
+    for prefix in EGRESS_PREFIXES:
+        baseline = (prefix + '_URL', prefix + '_SERVER_PKI_ROOT_SHA256', prefix + '_SERVER_PKI_NAME',
+                    prefix + '_TLS_CA')
+        m.require(all(values.get(key) for key in baseline)
+                  and values[prefix + '_SERVER_PKI_ROOT_SHA256'] == root['certificate_fingerprint_sha256'],
+                  'Account Manager egress baseline differs: ' + prefix)
+    settings = egress_settings(root)
+    present = [values.get(key) is not None for key in settings]
+    m.require(not any(present) or all(present), 'partial Account Manager egress Service Root policy differs')
+    m.require(not all(present) or all(values[key] == value for key, value in settings.items()),
+              'existing Account Manager egress Service Root policy differs')
+    volumes = {item['name']: item for item in pod.get('volumes', [])}
+    mounts = {item['name']: item for item in sidecar.get('volumeMounts', [])}
+    expected_volume = {'name': EGRESS_CRL_VOLUME, 'configMap': {'name': config_name, 'defaultMode': 292}}
+    expected_mount = {'name': EGRESS_CRL_VOLUME, 'mountPath': EGRESS_CRL_MOUNT, 'readOnly': True}
+    current_volume, current_mount = volumes.get(EGRESS_CRL_VOLUME), mounts.get(EGRESS_CRL_VOLUME)
+    m.require((current_volume is None and current_mount is None) or
+              (current_volume == expected_volume and current_mount == expected_mount),
+              'Account Manager egress CRL manifest differs')
+    if not all(present):
+        sidecar['env'] = with_env(sidecar['env'], settings)
+    if current_volume is None:
+        pod.setdefault('volumes', []).append(expected_volume)
+        sidecar.setdefault('volumeMounts', []).append(expected_mount)
+    if image:
+        m.require(IMAGE.fullmatch(image), 'immutable Dev Video Cloud image required')
+        sidecar['image'] = image
+    template.setdefault('metadata', {}).setdefault('annotations', {}).update({
+        'rtk.realtek.com/service-root-policy': root['issuer_id'],
+        'rtk.cloud/pki-management-egress-crl-manifest-sha256': config_name.removeprefix(EGRESS_CRL_CONFIG),
+    })
+    return template
 
 
 def policy_sha(state):
@@ -51,7 +132,7 @@ def controller_template(owner):
     container = containers[0]
     values = env_map(container)
     current = values.get('PKI_REQUIRED_CONSUMERS_SERVICE', '')
-    m.require(current in ('certissuer,factory-enroll,pki-controller', CONTROLLER_CONSUMERS),
+    m.require(current in LEGACY_CONTROLLER_CONSUMERS + (CONTROLLER_CONSUMERS,),
               'controller Service consumer policy differs')
     if current != CONTROLLER_CONSUMERS:
         container['env'] = with_env(container['env'], {'PKI_REQUIRED_CONSUMERS_SERVICE': CONTROLLER_CONSUMERS})
@@ -99,6 +180,24 @@ class AccountRun(s.ServiceRun):
         self.report['account_listener_root_policy_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
 
+    def preflight(self):
+        # This runner owns Account Manager egress only; unrelated historical
+        # CRL records must not gate a scoped, already-active policy refresh.
+        m.require(self.kube(['config', 'current-context']).strip() == self.context,
+                  'canonical dev context mismatch')
+        for name, namespace in (('account-manager', AM_NS), ('pki-controller', NS), ('certissuer', NS)):
+            deployment = self.obj('deployment', name, namespace)
+            m.require(deployment['spec'].get('replicas') == 1 and
+                      deployment.get('status', {}).get('readyReplicas') == 1 and
+                      deployment.get('status', {}).get('updatedReplicas') == 1 and
+                      deployment.get('status', {}).get('observedGeneration') == deployment['metadata'].get('generation'),
+                      'required Dev deployment is not ready: ' + name)
+        self.forward('am', AM_NS, 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        self.check('preflight', {'scope': 'Dev Account Manager paired Service callers',
+                                 'deployments': ['account-manager', 'pki-controller', 'certissuer'],
+                                 'staging_touched': False})
+
     def scoped_obj(self):
         return self.obj('deployment', 'account-manager', AM_NS)
 
@@ -114,6 +213,7 @@ class AccountRun(s.ServiceRun):
         m.require(owner.get('status', {}).get('readyReplicas') == 1 and owner.get('status', {}).get('updatedReplicas') == 1
                   and owner.get('status', {}).get('observedGeneration') == owner['metadata']['generation'], 'Account Manager is not ready')
         listener_template(owner, root)
+        egress_template(owner, root, self.egress_config_name())
         self.check('preflight_account_listener_root_policy', {'root_id': root['issuer_id'], 'consumer': 'account-manager', 'staging_touched': False})
 
     def authorize_account_consumer(self):
@@ -128,6 +228,35 @@ class AccountRun(s.ServiceRun):
         settings_path = self.base / 'pki/controller-bootstrap/rollout/pki-controller-service-settings.json'
         m.write(settings_path, dict(m.read(settings_path), PKI_REQUIRED_CONSUMERS_SERVICE=CONTROLLER_CONSUMERS))
         self.check('account_listener_controller_authorized', {'consumer': 'account-manager', 'service_consumers': CONTROLLER_CONSUMERS})
+
+    def egress_config(self):
+        source = self.obj('configmap', 'pki-service-client-crls').get('data', {}).get('crls.json')
+        m.require(isinstance(source, str), 'canonical Service CRL manifest missing')
+        manifest, raw, name = egress_manifest(json.loads(source))
+        return manifest, raw, name
+
+    def egress_config_name(self):
+        return self.egress_config()[2]
+
+    def ensure_egress_config(self):
+        manifest, raw, name = self.egress_config()
+        target = self.base / 'pki/controller-bootstrap/rollout' / (name + '-configmap.json')
+        desired = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': name, 'namespace': AM_NS},
+                   'immutable': True, 'data': {'crls.json': raw}}
+        # The name includes the exact payload digest: an existing object must match byte-for-byte.
+        result = subprocess.run(self.k + ['-n', AM_NS, 'get', 'configmap', name, '-o', 'json'],
+                                              capture_output=True, text=True)
+        if result.returncode == 0:
+            existing = json.loads(result.stdout)
+            m.require(existing.get('immutable') is True and existing.get('data', {}).get('crls.json') == raw,
+                      'existing Account Manager egress CRL manifest differs')
+        else:
+            self.create(desired)
+        m.write(target, desired)
+        self.check('account_manager_egress_crl_manifest', {
+            'configmap': name, 'sha256': hashlib.sha256(raw.encode()).hexdigest(),
+            'entries': len(manifest)})
+        return name
 
     def provision_state(self, root):
         policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
@@ -149,28 +278,32 @@ class AccountRun(s.ServiceRun):
         self.save('account-prepared-state.json', json.loads(state))
         return policy
 
-    def rollout(self, root):
+    def rollout(self, root, config_name):
         owner, template = self.scoped_obj(), None
         template = listener_template(owner, root, self.args.image)
+        owner_for_egress = dict(owner, spec=dict(owner['spec'], template=template))
+        template = egress_template(owner_for_egress, root, config_name, self.args.image)
         self.save('account-template.json', template)
         patch = [{'op': 'test', 'path': '/metadata/resourceVersion', 'value': owner['metadata']['resourceVersion']},
                  {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
                  {'op': 'replace', 'path': '/spec/template', 'value': template}]
-        self.kube(['-n', AM_NS, 'patch', 'deployment', 'account-manager', '--type=json', '--patch-file=/dev/stdin'], json.dumps(patch))
-        self.kube(['-n', AM_NS, 'rollout', 'status', 'deployment/account-manager', '--timeout=360s'], timeout=370)
-        self.check('account_listener_root_policy_installed', {'root_id': root['issuer_id'], 'state_path': STATE, 'image': self.args.image})
+        if template != owner['spec']['template']:
+            self.kube(['-n', AM_NS, 'patch', 'deployment', 'account-manager', '--type=json', '--patch-file=/dev/stdin'], json.dumps(patch))
+            self.kube(['-n', AM_NS, 'rollout', 'status', 'deployment/account-manager', '--timeout=360s'], timeout=370)
+        self.check('account_listener_root_policy_installed', {'root_id': root['issuer_id'], 'state_path': STATE, 'image': self.args.image, 'egress_state': EGRESS_STATE, 'egress_crl_configmap': config_name})
 
     def receipt(self, root, expected):
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
-            policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
-            m.require(policy['policy_sha256'] == expected['policy_sha256'], 'Service Root policy changed during Account Manager rollout')
             rows = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'video_cloud', '-At'],
-                             "SELECT loaded_roots_sha256 FROM pki_root_distrust_acknowledgments WHERE environment='dev' AND domain='service' AND policy_sha256='" + policy['policy_sha256'] + "' AND consumer_id='account-manager';")
+                             "SELECT loaded_roots_sha256 FROM pki_root_distrust_acknowledgments WHERE environment='dev' AND domain='service' AND policy_sha256='" + expected['policy_sha256'] + "' AND consumer_id='account-manager';")
             if rows:
                 state = json.loads(self.kube(['-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'pkimanagement', '--', 'cat', STATE]))
-                m.require(policy_sha(state) == policy['policy_sha256'], 'Account Manager policy state differs from receipt')
-                self.check('account_listener_root_policy_receipt', {'root_id': root['issuer_id'], 'policy_sha256': policy['policy_sha256'], 'consumer': 'account-manager', 'loaded_roots_sha256': rows})
+                egress = json.loads(self.kube(['-n', AM_NS, 'exec', 'deployment/account-manager', '-c', 'pkimanagement', '--', 'cat', EGRESS_STATE]))
+                m.require(policy_sha(state) == expected['policy_sha256'] == policy_sha(egress),
+                          'Account Manager Service Root state differs from receipt')
+                m.write(self.base / 'pki/controller-bootstrap/rollout' / EGRESS_SETTINGS_FILE, egress_settings(root))
+                self.check('account_listener_root_policy_receipt', {'root_id': root['issuer_id'], 'policy_sha256': expected['policy_sha256'], 'consumer': 'account-manager', 'loaded_roots_sha256': rows, 'states': [STATE, EGRESS_STATE], 'egress_settings_file': EGRESS_SETTINGS_FILE})
                 return
             time.sleep(3)
         raise RuntimeError('Account Manager Service Root policy receipt deadline')
@@ -180,8 +313,9 @@ class AccountRun(s.ServiceRun):
         root = self.active_root()
         self.preflight_listener(root)
         self.authorize_account_consumer()
+        config_name = self.ensure_egress_config()
         policy = self.provision_state(root)
-        self.rollout(root)
+        self.rollout(root, config_name)
         self.receipt(root, policy)
 
 

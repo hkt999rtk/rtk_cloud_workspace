@@ -131,6 +131,28 @@ different, or stale policy stops before mutating the Deployment. This helper
 does not qualify Service Root successor withdrawal, held-session cutoff, or
 other Service callers; those remain R2 completion work.
 
+
+## Account Manager paired Service callers
+
+Account Manager uses two management clients: one to `certissuer` and one to
+`pki-controller`. They share one durable Service Root policy state and require
+one immutable public CRL manifest rendered with Account Manager-owned state
+paths. Verify or install that exact Dev configuration with:
+
+```sh
+python3 scripts/pki-service-dev/account_listener_root_policy.py \
+  --root-id ACTIVE_SERVICE_ROOT_ID --image VIDEO_CLOUD_IMAGE_DIGEST \
+  --output NEW_PRIVATE_OUTPUT
+```
+
+The runner verifies only the Dev Account Manager, controller and certissuer
+scope, preserves the existing managed identity and listener policy, and rejects
+partial paired-client configuration. It stores the generated ConfigMap and
+`account-manager-management-service-settings.json` in the Dev rollout
+configuration. A passed receipt proves the listener and paired egress states
+match the reviewed policy; it does not qualify successor withdrawal or
+old-session cutoff, which remain R2 work.
+
 ## Authority rollout
 
 First run Device preflight. Build the selected Video Cloud revision using
