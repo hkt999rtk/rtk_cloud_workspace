@@ -2781,8 +2781,10 @@ Device mTLS and MQTT QoS1 canaries before and after the restart. Public
 evidence is `r2-service-certissuer-final-server-leaf-retry-20260913`; it
 contains request IDs, public fingerprints and rollout results only. The
 predecessor Root is still not withdrawn: OpenBao, pkibroker and Video Cloud API
-remain on predecessor-root Service client leaves, so the remaining R2 work is
-their transition plus the documented withdrawal and reconnect-denial matrix.
+were the remaining predecessor-root Service clients at this point. The ordinary
+and isolated Video Cloud API client owners have since completed below. The
+remaining R2 work is OpenBao and pkibroker transition, followed by the
+documented withdrawal and reconnect-denial matrix.
 
 ### R2 pki-controller final Service client recovery (2026-09-13)
 
@@ -2828,6 +2830,45 @@ Dev evidence `r2-video-cloud-api-final-client-recover-r3-20260913` passed the
 public App-token authorization canary, Factory enrollment, Device direct mTLS
 and MQTT QoS1 both before and after a bootstrap-free API restart. CertIssuer's
 Service-client verifier deliberately remains on the predecessor Root until
-OpenBao, pkibroker and the isolated API controller client complete their
-transitions. No predecessor root withdrawal, staging change or login/MFA change
-was made.
+OpenBao and pkibroker complete their transitions. No predecessor root
+withdrawal, staging change or login/MFA change was made.
+
+### R2 isolated Video Cloud API controller client (2026-09-13)
+
+The separate `video-cloud-api-pki` controller owner has also completed its
+final Service-client transition under
+`d61845ca-6b85-4f11-920b-f2f9685b0c13`. Its active retained state is
+`identity-root-697e8e86.json`, with successor Root fingerprint
+`32bbbfd2…f073704eb`; predecessor transition settings are absent after the
+final restart. The workload mounts the immutable two-root overlap ConfigMap
+`pki-service-host-root-697e8e86-5af`, which is required because its CertIssuer
+renewal transport has moved to the successor server authority. The isolated
+controller's normal pki-controller server verification pin stays on the
+predecessor Root for R4 compatibility.
+
+The initial transition exposed a one-root mount that could not verify the
+successor CertIssuer server. Recovery replaced only that mount with the
+reviewed two-root bundle, completed the retained request exactly once, then
+performed a bootstrap-free restart. Registry request
+`83eff860-e140-4fe1-bc0a-9126e7354033` matches public state fingerprint
+`c19785be…b4ba8ad4b`; the state is non-pending. No private key, CSR,
+certificate body or token was exported.
+
+The no-mutation verification evidence
+`r2-api-controller-final-client-verify-20260913` passed preflight, Factory
+enrollment, Device direct mTLS/MQTT QoS1 and the recovered controller-client
+state after the final restart. Only OpenBao and pkibroker still require their
+final Service-client transitions before predecessor-root withdrawal can begin.
+
+### R2 management transport 503 correction (2026-09-13)
+
+During the Service policy refresh investigation, an unchanged root-policy read
+was found to reinstall an equal TLS root pool. Reinstallation closes owned HTTP
+connections, so an unrelated in-flight management request could receive `EOF`
+and surface as HTTP 503. The registry consumer now compares both the pool and
+reviewed policy digest before replacing connections. The focused regression test
+proves an equal policy installs once; Dev runs the corrected API image. A
+30-minute log check found no new 503, EOF or root-replacement event, and 15
+independent live health requests returned HTTP 200. The separate MQTT CRL
+request warning about a missing client certificate is unrelated to this 503
+path and remains tracked as Service listener work.
