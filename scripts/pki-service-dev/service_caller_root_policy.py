@@ -30,7 +30,9 @@ NAME = 'factoryenroll'
 CONTAINER = 'factoryenroll'
 CONSUMER = 'factory-enroll'
 PREFIX = 'FACTORY_ENROLL_CERT_ISSUER'
+ADMISSION_PREFIX = 'FACTORY_ENROLL_ACCOUNT_MANAGER'
 STATE = '/state/identity/issuer-root-policy.json'
+ADMISSION_STATE = '/state/identity/account-manager-root-policy.json'
 ROOTS = '/run/service-root/root.pem'
 IMAGE = re.compile(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
 
@@ -79,14 +81,19 @@ def caller_template(owner, root, image=None):
               and volumes.get('identity', {}).get('persistentVolumeClaim', {}).get('claimName') == 'factoryenroll-service-identity'
               and volumes.get('service-root', {}).get('configMap', {}).get('name') == 'pki-service-host-root',
               'Factory policy state ownership changed')
-    settings = {PREFIX + '_SERVICE_ROOT_ID': root['issuer_id'],
-                PREFIX + '_SERVICE_ROOT_STATE': STATE,
-                PREFIX + '_SERVICE_ROOTS': ROOTS}
-    configured = [values.get(key) is not None for key in settings]
-    if any(configured):
-        m.require(all(configured) and all(values[key] == value for key, value in settings.items()),
-                  'existing Factory Service Root policy differs; reconcile manually')
-    else:
+    settings = {PREFIX + '_SERVICE_ROOT_ID': root['issuer_id'], PREFIX + '_SERVICE_ROOT_STATE': STATE,
+                PREFIX + '_SERVICE_ROOTS': ROOTS, ADMISSION_PREFIX + '_SERVICE_ROOT_ID': root['issuer_id'],
+                ADMISSION_PREFIX + '_SERVICE_ROOT_STATE': ADMISSION_STATE, ADMISSION_PREFIX + '_SERVICE_ROOTS': ROOTS}
+    issuer_keys = tuple(key for key in settings if key.startswith(PREFIX + '_'))
+    admission_keys = tuple(key for key in settings if key.startswith(ADMISSION_PREFIX + '_'))
+    issuer_present = [values.get(key) is not None for key in issuer_keys]
+    admission_present = [values.get(key) is not None for key in admission_keys]
+    m.require((not any(issuer_present) or all(issuer_present)) and (not any(admission_present) or all(admission_present)),
+              'partial Factory Service Root policy differs; reconcile manually')
+    m.require(all(values[key] == settings[key] for key in issuer_keys if values.get(key) is not None)
+              and all(values[key] == settings[key] for key in admission_keys if values.get(key) is not None),
+              'existing Factory Service Root policy differs; reconcile manually')
+    if not (all(issuer_present) and all(admission_present)):
         container['env'] = with_env(container['env'], settings)
     if image:
         m.require(IMAGE.fullmatch(image), 'immutable Dev Video Cloud image required')
@@ -139,14 +146,15 @@ class CallerRun(s.ServiceRun):
         m.require(result.returncode == 0, 'Factory Service Root state preparation failed')
         state = state_path.read_text()
         encoded = base64.b64encode(state.encode()).decode()
-        existing = self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c',
-                              'if test -e ' + STATE + '; then cat ' + STATE + '; fi'])
-        if existing:
-            m.require(existing == state, 'existing Factory Service Root state differs')
-        else:
-            command = ('umask 077; mkdir -p /state/identity; printf %s ' + encoded
-                       + ' | base64 -d > ' + STATE + '; chmod 600 ' + STATE)
-            self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c', command])
+        for path in (STATE, ADMISSION_STATE):
+            existing = self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c',
+                                  'if test -e ' + path + '; then cat ' + path + '; fi'])
+            if existing:
+                m.require(existing == state, 'existing Factory Service Root state differs: ' + path)
+            else:
+                command = ('umask 077; mkdir -p /state/identity; printf %s ' + encoded
+                           + ' | base64 -d > ' + path + '; chmod 600 ' + path)
+                self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c', command])
         self.save('factory-prepared-state.json', json.loads(state))
         return policy
 
@@ -159,7 +167,7 @@ class CallerRun(s.ServiceRun):
             {'op': 'replace', 'path': '/spec/template', 'value': template}])
         self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
         self.check('factory_service_root_policy_installed', {
-            'root_id': root['issuer_id'], 'state_path': STATE,
+            'root_id': root['issuer_id'], 'state_paths': [STATE, ADMISSION_STATE],
             'image': template['spec']['containers'][0]['image']})
 
     def receipt(self, root, expected):

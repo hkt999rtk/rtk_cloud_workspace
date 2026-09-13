@@ -41,6 +41,9 @@ class ServiceCallerRootPolicyTemplateTests(unittest.TestCase):
         self.assertEqual(values[r.PREFIX + '_SERVICE_ROOT_ID'], self.root()['issuer_id'])
         self.assertEqual(values[r.PREFIX + '_SERVICE_ROOT_STATE'], r.STATE)
         self.assertEqual(values[r.PREFIX + '_SERVICE_ROOTS'], r.ROOTS)
+        self.assertEqual(values[r.ADMISSION_PREFIX + '_SERVICE_ROOT_ID'], self.root()['issuer_id'])
+        self.assertEqual(values[r.ADMISSION_PREFIX + '_SERVICE_ROOT_STATE'], r.ADMISSION_STATE)
+        self.assertEqual(values[r.ADMISSION_PREFIX + '_SERVICE_ROOTS'], r.ROOTS)
         self.assertEqual(values['KEPT'], 'true')
         self.assertEqual(before['spec']['template']['spec']['containers'][0]['image'], 'old')
 
