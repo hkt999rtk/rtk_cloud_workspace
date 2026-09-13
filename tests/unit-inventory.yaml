@@ -685,6 +685,15 @@ cases:
       source: src/i18n.test.mjs
       title: i18n supports interpolation, plurals, and en-US formatting
       owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-09-13"
+      reason: Replaced by locale-aware formatting coverage for all supported locales.
+    - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#i18n%20supports%20interpolation%2C%20plurals%2C%20and%20locale-aware%20formatting
+      module: cloud-admin-web
+      language: javascript
+      source: src/i18n.test.mjs
+      title: i18n supports interpolation, plurals, and locale-aware formatting
+      owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#production%20Web%20UI%20contains%20no%20CJK%20copy%20outside%20legacy%20data%20aliases
       module: cloud-admin-web
@@ -692,12 +701,30 @@ cases:
       source: src/i18n.test.mjs
       title: production Web UI contains no CJK copy outside legacy data aliases
       owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-09-13"
+      reason: Replaced by managed locale-resource coverage.
+    - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#production%20Web%20UI%20keeps%20CJK%20copy%20in%20managed%20locale%20resources
+      module: cloud-admin-web
+      language: javascript
+      source: src/i18n.test.mjs
+      title: production Web UI keeps CJK copy in managed locale resources
+      owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#service%20console%20initializes%20with%20English%20as%20its%20only%20supported%20locale
       module: cloud-admin-web
       language: javascript
       source: src/i18n.test.mjs
       title: service console initializes with English as its only supported locale
+      owner: rtk_cloud_admin
+      status: retired
+      retired_at: "2026-09-13"
+      reason: Replaced by Portal-compatible locale-set coverage with English as the source locale.
+    - canonical_key: js://cloud-admin-web/src/i18n.test.mjs#service%20console%20supports%20the%20Portal%20language%20set%20with%20English%20as%20its%20source%20locale
+      module: cloud-admin-web
+      language: javascript
+      source: src/i18n.test.mjs
+      title: service console supports the Portal language set with English as its source locale
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#invoice%20usage%20respects%20the%20stored%20quantity%20scale%20and%20missing%20data

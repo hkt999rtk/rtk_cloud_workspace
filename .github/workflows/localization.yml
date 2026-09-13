@@ -1,0 +1,30 @@
+name: Localization validation
+
+on:
+  pull_request:
+    paths:
+      - 'tools/localization/**'
+      - 'docs/localization.md'
+      - 'repos/rtk_cloud_admin'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  localization:
+    name: Validate approved Admin translations
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - run: node --test tools/localization/localization.test.mjs
+      - run: >-
+          node tools/localization/localization.mjs check
+          --catalog repos/rtk_cloud_admin/web/localization/catalog.json
+          --translations repos/rtk_cloud_admin/web/localization/translations
