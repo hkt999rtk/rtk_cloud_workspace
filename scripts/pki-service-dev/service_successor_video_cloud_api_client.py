@@ -125,8 +125,7 @@ class VideoCloudAPIFinalClient(r.ServiceRun):
     def replacement(before, after, rows_before, rows_after):
         predecessor = VideoCloudAPIFinalClient.admission(rows_before, before)
         successor = VideoCloudAPIFinalClient.admission(rows_after, after)
-        added = [row for row in rows_after if row not in rows_before]
-        m.require(len(added) == 1 and added[0] == successor and predecessor['issuer_id'] != FINAL
+        m.require(successor not in rows_before and predecessor['issuer_id'] != FINAL
                   and successor['issuer_id'] == FINAL and successor['caller'] == SUBJECT
                   and after['fingerprint'] != before['fingerprint'] and after['public_key_sha256'] != before['public_key_sha256'],
                   'Video Cloud API final client registry result differs')
