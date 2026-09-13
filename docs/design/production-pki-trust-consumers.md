@@ -2830,8 +2830,8 @@ Dev evidence `r2-video-cloud-api-final-client-recover-r3-20260913` passed the
 public App-token authorization canary, Factory enrollment, Device direct mTLS
 and MQTT QoS1 both before and after a bootstrap-free API restart. CertIssuer's
 Service-client verifier deliberately remains on the predecessor Root until
-OpenBao and pkibroker complete their transitions. No predecessor root
-withdrawal, staging change or login/MFA change was made.
+OpenBao completes its transition. No predecessor root withdrawal, staging
+change or login/MFA change was made.
 
 ### R2 isolated Video Cloud API controller client (2026-09-13)
 
@@ -2857,8 +2857,9 @@ certificate body or token was exported.
 The no-mutation verification evidence
 `r2-api-controller-final-client-verify-20260913` passed preflight, Factory
 enrollment, Device direct mTLS/MQTT QoS1 and the recovered controller-client
-state after the final restart. Only OpenBao and pkibroker still require their
-final Service-client transitions before predecessor-root withdrawal can begin.
+state after the final restart. At that point, OpenBao and pkibroker still
+required their final Service-client transitions before predecessor-root
+withdrawal could begin.
 
 ### R2 management transport 503 correction (2026-09-13)
 
@@ -2872,3 +2873,31 @@ proves an equal policy installs once; Dev runs the corrected API image. A
 independent live health requests returned HTTP 200. The separate MQTT CRL
 request warning about a missing client certificate is unrelated to this 503
 path and remains tracked as Service listener work.
+
+### R2 pkibroker final Service client (2026-09-13)
+
+The isolated `pkibroker` owner in the `mqtt-pki` Deployment now uses its final
+Service-client leaf under `d61845ca-6b85-4f11-920b-f2f9685b0c13`. Its active
+state is `identity-root-697e8e86.json`, pinned to successor Root fingerprint
+`32bbbfd2…f073704eb`; the predecessor transition settings were removed after
+the final restart. The shared `pki-service-root` mount now selects immutable
+two-root ConfigMap `pki-service-host-root-697e8e86-5af`. The MQTT container,
+its host identity and its configuration were not changed; the pkibroker
+controller server pin remains predecessor-root for R4 while its CertIssuer
+renewal pin is successor-root.
+
+The first rollout exposed that pkibroker still used an older image without
+root-transition startup support. It retained the predecessor state and created
+no successor receipt. Replacing only the pkibroker container with the already
+validated Dev image completed the retained renewal exactly once. Request
+`b203bcc7-ada3-4d86-90cd-253d3b322993` matches public state fingerprint
+`8ae6bc0d…03cd0016`; no private key, CSR, certificate body, API key or token
+was exported.
+
+The initial post-restart MQTT verification used a port-forward attached to the
+replaced Pod and correctly recorded its EOF instead of accepting it as a
+success. A fresh, no-mutation verification then passed preflight, Factory
+enrollment and Device direct mTLS/MQTT QoS1:
+`r2-pkibroker-final-client-verify-20260913`. OpenBao is now the only remaining
+Service client that must transition before the predecessor-root withdrawal
+matrix can begin.
