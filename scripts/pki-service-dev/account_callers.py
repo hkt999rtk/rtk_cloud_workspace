@@ -27,6 +27,14 @@ SERVICE_ROOT = '87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2
 SERVICE_SUCCESSOR_ROOT = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 
 
+def caller_identity_fields(name, prefix):
+    if name == 'video-cloud-api':
+        return prefix + 'IDENTITY_STATE', prefix + 'IDENTITY_ROOT_SHA256', SERVICE_ROOT, prefix
+    m.require(name == 'factoryenroll', 'unknown managed Account Manager caller')
+    return ('FACTORY_ENROLL_SERVICE_IDENTITY_STATE', 'FACTORY_ENROLL_SERVICE_IDENTITY_ROOT_SHA256',
+            SERVICE_SUCCESSOR_ROOT, 'FACTORY_ENROLL_SERVICE_')
+
+
 def app_request(context, device):
     # Standard TLS verification includes the public server chain and hostname.
     connection = http.client.HTTPSConnection(API_HOST, context=context, timeout=30)
@@ -67,12 +75,12 @@ class CallerRun(m.Acceptance):
                           and env.get(prefix + 'SERVER_PKI_NAME') == ACCOUNT_HOST
                           and env.get(prefix + 'SERVER_PKI_ROOT_SHA256') == expected_root,
                           'managed Account Manager destination differs: ' + name)
-                identity_prefix = prefix if name == 'video-cloud-api' else 'FACTORY_ENROLL_SERVICE_'
-                m.require(env.get(identity_prefix + 'IDENTITY_STATE') and env.get(identity_prefix + 'IDENTITY_ROOT_SHA256') == SERVICE_ROOT,
-                          'managed caller identity missing: ' + name)
+                identity_state, identity_root, expected_identity_root, bootstrap_prefix = caller_identity_fields(name, prefix)
+                m.require(env.get(identity_state) and env.get(identity_root) == expected_identity_root,
+                  'managed caller identity missing: ' + name)
                 m.require(not env.get(prefix + 'MANAGEMENT_CERT') and not env.get(prefix + 'MANAGEMENT_KEY')
-                          and not env.get(identity_prefix + 'IDENTITY_BOOTSTRAP_CERT')
-                          and not env.get(identity_prefix + 'IDENTITY_BOOTSTRAP_KEY'),
+                          and not env.get(bootstrap_prefix + 'IDENTITY_BOOTSTRAP_CERT')
+                          and not env.get(bootstrap_prefix + 'IDENTITY_BOOTSTRAP_KEY'),
                           'static caller credential is configured: ' + name)
         self.forward('am', AM_NS, 'account-manager', 80)
         self.forward('factory', m.NS, 'factoryenroll', 80)
@@ -81,19 +89,28 @@ class CallerRun(m.Acceptance):
         self.admin = {name: base64.b64decode(secret[key]).decode() for name, key in (
             ('email', 'ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL'),
             ('password', 'ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD'))}
-        with sqlite3.connect(Path(args.database).resolve().as_uri() + '?mode=ro', uri=True) as db:
-            db.row_factory = sqlite3.Row
-            rows = db.execute('SELECT * FROM users WHERE email = ?', (args.email,)).fetchall()
-        m.require(len(rows) == 1 and rows[0]['brand_cloud_id'] == CLOUD, 'one test user in the governed dev Cloud required')
-        self.user = dict(rows[0])
-        m.require(args.email.startswith('pki-service-caller-') and args.email.endswith('@dev.invalid'),
-                  'dedicated dev caller test user required')
-        credentials = json.loads(self.user['app_credentials_json'])
-        certificate = json.loads(self.user['app_certificate_json'])
-        self.save('app-key.pem', credentials['private_key_pem'])
-        self.save('app-chain.pem', certificate['certificate_chain_pem'])
-        self.app_context = ssl.create_default_context()
-        self.app_context.load_cert_chain(self.output / 'app-chain.pem', self.output / 'app-key.pem')
+        if args.app_identity:
+            identity = args.app_identity.resolve()
+            key, chain = identity / 'app-key.pem', identity / 'app-chain.pem'
+            m.require(identity.is_dir() and key.is_file() and chain.is_file(),
+                      'retained Dev App identity is incomplete')
+            self.user = None
+            self.app_context = ssl.create_default_context()
+            self.app_context.load_cert_chain(chain, key)
+        else:
+            with sqlite3.connect(Path(args.database).resolve().as_uri() + '?mode=ro', uri=True) as db:
+                db.row_factory = sqlite3.Row
+                rows = db.execute('SELECT * FROM users WHERE email = ?', (args.email,)).fetchall()
+            m.require(len(rows) == 1 and rows[0]['brand_cloud_id'] == CLOUD, 'one test user in the governed dev Cloud required')
+            self.user = dict(rows[0])
+            m.require(args.email.startswith('pki-service-caller-') and args.email.endswith('@dev.invalid'),
+                      'dedicated dev caller test user required')
+            credentials = json.loads(self.user['app_credentials_json'])
+            certificate = json.loads(self.user['app_certificate_json'])
+            self.save('app-key.pem', credentials['private_key_pem'])
+            self.save('app-chain.pem', certificate['certificate_chain_pem'])
+            self.app_context = ssl.create_default_context()
+            self.app_context.load_cert_chain(self.output / 'app-chain.pem', self.output / 'app-key.pem')
         owner = self.http('/auth/login', self.accounts['requester'])
         cloud = self.http('/developer/brand-clouds/' + CLOUD, token=owner['tokens']['access_token'])
         m.require(cloud['brand_cloud']['role'] == 'owner', 'rehearsal requester must own the Cloud')
@@ -110,7 +127,9 @@ class CallerRun(m.Acceptance):
             self.save('owner-chain.pem', issued['app_certificate']['certificate_chain_pem'])
             self.owner_context = ssl.create_default_context()
             self.owner_context.load_cert_chain(self.output / 'owner-chain.pem', self.output / 'owner-key.pem')
-        self.check('preflight', {'deployments': deployments, 'user_id': self.user['user_id'],
+        self.check('preflight', {'deployments': deployments,
+                                 'app_identity_reused': bool(args.app_identity),
+                                 'user_id': self.user['user_id'] if self.user else None,
                                  'cloud': CLOUD, 'product': PRODUCT, 'public_origin': 'https://' + API_HOST})
 
     def restart_caller(self, name):
@@ -160,7 +179,7 @@ class CallerRun(m.Acceptance):
         m.require(result['certificate_pem'] == original['certificate_pem'], 'enrollment replay issued another certificate')
         self.check('factory_exact_replay', {'device': request['devid'], 'same_certificate': True})
 
-    def logs(self):
+    def logs(self, require_factory=True):
         raw = self.kube(['-n', AM_NS, 'logs', 'deployment/account-manager', '-c', 'app', '--since-time=' + self.started_at])
         records = []
         for line in raw.splitlines():
@@ -173,9 +192,11 @@ class CallerRun(m.Acceptance):
                 records.append({key: row.get(key) for key in ('ts', 'path', 'status', 'remote_addr')})
         m.require(any(r['path'] == '/v1/internal/app-token-authorizations' and r['status'] == 200
                       and r['remote_addr'] == '127.0.0.1' for r in records), 'no successful loopback Account Manager authorization log')
-        m.require(any(r['path'] == '/v1/internal/factory-enrollments/reserve' and r['status'] == 200
-                      and r['remote_addr'] == '127.0.0.1' for r in records), 'no successful loopback factory reservation log')
-        self.check('account_manager_internal_requests', {'records': records})
+        if require_factory:
+            m.require(any(r['path'] == '/v1/internal/factory-enrollments/reserve' and r['status'] == 200
+                          and r['remote_addr'] == '127.0.0.1' for r in records), 'no successful loopback factory reservation log')
+        self.check('account_manager_internal_requests', {
+            'records': records, 'factory_reservation_verified': require_factory})
 
     def enroll(self):
         issuers = self.api('/issuers/search', {'limit': 100})['items']
@@ -242,15 +263,25 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-root', default='~/.config/rtk_cloud')
     parser.add_argument('--output', required=True)
-    parser.add_argument('--database', required=True)
-    parser.add_argument('--email', required=True)
+    parser.add_argument('--database')
+    parser.add_argument('--email')
+    parser.add_argument('--app-identity', type=Path,
+                        help='Retained dedicated Dev App identity; avoids reading a local test-data database')
     parser.add_argument('--fixture', type=Path, help='Reuse a previously enrolled and bound caller fixture; no enrollment/binding mutation')
+    parser.add_argument('--skip-factory-replay', action='store_true',
+                        help='Use a retained bound fixture for App verification when its one-time Factory JWT has expired')
     parser.add_argument('--owner-identity', type=Path, help='Retained owner App identity directory; never rotate it implicitly')
     parser.add_argument('--restart', choices=('video-cloud-api', 'factoryenroll', 'account-manager'),
                         help='Restart one existing identity owner, verify unchanged state, then repeat caller checks')
     args = parser.parse_args()
+    m.require(bool(args.app_identity) == (not bool(args.database or args.email)),
+              'provide --app-identity or both --database and --email')
+    m.require(bool(args.app_identity) or (bool(args.database) and bool(args.email)),
+              'both --database and --email are required without --app-identity')
     m.require(not args.restart or (args.fixture and args.owner_identity),
               '--restart requires an enrolled/bound fixture and retained owner identity')
+    m.require(not args.skip_factory_replay or args.fixture,
+              '--skip-factory-replay requires an enrolled and bound fixture')
     os.umask(0o077)
     runner = CallerRun(args.config_root, 'lke649805-ctx', args.output)
     try:
@@ -266,10 +297,10 @@ def main():
             runner.bind(device)
         if args.restart:
             runner.restart_caller(args.restart)
-        if args.fixture:
+        if args.fixture and not args.skip_factory_replay:
             runner.replay_factory(args.fixture)
         runner.probe_calls(device)
-        runner.logs()
+        runner.logs(require_factory=not args.skip_factory_replay)
         runner.report['status'] = 'passed'
     except BaseException as error:
         runner.report['status'] = 'failed'

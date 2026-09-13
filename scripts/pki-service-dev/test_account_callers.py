@@ -10,6 +10,13 @@ spec.loader.exec_module(c)
 
 
 class CallerProofTest(unittest.TestCase):
+    def test_factory_identity_uses_the_successor_service_root(self):
+        self.assertEqual(c.caller_identity_fields('factoryenroll', 'FACTORY_ENROLL_ACCOUNT_MANAGER_'), (
+            'FACTORY_ENROLL_SERVICE_IDENTITY_STATE',
+            'FACTORY_ENROLL_SERVICE_IDENTITY_ROOT_SHA256',
+            c.SERVICE_SUCCESSOR_ROOT,
+            'FACTORY_ENROLL_SERVICE_'))
+
     def test_positive_and_denial_evidence_requires_all_three_results(self):
         for responses, passes in (
             ([(401, {}), (401, {}), (200, {'access_token': 'must-stay-private'})], True),

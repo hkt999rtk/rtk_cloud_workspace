@@ -95,6 +95,14 @@ production JWT must still be valid. The fixture contains `enroll-request.json`,
 `enrolled.json` and `production-run.json`; the owner identity directory contains
 `owner-chain.pem` and `owner-key.pem`.
 
+When the local test-data SQLite export or the fixture's one-time Factory JWT is
+no longer available, an R2 App-only check may instead pass the retained member
+identity with `--app-identity`, the retained owner identity, the bound fixture,
+and `--skip-factory-replay`. It still proves the public App token success and
+the two authorization denials through Account Manager; it records that Factory
+reservation was verified by its separate fresh canary rather than this reused
+fixture.
+
 Add `--restart video-cloud-api`, `--restart factoryenroll`, or
 `--restart account-manager` to that reuse command to replace one Pod with
 UID/resourceVersion preconditions, verify unchanged identity hashes and
