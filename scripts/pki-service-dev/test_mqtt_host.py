@@ -388,6 +388,27 @@ class MQTTHostTests(unittest.TestCase):
                                     'current MQTT host is not admitted'):
             runner.current_host({'issuer_id': 'issuer'}, owner)
 
+    def test_managed_host_requires_the_service_identity_caller(self):
+        runner = object.__new__(m.MQTTHostRun)
+        runner.inspect_host_state = Mock(return_value={
+            'pending': False, 'subject': m.MQTT_HOST,
+            'fingerprint': 'f' * 64})
+        row = {'fingerprint': 'f' * 64, 'issuer_id': 'issuer',
+               'caller': m.EMQX_SERVICE_SUBJECT, 'status': 'succeeded',
+               'revoked_at': None}
+        runner.server_rows = Mock(return_value=[row])
+        runner.served_fingerprint = Mock(return_value='f' * 64)
+        runner.host_state_digest = Mock(return_value='s' * 64)
+        runner.obj = Mock(return_value={'metadata': {'uid': 'pvc'}})
+        owner = {'metadata': {'uid': 'deployment'}, 'spec': {'template': {
+            'spec': {'containers': [{'name': 'mqtt', 'image': 'mqtt-image'}]}}}}
+        self.assertEqual(runner.current_host_with_caller(
+            {'issuer_id': 'issuer'}, m.EMQX_SERVICE_SUBJECT, owner)['row'], row)
+        with self.assertRaisesRegex(RuntimeError,
+                                    'current MQTT host is not admitted'):
+            runner.current_host_with_caller({'issuer_id': 'issuer'},
+                                            'emqx-pki', owner)
+
 
 if __name__ == '__main__':
     unittest.main()

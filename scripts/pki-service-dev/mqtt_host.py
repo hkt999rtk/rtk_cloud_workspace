@@ -1959,6 +1959,9 @@ class MQTTHostRun(h.ServiceRun):
         return root, issuer, owner
 
     def current_host(self, issuer, owner=None):
+        return self.current_host_with_caller(issuer, 'emqx-pki', owner)
+
+    def current_host_with_caller(self, issuer, caller, owner=None):
         owner = owner or self.obj('deployment', 'mqtt-pki')
         state = self.inspect_host_state()
         rows = self.server_rows()
@@ -1967,7 +1970,7 @@ class MQTTHostRun(h.ServiceRun):
         m.require(not state['pending'] and state['subject'] == MQTT_HOST
                   and len(selected) == 1
                   and selected[0]['issuer_id'] == issuer['issuer_id']
-                  and selected[0]['caller'] == 'emqx-pki'
+                  and selected[0]['caller'] == caller
                   and selected[0]['status'] == 'succeeded'
                   and selected[0]['revoked_at'] is None
                   and self.served_fingerprint() == state['fingerprint'],
@@ -1980,6 +1983,73 @@ class MQTTHostRun(h.ServiceRun):
                        owner['spec']['template']['spec']['containers']},
             'state': state, 'state_file_sha256': self.host_state_digest(),
             'row': selected[0], 'rows': rows}
+
+    def verify_managed_emqx_bootstrap(self):
+        """Record that the live broker has only the managed Service path."""
+        service_source = Path(self.args.service_authority)
+        service_report = m.read(service_source / 'report.json')
+        m.require(service_report.get('status') == 'passed'
+                  and service_report.get('phase') in (
+                      'activate-emqx-service-v9', 'recover-emqx-service-v9'),
+                  'passed EMQX Service authority evidence required')
+        service = m.read(service_source / 'intermediate-active.json')
+        m.require(service.get('status') == 'active'
+                  and service.get('trust_domain') == 'service'
+                  and EMQX_SERVICE_SUBJECT in service.get('service_client_ids', [])
+                  and self.api('/issuers/' + service['issuer_id']) == service,
+                  'active EMQX Service issuer changed')
+        root, issuer, _ = self.ready_intermediate(status='active')
+        owner = self.obj('deployment', 'mqtt-pki')
+        mqtt = next(item for item in owner['spec']['template']['spec']['containers']
+                    if item['name'] == 'mqtt')
+        env = {item['name']: item.get('value') for item in mqtt.get('env', [])}
+        forbidden = {name for name in env if name.startswith('EMQX_PKI_') and
+                     ('BOOTSTRAP' in name or 'RENEWAL_CLIENT_' in name)}
+        m.require(not forbidden
+                  and env.get('EMQX_PKI_SERVICE_CLIENT_IDENTITY_STATE') ==
+                  EMQX_SERVICE_STATE
+                  and env.get('EMQX_PKI_HOST_ROOT_SHA256') ==
+                  root['certificate_fingerprint_sha256'],
+                  'broker retains a bootstrap or static renewal credential')
+        m.require('emqx-bootstrap-ca.crt' not in
+                  self.obj('secret', 'certissuer-runtime').get('data', {}),
+                  'CertIssuer retains the EMQX bootstrap CA')
+        certissuer = self.obj('deployment', 'certissuer')
+        certenv = {item['name']: item.get('value') for item in
+                   certissuer['spec']['template']['spec']['containers'][0].get('env', [])}
+        m.require(certenv.get('CERT_ISSUER_MQTT_SERVER_CLIENT_CN_PATTERN') ==
+                  '^service:emqx-pki$'
+                  and certenv.get('CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN') ==
+                  '^service-provisioner$'
+                  and 'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER' not in certenv,
+                  'CertIssuer retains the EMQX bootstrap policy')
+        service_row = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT issuer_id,subject,caller,status,"
+            "fingerprint,revoked_at FROM pki_service_client_issuances WHERE "
+            "environment='dev' AND subject='service:emqx-pki' ORDER BY issued_at "
+            "DESC LIMIT 1) t;")
+        service_row = json.loads(service_row)
+        m.require(service_row['issuer_id'] == service['issuer_id']
+                  and service_row['subject'] == EMQX_SERVICE_SUBJECT
+                  and service_row['caller'] == EMQX_SERVICE_SUBJECT
+                  and service_row['status'] == 'succeeded'
+                  and service_row['revoked_at'] is None,
+                  'current EMQX Service client issuance differs')
+        self.save('emqx-service-client-issuance.json', service_row)
+        self.save('mqtt-root.pem', root['certificate_pem'])
+        healthy = self.current_host_with_caller(issuer, EMQX_SERVICE_SUBJECT,
+                                                owner)
+        clients = self.wait_actual_clients()
+        self.check('managed_emqx_bootstrap_verified', {
+            'service_issuer_id': service['issuer_id'],
+            'service_client_fingerprint': service_row['fingerprint'],
+            'mqtt_issuer_id': issuer['issuer_id'],
+            'mqtt_server_fingerprint': healthy['state']['fingerprint'],
+            'bootstrap_ca_removed': True,
+            'bootstrap_policy_closed': True,
+            'static_renewal_credential_present': False,
+            'actual_clients_authenticated': clients,
+            'staging_touched': False})
 
     def renew_host(self):
         traffic = m.read(Path(self.args.traffic) / 'report.json')
@@ -2459,6 +2529,7 @@ def main():
         'activate-intermediate', 'finish-intermediate-activation',
         'configure-certissuer', 'prepare-host', 'transition-host-root',
         'recover-host-transition', 'bootstrap-emqx-service-client',
+        'verify-managed-emqx-bootstrap',
         'adopt-host',
         'finish-host-adoption', 'repair-host-callback',
         'finish-host-callback', 'renew-host', 'finish-host-renewal', 'revoke-host',
@@ -2492,6 +2563,7 @@ def main():
                                  'configure-certissuer', 'prepare-host',
                                  'transition-host-root',
                                  'recover-host-transition', 'bootstrap-emqx-service-client',
+                                 'verify-managed-emqx-bootstrap',
                                  'adopt-host', 'finish-host-adoption',
                                  'repair-host-callback',
                                  'finish-host-callback', 'renew-host',
@@ -2503,6 +2575,9 @@ def main():
     m.require(args.phase != 'bootstrap-emqx-service-client'
               or (args.service_authority and args.image and args.certissuer_image),
               'active Service v9 evidence, managed EMQX image and CertIssuer image required')
+    m.require(args.phase != 'verify-managed-emqx-bootstrap'
+              or args.service_authority,
+              'active EMQX Service authority evidence required')
     m.require(args.phase != 'adopt-host' or args.prepared,
               'prepared MQTT host evidence required')
     m.require(args.phase != 'finish-host-adoption'
@@ -2532,7 +2607,8 @@ def main():
     try:
         if args.phase in ('finish-host-adoption', 'repair-host-callback',
                           'finish-host-callback', 'recover-host-transition',
-                          'bootstrap-emqx-service-client'):
+                          'bootstrap-emqx-service-client',
+                          'verify-managed-emqx-bootstrap'):
             runner.recovery_preflight()
         else:
             runner.preflight()
@@ -2549,6 +2625,7 @@ def main():
          'transition-host-root': runner.transition_host_root,
          'recover-host-transition': runner.recover_host_transition,
          'bootstrap-emqx-service-client': runner.bootstrap_emqx_service_client,
+         'verify-managed-emqx-bootstrap': runner.verify_managed_emqx_bootstrap,
          'adopt-host': runner.adopt_host,
          'finish-host-adoption':
              runner.finish_host_adoption_recovery,
