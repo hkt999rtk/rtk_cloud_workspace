@@ -133,6 +133,9 @@ class FactoryFinalLeaf(r.ServiceRun):
         return issuer
 
     def preflight(self):
+        # The common Dev preflight loads the existing disposable Factory canary
+        # context and performs only read-only ownership and readiness checks.
+        super().preflight()
         m.require(self.kube(['config', 'current-context']).strip() == self.context, 'canonical Dev context mismatch')
         owner = self.obj('deployment', NAME)
         m.require(owner.get('status', {}).get('readyReplicas') == 1 and owner.get('status', {}).get('updatedReplicas') == 1 and
