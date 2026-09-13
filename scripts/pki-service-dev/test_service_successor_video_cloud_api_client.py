@@ -39,6 +39,15 @@ class VideoCloudAPITransitionTemplateTests(unittest.TestCase):
         self.assertEqual(values['VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_ROOT_SHA256']['value'], mod.ROOT)
         self.assertEqual(values['VIDEO_CLOUD_ACCOUNT_MANAGER_SERVER_PKI_ROOT_SHA256']['value'], mod.OLD)
 
+    def test_replacement_matches_the_installed_leaf_not_a_legacy_caller_label(self):
+        before = {'fingerprint': 'old', 'public_key_sha256': 'old-key'}
+        after = {'fingerprint': 'new', 'public_key_sha256': 'new-key'}
+        legacy = {'fingerprint': 'other', 'issuer_id': 'old-issuer', 'subject': mod.SUBJECT, 'caller': mod.SUBJECT, 'status': 'succeeded'}
+        predecessor = {'fingerprint': 'old', 'issuer_id': 'old-issuer', 'subject': mod.SUBJECT, 'caller': 'video-cloud-api', 'status': 'succeeded'}
+        successor = {'fingerprint': 'new', 'issuer_id': mod.FINAL, 'subject': mod.SUBJECT, 'caller': mod.SUBJECT, 'status': 'succeeded'}
+        self.assertEqual(mod.VideoCloudAPIFinalClient.replacement(before, after, [legacy, predecessor],
+                         [legacy, predecessor, successor]), successor)
+
 
 if __name__ == '__main__':
     unittest.main()

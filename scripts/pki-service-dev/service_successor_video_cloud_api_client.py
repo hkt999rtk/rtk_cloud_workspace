@@ -109,10 +109,28 @@ class VideoCloudAPIFinalClient(r.ServiceRun):
     def rows(self):
         query = ("SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,caller,status,fingerprint,issued_at "
                  "FROM pki_service_client_issuances WHERE environment='dev' AND subject='service:video-cloud-api' "
-                 "AND caller='video-cloud-api' AND revoked_at IS NULL ORDER BY issued_at,request_id) t;")
+                 "AND revoked_at IS NULL ORDER BY issued_at,request_id) t;")
         raw = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X',
                          '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'video_cloud', '-At'], query)
         return [json.loads(line) for line in raw.splitlines() if line]
+
+    @staticmethod
+    def admission(rows, identity):
+        matches = [row for row in rows if row['fingerprint'] == identity['fingerprint']]
+        m.require(len(matches) == 1 and matches[0]['subject'] == SUBJECT and matches[0]['status'] == 'succeeded',
+                  'Video Cloud API identity lacks exactly one active registry admission')
+        return matches[0]
+
+    @staticmethod
+    def replacement(before, after, rows_before, rows_after):
+        predecessor = VideoCloudAPIFinalClient.admission(rows_before, before)
+        successor = VideoCloudAPIFinalClient.admission(rows_after, after)
+        added = [row for row in rows_after if row not in rows_before]
+        m.require(len(added) == 1 and added[0] == successor and predecessor['issuer_id'] != FINAL
+                  and successor['issuer_id'] == FINAL and successor['caller'] == SUBJECT
+                  and after['fingerprint'] != before['fingerprint'] and after['public_key_sha256'] != before['public_key_sha256'],
+                  'Video Cloud API final client registry result differs')
+        return successor
 
     def issuer(self):
         issuer = self.api('/issuers/' + FINAL)
@@ -166,8 +184,7 @@ class VideoCloudAPIFinalClient(r.ServiceRun):
         owner = self.obj('deployment', NAME)
         m.require(owner.get('status', {}).get('readyReplicas') == 1, 'Video Cloud API is not ready')
         before, rows_before = self.state(OLD_STATE, OLD), self.rows()
-        m.require(len(rows_before) == 1 and rows_before[0]['issuer_id'] != FINAL
-                  and rows_before[0]['fingerprint'] == before['fingerprint'], 'Video Cloud API predecessor admission differs')
+        m.require(self.admission(rows_before, before)['issuer_id'] != FINAL, 'Video Cloud API predecessor admission differs')
         self.save('baseline.json', {'identity': before, 'rows': rows_before})
         template = api_transition_template(owner, self.output)
         self.observed_patch('deployment', NAME, owner, [
@@ -178,16 +195,17 @@ class VideoCloudAPIFinalClient(r.ServiceRun):
         deadline = time.monotonic() + 180
         while True:
             after, rows_after = self.state(NEW_STATE, ROOT), self.rows()
-            added = [row for row in rows_after if row not in rows_before]
-            if len(added) == 1:
+            try:
+                successor = self.replacement(before, after, rows_before, rows_after)
                 break
+            except RuntimeError:
+                pass
             m.require(time.monotonic() < deadline, 'Video Cloud API final client transition incomplete; retain evidence')
             time.sleep(2)
-        m.require(added[0]['issuer_id'] == FINAL and added[0]['subject'] == added[0]['caller'] == SUBJECT
-                  and added[0]['status'] == 'succeeded' and added[0]['fingerprint'] == after['fingerprint']
-                  and after['fingerprint'] != before['fingerprint'] and after['public_key_sha256'] != before['public_key_sha256'],
-                  'Video Cloud API final client registry result differs')
-        self.save('renewed.json', {'identity': after, 'rows': rows_after, 'request_id': added[0]['request_id']})
+        self.save('renewed.json', {'identity': after, 'rows': rows_after, 'request_id': successor['request_id']})
+        self.finish(before, after, rows_after, successor)
+
+    def finish(self, before, after, rows_after, successor):
         self.app_canary('public-app-canary-before-restart')
         factory.FactoryIdentityRun.factory_canary(self)
         self.device_baseline()
@@ -204,12 +222,33 @@ class VideoCloudAPIFinalClient(r.ServiceRun):
         factory.FactoryIdentityRun.factory_canary(self)
         self.device_baseline()
         self.check('video_cloud_api_final_service_client', {
-            'final_issuer_id': FINAL, 'client_request_id': added[0]['request_id'],
+            'final_issuer_id': FINAL, 'client_request_id': successor['request_id'],
             'predecessor_account_manager_listener_retained_for_r4': True,
             'certissuer_predecessor_verifier_retained_for_remaining_r2_clients': True,
             'restart_preserved_identity': True, 'app_factory_and_device_canaries': 'passed',
             'private_keys_exported': False, 'staging_touched': False,
         })
+
+    def recover(self, source):
+        saved = m.read(source / 'report.json')
+        baseline = m.read(source / 'baseline.json')
+        m.require(saved.get('status') in ('failed', 'interrupted') and baseline.get('identity') and baseline.get('rows'),
+                  'interrupted Video Cloud API transition evidence required')
+        self.issuer()
+        before, rows_before = baseline['identity'], baseline['rows']
+        after, rows_after = self.state(NEW_STATE, ROOT), self.rows()
+        successor = self.replacement(before, after, rows_before, rows_after)
+        owner = self.obj('deployment', NAME)
+        values = env_map(owner['spec']['template']['spec']['containers'][0])
+        m.require(values.get('VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_STATE', {}).get('value') == NEW_STATE
+                  and values.get('VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_ROOT_SHA256', {}).get('value') == ROOT
+                  and values.get('VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_TRANSITION_FROM_STATE', {}).get('value') == OLD_STATE
+                  and values.get('VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_TRANSITION_FROM_ROOT_SHA256', {}).get('value') == OLD,
+                  'Video Cloud API transition owner changed during recovery')
+        self.save('baseline.json', {'identity': before, 'rows': rows_before, 'recovered_from': str(source)})
+        self.save('renewed.json', {'identity': after, 'rows': rows_after, 'request_id': successor['request_id'],
+                                   'recovered_from': str(source)})
+        self.finish(before, after, rows_after, successor)
 
 
 def main():
@@ -219,6 +258,7 @@ def main():
     parser.add_argument('--app-identity', required=True, type=Path)
     parser.add_argument('--owner-identity', required=True, type=Path)
     parser.add_argument('--fixture', required=True, type=Path)
+    parser.add_argument('--recover-from', type=Path, help='Interrupted post-issuance evidence; never sends another renewal')
     args = parser.parse_args(); args.phase = 'video-cloud-api-final-service-client'; args.authority = None
     m.require(all((args.app_identity / name).is_file() for name in ('app-chain.pem', 'app-key.pem'))
               and all((args.owner_identity / name).is_file() for name in ('owner-chain.pem', 'owner-key.pem'))
@@ -229,7 +269,11 @@ def main():
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = VideoCloudAPIFinalClient(args)
     try:
-        runner.rotate(); runner.report['status'] = 'passed'
+        if args.recover_from:
+            runner.recover(args.recover_from)
+        else:
+            runner.rotate()
+        runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error); raise
     finally:
