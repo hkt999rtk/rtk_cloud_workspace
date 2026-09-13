@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 spec = importlib.util.spec_from_file_location(
     'final_authority', Path(__file__).with_name('service_successor_final_authority.py'))
@@ -31,6 +32,19 @@ class FinalSignerRepair(f.FinalAuthority):
         self.report['foundation_scope'] = 'Dev final Service authority CertIssuer signer-policy repair only'
         self.report['service_successor_final_authority_signer_repair_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
+
+    def api(self, path, body=None, *args, **kwargs):
+        # Controller discovery may briefly return 503 while its Service listener
+        # reconnects.  Retry reads only; a mutation is never replayed here.
+        if body is not None:
+            return super().api(path, body, *args, **kwargs)
+        for attempt in range(3):
+            try:
+                return super().api(path, None, *args, **kwargs)
+            except RuntimeError as error:
+                if 'status 503' not in str(error) or attempt == 2:
+                    raise
+                time.sleep(attempt + 1)
 
     def issuer(self):
         issuer = self.api('/issuers/' + FINAL_ISSUER)
