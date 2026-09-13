@@ -73,8 +73,15 @@ class CertIssuerFinalLeaf(r.ServiceRun):
             failed = Path(self.args.failed)
             report = m.read(failed / 'report.json')
             before = m.read(failed / 'baseline.json')
+            unchanged = current == before
+            retained_pending = (current['client'].get('pending') is True
+                                and current['client'].get('fingerprint') == before['client']['fingerprint']
+                                and current['client'].get('public_key_sha256') == before['client']['public_key_sha256']
+                                and current['client_rows'] == before['client_rows']
+                                and current['server_rows'] == before['server_rows'])
             m.require(report['status'] == 'failed' and (failed / 'renewal-intent.json').is_file()
-                      and current == before, 'CertIssuer resume requires an unmodified failed-signal baseline')
+                      and (unchanged or retained_pending),
+                      'CertIssuer resume requires an unmodified or exact retained-pending baseline')
             self.save('baseline.json', before)
             self.save('renewal-intent.json', m.read(failed / 'renewal-intent.json'))
             self.report['reconciled_from'] = str(failed)
