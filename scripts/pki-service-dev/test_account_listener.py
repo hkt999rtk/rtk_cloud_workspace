@@ -79,6 +79,12 @@ class AccountListenerTests(unittest.TestCase):
         self.assertEqual([entry['issuer']['issuer_id'] for entry in updated], [old['issuer_id'], current['issuer_id']])
         self.assertEqual(updated[-1]['state_path'], lifecycle.FACTORY_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=current['issuer_id']))
         self.assertEqual(lifecycle.factory_account_manager_crl_entries(updated, current), updated)
+        api_entries = [{'issuer': old,
+                        'state_path': lifecycle.API_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=old['issuer_id'])}]
+        api_updated = lifecycle.account_manager_server_crl_entries(
+            api_entries, current, lifecycle.API_ACCOUNT_MANAGER_CRL_STATE)
+        self.assertEqual(api_updated[-1]['state_path'],
+                         lifecycle.API_ACCOUNT_MANAGER_CRL_STATE.format(issuer_id=current['issuer_id']))
         with self.assertRaisesRegex(RuntimeError, 'manifest is invalid'):
             lifecycle.factory_account_manager_crl_entries([{'issuer': old, 'state_path': '/wrong'}], current)
 
