@@ -212,7 +212,24 @@ class FactoryFinalLeaf(r.ServiceRun):
         m.require(re.fullmatch(r'pki-issuers/service/[0-9a-f-]{36}/v[0-9]+', mount),
                   'final Service provider mount differs')
         expected = m.command([self.openssl, 'req', '-pubkey', '-noout'], claim['csr_pem']).strip()
-        serials = json.loads(self.bao(['list', '-format=json', mount + '/certs']))
+        # Verify the exact mount before accepting OpenBao's normal exit-2 empty
+        # list result as an empty certificate inventory.  This keeps a missing
+        # mount or authentication error fail-closed while permitting recovery
+        # of a request that never reached provider signing.
+        provider = json.loads(self.bao(['read', '-format=json', mount + '/cert/ca']))
+        m.require(provider.get('data', {}).get('certificate', '').startswith('-----BEGIN CERTIFICATE-----'),
+                  'final Service provider mount is unavailable')
+        script = ('read -r BAO_TOKEN; export BAO_TOKEN; export BAO_MAX_RETRIES=0; '
+                  'export BAO_ADDR=https://openbao.video-cloud-dev-secrets.svc:8200; '
+                  'BAO_CACERT=/run/openbao-pki/private/current/chain.pem; '
+                  '[ -r "$BAO_CACERT" ] || BAO_CACERT=/openbao/tls/ca.crt; export BAO_CACERT; '
+                  'reply=$(bao list -format=json ' + mount + '/certs 2>/dev/null); status=$?; '
+                  'if [ "$status" -eq 0 ]; then printf %s "$reply"; '
+                  'elif [ "$status" -eq 2 ] && [ "$reply" = "{}" ]; then printf "[]"; '
+                  'else printf %s "$reply" >&2; exit "$status"; fi')
+        token = (self.base / 'openbao/root-token').read_text().strip()
+        serials = json.loads(self.kube(['-n', 'video-cloud-dev-secrets', 'exec', '-i', 'openbao-0',
+                                        '--', 'sh', '-c', script], token + '\n'))
         m.require(isinstance(serials, list) and len(serials) == len(set(serials)),
                   'invalid final Service provider inventory')
         matches = []
