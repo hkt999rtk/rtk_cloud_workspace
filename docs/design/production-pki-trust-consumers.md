@@ -2670,3 +2670,34 @@ predecessor-state settings are removed after it has a durable successor state;
 the issuer verification pin remains until every governed caller has completed.
 Only then may it move to the successor and predecessor withdrawal begin, after
 the full connection-cutoff and restart acceptance matrix.
+
+### R2 managed Service-host successor transition (2026-09-13)
+
+CertIssuer and pki-controller now hold separate durable successor-host states
+under the active Service Root. Their first renewal retained the predecessor
+server state only to prove possession of the current server key; CertIssuer
+issued the replacement through the active successor intermediate
+`240f6264-fde4-44af-81fe-1abe4aa13e06`. The predecessor state was then removed
+from each Deployment configuration. The host key was neither exported nor
+copied.
+
+The listener supports the overlap without weakening device admission: dynamic
+Service-root policy remains the authority for `service:<id>` peers, while the
+separate Device root is added only to the TLS handshake pool. This prevents a
+stale fixed predecessor pool in the Device-renewal wrapper from rejecting a
+valid successor Service client, and prevents a Device root from becoming a
+Service identity authority.
+
+Dev evidence records successful new server issuances for both approved DNS
+names under the successor intermediate and successor-state files larger than
+their empty initialization records. CertIssuer and pki-controller restarted
+ready after their predecessor transition settings were removed. During the
+overlap, pki-controller uses the installed two-root Service policy bundle only
+to authenticate CertIssuer's renewal endpoint; its configured server pin is
+the successor Root. Staging and login/MFA were untouched.
+
+This is not R2 closure. CertIssuer retains predecessor verification for legacy
+Service callers until every governed caller completes the same transition. The
+remaining R2 gate is the documented two-direction predecessor withdrawal,
+old-socket cutoff/reconnect denial, restart persistence, and factory, App and
+Device canaries.
