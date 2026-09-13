@@ -149,7 +149,7 @@ class FactoryFinalLeaf(r.ServiceRun):
                                                      'predecessor_state_retained': True, 'successor_state_present': False})
         return owner
 
-    def patch(self, owner, template, label):
+    def rollout_template(self, owner, template, label):
         self.save(label + '-template.json', template)
         self.observed_patch('deployment', NAME, owner, [
             {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
@@ -179,13 +179,13 @@ class FactoryFinalLeaf(r.ServiceRun):
 
     def rotate(self):
         before = self.preflight()
-        self.patch(before, transition_template(before, self.args.image), 'factory-transition')
+        self.rollout_template(before, transition_template(before, self.args.image), 'factory-transition')
         identity = self.inspect()
         issuance = self.issuance(identity['fingerprint'])
         self.save('factory-transition-identity.json', identity)
         factory.FactoryIdentityRun.factory_canary(self)
         current = self.obj('deployment', NAME)
-        self.patch(current, steady_template(current, self.args.image), 'factory-steady')
+        self.rollout_template(current, steady_template(current, self.args.image), 'factory-steady')
         m.require(self.inspect() == identity, 'Factory restart changed final Service identity')
         factory.FactoryIdentityRun.factory_canary(self)
         self.check('factory_final_service_leaf', {'final_issuer_id': FINAL_ISSUER, 'issuance': issuance,
