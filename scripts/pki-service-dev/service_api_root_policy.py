@@ -31,7 +31,9 @@ CONSUMER = 'video-cloud-api'
 PREFIXES = ('VIDEO_CLOUD_ACCOUNT_MANAGER', 'VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL')
 ROOT_MOUNT = '/run/pki-service-root/root.pem'
 STATE = '/var/lib/video-cloud-api-pki/private/account-manager-root-policy.json'
-RENEWAL_STATE = '/var/lib/video-cloud-api-pki/private/account-manager-renewal-root-policy.json'
+# A receipt is per consumer, so both API origins share one policy state.
+RENEWAL_STATE = STATE
+LEGACY_RENEWAL_STATE = '/var/lib/video-cloud-api-pki/private/account-manager-renewal-root-policy.json'
 SETTINGS_FILE = 'video-cloud-api-account-manager-service-settings.json'
 IMAGE = re.compile(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
 
@@ -56,6 +58,12 @@ def root_settings(root_id):
         PREFIXES[1] + '_SERVICE_ROOT_STATE': RENEWAL_STATE,
         PREFIXES[1] + '_SERVICE_ROOTS': ROOT_MOUNT,
     }
+
+
+def legacy_root_settings(root_id):
+    settings = root_settings(root_id)
+    settings[PREFIXES[1] + '_SERVICE_ROOT_STATE'] = LEGACY_RENEWAL_STATE
+    return settings
 
 
 def api_template(owner, root, image=None):
@@ -89,9 +97,10 @@ def api_template(owner, root, image=None):
               'existing API Service Root policy annotation differs; reconcile manually')
     present = [values.get(key) is not None for key in settings]
     m.require(not any(present) or all(present), 'partial API Service Root policy differs; reconcile manually')
-    m.require(all(values[key] == value for key, value in settings.items() if values.get(key) is not None),
-              'existing API Service Root policy differs; reconcile manually')
-    if not all(present):
+    exact = all(values[key] == value for key, value in settings.items()) if all(present) else False
+    legacy = all(values[key] == value for key, value in legacy_root_settings(root['issuer_id']).items()) if all(present) else False
+    m.require(not all(present) or exact or legacy, 'existing API Service Root policy differs; reconcile manually')
+    if not exact:
         container['env'] = with_env(container['env'], settings)
     if image:
         m.require(IMAGE.fullmatch(image), 'immutable Dev Video Cloud image required')

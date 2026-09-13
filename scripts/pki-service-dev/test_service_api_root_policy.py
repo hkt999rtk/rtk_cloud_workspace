@@ -43,6 +43,7 @@ class ServiceAPIRootPolicyTests(unittest.TestCase):
         self.assertEqual(values, {**{entry['name']: entry['value'] for entry in owner['spec']['template']['spec']['containers'][0]['env']},
                                   **r.root_settings(self.root()['issuer_id'])})
         self.assertEqual(result['metadata']['annotations']['rtk.realtek.com/service-root-policy'], self.root()['issuer_id'])
+        self.assertEqual(values[r.PREFIXES[0] + '_SERVICE_ROOT_STATE'], values[r.PREFIXES[1] + '_SERVICE_ROOT_STATE'])
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]['image'], 'old')
 
     def test_template_rejects_partial_or_changed_policy(self):
@@ -62,6 +63,17 @@ class ServiceAPIRootPolicyTests(unittest.TestCase):
         owner['spec']['template']['metadata']['annotations']['rtk.realtek.com/service-root-policy'] = 'old'
         with self.assertRaises(RuntimeError):
             r.api_template(owner, self.root())
+
+    def test_template_upgrades_the_reviewed_split_state_once(self):
+        owner = self.owner()
+        owner['spec']['template'] = r.api_template(owner, self.root())
+        entries = owner['spec']['template']['spec']['containers'][0]['env']
+        for entry in entries:
+            if entry['name'] == r.PREFIXES[1] + '_SERVICE_ROOT_STATE':
+                entry['value'] = r.LEGACY_RENEWAL_STATE
+        result = r.api_template(owner, self.root())
+        values = {entry['name']: entry['value'] for entry in result['spec']['containers'][0]['env']}
+        self.assertEqual(values[r.PREFIXES[1] + '_SERVICE_ROOT_STATE'], r.STATE)
 
     def test_template_does_not_mutate_input_and_validates_state(self):
         owner = self.owner()
