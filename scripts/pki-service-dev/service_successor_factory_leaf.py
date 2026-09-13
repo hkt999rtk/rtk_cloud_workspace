@@ -8,6 +8,7 @@ private state; it records only the public inspect result and issuance metadata.
 """
 import argparse
 import copy
+import datetime as dt
 import fcntl
 import importlib.util
 import json
@@ -187,6 +188,177 @@ class FactoryFinalLeaf(r.ServiceRun):
                   row[3] in ('issuing', 'succeeded'), 'Factory pending claim differs')
         return dict(zip(('issuer_id', 'subject', 'caller', 'status', 'fingerprint'), row))
 
+    def full_pending_claim(self, request_id):
+        """Keep the retained CSR in memory; evidence contains metadata only."""
+        m.require(re.fullmatch(r'[0-9a-f-]{36}', request_id), 'canonical pending Factory request ID required')
+        query = ("SELECT row_to_json(t) FROM (SELECT request_id,issuer_id,subject,caller,status,csr_pem,"
+                 "request_digest,ttl_days,created_at,fingerprint,revoked_at FROM pki_service_client_issuances "
+                 "WHERE environment='dev' AND request_id='" + request_id + "') t;")
+        rows = [json.loads(line) for line in self.kube([
+            '-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X',
+            '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'video_cloud', '-At'], query).splitlines() if line]
+        m.require(len(rows) == 1 and rows[0]['issuer_id'] == FINAL_ISSUER and rows[0]['subject'] == SUBJECT
+                  and rows[0]['caller'] == SUBJECT and rows[0]['status'] in ('issuing', 'succeeded')
+                  and rows[0]['revoked_at'] is None and rows[0]['csr_pem'], 'Factory retained claim differs')
+        return rows[0]
+
+    def provider_serial_for_claim(self, claim):
+        """Read provider inventory without exporting a key, CSR, or certificate."""
+        m.require(claim['status'] == 'issuing' and claim['issuer_id'] == FINAL_ISSUER
+                  and claim['subject'] == SUBJECT and claim['caller'] == SUBJECT,
+                  'Factory claim is not eligible for provider discovery')
+        issuer = self.issuer()
+        mount = issuer.get('signer_reference', '')
+        m.require(re.fullmatch(r'pki-issuers/service/[0-9a-f-]{36}/v[0-9]+', mount),
+                  'final Service provider mount differs')
+        expected = m.command([self.openssl, 'req', '-pubkey', '-noout'], claim['csr_pem']).strip()
+        serials = json.loads(self.bao(['list', '-format=json', mount + '/certs']))
+        m.require(isinstance(serials, list) and len(serials) == len(set(serials)),
+                  'invalid final Service provider inventory')
+        matches = []
+        for serial in serials:
+            m.require(re.fullmatch(r'[0-9a-fA-F:-]+', serial), 'invalid provider certificate serial')
+            record = json.loads(self.bao(['read', '-format=json', mount + '/cert/' + serial])).get('data', {})
+            actual = m.command([self.openssl, 'x509', '-pubkey', '-noout'], record.get('certificate', '')).strip()
+            if actual == expected:
+                m.require(record.get('revocation_time') == 0, 'matching Factory provider certificate is revoked')
+                matches.append(serial)
+        m.require(len(matches) <= 1, 'ambiguous Factory provider certificate inventory')
+        self.save('factory-pending-provider-inventory.json', {
+            'issuer_id': FINAL_ISSUER, 'request_id': claim['request_id'],
+            'certificate_count': len(serials), 'matching_serials': matches,
+            'private_keys_exported': False})
+        return issuer, mount, expected, matches[0] if matches else None
+
+    def transition_owner(self):
+        owner = self.obj('deployment', NAME)
+        values = env_map(owner['spec']['template']['spec']['containers'][0])
+        m.require(values.get('FACTORY_ENROLL_SERVICE_IDENTITY_STATE') == NEW_STATE
+                  and values.get('FACTORY_ENROLL_SERVICE_IDENTITY_ROOT_SHA256') == NEW_ROOT
+                  and values.get('FACTORY_ENROLL_SERVICE_IDENTITY_TRANSITION_FROM_STATE') == OLD_STATE
+                  and values.get('FACTORY_ENROLL_SERVICE_IDENTITY_TRANSITION_FROM_ROOT_SHA256') == OLD_ROOT
+                  and owner['spec']['template']['spec']['containers'][0].get('image') == self.args.image,
+                  'Factory recovery deployment ownership changed')
+        return owner
+
+    def inspect_pending_provider(self, request_id):
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        self.transition_owner()
+        claim = self.full_pending_claim(request_id)
+        m.require(claim['status'] == 'issuing', 'Factory claim is already reconciled')
+        _, _, _, serial = self.provider_serial_for_claim(claim)
+        self.check('factory_pending_provider_inventory', {
+            'request_id': request_id, 'provider_certificate_found': bool(serial),
+            'private_keys_exported': False, 'staging_touched': False})
+
+    def fence_pending_provider(self, request_id):
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        self.transition_owner()
+        claim = self.full_pending_claim(request_id)
+        m.require(claim['status'] == 'issuing', 'Factory claim is already reconciled')
+        _, _, _, serial = self.provider_serial_for_claim(claim)
+        m.require(serial is None, 'Factory provider certificate exists; use discovery-only reconciliation')
+        before = self.obj('deployment', 'certissuer')
+        m.require(before['spec'].get('replicas') == 1 and before.get('status', {}).get('readyReplicas') == 1
+                  and before.get('status', {}).get('observedGeneration') == before['metadata']['generation'],
+                  'CertIssuer is not ready for Factory signer fence')
+        template = copy.deepcopy(before['spec']['template'])
+        template.setdefault('metadata', {}).setdefault('annotations', {})[
+            'rtk.cloud/pki-factory-pending-provider-fence'] = self.output.name
+        self.observed_patch('deployment', 'certissuer', before, [
+            {'op': 'test', 'path': '/spec/template', 'value': before['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template},
+        ])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/certissuer', '--timeout=300s'], timeout=310)
+        after = self.obj('deployment', 'certissuer')
+        pods = json.loads(self.kube(['-n', NS, 'get', 'pods', '-l',
+            'app.kubernetes.io/name=certissuer', '-o', 'json']))['items']
+        pods = [pod for pod in pods if not pod['metadata'].get('deletionTimestamp')]
+        m.require(after.get('status', {}).get('readyReplicas') == 1
+                  and after.get('status', {}).get('observedGeneration') == after['metadata']['generation']
+                  and after['spec']['template']['metadata']['annotations'].get(
+                      'rtk.cloud/pki-factory-pending-provider-fence') == self.output.name
+                  and len(pods) == 1 and pods[0]['status'].get('startTime'),
+                  'CertIssuer Factory signer fence rollout differs')
+        self.save('factory-pending-provider-fence.json', {
+            'request_id': request_id, 'fence_run_id': self.output.name,
+            'certissuer_pod_uid': pods[0]['metadata']['uid'], 'certissuer_pod_started_at': pods[0]['status']['startTime'],
+            'drain_seconds_required_before_recovery': 300, 'private_keys_exported': False})
+        self.check('factory_pending_provider_signer_fenced', {
+            'request_id': request_id, 'certissuer_restarted': True,
+            'drain_seconds_required_before_recovery': 300, 'staging_touched': False})
+
+    def recover_missing_provider(self, request_id, fence_run_id):
+        m.require(re.fullmatch(r'[A-Za-z0-9._-]+', fence_run_id or ''), 'Factory fence run id required')
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        self.transition_owner()
+        claim = self.full_pending_claim(request_id)
+        m.require(claim['status'] == 'issuing', 'Factory claim is already reconciled')
+        issuer, mount, expected_public_key, serial = self.provider_serial_for_claim(claim)
+        if serial is None:
+            deployment = self.obj('deployment', 'certissuer')
+            m.require(deployment['spec']['template']['metadata'].get('annotations', {}).get(
+                'rtk.cloud/pki-factory-pending-provider-fence') == fence_run_id,
+                'Factory provider recovery requires the recorded CertIssuer fence')
+            pods = json.loads(self.kube(['-n', NS, 'get', 'pods', '-l',
+                'app.kubernetes.io/name=certissuer', '-o', 'json']))['items']
+            pods = [pod for pod in pods if not pod['metadata'].get('deletionTimestamp')]
+            now, created = dt.datetime.now(dt.timezone.utc), m.parse_time(claim['created_at'])
+            m.require(pods and all(pod['status'].get('phase') == 'Running'
+                      and m.parse_time(pod['status']['startTime']) > created
+                      and now - m.parse_time(pod['status']['startTime']) > dt.timedelta(minutes=5)
+                      for pod in pods), 'original CertIssuer owner is not fenced for five minutes')
+            again = self.full_pending_claim(request_id)
+            m.require(again == claim, 'Factory claim changed during provider discovery')
+            expires = min(created + dt.timedelta(days=claim['ttl_days']),
+                          m.parse_time(issuer['not_after']) - dt.timedelta(days=30))
+            ttl = int((expires - now).total_seconds()) - 60
+            m.require(ttl > 60, 'Factory retained certificate validity window has elapsed')
+            marker = self.base / 'pki' / ('factory-provider-recovery-' + request_id + '.json')
+            marker.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            jwt = self.kube(['-n', NS, 'create', 'token', 'certissuer-pki',
+                             '--audience=openbao', '--duration=10m']).strip()
+            login = json.loads(self.bao(['write', '-format=json', 'auth/kubernetes/login', '-'],
+                                        json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+            token = login['auth']['client_token']
+            try:
+                with marker.open('x') as stream:
+                    json.dump({'request_id': request_id, 'request_digest': claim['request_digest'],
+                               'issuer_id': FINAL_ISSUER, 'fence_run_id': fence_run_id, 'at': m.stamp(),
+                               'certissuer_pod_uids': [pod['metadata']['uid'] for pod in pods]}, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                directory = os.open(marker.parent, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+                signed = json.loads(self.bao(['write', '-format=json', mount + '/sign/service-client', '-'],
+                                             json.dumps({'csr': claim['csr_pem'], 'common_name': SUBJECT,
+                                                         'exclude_cn_from_sans': True, 'ttl': str(ttl) + 's'}),
+                                             token=token))['data']
+                actual = m.command([self.openssl, 'x509', '-pubkey', '-noout'], signed['certificate']).strip()
+                m.require(actual == expected_public_key and re.fullmatch(r'[0-9a-fA-F:-]+', signed['serial_number']),
+                          'Factory recovery provider result differs')
+                serial = signed['serial_number']
+            finally:
+                self.bao(['write', 'auth/token/revoke', '-'], json.dumps({'token': token}))
+            self.save('factory-pending-provider-recovery.json', {
+                'request_id': request_id, 'issuer_id': FINAL_ISSUER, 'provider_serial': serial,
+                'same_csr_and_request': True, 'recovery_signed': True, 'private_keys_exported': False})
+        self.api('/issuers/' + FINAL_ISSUER + '/reconcile-service-client', {
+            'caller': SUBJECT, 'request_id': request_id, 'serial_number': serial}, role='approver')
+        reconciled = self.pending_claim(request_id)
+        m.require(reconciled['status'] == 'succeeded' and re.fullmatch(r'[0-9a-f]{64}', reconciled['fingerprint']),
+                  'Factory provider recovery did not reconcile the retained claim')
+        self.complete_pending(request_id)
+        self.check('factory_missing_provider_claim_recovered', {
+            'request_id': request_id, 'same_csr_and_request': True,
+            'provider_serial': serial, 'private_keys_exported': False})
+
     def complete_pending(self, request_id):
         # The controller discovers an already signed result by the original
         # stored CSR.  It has no signing input and cannot replace the claim.
@@ -242,10 +414,21 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--image', required=True)
-    parser.add_argument('--recover-request-id')
+    parser.add_argument('--recover-request-id', help='reconcile only an already-signed retained claim')
+    parser.add_argument('--inspect-pending-request-id', help='read-only provider inventory for one retained claim')
+    parser.add_argument('--fence-pending-request-id', help='restart CertIssuer after a missing-provider inventory result')
+    parser.add_argument('--recover-missing-request-id', help='one-time recovery of a fenced missing-provider claim')
+    parser.add_argument('--fence-run-id', help='run id produced by --fence-pending-request-id')
     args = parser.parse_args()
     args.phase, args.authority = 'factory-final-service-leaf', None
     m.require(IMAGE.fullmatch(args.image), 'immutable Dev video-cloud image digest required')
+    selected = [value for value in (args.recover_request_id, args.inspect_pending_request_id,
+                args.fence_pending_request_id, args.recover_missing_request_id) if value]
+    m.require(len(selected) <= 1, 'select at most one Factory recovery action')
+    m.require(not args.fence_run_id or args.recover_missing_request_id,
+              'Factory fence run id applies only to missing-provider recovery')
+    m.require(not args.recover_missing_request_id or args.fence_run_id,
+              'missing-provider recovery requires the recorded Factory fence run id')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -253,6 +436,12 @@ def main():
     try:
         if args.recover_request_id:
             runner.complete_pending(args.recover_request_id)
+        elif args.inspect_pending_request_id:
+            runner.inspect_pending_provider(args.inspect_pending_request_id)
+        elif args.fence_pending_request_id:
+            runner.fence_pending_provider(args.fence_pending_request_id)
+        elif args.recover_missing_request_id:
+            runner.recover_missing_provider(args.recover_missing_request_id, args.fence_run_id)
         else:
             runner.rotate()
         runner.report['status'] = 'passed'
