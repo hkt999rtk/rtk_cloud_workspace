@@ -47,7 +47,10 @@ class OverlapRun(s.ServiceRun):
         self.save('report.json', self.report)
 
     def root(self, path, status):
-        saved = m.read(Path(path) / 'root-ready.json')
+        evidence = Path(path)
+        saved_path = next((evidence / name for name in ('root-ready.json', 'service-root.json') if (evidence / name).is_file()), None)
+        m.require(saved_path is not None, 'reviewed Service Root evidence is missing')
+        saved = m.read(saved_path)
         current = self.api('/issuers/' + saved['issuer_id'])
         m.require(current == saved and current['status'] == status and current['trust_domain'] == 'service',
                   'reviewed Service Root changed: ' + status)
@@ -76,6 +79,9 @@ class OverlapRun(s.ServiceRun):
         return True
 
     def prepare(self):
+        m.require(self.kube(['config', 'current-context']).strip() == self.context, 'canonical dev context mismatch')
+        self.forward('am', AM_NS, 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
         predecessor, successor = self.root(self.args.predecessor, 'active'), self.root(self.args.successor, 'ready')
         self.preflight_overlap(predecessor, successor)
         configs = overlap_configs(predecessor, successor)
