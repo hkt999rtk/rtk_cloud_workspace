@@ -66,7 +66,7 @@ class PkiControllerFinalClient(r.ServiceRun):
         self.issuer()
         owner = self.obj('deployment', NAME)
         m.require(owner.get('status', {}).get('readyReplicas') == 1
-                  and self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'cat', '/proc/1/comm']).strip() == NAME,
+                  and self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'cat', '/proc/1/comm']).strip() == 'pkicontroller',
                   'pki-controller is not ready to receive one client-only renewal signal')
         before = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
         m.require(before['client_rows'] and before['server_rows']
