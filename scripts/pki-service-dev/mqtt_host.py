@@ -129,7 +129,9 @@ def emqx_bootstrap_pod(image, settings, service_root_configmap, pull_secrets):
     command = '''set -eu; umask 077; mkdir -p /run/emqx-bootstrap;
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /run/emqx-bootstrap/ca.key;
 openssl req -x509 -new -key /run/emqx-bootstrap/ca.key -sha256 -days 1 \
-  -subj /CN=dev-emqx-service-bootstrap-ca -out /run/emqx-bootstrap/ca.crt;
+  -subj /CN=dev-emqx-service-bootstrap-ca \
+  -addext basicConstraints=critical,CA:TRUE \
+  -addext keyUsage=critical,keyCertSign,cRLSign -out /run/emqx-bootstrap/ca.crt;
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /run/emqx-bootstrap/client.key;
 openssl req -new -key /run/emqx-bootstrap/client.key -subj /CN=service:emqx-pki \
   -out /run/emqx-bootstrap/client.csr;
@@ -196,10 +198,13 @@ def certissuer_emqx_bootstrap_template(owner, pattern, bootstrap=False):
     remove = ()
     if bootstrap:
         updates.update({'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER': EMQX_SERVICE_SUBJECT,
-                        'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT': EMQX_SERVICE_SUBJECT})
+                        'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT': EMQX_SERVICE_SUBJECT,
+                        'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA':
+                            '/etc/video-cloud/certissuer/emqx-bootstrap-ca.crt'})
     else:
         remove = ('CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER',
-                  'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT')
+                  'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT',
+                  'CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA')
     containers[0]['env'] = [item for item in containers[0]['env']
                             if item['name'] not in remove]
     containers[0]['env'] = h.with_env(containers[0]['env'], updates)
@@ -1215,8 +1220,9 @@ class MQTTHostRun(h.ServiceRun):
 
     def bootstrap_emqx_service_client(self):
         """Seed the one managed Service client and MQTT leaf on the broker PVC."""
-        m.require(EMQX_IMAGE_PATTERN.fullmatch(self.args.image or ''),
-                  'verified managed EMQX image digest required')
+        m.require(EMQX_IMAGE_PATTERN.fullmatch(self.args.image or '')
+                  and IMAGE_PATTERN.fullmatch(self.args.certissuer_image or ''),
+                  'verified managed EMQX and CertIssuer image digests required')
         source = Path(self.args.service_authority)
         evidence = m.read(source / 'report.json')
         service = m.read(source / 'intermediate-active.json')
@@ -1263,14 +1269,20 @@ class MQTTHostRun(h.ServiceRun):
         # Public bootstrap CA is recorded solely for exact removal after this
         # enrollment. The private CA/client keys never leave emptyDir.
         self.save('emqx-bootstrap-ca.pem', bootstrap_ca)
-        initial_ca = base64.b64decode(self.obj('secret', 'certissuer-runtime')['data']['client-ca.crt']).decode()
+        bootstrap_key = 'emqx-bootstrap-ca.crt'
+        initial = self.obj('secret', 'certissuer-runtime')
+        m.require(bootstrap_key not in initial['data'],
+                  'CertIssuer bootstrap CA field already exists')
         opened, ca_added = False, False
         try:
-            self.patch_ca('certissuer-runtime', 'client-ca.crt', [bootstrap_ca])
+            self.scoped_patch('secret', initial, [{
+                'op': 'add', 'path': '/data/' + bootstrap_key,
+                'value': base64.b64encode(bootstrap_ca.encode()).decode()}])
             ca_added = True
             certissuer = self.obj('deployment', 'certissuer')
             template = certissuer_emqx_bootstrap_template(
                 certissuer, '^service:emqx-pki$', bootstrap=True)
+            template['spec']['containers'][0]['image'] = self.args.certissuer_image
             template.setdefault('metadata', {}).setdefault('annotations', {})[
                 'rtk.cloud/emqx-service-bootstrap'] = self.output.name
             self.scoped_patch('deployment', certissuer, [{
@@ -1296,13 +1308,13 @@ class MQTTHostRun(h.ServiceRun):
                 self.kube(['-n', NS, 'rollout', 'status', 'deployment/certissuer',
                            '--timeout=300s'], timeout=310)
             secret = self.obj('secret', 'certissuer-runtime')
-            current = base64.b64decode(secret['data']['client-ca.crt']).decode()
-            m.require(current == h.append_pem(initial_ca, bootstrap_ca),
+            m.require(secret['data'].get(bootstrap_key) ==
+                      base64.b64encode(bootstrap_ca.encode()).decode(),
                       'CertIssuer bootstrap CA changed during enrollment')
             self.scoped_patch('secret', secret, [{
-                'op': 'test', 'path': '/data/client-ca.crt', 'value': secret['data']['client-ca.crt']},
-                {'op': 'replace', 'path': '/data/client-ca.crt',
-                 'value': base64.b64encode(initial_ca.encode()).decode()}])
+                'op': 'test', 'path': '/data/' + bootstrap_key,
+                'value': secret['data'][bootstrap_key]},
+                {'op': 'remove', 'path': '/data/' + bootstrap_key}])
             if ca_added:
                 certissuer = self.obj('deployment', 'certissuer')
                 template = json.loads(json.dumps(certissuer['spec']['template']))
@@ -2465,6 +2477,7 @@ def main():
     parser.add_argument('--revocation')
     parser.add_argument('--publication')
     parser.add_argument('--service-authority')
+    parser.add_argument('--certissuer-image')
     args = parser.parse_args()
     m.require(args.phase != 'finish-root-consumers' or args.failed,
               'failed Root consumer evidence required')
@@ -2487,8 +2500,8 @@ def main():
               or args.intermediate,
               'prepared MQTT intermediate evidence required')
     m.require(args.phase != 'bootstrap-emqx-service-client'
-              or (args.service_authority and args.image),
-              'active Service v9 evidence and managed EMQX image required')
+              or (args.service_authority and args.image and args.certissuer_image),
+              'active Service v9 evidence, managed EMQX image and CertIssuer image required')
     m.require(args.phase != 'adopt-host' or args.prepared,
               'prepared MQTT host evidence required')
     m.require(args.phase != 'finish-host-adoption'
