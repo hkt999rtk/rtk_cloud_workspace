@@ -42,7 +42,7 @@ class ServiceRootPolicyTemplateTests(unittest.TestCase):
                 self.assertEqual(result['spec']['volumes'], [{'name': 'service-root-policy', 'configMap': {'name': r.ROOT_CONFIG, 'defaultMode': 292}}])
                 self.assertEqual(before['spec']['template']['spec']['containers'][0]['image'], 'old')
 
-    def test_template_rejects_partial_or_repeated_adoption(self):
+    def test_template_rejects_partial_or_conflicting_adoption(self):
         owner = self.owner('pki-controller')
         owner['spec']['template']['spec']['containers'][0]['env'].append(
             {'name': 'PKI_SERVICE_CLIENT_SERVICE_ROOT_ID', 'value': 'old'})
@@ -56,11 +56,32 @@ class ServiceRootPolicyTemplateTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             r.root_template(owner, 'certissuer', self.root())
 
+        owner = self.owner('pki-controller')
+        owner['spec']['template'] = r.root_template(owner, 'pki-controller', self.root())
+        owner['spec']['template']['spec']['containers'][0]['env'][-1]['value'] = '/wrong/roots.pem'
+        with self.assertRaises(RuntimeError):
+            r.root_template(owner, 'pki-controller', self.root())
+
+    def test_template_reconciles_an_exact_existing_adoption(self):
+        owner = self.owner('pki-controller')
+        adopted = r.root_template(owner, 'pki-controller', self.root())
+        owner['spec']['template'] = adopted
+        self.assertEqual(r.root_template(owner, 'pki-controller', self.root()), adopted)
+
     def test_template_does_not_modify_input(self):
         owner = self.owner('pki-controller')
         original = copy.deepcopy(owner)
         r.root_template(owner, 'pki-controller', self.root())
         self.assertEqual(owner, original)
+
+    def test_installed_policy_sha_uses_pkitrust_state_envelope(self):
+        state = {'policy': {'policy_sha256': 'b' * 64}, 'roots_pem': 'public'}
+        self.assertEqual(r.installed_policy_sha(state), 'b' * 64)
+        for invalid in ({}, {'policy': {}}, {'policy_sha256': 'b' * 64},
+                        {'policy': {'policy_sha256': 'not-a-digest'}}):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(RuntimeError):
+                    r.installed_policy_sha(invalid)
 
 
 if __name__ == '__main__':

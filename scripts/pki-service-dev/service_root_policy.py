@@ -60,28 +60,40 @@ def root_template(owner, name, root, image=None):
                 selected + '_PKI_CONTROLLER_URL', selected + '_MANAGEMENT_CA')
     m.require(all(values.get(key) for key in required),
               'listener CRL management path is incomplete')
-    for suffix in ('SERVICE_ROOT_ID', 'SERVICE_ROOT_STATE', 'SERVICE_ROOTS'):
-        m.require(not values.get(selected + '_' + suffix),
-                  'Service Root policy is already configured; reconcile')
     mounts = {item['name']: item for item in container.get('volumeMounts', [])}
     volumes = {item['name']: item for item in pod.get('volumes', [])}
-    m.require('service-root-policy' not in mounts and 'service-root-policy' not in volumes,
-              'Service Root policy mount already exists')
-    container['env'] = with_env(container['env'], {
-        selected + '_SERVICE_ROOT_ID': root['issuer_id'],
-        selected + '_SERVICE_ROOT_STATE': ROOT_STATE,
-        selected + '_SERVICE_ROOTS': ROOT_MOUNT + '/roots.pem'})
-    container['volumeMounts'].append({'name': 'service-root-policy',
-                                      'mountPath': ROOT_MOUNT,
-                                      'readOnly': True})
-    pod['volumes'].append({'name': 'service-root-policy',
-                           'configMap': {'name': ROOT_CONFIG, 'defaultMode': 292}})
+    settings = {selected + '_SERVICE_ROOT_ID': root['issuer_id'],
+                selected + '_SERVICE_ROOT_STATE': ROOT_STATE,
+                selected + '_SERVICE_ROOTS': ROOT_MOUNT + '/roots.pem'}
+    configured = [values.get(key) is not None for key in settings]
+    expected_mount = {'name': 'service-root-policy', 'mountPath': ROOT_MOUNT,
+                      'readOnly': True}
+    expected_volume = {'name': 'service-root-policy',
+                       'configMap': {'name': ROOT_CONFIG, 'defaultMode': 292}}
+    if any(configured) or 'service-root-policy' in mounts or 'service-root-policy' in volumes:
+        m.require(all(configured) and all(values[key] == value for key, value in settings.items())
+                  and mounts.get('service-root-policy') == expected_mount
+                  and volumes.get('service-root-policy') == expected_volume,
+                  'existing Service Root policy differs; reconcile manually')
+    else:
+        container['env'] = with_env(container['env'], settings)
+        container['volumeMounts'].append(expected_mount)
+        pod['volumes'].append(expected_volume)
     if image:
         m.require(IMAGE.fullmatch(image), 'immutable Dev Video Cloud image required')
         container['image'] = image
     template['metadata'].setdefault('annotations', {})[
         'rtk.realtek.com/service-root-policy'] = root['issuer_id']
     return template
+
+
+def installed_policy_sha(state):
+    """Return the policy digest from the pkitrust on-disk state envelope."""
+    policy = state.get('policy') if isinstance(state, dict) else None
+    value = policy.get('policy_sha256') if isinstance(policy, dict) else None
+    m.require(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value),
+              'persisted Service Root policy state is invalid')
+    return value
 
 
 class RootPolicyRun(s.ServiceRun):
@@ -202,7 +214,7 @@ class RootPolicyRun(s.ServiceRun):
             if rows:
                 raw = self.kube(['-n', NS, 'exec', 'deployment/' + name, '--', 'cat', ROOT_STATE])
                 state = json.loads(raw)
-                m.require(state['policy_sha256'] == policy['policy_sha256'],
+                m.require(installed_policy_sha(state) == policy['policy_sha256'],
                           'persisted Service Root policy differs from receipt')
                 return {'policy': policy, 'loaded_roots_sha256': rows, 'state': state}
             time.sleep(3)
