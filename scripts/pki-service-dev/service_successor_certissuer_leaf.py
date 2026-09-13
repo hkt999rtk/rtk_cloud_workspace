@@ -128,18 +128,73 @@ class CertIssuerFinalLeaf(r.ServiceRun):
             'server_request_id': added_server[0]['request_id'], 'restart_preserved_identity': True,
             'factory_canary': 'passed', 'private_keys_exported': False, 'staging_touched': False})
 
+    def rotate_server(self):
+        super().preflight()
+        self.issuer()
+        owner = self.obj('deployment', NAME)
+        m.require(owner.get('status', {}).get('readyReplicas') == 1
+                  and self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'cat', '/proc/1/comm']).strip() == NAME,
+                  'CertIssuer is not ready to receive one server-only renewal signal')
+        before = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+        m.require(before['client_rows'] and before['server_rows']
+                  and before['client_rows'][-1]['issuer_id'] == FINAL
+                  and before['server_rows'][-1]['issuer_id'] != FINAL,
+                  'CertIssuer server-only rotation requires a final client leaf and a predecessor server leaf')
+        self.save('baseline.json', before)
+        self.save('renewal-intent.json', {'previous_server': before['server_rows'][-1]['fingerprint'],
+                                          'signal': 'SIGUSR1', 'at': m.stamp()})
+        self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c', 'kill -USR1 1'])
+        deadline = time.monotonic() + 180
+        while True:
+            after = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+            added_server = [row for row in after['server_rows'] if row not in before['server_rows']]
+            if len(added_server) == 1:
+                break
+            m.require(after['client'] == before['client'] and after['client_rows'] == before['client_rows'],
+                      'CertIssuer server-only renewal changed the client identity')
+            m.require(time.monotonic() < deadline, 'CertIssuer server-only renewal incomplete; retain evidence and do not signal again')
+            time.sleep(2)
+        m.require(added_server[0]['issuer_id'] == FINAL and added_server[0]['caller'] == SUBJECT
+                  and added_server[0]['status'] == 'succeeded'
+                  and after['client'] == before['client'] and after['client_rows'] == before['client_rows'],
+                  'CertIssuer final server-only registry result differs')
+        self.save('renewed.json', after)
+        factory.FactoryIdentityRun.factory_canary(self)
+        current = self.obj('deployment', NAME)
+        template = copy.deepcopy(current['spec']['template'])
+        template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-certissuer-final-server-leaf'] = self.output.name
+        self.observed_patch('deployment', NAME, current, [
+            {'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template},
+        ])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
+        m.require(self.state() == before['client'] and self.rows('client') == before['client_rows']
+                  and self.rows('server') == after['server_rows'], 'CertIssuer restart changed final server-only state')
+        factory.FactoryIdentityRun.factory_canary(self)
+        self.check('certissuer_final_service_server_leaf', {
+            'final_issuer_id': FINAL, 'server_request_id': added_server[0]['request_id'],
+            'client_unchanged': True, 'restart_preserved_identity': True,
+            'factory_canary': 'passed', 'private_keys_exported': False, 'staging_touched': False})
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
     parser.add_argument('--failed', help='failed pre-signal evidence to reconcile once')
-    args = parser.parse_args(); args.phase = 'certissuer-final-service-leaf'; args.authority = None
+    parser.add_argument('--server-only', action='store_true', help='rotate only the final CertIssuer server leaf using SIGUSR1')
+    args = parser.parse_args(); args.phase = 'certissuer-final-service-server-leaf' if args.server_only else 'certissuer-final-service-leaf'; args.authority = None
+    if args.server_only and args.failed:
+        parser.error('--server-only and --failed cannot be combined')
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = CertIssuerFinalLeaf(args)
     try:
-        runner.rotate(resume=bool(args.failed)); runner.report['status'] = 'passed'
+        if args.server_only:
+            runner.rotate_server()
+        else:
+            runner.rotate(resume=bool(args.failed))
+        runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error); raise
     finally:
