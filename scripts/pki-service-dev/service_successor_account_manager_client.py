@@ -126,7 +126,7 @@ class AccountManagerFinalClient(r.ServiceRun):
         }
         for key, value in expected.items():
             m.require(env.get(key, {}).get('value') == value, 'Account Manager transition baseline changed: ' + key)
-        m.require(container['image'] != OWNER and container['image'].startswith('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:'),
+        m.require(container['image'].startswith('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:'),
                   'Account Manager owner image baseline changed')
         env['PKI_MANAGEMENT_ISSUER_SERVER_PKI_ROOT_SHA256']['value'] = ROOT
         env['PKI_MANAGEMENT_ACCOUNT_HOST_RENEWAL_SERVER_PKI_ROOT_SHA256']['value'] = ROOT
