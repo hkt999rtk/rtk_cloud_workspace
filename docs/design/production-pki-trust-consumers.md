@@ -2646,3 +2646,22 @@ and private cache digest. Dev evidence
 `r2-service-successor-intermediate-crl-adoption-retry-20260913` passed; an
 idempotent replay created no second lineage or changed Root authority. This
 does not rotate leaf identities or withdraw the predecessor lineage.
+
+### R2 successor-root leaf transition contract (2026-09-13)
+
+An active Service Root transition cannot overwrite a managed leaf state in
+place: the old chain would fail the successor Root pin before it could request
+its replacement. Managed callers therefore use a distinct successor state path.
+For the one transition request only, the process opens the retained predecessor
+state locally, authenticates the normal Service-client renewal endpoint with
+that certificate, and verifies the returned chain against the successor Root
+before atomically installing the new state. The predecessor private key is not
+copied, logged or exported and is released from process memory after the
+successor install.
+
+Cert Issuer separates the Root that verifies its own managed caller from the
+Root selected to issue successor Service leaves. This lets the active listener
+accept the reviewed overlap while issuing only from the successor authority.
+The temporary predecessor-state settings are removed after each owner has a
+durable successor state; predecessor withdrawal still waits for the full
+connection-cutoff and restart acceptance matrix.
