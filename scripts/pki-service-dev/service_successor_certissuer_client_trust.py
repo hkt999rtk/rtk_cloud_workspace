@@ -7,6 +7,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import sys
 
 spec = importlib.util.spec_from_file_location('service_hierarchy', Path(__file__).with_name('run.py'))
@@ -91,6 +92,11 @@ class CertIssuerTrustRepair(r.ServiceRun):
                   'CertIssuer server verification-root baseline changed')
         for entry in server_roots.values():
             entry['value'] = NEW
+        if self.args.image:
+            image = self.args.image.strip()
+            m.require(re.fullmatch(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}', image),
+                      'CertIssuer image must be a pinned Dev video-cloud-api digest')
+            template['spec']['containers'][0]['image'] = image
         template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-certissuer-egress-roots'] = self.output.name
         self.observed_patch('deployment', NAME, current, [
             {'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
@@ -102,6 +108,7 @@ class CertIssuerTrustRepair(r.ServiceRun):
         selected = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
         selected_host = [v for v in live['spec']['template']['spec']['volumes'] if v['name'] == 'host-root']
         live_env = {entry['name']: entry.get('value') for entry in live['spec']['template']['spec']['containers'][0].get('env', [])}
+        live_image = live['spec']['template']['spec']['containers'][0].get('image')
         m.require(installed.get('immutable') and installed['data'].get('ca.crt') == expected
                   and len(selected) == 1 and selected[0].get('configMap', {}).get('name') == target
                   and len(selected_host) == 1 and selected_host[0].get('configMap', {}).get('name') == HOST_TARGET
@@ -109,6 +116,8 @@ class CertIssuerTrustRepair(r.ServiceRun):
                   and live_env.get('CERT_ISSUER_SERVER_PKI_ROOT_SHA256') == NEW
                   and live_env.get('CERT_ISSUER_SERVER_PKI_VERIFY_ROOT_SHA256') == NEW,
                   'CertIssuer renewal trust did not persist')
+        m.require(not self.args.image or live_image == self.args.image,
+                  'CertIssuer image did not persist')
         self.check('certissuer_dual_root_renewal_trust', {
             'roots': [OLD, NEW], 'source_configmap': ROOT_POLICY,
             'host_renewal_configmap': HOST_TARGET,
@@ -121,6 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
+    parser.add_argument('--image', help='optional pinned Dev video-cloud-api digest for the same rollout')
     args = parser.parse_args(); args.phase = 'certissuer-managed-egress-dual-root-trust'; args.authority = None
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
