@@ -218,6 +218,31 @@ class APIControllerFinalClient(r.ServiceRun):
         super().preflight()
         self.finish(after, rows_after, successor)
 
+    def verify(self, source):
+        saved = m.read(source / 'report.json')
+        renewed = m.read(source / 'renewed.json')
+        m.require(saved.get('status') == 'failed' and renewed.get('identity') and renewed.get('rows'),
+                  'failed post-restart isolated API evidence required')
+        super().preflight()
+        after, rows = self.state(NEW_STATE, ROOT), self.rows()
+        m.require(after == renewed['identity'] and rows == renewed['rows'],
+                  'isolated API final identity or registry changed after failed verification')
+        owner = self.obj('deployment', NAME)
+        values = env_map(owner['spec']['template']['spec']['containers'][0])
+        m.require(values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', {}).get('value') == NEW_STATE
+                  and values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256', {}).get('value') == ROOT
+                  and not values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_STATE')
+                  and not values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_ROOT_SHA256'),
+                  'isolated API final transition settings changed')
+        service_root_volume(owner['spec']['template'], ROOT_CONFIGMAP)
+        factory.FactoryIdentityRun.factory_canary(self)
+        self.device_baseline()
+        self.check('api_controller_final_service_client_recovered', {
+            'final_issuer_id': FINAL, 'client_request_id': renewed['request_id'],
+            'restart_preserved_identity': True, 'factory_and_device_canaries': 'passed',
+            'verification_source': str(source), 'private_keys_exported': False, 'staging_touched': False,
+        })
+
     def rotate(self):
         super().preflight()
         self.issuer()
@@ -250,13 +275,17 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--recover-from', type=Path, help='Interrupted pre-issuance evidence; resumes without a renewal signal')
+    parser.add_argument('--verify-from', type=Path, help='Failed post-restart evidence; verifies final state without a mutation')
     args = parser.parse_args(); args.phase = 'api-controller-final-service-client'; args.authority = None
     os.umask(0o077)
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = APIControllerFinalClient(args)
     try:
-        if args.recover_from:
+        m.require(not (args.recover_from and args.verify_from), 'select one recovery mode')
+        if args.verify_from:
+            runner.verify(args.verify_from)
+        elif args.recover_from:
             runner.recover(args.recover_from)
         else:
             runner.rotate()
