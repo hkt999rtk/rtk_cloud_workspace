@@ -51,7 +51,7 @@ class ActivationRun(s.ServiceRun):
                   'saved Service Root successor differs')
         rows = self.kube(['-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0', '--', 'psql', '-X', '-v',
                           'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'video_cloud', '-At'], receipt_query(successor)).splitlines()
-        m.require(rows == list(REQUIRED), 'exact successor listener receipts required before activation')
+        m.require(rows == sorted(REQUIRED), 'exact successor listener receipts required before activation')
         self.check('service_successor_activation_preflight', {'successor_root_id': successor['issuer_id'],
                    'bundle_receipts': rows, 'staging_touched': False})
         self.api('/operations/' + operation['operation_id'] + '/activate', {}, 204)
