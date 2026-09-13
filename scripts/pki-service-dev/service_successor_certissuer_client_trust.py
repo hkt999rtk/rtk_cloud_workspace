@@ -69,7 +69,7 @@ class CertIssuerTrustRepair(r.ServiceRun):
         egress_volumes = [v for v in template['spec']['volumes'] if v['name'] == 'service-managed-egress-ca']
         host_volumes = [v for v in template['spec']['volumes'] if v['name'] == 'host-root']
         m.require(len(egress_volumes) == 1 and egress_volumes[0].get('configMap', {}).get('name') in (CM, target)
-                  and len(host_volumes) == 1 and host_volumes[0].get('configMap', {}).get('name') == HOST_CM,
+                  and len(host_volumes) == 1 and host_volumes[0].get('configMap', {}).get('name') in (HOST_CM, HOST_TARGET),
                   'CertIssuer renewal trust volume changed')
         egress_volumes[0]['configMap']['name'] = target
         host_volumes[0]['configMap']['name'] = HOST_TARGET
