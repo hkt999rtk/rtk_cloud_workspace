@@ -20,11 +20,11 @@ no fixed denominator and must not be used as completion percentages.
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Complete | The repaired M11 Dev lifecycle run proves real Account Manager consumer eviction and successor-connection survival. Deterministic recovery regressions cover provider-login marker ordering and exact-request identity binding. |
 | 3. Remaining transport and host adoption | Complete | T1–T11 are qualified. The [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12) separates live host/caller lifecycle evidence, process replacement, and local deterministic failure tests. |
-| 4. Root-policy adoption | Partial | R1 App root-policy adoption is complete. Service, MQTT and OpenBao root-policy adoption remain under R2–R4. |
+| 4. Root-policy adoption | Partial | R1 App and R2 Service root-policy adoption are complete. MQTT and OpenBao root-policy adoption remain under R3–R4. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 31/40 = 77.5%.** The fixed decomposition below
+**Current checkpoint completion: 32/40 = 80%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **3/6
@@ -49,10 +49,10 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 11/11 | 100% |
 | Transports and hosts | 11/11 | 100% |
-| Root-policy adoption | 1/4 | 25% |
+| Root-policy adoption | 2/4 | 50% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **31/40** | **77.5%** |
+| **Total** | **32/40** | **80%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -102,7 +102,7 @@ and fixed group definition below. Device root-policy evidence belongs to the
 completed Device milestone and is not counted again here.
 
 - [x] R1: App consumers install reviewed root changes with rollback protection, receipts and cutoff. Evidence: [R1 closure](#r1-app-root-policy-adoption-closed-2026-09-13).
-- [ ] R2: Service consumers install reviewed root changes with rollback protection, receipts and cutoff.
+- [x] R2: Service consumers install reviewed root changes with rollback protection, receipts and cutoff. Evidence: [R2 closure](#r2-service-root-policy-closure-2026-09-14).
 - [ ] R3: MQTT consumers install reviewed root changes with rollback protection, receipts and cutoff.
 - [ ] R4: OpenBao transport consumers install reviewed root changes with rollback protection, receipts and cutoff.
 
@@ -2902,7 +2902,7 @@ enrollment and Device direct mTLS/MQTT QoS1:
 Service client that must transition before the predecessor-root withdrawal
 matrix can begin.
 
-### R2 Service Root withdrawal state and closure correction (2026-09-14)
+### R2 Service Root policy closure (2026-09-14)
 
 The retiring Dev Service Root `59c37a28-7016-4706-ae93-e3da7746615d` has
 completed its governed withdrawal. Operation
@@ -2926,22 +2926,45 @@ then passed Device direct mTLS and MQTT QoS1. The private evidence directory
 test identity material and must remain private. Staging and login/MFA were
 untouched.
 
-The withdrawal operation is final, but the R2 milestone was reopened after a
-2026-09-14 review found that the ordinary Video Cloud API still used a static
-client key for MQTT trust-management calls to pki-controller. Once the retired
-Service Root was removed, those CRL reads failed with a client-certificate TLS
-error and the MQTT server-trust owner failed closed. R2 cannot close until that
-controller transport uses the API's existing managed Service identity, its
-static key mount is removed, the corrected Deployment is persisted, and the
-post-change authenticated App and Device checks pass. The log ingester's MQTT
-broker connection remains part of R3; that separate broker-client result does
-not excuse a failed Service-authenticated controller call.
+The 2026-09-14 closure review found and corrected four gaps. The ordinary Video
+Cloud API now reuses its existing managed `service:video-cloud-api` identity for
+MQTT trust-management calls to pki-controller. Dev runs image
+`ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:16831fb6b47d4f5f3187b583a5fa86710fa0707e9b60d5f38bd8d1915c181180`;
+its static MQTT management certificate/key settings and mount are absent. The
+post-rollout report `r2-service-mqtt-controller-managed-20260914` records a Ready
+Deployment, a persisted Deployment matching live state, and no controller TLS or
+authorization denial during its observation window. A later 45-minute log check
+also found zero `tls: certificate required` or `pki authorization denied` lines.
 
-The same review found that the persisted pki-controller and CertIssuer overlays
-lagged behind their live successor-only settings. Final R2 verification must
-render those overlays byte-for-byte to the live Pod templates, retain all five
-Service policy consumers, and reject every predecessor Root pin. The connection
-test must establish a predecessor stream before Root replacement, record its
-bounded cutoff, deny a new predecessor connection, admit the successor, and
-repeat predecessor denial with a reconstructed owner. Historical leaf-revocation
-tests alone are insufficient evidence for this Root-policy condition.
+The persisted pki-controller and CertIssuer overlays now preserve existing env
+ordering while replacing exact values. Report
+`r2-service-root-persistence-final-r3-20260914` proves the rendered Pod templates
+match live state byte-for-byte, all Service root pins use successor fingerprint
+`32bbbfd2…704eb`, the final CRL ConfigMap is `pki-service-client-crls-final-240-d618`,
+and the controller retains the exact five consumers: `account-manager`,
+`certissuer`, `factory-enroll`, `pki-controller`, and `video-cloud-api`. The
+failed predecessor report is retained to show the renderer caught the drift
+before reconciliation.
+
+The PostgreSQL root-policy ledger contains matching final policy
+`698d2bb4…6e73ff` receipts from all five consumers, each with loaded bundle
+version `60c96981…8809`. The successor Root is active at fingerprint
+`32bbbfd2…704eb`; the predecessor is no longer present in any governed Service
+root pin. `TestDynamicServerConnectionsRootWithdrawalCutsOldSocketAndDeniesReconnect`
+establishes a predecessor stream before pool replacement, records bounded
+cutoff, rejects predecessor reconnect, admits the successor, and repeats
+predecessor denial after owner reconstruction.
+
+Post-change application and device behavior passed. Report
+`r2-service-root-post-withdrawal-app-r2-20260914` records denied unassigned and
+unauthorized-member requests, a successful assigned App token request, and the
+successful internal Account Manager authorization. Report
+`r2-service-root-post-fix-factory-device-r4-20260914` records a fresh Factory
+enrollment, Device direct mTLS, and MQTT QoS1 round trip. The first App rerun used
+the system LibreSSL runtime, which cannot load the Ed25519 fixture; the runner now
+reports that prerequisite explicitly, and the successful run used Python linked
+to OpenSSL 3.5.8.
+
+R2 is closed. The log ingester's actual MQTT broker connection remains R3 scope;
+it does not own this Service-authenticated API controller transport. Staging,
+login authentication, and MFA were untouched.

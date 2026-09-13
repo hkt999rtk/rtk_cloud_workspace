@@ -52,6 +52,17 @@ def app_request(context, device):
         connection.close()
 
 
+def client_identity_context(chain, key):
+    context = ssl.create_default_context()
+    try:
+        context.load_cert_chain(chain, key)
+    except ssl.SSLError as error:
+        raise RuntimeError('TLS runtime cannot load the retained App identity; '
+                           'use Python linked to OpenSSL with Ed25519 support '
+                           '(' + ssl.OPENSSL_VERSION + ')') from error
+    return context
+
+
 class CallerRun(m.Acceptance):
     def prepare(self, args):
         self.started_at = m.stamp()
@@ -96,8 +107,7 @@ class CallerRun(m.Acceptance):
             m.require(identity.is_dir() and key.is_file() and chain.is_file(),
                       'retained Dev App identity is incomplete')
             self.user = None
-            self.app_context = ssl.create_default_context()
-            self.app_context.load_cert_chain(chain, key)
+            self.app_context = client_identity_context(chain, key)
         else:
             with sqlite3.connect(Path(args.database).resolve().as_uri() + '?mode=ro', uri=True) as db:
                 db.row_factory = sqlite3.Row
@@ -110,14 +120,13 @@ class CallerRun(m.Acceptance):
             certificate = json.loads(self.user['app_certificate_json'])
             self.save('app-key.pem', credentials['private_key_pem'])
             self.save('app-chain.pem', certificate['certificate_chain_pem'])
-            self.app_context = ssl.create_default_context()
-            self.app_context.load_cert_chain(self.output / 'app-chain.pem', self.output / 'app-key.pem')
+            self.app_context = client_identity_context(self.output / 'app-chain.pem', self.output / 'app-key.pem')
         owner = self.http('/auth/login', self.accounts['requester'])
         cloud = self.http('/developer/brand-clouds/' + CLOUD, token=owner['tokens']['access_token'])
         m.require(cloud['brand_cloud']['role'] == 'owner', 'rehearsal requester must own the Cloud')
         if args.owner_identity:
-            self.owner_context = ssl.create_default_context()
-            self.owner_context.load_cert_chain(args.owner_identity / 'owner-chain.pem', args.owner_identity / 'owner-key.pem')
+            self.owner_context = client_identity_context(args.owner_identity / 'owner-chain.pem',
+                                                           args.owner_identity / 'owner-key.pem')
         else:
             m.require(owner['app_certificate']['status'] == 'csr_required',
                       'owner already has an App certificate; provide its retained --owner-identity')
@@ -126,8 +135,7 @@ class CallerRun(m.Acceptance):
             issued = self.http('/auth/login', dict(self.accounts['requester'], app_csr_pem=csr))
             self.save('owner-certificate.json', issued['app_certificate'])
             self.save('owner-chain.pem', issued['app_certificate']['certificate_chain_pem'])
-            self.owner_context = ssl.create_default_context()
-            self.owner_context.load_cert_chain(self.output / 'owner-chain.pem', self.output / 'owner-key.pem')
+            self.owner_context = client_identity_context(self.output / 'owner-chain.pem', self.output / 'owner-key.pem')
         self.check('preflight', {'deployments': deployments,
                                  'app_identity_reused': bool(args.app_identity),
                                  'user_id': self.user['user_id'] if self.user else None,

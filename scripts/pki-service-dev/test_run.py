@@ -101,6 +101,15 @@ class RolloutTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'duplicate environment'):
             m.with_env([{'name': 'X', 'value': 'one'}, {'name': 'X', 'value': 'two'}], {'X': 'new'})
 
+    def test_persisted_overlay_keeps_existing_order(self):
+        existing = [{'name': 'FIRST', 'value': 'old'},
+                    {'name': 'SECRET', 'valueFrom': {'secretKeyRef': {'name': 's', 'key': 'k'}}},
+                    {'name': 'LAST', 'value': 'old'}]
+        result = m.overlay_env(existing, {'LAST': 'new', 'FIRST': 'new'})
+        self.assertEqual([entry['name'] for entry in result],
+                         ['FIRST', 'SECRET', 'LAST'])
+        self.assertEqual(result[1], existing[1])
+
     def test_persisted_renderer_consumes_image_and_settings(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

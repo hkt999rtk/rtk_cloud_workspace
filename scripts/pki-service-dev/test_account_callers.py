@@ -10,6 +10,14 @@ spec.loader.exec_module(c)
 
 
 class CallerProofTest(unittest.TestCase):
+    def test_client_identity_reports_unsupported_tls_runtime(self):
+        context = unittest.mock.Mock()
+        context.load_cert_chain.side_effect = c.ssl.SSLError('unsupported algorithm')
+        with patch.object(c.ssl, 'create_default_context', return_value=context), \
+                patch.object(c.ssl, 'OPENSSL_VERSION', 'LibreSSL test'):
+            with self.assertRaisesRegex(RuntimeError, 'OpenSSL with Ed25519 support'):
+                c.client_identity_context('chain.pem', 'key.pem')
+
     def test_api_identity_root_can_be_selected_for_a_successor_transition(self):
         self.assertEqual(c.caller_identity_fields('video-cloud-api', 'VIDEO_CLOUD_ACCOUNT_MANAGER_', c.SERVICE_SUCCESSOR_ROOT), (
             'VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_STATE', 'VIDEO_CLOUD_ACCOUNT_MANAGER_IDENTITY_ROOT_SHA256',

@@ -65,6 +65,22 @@ def with_env(existing, updates, remove=()):
         {'name': key, 'value': value} for key, value in updates.items()]
 
 
+def overlay_env(existing, updates):
+    """Replace literal values in place so persisted rendering is stable."""
+    names = [entry['name'] for entry in existing]
+    m.require(len(names) == len(set(names)), 'duplicate environment settings')
+    result, remaining = [], dict(updates)
+    for entry in existing:
+        name = entry['name']
+        if name in remaining:
+            result.append({'name': name, 'value': remaining.pop(name)})
+        else:
+            result.append(entry)
+    result.extend({'name': name, 'value': value}
+                  for name, value in remaining.items())
+    return result
+
+
 def append_pem(existing, extra):
     m.require(extra.startswith('-----BEGIN CERTIFICATE-----'), 'public certificate required')
     return existing if extra.strip() in existing else existing.rstrip() + '\n' + extra
@@ -82,7 +98,7 @@ def render_persisted_listener(base, name):
     containers = desired['spec']['template']['spec']['containers']
     m.require(len(containers) == 1 and containers[0]['name'] == name, 'persisted listener container changed')
     containers[0]['image'] = image
-    containers[0]['env'] = with_env(containers[0]['env'], settings)
+    containers[0]['env'] = overlay_env(containers[0]['env'], settings)
     if name == 'pki-controller':
         env = {e['name']: e.get('value') for e in containers[0]['env']}
         m.require(m.device_consumers(env) == m.CONSUMERS
