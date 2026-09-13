@@ -2781,3 +2781,23 @@ contains request IDs, public fingerprints and rollout results only. The
 predecessor Root is still not withdrawn: OpenBao, pkibroker and Video Cloud API
 remain on predecessor-root Service client leaves, so the remaining R2 work is
 their transition plus the documented withdrawal and reconnect-denial matrix.
+
+### R2 pki-controller final Service client recovery (2026-09-13)
+
+pki-controller now holds a final-intermediate Service client leaf under
+`d61845ca-6b85-4f11-920b-f2f9685b0c13`. A first client-only renewal created one
+durable pending request but could not verify CertIssuer after CertIssuer moved
+its server leaf to the successor Root. The recovery installed the reviewed
+immutable two-root overlap bundle solely for pki-controller's renewal transport
+and changed that transport's server-root pin to the successor. It retained the
+pki-controller host identity's predecessor-root pin and server issuance for
+R4/OpenBao compatibility.
+
+After the Dev rollout, the same pending request completed exactly once and the
+public state reports a non-pending successor-root client leaf. The recovery
+also proves the pki-controller server issuance registry row did not change and
+passes the Factory enrollment, Device mTLS and MQTT QoS1 canary. Public evidence
+is `r2-service-pki-controller-final-client-recovery-retry-20260913`; it records
+only request IDs, public fingerprints, root-policy metadata and rollout checks.
+No private key, CSR, certificate, token, staging resource or login/MFA setting
+was exposed or changed.
