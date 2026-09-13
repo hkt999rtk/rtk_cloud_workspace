@@ -24,6 +24,7 @@ PRODUCT = '773aa199-16e3-4d59-94c6-5cdb5801c02f'
 API_HOST = 'device.video-cloud-dev.realtekconnect.com'
 ACCOUNT_HOST = 'account-manager-internal.' + AM_NS + '.svc'
 SERVICE_ROOT = '87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2'
+SERVICE_SUCCESSOR_ROOT = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 
 
 def app_request(context, device):
@@ -61,9 +62,10 @@ class CallerRun(m.Acceptance):
             if name != 'account-manager':
                 env = {e['name']: e.get('value') for c in obj['spec']['template']['spec']['containers'] for e in c.get('env', [])}
                 prefix = 'VIDEO_CLOUD_ACCOUNT_MANAGER_' if name == 'video-cloud-api' else 'FACTORY_ENROLL_ACCOUNT_MANAGER_'
+                expected_root = SERVICE_ROOT if name == 'video-cloud-api' else SERVICE_SUCCESSOR_ROOT
                 m.require(env.get(prefix + ('INTERNAL_URL' if name == 'video-cloud-api' else 'URL')) == 'https://' + ACCOUNT_HOST + ':8443'
                           and env.get(prefix + 'SERVER_PKI_NAME') == ACCOUNT_HOST
-                          and env.get(prefix + 'SERVER_PKI_ROOT_SHA256') == SERVICE_ROOT,
+                          and env.get(prefix + 'SERVER_PKI_ROOT_SHA256') == expected_root,
                           'managed Account Manager destination differs: ' + name)
                 identity_prefix = prefix if name == 'video-cloud-api' else 'FACTORY_ENROLL_SERVICE_'
                 m.require(env.get(identity_prefix + 'IDENTITY_STATE') and env.get(identity_prefix + 'IDENTITY_ROOT_SHA256') == SERVICE_ROOT,
