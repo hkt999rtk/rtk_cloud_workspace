@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import uuid
 spec=importlib.util.spec_from_file_location('service',Path(__file__).with_name('run.py'))
 s=importlib.util.module_from_spec(spec);spec.loader.exec_module(s)
@@ -18,7 +19,10 @@ class Run(s.ServiceRun):
  def __init__(self,args):
   super().__init__(args);self.report['foundation_scope']='Dev successor Service Root initial CRL publication';self.save('report.json',self.report)
  def go(self):
-  m.require(self.kube(['config','current-context']).strip()==self.context,'canonical dev context mismatch');self.forward('am',AM_NS,'account-manager',80);self.accounts=m.read(self.foundation/'accounts.json')
+  m.require(self.kube(['config','current-context']).strip()==self.context,'canonical dev context mismatch')
+  build=subprocess.run(['go','build','-o',str(self.ceremony),'./cmd/pkiceremony'],cwd=str(m.WORKSPACE/'repos/rtk_video_cloud'),env=dict(os.environ,GOWORK='off'),capture_output=True,timeout=180)
+  m.require(build.returncode==0,'successor CRL ceremony build failed')
+  self.forward('am',AM_NS,'account-manager',80);self.accounts=m.read(self.foundation/'accounts.json')
   source=Path(self.args.successor);saved=m.read(source/'root-ready.json');root=self.api('/issuers/'+saved['issuer_id'])
   m.require(root['status']=='active' and root['environment']=='dev' and root['trust_domain']=='service' and root['kind']=='root' and root['certificate_fingerprint_sha256']==saved['certificate_fingerprint_sha256'],'active successor root differs')
   count=self.kube(['-n','video-cloud-dev-platform','exec','-i','postgresql-0','--','psql','-X','-v','ON_ERROR_STOP=1','-U','postgres','-d','video_cloud','-At'],"SELECT count(*) FROM pki_crls WHERE issuer_id='"+root['issuer_id']+"';").strip()
