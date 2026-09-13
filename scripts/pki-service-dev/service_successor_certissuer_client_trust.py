@@ -35,8 +35,12 @@ class CertIssuerTrustRepair(r.ServiceRun):
         env = {item['name']: item.get('value') for item in owner['spec']['template']['spec']['containers'][0].get('env', [])}
         m.require(env.get('CERT_ISSUER_SERVICE_CLIENT_MANAGEMENT_CA') == '/run/pki-service-managed-egress-ca/ca.crt'
                   and env.get('CERT_ISSUER_SERVICE_CLIENT_ROOT_SHA256') == NEW
-                  and env.get('CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256') == OLD,
-                  'CertIssuer managed egress baseline changed')
+                  and env.get('CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256') in (OLD, NEW)
+                  and env.get('CERT_ISSUER_SERVER_PKI_DOMAIN') == 'service'
+                  and env.get('CERT_ISSUER_SERVER_PKI_ISSUER_ROOT_SHA256') == NEW
+                  and env.get('CERT_ISSUER_SERVER_PKI_ROOT_SHA256') == OLD
+                  and env.get('CERT_ISSUER_SERVER_PKI_VERIFY_ROOT_SHA256') == OLD,
+                  'CertIssuer renewal policy baseline changed')
         roots = self.obj('configmap', ROOT_POLICY)
         ca = self.obj('configmap', CM)
         host_ca = self.obj('configmap', HOST_CM)
@@ -75,9 +79,18 @@ class CertIssuerTrustRepair(r.ServiceRun):
         host_volumes[0]['configMap']['name'] = HOST_TARGET
         verification_roots = [entry for entry in template['spec']['containers'][0].get('env', [])
                               if entry['name'] == 'CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256']
-        m.require(len(verification_roots) == 1 and verification_roots[0].get('value') == OLD,
+        m.require(len(verification_roots) == 1 and verification_roots[0].get('value') in (OLD, NEW),
                   'CertIssuer Service client verification-root baseline changed')
         verification_roots[0]['value'] = NEW
+        server_roots = {entry['name']: entry for entry in template['spec']['containers'][0].get('env', [])
+                        if entry['name'] in ('CERT_ISSUER_SERVER_PKI_ROOT_SHA256',
+                                             'CERT_ISSUER_SERVER_PKI_VERIFY_ROOT_SHA256')}
+        m.require(set(server_roots) == {'CERT_ISSUER_SERVER_PKI_ROOT_SHA256',
+                                        'CERT_ISSUER_SERVER_PKI_VERIFY_ROOT_SHA256'}
+                  and all(entry.get('value') == OLD for entry in server_roots.values()),
+                  'CertIssuer server verification-root baseline changed')
+        for entry in server_roots.values():
+            entry['value'] = NEW
         template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-certissuer-egress-roots'] = self.output.name
         self.observed_patch('deployment', NAME, current, [
             {'op': 'test', 'path': '/spec/template', 'value': current['spec']['template']},
@@ -92,12 +105,15 @@ class CertIssuerTrustRepair(r.ServiceRun):
         m.require(installed.get('immutable') and installed['data'].get('ca.crt') == expected
                   and len(selected) == 1 and selected[0].get('configMap', {}).get('name') == target
                   and len(selected_host) == 1 and selected_host[0].get('configMap', {}).get('name') == HOST_TARGET
-                  and live_env.get('CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256') == NEW,
+                  and live_env.get('CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256') == NEW
+                  and live_env.get('CERT_ISSUER_SERVER_PKI_ROOT_SHA256') == NEW
+                  and live_env.get('CERT_ISSUER_SERVER_PKI_VERIFY_ROOT_SHA256') == NEW,
                   'CertIssuer renewal trust did not persist')
         self.check('certissuer_dual_root_renewal_trust', {
             'roots': [OLD, NEW], 'source_configmap': ROOT_POLICY,
             'host_renewal_configmap': HOST_TARGET,
             'service_client_verification_root': NEW,
+            'server_verification_root': NEW,
             'restart_completed': True, 'private_keys_exported': False, 'staging_touched': False})
 
 
