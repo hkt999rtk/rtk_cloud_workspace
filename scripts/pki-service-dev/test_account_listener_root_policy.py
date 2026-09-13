@@ -25,5 +25,10 @@ class AccountListenerRootPolicyTests(unittest.TestCase):
     def test_requires_policy_envelope(self):
         self.assertEqual(r.policy_sha({'policy':{'policy_sha256':'b'*64}}),'b'*64)
         with self.assertRaises(RuntimeError): r.policy_sha({})
+    def test_controller_authorization_adds_only_account_manager(self):
+        owner={'spec':{'replicas':1,'template':{'spec':{'containers':[{'name':'pki-controller','env':[{'name':'PKI_REQUIRED_CONSUMERS_SERVICE','value':'certissuer,factory-enroll,pki-controller'},{'name':'KEPT','value':'true'}]}]}}}}
+        result=r.controller_template(owner); env={x['name']:x['value'] for x in result['spec']['containers'][0]['env']}
+        self.assertEqual(env['PKI_REQUIRED_CONSUMERS_SERVICE'],r.CONTROLLER_CONSUMERS); self.assertEqual(env['KEPT'],'true')
+        self.assertEqual(r.controller_template({'spec':{'replicas':1,'template':result}}),result)
 
 if __name__ == '__main__': unittest.main()

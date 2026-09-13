@@ -22,6 +22,7 @@ PREFIX = 'PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT'
 STATE = '/var/lib/account-pki/private/account-service-root-policy.json'
 ROOTS = '/run/pki-root/root.pem'
 IMAGE = re.compile(r'ghcr\.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:[0-9a-f]{64}')
+CONTROLLER_CONSUMERS = 'account-manager,certissuer,factory-enroll,pki-controller'
 
 
 def env_map(container):
@@ -40,6 +41,21 @@ def policy_sha(state):
     value = policy.get('policy_sha256') if isinstance(policy, dict) else None
     m.require(isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value), 'invalid Account Manager policy state')
     return value
+
+
+def controller_template(owner):
+    template = copy.deepcopy(owner['spec']['template'])
+    containers = template['spec'].get('containers', [])
+    m.require(owner['spec'].get('replicas') == 1 and len(containers) == 1
+              and containers[0].get('name') == 'pki-controller', 'controller ownership changed')
+    container = containers[0]
+    values = env_map(container)
+    current = values.get('PKI_REQUIRED_CONSUMERS_SERVICE', '')
+    m.require(current in ('certissuer,factory-enroll,pki-controller', CONTROLLER_CONSUMERS),
+              'controller Service consumer policy differs')
+    if current != CONTROLLER_CONSUMERS:
+        container['env'] = with_env(container['env'], {'PKI_REQUIRED_CONSUMERS_SERVICE': CONTROLLER_CONSUMERS})
+    return template
 
 
 def listener_template(owner, root, image=None):
@@ -100,6 +116,19 @@ class AccountRun(s.ServiceRun):
         listener_template(owner, root)
         self.check('preflight_account_listener_root_policy', {'root_id': root['issuer_id'], 'consumer': 'account-manager', 'staging_touched': False})
 
+    def authorize_account_consumer(self):
+        owner = self.obj('deployment', 'pki-controller')
+        template = controller_template(owner)
+        if template == owner['spec']['template']:
+            return
+        self.observed_patch('deployment', 'pki-controller', owner, [
+            {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template}])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/pki-controller', '--timeout=300s'], timeout=310)
+        settings_path = self.base / 'pki/controller-bootstrap/rollout/pki-controller-service-settings.json'
+        m.write(settings_path, dict(m.read(settings_path), PKI_REQUIRED_CONSUMERS_SERVICE=CONTROLLER_CONSUMERS))
+        self.check('account_listener_controller_authorized', {'consumer': 'account-manager', 'service_consumers': CONTROLLER_CONSUMERS})
+
     def provision_state(self, root):
         policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
         root_pem, policy_path, state_path = (self.output / name for name in ('account-roots.pem', 'account-policy.json', 'account-state.json'))
@@ -150,6 +179,7 @@ class AccountRun(s.ServiceRun):
         self.preflight()
         root = self.active_root()
         self.preflight_listener(root)
+        self.authorize_account_consumer()
         policy = self.provision_state(root)
         self.rollout(root)
         self.receipt(root, policy)
