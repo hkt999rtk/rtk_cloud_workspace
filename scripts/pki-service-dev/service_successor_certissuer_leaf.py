@@ -61,21 +61,32 @@ class CertIssuerFinalLeaf(r.ServiceRun):
         self.api('/issuers/' + FINAL + '/crl')
         return value
 
-    def rotate(self):
+    def rotate(self, resume=False):
         super().preflight()
         self.issuer()
         owner = self.obj('deployment', NAME)
         m.require(owner.get('status', {}).get('readyReplicas') == 1
                   and self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'cat', '/proc/1/comm']).strip() == NAME,
                   'CertIssuer is not ready to receive one renewal signal')
-        before = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
-        m.require(before['client_rows'] and before['server_rows']
-                  and before['client_rows'][-1]['issuer_id'] != FINAL and before['server_rows'][-1]['issuer_id'] != FINAL,
-                  'CertIssuer final leaf rotation is already complete or baseline changed')
-        self.save('baseline.json', before)
-        self.save('renewal-intent.json', {'previous_client': before['client']['fingerprint'],
-                                          'previous_server': before['server_rows'][-1]['fingerprint'], 'at': m.stamp()})
-        self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'kill', '-HUP', '1'])
+        current = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
+        if resume:
+            failed = Path(self.args.failed)
+            report = m.read(failed / 'report.json')
+            before = m.read(failed / 'baseline.json')
+            m.require(report['status'] == 'failed' and (failed / 'renewal-intent.json').is_file()
+                      and current == before, 'CertIssuer resume requires an unmodified failed-signal baseline')
+            self.save('baseline.json', before)
+            self.save('renewal-intent.json', m.read(failed / 'renewal-intent.json'))
+            self.report['reconciled_from'] = str(failed)
+        else:
+            before = current
+            m.require(before['client_rows'] and before['server_rows']
+                      and before['client_rows'][-1]['issuer_id'] != FINAL and before['server_rows'][-1]['issuer_id'] != FINAL,
+                      'CertIssuer final leaf rotation is already complete or baseline changed')
+            self.save('baseline.json', before)
+            self.save('renewal-intent.json', {'previous_client': before['client']['fingerprint'],
+                                              'previous_server': before['server_rows'][-1]['fingerprint'], 'at': m.stamp()})
+        self.kube(['-n', NS, 'exec', 'deployment/' + NAME, '--', 'sh', '-c', 'kill -HUP 1'])
         deadline = time.monotonic() + 180
         while True:
             after = {'client': self.state(), 'client_rows': self.rows('client'), 'server_rows': self.rows('server')}
@@ -114,12 +125,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
+    parser.add_argument('--failed', help='failed pre-signal evidence to reconcile once')
     args = parser.parse_args(); args.phase = 'certissuer-final-service-leaf'; args.authority = None
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = CertIssuerFinalLeaf(args)
     try:
-        runner.rotate(); runner.report['status'] = 'passed'
+        runner.rotate(resume=bool(args.failed)); runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error); raise
     finally:
