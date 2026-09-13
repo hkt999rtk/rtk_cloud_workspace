@@ -7,7 +7,7 @@ Live verification is dev-only.
 Legacy migration and staging remain deferred. MFA is optional future human
 login functionality and is never a Device authentication requirement.
 
-## Current acceptance status (2026-09-13 R1 completion)
+## Current acceptance status (2026-09-14 R3 completion)
 
 This section is the single current progress record for this milestone. Dated
 checkpoints below retain historical evidence; their percentages and group counts
@@ -20,11 +20,11 @@ no fixed denominator and must not be used as completion percentages.
 | 1. Inventory/design reconciliation | Complete | Connection/domain inventory below; scope and evidence discrepancies reconciled in the [scope audit](production-pki-remaining-audit.md#scope-review-completion-2026-09-09). |
 | 2. Management Service identity enforcement | Complete | The repaired M11 Dev lifecycle run proves real Account Manager consumer eviction and successor-connection survival. Deterministic recovery regressions cover provider-login marker ordering and exact-request identity binding. |
 | 3. Remaining transport and host adoption | Complete | T1–T11 are qualified. The [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12) separates live host/caller lifecycle evidence, process replacement, and local deterministic failure tests. |
-| 4. Root-policy adoption | Partial | R1 App and R2 Service root-policy adoption are complete. MQTT and OpenBao root-policy adoption remain under R3–R4. |
+| 4. Root-policy adoption | Partial | R1 App, R2 Service and R3 MQTT root-policy adoption are complete. OpenBao root-policy adoption remains under R4. |
 | 5. App and relay enforcement | Open | Real dev App API/MQTT and TURN/signaling renewal/revocation, selective held-session cutoff and failed-consumer behavior remain. Local adapters/tests are supporting evidence. |
 | 6. Repeatable dev acceptance | Partial | Device acceptance and maintained Service procedures exist. Full coverage of groups 2–5, restart/trust-outage cases and final Device regression acceptance remain. |
 
-**Current checkpoint completion: 32/40 = 80%.** The fixed decomposition below
+**Current checkpoint completion: 33/40 = 82.5%.** The fixed decomposition below
 credits completed implementation and dev acceptance separately. Each checkpoint
 has equal weight and earns credit only when its stated scope is complete. It is
 not an effort-weighted estimate or a prediction of remaining time. Only **3/6
@@ -38,7 +38,7 @@ for every currently open ID. It expands this scope without adding checkpoints.
 The four broad milestones remain: this milestone; backup/recovery and SDK;
 provider/hardware compatibility; deferred staging/custody/recovery qualification.
 
-### Progress calculation (updated 2026-09-12)
+### Progress calculation (updated 2026-09-14)
 
 This is a new explicit accounting baseline for the existing six groups, not 40
 new features. Completed checkpoints use the retained evidence linked per group;
@@ -49,10 +49,10 @@ this recalculation does not claim to have rerun those tests or live exercises.
 | Inventory/design | 3/3 | 100% |
 | Management Service identities | 11/11 | 100% |
 | Transports and hosts | 11/11 | 100% |
-| Root-policy adoption | 2/4 | 50% |
+| Root-policy adoption | 3/4 | 75% |
 | App/relay enforcement | 3/6 | 50% |
 | Repeatable dev acceptance | 2/5 | 40% |
-| **Total** | **32/40** | **80%** |
+| **Total** | **33/40** | **82.5%** |
 
 **Group 1 — inventory/design (3/3).** Evidence: the audited connection inventory
 below and the [scope review](production-pki-remaining-audit.md#scope-review-completion-2026-09-09).
@@ -97,13 +97,13 @@ and [local EMQX qualification](production-pki-emqx-host.md#fixed-implementation-
 - [x] T10: Record independent public HTTPS endpoint and renewal evidence. Evidence: [public HTTPS renewal](#public-https-renewal-qualified-in-dev-2026-09-12).
 - [x] T11: Qualify pre-held server connections and remaining trust-outage cases across adopted hosts. Corrected Service-listener and OpenBao held-session evidence, retained MQTT/provider recovery, and deterministic trust-failure tests are recorded in the [final T11 matrix](#t11-final-evidence-and-correction-closure-2026-09-12).
 
-**Group 4 — root-policy adoption (1/4).** Evidence boundary: the audited inventory
+**Group 4 — root-policy adoption (3/4).** Evidence boundary: the audited inventory
 and fixed group definition below. Device root-policy evidence belongs to the
 completed Device milestone and is not counted again here.
 
 - [x] R1: App consumers install reviewed root changes with rollback protection, receipts and cutoff. Evidence: [R1 closure](#r1-app-root-policy-adoption-closed-2026-09-13).
 - [x] R2: Service consumers install reviewed root changes with rollback protection, receipts and cutoff. Evidence: [R2 closure](#r2-service-root-policy-closure-2026-09-14).
-- [ ] R3: MQTT consumers install reviewed root changes with rollback protection, receipts and cutoff.
+- [x] R3: MQTT consumers install reviewed root changes with rollback protection, receipts and cutoff. Evidence: [R3 closure](#r3-mqtt-root-policy-closure-2026-09-14).
 - [ ] R4: OpenBao transport consumers install reviewed root changes with rollback protection, receipts and cutoff.
 
 **Group 5 — App and relay (3/6).** Local evidence: [App API consumer](production-pki-implementation.md#app-only-api-crl-consumer-checkpoint-2026-09-08),
@@ -2968,3 +2968,20 @@ to OpenSSL 3.5.8.
 R2 is closed. The log ingester's actual MQTT broker connection remains R3 scope;
 it does not own this Service-authenticated API controller transport. Staging,
 login authentication, and MFA were untouched.
+
+### R3 MQTT root-policy closure (2026-09-14)
+
+Dev report `r3-mqtt-root-withdrawal-recover-r2-20260914` completed the MQTT
+root withdrawal operation `53e5a7eb-39bb-44db-9739-cc226f4961b4`. The retiring
+root `e8edbaad-5c7c-4516-8d23-c7031a415bef` is revoked. Its cumulative MQTT
+distrust policy is version 3 with digest
+`b15421b151dab779eb5850e11267e76ba3480af9d87a28d8801b30a1fd6cf92c`.
+
+The actual `video-cloud-api` and `video-cloud-logingester` MQTT clients each
+wrote a receipt for the same successor-only root bundle, then restarted while
+retaining their own PVC-backed policy state. The pre-credential TLS probe using
+the withdrawn root failed, the broker recorded both client families reconnecting,
+and the Device direct-mTLS and MQTT QoS1 baseline passed. EMQX now obtains its
+MQTT server leaf through the managed `service:emqx-pki` client; its one-use
+bootstrap CA and temporary CertIssuer policy are absent. Staging, human login,
+and MFA were untouched.
