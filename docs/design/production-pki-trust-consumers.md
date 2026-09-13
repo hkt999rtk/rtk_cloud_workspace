@@ -2659,9 +2659,14 @@ before atomically installing the new state. The predecessor private key is not
 copied, logged or exported and is released from process memory after the
 successor install.
 
-Cert Issuer separates the Root that verifies its own managed caller from the
-Root selected to issue successor Service leaves. This lets the active listener
-accept the reviewed overlap while issuing only from the successor authority.
-The temporary predecessor-state settings are removed after each owner has a
-durable successor state; predecessor withdrawal still waits for the full
-connection-cutoff and restart acceptance matrix.
+Cert Issuer separates the Root that verifies a transitioning caller from the
+Root selected to issue successor Service leaves. During the overlap,
+`CERT_ISSUER_SERVICE_CLIENT_VERIFY_ROOT_SHA256` remains explicitly pinned to
+the predecessor so legacy callers can perform their one authenticated renewal,
+while `CERT_ISSUER_SERVICE_CLIENT_ISSUER_ROOT_SHA256` is pinned to the active
+successor. The issuer attaches the successor's exact `sign/service-client`
+policy before any caller transition starts. A caller's temporary
+predecessor-state settings are removed after it has a durable successor state;
+the issuer verification pin remains until every governed caller has completed.
+Only then may it move to the successor and predecessor withdrawal begin, after
+the full connection-cutoff and restart acceptance matrix.
