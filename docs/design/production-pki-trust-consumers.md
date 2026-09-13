@@ -2763,3 +2763,21 @@ provider-inventory/fence runs. This completes Factory's final-authority leaf
 transition, but R2 remains open until the other governed Service clients
 transition and the documented predecessor-withdrawal, cutoff, restart and
 cross-client canaries pass. Staging and login/MFA were untouched.
+
+### R2 CertIssuer final Service leaves (2026-09-13)
+
+CertIssuer now holds final-intermediate client and server leaves under
+`d61845ca-6b85-4f11-920b-f2f9685b0c13`. Its managed client completed the
+retained request exactly once; a separate `SIGUSR1` server-only operation then
+issued the server leaf without changing the client state or creating another
+client receipt. Both Service root policy mounts retain the immutable two-root
+overlap bundle, while CertIssuer's client and server verification pins now
+select the active successor Root.
+
+The server-only operation restarted CertIssuer and passed Factory enrollment,
+Device mTLS and MQTT QoS1 canaries before and after the restart. Public
+evidence is `r2-service-certissuer-final-server-leaf-retry-20260913`; it
+contains request IDs, public fingerprints and rollout results only. The
+predecessor Root is still not withdrawn: OpenBao, pkibroker and Video Cloud API
+remain on predecessor-root Service client leaves, so the remaining R2 work is
+their transition plus the documented withdrawal and reconnect-denial matrix.
