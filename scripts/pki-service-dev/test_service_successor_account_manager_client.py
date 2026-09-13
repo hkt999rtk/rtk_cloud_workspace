@@ -89,5 +89,20 @@ class PreflightStabilityTests(unittest.TestCase):
         self.assertFalse(runner.report['control_plane_preflight']['transient_503_recovered'])
 
 
+class AccountManagerPatchTests(unittest.TestCase):
+    def test_patch_targets_account_manager_namespace(self):
+        runner = object.__new__(mod.AccountManagerFinalClient)
+        runner.base = Path('/tmp/r2-account-manager-patch-test')
+        calls = []
+        runner.kube = lambda args, body: calls.append((args, body)) or '{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"account-manager","namespace":"video-cloud-dev-account-manager"},"spec":{}}'
+        original = mod.m.write
+        try:
+            mod.m.write = lambda *_: None
+            runner.patch('deployment', 'account-manager', {'metadata': {'resourceVersion': '123'}}, [])
+        finally:
+            mod.m.write = original
+        self.assertEqual(calls[0][0][:2], ['-n', mod.AM_NS])
+
+
 if __name__ == '__main__':
     unittest.main()

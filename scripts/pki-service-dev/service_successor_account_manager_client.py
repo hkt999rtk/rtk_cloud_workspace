@@ -149,6 +149,21 @@ class AccountManagerFinalClient(r.ServiceRun):
         m.write(self.base / PERSISTED, persisted)
         m.write(self.base / 'operator/env' / OWNER_PIN, OWNER + '\n')
 
+    # Account Manager is the one R2 owner outside the Video Cloud namespace.
+    # Keep the inherited JSON-patch concurrency guard, but target its actual
+    # namespace rather than the Service rollout runner's default namespace.
+    def patch(self, kind, name, old, changes):
+        patches = [{'op': 'test', 'path': '/metadata/resourceVersion', 'value': old['metadata']['resourceVersion']}]
+        updated = json.loads(self.kube(['-n', AM_NS, 'patch', kind, name, '--type=json',
+                                        '--patch-file=/dev/stdin', '-o', 'json'], json.dumps(patches + changes)))
+        clean = {key: updated[key] for key in ('apiVersion', 'kind')}
+        clean['metadata'] = {key: updated['metadata'][key] for key in ('name', 'namespace')}
+        for key in ('spec', 'data', 'type'):
+            if key in updated:
+                clean[key] = updated[key]
+        m.write(self.base / 'pki/controller-bootstrap/rollout' / (name + '-' + updated['kind'].lower() + '.json'), clean)
+        return updated
+
     def app_canary(self, label):
         args = ['/opt/homebrew/bin/python3', str(Path(__file__).with_name('account_callers.py')),
                 '--database', str(self.args.app_database), '--email', self.args.app_email,
