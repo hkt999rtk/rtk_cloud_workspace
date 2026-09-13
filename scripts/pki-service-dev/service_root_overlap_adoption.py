@@ -29,14 +29,14 @@ TARGETS = (
      'old_config': 'pki-service-root-policy', 'new_config': 'pki-service-root-policy-{suffix}',
      'prefixes': ('PKI_SERVICE_CLIENT',), 'state_indexes': (0,),
      'states': ('/var/lib/pki-host/identity/service-root-policy-{suffix}.json',),
-     'bundle_volume': 'service-bundles', 'old_bundle_config': 'pki-service-bundles',
+     'bundle_volume': 'service-bundles', 'old_bundle_prefix': 'pki-service-bundles-',
      'new_bundle_config': 'pki-service-bundles-{suffix}'},
     {'name': 'certissuer', 'namespace': NS, 'container': 'certissuer',
      'consumer': 'certissuer', 'volume': 'service-root-policy',
      'old_config': 'pki-service-root-policy', 'new_config': 'pki-service-root-policy-{suffix}',
      'prefixes': ('CERT_ISSUER_SERVICE_CLIENT',), 'state_indexes': (0,),
      'states': ('/var/lib/pki-host/identity/service-root-policy-{suffix}.json',),
-     'bundle_volume': 'service-bundles', 'old_bundle_config': 'pki-service-bundles',
+     'bundle_volume': 'service-bundles', 'old_bundle_prefix': 'pki-service-bundles-',
      'new_bundle_config': 'pki-service-bundles-{suffix}'},
     {'name': 'factoryenroll', 'namespace': NS, 'container': 'factoryenroll',
      'consumer': 'factory-enroll', 'volume': 'service-root',
@@ -104,7 +104,7 @@ def successor_template(owner, target, predecessor_id, successor_id, image):
     volume['configMap']['name'] = target['new_config'].format(suffix=suffix)
     if target.get('bundle_volume'):
         bundle = volumes.get(target['bundle_volume'], {})
-        m.require(bundle.get('configMap', {}).get('name') == target['old_bundle_config'],
+        m.require(bundle.get('configMap', {}).get('name', '').startswith(target['old_bundle_prefix']),
                   'Service bundle receipt mount differs: ' + target['name'])
         bundle['configMap']['name'] = target['new_bundle_config'].format(suffix=suffix)
     container['env'] = with_env(container.get('env', []), updates)

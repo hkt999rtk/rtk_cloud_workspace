@@ -14,7 +14,7 @@ class OverlapAdoptionTests(unittest.TestCase):
                         {'name': prefix + '_SERVICE_ROOT_STATE', 'value': '/old/' + prefix},
                         {'name': prefix + '_SERVICE_ROOTS', 'value': '/roots/' + prefix}])
         return {'spec': {'template': {'metadata': {}, 'spec': {'containers': [{'name': target['container'], 'env': env}],
-            'volumes': [{'name': target['volume'], 'configMap': {'name': target['old_config']}}] + ([{'name': target['bundle_volume'], 'configMap': {'name': target['old_bundle_config']}}] if target.get('bundle_volume') else [])}}}}
+            'volumes': [{'name': target['volume'], 'configMap': {'name': target['old_config']}}] + ([{'name': target['bundle_volume'], 'configMap': {'name': target['old_bundle_prefix'] + 'current'}}] if target.get('bundle_volume') else [])}}}}
     def test_successor_template_updates_only_policy_scope(self):
         old, new = '00000000-0000-4000-8000-000000000001', '11111111-1111-4000-8000-000000000002'
         for target in r.TARGETS:
