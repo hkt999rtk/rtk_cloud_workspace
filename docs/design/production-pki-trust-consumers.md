@@ -2901,3 +2901,31 @@ enrollment and Device direct mTLS/MQTT QoS1:
 `r2-pkibroker-final-client-verify-20260913`. OpenBao is now the only remaining
 Service client that must transition before the predecessor-root withdrawal
 matrix can begin.
+
+### R2 Service Root withdrawal completed (2026-09-13)
+
+The retiring Dev Service Root `59c37a28-7016-4706-ae93-e3da7746615d` has
+completed its governed withdrawal. Operation
+`129a3971-8720-4505-ada7-a6cdd560cadd` is `completed`, and the retired Root
+is `revoked`. Completion was permitted only after matching successor-only Root
+policy receipts from `account-manager`, `certissuer`, `factory-enroll`,
+`pki-controller`, and `video-cloud-api`.
+
+The final Service CRL manifests retain the successor Root and both still-valid
+successor-root intermediates: `240f6264-fde4-44af-81fe-1abe4aa13e06` and
+`d61845ca-6b85-4f11-920b-f2f9685b0c13`. A final-root manifest must never be
+reduced to the newest intermediate alone while an earlier successor-root
+intermediate still has active leaves. The withdrawal check verified that exact
+three-authority set before the affected workloads restarted.
+
+After completion, pki-controller, CertIssuer, Factory Enrollment, the isolated
+PKI API owner, the ordinary Video Cloud API, and Account Manager were all
+Ready at their current Deployment generation. A fresh Dev Factory enrollment
+then passed Device direct mTLS and MQTT QoS1. The private evidence directory
+`r2-service-root-withdrawal-factory-device-20260913` contains only test-run
+metadata and public result digests. Staging and login/MFA were untouched.
+
+The Video Cloud API MQTT CRL refresh warning remains outside this result: it is
+a separate MQTT transport caller that lacks its managed client identity for a
+controller request. It belongs to R3 and does not alter the completed Service
+Root receipt or withdrawal state.
