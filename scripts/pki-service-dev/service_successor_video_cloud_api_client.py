@@ -234,6 +234,7 @@ class VideoCloudAPIFinalClient(r.ServiceRun):
         baseline = m.read(source / 'baseline.json')
         m.require(saved.get('status') in ('failed', 'interrupted') and baseline.get('identity') and baseline.get('rows'),
                   'interrupted Video Cloud API transition evidence required')
+        super().preflight()
         self.issuer()
         before, rows_before = baseline['identity'], baseline['rows']
         after, rows_after = self.state(NEW_STATE, ROOT), self.rows()
