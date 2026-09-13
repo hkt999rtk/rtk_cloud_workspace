@@ -65,10 +65,10 @@ def with_env(entries, updates):
         {'name': key, 'value': value} for key, value in updates.items()]
 
 
-def target_for(name):
-    found = [target for target in TARGETS if target['name'] == name]
-    m.require(len(found) == 1, 'known Service Root consumer required')
-    return found[0]
+def pem_blocks(value):
+    return sorted('-----BEGIN CERTIFICATE-----' + block.strip() + '\n'
+                  for block in value.split('-----BEGIN CERTIFICATE-----')[1:])
+
 
 
 def successor_template(owner, target, predecessor_id, successor_id):
@@ -146,7 +146,8 @@ class OverlapAdoption(s.ServiceRun):
         state = state_path.read_text()
         parsed = json.loads(state)
         m.require(parsed.get('policy', {}).get('policy_sha256') == policy['policy_sha256'] and
-                  parsed.get('roots_pem') == roots, 'prepared overlap state differs')
+                  pem_blocks(parsed.get('roots_pem', '')) == pem_blocks(roots),
+                  'prepared overlap state differs')
         self.save('prepared-state.json', parsed)
         return state
 
