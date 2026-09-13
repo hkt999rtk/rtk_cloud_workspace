@@ -434,6 +434,16 @@ policy digest. The persisted state is reloaded for controlled restart recovery;
 it never restores bootstrap credentials or sends an acknowledgement until a
 normal management sweep succeeds.
 
+During a Service Root successor cutover, publish an immutable replacement for
+each consumer CRL manifest before changing `*_SERVICE_ROOT_ID`. The replacement
+keeps every predecessor-root and intermediate entry, appends the active
+successor root with that workload's private CRL-state path, and is mounted only
+through a reviewed restart. Once every affected listener and caller has the
+successor record, its policy authority may move to the successor while the
+provisioned root bundle still contains both anchors. Withdrawal is a later,
+separate operation: it removes neither predecessor CRL evidence nor the old
+anchor until live-session cutoff and reconnect denial have been verified.
+
 For inbound Service mTLS, each new handshake reads the current installed client
 root pool and the listener rechecks established sockets after a policy update.
 For outbound Service callers, the HTTP connection owner swaps its TLS root pool
