@@ -2673,13 +2673,18 @@ the full connection-cutoff and restart acceptance matrix.
 
 ### R2 managed Service-host successor transition (2026-09-13)
 
-CertIssuer and pki-controller now hold separate durable successor-host states
-under the active Service Root. Their first renewal retained the predecessor
-server state only to prove possession of the current server key; CertIssuer
-issued the replacement through the active successor intermediate
-`240f6264-fde4-44af-81fe-1abe4aa13e06`. The predecessor state was then removed
-from each Deployment configuration. The host key was neither exported nor
-copied.
+CertIssuer holds a separate durable successor-host state under the active
+Service Root. Its first renewal retained the predecessor server state only to
+prove possession of the current server key, then issued the replacement through
+the active successor intermediate `240f6264-fde4-44af-81fe-1abe4aa13e06`.
+The predecessor state was then removed from the CertIssuer Deployment
+configuration. The host key was neither exported nor copied.
+
+pki-controller retains its predecessor server credential while R4 transitions
+the OpenBao transport caller that verifies that server. Its Service *client*
+state is already under the successor Root. This preserves authenticated CRL
+and registry access without presenting a controller server certificate that
+the still-predecessor-only OpenBao client would reject.
 
 The listener supports the overlap without weakening device admission: dynamic
 Service-root policy remains the authority for `service:<id>` peers, while the
@@ -2688,16 +2693,35 @@ stale fixed predecessor pool in the Device-renewal wrapper from rejecting a
 valid successor Service client, and prevents a Device root from becoming a
 Service identity authority.
 
-Dev evidence records successful new server issuances for both approved DNS
-names under the successor intermediate and successor-state files larger than
-their empty initialization records. CertIssuer and pki-controller restarted
-ready after their predecessor transition settings were removed. During the
-overlap, pki-controller uses the installed two-root Service policy bundle only
-to authenticate CertIssuer's renewal endpoint; its configured server pin is
-the successor Root. Staging and login/MFA were untouched.
+Dev evidence records CertIssuer's new server issuance and a successor-state
+file larger than its empty initialization record. CertIssuer restarted ready
+after its predecessor transition settings were removed. During the overlap,
+pki-controller uses the installed two-root Service policy bundle to
+authenticate CertIssuer's renewal endpoint while retaining its predecessor
+server certificate. Staging and login/MFA were untouched.
 
 This is not R2 closure. CertIssuer retains predecessor verification for legacy
 Service callers until every governed caller completes the same transition. The
 remaining R2 gate is the documented two-direction predecessor withdrawal,
 old-socket cutoff/reconnect denial, restart persistence, and factory, App and
 Device canaries.
+
+### R2 final Service authority activation and CRL recovery (2026-09-13)
+
+The final successor-root Service intermediate
+`d61845ca-6b85-4f11-920b-f2f9685b0c13` is active and its predecessor
+`240f6264-fde4-44af-81fe-1abe4aa13e06` is retiring. Before activation, both
+Service listeners installed the immutable bundle containing the successor Root,
+the predecessor intermediate and the final intermediate, then recorded their
+durable bundle receipts. The final intermediate CRL was published immediately
+after activation and installed through immutable CRL manifests and private
+digest-checked caches on controller, CertIssuer, factory enrollment, Video
+Cloud API and Account Manager. The post-restart adoption evidence is
+`r2-service-final-authority-crl-adoption-retry-20260913`.
+
+This establishes authority and revocation readiness only. The current Service
+client inventory still shows every governed client under a predecessor
+intermediate, including Account Manager under version 6. Each of the seven
+clients must receive and prove a final-intermediate credential before version 6
+can be withdrawn. No root withdrawal, client revocation, or old-session cutoff
+was performed by this activation recovery.

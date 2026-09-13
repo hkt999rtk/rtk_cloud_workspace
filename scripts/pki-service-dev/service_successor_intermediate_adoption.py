@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 
 spec = importlib.util.spec_from_file_location(
     'service_root_cutover', Path(__file__).with_name('service_root_authority_cutover.py'))
@@ -82,6 +83,17 @@ class IntermediateAdoption(s.ServiceRun):
                                            'Service Root authority and predecessor withdrawal are unchanged')
         self.report['service_successor_intermediate_adoption_runner_sha256'] = m.digest(Path(__file__).read_bytes())
         self.save('report.json', self.report)
+
+    def api(self, path, body=None, *args, **kwargs):
+        if body is not None:
+            return super().api(path, body, *args, **kwargs)
+        for attempt in range(3):
+            try:
+                return super().api(path, None, *args, **kwargs)
+            except RuntimeError as error:
+                if 'status 503' not in str(error) or attempt == 2:
+                    raise
+                time.sleep(attempt + 1)
 
     def evidence(self, directory, names, kind, status):
         directory = Path(directory)
