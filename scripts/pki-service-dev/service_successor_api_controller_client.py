@@ -24,6 +24,7 @@ OLD = '87099089d30f13a7b93035b59c1c0c91bdb05bbe3dab427258c0c48e38144cc2'
 ROOT = '32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb'
 FINAL = 'd61845ca-6b85-4f11-920b-f2f9685b0c13'
 IMAGE = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:bba34225ae40c47a3ce8444c61f5d568a87f700fa1b117e4a631e308dbf7ad58'
+ROOT_CONFIGMAP = 'pki-service-host-root-697e8e86-5af'
 
 
 def env_map(container):
@@ -35,6 +36,13 @@ def env_map(container):
 def update_env(container, updates, remove=()):
     container['env'] = [entry for entry in container['env'] if entry['name'] not in updates and entry['name'] not in remove]
     container['env'].extend({'name': key, 'value': value} for key, value in updates.items())
+
+
+def service_root_volume(template, expected):
+    matches = [volume for volume in template['spec']['volumes'] if volume['name'] == 'service-root']
+    m.require(len(matches) == 1 and matches[0].get('configMap', {}).get('name') == expected,
+              'isolated API Service Root mount changed')
+    return matches[0]
 
 
 def transition_template(owner, output):
@@ -54,6 +62,7 @@ def transition_template(owner, output):
     m.require(not values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_STATE') and
               not values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_ROOT_SHA256'),
               'isolated API transition is already configured; reconcile retained evidence')
+    service_root_volume(template, 'pki-service-host-root')['configMap']['name'] = ROOT_CONFIGMAP
     container['image'] = IMAGE
     update_env(container, {
         'VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE': NEW_STATE,
@@ -81,6 +90,7 @@ def steady_template(owner, output):
     }
     m.require(all(values.get(key, {}).get('value') == value for key, value in expected.items()) and container['image'] == IMAGE,
               'isolated API transition deployment changed')
+    service_root_volume(template, ROOT_CONFIGMAP)
     update_env(container, {}, ('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_STATE',
                                'VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_ROOT_SHA256'))
     template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-api-controller-final-client-restart'] = output.name
@@ -161,6 +171,43 @@ class APIControllerFinalClient(r.ServiceRun):
             'private_keys_exported': False, 'staging_touched': False,
         })
 
+    def recover(self, source):
+        saved = m.read(source / 'report.json')
+        baseline = m.read(source / 'baseline.json')
+        m.require(saved.get('status') in ('failed', 'interrupted') and baseline.get('identity') and baseline.get('rows'),
+                  'interrupted isolated API transition evidence required')
+        self.issuer()
+        before, rows_before = baseline['identity'], baseline['rows']
+        m.require(self.rows() == rows_before, 'isolated API registry changed before startup recovery')
+        owner = self.obj('deployment', NAME)
+        values = env_map(owner['spec']['template']['spec']['containers'][0])
+        m.require(values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', {}).get('value') == NEW_STATE
+                  and values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256', {}).get('value') == ROOT
+                  and values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_STATE', {}).get('value') == OLD_STATE
+                  and values.get('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_ROOT_SHA256', {}).get('value') == OLD,
+                  'isolated API transition owner changed during recovery')
+        template = copy.deepcopy(owner['spec']['template'])
+        service_root_volume(template, 'pki-service-host-root')['configMap']['name'] = ROOT_CONFIGMAP
+        template.setdefault('metadata', {}).setdefault('annotations', {})['rtk.cloud/r2-api-controller-final-client-recovery'] = self.output.name
+        self.observed_patch('deployment', NAME, owner, [
+            {'op': 'test', 'path': '/spec/template', 'value': owner['spec']['template']},
+            {'op': 'replace', 'path': '/spec/template', 'value': template},
+        ])
+        self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + NAME, '--timeout=300s'], timeout=310)
+        deadline = time.monotonic() + 180
+        while True:
+            try:
+                after, rows_after = self.state(NEW_STATE, ROOT), self.rows()
+                successor = self.replacement(before, after, rows_before, rows_after)
+                break
+            except RuntimeError:
+                m.require(time.monotonic() < deadline, 'isolated API final client recovery incomplete; retain evidence')
+                time.sleep(2)
+        self.save('baseline.json', {'identity': before, 'rows': rows_before, 'recovered_from': str(source)})
+        self.save('renewed.json', {'identity': after, 'rows': rows_after, 'request_id': successor['request_id'],
+                                   'recovered_from': str(source)})
+        self.finish(after, rows_after, successor)
+
     def rotate(self):
         super().preflight()
         self.issuer()
@@ -192,13 +239,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config-root', default=os.environ.get('RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--recover-from', type=Path, help='Interrupted pre-issuance evidence; resumes without a renewal signal')
     args = parser.parse_args(); args.phase = 'api-controller-final-service-client'; args.authority = None
     os.umask(0o077)
     lock = Path(args.config_root).expanduser() / 'dev/pki/service-rollout.lock'
     fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600); fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = APIControllerFinalClient(args)
     try:
-        runner.rotate(); runner.report['status'] = 'passed'
+        if args.recover_from:
+            runner.recover(args.recover_from)
+        else:
+            runner.rotate()
+        runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error); raise
     finally:

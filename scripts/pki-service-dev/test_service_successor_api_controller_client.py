@@ -9,7 +9,9 @@ mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
 class APIControllerTransitionTemplateTests(unittest.TestCase):
     def owner(self):
-        return {'spec': {'template': {'spec': {'containers': [{'name': 'app', 'image': 'old-image', 'env': [
+        return {'spec': {'template': {'spec': {'volumes': [
+            {'name': 'service-root', 'configMap': {'name': 'pki-service-host-root'}},
+        ], 'containers': [{'name': 'app', 'image': 'old-image', 'env': [
             {'name': 'VIDEO_CLOUD_CONTROLLER_IDENTITY_STATE', 'value': mod.OLD_STATE},
             {'name': 'VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256', 'value': mod.OLD},
             {'name': 'VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256', 'value': mod.OLD},
@@ -25,6 +27,7 @@ class APIControllerTransitionTemplateTests(unittest.TestCase):
         self.assertEqual(values['VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256']['value'], mod.ROOT)
         self.assertEqual(values['VIDEO_CLOUD_CONTROLLER_IDENTITY_RENEWAL_SERVER_PKI_ROOT_SHA256']['value'], mod.ROOT)
         self.assertEqual(values['VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256']['value'], mod.OLD)
+        self.assertEqual(template['spec']['volumes'][0]['configMap']['name'], mod.ROOT_CONFIGMAP)
 
     def test_steady_template_removes_only_one_time_transition_settings(self):
         transition = mod.transition_template(copy.deepcopy(self.owner()), Path('/tmp/r2-api-controller-transition'))
@@ -34,6 +37,7 @@ class APIControllerTransitionTemplateTests(unittest.TestCase):
         self.assertNotIn('VIDEO_CLOUD_CONTROLLER_IDENTITY_TRANSITION_FROM_ROOT_SHA256', values)
         self.assertEqual(values['VIDEO_CLOUD_CONTROLLER_IDENTITY_ROOT_SHA256']['value'], mod.ROOT)
         self.assertEqual(values['VIDEO_CLOUD_CONTROLLER_IDENTITY_SERVER_PKI_ROOT_SHA256']['value'], mod.OLD)
+        self.assertEqual(steady['spec']['volumes'][0]['configMap']['name'], mod.ROOT_CONFIGMAP)
 
 
 if __name__ == '__main__':
