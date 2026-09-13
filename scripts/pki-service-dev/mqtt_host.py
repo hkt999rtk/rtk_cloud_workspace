@@ -2166,9 +2166,12 @@ class MQTTHostRun(h.ServiceRun):
         if resuming:
             failed = m.read(prior / 'report.json')
             m.require(failed.get('status') == 'failed'
-                      and failed.get('phase') == 'withdraw-mqtt-root'
-                      and failed.get('failure') ==
-                      'MQTT Root distrust policy differs after withdrawal',
+                      and failed.get('phase') in (
+                          'withdraw-mqtt-root', 'finish-withdraw-mqtt-root')
+                      and failed.get('failure') in (
+                          'MQTT Root distrust policy differs after withdrawal',
+                          'probe failed: verified MQTT TLS failed: tls: failed to '
+                          'verify certificate: x509: certificate signed by unknown authority'),
                       'recoverable MQTT Root withdrawal evidence required')
             before_policy = m.read(prior / 'before-policy.json')
             before_states = m.read(prior / 'before-consumers.json')
@@ -2207,7 +2210,8 @@ class MQTTHostRun(h.ServiceRun):
         if current_operation['status'] == 'approved':
             self.api(operation_path + '/execute', {}, 204)
         else:
-            m.require(current_operation['status'] == 'revocation_pending',
+            m.require(current_operation['status'] in (
+                      'revocation_pending', 'completed'),
                       'existing MQTT Root withdrawal operation changed')
         policy = self.api('/issuers/' + successor['issuer_id'] + '/distrust')
         m.require(policy.get('environment') == 'dev'
@@ -2230,7 +2234,8 @@ class MQTTHostRun(h.ServiceRun):
             text=True, timeout=15)
         m.require(old_root.returncode != 0,
                   'old MQTT Root established TLS before credentials')
-        self.api(operation_path + '/revocation-complete', {}, 204)
+        if self.api(operation_path)['status'] == 'revocation_pending':
+            self.api(operation_path + '/revocation-complete', {}, 204)
         m.require(self.api(operation_path)['status'] == 'completed'
                   and self.api('/issuers/' + predecessor['issuer_id'])[
                       'status'] == 'revoked',
@@ -2246,6 +2251,8 @@ class MQTTHostRun(h.ServiceRun):
                   and repeat_receipts == receipts,
                   'MQTT Root distrust state did not survive restart')
         clients = self.wait_actual_clients()
+        m.write(self.base / 'pki/servers/mqtt-pki/ca.crt',
+                successor['certificate_pem'])
         self.forward('api', NS, 'video-cloud-api-pki', 8443)
         self.forward('mqtt', NS, 'mqtt-pki', 8883)
         self.device_baseline()
