@@ -1124,7 +1124,7 @@ class OpenBaoHostRun(h.ServiceRun):
                   and issuer['status'] == status
                   and issuer['parent_issuer_id'] == root['issuer_id']
                   and issuer.get('service_client_ids', []) == expected_ids
-                  and (not server_only or issuer['issuer_version'] == 2),
+                  and (not server_only or issuer['issuer_version'] >= 2),
                   'OpenBao TLS intermediate identity or policy changed')
         if server_only:
             predecessor_path = source / 'intermediate-predecessor.json'
