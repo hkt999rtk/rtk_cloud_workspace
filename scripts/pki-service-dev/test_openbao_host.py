@@ -122,6 +122,27 @@ class OpenBaoHostTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             o.recovery_server_ttl(claim, issuer, now + dt.timedelta(minutes=9))
 
+    def test_completed_server_recovery_uses_verified_durable_response(self):
+        claim = {'status': 'succeeded', 'issuer_id': 'issuer',
+                 'certificate_pem': 'leaf', 'fingerprint': 'f' * 64,
+                 'issued_at': '2026-09-14T04:00:00Z'}
+        issuer = {'issuer_id': 'issuer', 'chain_pem': 'issuer-chain'}
+        response = o.completed_server_recovery(
+            claim, issuer, 'expected-public',
+            lambda kind, pem: 'expected-public' if (kind, pem) == ('x509', 'leaf') else '')
+        self.assertEqual(response['fingerprint'], claim['fingerprint'])
+        self.assertEqual(response['certificate_chain_pem'], 'leaf\nissuer-chain')
+        for key, value in [('status', 'issuing'), ('issuer_id', 'other'),
+                           ('certificate_pem', ''), ('fingerprint', ''),
+                           ('issued_at', '')]:
+            invalid = dict(claim, **{key: value})
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                o.completed_server_recovery(
+                    invalid, issuer, 'expected-public', lambda *_: 'expected-public')
+        with self.assertRaises(RuntimeError):
+            o.completed_server_recovery(claim, issuer, 'other-public',
+                                        lambda *_: 'expected-public')
+
     def test_managed_openbao_config_replaces_only_listener_keys(self):
         source = {'extraconfig-from-values.hcl': (
             'listener "tcp" {\n'

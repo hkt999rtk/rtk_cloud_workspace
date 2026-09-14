@@ -79,6 +79,26 @@ def recovery_server_ttl(claim, issuer, now):
     return ttl
 
 
+def completed_server_recovery(claim, issuer, expected_public, public):
+    """Return a verified durable server result without re-contacting a signer."""
+    m.require(claim.get('status') == 'succeeded'
+              and claim.get('issuer_id') == issuer.get('issuer_id')
+              and claim.get('certificate_pem')
+              and claim.get('fingerprint')
+              and claim.get('issued_at')
+              and issuer.get('chain_pem'),
+              'completed OpenBao host claim differs')
+    m.require(public('x509', claim['certificate_pem']) == expected_public,
+              'completed OpenBao host claim has another key')
+    return {
+        'issuer': issuer,
+        'certificate_pem': claim['certificate_pem'],
+        'certificate_chain_pem': claim['certificate_pem'] + '\n' +
+                                 issuer['chain_pem'],
+        'issued_at': claim['issued_at'],
+        'fingerprint': claim['fingerprint']}
+
+
 def registry_network_policy():
     return {
         'apiVersion': 'networking.k8s.io/v1',
@@ -1968,16 +1988,23 @@ class OpenBaoHostRun(h.ServiceRun):
                              'status': 'signed', 'serial': matches[0],
                              'at': m.stamp()})
             signed = True
-        recovered = self.api('/issuers/' + issuer['issuer_id'] +
-                             '/reconcile-server', {
-                                 'caller': 'service:openbao',
-                                 'request_id': claim['request_id'],
-                                 'serial_number': matches[0]},
-                             role='approver')
+        if claim['status'] == 'succeeded':
+            # The registry already admitted this exact provider result. A
+            # controller/provider outage must not prevent the host owner from
+            # installing its retained successful response on restart.
+            recovered = completed_server_recovery(claim, issuer, expected, public)
+        else:
+            recovered = self.api('/issuers/' + issuer['issuer_id'] +
+                                 '/reconcile-server', {
+                                     'caller': 'service:openbao',
+                                     'request_id': claim['request_id'],
+                                     'serial_number': matches[0]},
+                                 role='approver')
         m.require(recovered.get('issuer', {}).get('issuer_id') == issuer['issuer_id']
                   and recovered.get('certificate_pem')
                   and recovered.get('certificate_chain_pem')
-                  and recovered.get('issued_at'),
+                  and recovered.get('issued_at')
+                  and recovered.get('fingerprint'),
                   'OpenBao successor host recovery changed')
         deadline = time.monotonic() + 150
         while True:
@@ -1991,19 +2018,34 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(current['state']['public_key_sha256'] !=
                   baseline['state']['public_key_sha256'],
                   'OpenBao recovered host reused the predecessor key')
+        self.delete_exact('pods', pod['metadata']['name'], SECRETS_NS, pod)
+        self.wait_openbao_replacement(pod['metadata']['uid'])
+        self.kube(['-n', SECRETS_NS, 'wait',
+                   '--for=jsonpath={.status.phase}=Running',
+                   'pod/openbao-0', '--timeout=300s'], timeout=310)
+        self.unseal_openbao()
+        self.kube(['-n', SECRETS_NS, 'wait', '--for=condition=Ready',
+                   'pod/openbao-0', '--timeout=120s'], timeout=130)
+        restarted_pod = self.wait_openbao()
+        restarted = self.current_host({issuer['issuer_id']}, restarted_pod)
+        m.require(restarted['state'] == current['state']
+                  and restarted['row'] == current['row']
+                  and restarted['pvc_uid'] == current['pvc_uid']
+                  and restarted_pod['metadata']['uid'] != pod['metadata']['uid'],
+                  'OpenBao recovered successor changed across retained restart')
         self.save('baseline.json', baseline)
-        self.save('renewed.json', current)
+        self.save('renewed.json', restarted)
         self.save('recovered-claim.json', claim)
         self.save('recovered.json', recovered)
         self.check('openbao_host_recovered_on_server_only_successor', {
             'request_id': claim['request_id'],
             'predecessor_fingerprint': baseline['state']['fingerprint'],
-            'successor_fingerprint': current['state']['fingerprint'],
+            'successor_fingerprint': restarted['state']['fingerprint'],
             'successor_issuer_id': issuer['issuer_id'],
             'original_csr_and_request_retained': True,
             'provider_signed_during_recovery': signed,
             'new_owner_key': True, 'private_key_exported': False,
-            'served_successor': True})
+            'served_successor': True, 'retained_restart': True})
 
     def retire_host_predecessor(self):
         _, predecessor, issuer, _, pod = self.lifecycle_prerequisites()
