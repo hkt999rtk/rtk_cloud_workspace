@@ -63,8 +63,8 @@ def select_server_predecessor(items, root, transition_id=None):
                   and item['kind'] == 'intermediate'
                   and item['issuer_id'] not in {
                       predecessor['issuer_id'], transition_id}
-                  and item['status'] not in ('retired', 'cancelled', 'revoked',
-                                             'compromised', 'failed')]
+                  and item['status'] in ('approved', 'provisioning', 'ready',
+                                         'active')]
     m.require(not unfinished,
                   'another OpenBao TLS server successor already exists; reconcile it')
     return predecessor
