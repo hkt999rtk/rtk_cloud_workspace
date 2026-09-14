@@ -368,7 +368,7 @@ class MQTTHostTests(unittest.TestCase):
             'pending': False, 'subject': m.MQTT_HOST,
             'fingerprint': 'f' * 64})
         row = {'fingerprint': 'f' * 64, 'issuer_id': 'issuer',
-               'caller': 'emqx-pki', 'status': 'succeeded',
+               'caller': m.EMQX_SERVICE_SUBJECT, 'status': 'succeeded',
                'revoked_at': None}
         runner.server_rows = Mock(return_value=[row])
         runner.served_fingerprint = Mock(return_value='f' * 64)
@@ -417,6 +417,68 @@ class MQTTHostTests(unittest.TestCase):
         self.assertEqual(m.MQTTHostRun.root_fingerprints(roots), {
             __import__('hashlib').sha256(b'a').hexdigest(),
             __import__('hashlib').sha256(b'b').hexdigest()})
+
+    def test_root_policy_advance_preserves_cumulative_history(self):
+        old = {'issuer_id': 'old', 'operation_id': 'old-op',
+               'certificate_sha256': 'a' * 64,
+               'public_key_sha256': 'b' * 64}
+        target = {'issuer_id': 'target',
+                  'certificate_fingerprint_sha256': 'c' * 64}
+        before = {'environment': 'dev', 'trust_domain': 'mqtt', 'version': 4,
+                  'distrusted_roots': [old]}
+        added = {'issuer_id': 'target', 'operation_id': 'new-op',
+                 'certificate_sha256': 'c' * 64,
+                 'public_key_sha256': 'd' * 64}
+        after = dict(before, version=7, distrusted_roots=[old, added])
+        m.validate_root_policy_advance(
+            before, after, target, {'operation_id': 'new-op'})
+        with self.assertRaisesRegex(RuntimeError, 'policy differs'):
+            m.validate_root_policy_advance(
+                before, dict(after, distrusted_roots=[added]), target,
+                {'operation_id': 'new-op'})
+        with self.assertRaisesRegex(RuntimeError, 'policy differs'):
+            changed = dict(old, certificate_sha256='e' * 64)
+            m.validate_root_policy_advance(
+                before, dict(after, distrusted_roots=[changed, added]), target,
+                {'operation_id': 'new-op'})
+
+    def test_tls_denial_requires_a_certificate_validation_failure(self):
+        result = type('Result', (), {
+            'returncode': 1,
+            'stderr': ('verified TLS peer unavailable: tls: failed to verify '
+                       'certificate: x509: certificate signed by unknown authority')})()
+        self.assertTrue(m.tls_verification_denied(result))
+        self.assertFalse(m.tls_verification_denied(
+            type('Result', (), {'returncode': 1,
+                                'stderr': 'connection refused'})()))
+        self.assertFalse(m.tls_verification_denied(
+            type('Result', (), {'returncode': 0,
+                                'stderr': 'certificate signed by unknown authority'})()))
+
+    def test_consumer_restart_requires_new_pod_uids(self):
+        runner = object.__new__(m.MQTTHostRun)
+        runner.mqtt_consumer_state = Mock(
+            side_effect=lambda name: {'deployment': name})
+        runner.deployment_pod = Mock(side_effect=[
+            {'metadata': {'uid': 'api-old'}},
+            {'metadata': {'uid': 'api-new'}},
+            {'metadata': {'uid': 'logs-old'}},
+            {'metadata': {'uid': 'logs-new'}}])
+        owner = {'spec': {'template': {'metadata': {'annotations': {}}}}}
+        runner.obj = Mock(return_value=owner)
+        runner.scoped_patch = Mock()
+        runner.wait_available = Mock()
+        evidence = runner.restart_mqtt_consumers('withdraw-policy')
+        self.assertEqual(evidence['video-cloud-api']['previous_pod_uid'],
+                         'api-old')
+        self.assertEqual(evidence['video-cloud-logingester'][
+                         'replacement_pod_uid'], 'logs-new')
+        annotations = [call.args[2][0]['value']['metadata']['annotations'][
+                       'rtk.cloud/mqtt-root-distrust-restart']
+                       for call in runner.scoped_patch.call_args_list]
+        self.assertEqual(len(set(annotations)), 2)
+        self.assertTrue(all(value.startswith('withdraw-policy-')
+                            for value in annotations))
 
 
 if __name__ == '__main__':
