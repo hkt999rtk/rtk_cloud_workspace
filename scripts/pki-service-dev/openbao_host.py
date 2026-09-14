@@ -416,7 +416,14 @@ class OpenBaoHostRun(h.ServiceRun):
 
     def openbao_root(self, status):
         source = Path(self.args.authority)
-        saved = m.read(source / 'root-ready.json')
+        # The initial authority records root-ready.json. Later provider phases
+        # retain the same reviewed root as openbao-tls-root.json, so a Dev
+        # transport-policy rollout can be resumed without recreating authority
+        # evidence or an offline key ceremony.
+        evidence = source / 'root-ready.json'
+        if not evidence.exists():
+            evidence = source / 'openbao-tls-root.json'
+        saved = m.read(evidence)
         root = self.api('/issuers/' + saved['issuer_id'])
         m.require(root['environment'] == 'dev'
                   and root['trust_domain'] == 'openbao_tls'
