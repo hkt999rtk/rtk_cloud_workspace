@@ -1138,11 +1138,11 @@ class OpenBaoHostRun(h.ServiceRun):
             remote = '/var/lib/pki-host/identity/openbao-tls-crl-' + issuer_id + '.json'
             payload = base64.b64encode(raw).decode()
             for consumer in CONSUMERS:
-                command = ('umask 077; temp="$1.prepare"; base64 -d > "$temp"; '
-                           'if test -e "$1"; then test "$(sha256sum "$1" | cut -d " " -f1)" = "$2" && rm "$temp"; '
-                           'else mv "$temp" "$1"; fi')
+                command = ('umask 077; if test -e "$1"; then exit 0; fi; '
+                           'temp="$1.prepare"; base64 -d > "$temp"; '
+                           'test ! -e "$1" && mv "$temp" "$1" || rm "$temp"')
                 self.kube(['-n', NS, 'exec', '-i', 'deployment/' + consumer,
-                           '--', 'sh', '-ec', command, 'sh', remote, digest], payload)
+                           '--', 'sh', '-ec', command, 'sh', remote], payload)
             prepared.append({'issuer_id': issuer_id, 'crl_sha256': crl['crl_sha256'],
                              'state_sha256': digest})
         self.save('prepared-transition-crl-states.json', prepared)
