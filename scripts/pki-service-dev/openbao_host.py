@@ -2269,9 +2269,7 @@ class OpenBaoHostRun(h.ServiceRun):
                   'published OpenBao predecessor revocation changed')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
-        authorities = [root,
-                       self.api('/issuers/' + predecessor['issuer_id']),
-                       issuer]
+        authorities = self.intermediate_bundle_issuers(root, issuer)
         manifest = provider_crl_manifest(authorities)
         manifest_name = ('pki-openbao-tls-crls-identity-' +
                          issuer['issuer_id'][:8])
@@ -2297,7 +2295,7 @@ class OpenBaoHostRun(h.ServiceRun):
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/' + name, '--timeout=300s'], timeout=310)
         receipts = {}
-        for item in (root, predecessor, issuer):
+        for item in authorities:
             crl = self.api('/issuers/' + item['issuer_id'] + '/crl')
             receipts[item['issuer_id']] = self.wait_receipts(
                 item['issuer_id'], crl['crl_sha256'], CONSUMERS, kind='crl')
