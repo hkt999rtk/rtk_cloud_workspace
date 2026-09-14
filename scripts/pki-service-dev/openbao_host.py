@@ -211,12 +211,15 @@ def certissuer_route_template(owner, image, root):
               for item in container.get('env', [])}
     m.require(not any(values.get(name) for name in (
         'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256',
+        'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256',
         'CERT_ISSUER_OPENBAO_HOST_DNS_NAMES',
         'CERT_ISSUER_OPENBAO_HOST_CLIENT_CN_PATTERN')),
         'OpenBao host issuance route already configured; reconcile')
     container['image'] = image
     container['env'] = h.with_env(container.get('env', []), {
         'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
+            root['certificate_fingerprint_sha256'],
+        'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256':
             root['certificate_fingerprint_sha256'],
         'CERT_ISSUER_OPENBAO_HOST_DNS_NAMES':
             ','.join(OPENBAO_HOST_NAMES),
@@ -446,7 +449,8 @@ def certissuer_server_root_template(owner, root, run_name):
               'CertIssuer OpenBao server issuer Root policy is absent')
     container['env'] = h.with_env(container.get('env', []), {
         'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
-            root['certificate_fingerprint_sha256']})
+            root['certificate_fingerprint_sha256'],
+        'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': previous})
     template.setdefault('metadata', {}).setdefault('annotations', {})[
         'rtk.cloud/openbao-server-issuer-root'] = run_name
     return template
@@ -1332,11 +1336,23 @@ class OpenBaoHostRun(h.ServiceRun):
             policies['signer_policy'])
         if getattr(self.args, 'server_only', False):
             owner = self.obj('deployment', 'certissuer')
+            previous = next((item.get('value', '') for item in
+                             owner['spec']['template']['spec']['containers'][0]
+                             .get('env', []) if item['name'] ==
+                             'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256'), '')
+            m.require(re.fullmatch(r'[0-9a-f]{64}', previous),
+                      'CertIssuer OpenBao server issuer Root policy is absent')
             template = certissuer_server_root_template(
                 owner, root, self.output.name)
             self.scoped_patch('certissuer', owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/certissuer', '--timeout=300s'], timeout=310)
+            path = (self.base / 'pki/controller-bootstrap/rollout' /
+                    'certissuer-service-settings.json')
+            m.write(path, dict(m.read(path), **{
+                'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
+                    root['certificate_fingerprint_sha256'],
+                'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': previous}))
             self.check('openbao_tls_server_only_signer_enabled', {
                 'issuer_id': issuer['issuer_id'],
                 'root_sha256': root['certificate_fingerprint_sha256'],
@@ -1370,6 +1386,8 @@ class OpenBaoHostRun(h.ServiceRun):
                    'deployment/certissuer', '--timeout=300s'], timeout=310)
         settings = {
             'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
+                root['certificate_fingerprint_sha256'],
+            'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256':
                 root['certificate_fingerprint_sha256'],
             'CERT_ISSUER_OPENBAO_HOST_DNS_NAMES':
                 ','.join(OPENBAO_HOST_NAMES),
