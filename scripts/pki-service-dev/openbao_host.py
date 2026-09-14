@@ -2272,7 +2272,8 @@ class OpenBaoHostRun(h.ServiceRun):
         authorities = self.intermediate_bundle_issuers(root, issuer)
         manifest = provider_crl_manifest(authorities)
         manifest_name = ('pki-openbao-tls-crls-identity-' +
-                         issuer['issuer_id'][:8])
+                         issuer['issuer_id'][:8] + '-' + hashlib.sha256(
+                             json.dumps(manifest).encode()).hexdigest()[:8])
         raw = self.kube(['-n', NS, 'get', 'configmap', manifest_name,
                          '--ignore-not-found', '-o', 'json'])
         expected = {'crls.json': json.dumps(manifest)}
