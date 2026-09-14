@@ -1933,7 +1933,7 @@ class OpenBaoHostRun(h.ServiceRun):
             '-c', 'openbao-pki', '--', 'sh', '-ec',
             "for f in /proc/[0-9]*/comm; do "
             "[ \"$(cat \"$f\")\" = openbaopkihost ] && "
-            "basename \"$(dirname \"$f\")\"; done"]).splitlines()
+            "basename \"$(dirname \"$f\")\"; done; true"]).splitlines()
         m.require(len(processes) == 1 and processes[0].isdigit(),
                   'expected one OpenBao TLS identity owner process')
         intent = {'pod_uid': pod['metadata']['uid'],
