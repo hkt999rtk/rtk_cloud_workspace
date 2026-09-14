@@ -1127,26 +1127,33 @@ class OpenBaoHostRun(h.ServiceRun):
                   and (not server_only or issuer['issuer_version'] == 2),
                   'OpenBao TLS intermediate identity or policy changed')
         if server_only:
-            predecessor = m.read(source / 'intermediate-v1.json')
+            predecessor_path = source / 'intermediate-predecessor.json'
+            if not predecessor_path.exists():
+                predecessor_path = source / 'intermediate-v1.json'
+            predecessor = m.read(predecessor_path)
+            legacy = predecessor_path.name == 'intermediate-v1.json'
             current = self.api('/issuers/' + predecessor['issuer_id'])
             expected_status = 'retiring' if status == 'active' else 'active'
             m.require(all(current.get(key) == predecessor.get(key)
                           for key in immutable)
                       and current['status'] == expected_status
-                      and predecessor['issuer_version'] == 1
-                      and predecessor['service_client_ids'] ==
-                      ['service:openbao']
+                      and predecessor['issuer_version'] == issuer['issuer_version'] - 1
+                      and predecessor.get('service_client_ids', []) ==
+                      (['service:openbao'] if legacy else [])
                       and predecessor['server_dns_names'] ==
                       OPENBAO_HOST_NAMES,
-                      'OpenBao TLS v1 predecessor changed')
+                      'OpenBao TLS server predecessor changed')
         operation = m.read(source / 'intermediate-operation.json')
         return root, issuer, operation
 
     def intermediate_bundle_issuers(self, root, issuer):
         items = [root]
         if getattr(self.args, 'server_only', False):
-            items.append(m.read(Path(self.args.intermediate) /
-                                'intermediate-v1.json'))
+            source = Path(self.args.intermediate)
+            path = source / 'intermediate-predecessor.json'
+            if not path.exists():
+                path = source / 'intermediate-v1.json'
+            items.append(m.read(path))
         items.append(issuer)
         return items
 
