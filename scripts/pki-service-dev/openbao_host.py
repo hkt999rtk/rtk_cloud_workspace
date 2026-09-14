@@ -2239,10 +2239,14 @@ class OpenBaoHostRun(h.ServiceRun):
         root, predecessor, issuer, _, _ = self.lifecycle_prerequisites()
         source = Path(self.args.retirement)
         report = m.read(source / 'report.json')
-        m.require(report['status'] == 'failed'
-                  and report['phase'] == 'retire-host'
-                  and report['failure'] == 'consumer receipt deadline',
-                  'failed OpenBao predecessor receipt evidence required')
+        retired = report.get('checks', {}).get(
+            'openbao_predecessor_leaf_revocation_published', {})
+        m.require(report.get('phase') == 'retire-host' and (
+            (report.get('status') == 'failed' and
+             report.get('failure') == 'consumer receipt deadline') or
+            (report.get('status') == 'passed' and
+             retired.get('status') == 'passed')),
+            'OpenBao predecessor retirement evidence required')
         target = m.read(source / 'target.json')
         published = m.read(source / 'published-crl.json')
         rows = [row for row in self.server_rows()
