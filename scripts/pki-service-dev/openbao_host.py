@@ -1928,14 +1928,18 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(before['row']['issuer_id'] == predecessor['issuer_id'],
                   'OpenBao predecessor is not the installed predecessor leaf')
         self.save('baseline.json', before)
-        processes = self.kube([
+        scan = m.subprocess.run(self.k + [
             '-n', SECRETS_NS, 'exec', '-c', 'openbao-pki',
             'pod/openbao-0', '--', 'sh', '-ec',
             "for f in /proc/[0-9]*/comm; do "
             "if [ \"$(cat \"$f\")\" = openbaopkihost ]; then "
-            "basename \"$(dirname \"$f\")\"; fi; done"]).splitlines()
+            "basename \"$(dirname \"$f\")\"; fi; done"],
+            capture_output=True, text=True, timeout=90)
+        processes = scan.stdout.splitlines()
         self.save('owner-scan.json', {'pod_uid': pod['metadata']['uid'],
+                                      'returncode': scan.returncode,
                                       'pids': processes})
+        m.require(scan.returncode == 0, 'OpenBao owner scan failed')
         m.require(len(processes) == 1 and processes[0].isdigit(),
                   'expected one OpenBao TLS identity owner process')
         intent = {'pod_uid': pod['metadata']['uid'],
