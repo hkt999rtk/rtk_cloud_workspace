@@ -2362,12 +2362,18 @@ class OpenBaoHostRun(h.ServiceRun):
                 self.session_command(process, 'check', 'alive')
         self.save('provider-operation-step.json', {'step': 'before-owner-scan',
                   'held_sessions': bool(held)})
-        processes = self.kube([
-            '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
-            '-c', 'openbao-pki', '--', 'sh', '-ec',
+        scan = m.subprocess.run(self.k + [
+            '-n', SECRETS_NS, 'exec', '-c', 'openbao-pki',
+            'pod/openbao-0', '--', 'sh', '-ec',
             "for f in /proc/[0-9]*/comm; do "
-            "[ \"$(cat \"$f\")\" = openbaopkihost ] && "
-            "basename \"$(dirname \"$f\")\"; done"]).splitlines()
+            "if [ \"$(cat \"$f\")\" = openbaopkihost ]; then "
+            "basename \"$(dirname \"$f\")\"; fi; done"],
+            capture_output=True, text=True, timeout=90)
+        processes = scan.stdout.splitlines()
+        self.save('owner-scan.json', {'pod_uid': pod['metadata']['uid'],
+                                      'returncode': scan.returncode,
+                                      'pids': processes})
+        m.require(scan.returncode == 0, 'OpenBao owner scan failed')
         m.require(len(processes) == 1 and processes[0].isdigit(),
                   'expected one OpenBao TLS identity owner process')
         self.save('renewal-intent.json', {
@@ -2375,8 +2381,8 @@ class OpenBaoHostRun(h.ServiceRun):
             'previous_fingerprint': before['state']['fingerprint'],
             'target_issuer_id': issuer['issuer_id'],
             'at': m.stamp(dt.datetime.now(dt.timezone.utc))})
-        self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
-                   '-c', 'openbao-pki', '--', 'kill', '-HUP', processes[0]])
+        self.kube(['-n', SECRETS_NS, 'exec', '-c', 'openbao-pki',
+                   'pod/openbao-0', '--', 'kill', '-HUP', processes[0]])
         deadline = time.monotonic() + 180
         while True:
             try:
