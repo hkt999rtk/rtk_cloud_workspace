@@ -1813,6 +1813,63 @@ class OpenBaoHostRun(h.ServiceRun):
             'served_successor': True,
             'retained_restart': True})
 
+    def recover_host(self):
+        """Complete one retained host claim after its signer policy is repaired."""
+        _, predecessor, issuer, _, pod = self.lifecycle_prerequisites()
+        source = Path(self.args.recovery)
+        report = m.read(source / 'report.json')
+        intent = m.read(source / 'renewal-intent.json')
+        baseline = m.read(source / 'baseline.json')
+        m.require(report.get('status') == 'failed'
+                  and report.get('phase') == 'renew-host'
+                  and report.get('failure') ==
+                  'OpenBao host renewal deadline; do not signal again'
+                  and intent.get('target_issuer_id') == issuer['issuer_id']
+                  and baseline['row']['issuer_id'] == predecessor['issuer_id'],
+                  'exact failed OpenBao host renewal evidence required')
+        pending = [row for row in self.server_rows()
+                   if row['issuer_id'] == issuer['issuer_id']
+                   and row['caller'] == 'service:openbao'
+                   and row['status'] == 'issuing'
+                   and row['revoked_at'] is None]
+        m.require(len(pending) == 1,
+                  'exactly one OpenBao successor host claim required')
+        claim = pending[0]
+        recovered = self.api('/issuers/' + issuer['issuer_id'] +
+                             '/reconcile-server', {
+                                 'caller': 'service:openbao',
+                                 'request_id': claim['request_id']},
+                             role='approver')
+        m.require(recovered.get('issuer_id') == issuer['issuer_id']
+                  and recovered.get('request_id') == claim['request_id']
+                  and recovered.get('certificate_pem')
+                  and recovered.get('fingerprint'),
+                  'OpenBao successor host recovery changed')
+        deadline = time.monotonic() + 150
+        while True:
+            state = self.inspect_host_state(pod)
+            if not state['pending'] and state['fingerprint'] == recovered['fingerprint']:
+                break
+            m.require(time.monotonic() < deadline,
+                      'OpenBao recovered host installation deadline')
+            time.sleep(2)
+        current = self.current_host({issuer['issuer_id']}, pod)
+        m.require(current['state']['public_key_sha256'] !=
+                  baseline['state']['public_key_sha256'],
+                  'OpenBao recovered host reused the predecessor key')
+        self.save('baseline.json', baseline)
+        self.save('renewed.json', current)
+        self.save('recovered-claim.json', claim)
+        self.save('recovered.json', recovered)
+        self.check('openbao_host_recovered_on_server_only_successor', {
+            'request_id': claim['request_id'],
+            'predecessor_fingerprint': baseline['state']['fingerprint'],
+            'successor_fingerprint': current['state']['fingerprint'],
+            'successor_issuer_id': issuer['issuer_id'],
+            'original_csr_and_request_retained': True,
+            'new_owner_key': True, 'private_key_exported': False,
+            'served_successor': True})
+
     def retire_host_predecessor(self):
         _, predecessor, issuer, _, pod = self.lifecycle_prerequisites()
         renewal = Path(self.args.renewal)
@@ -1820,9 +1877,11 @@ class OpenBaoHostRun(h.ServiceRun):
         renewal_check = report.get('checks', {}).get(
             'openbao_host_renewed_on_server_only_successor',
             report.get('checks', {}).get(
-                'openbao_host_renewed_on_server_only_v2'))
+                'openbao_host_recovered_on_server_only_successor',
+                report.get('checks', {}).get(
+                    'openbao_host_renewed_on_server_only_v2')))
         m.require(report['status'] == 'passed'
-                  and report['phase'] == 'renew-host'
+                  and report['phase'] in ('renew-host', 'recover-host')
                   and renewal_check and renewal_check['status'] == 'passed',
                   'successful OpenBao successor renewal evidence required')
         baseline = m.read(renewal / 'baseline.json')
@@ -2770,7 +2829,7 @@ def main():
         'install-root-consumers', 'finish-root-consumers', 'activate-root',
         'install-intermediate-consumers', 'activate-intermediate',
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
-        'renew-host', 'retire-host', 'enable-provider-verification',
+        'renew-host', 'recover-host', 'retire-host', 'enable-provider-verification',
         'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
         'verify-provider-recovery', 'install-provider-root-policy',
         'install-provider-root-overlap', 'install-provider-successor-bundles'])
@@ -2825,6 +2884,10 @@ def main():
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer),
               'server-only issuer, adoption and signer evidence required')
+    m.require(args.phase != 'recover-host'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer and args.recovery),
+              'server-only issuer, signer and failed renewal evidence required')
     m.require(args.phase != 'retire-host'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.renewal),
@@ -2877,6 +2940,7 @@ def main():
          'bootstrap-host': runner.bootstrap_host,
          'adopt-host': runner.adopt_host,
          'renew-host': runner.renew_host,
+         'recover-host': runner.recover_host,
          'retire-host': runner.retire_host_predecessor,
          'enable-provider-verification':
              runner.enable_provider_verification,
