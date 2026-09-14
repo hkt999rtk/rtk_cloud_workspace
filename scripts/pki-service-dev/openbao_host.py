@@ -465,20 +465,34 @@ class OpenBaoHostRun(h.ServiceRun):
                   'canonical dev context mismatch')
         m.require(self.obj('namespace', NS)['metadata']['name'] == NS,
                   'wrong provider consumer namespace')
+        recovery = (self.args.phase == 'install-intermediate-consumers'
+                    and self.args.server_only and self.args.failed)
+        if recovery:
+            failed = m.read(Path(self.args.failed) / 'report.json')
+            m.require(failed.get('status') == 'failed'
+                      and failed.get('phase') == 'install-intermediate-consumers'
+                      and failed.get('failure') == 'consumer receipt deadline',
+                      'failed OpenBao intermediate receipt evidence required')
         workloads = {}
         for name in CONSUMERS:
             owner = self.obj('deployment', name)
             m.require(owner['spec'].get('replicas') == 1
-                      and owner.get('status', {}).get('readyReplicas') == 1
-                      and owner.get('status', {}).get('updatedReplicas') == 1
                       and owner.get('status', {}).get('observedGeneration') ==
-                      owner['metadata'].get('generation'),
+                      owner['metadata'].get('generation')
+                      and (recovery or (
+                          owner.get('status', {}).get('readyReplicas') == 1
+                          and owner.get('status', {}).get('updatedReplicas') == 1)),
                       'provider consumer is not ready: ' + name)
             containers = owner['spec']['template']['spec'].get('containers', [])
             m.require(len(containers) == 1 and containers[0]['name'] == name
                       and '@sha256:' in containers[0].get('image', ''),
                       'provider consumer image ownership changed: ' + name)
             workloads[name] = containers[0]['image']
+        if recovery:
+            self.report['recovery'] = {
+                'reconciled_from': str(Path(self.args.failed)),
+                'reason': 'consumer receipt deadline'}
+            return workloads
         self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
         self.accounts = m.read(self.foundation / 'accounts.json')
         self.api('/issuers/search', {'limit': 1}, role='requester')

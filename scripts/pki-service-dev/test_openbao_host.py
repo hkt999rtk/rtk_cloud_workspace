@@ -544,6 +544,21 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['volumes'][0]
                          ['configMap']['name'], 'root-only')
 
+    def test_provider_recovery_requires_the_exact_receipt_failure(self):
+        runner = object.__new__(o.OpenBaoHostRun)
+        runner.args = type('Args', (), {
+            'phase': 'install-intermediate-consumers', 'server_only': True,
+            'failed': '/private/failed'})()
+        runner.context = 'dev-context'
+        runner.kube = Mock(return_value='dev-context')
+        runner.obj = Mock(return_value={'metadata': {'name': o.NS}})
+        with patch.object(o.m, 'read', return_value={
+                'status': 'failed', 'phase': 'install-intermediate-consumers',
+                'failure': 'wrong failure'}):
+            with self.assertRaisesRegex(RuntimeError,
+                                        'failed OpenBao intermediate receipt'):
+                runner.provider_root_policy_preflight()
+
 
 if __name__ == '__main__':
     unittest.main()
