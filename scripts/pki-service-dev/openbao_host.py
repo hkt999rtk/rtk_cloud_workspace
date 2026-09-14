@@ -616,7 +616,7 @@ class OpenBaoHostRun(h.ServiceRun):
                     'package_source_sha256': m.digest((m.WORKSPACE / ('repos/rtk_video_cloud/internal/' + package_dir +
                         '/provider_dev_session_test.go')).read_bytes())})
             path = '/var/lib/pki-host/identity/.t11-openbao-' + uuid.uuid4().hex
-            self.kube(['-n', NS, 'exec', '-i', 'deployment/' + owner, '--', 'sh', '-ec',
+            self.kube(['-n', NS, 'exec', '-i', '-c', owner, 'deployment/' + owner, '--', 'sh', '-ec',
                        'umask 077; base64 -d > ' + path + ' && chmod 700 ' + path],
                       base64.b64encode(binary.read_bytes()).decode())
             self.held_probe_paths[owner] = path
@@ -633,7 +633,7 @@ class OpenBaoHostRun(h.ServiceRun):
                    'PKI_DEV_HELD_SESSION=dev-openbao '
                    'PKI_DEV_EXPECTED_SERVER_SHA256="$2" "$3" '
                    '-test.run=^TestDevOpenBaoProviderHeldSession$')
-        process = m.Process(self.k + ['-n', NS, 'exec', '-i', 'deployment/' + owner, '--',
+        process = m.Process(self.k + ['-n', NS, 'exec', '-i', '-c', owner, 'deployment/' + owner, '--',
             'sh', '-ec', command, 'sh', state_path, fingerprint, self.held_probe_paths[owner]],
             keep_stdin=True)
         self.children.append(process)
