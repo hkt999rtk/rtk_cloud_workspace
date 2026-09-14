@@ -1934,6 +1934,8 @@ class OpenBaoHostRun(h.ServiceRun):
             "for f in /proc/[0-9]*/comm; do "
             "if [ \"$(cat \"$f\")\" = openbaopkihost ]; then "
             "basename \"$(dirname \"$f\")\"; fi; done"]).splitlines()
+        self.save('owner-scan.json', {'pod_uid': pod['metadata']['uid'],
+                                      'pids': processes})
         m.require(len(processes) == 1 and processes[0].isdigit(),
                   'expected one OpenBao TLS identity owner process')
         intent = {'pod_uid': pod['metadata']['uid'],
