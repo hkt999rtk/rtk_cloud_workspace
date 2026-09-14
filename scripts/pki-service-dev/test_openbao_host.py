@@ -601,6 +601,22 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(runner.provider_transport_roots(),
                          o.canonical_roots_pem(roots))
 
+    def test_server_only_signer_advances_the_certissuer_root_lineage(self):
+        root = {'certificate_fingerprint_sha256': 'b' * 64}
+        owner = {'spec': {'template': {'metadata': {}, 'spec': {'containers': [{
+            'name': 'certissuer', 'env': [{
+                'name': 'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256',
+                'value': 'a' * 64}]}]}}}}
+        result = o.certissuer_server_root_template(owner, root, 'v3-rollout')
+        env = {item['name']: item.get('value')
+               for item in result['spec']['containers'][0]['env']}
+        self.assertEqual(env['CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256'],
+                         'b' * 64)
+        self.assertEqual(result['metadata']['annotations'][
+            'rtk.cloud/openbao-server-issuer-root'], 'v3-rollout')
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0][
+            'env'][0]['value'], 'a' * 64)
+
 
 if __name__ == '__main__':
     unittest.main()

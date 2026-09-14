@@ -433,6 +433,25 @@ def provider_successor_bundle_template(owner, successor, ca_configmap,
     return template
 
 
+def certissuer_server_root_template(owner, root, run_name):
+    """Advance the named OpenBao server issuer to its active Root lineage."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec'].get('containers', [])
+    m.require(len(containers) == 1 and containers[0]['name'] == 'certissuer',
+              'CertIssuer OpenBao server issuer topology changed')
+    container = containers[0]
+    env = {item['name']: item.get('value') for item in container.get('env', [])}
+    previous = env.get('CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256', '')
+    m.require(re.fullmatch(r'[0-9a-f]{64}', previous),
+              'CertIssuer OpenBao server issuer Root policy is absent')
+    container['env'] = h.with_env(container.get('env', []), {
+        'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
+            root['certificate_fingerprint_sha256']})
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-server-issuer-root'] = run_name
+    return template
+
+
 class OpenBaoHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -1312,8 +1331,15 @@ class OpenBaoHostRun(h.ServiceRun):
             'pki-openbao-tls-server-dev-' + issuer['issuer_id'],
             policies['signer_policy'])
         if getattr(self.args, 'server_only', False):
+            owner = self.obj('deployment', 'certissuer')
+            template = certissuer_server_root_template(
+                owner, root, self.output.name)
+            self.scoped_patch('certissuer', owner, template)
+            self.kube(['-n', NS, 'rollout', 'status',
+                       'deployment/certissuer', '--timeout=300s'], timeout=310)
             self.check('openbao_tls_server_only_signer_enabled', {
                 'issuer_id': issuer['issuer_id'],
+                'root_sha256': root['certificate_fingerprint_sha256'],
                 'server_dns_names': issuer['server_dns_names'],
                 'service_client_ids': issuer.get('service_client_ids', []),
                 'existing_route_preserved': True})
