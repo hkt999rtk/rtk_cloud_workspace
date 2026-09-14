@@ -1974,10 +1974,10 @@ class OpenBaoHostRun(h.ServiceRun):
                                  'request_id': claim['request_id'],
                                  'serial_number': matches[0]},
                              role='approver')
-        m.require(recovered.get('issuer_id') == issuer['issuer_id']
-                  and recovered.get('request_id') == claim['request_id']
+        m.require(recovered.get('issuer', {}).get('issuer_id') == issuer['issuer_id']
                   and recovered.get('certificate_pem')
-                  and recovered.get('fingerprint'),
+                  and recovered.get('certificate_chain_pem')
+                  and recovered.get('issued_at'),
                   'OpenBao successor host recovery changed')
         deadline = time.monotonic() + 150
         while True:
