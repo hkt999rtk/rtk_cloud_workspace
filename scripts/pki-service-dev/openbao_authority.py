@@ -54,7 +54,7 @@ def select_server_predecessor(items, root, transition_id=None):
     predecessor = live[0]
     m.require(predecessor['issuer_version'] >= 2
               and predecessor['parent_issuer_id'] != root['issuer_id']
-              and predecessor['service_client_ids'] == []
+              and predecessor.get('service_client_ids', []) == []
               and predecessor['server_dns_names'] == OPENBAO_DNS_NAMES,
               'active OpenBao TLS server predecessor differs')
     unfinished = [item for item in items
