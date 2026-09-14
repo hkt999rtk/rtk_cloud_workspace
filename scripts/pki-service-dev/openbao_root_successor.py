@@ -163,6 +163,46 @@ class OpenBaoRootSuccessor(s.ServiceRun):
             'successor_root_id': successor['issuer_id'],
             'reconciled_from': str(source)})
 
+    def activate(self):
+        source = Path(self.args.source)
+        prior = m.read(source / 'report.json')
+        bundles = m.read(Path(self.args.bundles) / 'report.json')
+        m.require(prior.get('status') == 'passed'
+                  and prior.get('phase') == 'prepare-openbao-tls-root-successor'
+                  and bundles.get('status') == 'passed'
+                  and bundles.get('checks', {}).get(
+                      'openbao_successor_bundle_receipts_installed', {}).get(
+                      'status') == 'passed',
+                  'passed successor preparation and bundle receipts required')
+        predecessor = m.read(source / 'predecessor-root.json')
+        operation = m.read(source / 'root-operation.json')
+        successor = m.read(source / 'root-ready.json')
+        evidence = bundles['checks']['openbao_successor_bundle_receipts_installed']['evidence']
+        m.require(evidence.get('predecessor_root_id') == predecessor['issuer_id']
+                  and evidence.get('successor_root_id') == successor['issuer_id']
+                  and set(evidence.get('receipts', [])) == set(CONSUMERS),
+                  'successor bundle receipt lineage changed')
+        valid_root(self.api('/issuers/' + predecessor['issuer_id']), 'active')
+        current = self.api('/issuers/' + successor['issuer_id'])
+        valid_root(current, 'ready')
+        m.require(current['certificate_fingerprint_sha256'] ==
+                  successor['certificate_fingerprint_sha256'],
+                  'successor Root certificate changed')
+        self.api('/operations/' + operation['operation_id'] + '/activate', {},
+                 204, role='approver')
+        activated = self.api('/issuers/' + successor['issuer_id'])
+        retiring = self.api('/issuers/' + predecessor['issuer_id'])
+        valid_root(activated, 'active')
+        valid_root(retiring, 'retiring')
+        self.save('predecessor-root.json', retiring)
+        self.save('root-active.json', activated)
+        self.check('openbao_tls_successor_activated', {
+            'predecessor_root_id': predecessor['issuer_id'],
+            'successor_root_id': successor['issuer_id'],
+            'bundle_receipts': evidence['receipts'],
+            'old_root_status': 'retiring', 'withdrawal': 'not_attempted',
+            'staging_touched': False})
+
 
 def main():
     os.umask(0o077)
@@ -170,16 +210,25 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
+    parser.add_argument('--phase', choices=('prepare', 'activate'), default='prepare')
+    parser.add_argument('--source')
+    parser.add_argument('--bundles')
     parser.add_argument('--reconcile')
     args = parser.parse_args()
-    args.phase = 'prepare-openbao-tls-root-successor'
+    args.phase = 'prepare-openbao-tls-root-successor' if args.phase == 'prepare' else 'activate-openbao-tls-root-successor'
+    m.require(args.phase != 'activate-openbao-tls-root-successor' or
+              (args.source and args.bundles),
+              'successor preparation and bundle receipt evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/openbao-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = OpenBaoRootSuccessor(args)
     try:
         runner.preflight_successor()
-        runner.reconcile(args.reconcile) if args.reconcile else runner.prepare()
+        if args.phase == 'activate-openbao-tls-root-successor':
+            runner.activate()
+        else:
+            runner.reconcile(args.reconcile) if args.reconcile else runner.prepare()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'], runner.report['failure'] = 'failed', str(error)
