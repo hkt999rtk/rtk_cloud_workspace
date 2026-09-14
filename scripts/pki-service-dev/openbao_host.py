@@ -353,10 +353,38 @@ class OpenBaoHostRun(h.ServiceRun):
             super().close()
         finally:
             for owner, path in self.held_probe_paths.items():
-                self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--', 'rm', '-f', path])
+                self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--',
+                           'rm', '-f', path])
             for owner, path in self.held_state_paths:
-                self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--', 'rm', '-f',
-                           path, path + '.lock', path + '.owner'])
+                self.kube(['-n', NS, 'exec', 'deployment/' + owner, '--',
+                           'rm', '-f', path, path + '.lock',
+                           path + '.owner'])
+
+    def provider_root_policy_preflight(self):
+        """Check only the Dev resources this transport-policy phase owns."""
+        m.require(self.kube(['config', 'current-context']).strip() == self.context,
+                  'canonical dev context mismatch')
+        m.require(self.obj('namespace', NS)['metadata']['name'] == NS,
+                  'wrong provider consumer namespace')
+        workloads = {}
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            m.require(owner['spec'].get('replicas') == 1
+                      and owner.get('status', {}).get('readyReplicas') == 1
+                      and owner.get('status', {}).get('updatedReplicas') == 1
+                      and owner.get('status', {}).get('observedGeneration') ==
+                      owner['metadata'].get('generation'),
+                      'provider consumer is not ready: ' + name)
+            containers = owner['spec']['template']['spec'].get('containers', [])
+            m.require(len(containers) == 1 and containers[0]['name'] == name
+                      and '@sha256:' in containers[0].get('image', ''),
+                      'provider consumer image ownership changed: ' + name)
+            workloads[name] = containers[0]['image']
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        self.api('/issuers/search', {'limit': 1}, role='requester')
+        self.check('openbao_transport_root_policy_preflight', {
+            'consumers': workloads, 'staging_touched': False})
 
     def provider_session(self, owner, fingerprint):
         """Hold one socket through the provider's production transport."""
@@ -2458,6 +2486,8 @@ def main():
     try:
         if args.phase == 'finish-root-consumers':
             runner.recovery_preflight()
+        elif args.phase == 'install-provider-root-policy':
+            runner.provider_root_policy_preflight()
         else:
             runner.preflight()
         {'install-root-consumers': runner.install_root_consumers,
