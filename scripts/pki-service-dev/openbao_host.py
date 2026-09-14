@@ -1163,14 +1163,17 @@ class OpenBaoHostRun(h.ServiceRun):
         operation = m.read(source / 'intermediate-operation.json')
         return root, issuer, operation
 
+    def intermediate_predecessor(self):
+        source = Path(self.args.intermediate)
+        path = source / 'intermediate-predecessor.json'
+        if not path.exists():
+            path = source / 'intermediate-v1.json'
+        return m.read(path), path
+
     def intermediate_bundle_issuers(self, root, issuer):
         items = [root]
         if getattr(self.args, 'server_only', False):
-            source = Path(self.args.intermediate)
-            path = source / 'intermediate-predecessor.json'
-            if not path.exists():
-                path = source / 'intermediate-v1.json'
-            predecessor = m.read(path)
+            predecessor, _ = self.intermediate_predecessor()
             if predecessor['parent_issuer_id'] != root['issuer_id']:
                 parent = self.api('/issuers/' + predecessor['parent_issuer_id'])
                 m.require(parent.get('environment') == 'dev'
@@ -1258,16 +1261,16 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(issuer['status'] == 'active',
                   'OpenBao TLS intermediate did not activate')
         if getattr(self.args, 'server_only', False):
-            predecessor = m.read(Path(self.args.intermediate) /
-                                 'intermediate-v1.json')
+            predecessor, _ = self.intermediate_predecessor()
             old = self.api('/issuers/' + predecessor['issuer_id'])
             m.require(old['status'] == 'retiring'
                       and old['certificate_fingerprint_sha256'] ==
                       predecessor['certificate_fingerprint_sha256']
                       and old['trust_bundle_version'] ==
                       predecessor['trust_bundle_version'],
-                      'OpenBao TLS v1 did not enter retiring state')
-            self.save('openbao-tls-intermediate-v1-retiring.json', old)
+                      'OpenBao TLS predecessor did not enter retiring state')
+            self.save('openbao-tls-intermediate-' +
+                      str(predecessor['issuer_version']) + '-retiring.json', old)
         self.save('openbao-tls-intermediate-active.json', issuer)
         provider = json.loads(self.bao([
             'read', '-format=json', issuer['signer_reference'] + '/cert/crl']))
