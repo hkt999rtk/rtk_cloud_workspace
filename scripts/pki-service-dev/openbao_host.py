@@ -466,6 +466,26 @@ def provider_successor_bundle_template(owner, successor, ca_configmap,
     return template
 
 
+def provider_transition_crl_template(owner, manifest_name, image, run_name):
+    """Install the complete Root-transition CRL lineage before host renewal."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec'].get('containers', [])
+    m.require(len(containers) == 1
+              and containers[0]['name'] == owner['metadata']['name']
+              and IMAGE_PATTERN.fullmatch(image or ''),
+              'provider transition CRL owner or image changed')
+    volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
+    crls = volumes.get('openbao-server-crls', {}).get('configMap', {})
+    m.require(crls.get('name', '').startswith('pki-openbao-tls-crls-')
+              and crls.get('defaultMode') in (None, 292),
+              'provider predecessor CRL source changed')
+    crls['name'] = manifest_name
+    containers[0]['image'] = image
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-transition-crls'] = run_name
+    return template
+
+
 def certissuer_server_root_template(owner, root, verify_root, image, run_name):
     """Advance the named OpenBao server issuer to its active Root lineage."""
     template = json.loads(json.dumps(owner['spec']['template']))
@@ -1049,6 +1069,50 @@ class OpenBaoHostRun(h.ServiceRun):
             'ca_configmap': ca_name, 'bundle_configmap': manifest_name,
             'receipts': receipts, 'activation': 'not_attempted',
             'withdrawal': 'not_attempted', 'staging_touched': False})
+
+    def install_provider_transition_crls(self):
+        """Give provider clients CRL evidence for both Root lineages.
+
+        The successor leaf is not usable by a dynamic transport until its
+        issuer and Root CRLs are installed alongside the retiring lineage.
+        """
+        root, predecessor, issuer, _, _ = self.lifecycle_prerequisites()
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        authorities = self.intermediate_bundle_issuers(root, issuer)
+        m.require({item['issuer_id'] for item in authorities} == {
+            root['issuer_id'], predecessor['issuer_id'], issuer['issuer_id'],
+            predecessor['parent_issuer_id']},
+            'OpenBao transition CRL lineage changed')
+        name = 'pki-openbao-tls-crls-transition-' + issuer['issuer_id'][:8]
+        expected = {'crls.json': json.dumps(provider_crl_manifest(authorities))}
+        raw = self.kube(['-n', NS, 'get', 'configmap', name,
+                         '--ignore-not-found', '-o', 'json'])
+        if raw.strip():
+            current = json.loads(raw)
+            m.require(current.get('immutable') is True
+                      and current.get('data') == expected,
+                      'OpenBao transition CRL ConfigMap changed')
+        else:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                         'metadata': {'name': name, 'namespace': NS},
+                         'immutable': True, 'data': expected})
+        for consumer in CONSUMERS:
+            owner = self.obj('deployment', consumer)
+            template = provider_transition_crl_template(
+                owner, name, self.args.image, self.output.name)
+            self.scoped_patch(consumer, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status',
+                       'deployment/' + consumer, '--timeout=300s'], timeout=310)
+        receipts = {}
+        for authority in authorities:
+            crl = self.api('/issuers/' + authority['issuer_id'] + '/crl')
+            receipts[authority['issuer_id']] = self.wait_receipts(
+                authority['issuer_id'], crl['crl_sha256'], CONSUMERS, kind='crl')
+        self.check('openbao_transition_crl_lineage_installed', {
+            'configmap': name,
+            'issuers': [authority['issuer_id'] for authority in authorities],
+            'receipts': receipts, 'staging_touched': False})
 
     def require_activation_blocked(self, operation):
         # The operation requester owns activation. Approval accounts only supply
@@ -3005,7 +3069,8 @@ def main():
         'renew-host', 'recover-host', 'retire-host', 'enable-provider-verification',
         'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
         'verify-provider-recovery', 'install-provider-root-policy',
-        'install-provider-root-overlap', 'install-provider-successor-bundles'])
+        'install-provider-root-overlap', 'install-provider-successor-bundles',
+        'install-provider-transition-crls'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -3087,6 +3152,10 @@ def main():
     m.require(args.phase != 'install-provider-successor-bundles'
               or (args.successor and args.root_overlap and args.image),
               'successor, Root-overlap evidence and image required')
+    m.require(args.phase != 'install-provider-transition-crls'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer and args.image),
+              'server-only issuer, adoption, signer and image required')
     m.require(args.phase != 'exercise-provider-outage'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_operations),
@@ -3133,7 +3202,9 @@ def main():
          'install-provider-root-overlap':
              runner.install_provider_root_overlap,
          'install-provider-successor-bundles':
-             runner.install_provider_successor_bundles}[args.phase]()
+             runner.install_provider_successor_bundles,
+         'install-provider-transition-crls':
+             runner.install_provider_transition_crls}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

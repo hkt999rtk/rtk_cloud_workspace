@@ -17,6 +17,23 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_transition_crl_template_replaces_only_crl_manifest(self):
+        image = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' + 'a' * 64
+        owner = {'metadata': {'name': 'pki-controller'}, 'spec': {'template': {
+            'metadata': {}, 'spec': {'containers': [{'name': 'pki-controller',
+            'image': 'old', 'env': [{'name': 'KEEP', 'value': 'value'}]}],
+            'volumes': [{'name': 'openbao-server-crls', 'configMap': {
+                'name': 'pki-openbao-tls-crls-identity-old', 'defaultMode': 292}}]}}}}
+        result = o.provider_transition_crl_template(
+            owner, 'pki-openbao-tls-crls-transition-new', image, 'run')
+        container = result['spec']['containers'][0]
+        self.assertEqual(container['image'], image)
+        self.assertEqual(container['env'], [{'name': 'KEEP', 'value': 'value'}])
+        self.assertEqual(result['spec']['volumes'][0]['configMap']['name'],
+                         'pki-openbao-tls-crls-transition-new')
+        self.assertEqual(result['metadata']['annotations'][
+            'rtk.cloud/openbao-transition-crls'], 'run')
+
     def test_retirement_resumes_after_registry_revocation(self):
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)

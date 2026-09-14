@@ -463,7 +463,10 @@ policy. This does not change the Device/App identity authority or public-CA cont
    owners, with independent state, approved trust and exact-origin restrictions.
 2. Install approved successor TLS trust before withdrawing the old transport root;
    preserve authenticated provider access during the controlled transition.
-3. Integrate pool replacement, active-connection eviction and exact receipts without
+3. Install one immutable transition CRL manifest containing both Root lineages and
+   every serving intermediate before a successor OpenBao host leaf is used. Wait
+   for CRL receipts from both provider clients before provider operations.
+4. Integrate pool replacement, active-connection eviction and exact receipts without
    changing provider login tokens, seal material or recovery-command trust.
 
 **Test steps**
@@ -471,7 +474,10 @@ policy. This does not change the Device/App identity authority or public-CA cont
 1. Run common root-policy tests and wrong-origin/redirect tests before provider login.
 2. Hold a provider connection across withdrawal; verify closure and old-root denial,
    then authenticate and perform a permitted operation through the successor.
-3. Exercise persistence failure, lost receipt and restart; prove no rollback and
+3. Verify a successor leaf is denied while its issuer is absent from the installed
+   CRL manifest, then accepted only after the immutable transition manifest and
+   its consumer receipts are installed.
+4. Exercise persistence failure, lost receipt and restart; prove no rollback and
    safe reconciliation of an interrupted signing request without duplicate issuance.
 
 **Done when:** actual provider clients enforce reviewed transport-root changes
