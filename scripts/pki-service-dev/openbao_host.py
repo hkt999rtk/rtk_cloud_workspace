@@ -342,7 +342,11 @@ def provider_verification_template(owner, root, manifest_name, image,
             'https://pki-controller.' + NS + '.svc:18446',
         'OPENBAO_MANAGEMENT_CA': '/run/pki-host-root/root.pem'}
     for key, value in settings.items():
-        m.require(env.get(key) in (None, '', value),
+        allowed = (None, '', value)
+        if key == 'OPENBAO_SERVER_PKI_ROOT_SHA256':
+            allowed = allowed + (env.get(key),) if re.fullmatch(
+                r'[0-9a-f]{64}', env.get(key, '')) else allowed
+        m.require(env.get(key) in allowed,
                   'OpenBao provider verification setting changed: ' + key)
     m.require(not env.get('OPENBAO_MANAGEMENT_CERT')
               and not env.get('OPENBAO_MANAGEMENT_KEY'),
