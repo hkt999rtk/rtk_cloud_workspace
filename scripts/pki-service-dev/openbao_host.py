@@ -315,15 +315,22 @@ def provider_verification_template(owner, root, manifest_name, image,
                   'persistentVolumeClaim', {}).get('claimName')
               and mounts.get('host-state', {}).get('mountPath') ==
               '/var/lib/pki-host'
-              and 'openbao-server-crls' not in volumes
-              and 'openbao-server-crls' not in mounts,
+              and (('openbao-server-crls' not in volumes and
+                    'openbao-server-crls' not in mounts) or
+                   (volumes.get('openbao-server-crls', {}).get(
+                       'configMap', {}).get('name', '').startswith(
+                           'pki-openbao-tls-crls-') and
+                    mounts.get('openbao-server-crls', {}).get('mountPath') ==
+                    '/run/openbao-server-crls')),
               'provider retained state or CRL manifest mount changed')
-    template['spec']['volumes'].append({
-        'name': 'openbao-server-crls',
-        'configMap': {'name': manifest_name}})
-    container.setdefault('volumeMounts', []).append({
-        'name': 'openbao-server-crls',
-        'mountPath': '/run/openbao-server-crls', 'readOnly': True})
+    if 'openbao-server-crls' in volumes:
+        volumes['openbao-server-crls']['configMap']['name'] = manifest_name
+    else:
+        template['spec']['volumes'].append({'name': 'openbao-server-crls',
+            'configMap': {'name': manifest_name}})
+        container.setdefault('volumeMounts', []).append({
+            'name': 'openbao-server-crls',
+            'mountPath': '/run/openbao-server-crls', 'readOnly': True})
     settings = {
         'OPENBAO_SERVER_PKI_ROOT_SHA256':
             root['certificate_fingerprint_sha256'],
