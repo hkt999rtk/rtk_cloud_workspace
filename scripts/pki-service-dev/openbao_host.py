@@ -1097,6 +1097,7 @@ class OpenBaoHostRun(h.ServiceRun):
             self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
                          'metadata': {'name': name, 'namespace': NS},
                          'immutable': True, 'data': expected})
+        self.prepare_transition_crl_states(authorities)
         for consumer in CONSUMERS:
             owner = self.obj('deployment', consumer)
             template = provider_transition_crl_template(
@@ -1113,6 +1114,38 @@ class OpenBaoHostRun(h.ServiceRun):
             'configmap': name,
             'issuers': [authority['issuer_id'] for authority in authorities],
             'receipts': receipts, 'staging_touched': False})
+
+    def prepare_transition_crl_states(self, authorities):
+        """Validate and persist transition CRLs before changing a manifest."""
+        installer = self.output / 'pkitrust-crl-install'
+        result = m.subprocess.run(
+            ['go', 'build', '-o', str(installer), './cmd/pkitrust'],
+            cwd=m.WORKSPACE / 'repos/rtk_video_cloud',
+            env=dict(os.environ, GOWORK='off'), capture_output=True, timeout=180)
+        m.require(result.returncode == 0, 'transition CRL installer build failed')
+        prepared = []
+        for authority in authorities:
+            issuer_id = authority['issuer_id']
+            issuer_path = self.output / ('transition-issuer-' + issuer_id + '.json')
+            crl_path = self.output / ('transition-crl-' + issuer_id + '.json')
+            state_path = self.output / ('transition-crl-' + issuer_id + '.state.json')
+            m.write(issuer_path, authority)
+            crl = self.api('/issuers/' + issuer_id + '/crl')
+            m.write(crl_path, crl)
+            m.command([installer, 'apply-crl', issuer_path, crl_path, state_path])
+            raw = state_path.read_bytes()
+            digest = hashlib.sha256(raw).hexdigest()
+            remote = '/var/lib/pki-host/identity/openbao-tls-crl-' + issuer_id + '.json'
+            payload = base64.b64encode(raw).decode()
+            for consumer in CONSUMERS:
+                command = ('umask 077; temp="$1.prepare"; base64 -d > "$temp"; '
+                           'if test -e "$1"; then test "$(sha256sum "$1" | cut -d " " -f1)" = "$2" && rm "$temp"; '
+                           'else mv "$temp" "$1"; fi')
+                self.kube(['-n', NS, 'exec', '-i', 'deployment/' + consumer,
+                           '--', 'sh', '-ec', command, 'sh', remote, digest], payload)
+            prepared.append({'issuer_id': issuer_id, 'crl_sha256': crl['crl_sha256'],
+                             'state_sha256': digest})
+        self.save('prepared-transition-crl-states.json', prepared)
 
     def require_activation_blocked(self, operation):
         # The operation requester owns activation. Approval accounts only supply
