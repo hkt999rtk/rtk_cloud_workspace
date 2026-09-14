@@ -523,19 +523,24 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(recovered['spec']['volumes'],
                          owner['spec']['template']['spec']['volumes'])
 
-    def test_intermediate_template_changes_only_manifest_and_annotation(self):
+    def test_intermediate_template_updates_pinned_image_manifest_and_annotation(self):
         owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
             'metadata': {}, 'spec': {'containers': [{
-                'name': 'certissuer', 'image': 'pinned'}], 'volumes': [{
+                'name': 'certissuer', 'image': 'old-image'}], 'volumes': [{
                     'name': 'openbao-server-bundles',
                     'configMap': {'name': 'root-only'}}]}}}}
         runner = object.__new__(o.OpenBaoHostRun)
+        image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
+                 'a' * 64)
         got = runner.intermediate_template(
-            owner, 'pinned', 'root-and-intermediate', 'run-1')
+            owner, image, 'root-and-intermediate', 'run-1')
         self.assertEqual(got['spec']['volumes'][0]['configMap']['name'],
                          'root-and-intermediate')
         self.assertEqual(got['metadata']['annotations'][
             'rtk.cloud/openbao-intermediate-staging'], 'run-1')
+        self.assertEqual(got['spec']['containers'][0]['image'], image)
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['image'], 'old-image')
         self.assertEqual(owner['spec']['template']['spec']['volumes'][0]
                          ['configMap']['name'], 'root-only')
 

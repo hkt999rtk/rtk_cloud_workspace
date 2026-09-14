@@ -1162,12 +1162,13 @@ class OpenBaoHostRun(h.ServiceRun):
         container = template['spec']['containers'][0]
         m.require(container['name'] == owner['metadata']['name'],
                   'provider container changed')
-        m.require(container['image'] == image,
-                  'verified provider image changed')
+        m.require(IMAGE_PATTERN.fullmatch(image or ''),
+                  'verified provider image digest required')
         volumes = {item['name']: item for item in template['spec']['volumes']}
         m.require('openbao-server-bundles' in volumes,
                   'OpenBao manifest mount missing')
         volumes['openbao-server-bundles']['configMap']['name'] = manifest_name
+        container['image'] = image
         template.setdefault('metadata', {}).setdefault('annotations', {})[
             'rtk.cloud/openbao-intermediate-staging'] = run_name
         return template
@@ -1196,8 +1197,8 @@ class OpenBaoHostRun(h.ServiceRun):
                       'OpenBao intermediate manifest changed')
         for consumer in reversed(CONSUMERS):
             owner = self.obj('deployment', consumer)
-            image = (owner['spec']['template']['spec']['containers'][0]
-                     ['image'] if server_only else self.args.image)
+            image = self.args.image or (owner['spec']['template']['spec']
+                                        ['containers'][0]['image'])
             m.require(IMAGE_PATTERN.fullmatch(image or ''),
                       'verified dev application image digest required')
             template = self.intermediate_template(
