@@ -42,21 +42,24 @@ class OpenBaoAuthorityTests(unittest.TestCase):
         self.assertEqual(request['service_client_ids'], [])
         self.assertEqual(request['server_dns_names'], o.OPENBAO_DNS_NAMES)
 
-    def test_server_only_successor_requires_exact_active_v1(self):
-        root = self.root(status='active', issuer_id='root-1')
-        v1 = dict(o.intermediate_request(root), issuer_id='v1',
-                  issuer_version=1, status='active')
-        self.assertEqual(o.select_v1_predecessor([v1], root), v1)
+    def test_server_only_successor_requires_active_server_predecessor(self):
+        root = self.root(status='active', issuer_id='root-2')
+        v2 = {'environment': 'dev', 'trust_domain': 'openbao_tls',
+              'kind': 'intermediate', 'parent_issuer_id': 'root-1',
+              'service_client_ids': [], 'server_dns_names': o.OPENBAO_DNS_NAMES,
+              'issuer_id': 'v2', 'issuer_version': 2, 'status': 'active'}
+        self.assertEqual(o.select_server_predecessor([v2], root), v2)
         for changed in (
-                dict(v1, status='retiring'),
-                dict(v1, issuer_version=2),
-                dict(v1, service_client_ids=[])):
+                dict(v2, status='retiring'),
+                dict(v2, issuer_version=1),
+                dict(v2, service_client_ids=o.OPENBAO_CLIENT_IDS),
+                dict(v2, parent_issuer_id='root-2')):
             with self.assertRaises(RuntimeError):
-                o.select_v1_predecessor([changed], root)
-        v2 = dict(o.intermediate_request(root, []), issuer_id='v2',
-                  issuer_version=2, status='ready')
-        with self.assertRaisesRegex(RuntimeError, 'successor already exists'):
-            o.select_v1_predecessor([v1, v2], root)
+                o.select_server_predecessor([changed], root)
+        v3 = dict(o.intermediate_request(root, []), issuer_id='v3',
+                  issuer_version=3, status='ready')
+        with self.assertRaisesRegex(RuntimeError, 'server successor already exists'):
+            o.select_server_predecessor([v2, v3], root)
 
     def test_intermediate_inventory_hydrates_search_summaries(self):
         runner = object.__new__(o.OpenBaoAuthorityRun)

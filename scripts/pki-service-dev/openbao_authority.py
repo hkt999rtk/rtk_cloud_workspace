@@ -44,20 +44,19 @@ def intermediate_request(root, service_client_ids=OPENBAO_CLIENT_IDS):
             'server_dns_names': list(OPENBAO_DNS_NAMES)}
 
 
-def select_v1_predecessor(items, root, transition_id=None):
+def select_server_predecessor(items, root, transition_id=None):
     live = [item for item in items
             if item['environment'] == 'dev'
             and item['trust_domain'] == DOMAIN
             and item['kind'] == 'intermediate'
-            and item['status'] in ('active', 'retiring')]
-    m.require(len(live) == 1, 'exact OpenBao TLS v1 predecessor required')
+            and item['status'] == 'active']
+    m.require(len(live) == 1, 'exact active OpenBao TLS server predecessor required')
     predecessor = live[0]
-    m.require(predecessor['issuer_version'] == 1
-              and predecessor['status'] == 'active'
-              and predecessor['parent_issuer_id'] == root['issuer_id']
-              and predecessor['service_client_ids'] == OPENBAO_CLIENT_IDS
+    m.require(predecessor['issuer_version'] >= 2
+              and predecessor['parent_issuer_id'] != root['issuer_id']
+              and predecessor['service_client_ids'] == []
               and predecessor['server_dns_names'] == OPENBAO_DNS_NAMES,
-              'active OpenBao TLS v1 policy differs')
+              'active OpenBao TLS server predecessor differs')
     unfinished = [item for item in items
                   if item['environment'] == 'dev'
                   and item['trust_domain'] == DOMAIN
@@ -67,7 +66,7 @@ def select_v1_predecessor(items, root, transition_id=None):
                   and item['status'] not in ('retired', 'cancelled', 'revoked',
                                              'compromised', 'failed')]
     m.require(not unfinished,
-              'another OpenBao TLS successor already exists; reconcile it')
+                  'another OpenBao TLS server successor already exists; reconcile it')
     return predecessor
 
 
@@ -137,7 +136,7 @@ class OpenBaoAuthorityRun(s.ServiceRun):
                   and report['checks']['openbao_managed_host_adopted'][
                       'evidence']['private_keys_exported'] is False,
                   'successful managed OpenBao adoption evidence required')
-        return select_v1_predecessor(
+        return select_server_predecessor(
             self.intermediates(), root, transition_id)
 
     def prepare_root(self):
@@ -259,7 +258,7 @@ class OpenBaoAuthorityRun(s.ServiceRun):
         if self.args.server_only:
             predecessor = self.server_only_predecessor(root)
             expected_ids = []
-            self.save('intermediate-v1.json', predecessor)
+            self.save('intermediate-predecessor.json', predecessor)
         else:
             m.require(not any(item['trust_domain'] == DOMAIN
                               and item['kind'] == 'intermediate'
@@ -284,8 +283,8 @@ class OpenBaoAuthorityRun(s.ServiceRun):
     def provision_intermediate(self, root, operation, issuer, expected_ids,
                                predecessor=None):
         if self.args.server_only:
-            m.require(issuer['issuer_version'] == 2,
-                      'OpenBao TLS server-only successor must be v2')
+            m.require(issuer['issuer_version'] == predecessor['issuer_version'] + 1,
+                      'OpenBao TLS server-only successor version differs')
         policies = json.loads(self.kube([
             '-n', s.NS, 'exec', 'deployment/pki-controller', '--',
             '/app/pkicontroller', 'render-openbao-policy',
