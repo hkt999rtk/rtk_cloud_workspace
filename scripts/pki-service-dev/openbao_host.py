@@ -367,8 +367,12 @@ def provider_root_overlap_template(owner, predecessor, successor, configmap,
               'provider Root-overlap owner or image changed')
     container = containers[0]
     env = {item['name']: item.get('value') for item in container.get('env', [])}
+    suffix = successor['issuer_id'][:12]
+    state_path = (OPENBAO_ROOT_POLICY_STATE.removesuffix('.json') + '-' +
+                  suffix + '.json')
     m.require(env.get('OPENBAO_SERVER_ROOT_ID') == predecessor['issuer_id']
-              and env.get('OPENBAO_SERVER_ROOT_STATE') == OPENBAO_ROOT_POLICY_STATE
+              and env.get('OPENBAO_SERVER_ROOT_STATE') in (
+                  OPENBAO_ROOT_POLICY_STATE, state_path)
               and env.get('OPENBAO_SERVER_ROOTS') ==
               OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem',
               'provider predecessor Root-policy settings changed')
@@ -382,9 +386,6 @@ def provider_root_overlap_template(owner, predecessor, successor, configmap,
               OPENBAO_ROOT_POLICY_MOUNT
               and mounts['openbao-server-root-policy'].get('readOnly') is True,
               'provider Root-policy public bundle mount changed')
-    suffix = successor['issuer_id'][:12]
-    state_path = (OPENBAO_ROOT_POLICY_STATE.removesuffix('.json') + '-' +
-                  suffix + '.json')
     volume['configMap']['name'] = configmap
     container['env'] = h.with_env(container.get('env', []), {
         'OPENBAO_SERVER_ROOT_ID': predecessor['issuer_id'],
