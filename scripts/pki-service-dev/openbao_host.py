@@ -436,21 +436,19 @@ def provider_successor_bundle_template(owner, successor, ca_configmap,
     return template
 
 
-def certissuer_server_root_template(owner, root, run_name):
+def certissuer_server_root_template(owner, root, verify_root, run_name):
     """Advance the named OpenBao server issuer to its active Root lineage."""
     template = json.loads(json.dumps(owner['spec']['template']))
     containers = template['spec'].get('containers', [])
     m.require(len(containers) == 1 and containers[0]['name'] == 'certissuer',
               'CertIssuer OpenBao server issuer topology changed')
     container = containers[0]
-    env = {item['name']: item.get('value') for item in container.get('env', [])}
-    previous = env.get('CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256', '')
-    m.require(re.fullmatch(r'[0-9a-f]{64}', previous),
-              'CertIssuer OpenBao server issuer Root policy is absent')
+    m.require(re.fullmatch(r'[0-9a-f]{64}', verify_root),
+              'OpenBao predecessor Root policy is absent')
     container['env'] = h.with_env(container.get('env', []), {
         'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
             root['certificate_fingerprint_sha256'],
-        'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': previous})
+        'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': verify_root})
     template.setdefault('metadata', {}).setdefault('annotations', {})[
         'rtk.cloud/openbao-server-issuer-root'] = run_name
     return template
@@ -1336,14 +1334,17 @@ class OpenBaoHostRun(h.ServiceRun):
             policies['signer_policy'])
         if getattr(self.args, 'server_only', False):
             owner = self.obj('deployment', 'certissuer')
-            previous = next((item.get('value', '') for item in
-                             owner['spec']['template']['spec']['containers'][0]
-                             .get('env', []) if item['name'] ==
-                             'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256'), '')
-            m.require(re.fullmatch(r'[0-9a-f]{64}', previous),
-                      'CertIssuer OpenBao server issuer Root policy is absent')
+            host_owner = self.obj('statefulset', 'openbao', SECRETS_NS)
+            workers = {item['name']: item for item in host_owner['spec']
+                       ['template']['spec'].get('containers', [])}
+            predecessor = next((item.get('value', '') for item in
+                                workers.get('openbao-pki', {}).get('env', [])
+                                if item['name'] ==
+                                'OPENBAO_PKI_HOST_ROOT_SHA256'), '')
+            m.require(re.fullmatch(r'[0-9a-f]{64}', predecessor),
+                      'OpenBao predecessor Root policy is absent')
             template = certissuer_server_root_template(
-                owner, root, self.output.name)
+                owner, root, predecessor, self.output.name)
             self.scoped_patch('certissuer', owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/certissuer', '--timeout=300s'], timeout=310)
@@ -1352,7 +1353,7 @@ class OpenBaoHostRun(h.ServiceRun):
             m.write(path, dict(m.read(path), **{
                 'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
                     root['certificate_fingerprint_sha256'],
-                'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': previous}))
+                'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': predecessor}))
             self.check('openbao_tls_server_only_signer_enabled', {
                 'issuer_id': issuer['issuer_id'],
                 'root_sha256': root['certificate_fingerprint_sha256'],

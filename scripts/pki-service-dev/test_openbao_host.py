@@ -607,11 +607,14 @@ class OpenBaoHostTests(unittest.TestCase):
             'name': 'certissuer', 'env': [{
                 'name': 'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256',
                 'value': 'a' * 64}]}]}}}}
-        result = o.certissuer_server_root_template(owner, root, 'v3-rollout')
+        result = o.certissuer_server_root_template(
+            owner, root, 'a' * 64, 'v3-rollout')
         env = {item['name']: item.get('value')
                for item in result['spec']['containers'][0]['env']}
         self.assertEqual(env['CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256'],
                          'b' * 64)
+        self.assertEqual(env['CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256'],
+                         'a' * 64)
         self.assertEqual(result['metadata']['annotations'][
             'rtk.cloud/openbao-server-issuer-root'], 'v3-rollout')
         self.assertEqual(owner['spec']['template']['spec']['containers'][0][
