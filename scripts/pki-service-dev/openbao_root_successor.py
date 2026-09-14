@@ -2,6 +2,7 @@
 """Prepare or reconcile an inactive Dev OpenBao TLS Root successor."""
 import argparse
 import base64
+import datetime as dt
 import fcntl
 import importlib.util
 import json
@@ -203,6 +204,46 @@ class OpenBaoRootSuccessor(s.ServiceRun):
             'old_root_status': 'retiring', 'withdrawal': 'not_attempted',
             'staging_touched': False})
 
+    def publish_initial_crl(self):
+        source = Path(self.args.source)
+        prior = m.read(source / 'report.json')
+        m.require(prior.get('status') == 'passed'
+                  and prior.get('phase') == 'prepare-openbao-tls-root-successor',
+                  'passed successor preparation evidence required')
+        root = m.read(source / 'root-ready.json')
+        current = self.api('/issuers/' + root['issuer_id'])
+        valid_root(current, 'active')
+        m.require(current['certificate_fingerprint_sha256'] ==
+                  root['certificate_fingerprint_sha256'],
+                  'successor Root certificate changed')
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        request = {'issuer_id': current['issuer_id'],
+                   'issuer_fingerprint_sha256':
+                   current['certificate_fingerprint_sha256'],
+                   'crl_number': '1', 'this_update': m.stamp(now),
+                   'next_update': m.stamp(now + dt.timedelta(days=1)),
+                   'revocations': []}
+        self.save('root-crl-request.json', request)
+        expected = self.ceremony_call([
+            'crl-digest', self.output / 'root-crl-request.json']).strip()
+        passfile = m.read(source / 'passphrase-reference.json')['path']
+        self.ceremony_call([
+            'crl', '--issuer', source / 'root-ready.json',
+            '--crl-request', self.output / 'root-crl-request.json',
+            '--expected-request-sha256', expected,
+            '--key', source / 'root-offline-simulation/ca-key.encrypted.pem',
+            '--passphrase-file', passfile, '--out', self.output / 'root-crl'])
+        record = self.api('/issuers/' + current['issuer_id'] + '/crl', {
+            'crl_pem': (self.output / 'root-crl/revocations.pem').read_text()},
+            role='approver')
+        m.require(record.get('issuer_id') == current['issuer_id']
+                  and record.get('crl_number') == '1',
+                  'initial successor Root CRL differs')
+        self.save('root-crl.json', record)
+        self.check('openbao_tls_successor_initial_crl_published', {
+            'issuer_id': current['issuer_id'], 'crl_sha256': record['crl_sha256'],
+            'revocations': 0, 'staging_touched': False})
+
 
 def main():
     os.umask(0o077)
@@ -210,15 +251,19 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--output', required=True)
-    parser.add_argument('--phase', choices=('prepare', 'activate'), default='prepare')
+    parser.add_argument('--phase', choices=('prepare', 'activate', 'publish-root-crl'), default='prepare')
     parser.add_argument('--source')
     parser.add_argument('--bundles')
     parser.add_argument('--reconcile')
     args = parser.parse_args()
-    args.phase = 'prepare-openbao-tls-root-successor' if args.phase == 'prepare' else 'activate-openbao-tls-root-successor'
+    args.phase = {'prepare': 'prepare-openbao-tls-root-successor',
+                  'activate': 'activate-openbao-tls-root-successor',
+                  'publish-root-crl': 'publish-openbao-tls-root-crl'}[args.phase]
     m.require(args.phase != 'activate-openbao-tls-root-successor' or
               (args.source and args.bundles),
               'successor preparation and bundle receipt evidence required')
+    m.require(args.phase != 'publish-openbao-tls-root-crl' or args.source,
+              'successor preparation evidence required')
     lock = Path(args.config_root).expanduser() / 'dev/pki/openbao-host-rollout.lock'
     owner = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -227,6 +272,8 @@ def main():
         runner.preflight_successor()
         if args.phase == 'activate-openbao-tls-root-successor':
             runner.activate()
+        elif args.phase == 'publish-openbao-tls-root-crl':
+            runner.publish_initial_crl()
         else:
             runner.reconcile(args.reconcile) if args.reconcile else runner.prepare()
         runner.report['status'] = 'passed'
