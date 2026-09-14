@@ -468,6 +468,60 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
                          ['env'][0]['value'], 'old-root')
 
+    def test_provider_root_withdrawal_switches_only_governed_sources(self):
+        owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
+            'metadata': {}, 'spec': {'volumes': [
+                {'name': 'openbao-server-root-policy', 'configMap': {
+                    'name': 'pki-openbao-transport-root-policy-overlap'}},
+                {'name': 'openbao-server-crls', 'configMap': {
+                    'name': 'pki-openbao-tls-crls-transition'}},
+                {'name': 'keep', 'emptyDir': {}}], 'containers': [{
+                    'name': 'certissuer', 'image': 'old-image', 'env': [
+                        {'name': 'OPENBAO_SERVER_ROOT_ID', 'value': 'old-root'},
+                        {'name': 'OPENBAO_SERVER_ROOT_STATE', 'value':
+                         '/var/lib/pki-host/identity/openbao-tls-root-policy-next.json'},
+                        {'name': 'OPENBAO_SERVER_ROOTS', 'value':
+                         o.OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem'},
+                        {'name': 'KEEP', 'value': 'kept'}]}]}}}}
+        image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
+                 'a' * 64)
+        result = o.provider_root_withdrawal_template(
+            owner, {'issuer_id': 'old-root'}, {'issuer_id': 'new-root'},
+            'successor-roots', 'successor-crls', image, 'withdraw-run')
+        container = result['spec']['containers'][0]
+        env = {item['name']: item.get('value') for item in container['env']}
+        volumes = {item['name']: item for item in result['spec']['volumes']}
+        self.assertEqual(env['OPENBAO_SERVER_ROOT_ID'], 'new-root')
+        self.assertEqual(env['KEEP'], 'kept')
+        self.assertEqual(volumes['openbao-server-root-policy'][
+            'configMap']['name'], 'successor-roots')
+        self.assertEqual(volumes['openbao-server-crls'][
+            'configMap']['name'], 'successor-crls')
+        self.assertEqual(volumes['keep'], {'name': 'keep', 'emptyDir': {}})
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['env'][0]['value'], 'old-root')
+
+    def test_openbao_root_policy_advance_is_exact_and_monotonic(self):
+        predecessor = {'issuer_id': 'old-root',
+                       'certificate_fingerprint_sha256': 'a' * 64}
+        operation = {'operation_id': 'operation-1'}
+        before = {'environment': 'dev', 'trust_domain': 'openbao_tls',
+                  'version': 0, 'distrusted_roots': []}
+        removed = {'issuer_id': 'old-root', 'operation_id': 'operation-1',
+                   'certificate_sha256': 'a' * 64}
+        after = dict(before, version=1, distrusted_roots=[removed])
+        o.validate_openbao_root_policy_advance(
+            before, after, predecessor, operation)
+        for invalid in (
+                dict(after, version=0),
+                dict(after, trust_domain='service'),
+                dict(after, distrusted_roots=[]),
+                dict(after, distrusted_roots=[dict(
+                    removed, operation_id='other')])):
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                o.validate_openbao_root_policy_advance(
+                    before, invalid, predecessor, operation)
+
     def test_authority_loader_does_not_shadow_acceptance_root_state(self):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
         self.assertTrue(callable(o.OpenBaoHostRun.openbao_root))
