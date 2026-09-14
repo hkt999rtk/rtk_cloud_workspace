@@ -400,6 +400,39 @@ def provider_root_overlap_template(owner, predecessor, successor, configmap,
     return template, state_path
 
 
+def provider_successor_bundle_template(owner, successor, ca_configmap,
+                                       manifest_configmap, image, run_name):
+    """Publish the ready successor bundle while dynamic Root trust overlaps."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    container = template['spec']['containers'][0]
+    m.require(len(template['spec'].get('containers', [])) == 1
+              and container['name'] == owner['metadata']['name']
+              and IMAGE_PATTERN.fullmatch(image or ''),
+              'provider successor bundle owner or image changed')
+    volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
+    for volume, prefix in (('openbao-ca', 'pki-openbao-transport-ca-'),
+                           ('openbao-server-bundles', 'pki-openbao-tls-bundles-')):
+        m.require(volumes.get(volume, {}).get('configMap', {}).get('name', '').startswith(prefix),
+                  'provider predecessor bundle source changed: ' + volume)
+    env = {item['name']: item.get('value') for item in container.get('env', [])}
+    m.require(env.get('OPENBAO_SERVER_ROOT_ID')
+              and env.get('OPENBAO_SERVER_ROOT_STATE')
+              and env.get('OPENBAO_SERVER_ROOTS') ==
+              OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem',
+              'provider dynamic Root policy is not installed')
+    volumes['openbao-ca']['configMap']['name'] = ca_configmap
+    volumes['openbao-server-bundles']['configMap']['name'] = manifest_configmap
+    container['env'] = h.with_env(container.get('env', []), {
+        'OPENBAO_SERVER_BUNDLE_ROOT_SHA256':
+            successor['certificate_fingerprint_sha256']})
+    container['image'] = image
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-successor-bundle'] = successor['issuer_id']
+    template['metadata']['annotations'][
+        'rtk.cloud/openbao-transport-root-policy'] = run_name
+    return template
+
+
 class OpenBaoHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -903,6 +936,37 @@ class OpenBaoHostRun(h.ServiceRun):
             'loaded_roots_sha256': states, 'receipts': receipts,
             'activation': 'not_attempted', 'withdrawal': 'not_attempted',
             'static_management_credentials': False, 'staging_touched': False})
+
+    def install_provider_successor_bundles(self):
+        overlap = m.read(Path(self.args.root_overlap) / 'report.json')
+        m.require(overlap.get('status') == 'passed'
+                  and overlap.get('checks', {}).get(
+                      'openbao_transport_root_overlap_installed', {}).get(
+                      'status') == 'passed',
+                  'passed OpenBao Root-overlap evidence required')
+        predecessor = self.openbao_root('active')
+        successor = self.evidence_root(self.args.successor, 'ready')
+        evidence = overlap['checks']['openbao_transport_root_overlap_installed']['evidence']
+        m.require(evidence.get('predecessor_root_id') == predecessor['issuer_id']
+                  and evidence.get('successor_root_id') == successor['issuer_id'],
+                  'OpenBao Root-overlap lineage changed')
+        ca_name, manifest_name = self.ensure_root_configmaps(successor)
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            template = provider_successor_bundle_template(
+                owner, successor, ca_name, manifest_name, self.args.image,
+                self.output.name)
+            self.scoped_patch(name, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+        receipts = self.wait_receipts(successor['issuer_id'],
+                                      successor['trust_bundle_version'], CONSUMERS)
+        self.check('openbao_successor_bundle_receipts_installed', {
+            'predecessor_root_id': predecessor['issuer_id'],
+            'successor_root_id': successor['issuer_id'],
+            'ca_configmap': ca_name, 'bundle_configmap': manifest_name,
+            'receipts': receipts, 'activation': 'not_attempted',
+            'withdrawal': 'not_attempted', 'staging_touched': False})
 
     def require_activation_blocked(self, operation):
         # The operation requester owns activation. Approval accounts only supply
@@ -2598,7 +2662,7 @@ def main():
         'renew-host', 'retire-host', 'enable-provider-verification',
         'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
         'verify-provider-recovery', 'install-provider-root-policy',
-        'install-provider-root-overlap'])
+        'install-provider-root-overlap', 'install-provider-successor-bundles'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -2613,6 +2677,7 @@ def main():
     parser.add_argument('--retirement')
     parser.add_argument('--provider-verification')
     parser.add_argument('--successor')
+    parser.add_argument('--root-overlap')
     parser.add_argument('--provider-operations')
     parser.add_argument('--failed')
     parser.add_argument('--request-id')
@@ -2667,6 +2732,9 @@ def main():
     m.require(args.phase != 'install-provider-root-overlap'
               or (args.successor and args.image),
               'ready OpenBao TLS successor evidence and image required')
+    m.require(args.phase != 'install-provider-successor-bundles'
+              or (args.successor and args.root_overlap and args.image),
+              'successor, Root-overlap evidence and image required')
     m.require(args.phase != 'exercise-provider-outage'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_operations),
@@ -2680,7 +2748,8 @@ def main():
         if args.phase == 'finish-root-consumers':
             runner.recovery_preflight()
         elif args.phase in ('install-provider-root-policy',
-                            'install-provider-root-overlap'):
+                            'install-provider-root-overlap',
+                            'install-provider-successor-bundles'):
             runner.provider_root_policy_preflight()
         else:
             runner.preflight()
@@ -2706,7 +2775,9 @@ def main():
          'install-provider-root-policy':
              runner.install_provider_root_policy,
          'install-provider-root-overlap':
-             runner.install_provider_root_overlap}[args.phase]()
+             runner.install_provider_root_overlap,
+         'install-provider-successor-bundles':
+             runner.install_provider_successor_bundles}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
