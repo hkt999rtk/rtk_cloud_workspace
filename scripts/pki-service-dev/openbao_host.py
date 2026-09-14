@@ -652,6 +652,53 @@ class OpenBaoHostRun(h.ServiceRun):
                          'immutable': True, 'data': expected})
         return name, roots_pem
 
+    def provision_root_policy_state(self, root, name):
+        """Seed first policy state before replacing a deferred provider owner.
+
+        Certissuer must contact OpenBao while it is still recovering its own
+        Service identity. Its first dynamic transport therefore cannot fetch a
+        root policy online. The healthy predecessor writes only the reviewed
+        policy and public roots into its existing private PVC; it never copies
+        a client key, login token, or seal value.
+        """
+        policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
+        m.require(policy.get('environment') == 'dev'
+                  and policy.get('trust_domain') == 'openbao_tls'
+                  and re.fullmatch(r'[0-9a-f]{64}',
+                                   policy.get('policy_sha256', '')),
+                  'OpenBao Root policy differs before state bootstrap')
+        roots_path = self.output / (name + '-roots.pem')
+        policy_path = self.output / (name + '-policy.json')
+        state_path = self.output / (name + '-state.json')
+        roots_path.write_text(root['certificate_pem'].rstrip() + '\n')
+        m.write(policy_path, policy)
+        result = m.subprocess.run(
+            ['go', 'run', './cmd/pkitrust', 'apply', str(policy_path),
+             str(roots_path), str(state_path)],
+            cwd=m.WORKSPACE / 'repos/rtk_video_cloud',
+            env=dict(os.environ, GOWORK='off',
+                     GOCACHE='/private/tmp/r4-openbao-root-cache'),
+            capture_output=True, text=True, timeout=120)
+        m.require(result.returncode == 0,
+                  'OpenBao Root state preparation failed')
+        state = state_path.read_text()
+        existing = self.kube([
+            '-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c',
+            'if test -e ' + OPENBAO_ROOT_POLICY_STATE + '; then cat ' +
+            OPENBAO_ROOT_POLICY_STATE + '; fi'])
+        if existing:
+            m.require(existing == state,
+                      'existing OpenBao Root state differs: ' + name)
+        else:
+            encoded = base64.b64encode(state.encode()).decode()
+            command = ('umask 077; mkdir -p /var/lib/pki-host/identity; '
+                       'printf %s ' + encoded + ' | base64 -d > ' +
+                       OPENBAO_ROOT_POLICY_STATE + '; chmod 600 ' +
+                       OPENBAO_ROOT_POLICY_STATE)
+            self.kube(['-n', NS, 'exec', 'deployment/' + name, '--',
+                       'sh', '-c', command])
+        self.save(name + '-prepared-openbao-root-state.json', json.loads(state))
+
     def root_receipts(self, policy_sha256):
         m.require(re.fullmatch(r'[0-9a-f]{64}', policy_sha256),
                   'invalid OpenBao Root-policy digest')
@@ -687,6 +734,8 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
         configmap, roots_pem = self.root_policy_configmap(root)
+        for name in CONSUMERS:
+            self.provision_root_policy_state(root, name)
         for name in CONSUMERS:
             owner = self.obj('deployment', name)
             template = provider_root_policy_template(
