@@ -447,7 +447,8 @@ def provider_root_overlap_template(owner, predecessor, successor, configmap,
 
 
 def provider_root_withdrawal_template(owner, predecessor, successor, configmap,
-                                      manifest, image, run_name):
+                                      manifest, ca_configmap, bundle_configmap,
+                                      image, run_name):
     """Point a durable post-withdrawal client at successor-only public inputs."""
     template = json.loads(json.dumps(owner['spec']['template']))
     containers = template['spec'].get('containers', [])
@@ -458,7 +459,8 @@ def provider_root_withdrawal_template(owner, predecessor, successor, configmap,
     container = containers[0]
     env = {item['name']: item.get('value') for item in container.get('env', [])}
     state_path = env.get('OPENBAO_SERVER_ROOT_STATE', '')
-    m.require(env.get('OPENBAO_SERVER_ROOT_ID') == predecessor['issuer_id']
+    m.require(env.get('OPENBAO_SERVER_ROOT_ID') in (
+                  predecessor['issuer_id'], successor['issuer_id'])
               and state_path.startswith(
                   '/var/lib/pki-host/identity/openbao-tls-root-policy-')
               and env.get('OPENBAO_SERVER_ROOTS') ==
@@ -467,17 +469,36 @@ def provider_root_withdrawal_template(owner, predecessor, successor, configmap,
     volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
     roots = volumes.get('openbao-server-root-policy', {}).get('configMap', {})
     crls = volumes.get('openbao-server-crls', {}).get('configMap', {})
-    m.require(roots.get('name', '').startswith(
-                  'pki-openbao-transport-root-policy-')
-              and crls.get('name', '').startswith('pki-openbao-tls-crls-'),
+    ca = volumes.get('openbao-ca', {}).get('configMap', {})
+    bundles = volumes.get('openbao-server-bundles', {}).get('configMap', {})
+    already_withdrawn = (env.get('OPENBAO_SERVER_ROOT_ID') ==
+                         successor['issuer_id']
+                         and roots.get('name') == configmap
+                         and crls.get('name') == manifest
+                         and ca.get('name') == ca_configmap
+                         and bundles.get('name') == bundle_configmap)
+    m.require((roots.get('name') == configmap or roots.get('name', '').startswith(
+                  'pki-openbao-transport-root-policy-'))
+              and (crls.get('name') == manifest or
+                   crls.get('name', '').startswith('pki-openbao-tls-crls-'))
+              and (ca.get('name') == ca_configmap or
+                   ca.get('name', '').startswith('pki-openbao-transport-ca-'))
+              and (bundles.get('name') == bundle_configmap or
+                   bundles.get('name', '').startswith(
+                       'pki-openbao-tls-bundles-')),
               'provider Root or CRL source changed before withdrawal')
     roots['name'] = configmap
     crls['name'] = manifest
+    ca['name'] = ca_configmap
+    bundles['name'] = bundle_configmap
     container['env'] = h.with_env(container.get('env', []), {
-        'OPENBAO_SERVER_ROOT_ID': successor['issuer_id']})
+        'OPENBAO_SERVER_ROOT_ID': successor['issuer_id'],
+        'OPENBAO_SERVER_BUNDLE_ROOT_SHA256':
+            successor['certificate_fingerprint_sha256']})
     container['image'] = image
     annotations = template.setdefault('metadata', {}).setdefault('annotations', {})
-    annotations['rtk.cloud/openbao-transport-root-policy'] = run_name
+    if not already_withdrawn:
+        annotations['rtk.cloud/openbao-transport-root-policy'] = run_name
     annotations['rtk.cloud/openbao-root-withdrawal'] = (
         predecessor['issuer_id'] + ':' + successor['issuer_id'])
     return template
@@ -624,14 +645,24 @@ class OpenBaoHostRun(h.ServiceRun):
                   'canonical dev context mismatch')
         m.require(self.obj('namespace', NS)['metadata']['name'] == NS,
                   'wrong provider consumer namespace')
-        recovery = (self.args.phase == 'install-intermediate-consumers'
-                    and self.args.server_only and self.args.failed)
+        recovery = ((self.args.phase == 'install-intermediate-consumers'
+                     and self.args.server_only and self.args.failed)
+                    or self.args.phase == 'recover-provider-root-withdrawal')
         if recovery:
             failed = m.read(Path(self.args.failed) / 'report.json')
-            m.require(failed.get('status') == 'failed'
-                      and failed.get('phase') == 'install-intermediate-consumers'
-                      and failed.get('failure') == 'consumer receipt deadline',
-                      'failed OpenBao intermediate receipt evidence required')
+            if self.args.phase == 'recover-provider-root-withdrawal':
+                m.require(failed.get('status') == 'failed'
+                          and failed.get('phase') == 'withdraw-provider-root'
+                          and failed.get('failure') ==
+                              'OpenBao Root distrust installation receipt deadline',
+                          'failed OpenBao Root withdrawal evidence required')
+            else:
+                m.require(failed.get('status') == 'failed'
+                          and failed.get('phase') ==
+                              'install-intermediate-consumers'
+                          and failed.get('failure') ==
+                              'consumer receipt deadline',
+                          'failed OpenBao intermediate receipt evidence required')
         workloads = {}
         for name in CONSUMERS:
             owner = self.obj('deployment', name)
@@ -651,6 +682,7 @@ class OpenBaoHostRun(h.ServiceRun):
             self.forward('am', 'video-cloud-dev-account-manager',
                          'account-manager', 80)
             self.accounts = m.read(self.foundation / 'accounts.json')
+            self.ensure_local_probe()
             self.report['recovery'] = {
                 'reconciled_from': str(Path(self.args.failed)),
                 'reason': 'consumer receipt deadline'}
@@ -1329,8 +1361,7 @@ class OpenBaoHostRun(h.ServiceRun):
                 'successor_roots_rejected_old_root_leaf': True,
                 'product_private_key_used': False}
 
-    def withdraw_provider_root(self):
-        """Withdraw the old OpenBao transport Root after successor adoption."""
+    def provider_root_withdrawal_prerequisites(self):
         operations = m.read(Path(self.args.provider_operations) / 'report.json')
         m.require(operations.get('status') == 'passed'
                   and operations.get('phase') == 'exercise-provider-clients'
@@ -1338,7 +1369,132 @@ class OpenBaoHostRun(h.ServiceRun):
                       'openbao_actual_provider_operations', {}).get('status') ==
                       'passed',
                   'successful actual provider operations required')
-        successor, _, issuer, _, pod = self.lifecycle_prerequisites()
+        return self.lifecycle_prerequisites()
+
+    def finish_provider_root_withdrawal(
+            self, predecessor_source, predecessor, successor, issuer, policy,
+            operation, before_states, cutoffs, held=None, recovered_from=None):
+        """Install successor-only inputs before requiring policy receipts."""
+        configmap, roots_pem = self.root_policy_configmap(successor)
+        authorities = [successor, issuer]
+        m.require(issuer.get('parent_issuer_id') == successor['issuer_id']
+                  and issuer.get('status') == 'active',
+                  'active successor OpenBao lineage changed')
+        ca_configmap = ('pki-openbao-transport-ca-post-withdraw-' +
+                        successor['issuer_id'][:8])
+        bundle_data = [{'issuer_id': item['issuer_id'],
+                        'trust_bundle_version': item['trust_bundle_version']}
+                       for item in authorities]
+        bundle_raw = json.dumps(bundle_data)
+        bundle_configmap = ('pki-openbao-tls-bundles-post-withdraw-' +
+                            issuer['issuer_id'][:8] + '-' + hashlib.sha256(
+                                bundle_raw.encode()).hexdigest()[:8])
+        public_inputs = {
+            ca_configmap: {'ca.crt': successor['certificate_pem'].rstrip() + '\n'},
+            bundle_configmap: {'issuers.json': bundle_raw}}
+        for name, data in public_inputs.items():
+            existing_raw = self.kube([
+                '-n', NS, 'get', 'configmap', name, '--ignore-not-found',
+                '-o', 'json'])
+            if existing_raw.strip():
+                existing = json.loads(existing_raw)
+                m.require(existing.get('immutable') is True
+                          and existing.get('data') == data,
+                          'post-withdraw OpenBao public input changed: ' + name)
+            else:
+                self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                             'metadata': {'name': name, 'namespace': NS},
+                             'immutable': True, 'data': data})
+        manifest_data = provider_crl_manifest(authorities)
+        manifest = ('pki-openbao-tls-crls-post-withdraw-' +
+                    issuer['issuer_id'][:8] + '-' + hashlib.sha256(
+                        json.dumps(manifest_data).encode()).hexdigest()[:8])
+        expected = {'crls.json': json.dumps(manifest_data)}
+        raw = self.kube(['-n', NS, 'get', 'configmap', manifest,
+                         '--ignore-not-found', '-o', 'json'])
+        if raw.strip():
+            existing = json.loads(raw)
+            m.require(existing.get('immutable') is True
+                      and existing.get('data') == expected,
+                      'post-withdraw OpenBao CRL manifest changed')
+        else:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                         'metadata': {'name': manifest, 'namespace': NS},
+                         'immutable': True, 'data': expected})
+        self.prepare_transition_crl_states(authorities)
+        previous_pods = {name: self.provider_consumer_pod(name)['metadata']['uid']
+                         for name in CONSUMERS}
+        changed = {}
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            template = provider_root_withdrawal_template(
+                owner, predecessor, successor, configmap, manifest,
+                ca_configmap, bundle_configmap, self.args.image,
+                self.output.name)
+            changed[name] = template != owner['spec']['template']
+            if changed[name]:
+                self.scoped_patch(name, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+        states, receipts = self.wait_provider_root_policy(
+            policy, predecessor, successor)
+        replacement_pods = {
+            name: self.provider_consumer_pod(name)['metadata']['uid']
+            for name in CONSUMERS}
+        m.require(all((not changed[name] or
+                       previous_pods[name] != replacement_pods[name])
+                      and before_states[name]['pvc_uid'] ==
+                          states[name]['pvc_uid']
+                      for name in CONSUMERS),
+                  'OpenBao Root distrust state did not survive restart')
+        self.save('installed-consumers.json', states)
+        self.save('root-distrust-receipts.json', receipts)
+        denial = self.verify_old_openbao_root_denied(
+            predecessor_source, predecessor, states)
+        self.save('old-root-server-denial.json', denial)
+        operation_path = '/operations/' + operation['operation_id']
+        self.api(operation_path + '/revocation-complete', {}, 204)
+        m.require(self.api(operation_path)['status'] == 'completed'
+                  and self.api('/issuers/' + predecessor['issuer_id'])[
+                      'status'] == 'revoked',
+                  'OpenBao Root withdrawal did not complete')
+        m.require(canonical_roots_pem(roots_pem) == canonical_roots_pem(
+                      successor['certificate_pem'].rstrip() + '\n'),
+                  'post-withdraw OpenBao public roots differ')
+        served = self.current_host({issuer['issuer_id']})
+        fresh = {name: self.provider_session(
+                     name, served['state']['fingerprint']) for name in CONSUMERS}
+        for process in fresh.values():
+            self.session_command(process, 'check', 'alive')
+        for process in list((held or {}).values()) + list(fresh.values()):
+            self.session_command(process, 'quit', 'stopped')
+            process.child.stdin.close()
+            m.require(process.child.wait(timeout=20) == 0,
+                      'OpenBao Root-withdrawal probe did not stop')
+        evidence = {
+            'operation_id': operation['operation_id'],
+            'policy_sha256': policy['policy_sha256'],
+            'policy_version': policy['version'], 'receipts': receipts,
+            'held_connection_cutoff_seconds': cutoffs,
+            'old_root_denied': True,
+            'successor_provider_sessions': sorted(fresh),
+            'provider_operation_evidence': str(Path(
+                self.args.provider_operations).resolve()),
+            'restarted_consumers': replacement_pods,
+            'consumer_templates_changed': changed,
+            'persisted_successor_only_roots': True,
+            'successor_only_ca_configmap': ca_configmap,
+            'successor_only_bundle_configmap': bundle_configmap,
+            'post_withdraw_crl_manifest': manifest,
+            'staging_touched': False}
+        if recovered_from:
+            evidence['recovered_from'] = str(Path(recovered_from).resolve())
+        self.check('openbao_transport_root_withdrawal_enforced', evidence)
+
+    def withdraw_provider_root(self):
+        """Withdraw the old OpenBao transport Root after successor adoption."""
+        successor, _, issuer, _, pod = (
+            self.provider_root_withdrawal_prerequisites())
         predecessor_source = Path(self.args.predecessor_authority)
         predecessor_saved = m.read(predecessor_source / 'root-ready.json')
         predecessor = self.api('/issuers/' + predecessor_saved['issuer_id'])
@@ -1401,86 +1557,60 @@ class OpenBaoHostRun(h.ServiceRun):
                       and 0 <= delay <= 45,
                       'OpenBao Root-policy connection cutoff exceeded 45 seconds')
             cutoffs[name] = delay
-        states, receipts = self.wait_provider_root_policy(
-            policy, predecessor, successor)
-        self.save('installed-consumers.json', states)
-        self.save('root-distrust-receipts.json', receipts)
-        denial = self.verify_old_openbao_root_denied(
-            predecessor_source, predecessor, states)
-        self.save('old-root-server-denial.json', denial)
-        self.api(operation_path + '/revocation-complete', {}, 204)
-        m.require(self.api(operation_path)['status'] == 'completed'
-                  and self.api('/issuers/' + predecessor['issuer_id'])[
-                      'status'] == 'revoked',
-                  'OpenBao Root withdrawal did not complete')
+        self.save('held-connection-cutoffs.json', cutoffs)
+        self.finish_provider_root_withdrawal(
+            predecessor_source, predecessor, successor, issuer, policy,
+            operation, before_states, cutoffs, held=held)
 
-        configmap, roots_pem = self.root_policy_configmap(successor)
-        authorities = [successor, issuer]
-        manifest_data = provider_crl_manifest(authorities)
-        manifest = ('pki-openbao-tls-crls-post-withdraw-' +
-                    issuer['issuer_id'][:8] + '-' + hashlib.sha256(
-                        json.dumps(manifest_data).encode()).hexdigest()[:8])
-        expected = {'crls.json': json.dumps(manifest_data)}
-        raw = self.kube(['-n', NS, 'get', 'configmap', manifest,
-                         '--ignore-not-found', '-o', 'json'])
-        if raw.strip():
-            existing = json.loads(raw)
-            m.require(existing.get('immutable') is True
-                      and existing.get('data') == expected,
-                      'post-withdraw OpenBao CRL manifest changed')
-        else:
-            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
-                         'metadata': {'name': manifest, 'namespace': NS},
-                         'immutable': True, 'data': expected})
-        self.prepare_transition_crl_states(authorities)
-        previous_pods = {name: self.provider_consumer_pod(name)['metadata']['uid']
-                         for name in CONSUMERS}
-        for name in CONSUMERS:
-            owner = self.obj('deployment', name)
-            template = provider_root_withdrawal_template(
-                owner, predecessor, successor, configmap, manifest,
-                self.args.image, self.output.name)
-            self.scoped_patch(name, owner, template)
-            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
-                       '--timeout=300s'], timeout=310)
-        after, repeated_receipts = self.wait_provider_root_policy(
-            policy, predecessor, successor)
-        replacement_pods = {
-            name: self.provider_consumer_pod(name)['metadata']['uid']
-            for name in CONSUMERS}
-        m.require(repeated_receipts == receipts
-                  and all(previous_pods[name] != replacement_pods[name]
-                          and before_states[name]['pvc_uid'] ==
-                              after[name]['pvc_uid']
-                          and states[name]['state'] == after[name]['state']
-                          for name in CONSUMERS),
-                  'OpenBao Root distrust state did not survive restart')
-        m.require(canonical_roots_pem(roots_pem) == canonical_roots_pem(
-                      successor['certificate_pem'].rstrip() + '\n'),
-                  'post-withdraw OpenBao public roots differ')
-        served = self.current_host({issuer['issuer_id']})
-        fresh = {name: self.provider_session(
-                     name, served['state']['fingerprint']) for name in CONSUMERS}
-        for process in fresh.values():
-            self.session_command(process, 'check', 'alive')
-        for process in list(held.values()) + list(fresh.values()):
-            self.session_command(process, 'quit', 'stopped')
-            process.child.stdin.close()
-            m.require(process.child.wait(timeout=20) == 0,
-                      'OpenBao Root-withdrawal probe did not stop')
-        self.check('openbao_transport_root_withdrawal_enforced', {
-            'operation_id': operation['operation_id'],
-            'policy_sha256': policy['policy_sha256'],
-            'policy_version': policy['version'], 'receipts': receipts,
-            'held_connection_cutoff_seconds': cutoffs,
-            'old_root_denied': True,
-            'successor_provider_sessions': sorted(fresh),
-            'provider_operation_evidence': str(Path(
-                self.args.provider_operations).resolve()),
-            'restarted_consumers': replacement_pods,
-            'persisted_successor_only_roots': True,
-            'post_withdraw_crl_manifest': manifest,
-            'staging_touched': False})
+    def recover_provider_root_withdrawal(self):
+        """Resume only the reviewed post-execute Root-withdrawal state."""
+        failed = Path(self.args.failed)
+        report = m.read(failed / 'report.json')
+        m.require(report.get('status') == 'failed'
+                  and report.get('phase') == 'withdraw-provider-root'
+                  and report.get('failure') ==
+                      'OpenBao Root distrust installation receipt deadline',
+                  'matching failed OpenBao Root withdrawal evidence required')
+        successor, _, issuer, _, _ = (
+            self.provider_root_withdrawal_prerequisites())
+        predecessor_source = Path(self.args.predecessor_authority)
+        predecessor_saved = m.read(failed / 'predecessor-root.json')
+        predecessor = self.api(
+            '/issuers/' + predecessor_saved['issuer_id'])
+        m.require(predecessor.get('status') == 'revoked'
+                  and predecessor.get('environment') == 'dev'
+                  and predecessor.get('trust_domain') == 'openbao_tls'
+                  and predecessor.get('kind') == 'root'
+                  and predecessor.get('certificate_fingerprint_sha256') ==
+                      predecessor_saved.get('certificate_fingerprint_sha256')
+                  and m.read(predecessor_source / 'root-ready.json').get(
+                      'issuer_id') == predecessor['issuer_id'],
+                  'failed OpenBao Root withdrawal lineage changed')
+        operation_saved = m.read(failed / 'withdrawal-operation.json')
+        operation = self.api(
+            '/operations/' + operation_saved['operation_id'])
+        m.require(operation.get('status') == 'revocation_pending'
+                  and operation.get('action') == 'revoke'
+                  and operation.get('issuer_id') == predecessor['issuer_id'],
+                  'failed OpenBao Root withdrawal operation changed')
+        policy = m.read(failed / 'distrust-policy.json')
+        m.require(self.api('/issuers/' + successor['issuer_id'] +
+                           '/distrust') == policy,
+                  'failed OpenBao Root distrust policy changed')
+        before_states = m.read(failed / 'before-consumers.json')
+        current = self.provider_root_states()
+        expected_roots = canonical_roots_pem(
+            successor['certificate_pem'].rstrip() + '\n')
+        m.require(all(item['state'].get('policy') == policy
+                      and canonical_roots_pem(
+                          item['state'].get('roots_pem', '')) == expected_roots
+                      for item in current.values()),
+                  'failed OpenBao Root policy was not installed')
+        cutoffs = {name: 'verified-before-failed-receipt-gate'
+                   for name in CONSUMERS}
+        self.finish_provider_root_withdrawal(
+            predecessor_source, predecessor, successor, issuer, policy,
+            operation, before_states, cutoffs, recovered_from=failed)
 
     def prepare_transition_crl_states(self, authorities):
         """Validate and persist transition CRLs before changing a manifest."""
@@ -3532,7 +3662,8 @@ def main():
         'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
         'verify-provider-recovery', 'install-provider-root-policy',
         'install-provider-root-overlap', 'install-provider-successor-bundles',
-        'install-provider-transition-crls', 'withdraw-provider-root'])
+        'install-provider-transition-crls', 'withdraw-provider-root',
+        'recover-provider-root-withdrawal'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -3624,6 +3755,11 @@ def main():
                   and args.signer and args.provider_operations
                   and args.predecessor_authority and args.image),
               'OpenBao successor lifecycle, predecessor and provider evidence required')
+    m.require(args.phase != 'recover-provider-root-withdrawal'
+              or (args.server_only and args.intermediate and args.adoption
+                  and args.signer and args.provider_operations
+                  and args.predecessor_authority and args.image and args.failed),
+              'failed OpenBao Root withdrawal and provider evidence required')
     m.require(args.phase != 'exercise-provider-outage'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_operations),
@@ -3673,7 +3809,9 @@ def main():
              runner.install_provider_successor_bundles,
          'install-provider-transition-crls':
              runner.install_provider_transition_crls,
-         'withdraw-provider-root': runner.withdraw_provider_root}[args.phase]()
+         'withdraw-provider-root': runner.withdraw_provider_root,
+         'recover-provider-root-withdrawal':
+             runner.recover_provider_root_withdrawal}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

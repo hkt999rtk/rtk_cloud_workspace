@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 from pathlib import Path
 import unittest
 import datetime as dt
@@ -475,6 +476,10 @@ class OpenBaoHostTests(unittest.TestCase):
                     'name': 'pki-openbao-transport-root-policy-overlap'}},
                 {'name': 'openbao-server-crls', 'configMap': {
                     'name': 'pki-openbao-tls-crls-transition'}},
+                {'name': 'openbao-ca', 'configMap': {
+                    'name': 'pki-openbao-transport-ca-overlap'}},
+                {'name': 'openbao-server-bundles', 'configMap': {
+                    'name': 'pki-openbao-tls-bundles-transition'}},
                 {'name': 'keep', 'emptyDir': {}}], 'containers': [{
                     'name': 'certissuer', 'image': 'old-image', 'env': [
                         {'name': 'OPENBAO_SERVER_ROOT_ID', 'value': 'old-root'},
@@ -482,12 +487,17 @@ class OpenBaoHostTests(unittest.TestCase):
                          '/var/lib/pki-host/identity/openbao-tls-root-policy-next.json'},
                         {'name': 'OPENBAO_SERVER_ROOTS', 'value':
                          o.OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem'},
+                        {'name': 'OPENBAO_SERVER_BUNDLE_ROOT_SHA256',
+                         'value': 'b' * 64},
                         {'name': 'KEEP', 'value': 'kept'}]}]}}}}
         image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
                  'a' * 64)
         result = o.provider_root_withdrawal_template(
-            owner, {'issuer_id': 'old-root'}, {'issuer_id': 'new-root'},
-            'successor-roots', 'successor-crls', image, 'withdraw-run')
+            owner, {'issuer_id': 'old-root'},
+            {'issuer_id': 'new-root',
+             'certificate_fingerprint_sha256': 'c' * 64},
+            'successor-roots', 'successor-crls', 'successor-ca',
+            'successor-bundles', image, 'withdraw-run')
         container = result['spec']['containers'][0]
         env = {item['name']: item.get('value') for item in container['env']}
         volumes = {item['name']: item for item in result['spec']['volumes']}
@@ -497,9 +507,34 @@ class OpenBaoHostTests(unittest.TestCase):
             'configMap']['name'], 'successor-roots')
         self.assertEqual(volumes['openbao-server-crls'][
             'configMap']['name'], 'successor-crls')
+        self.assertEqual(volumes['openbao-ca'][
+            'configMap']['name'], 'successor-ca')
+        self.assertEqual(volumes['openbao-server-bundles'][
+            'configMap']['name'], 'successor-bundles')
+        self.assertEqual(env['OPENBAO_SERVER_BUNDLE_ROOT_SHA256'], 'c' * 64)
         self.assertEqual(volumes['keep'], {'name': 'keep', 'emptyDir': {}})
         self.assertEqual(owner['spec']['template']['spec']['containers'][0]
                          ['env'][0]['value'], 'old-root')
+        repeated = o.provider_root_withdrawal_template(
+            {'metadata': {'name': 'certissuer'},
+             'spec': {'template': result}},
+            {'issuer_id': 'old-root'},
+            {'issuer_id': 'new-root',
+             'certificate_fingerprint_sha256': 'c' * 64},
+            'successor-roots', 'successor-crls', 'successor-ca',
+            'successor-bundles', image, 'recovery-run')
+        self.assertEqual(repeated, result)
+
+    def test_provider_root_withdrawal_restarts_before_receipt_gate(self):
+        source = inspect.getsource(
+            o.OpenBaoHostRun.finish_provider_root_withdrawal)
+        rollout = source.index("'rollout', 'status'")
+        receipt = source.index('self.wait_provider_root_policy')
+        denial = source.index('self.verify_old_openbao_root_denied')
+        completion = source.index("'/revocation-complete'")
+        self.assertLess(rollout, receipt)
+        self.assertLess(receipt, denial)
+        self.assertLess(denial, completion)
 
     def test_openbao_root_policy_advance_is_exact_and_monotonic(self):
         predecessor = {'issuer_id': 'old-root',

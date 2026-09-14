@@ -468,6 +468,11 @@ policy. This does not change the Device/App identity authority or public-CA cont
    for CRL receipts from both provider clients before provider operations.
 4. Integrate pool replacement, active-connection eviction and exact receipts without
    changing provider login tokens, seal material or recovery-command trust.
+5. During final withdrawal, replace the OpenBao CA, server bundle, Root-policy
+   bundle and CRL manifest with one successor-only set before waiting for policy
+   receipts. If the run stops after revocation begins, resume the same reviewed
+   operation from its saved failed report; do not create a second operation or
+   claim an unrecorded connection-cutoff duration.
 
 **Test steps**
 
@@ -482,6 +487,13 @@ policy. This does not change the Device/App identity authority or public-CA cont
 
 **Done when:** actual provider clients enforce reviewed transport-root changes
 with durable state and receipts; backup/seal recovery is not claimed by this result.
+
+**Completed 2026-09-14:** `certissuer` and `pki-controller` installed the
+successor-only CA, server bundle, Root policy and CRL manifest, restarted with
+their retained state, submitted exact version-4 policy receipts, rejected a
+control leaf signed by the withdrawn Root, and established fresh successor
+provider sessions. Recovery completed the original operation without duplicate
+withdrawal. See the [R4 closure evidence](production-pki-trust-consumers.md#r4-openbao-transport-root-policy-closure-2026-09-14).
 
 ## 13. A4 — App API renewal, revocation and restart
 
