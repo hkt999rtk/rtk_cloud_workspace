@@ -334,6 +334,49 @@ def provider_root_policy_template(owner, root, configmap, image, run_name):
     return template
 
 
+def provider_root_overlap_template(owner, predecessor, successor, configmap,
+                                   image, run_name):
+    """Install a successor state and public bundle without changing policy owner."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec'].get('containers', [])
+    m.require(len(containers) == 1
+              and containers[0]['name'] == owner['metadata']['name']
+              and IMAGE_PATTERN.fullmatch(image or ''),
+              'provider Root-overlap owner or image changed')
+    container = containers[0]
+    env = {item['name']: item.get('value') for item in container.get('env', [])}
+    m.require(env.get('OPENBAO_SERVER_ROOT_ID') == predecessor['issuer_id']
+              and env.get('OPENBAO_SERVER_ROOT_STATE') == OPENBAO_ROOT_POLICY_STATE
+              and env.get('OPENBAO_SERVER_ROOTS') ==
+              OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem',
+              'provider predecessor Root-policy settings changed')
+    volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
+    mounts = {item['name']: item for item in container.get('volumeMounts', [])}
+    volume = volumes.get('openbao-server-root-policy', {})
+    m.require(volume.get('configMap', {}).get('name', '').startswith(
+                      'pki-openbao-transport-root-policy-')
+              and volume['configMap'].get('defaultMode') == 292
+              and mounts.get('openbao-server-root-policy', {}).get('mountPath') ==
+              OPENBAO_ROOT_POLICY_MOUNT
+              and mounts['openbao-server-root-policy'].get('readOnly') is True,
+              'provider Root-policy public bundle mount changed')
+    suffix = successor['issuer_id'][:12]
+    state_path = (OPENBAO_ROOT_POLICY_STATE.removesuffix('.json') + '-' +
+                  suffix + '.json')
+    volume['configMap']['name'] = configmap
+    container['env'] = h.with_env(container.get('env', []), {
+        'OPENBAO_SERVER_ROOT_ID': predecessor['issuer_id'],
+        'OPENBAO_SERVER_ROOT_STATE': state_path,
+        'OPENBAO_SERVER_ROOTS': OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem'})
+    container['image'] = image
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-transport-root-overlap'] = (
+            predecessor['issuer_id'] + ':' + successor['issuer_id'])
+    template['metadata']['annotations'][
+        'rtk.cloud/openbao-transport-root-policy'] = run_name
+    return template, state_path
+
+
 class OpenBaoHostRun(h.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -635,9 +678,12 @@ class OpenBaoHostRun(h.ServiceRun):
                       'installed OpenBao Root ConfigMap changed: ' + name)
         return ca_name, manifest_name
 
-    def root_policy_configmap(self, root):
+    def root_policy_configmap(self, root, roots_pem=None):
         name = 'pki-openbao-transport-root-policy-' + root['issuer_id'][:8]
-        roots_pem = root['certificate_pem'].rstrip() + '\n'
+        roots_pem = roots_pem or root['certificate_pem'].rstrip() + '\n'
+        m.require(roots_pem.endswith('\n')
+                  and root['certificate_pem'].strip() in roots_pem,
+                  'reviewed OpenBao Root bundle differs')
         expected = {'roots.pem': roots_pem}
         raw = self.kube(['-n', NS, 'get', 'configmap', name,
                          '--ignore-not-found', '-o', 'json'])
@@ -652,7 +698,7 @@ class OpenBaoHostRun(h.ServiceRun):
                          'immutable': True, 'data': expected})
         return name, roots_pem
 
-    def provision_root_policy_state(self, root, name):
+    def provision_root_policy_state(self, root, roots_pem, name, state_location):
         """Seed first policy state before replacing a deferred provider owner.
 
         Certissuer must contact OpenBao while it is still recovering its own
@@ -667,10 +713,13 @@ class OpenBaoHostRun(h.ServiceRun):
                   and re.fullmatch(r'[0-9a-f]{64}',
                                    policy.get('policy_sha256', '')),
                   'OpenBao Root policy differs before state bootstrap')
-        roots_path = self.output / (name + '-roots.pem')
-        policy_path = self.output / (name + '-policy.json')
-        state_path = self.output / (name + '-state.json')
-        roots_path.write_text(root['certificate_pem'].rstrip() + '\n')
+        m.require(state_location.startswith('/var/lib/pki-host/identity/'),
+                  'OpenBao Root-policy state must remain on retained private PVC')
+        label = Path(state_location).stem
+        roots_path = self.output / (name + '-' + label + '-roots.pem')
+        policy_path = self.output / (name + '-' + label + '-policy.json')
+        state_path = self.output / (name + '-' + label + '-state.json')
+        roots_path.write_text(roots_pem)
         m.write(policy_path, policy)
         result = m.subprocess.run(
             ['go', 'run', './cmd/pkitrust', 'apply', str(policy_path),
@@ -684,8 +733,8 @@ class OpenBaoHostRun(h.ServiceRun):
         state = state_path.read_text()
         existing = self.kube([
             '-n', NS, 'exec', 'deployment/' + name, '--', 'sh', '-c',
-            'if test -e ' + OPENBAO_ROOT_POLICY_STATE + '; then cat ' +
-            OPENBAO_ROOT_POLICY_STATE + '; fi'])
+            'if test -e ' + state_location + '; then cat ' +
+            state_location + '; fi'])
         if existing:
             m.require(existing == state,
                       'existing OpenBao Root state differs: ' + name)
@@ -693,11 +742,11 @@ class OpenBaoHostRun(h.ServiceRun):
             encoded = base64.b64encode(state.encode()).decode()
             command = ('umask 077; mkdir -p /var/lib/pki-host/identity; '
                        'printf %s ' + encoded + ' | base64 -d > ' +
-                       OPENBAO_ROOT_POLICY_STATE + '; chmod 600 ' +
-                       OPENBAO_ROOT_POLICY_STATE)
+                       state_location + '; chmod 600 ' + state_location)
             self.kube(['-n', NS, 'exec', 'deployment/' + name, '--',
                        'sh', '-c', command])
-        self.save(name + '-prepared-openbao-root-state.json', json.loads(state))
+        self.save(name + '-' + label + '-prepared-openbao-root-state.json',
+                  json.loads(state))
 
     def root_receipts(self, policy_sha256):
         m.require(re.fullmatch(r'[0-9a-f]{64}', policy_sha256),
@@ -714,11 +763,11 @@ class OpenBaoHostRun(h.ServiceRun):
         deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             rows = self.root_receipts(policy['policy_sha256'])
-            if {row['consumer_id'] for row in rows} == set(CONSUMERS):
-                m.require(all(row['loaded_roots_sha256'] == expected
-                              for row in rows),
-                          'OpenBao Root-policy receipt root digest differs')
-                return rows
+            matched = [row for row in rows
+                       if row['loaded_roots_sha256'] == expected]
+            if len(matched) == len(CONSUMERS) and {
+                    row['consumer_id'] for row in matched} == set(CONSUMERS):
+                return matched
             time.sleep(2)
         raise RuntimeError('OpenBao Root-policy receipt deadline')
 
@@ -735,7 +784,8 @@ class OpenBaoHostRun(h.ServiceRun):
                   'verified dev application image digest required')
         configmap, roots_pem = self.root_policy_configmap(root)
         for name in CONSUMERS:
-            self.provision_root_policy_state(root, name)
+            self.provision_root_policy_state(
+                root, roots_pem, name, OPENBAO_ROOT_POLICY_STATE)
         for name in CONSUMERS:
             owner = self.obj('deployment', name)
             template = provider_root_policy_template(
@@ -763,6 +813,69 @@ class OpenBaoHostRun(h.ServiceRun):
         self.check('openbao_transport_root_policy_installed', {
             'root_id': root['issuer_id'], 'policy_sha256': policy['policy_sha256'],
             'configmap': configmap, 'receipts': receipts, 'states': states,
+            'static_management_credentials': False, 'staging_touched': False})
+
+    def evidence_root(self, source, status):
+        saved = m.read(Path(source) / 'root-ready.json')
+        root = self.api('/issuers/' + saved['issuer_id'])
+        m.require(root.get('environment') == 'dev'
+                  and root.get('trust_domain') == 'openbao_tls'
+                  and root.get('kind') == 'root'
+                  and root.get('status') == status
+                  and root.get('certificate_fingerprint_sha256') ==
+                  saved.get('certificate_fingerprint_sha256')
+                  and root.get('trust_bundle_version') ==
+                  saved.get('trust_bundle_version'),
+                  'reviewed OpenBao TLS Root evidence changed')
+        return root
+
+    def install_provider_root_overlap(self):
+        """Add the ready successor before any provider TLS cutover or withdrawal."""
+        predecessor = self.openbao_root('active')
+        successor = self.evidence_root(self.args.successor, 'ready')
+        m.require(predecessor['issuer_id'] != successor['issuer_id'],
+                  'OpenBao TLS successor must differ from predecessor')
+        policy = self.api('/issuers/' + predecessor['issuer_id'] + '/distrust')
+        m.require(policy.get('environment') == 'dev'
+                  and policy.get('trust_domain') == 'openbao_tls'
+                  and policy.get('version') == 0
+                  and not policy.get('distrusted_roots')
+                  and re.fullmatch(r'[0-9a-f]{64}',
+                                   policy.get('policy_sha256', '')),
+                  'OpenBao predecessor Root policy differs before overlap')
+        roots_pem = (predecessor['certificate_pem'].rstrip() + '\n' +
+                     successor['certificate_pem'].rstrip() + '\n')
+        configmap, roots_pem = self.root_policy_configmap(successor, roots_pem)
+        states, paths = {}, {}
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            template, state_path = provider_root_overlap_template(
+                owner, predecessor, successor, configmap, self.args.image,
+                self.output.name)
+            self.provision_root_policy_state(
+                predecessor, roots_pem, name, state_path)
+            self.scoped_patch(name, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+            raw = self.kube(['-n', NS, 'exec', 'deployment/' + name, '--',
+                             'cat', state_path])
+            state = json.loads(raw)
+            m.require(state.get('policy', {}).get('policy_sha256') ==
+                      policy['policy_sha256']
+                      and state.get('roots_pem') == roots_pem,
+                      'persisted OpenBao Root-overlap state differs: ' + name)
+            paths[name] = state_path
+            states[name] = hashlib.sha256(
+                state['roots_pem'].encode()).hexdigest()
+        receipts = self.wait_root_receipts(policy, roots_pem)
+        self.check('openbao_transport_root_overlap_installed', {
+            'predecessor_root_id': predecessor['issuer_id'],
+            'successor_root_id': successor['issuer_id'],
+            'policy_authority_root_id': predecessor['issuer_id'],
+            'policy_sha256': policy['policy_sha256'],
+            'configmap': configmap, 'state_paths': paths,
+            'loaded_roots_sha256': states, 'receipts': receipts,
+            'activation': 'not_attempted', 'withdrawal': 'not_attempted',
             'static_management_credentials': False, 'staging_touched': False})
 
     def require_activation_blocked(self, operation):
@@ -2458,7 +2571,8 @@ def main():
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
         'renew-host', 'retire-host', 'enable-provider-verification',
         'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
-        'verify-provider-recovery', 'install-provider-root-policy'])
+        'verify-provider-recovery', 'install-provider-root-policy',
+        'install-provider-root-overlap'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -2472,6 +2586,7 @@ def main():
     parser.add_argument('--renewal')
     parser.add_argument('--retirement')
     parser.add_argument('--provider-verification')
+    parser.add_argument('--successor')
     parser.add_argument('--provider-operations')
     parser.add_argument('--failed')
     parser.add_argument('--request-id')
@@ -2523,6 +2638,9 @@ def main():
     m.require(args.phase != 'install-provider-root-policy'
               or (args.provider_verification and args.image),
               'provider verification evidence and image required')
+    m.require(args.phase != 'install-provider-root-overlap'
+              or (args.successor and args.image),
+              'ready OpenBao TLS successor evidence and image required')
     m.require(args.phase != 'exercise-provider-outage'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_operations),
@@ -2535,7 +2653,8 @@ def main():
     try:
         if args.phase == 'finish-root-consumers':
             runner.recovery_preflight()
-        elif args.phase == 'install-provider-root-policy':
+        elif args.phase in ('install-provider-root-policy',
+                            'install-provider-root-overlap'):
             runner.provider_root_policy_preflight()
         else:
             runner.preflight()
@@ -2559,7 +2678,9 @@ def main():
          'recover-provider-outage': runner.recover_provider_outage,
          'verify-provider-recovery': runner.verify_provider_recovery,
          'install-provider-root-policy':
-             runner.install_provider_root_policy}[args.phase]()
+             runner.install_provider_root_policy,
+         'install-provider-root-overlap':
+             runner.install_provider_root_overlap}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'

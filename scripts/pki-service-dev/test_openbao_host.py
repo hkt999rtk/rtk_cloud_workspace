@@ -278,7 +278,44 @@ class OpenBaoHostTests(unittest.TestCase):
                          ['configMap']['defaultMode'], 292)
         self.assertNotIn('OPENBAO_SERVER_ROOT_ID', {
             item['name'] for item in owner['spec']['template']['spec'][
-                'containers'][0]['env']})
+                  'containers'][0]['env']})
+
+    def test_provider_root_overlap_keeps_predecessor_policy_owner(self):
+        owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
+            'metadata': {}, 'spec': {'volumes': [
+                {'name': 'host-state', 'persistentVolumeClaim': {
+                    'claimName': 'certissuer-state'}},
+                {'name': 'openbao-server-root-policy', 'configMap': {
+                    'name': 'pki-openbao-transport-root-policy-old',
+                    'defaultMode': 292}}], 'containers': [{
+                'name': 'certissuer', 'env': [
+                    {'name': 'OPENBAO_SERVER_ROOT_ID', 'value': 'old-root'},
+                    {'name': 'OPENBAO_SERVER_ROOT_STATE',
+                     'value': o.OPENBAO_ROOT_POLICY_STATE},
+                    {'name': 'OPENBAO_SERVER_ROOTS',
+                     'value': o.OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem'}],
+                'volumeMounts': [
+                    {'name': 'host-state', 'mountPath': '/var/lib/pki-host'},
+                    {'name': 'openbao-server-root-policy',
+                     'mountPath': o.OPENBAO_ROOT_POLICY_MOUNT,
+                     'readOnly': True}]}]}}}}
+        image = ('ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
+                 'b' * 64)
+        result, state = o.provider_root_overlap_template(
+            owner, {'issuer_id': 'old-root'},
+            {'issuer_id': '12345678-abcd-efab-cdef-123456789012'},
+            'pki-openbao-transport-root-policy-12345678', image, 'run-2')
+        container = result['spec']['containers'][0]
+        env = {item['name']: item.get('value') for item in container['env']}
+        self.assertEqual(env['OPENBAO_SERVER_ROOT_ID'], 'old-root')
+        self.assertEqual(env['OPENBAO_SERVER_ROOT_STATE'], state)
+        self.assertIn('12345678-ab', state)
+        volume = next(item for item in result['spec']['volumes']
+                      if item['name'] == 'openbao-server-root-policy')
+        self.assertEqual(volume['configMap']['name'],
+                         'pki-openbao-transport-root-policy-12345678')
+        self.assertEqual(owner['spec']['template']['spec']['containers'][0]
+                         ['env'][0]['value'], 'old-root')
 
     def test_authority_loader_does_not_shadow_acceptance_root_state(self):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
