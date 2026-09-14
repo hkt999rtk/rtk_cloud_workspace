@@ -69,6 +69,16 @@ def recovery_ttl(claim, issuer, pods, now):
     return ttl
 
 
+def recovery_server_ttl(claim, issuer, now):
+    """Keep recovered server leaves inside the original request lifetime."""
+    created = m.parse_time(claim['created_at'])
+    original_deadline = created + dt.timedelta(days=claim['ttl_days'])
+    issuer_deadline = m.parse_time(issuer['not_after']) - dt.timedelta(days=30)
+    ttl = int((min(original_deadline, issuer_deadline) - now).total_seconds()) - 60
+    m.require(ttl > 60, 'OpenBao successor host validity window elapsed')
+    return ttl
+
+
 def registry_network_policy():
     return {
         'apiVersion': 'networking.k8s.io/v1',
@@ -1899,7 +1909,7 @@ class OpenBaoHostRun(h.ServiceRun):
             [self.openssl, kind, '-pubkey', '-noout'], pem).strip()
         expected = public('req', claim['csr_pem'])
         serials = self.bao_certificate_serials(issuer['signer_reference'])
-        matches = []
+        matches, revoked_matches = [], []
         for serial in serials:
             m.require(re.fullmatch(r'[0-9a-fA-F:-]+', serial),
                       'invalid OpenBao successor host certificate serial')
@@ -1907,11 +1917,12 @@ class OpenBaoHostRun(h.ServiceRun):
                 'read', '-format=json', issuer['signer_reference'] +
                 '/cert/' + serial]))['data']
             if public('x509', record['certificate']) == expected:
-                m.require(record.get('revocation_time') == 0,
-                          'matching OpenBao successor host leaf is revoked')
-                matches.append(serial)
+                (matches if record.get('revocation_time') == 0 else
+                 revoked_matches).append(serial)
         m.require(len(matches) <= 1,
                   'ambiguous OpenBao successor host provider result')
+        m.require(len(revoked_matches) <= 1,
+                  'ambiguous revoked OpenBao successor host provider result')
         signed = False
         if not matches:
             marker = self.base / 'pki' / (
@@ -1922,17 +1933,15 @@ class OpenBaoHostRun(h.ServiceRun):
                           and existing.get('request_digest') ==
                           claim['request_digest'],
                           'OpenBao host recovery marker differs')
-                m.require(False,
+                m.require(existing.get('status') == 'revoked-unaccepted-candidate'
+                          and existing.get('serial') ==
+                          (revoked_matches[0] if revoked_matches else ''),
                           'OpenBao host recovery signing was already started; inspect provider inventory')
             else:
                 m.write(marker, {'request_id': claim['request_id'],
                                  'request_digest': claim['request_digest'],
-                                 'at': m.stamp()})
-            horizon = (m.parse_time(issuer['not_after']) -
-                       dt.datetime.now(dt.timezone.utc) -
-                       dt.timedelta(days=30)).total_seconds()
-            ttl = min(claim['ttl_days'] * 24 * 60 * 60, int(horizon))
-            m.require(ttl > 60, 'OpenBao successor host validity window elapsed')
+                                 'status': 'signing', 'at': m.stamp()})
+            ttl = recovery_server_ttl(claim, issuer, dt.datetime.now(dt.timezone.utc))
             jwt = self.kube(['-n', NS, 'create', 'token', 'certissuer-pki',
                              '--audience=openbao', '--duration=10m']).strip()
             login = json.loads(self.bao([
@@ -1954,6 +1963,10 @@ class OpenBaoHostRun(h.ServiceRun):
             m.require(public('x509', response['certificate']) == expected,
                       'OpenBao recovery provider returned another host key')
             matches = [response['serial_number']]
+            m.write(marker, {'request_id': claim['request_id'],
+                             'request_digest': claim['request_digest'],
+                             'status': 'signed', 'serial': matches[0],
+                             'at': m.stamp()})
             signed = True
         recovered = self.api('/issuers/' + issuer['issuer_id'] +
                              '/reconcile-server', {

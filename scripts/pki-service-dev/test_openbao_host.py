@@ -110,6 +110,18 @@ class OpenBaoHostTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(RuntimeError):
                 o.recovery_ttl(invalid, issuer, pods, now)
 
+    def test_server_recovery_ttl_remains_inside_original_claim_lifetime(self):
+        now = dt.datetime(2026, 9, 14, 4, 0, tzinfo=dt.timezone.utc)
+        claim = {'created_at': (now - dt.timedelta(minutes=20)).isoformat(),
+                 'ttl_days': 30}
+        issuer = {'not_after': (now + dt.timedelta(days=365)).isoformat()}
+        self.assertEqual(o.recovery_server_ttl(claim, issuer, now),
+                         30 * 86400 - 20 * 60 - 60)
+        issuer['not_after'] = (now + dt.timedelta(days=30, minutes=10)).isoformat()
+        self.assertEqual(o.recovery_server_ttl(claim, issuer, now), 9 * 60)
+        with self.assertRaises(RuntimeError):
+            o.recovery_server_ttl(claim, issuer, now + dt.timedelta(minutes=9))
+
     def test_managed_openbao_config_replaces_only_listener_keys(self):
         source = {'extraconfig-from-values.hcl': (
             'listener "tcp" {\n'
