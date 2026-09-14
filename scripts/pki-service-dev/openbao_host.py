@@ -232,6 +232,28 @@ def provider_crl_manifest(authorities):
             for issuer in authorities]
 
 
+def canonical_roots_pem(roots_pem):
+    """Match the registry's DER-fingerprint order for an exact receipt digest."""
+    blocks = re.findall(r'-----BEGIN CERTIFICATE-----\s+([A-Za-z0-9+/=\s]+?)'
+                        r'-----END CERTIFICATE-----', roots_pem)
+    m.require(blocks and ''.join(
+        '-----BEGINCERTIFICATE-----' + ''.join(block.split()) +
+        '-----ENDCERTIFICATE-----' for block in blocks) ==
+        re.sub(r'\s+', '', roots_pem),
+        'OpenBao Root bundle must contain only certificates')
+    parsed = []
+    for block in blocks:
+        raw = base64.b64decode(''.join(block.split()), validate=True)
+        encoded = base64.b64encode(raw).decode()
+        pem = ('-----BEGIN CERTIFICATE-----\n' + '\n'.join(
+            encoded[index:index + 64] for index in range(0, len(encoded), 64)) +
+            '\n-----END CERTIFICATE-----\n')
+        parsed.append((hashlib.sha256(raw).hexdigest(), pem))
+    m.require(len({fingerprint for fingerprint, _ in parsed}) == len(parsed),
+              'OpenBao Root bundle contains a duplicate certificate')
+    return ''.join(pem for _, pem in sorted(parsed))
+
+
 def provider_verification_template(owner, root, manifest_name, image,
                                    run_name):
     template = json.loads(json.dumps(owner['spec']['template']))
@@ -681,8 +703,8 @@ class OpenBaoHostRun(h.ServiceRun):
     def root_policy_configmap(self, root, roots_pem=None):
         name = 'pki-openbao-transport-root-policy-' + root['issuer_id'][:8]
         roots_pem = roots_pem or root['certificate_pem'].rstrip() + '\n'
-        m.require(roots_pem.endswith('\n')
-                  and root['certificate_pem'].strip() in roots_pem,
+        roots_pem = canonical_roots_pem(roots_pem)
+        m.require(root['certificate_pem'].strip() in roots_pem,
                   'reviewed OpenBao Root bundle differs')
         expected = {'roots.pem': roots_pem}
         raw = self.kube(['-n', NS, 'get', 'configmap', name,

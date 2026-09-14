@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 import datetime as dt
 import copy
+import hashlib
 import json
 import tempfile
 from types import SimpleNamespace
@@ -16,6 +17,18 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_root_bundle_is_canonicalized_by_der_fingerprint(self):
+        first = ('-----BEGIN CERTIFICATE-----\nYg==\n'
+                 '-----END CERTIFICATE-----\n')
+        second = ('-----BEGIN CERTIFICATE-----\nYQ==\n'
+                  '-----END CERTIFICATE-----\n')
+        expected = ''.join(pem for _, pem in sorted([
+            (hashlib.sha256(b'b').hexdigest(), first),
+            (hashlib.sha256(b'a').hexdigest(), second)]))
+        self.assertEqual(o.canonical_roots_pem(first + second), expected)
+        with self.assertRaises(RuntimeError):
+            o.canonical_roots_pem(first + first)
+
     def test_recovery_discovers_before_signing_and_never_repeats_attempt(self):
         for existing, attempted in [(True, False), (False, False), (False, True)]:
             with self.subTest(existing=existing, attempted=attempted), tempfile.TemporaryDirectory() as directory:
