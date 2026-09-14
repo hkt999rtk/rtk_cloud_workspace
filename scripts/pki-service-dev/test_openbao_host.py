@@ -559,6 +559,30 @@ class OpenBaoHostTests(unittest.TestCase):
                                         'failed OpenBao intermediate receipt'):
                 runner.provider_root_policy_preflight()
 
+    def test_intermediate_bundle_keeps_retiring_parent_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            predecessor = {'issuer_id': 'old-intermediate',
+                           'parent_issuer_id': 'old-root',
+                           'trust_bundle_version': 'old-intermediate-bundle'}
+            (source / 'intermediate-predecessor.json').write_text(
+                json.dumps(predecessor))
+            runner = object.__new__(o.OpenBaoHostRun)
+            runner.args = SimpleNamespace(server_only=True,
+                                          intermediate=str(source))
+            runner.api = Mock(return_value={
+                'issuer_id': 'old-root', 'environment': 'dev',
+                'trust_domain': 'openbao_tls', 'kind': 'root',
+                'status': 'retiring', 'trust_bundle_version': 'old-root-bundle'})
+            root = {'issuer_id': 'new-root',
+                    'trust_bundle_version': 'new-root-bundle'}
+            issuer = {'issuer_id': 'new-intermediate',
+                      'trust_bundle_version': 'new-intermediate-bundle'}
+            self.assertEqual([item['issuer_id'] for item in
+                              runner.intermediate_bundle_issuers(root, issuer)],
+                             ['new-root', 'old-root', 'old-intermediate',
+                              'new-intermediate'])
+
 
 if __name__ == '__main__':
     unittest.main()

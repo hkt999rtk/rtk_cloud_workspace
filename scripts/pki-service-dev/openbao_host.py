@@ -1170,7 +1170,18 @@ class OpenBaoHostRun(h.ServiceRun):
             path = source / 'intermediate-predecessor.json'
             if not path.exists():
                 path = source / 'intermediate-v1.json'
-            items.append(m.read(path))
+            predecessor = m.read(path)
+            if predecessor['parent_issuer_id'] != root['issuer_id']:
+                parent = self.api('/issuers/' + predecessor['parent_issuer_id'])
+                m.require(parent.get('environment') == 'dev'
+                          and parent.get('trust_domain') == 'openbao_tls'
+                          and parent.get('kind') == 'root'
+                          and parent.get('status') == 'retiring'
+                          and parent.get('issuer_id') ==
+                          predecessor['parent_issuer_id'],
+                          'OpenBao retiring predecessor Root changed')
+                items.append(parent)
+            items.append(predecessor)
         items.append(issuer)
         return items
 
@@ -1196,10 +1207,13 @@ class OpenBaoHostRun(h.ServiceRun):
         if not server_only:
             m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                       'verified dev application image digest required')
-        name = 'pki-openbao-tls-bundles-' + issuer['issuer_id'][:8]
         refs = [{'issuer_id': item['issuer_id'],
                  'trust_bundle_version': item['trust_bundle_version']}
                 for item in self.intermediate_bundle_issuers(root, issuer)]
+        bundle_digest = hashlib.sha256(
+            json.dumps(refs, separators=(',', ':')).encode()).hexdigest()[:8]
+        name = ('pki-openbao-tls-bundles-' + issuer['issuer_id'][:8] + '-' +
+                bundle_digest)
         raw = self.kube(['-n', NS, 'get', 'configmap', name,
                          '--ignore-not-found', '-o', 'json'])
         expected = {'issuers.json': json.dumps(refs)}
