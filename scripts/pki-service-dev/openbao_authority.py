@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import subprocess
 import sys
 import uuid
 
@@ -79,6 +80,36 @@ class OpenBaoAuthorityRun(s.ServiceRun):
         self.report['openbao_authority_runner_sha256'] = m.digest(
             Path(__file__).read_bytes())
         self.save('report.json', self.report)
+
+    def preflight(self):
+        """Scope successor work to its two provider consumers in Dev."""
+        m.require(self.kube(['config', 'current-context']).strip() == self.context,
+                  'canonical dev context mismatch')
+        m.require(self.obj('namespace', s.NS)['metadata']['name'] == s.NS,
+                  'wrong provider consumer namespace')
+        images = {}
+        for name in ('certissuer', 'pki-controller'):
+            owner = self.obj('deployment', name)
+            m.require(owner['spec'].get('replicas') == 1
+                      and owner.get('status', {}).get('readyReplicas') == 1
+                      and owner.get('status', {}).get('updatedReplicas') == 1
+                      and owner.get('status', {}).get('observedGeneration') ==
+                      owner['metadata'].get('generation'),
+                      'provider consumer is not ready: ' + name)
+            images[name] = owner['spec']['template']['spec']['containers'][0]['image']
+        self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
+        self.accounts = m.read(self.foundation / 'accounts.json')
+        for role in ('requester', 'approver', 'custodian'):
+            self.api('/issuers/search', {'limit': 1}, role=role)
+        result = subprocess.run(['go', 'build', '-o', str(self.ceremony),
+                                 './cmd/pkiceremony'],
+                                cwd=m.WORKSPACE / 'repos/rtk_video_cloud',
+                                env=dict(os.environ, GOWORK='off'),
+                                capture_output=True, timeout=180)
+        m.require(result.returncode == 0,
+                  'OpenBao successor ceremony build failed')
+        self.check('openbao_successor_preflight', {
+            'consumers': images, 'staging_touched': False})
 
     def intermediates(self):
         items, cursor = [], ''
