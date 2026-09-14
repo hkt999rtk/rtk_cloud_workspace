@@ -436,7 +436,7 @@ def provider_successor_bundle_template(owner, successor, ca_configmap,
     return template
 
 
-def certissuer_server_root_template(owner, root, verify_root, run_name):
+def certissuer_server_root_template(owner, root, verify_root, image, run_name):
     """Advance the named OpenBao server issuer to its active Root lineage."""
     template = json.loads(json.dumps(owner['spec']['template']))
     containers = template['spec'].get('containers', [])
@@ -449,6 +449,7 @@ def certissuer_server_root_template(owner, root, verify_root, run_name):
         'CERT_ISSUER_OPENBAO_HOST_PKI_ROOT_SHA256':
             root['certificate_fingerprint_sha256'],
         'CERT_ISSUER_OPENBAO_HOST_PKI_VERIFY_ROOT_SHA256': verify_root})
+    container['image'] = image
     template.setdefault('metadata', {}).setdefault('annotations', {})[
         'rtk.cloud/openbao-server-issuer-root'] = run_name
     return template
@@ -1345,7 +1346,7 @@ class OpenBaoHostRun(h.ServiceRun):
             m.require(re.fullmatch(r'[0-9a-f]{64}', predecessor),
                       'OpenBao predecessor Root policy is absent')
             template = certissuer_server_root_template(
-                owner, root, predecessor, self.output.name)
+                owner, root, predecessor, self.args.image, self.output.name)
             self.scoped_patch('certissuer', owner, template)
             self.kube(['-n', NS, 'rollout', 'status',
                        'deployment/certissuer', '--timeout=300s'], timeout=310)
