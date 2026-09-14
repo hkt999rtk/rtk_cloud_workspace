@@ -701,11 +701,14 @@ class OpenBaoHostRun(h.ServiceRun):
         return ca_name, manifest_name
 
     def root_policy_configmap(self, root, roots_pem=None):
-        name = 'pki-openbao-transport-root-policy-' + root['issuer_id'][:8]
+        overlap = roots_pem is not None
         roots_pem = roots_pem or root['certificate_pem'].rstrip() + '\n'
         roots_pem = canonical_roots_pem(roots_pem)
         m.require(root['certificate_pem'].strip() in roots_pem,
                   'reviewed OpenBao Root bundle differs')
+        name = 'pki-openbao-transport-root-policy-' + root['issuer_id'][:8]
+        if overlap:
+            name += '-' + hashlib.sha256(roots_pem.encode()).hexdigest()[:8]
         expected = {'roots.pem': roots_pem}
         raw = self.kube(['-n', NS, 'get', 'configmap', name,
                          '--ignore-not-found', '-o', 'json'])
