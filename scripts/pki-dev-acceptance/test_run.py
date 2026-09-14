@@ -11,6 +11,17 @@ spec.loader.exec_module(m)
 
 
 class AcceptanceTests(unittest.TestCase):
+    def test_live_pods_ignores_terminal_and_deleting_pods(self):
+        pods = [
+            {'metadata': {'name': 'running'}, 'status': {'phase': 'Running'}},
+            {'metadata': {'name': 'complete'}, 'status': {'phase': 'Succeeded'}},
+            {'metadata': {'name': 'failed'}, 'status': {'phase': 'Failed'}},
+            {'metadata': {'name': 'deleting', 'deletionTimestamp': 'now'},
+             'status': {'phase': 'Running'}}]
+
+        self.assertEqual([pod['metadata']['name'] for pod in m.live_pods(pods)],
+                         ['running'])
+
     def test_managed_issuer_uses_approved_name_and_rejects_partial_settings(self):
         self.assertEqual(m.certissuer_server_name({}), 'certissuer.' + m.NS + '.svc.cluster.local')
         env = {'CERT_ISSUER_HOST_NAME': 'certissuer.' + m.NS + '.svc',

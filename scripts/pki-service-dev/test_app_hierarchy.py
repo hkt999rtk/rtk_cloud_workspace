@@ -1,5 +1,6 @@
 import importlib.util
 from pathlib import Path
+import datetime as dt
 import json
 import tempfile
 from types import SimpleNamespace
@@ -13,6 +14,13 @@ spec.loader.exec_module(a)
 
 
 class AppManifestTests(unittest.TestCase):
+    def test_append_ca_is_idempotent(self):
+        first = '-----BEGIN CERTIFICATE-----\nfirst\n-----END CERTIFICATE-----\n'
+        second = '-----BEGIN CERTIFICATE-----\nsecond\n-----END CERTIFICATE-----\n'
+        combined = a.append_ca(first, second)
+        self.assertEqual(combined.count('second'), 1)
+        self.assertEqual(a.append_ca(combined, second), combined)
+
     def issuer(self, issuer_id, kind, parent=''):
         return {
             'issuer_id': issuer_id, 'kind': kind,
@@ -168,6 +176,62 @@ class AppManifestTests(unittest.TestCase):
             'MQTT authorization result differs: 5'))
         self.assertFalse(a.retryable_device_mqtt_error(
             'MQTT authorization result differs: 0'))
+
+    def test_root_crl_refresh_advances_and_preserves_revocations(self):
+        now = dt.datetime(2026, 9, 14, 12, 0, 0,
+                          tzinfo=dt.timezone.utc)
+        root = {
+            'issuer_id': '00000000-0000-4000-8000-000000000001',
+            'certificate_fingerprint_sha256': 'a' * 64}
+        previous = {
+            'issuer_id': root['issuer_id'], 'crl_number': '7',
+            'this_update': '2026-09-13T12:00:00Z'}
+        entries = [{
+            'serial_number': '42',
+            'revocation_time': '2026-09-13T13:00:00Z',
+            'reason': 1}]
+
+        request = a.root_crl_refresh_request(
+            root, previous, entries, now)
+
+        self.assertEqual(request['crl_number'], '8')
+        self.assertEqual(request['revocations'], entries)
+        self.assertEqual(request['this_update'], '2026-09-14T12:00:00Z')
+        self.assertEqual(request['next_update'], '2026-09-17T12:00:00Z')
+
+    def test_root_crl_refresh_rejects_wrong_issuer_and_rollback_clock(self):
+        now = dt.datetime(2026, 9, 14, tzinfo=dt.timezone.utc)
+        root = {'issuer_id': 'root',
+                'certificate_fingerprint_sha256': 'a' * 64}
+        previous = {'issuer_id': 'other', 'crl_number': '1',
+                    'this_update': '2026-09-13T00:00:00Z'}
+        with self.assertRaises(RuntimeError):
+            a.root_crl_refresh_request(root, previous, [], now)
+        previous['issuer_id'] = 'root'
+        previous['this_update'] = '2026-09-15T00:00:00Z'
+        with self.assertRaises(RuntimeError):
+            a.root_crl_refresh_request(root, previous, [], now)
+
+    def test_expired_root_crl_uses_exact_dev_history_row(self):
+        runner = object.__new__(a.AppHierarchy)
+        seen = {}
+        record = {
+            'issuer_id': '00000000-0000-4000-8000-000000000001',
+            'crl_number': '2', 'crl_sha256': 'a' * 64,
+            'crl_pem': 'pem', 'this_update': '2026-09-14T00:00:00Z',
+            'next_update': '2026-09-17T00:00:00Z'}
+
+        def kube(args, body):
+            seen['args'], seen['body'] = args, body
+            return json.dumps(record)
+
+        runner.kube = kube
+        self.assertEqual(runner.latest_root_crl_history(
+            {'issuer_id': record['issuer_id']}), record)
+        self.assertIn('video-cloud-dev-platform', seen['args'])
+        self.assertIn("issuer_id='" + record['issuer_id'] + "'", seen['body'])
+        with self.assertRaises(RuntimeError):
+            runner.latest_root_crl_history({'issuer_id': "' OR true--"})
 
 
 if __name__ == '__main__':

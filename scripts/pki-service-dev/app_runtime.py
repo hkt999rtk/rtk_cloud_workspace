@@ -191,7 +191,8 @@ class AppRuntime(h.ServiceRun):
             m.require(current.get('type') == desired.get('type'),
                       'existing R1 Secret type differs')
             if current.get('data') != desired.get('data'):
-                m.require(name == 'pki-app-consumer-video-cloud-api-app',
+                m.require(name in ('pki-app-consumer-video-cloud-api-app',
+                                   'pki-app-consumer-pkiturn'),
                           'existing R1 Secret differs')
                 self.observed_patch('secret', name, current, [{
                     'op': 'replace', 'path': '/data',
@@ -254,7 +255,23 @@ class AppRuntime(h.ServiceRun):
             'consumers': CONSUMERS.split(','), 'image': image,
             'separate_management_authorities': True})
 
-    def install_api(self, image, root):
+    def service_root(self):
+        cursor, roots = '', []
+        while True:
+            page = self.api('/issuers/search', {
+                'limit': 100, 'before': cursor})
+            roots += [item for item in page['items']
+                      if item['environment'] == 'dev'
+                      and item['trust_domain'] == 'service'
+                      and item['kind'] == 'root'
+                      and item['status'] == 'active']
+            cursor = page.get('next', '')
+            if not cursor:
+                break
+        m.require(len(roots) == 1, 'active Dev Service Root is ambiguous')
+        return roots[0]
+
+    def install_api(self, image, root, service_root):
         identity = self.private_material('consumers', 'video-cloud-api-app')
         public_tls = self.obj('secret', 'video-cloud-api-app-public-tls')
         m.require(public_tls.get('type') == 'kubernetes.io/tls'
@@ -264,8 +281,7 @@ class AppRuntime(h.ServiceRun):
                   'validated Dev public App TLS Secret is missing')
         public_cert_sha256 = m.digest(base64.b64decode(
             public_tls['data']['tls.crt']))
-        service_root = self.obj('configmap', 'pki-service-host-root')
-        management_ca = service_root.get('data', {}).get('root.pem', '')
+        management_ca = service_root.get('certificate_pem', '')
         m.require(management_ca.startswith('-----BEGIN CERTIFICATE-----'),
                   'Dev controller serving root is missing')
         management = dict(identity)
@@ -474,7 +490,7 @@ class AppRuntime(h.ServiceRun):
             'direct_mtls': 'passed', 'mqtt_acl_qos1': 'passed',
             'auth_attempts': auth_attempts, 'mqtt_attempts': mqtt_attempts})
 
-    def install_turn(self, image, root):
+    def install_turn(self, image, root, service_root):
         role = self.turn_database()
         cli = self.base / 'pki/pkiturn/cli-password'
         ssh_dir = self.base / 'pki/pkiturn-ssh'
@@ -495,9 +511,8 @@ class AppRuntime(h.ServiceRun):
         self.secret('pkiturn-ssh', {
             'id_ed25519': key.read_text(), 'known_hosts': known.read_text()})
         identity = self.private_material('consumers', 'pkiturn')
-        service_root = self.obj('configmap', 'pki-service-host-root')
         management = dict(identity)
-        management['ca.crt'] = service_root['data']['root.pem']
+        management['ca.crt'] = service_root['certificate_pem']
         self.secret('pki-app-consumer-pkiturn', management)
         self.ensure({'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
                      'metadata': {'name': 'pkiturn-app-trust',
@@ -615,6 +630,8 @@ class AppRuntime(h.ServiceRun):
                              'rtk.realtek.com/app-trust-sha256': m.digest(
                                  (root['issuer_id']
                                   + root['trust_bundle_version']
+                                  + service_root[
+                                      'certificate_fingerprint_sha256']
                                   + image).encode())}},
                          'spec': {
                              'securityContext': {
@@ -662,6 +679,7 @@ class AppRuntime(h.ServiceRun):
         m.require(IMAGE.fullmatch(self.args.image or ''),
                   'immutable Dev Video Cloud image required')
         root = self.app_root()
+        service_root = self.service_root()
         self.install_controller(self.args.image)
         self.ensure({
             'apiVersion': 'networking.k8s.io/v1',
@@ -678,9 +696,9 @@ class AppRuntime(h.ServiceRun):
                         'values': ['video-cloud-api-app-pki', 'mqtt-pki',
                                    'pkiturn']}]}}],
                     'ports': [{'protocol': 'TCP', 'port': 18446}]}]}})
-        self.install_api(self.args.image, root)
+        self.install_api(self.args.image, root, service_root)
         self.install_broker(self.args.image, root)
-        self.install_turn(self.args.image, root)
+        self.install_turn(self.args.image, root, service_root)
 
 
 def main():

@@ -37,6 +37,12 @@ def with_env(entries, updates, remove=()):
                 for name, value in updates.items()]
 
 
+def append_ca(bundle, certificate):
+    certificate = certificate.strip() + '\n'
+    return (bundle if certificate.strip() in bundle
+            else bundle.rstrip() + '\n' + certificate)
+
+
 def app_manifest(authorities):
     roots = [item for item in authorities if item['kind'] == 'root']
     root_ids = {item['issuer_id'] for item in roots}
@@ -130,6 +136,28 @@ def retryable_device_mqtt_error(message):
             or message == 'MQTT authorization result differs: 5')
 
 
+def root_crl_refresh_request(root, previous, revocations, now):
+    """Advance one offline Root CRL without dropping prior revocations."""
+    m.require(previous.get('issuer_id') == root.get('issuer_id')
+              and previous.get('crl_number', '').isdigit()
+              and int(previous['crl_number']) > 0,
+              'prior App Root CRL identity changed')
+    number = int(previous['crl_number']) + 1
+    m.require(number < 2 ** 159, 'App Root CRL number exhausted')
+    now = now.replace(microsecond=0)
+    prior = dt.datetime.fromisoformat(
+        previous['this_update'].replace('Z', '+00:00'))
+    m.require(now >= prior, 'clock predates prior App Root CRL')
+    return {
+        'issuer_id': root['issuer_id'],
+        'issuer_fingerprint_sha256':
+            root['certificate_fingerprint_sha256'],
+        'crl_number': str(number),
+        'this_update': m.stamp(now),
+        'next_update': m.stamp(now + dt.timedelta(hours=72)),
+        'revocations': revocations}
+
+
 class AppHierarchy(s.ServiceRun):
     def __init__(self, args):
         super().__init__(args)
@@ -143,6 +171,7 @@ class AppHierarchy(s.ServiceRun):
         self.preflight()
         repairing_missing_root_crl = (
             self.args.phase == 'activate-root' and bool(self.args.resume))
+        refreshing_root_crl = self.args.phase == 'refresh-root-crl'
         recovering_withdrawal = (
             self.args.phase == 'withdraw' and bool(self.args.resume))
         readiness = {}
@@ -151,7 +180,7 @@ class AppHierarchy(s.ServiceRun):
             ready = owner.get('status', {}).get('readyReplicas', 0)
             m.require(owner['spec']['replicas'] == 1
                       and (ready == 1 or repairing_missing_root_crl
-                           or recovering_withdrawal),
+                           or refreshing_root_crl or recovering_withdrawal),
                       'App consumer is not ready: ' + name)
             readiness[name] = ready
         controller = self.obj('deployment', 'pki-controller')
@@ -169,6 +198,7 @@ class AppHierarchy(s.ServiceRun):
             'consumer_deployments': DEPLOYMENTS,
             'ready_replicas': readiness,
             'missing_root_crl_repair': repairing_missing_root_crl,
+            'root_crl_refresh': refreshing_root_crl,
             'withdrawal_recovery': recovering_withdrawal,
             'required_consumers': CONSUMERS,
             'staging_touched': False})
@@ -315,6 +345,222 @@ class AppHierarchy(s.ServiceRun):
                 source / 'passphrase-reference.json')['path'],
             '--out', self.output / 'root-crl'])
         return self.import_saved_root_crl(root, self.output)
+
+    def inspect_root_crl(self, root, raw, label):
+        """Verify one saved CRL against the reviewed active App Root."""
+        pem_path = self.output / (label + '.pem')
+        issuer_path = self.output / (label + '-issuer.pem')
+        self.save(pem_path.name, raw)
+        self.save(issuer_path.name, root['certificate_pem'])
+        result = m.subprocess.run([
+            self.openssl, 'crl', '-in', str(pem_path), '-noout', '-verify',
+            '-CAfile', str(issuer_path)], capture_output=True, timeout=15)
+        m.require(result.returncode == 0 and b'verify OK' in result.stderr,
+                  'App Root CRL signature invalid')
+        lines = raw.strip().splitlines()
+        m.require(lines[0] == '-----BEGIN X509 CRL-----'
+                  and lines[-1] == '-----END X509 CRL-----',
+                  'invalid App Root CRL PEM')
+        der = base64.b64decode(''.join(lines[1:-1]), validate=True)
+        entries = json.loads(m.command([self.probe, 'crl'], raw)) or []
+        return m.digest(der), entries
+
+    def latest_root_crl_history(self, root):
+        """Read immutable Dev history when the public freshness gate is closed."""
+        identifier = root['issuer_id']
+        m.require(re.fullmatch(
+            r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
+            identifier), 'invalid App Root identifier')
+        query = (
+            "SELECT json_build_object("
+            "'issuer_id',issuer_id,'crl_sha256',digest,"
+            "'crl_number',number::text,'crl_pem',pem,"
+            "'this_update',to_char(this_update AT TIME ZONE 'UTC',"
+            "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),"
+            "'next_update',to_char(next_update AT TIME ZONE 'UTC',"
+            "'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'))::text "
+            "FROM pki_crls WHERE issuer_id='" + identifier +
+            "' ORDER BY number DESC LIMIT 1;")
+        raw = self.kube([
+            '-n', 'video-cloud-dev-platform', 'exec', '-i', 'postgresql-0',
+            '--', 'psql', '-X', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres',
+            '-d', 'video_cloud', '-At'], query).strip()
+        m.require(raw, 'App Root CRL history is missing')
+        return json.loads(raw)
+
+    def active_service_root(self):
+        cursor, roots = '', []
+        while True:
+            page = self.api('/issuers/search', {
+                'limit': 100, 'before': cursor})
+            roots += [item for item in page['items']
+                      if item['environment'] == 'dev'
+                      and item['trust_domain'] == 'service'
+                      and item['kind'] == 'root'
+                      and item['status'] == 'active']
+            cursor = page.get('next', '')
+            if not cursor:
+                break
+        m.require(len(roots) == 1, 'active Dev Service Root is ambiguous')
+        return roots[0]
+
+    def repair_consumer_management_roots(self):
+        """Replace stale controller CA pins without changing client keys."""
+        root = self.active_service_root()
+        encoded = base64.b64encode(root['certificate_pem'].encode()).decode()
+        changed = []
+        controller_secret = self.obj('secret', 'pki-controller-tls')
+        controller_data = controller_secret.get('data', {})
+        m.require(set(controller_data) >= {'ca.crt', 'tls.crt', 'tls.key'},
+                  'controller TLS Secret shape changed')
+        controller_ca = base64.b64decode(
+            controller_data['ca.crt']).decode()
+        for name in ('video-cloud-api-app', 'pkiturn'):
+            path = self.base / 'pki/consumers' / name / 'ca.crt'
+            m.require(path.is_file(), 'App management client CA is missing')
+            controller_ca = append_ca(controller_ca, path.read_text())
+        controller_encoded = base64.b64encode(controller_ca.encode()).decode()
+        if controller_data['ca.crt'] != controller_encoded:
+            updated = dict(controller_data)
+            updated['ca.crt'] = controller_encoded
+            self.observed_patch('secret', 'pki-controller-tls',
+                                controller_secret, [{
+                'op': 'test', 'path': '/data', 'value': controller_data}, {
+                'op': 'replace', 'path': '/data', 'value': updated}])
+        controller = self.obj('deployment', 'pki-controller')
+        controller_template = copy.deepcopy(controller['spec']['template'])
+        controller_template['metadata'].setdefault('annotations', {})[
+            'rtk.realtek.com/app-management-client-ca-sha256'] = m.digest(
+                controller_ca.encode())
+        if controller_template != controller['spec']['template']:
+            self.observed_patch('deployment', 'pki-controller', controller, [{
+                'op': 'test', 'path': '/spec/template',
+                'value': controller['spec']['template']}, {
+                'op': 'replace', 'path': '/spec/template',
+                'value': controller_template}])
+            changed.append('pki-controller')
+        for deployment, secret_name in (
+                ('video-cloud-api-app-pki',
+                 'pki-app-consumer-video-cloud-api-app'),
+                ('pkiturn', 'pki-app-consumer-pkiturn')):
+            secret = self.obj('secret', secret_name)
+            data = secret.get('data', {})
+            m.require(set(data) == {'ca.crt', 'tls.crt', 'tls.key'},
+                      'App consumer management Secret shape changed')
+            if data['ca.crt'] != encoded:
+                updated = dict(data)
+                updated['ca.crt'] = encoded
+                self.observed_patch('secret', secret_name, secret, [{
+                    'op': 'test', 'path': '/data', 'value': data}, {
+                    'op': 'replace', 'path': '/data', 'value': updated}])
+                changed.append(deployment)
+            owner = self.obj('deployment', deployment)
+            template = copy.deepcopy(owner['spec']['template'])
+            template['metadata'].setdefault('annotations', {})[
+                'rtk.realtek.com/app-management-root-sha256'] = root[
+                    'certificate_fingerprint_sha256']
+            if template != owner['spec']['template']:
+                self.observed_patch('deployment', deployment, owner, [{
+                    'op': 'test', 'path': '/spec/template',
+                    'value': owner['spec']['template']}, {
+                    'op': 'replace', 'path': '/spec/template',
+                    'value': template}])
+                if deployment not in changed:
+                    changed.append(deployment)
+        return root, changed
+
+    def resumed_root_crl(self, root):
+        source = Path(self.args.resume)
+        report = m.read(source / 'report.json')
+        m.require(report['environment'] == 'dev'
+                  and report['phase'] == 'refresh-root-crl',
+                  'App Root CRL resume evidence differs')
+        request = m.read(source / 'root-crl-request.json')
+        manifest = m.read(source / 'root-crl/public-manifest.json')
+        raw = (source / 'root-crl/revocations.pem').read_text()
+        digest, _ = self.inspect_root_crl(root, raw, 'resumed-root-crl')
+        current = self.api('/issuers/' + root['issuer_id'] + '/crl',
+                           role='approver')
+        m.require(manifest['request'] == request
+                  and manifest['crl_sha256'] == digest
+                  and current['crl_sha256'] == digest
+                  and current['crl_number'] == request['crl_number'],
+                  'published App Root CRL resume evidence differs')
+        self.save('root-crl-resume.json', {
+            'source': str(source), 'crl_sha256': digest,
+            'crl_number': current['crl_number']})
+        return current, len(manifest['request']['revocations'])
+
+    def refresh_root_crl(self):
+        """Refresh the active offline App Root CRL and await real consumers."""
+        root = self.app_root('active')
+        if self.args.resume:
+            record, preserved = self.resumed_root_crl(root)
+            previous = {'crl_sha256': 'recorded in resume evidence'}
+        else:
+            previous = self.latest_root_crl_history(root)
+            previous_digest, entries = self.inspect_root_crl(
+                root, previous['crl_pem'], 'previous-root-crl')
+            m.require(previous_digest == previous['crl_sha256'],
+                      'registered App Root CRL digest changed')
+            now = dt.datetime.now(dt.timezone.utc)
+            request = root_crl_refresh_request(root, previous, entries, now)
+            self.save('root-active.json', root)
+            self.save('previous-root-crl.json', previous)
+            self.save('root-crl-request.json', request)
+            expected = self.ceremony_call([
+                'crl-digest', self.output / 'root-crl-request.json']).strip()
+            source = Path(self.args.authority)
+            self.ceremony_call([
+                'crl', '--issuer', self.output / 'root-active.json',
+                '--crl-request', self.output / 'root-crl-request.json',
+                '--expected-request-sha256', expected,
+                '--key',
+                source / 'root-offline-simulation/ca-key.encrypted.pem',
+                '--passphrase-file', m.read(
+                    source / 'passphrase-reference.json')['path'],
+                '--out', self.output / 'root-crl'])
+            manifest = m.read(self.output / 'root-crl/public-manifest.json')
+            raw = (self.output / 'root-crl/revocations.pem').read_text()
+            signed_digest, signed_entries = self.inspect_root_crl(
+                root, raw, 'signed-root-crl')
+            m.require(manifest['request'] == request
+                      and manifest['request_sha256'] == expected
+                      and manifest['crl_sha256'] == signed_digest
+                      and signed_entries == entries,
+                      'signed App Root CRL refresh differs')
+            record = self.api('/issuers/' + root['issuer_id'] + '/crl', {
+                'crl_pem': raw}, role='approver')
+            m.require(record['crl_sha256'] == signed_digest
+                      and record['crl_number'] == request['crl_number']
+                      and record['this_update'] == request['this_update']
+                      and record['next_update'] == request['next_update'],
+                      'published App Root CRL refresh differs')
+            preserved = len(entries)
+        self.save('root-crl.json', record)
+        service_root, restarted = self.repair_consumer_management_roots()
+        for name in restarted:
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+        receipts = self.wait_receipts(
+            root['issuer_id'], record['crl_sha256'], CONSUMERS, kind='crl')
+        for name in DEPLOYMENTS:
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+        self.check('app_root_crl_refreshed', {
+            'issuer_id': root['issuer_id'],
+            'previous_crl_sha256': previous['crl_sha256'],
+            'crl_sha256': record['crl_sha256'],
+            'crl_number': record['crl_number'],
+            'next_update': record['next_update'],
+            'preserved_revocations': preserved,
+            'previous_source': 'immutable Dev registry history',
+            'service_root_sha256': service_root[
+                'certificate_fingerprint_sha256'],
+            'management_root_restarts': restarted,
+            'consumers': receipts,
+            'staging_touched': False})
+        self.device_baseline()
 
     def import_saved_root_crl(self, root, source):
         report = m.read(source / 'report.json')
@@ -729,7 +975,8 @@ def main():
     parser.add_argument('--config-root', default=os.environ.get(
         'RTK_CLOUD_CONFIG_ROOT', str(Path.home() / '.config/rtk_cloud')))
     parser.add_argument('--phase', required=True,
-                        choices=('activate-root', 'prepare-intermediate',
+                        choices=('activate-root', 'refresh-root-crl',
+                                 'prepare-intermediate',
                                  'install-intermediate',
                                  'activate-intermediate', 'enable-issuance'))
     parser.add_argument('--authority', required=True)
@@ -739,8 +986,9 @@ def main():
     parser.add_argument('--resume', help='Reuse signed evidence from a failed phase')
     args = parser.parse_args()
     m.require(not args.resume or args.phase in (
-        'activate-root', 'prepare-intermediate'),
-        '--resume applies only to Root activation or intermediate preparation')
+        'activate-root', 'refresh-root-crl', 'prepare-intermediate'),
+        '--resume applies only to Root activation, Root CRL refresh, or '
+        'intermediate preparation')
     m.require(args.phase not in ('install-intermediate',
                                  'activate-intermediate',
                                  'enable-issuance') or args.intermediate,
@@ -756,6 +1004,7 @@ def main():
     try:
         runner.preflight_app()
         {'activate-root': runner.activate_root,
+         'refresh-root-crl': runner.refresh_root_crl,
          'prepare-intermediate': runner.prepare_intermediate,
          'install-intermediate': runner.install_intermediate,
          'activate-intermediate': runner.activate_intermediate,

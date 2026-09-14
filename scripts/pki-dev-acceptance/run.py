@@ -48,6 +48,13 @@ def certissuer_server_name(env):
     return host
 
 
+def live_pods(items):
+    """Ignore completed Job pods that intentionally share owner labels."""
+    return [pod for pod in items
+            if not pod['metadata'].get('deletionTimestamp')
+            and pod.get('status', {}).get('phase') not in ('Succeeded', 'Failed')]
+
+
 def digest(raw):
     return hashlib.sha256(raw.encode() if isinstance(raw, str) else raw).hexdigest()
 
@@ -278,7 +285,7 @@ class Acceptance:
                     and obj['status'].get('updatedReplicas') == obj['spec']['replicas'], 'deployment rollout is incomplete')
             selector = ','.join(k + '=' + v for k, v in obj['spec']['selector']['matchLabels'].items())
             pods = json.loads(self.kube(['-n', ns, 'get', 'pods', '-l', selector, '-o', 'json']))['items']
-            pods = [p for p in pods if not p['metadata'].get('deletionTimestamp')]
+            pods = live_pods(pods)
             require(len(pods) == obj['spec']['replicas'], 'unexpected live pod count')
             running_images[deployment] = []
             for pod in pods:
