@@ -2354,10 +2354,14 @@ class OpenBaoHostRun(h.ServiceRun):
         before = self.current_host({issuer['issuer_id']}, pod)
         self.save('baseline.json', before)
         held = {}
+        self.save('provider-operation-step.json', {'step': 'before-held-sessions',
+                  'held_sessions': bool(getattr(self.args, 'held_sessions', False))})
         if getattr(self.args, 'held_sessions', False):
             held = {name: self.provider_session(name, before['state']['fingerprint']) for name in CONSUMERS}
             for process in held.values():
                 self.session_command(process, 'check', 'alive')
+        self.save('provider-operation-step.json', {'step': 'before-owner-scan',
+                  'held_sessions': bool(held)})
         processes = self.kube([
             '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
             '-c', 'openbao-pki', '--', 'sh', '-ec',
