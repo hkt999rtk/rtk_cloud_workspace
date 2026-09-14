@@ -17,6 +17,50 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_transition_crl_preparation_validates_existing_consumer_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+            runner.output = Path(directory)
+            runner.api = Mock(return_value={
+                'issuer_id': 'issuer-1', 'crl_sha256': 'a' * 64})
+            runner.kube = Mock(side_effect=[
+                'file\n', 'corrupt state', 'file\n', 'corrupt state'])
+            observed = []
+
+            def validate(args):
+                observed.append(Path(args[-1]).read_text())
+                raise RuntimeError('invalid CRL state')
+
+            with patch.object(o.m.subprocess, 'run', return_value=SimpleNamespace(
+                    returncode=0)), patch.object(o.m, 'command', side_effect=validate):
+                with self.assertRaisesRegex(RuntimeError, 'invalid CRL state'):
+                    runner.prepare_transition_crl_states([{
+                        'issuer_id': 'issuer-1'}])
+            self.assertEqual(observed, ['corrupt state'])
+            self.assertEqual(runner.kube.call_count, 4)
+
+    def test_interrupted_retirement_finishes_signer_removal(self):
+        runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+        runner.role_policy = Mock()
+        predecessor = {'issuer_id': 'old-issuer'}
+        runner.ensure_retirement_signer_removed(
+            {'status': 'failed'}, {}, predecessor)
+        runner.role_policy.assert_called_once_with(
+            'certissuer-pki-dev',
+            'pki-openbao-tls-server-dev-old-issuer')
+
+    def test_completed_retirement_requires_signer_removal_evidence(self):
+        runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+        runner.role_policy = Mock()
+        predecessor = {'issuer_id': 'old-issuer'}
+        runner.ensure_retirement_signer_removed(
+            {'status': 'passed'}, {'evidence': {
+                'predecessor_certissuer_signer_removed': True}}, predecessor)
+        runner.role_policy.assert_not_called()
+        with self.assertRaisesRegex(RuntimeError, 'signer-removal evidence'):
+            runner.ensure_retirement_signer_removed(
+                {'status': 'passed'}, {}, predecessor)
+
     def test_transition_crl_template_replaces_only_crl_manifest(self):
         image = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' + 'a' * 64
         owner = {'metadata': {'name': 'pki-controller'}, 'spec': {'template': {

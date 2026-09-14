@@ -1143,17 +1143,51 @@ class OpenBaoHostRun(h.ServiceRun):
             m.write(issuer_path, authority)
             crl = self.api('/issuers/' + issuer_id + '/crl')
             m.write(crl_path, crl)
+            remote = '/var/lib/pki-host/identity/openbao-tls-crl-' + issuer_id + '.json'
+            existing_by_consumer = {}
+            for consumer in CONSUMERS:
+                kind = self.kube([
+                    '-n', NS, 'exec', '-i', 'deployment/' + consumer, '--',
+                    'sh', '-ec',
+                    'if test ! -e "$1"; then echo absent; '
+                    'elif test -f "$1" && test ! -L "$1"; then echo file; '
+                    'else exit 1; fi', 'sh', remote]).strip()
+                m.require(kind in ('absent', 'file'),
+                          'unexpected transition CRL state kind: ' + consumer)
+                existing_by_consumer[consumer] = (None if kind == 'absent' else
+                    self.kube(['-n', NS, 'exec', '-i',
+                               'deployment/' + consumer, '--', 'cat', remote]))
+            existing_states = {raw for raw in existing_by_consumer.values()
+                               if raw is not None}
+            m.require(len(existing_states) <= 1,
+                      'provider transition CRL states differ before update')
+            if existing_states:
+                state_path.write_text(next(iter(existing_states)))
             m.command([installer, 'apply-crl', issuer_path, crl_path, state_path])
             raw = state_path.read_bytes()
             digest = hashlib.sha256(raw).hexdigest()
-            remote = '/var/lib/pki-host/identity/openbao-tls-crl-' + issuer_id + '.json'
             payload = base64.b64encode(raw).decode()
             for consumer in CONSUMERS:
-                command = ('umask 077; if test -e "$1"; then exit 0; fi; '
-                           'temp="$1.prepare"; base64 -d > "$temp"; '
-                           'test ! -e "$1" && mv "$temp" "$1" || rm "$temp"')
+                previous = existing_by_consumer[consumer]
+                previous_digest = ('absent' if previous is None else
+                    hashlib.sha256(previous.encode()).hexdigest())
+                command = (
+                    'set -eu; umask 077; lock="$1.operator-lock"; mkdir "$lock"; '
+                    "temp=\"$1.prepare.$$\"; trap 'rm -f \"$temp\"; rmdir \"$lock\"' EXIT; "
+                    'if test "$2" = absent; then test ! -e "$1"; '
+                    'else test -f "$1" && test ! -L "$1" && '
+                    'test "$(sha256sum "$1" | cut -d " " -f 1)" = "$2"; fi; '
+                    'base64 -d > "$temp"; chmod 600 "$temp"; '
+                    'test "$(sha256sum "$temp" | cut -d " " -f 1)" = "$3"; '
+                    'sync "$temp"; mv "$temp" "$1"; sync')
                 self.kube(['-n', NS, 'exec', '-i', 'deployment/' + consumer,
-                           '--', 'sh', '-ec', command, 'sh', remote], payload)
+                           '--', 'sh', '-ec', command, 'sh', remote,
+                           previous_digest, digest], payload)
+                installed = self.kube([
+                    '-n', NS, 'exec', '-i', 'deployment/' + consumer,
+                    '--', 'cat', remote]).encode()
+                m.require(hashlib.sha256(installed).hexdigest() == digest,
+                          'installed transition CRL state differs: ' + consumer)
             prepared.append({'issuer_id': issuer_id, 'crl_sha256': crl['crl_sha256'],
                              'state_sha256': digest})
         self.save('prepared-transition-crl-states.json', prepared)
@@ -2315,6 +2349,7 @@ class OpenBaoHostRun(h.ServiceRun):
                   finalized,
                   'OpenBao predecessor finalization differs after client recovery')
         self.save('finalized.json', finalized)
+        self.ensure_retirement_signer_removed(report, retired, predecessor)
         current = self.current_host({issuer['issuer_id']})
         self.check('openbao_actual_clients_verify_registry_and_crls', {
             'root_sha256': root['certificate_fingerprint_sha256'],
@@ -2334,6 +2369,17 @@ class OpenBaoHostRun(h.ServiceRun):
             'predecessor_finalized': True,
             'predecessor_certissuer_signer_removed': True,
             'successor_sha256': current['state']['fingerprint']})
+
+    def ensure_retirement_signer_removed(self, report, retired, predecessor):
+        """Finish the one retirement step that follows consumer receipts."""
+        if report.get('status') == 'failed':
+            self.role_policy(
+                'certissuer-pki-dev',
+                'pki-openbao-tls-server-dev-' + predecessor['issuer_id'])
+            return
+        m.require(retired.get('evidence', {}).get(
+                      'predecessor_certissuer_signer_removed') is True,
+                  'completed OpenBao retirement lacks signer-removal evidence')
 
     def exercise_provider_clients(self):
         """Renew the active host, then publish its replaced leaf's CRL.
