@@ -2309,9 +2309,6 @@ class OpenBaoHostRun(h.ServiceRun):
                   finalized,
                   'OpenBao predecessor finalization differs after client recovery')
         self.save('finalized.json', finalized)
-        policy = ('pki-openbao-tls-server-dev-' +
-                  predecessor['issuer_id'])
-        self.role_policy('certissuer-pki-dev', policy)
         current = self.current_host({issuer['issuer_id']})
         self.check('openbao_actual_clients_verify_registry_and_crls', {
             'root_sha256': root['certificate_fingerprint_sha256'],
