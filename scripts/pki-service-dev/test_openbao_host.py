@@ -250,6 +250,36 @@ class OpenBaoHostTests(unittest.TestCase):
             '/var/lib/pki-host/identity/openbao-tls-crl-v1.json',
             '/var/lib/pki-host/identity/openbao-tls-crl-v2.json'])
 
+    def test_provider_root_policy_requires_existing_crl_and_private_state(self):
+        owner = {'metadata': {'name': 'certissuer'}, 'spec': {'template': {
+            'metadata': {}, 'spec': {'volumes': [{
+                'name': 'host-state', 'persistentVolumeClaim': {
+                    'claimName': 'certissuer-state'}}], 'containers': [{
+                'name': 'certissuer', 'env': [
+                    {'name': 'OPENBAO_SERVER_CRL_MANIFEST', 'value': '/crls'},
+                    {'name': 'OPENBAO_PKI_CONTROLLER_URL', 'value': 'https://pki.example'},
+                    {'name': 'OPENBAO_MANAGEMENT_CA', 'value': '/ca'},
+                    {'name': 'OPENBAO_SERVER_PKI_ROOT_SHA256', 'value': 'a' * 64},
+                    {'name': 'OPENBAO_SERVER_PKI_NAME', 'value': o.OPENBAO_HOST_NAMES[0]}],
+                'volumeMounts': [{'name': 'host-state',
+                                  'mountPath': '/var/lib/pki-host'}]}]}}}}
+        image = 'ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' + 'b' * 64
+        result = o.provider_root_policy_template(
+            owner, {'issuer_id': 'root-1'}, 'root-policy', image, 'run-1')
+        container = result['spec']['containers'][0]
+        env = {item['name']: item.get('value') for item in container['env']}
+        self.assertEqual(env['OPENBAO_SERVER_ROOT_ID'], 'root-1')
+        self.assertEqual(env['OPENBAO_SERVER_ROOT_STATE'],
+                         o.OPENBAO_ROOT_POLICY_STATE)
+        self.assertEqual(env['OPENBAO_SERVER_ROOTS'],
+                         o.OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem')
+        self.assertEqual(next(item for item in result['spec']['volumes']
+                              if item['name'] == 'openbao-server-root-policy')
+                         ['configMap']['defaultMode'], 292)
+        self.assertNotIn('OPENBAO_SERVER_ROOT_ID', {
+            item['name'] for item in owner['spec']['template']['spec'][
+                'containers'][0]['env']})
+
     def test_authority_loader_does_not_shadow_acceptance_root_state(self):
         self.assertFalse('root' in o.OpenBaoHostRun.__dict__)
         self.assertTrue(callable(o.OpenBaoHostRun.openbao_root))

@@ -4,6 +4,7 @@ import argparse
 import base64
 import datetime as dt
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -40,6 +41,8 @@ OPENBAO_SEED_POD = 'openbao-pki-bootstrap'
 OPENBAO_CLIENT_STATE = '/var/lib/openbao-pki/service/client.json'
 OPENBAO_HOST_STATE = '/var/lib/openbao-pki/host/server.json'
 OPENBAO_RUNTIME = '/run/openbao-pki/private'
+OPENBAO_ROOT_POLICY_MOUNT = '/run/openbao-server-root-policy'
+OPENBAO_ROOT_POLICY_STATE = '/var/lib/pki-host/identity/openbao-tls-root-policy.json'
 
 
 def recovery_ttl(claim, issuer, pods, now):
@@ -286,6 +289,48 @@ def provider_verification_template(owner, root, manifest_name, image,
     container['image'] = image
     template.setdefault('metadata', {}).setdefault('annotations', {})[
         'rtk.cloud/openbao-provider-verification'] = run_name
+    return template
+
+
+def provider_root_policy_template(owner, root, configmap, image, run_name):
+    """Add only durable OpenBao TLS Root-policy inputs to a ready client."""
+    template = json.loads(json.dumps(owner['spec']['template']))
+    containers = template['spec'].get('containers', [])
+    m.require(len(containers) == 1
+              and containers[0]['name'] == owner['metadata']['name']
+              and IMAGE_PATTERN.fullmatch(image or ''),
+              'provider Root-policy owner or image changed')
+    container = containers[0]
+    env = {item['name']: item.get('value') for item in container.get('env', [])}
+    required = ('OPENBAO_SERVER_CRL_MANIFEST', 'OPENBAO_PKI_CONTROLLER_URL',
+                'OPENBAO_MANAGEMENT_CA', 'OPENBAO_SERVER_PKI_ROOT_SHA256',
+                'OPENBAO_SERVER_PKI_NAME')
+    m.require(all(env.get(key) for key in required),
+              'provider CRL verification must precede Root policy')
+    volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
+    mounts = {item['name']: item for item in container.get('volumeMounts', [])}
+    m.require(volumes.get('host-state', {}).get('persistentVolumeClaim', {}).get('claimName')
+              and mounts.get('host-state', {}).get('mountPath') == '/var/lib/pki-host'
+              and 'openbao-server-root-policy' not in volumes
+              and 'openbao-server-root-policy' not in mounts,
+              'provider Root-policy state or mount changed')
+    settings = {
+        'OPENBAO_SERVER_ROOT_ID': root['issuer_id'],
+        'OPENBAO_SERVER_ROOT_STATE': OPENBAO_ROOT_POLICY_STATE,
+        'OPENBAO_SERVER_ROOTS': OPENBAO_ROOT_POLICY_MOUNT + '/roots.pem'}
+    m.require(all(env.get(key) in (None, '', value)
+                  for key, value in settings.items()),
+              'provider Root-policy setting changed')
+    template['spec']['volumes'].append({
+        'name': 'openbao-server-root-policy',
+        'configMap': {'name': configmap, 'defaultMode': 292}})
+    container.setdefault('volumeMounts', []).append({
+        'name': 'openbao-server-root-policy',
+        'mountPath': OPENBAO_ROOT_POLICY_MOUNT, 'readOnly': True})
+    container['env'] = h.with_env(container.get('env', []), settings)
+    container['image'] = image
+    template.setdefault('metadata', {}).setdefault('annotations', {})[
+        'rtk.cloud/openbao-transport-root-policy'] = run_name
     return template
 
 
@@ -554,6 +599,84 @@ class OpenBaoHostRun(h.ServiceRun):
                       and current.get('data') == expected[name],
                       'installed OpenBao Root ConfigMap changed: ' + name)
         return ca_name, manifest_name
+
+    def root_policy_configmap(self, root):
+        name = 'pki-openbao-transport-root-policy-' + root['issuer_id'][:8]
+        roots_pem = root['certificate_pem'].rstrip() + '\n'
+        expected = {'roots.pem': roots_pem}
+        raw = self.kube(['-n', NS, 'get', 'configmap', name,
+                         '--ignore-not-found', '-o', 'json'])
+        if raw.strip():
+            current = json.loads(raw)
+            m.require(current.get('immutable') is True
+                      and current.get('data') == expected,
+                      'OpenBao transport Root-policy ConfigMap changed')
+        else:
+            self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
+                         'metadata': {'name': name, 'namespace': NS},
+                         'immutable': True, 'data': expected})
+        return name, roots_pem
+
+    def root_receipts(self, policy_sha256):
+        m.require(re.fullmatch(r'[0-9a-f]{64}', policy_sha256),
+                  'invalid OpenBao Root-policy digest')
+        raw = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT consumer_id,loaded_roots_sha256 "
+            "FROM pki_root_distrust_acknowledgments WHERE environment='dev' "
+            "AND domain='openbao_tls' AND policy_sha256='" + policy_sha256 +
+            "' ORDER BY consumer_id,loaded_roots_sha256) t;")
+        return [json.loads(line) for line in raw.splitlines() if line]
+
+    def wait_root_receipts(self, policy, roots_pem):
+        expected = hashlib.sha256(roots_pem.encode()).hexdigest()
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            rows = self.root_receipts(policy['policy_sha256'])
+            if {row['consumer_id'] for row in rows} == set(CONSUMERS):
+                m.require(all(row['loaded_roots_sha256'] == expected
+                              for row in rows),
+                          'OpenBao Root-policy receipt root digest differs')
+                return rows
+            time.sleep(2)
+        raise RuntimeError('OpenBao Root-policy receipt deadline')
+
+    def install_provider_root_policy(self):
+        root = self.openbao_root('active')
+        verified = m.read(Path(self.args.provider_verification) / 'report.json')
+        m.require(verified.get('status') == 'passed'
+                  and verified.get('phase') == 'enable-provider-verification',
+                  'passed provider CRL verification evidence required')
+        m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
+                  'verified dev application image digest required')
+        configmap, roots_pem = self.root_policy_configmap(root)
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            template = provider_root_policy_template(
+                owner, root, configmap, self.args.image, self.output.name)
+            self.scoped_patch(name, owner, template)
+            self.kube(['-n', NS, 'rollout', 'status', 'deployment/' + name,
+                       '--timeout=300s'], timeout=310)
+        policy = self.api('/issuers/' + root['issuer_id'] + '/distrust')
+        m.require(policy.get('environment') == 'dev'
+                  and policy.get('trust_domain') == 'openbao_tls'
+                  and policy.get('version') == 0 and not policy.get('roots'),
+                  'initial OpenBao Root policy differs')
+        receipts = self.wait_root_receipts(policy, roots_pem)
+        states = {}
+        for name in CONSUMERS:
+            raw = self.kube(['-n', NS, 'exec', 'deployment/' + name, '--',
+                             'cat', OPENBAO_ROOT_POLICY_STATE])
+            state = json.loads(raw)
+            m.require(state.get('policy', {}).get('policy_sha256') ==
+                      policy['policy_sha256'] and state.get('roots_pem') == roots_pem,
+                      'persisted OpenBao Root-policy state differs: ' + name)
+            states[name] = {'policy_sha256': state['policy']['policy_sha256'],
+                            'roots_sha256': hashlib.sha256(
+                                state['roots_pem'].encode()).hexdigest()}
+        self.check('openbao_transport_root_policy_installed', {
+            'root_id': root['issuer_id'], 'policy_sha256': policy['policy_sha256'],
+            'configmap': configmap, 'receipts': receipts, 'states': states,
+            'static_management_credentials': False, 'staging_touched': False})
 
     def require_activation_blocked(self, operation):
         # The operation requester owns activation. Approval accounts only supply
@@ -2248,7 +2371,7 @@ def main():
         'configure-certissuer', 'bootstrap-host', 'adopt-host',
         'renew-host', 'retire-host', 'enable-provider-verification',
         'exercise-provider-clients', 'exercise-provider-outage', 'recover-provider-outage',
-        'verify-provider-recovery'])
+        'verify-provider-recovery', 'install-provider-root-policy'])
     parser.add_argument('--authority', required=True)
     parser.add_argument('--image')
     parser.add_argument('--intermediate')
@@ -2309,7 +2432,10 @@ def main():
     m.require(args.phase != 'exercise-provider-clients'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_verification),
-              'server-only issuer and successful provider evidence required')
+                  'server-only issuer and successful provider evidence required')
+    m.require(args.phase != 'install-provider-root-policy'
+              or (args.provider_verification and args.image),
+              'provider verification evidence and image required')
     m.require(args.phase != 'exercise-provider-outage'
               or (args.server_only and args.intermediate and args.adoption
                   and args.signer and args.provider_operations),
@@ -2342,7 +2468,9 @@ def main():
          'exercise-provider-outage':
              runner.exercise_provider_outage,
          'recover-provider-outage': runner.recover_provider_outage,
-         'verify-provider-recovery': runner.verify_provider_recovery}[args.phase]()
+         'verify-provider-recovery': runner.verify_provider_recovery,
+         'install-provider-root-policy':
+             runner.install_provider_root_policy}[args.phase]()
         runner.report['status'] = 'passed'
     except Exception as error:
         runner.report['status'] = 'failed'
