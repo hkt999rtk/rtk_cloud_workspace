@@ -359,8 +359,31 @@ class Acceptance:
                   'export BAO_CACERT; exec bao ' + shlex.join(args))
         if token is None:
             token = (self.base / 'openbao/root-token').read_text().strip()
-        return self.kube(['-n', 'video-cloud-dev-secrets', 'exec', '-i', 'openbao-0',
+        return self.kube(['-n', 'video-cloud-dev-secrets', 'exec', '-i', 'openbao-0', '-c', 'openbao',
                           '--', 'sh', '-c', script], token + '\n' + body)
+
+    def bao_certificate_serials(self, mount):
+        """List a PKI mount's leaves, distinguishing its valid empty response."""
+        require(re.fullmatch(r'pki-issuers/openbao_tls/[0-9a-f-]{36}/v[0-9]+', mount),
+                'unexpected OpenBao TLS provider mount')
+        token = (self.base / 'openbao/root-token').read_text().strip()
+        script = ('read -r BAO_TOKEN; export BAO_TOKEN; '
+                  'export BAO_MAX_RETRIES=0; '
+                  'export BAO_ADDR=https://openbao.video-cloud-dev-secrets.svc:8200; '
+                  'BAO_CACERT=/run/openbao-pki/private/current/chain.pem; '
+                  '[ -r "$BAO_CACERT" ] || BAO_CACERT=/openbao/tls/ca.crt; '
+                  'export BAO_CACERT; '
+                  'value=$(bao list -format=json ' + shlex.quote(mount + '/certs') + ' 2>/dev/null); '
+                  'status=$?; '
+                  'if [ "$status" -eq 0 ]; then printf "%s" "$value"; '
+                  'elif [ "$status" -eq 2 ] && [ "$value" = "{}" ]; then printf "[]"; '
+                  'else exit "$status"; fi')
+        raw = self.kube(['-n', 'video-cloud-dev-secrets', 'exec', '-i', 'openbao-0', '-c', 'openbao',
+                         '--', 'sh', '-c', script], token + '\n')
+        serials = json.loads(raw)
+        require(isinstance(serials, list) and len(serials) == len(set(serials)),
+                'invalid OpenBao TLS provider certificate inventory')
+        return serials
 
     def approval(self, operation):
         path = '/operations/' + operation['operation_id']

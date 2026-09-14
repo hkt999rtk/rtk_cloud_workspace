@@ -1898,10 +1898,7 @@ class OpenBaoHostRun(h.ServiceRun):
         public = lambda kind, pem: m.command(
             [self.openssl, kind, '-pubkey', '-noout'], pem).strip()
         expected = public('req', claim['csr_pem'])
-        serials = json.loads(self.bao([
-            'list', '-format=json', issuer['signer_reference'] + '/certs']))
-        m.require(isinstance(serials, list) and len(serials) == len(set(serials)),
-                  'invalid OpenBao successor host certificate inventory')
+        serials = self.bao_certificate_serials(issuer['signer_reference'])
         matches = []
         for serial in serials:
             m.require(re.fullmatch(r'[0-9a-fA-F:-]+', serial),
