@@ -1887,18 +1887,18 @@ class OpenBaoHostRun(h.ServiceRun):
         pending = [row for row in self.server_rows()
                    if row['issuer_id'] == issuer['issuer_id']
                    and row['caller'] == 'service:openbao'
-                   and row['status'] == 'issuing'
+                   and row['status'] in ('issuing', 'succeeded')
                    and row['revoked_at'] is None]
         m.require(len(pending) == 1,
-                  'exactly one OpenBao successor host claim required')
+                  'exactly one OpenBao successor host claim or receipt required')
         claim = pending[0]
         raw = self.sql(
             "SELECT row_to_json(t) FROM (SELECT request_id,csr_pem,ttl_days,"
             "request_digest,created_at FROM pki_server_issuances WHERE "
             "environment='dev' AND domain='openbao_tls' AND caller="
             "'service:openbao' AND issuer_id='" + issuer['issuer_id'] +
-            "' AND request_id='" + claim['request_id'] + "' AND status="
-            "'issuing' AND revoked_at IS NULL) t;")
+            "' AND request_id='" + claim['request_id'] + "' AND status IN "
+            "('issuing','succeeded') AND revoked_at IS NULL) t;")
         m.require(raw, 'OpenBao successor host claim disappeared')
         claim = dict(claim, **json.loads(raw))
         m.require(claim['csr_pem'] and re.fullmatch(
