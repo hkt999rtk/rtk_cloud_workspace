@@ -477,7 +477,7 @@ def provider_transition_crl_template(owner, manifest_name, image, run_name):
     volumes = {item['name']: item for item in template['spec'].get('volumes', [])}
     crls = volumes.get('openbao-server-crls', {}).get('configMap', {})
     m.require(crls.get('name', '').startswith('pki-openbao-tls-crls-')
-              and crls.get('defaultMode') in (None, 292),
+              and crls.get('defaultMode') in (None, 292, 420),
               'provider predecessor CRL source changed')
     crls['name'] = manifest_name
     containers[0]['image'] = image

@@ -23,7 +23,7 @@ class OpenBaoHostTests(unittest.TestCase):
             'metadata': {}, 'spec': {'containers': [{'name': 'pki-controller',
             'image': 'old', 'env': [{'name': 'KEEP', 'value': 'value'}]}],
             'volumes': [{'name': 'openbao-server-crls', 'configMap': {
-                'name': 'pki-openbao-tls-crls-identity-old', 'defaultMode': 292}}]}}}}
+                'name': 'pki-openbao-tls-crls-identity-old', 'defaultMode': 420}}]}}}}
         result = o.provider_transition_crl_template(
             owner, 'pki-openbao-tls-crls-transition-new', image, 'run')
         container = result['spec']['containers'][0]
@@ -31,6 +31,7 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(container['env'], [{'name': 'KEEP', 'value': 'value'}])
         self.assertEqual(result['spec']['volumes'][0]['configMap']['name'],
                          'pki-openbao-tls-crls-transition-new')
+        self.assertEqual(result['spec']['volumes'][0]['configMap']['defaultMode'], 420)
         self.assertEqual(result['metadata']['annotations'][
             'rtk.cloud/openbao-transition-crls'], 'run')
 
