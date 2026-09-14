@@ -1932,8 +1932,8 @@ class OpenBaoHostRun(h.ServiceRun):
             '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
             '-c', 'openbao-pki', '--', 'sh', '-ec',
             "for f in /proc/[0-9]*/comm; do "
-            "[ \"$(cat \"$f\")\" = openbaopkihost ] && "
-            "basename \"$(dirname \"$f\")\"; done; true"]).splitlines()
+            "if [ \"$(cat \"$f\")\" = openbaopkihost ]; then "
+            "basename \"$(dirname \"$f\")\"; fi; done"]).splitlines()
         m.require(len(processes) == 1 and processes[0].isdigit(),
                   'expected one OpenBao TLS identity owner process')
         intent = {'pod_uid': pod['metadata']['uid'],
