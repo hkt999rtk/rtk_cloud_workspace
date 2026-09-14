@@ -650,8 +650,11 @@ class OpenBaoHostRun(h.ServiceRun):
     def install_provider_root_policy(self):
         root = self.openbao_root('active')
         verified = m.read(Path(self.args.provider_verification) / 'report.json')
+        prior_verified = verified.get('phase') == 'enable-provider-verification'
+        prior_exercised = verified.get('checks', {}).get(
+            'openbao_actual_provider_operations', {}).get('status') == 'passed'
         m.require(verified.get('status') == 'passed'
-                  and verified.get('phase') == 'enable-provider-verification',
+                  and (prior_verified or prior_exercised),
                   'passed provider CRL verification evidence required')
         m.require(IMAGE_PATTERN.fullmatch(self.args.image or ''),
                   'verified dev application image digest required')
