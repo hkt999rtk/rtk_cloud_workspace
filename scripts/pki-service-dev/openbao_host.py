@@ -1328,10 +1328,11 @@ class OpenBaoHostRun(h.ServiceRun):
                   and (not getattr(self.args, 'server_only', False)
                        or not policies.get('service_client_signer_policy')),
                   'saved OpenBao TLS signer policy changed')
-        self.role_policy(
-            'certissuer-pki-dev',
-            'pki-openbao-tls-server-dev-' + issuer['issuer_id'],
-            policies['signer_policy'])
+        if not getattr(self.args, 'reuse_signer_policy', False):
+            self.role_policy(
+                'certissuer-pki-dev',
+                'pki-openbao-tls-server-dev-' + issuer['issuer_id'],
+                policies['signer_policy'])
         if getattr(self.args, 'server_only', False):
             owner = self.obj('deployment', 'certissuer')
             host_owner = self.obj('statefulset', 'openbao', SECRETS_NS)
@@ -2872,12 +2873,17 @@ def main():
     parser.add_argument('--request-id')
     parser.add_argument('--recovery')
     parser.add_argument('--server-only', action='store_true')
+    parser.add_argument('--reuse-signer-policy', action='store_true',
+                        help='use verified signer evidence while OpenBao is offline')
     parser.add_argument('--held-sessions', action='store_true',
                         help='hold both provider-family sockets through host renewal and predecessor revocation')
     parser.add_argument('--output', required=True)
     args = parser.parse_args()
     m.require(not args.held_sessions or args.phase == 'exercise-provider-clients',
               'held sessions require the provider-client exercise')
+    m.require(not args.reuse_signer_policy or (
+              args.phase == 'configure-certissuer' and args.server_only),
+              'signer-policy reuse is only for server-only CertIssuer recovery')
     m.require(args.phase != 'recover-provider-outage' or (args.failed and args.request_id),
               'failed outage evidence and exact retained request ID required')
     m.require(args.phase != 'verify-provider-recovery' or (

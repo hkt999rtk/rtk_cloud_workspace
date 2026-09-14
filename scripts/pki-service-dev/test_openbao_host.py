@@ -620,6 +620,35 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['containers'][0][
             'env'][0]['value'], 'a' * 64)
 
+    def test_server_only_transition_reuses_verified_signer_policy(self):
+        runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+        runner.args = SimpleNamespace(
+            image='ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api@sha256:' +
+                  'a' * 64,
+            policy_evidence='/evidence', server_only=True,
+            reuse_signer_policy=True)
+        runner.ready_intermediate = Mock(return_value=(
+            {'certificate_fingerprint_sha256': 'b' * 64},
+            {'issuer_id': 'issuer', 'signer_reference': 'mount',
+             'server_dns_names': o.OPENBAO_HOST_NAMES,
+             'service_client_ids': []}, None))
+        runner.provider_root_policy_preflight = Mock()
+        runner.role_policy = Mock()
+        runner.obj = Mock(side_effect=[
+            {'spec': {'template': {'spec': {'containers': [{'name': 'certissuer', 'env': []}]}}}},
+            {'spec': {'template': {'spec': {'containers': [{'name': 'openbao-pki', 'env': [{
+                'name': 'OPENBAO_PKI_HOST_ROOT_SHA256', 'value': 'c' * 64}]}]}}}}])
+        runner.scoped_patch = Mock(); runner.kube = Mock(); runner.check = Mock()
+        with tempfile.TemporaryDirectory() as directory:
+            runner.base = Path(directory)
+            runner.output = runner.base / 'transition'
+            (runner.base / 'pki/controller-bootstrap/rollout').mkdir(parents=True)
+            (runner.base / 'pki/controller-bootstrap/rollout/certissuer-service-settings.json').write_text('{}')
+            with patch.object(o.m, 'read', return_value={'issuer_id': 'issuer', 'mount': 'mount', 'signer_policy': 'path "x/sign/server" {}'}):
+                with patch.object(o.m, 'write'):
+                    runner.configure_certissuer()
+        runner.role_policy.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()
