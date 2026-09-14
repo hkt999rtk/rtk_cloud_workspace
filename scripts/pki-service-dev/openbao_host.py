@@ -1929,8 +1929,8 @@ class OpenBaoHostRun(h.ServiceRun):
                   'OpenBao predecessor is not the installed predecessor leaf')
         self.save('baseline.json', before)
         processes = self.kube([
-            '-n', SECRETS_NS, 'exec', pod['metadata']['name'],
-            '-c', 'openbao-pki', '--', 'sh', '-ec',
+            '-n', SECRETS_NS, 'exec', '-c', 'openbao-pki',
+            'pod/openbao-0', '--', 'sh', '-ec',
             "for f in /proc/[0-9]*/comm; do "
             "if [ \"$(cat \"$f\")\" = openbaopkihost ]; then "
             "basename \"$(dirname \"$f\")\"; fi; done"]).splitlines()
@@ -1943,8 +1943,8 @@ class OpenBaoHostRun(h.ServiceRun):
                   'target_issuer_id': issuer['issuer_id'],
                   'at': m.stamp(dt.datetime.now(dt.timezone.utc))}
         self.save('renewal-intent.json', intent)
-        self.kube(['-n', SECRETS_NS, 'exec', pod['metadata']['name'],
-                   '-c', 'openbao-pki', '--', 'kill', '-HUP', processes[0]])
+        self.kube(['-n', SECRETS_NS, 'exec', '-c', 'openbao-pki',
+                   'pod/openbao-0', '--', 'kill', '-HUP', processes[0]])
         deadline = time.monotonic() + 180
         while True:
             try:
