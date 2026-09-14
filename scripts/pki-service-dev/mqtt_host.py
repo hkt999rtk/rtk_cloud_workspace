@@ -2386,7 +2386,8 @@ class MQTTHostRun(h.ServiceRun):
         current_predecessor = self.api(
             '/issuers/' + predecessor['issuer_id'])
         current_successor = self.mqtt_root('active')
-        root, issuer, owner = self.ready_intermediate(status='active')
+        root, issuer, _ = self.ready_intermediate(status='active')
+        owner = self.obj('deployment', 'mqtt-pki')
         m.require(current_predecessor.get('status') in ('revoked', 'compromised')
                   and current_predecessor['certificate_fingerprint_sha256'] ==
                   predecessor['certificate_fingerprint_sha256']
