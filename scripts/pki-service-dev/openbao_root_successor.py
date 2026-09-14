@@ -216,6 +216,7 @@ class OpenBaoRootSuccessor(s.ServiceRun):
         m.require(current['certificate_fingerprint_sha256'] ==
                   root['certificate_fingerprint_sha256'],
                   'successor Root certificate changed')
+        self.save('root-active.json', current)
         now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
         request = {'issuer_id': current['issuer_id'],
                    'issuer_fingerprint_sha256':
@@ -228,7 +229,7 @@ class OpenBaoRootSuccessor(s.ServiceRun):
             'crl-digest', self.output / 'root-crl-request.json']).strip()
         passfile = m.read(source / 'passphrase-reference.json')['path']
         self.ceremony_call([
-            'crl', '--issuer', source / 'root-ready.json',
+            'crl', '--issuer', self.output / 'root-active.json',
             '--crl-request', self.output / 'root-crl-request.json',
             '--expected-request-sha256', expected,
             '--key', source / 'root-offline-simulation/ca-key.encrypted.pem',
