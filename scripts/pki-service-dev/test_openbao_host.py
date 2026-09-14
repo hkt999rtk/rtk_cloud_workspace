@@ -17,6 +17,49 @@ spec.loader.exec_module(o)
 
 
 class OpenBaoHostTests(unittest.TestCase):
+    def test_retirement_resumes_after_registry_revocation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            renewal = base / 'renewal'
+            renewal.mkdir()
+            old_fingerprint, successor_fingerprint = 'a' * 64, 'b' * 64
+            state = {'fingerprint': successor_fingerprint}
+            (renewal / 'report.json').write_text(json.dumps({
+                'status': 'passed', 'phase': 'recover-host',
+                'checks': {'openbao_host_recovered_on_server_only_successor': {
+                    'status': 'passed'}}}))
+            (renewal / 'baseline.json').write_text(json.dumps({
+                'state': {'fingerprint': old_fingerprint}}))
+            (renewal / 'renewed.json').write_text(json.dumps({
+                'state': state, 'pvc_uid': 'pvc'}))
+            predecessor = {'issuer_id': 'old-issuer'}
+            successor = {'issuer_id': 'new-issuer'}
+            old = {'fingerprint': old_fingerprint, 'issuer_id': 'old-issuer',
+                   'revoked_at': 'already-revoked', 'certificate_pem': 'old'}
+            new = {'fingerprint': successor_fingerprint, 'issuer_id': 'new-issuer',
+                   'revoked_at': None, 'request_id': 'request'}
+            previous = {'crl_sha256': 'old-crl'}
+            published = {'crl_sha256': 'new-crl', 'crl_pem': 'crl'}
+            runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+            runner.args = SimpleNamespace(renewal=str(renewal))
+            runner.output = base / 'output'
+            runner.output.mkdir()
+            runner.probe, runner.openssl = 'probe', 'openssl'
+            runner.lifecycle_prerequisites = Mock(
+                return_value=({}, predecessor, successor, {}, {}))
+            runner.current_host = Mock(return_value={'state': state, 'pvc_uid': 'pvc'})
+            runner.server_rows = Mock(side_effect=[[old, new], [old, new]])
+            runner.save, runner.check, runner.role_policy = Mock(), Mock(), Mock()
+            runner.wait_receipts = Mock(return_value={'pki-controller': 'receipt'})
+            runner.api = Mock(side_effect=[previous, {'revoked': True}, {'revoked': True},
+                                          published, published, published, published])
+            with patch.object(o.m, 'command', side_effect=[json.dumps([
+                    {'serial_hex': '1'}]), 'serial=01']):
+                runner.retire_host_predecessor()
+            self.assertEqual(runner.api.call_count, 7)
+            self.assertEqual(runner.wait_receipts.call_count, 1)
+            self.assertTrue((runner.output / 'target.pem').exists())
+
     def test_root_bundle_is_canonicalized_by_der_fingerprint(self):
         first = ('-----BEGIN CERTIFICATE-----\nYg==\n'
                  '-----END CERTIFICATE-----\n')

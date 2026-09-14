@@ -2075,7 +2075,6 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(len(old) == len(successor) == 1
                   and old[0]['issuer_id'] == predecessor['issuer_id']
                   and successor[0]['issuer_id'] == issuer['issuer_id']
-                  and old[0]['revoked_at'] is None
                   and successor[0]['revoked_at'] is None,
                   'OpenBao retirement targets changed')
         previous = self.api('/issuers/' + predecessor['issuer_id'] + '/crl')
@@ -2094,25 +2093,22 @@ class OpenBaoHostRun(h.ServiceRun):
         self.save('revocation.json', revoked)
         denied = [row for row in self.server_rows()
                   if row['fingerprint'] == old[0]['fingerprint']]
-        m.require(len(denied) == 1 and denied[0]['revoked_at'] is not None
-                  and self.api('/issuers/' + predecessor['issuer_id'] +
-                               '/crl') == previous,
+        m.require(len(denied) == 1 and denied[0]['revoked_at'] is not None,
                   'OpenBao predecessor registry denial differs')
         publish = {'certificate_sha256': old[0]['fingerprint']}
         published = self.api('/issuers/' + predecessor['issuer_id'] +
                              '/publish-server-revocation', publish)
-        m.require(published['crl_sha256'] != previous['crl_sha256']
-                  and self.api('/issuers/' + predecessor['issuer_id'] +
+        m.require(self.api('/issuers/' + predecessor['issuer_id'] +
                                '/publish-server-revocation', publish) ==
                   published,
                   'OpenBao predecessor CRL publication differs')
         self.save('published-crl.json', published)
+        m.write(self.output / 'target.pem', old[0]['certificate_pem'])
         receipts = self.wait_receipts(
             predecessor['issuer_id'], published['crl_sha256'], CONSUMERS,
             kind='crl')
         entries = json.loads(m.command(
             [self.probe, 'crl'], published['crl_pem'])) or []
-        m.write(self.output / 'target.pem', old[0]['certificate_pem'])
         serial = m.command([
             self.openssl, 'x509', '-in', self.output / 'target.pem',
             '-noout', '-serial']).strip().split('=')[1]
