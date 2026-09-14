@@ -2756,7 +2756,10 @@ def main():
             runner.recovery_preflight()
         elif args.phase in ('install-provider-root-policy',
                             'install-provider-root-overlap',
-                            'install-provider-successor-bundles'):
+                            'install-provider-successor-bundles') or (
+                                args.server_only and args.phase in (
+                                    'install-intermediate-consumers',
+                                    'activate-intermediate')):
             runner.provider_root_policy_preflight()
         else:
             runner.preflight()
