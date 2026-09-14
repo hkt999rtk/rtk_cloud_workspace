@@ -459,6 +459,18 @@ class OpenBaoHostRun(h.ServiceRun):
                            'rm', '-f', path, path + '.lock',
                            path + '.owner'])
 
+    def ensure_local_probe(self):
+        """Build only the local verifier required by scoped transport checks."""
+        if self.probe.exists():
+            return
+        result = m.subprocess.run(
+            ['go', 'build', '-o', str(self.probe), './pki-dev-probe'],
+            cwd=m.WORKSPACE / 'scripts/go',
+            env=dict(os.environ, GOWORK='off'), capture_output=True,
+            timeout=180)
+        m.require(result.returncode == 0,
+                  'OpenBao transport probe build failed')
+
     def provider_root_policy_preflight(self):
         """Check only the Dev resources this transport-policy phase owns."""
         m.require(self.kube(['config', 'current-context']).strip() == self.context,
@@ -499,6 +511,7 @@ class OpenBaoHostRun(h.ServiceRun):
         self.forward('am', 'video-cloud-dev-account-manager', 'account-manager', 80)
         self.accounts = m.read(self.foundation / 'accounts.json')
         self.api('/issuers/search', {'limit': 1}, role='requester')
+        self.ensure_local_probe()
         self.check('openbao_transport_root_policy_preflight', {
             'consumers': workloads, 'staging_touched': False})
 
