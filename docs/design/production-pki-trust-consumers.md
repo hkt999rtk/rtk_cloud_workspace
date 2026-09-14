@@ -2977,11 +2977,31 @@ root `e8edbaad-5c7c-4516-8d23-c7031a415bef` is revoked. Its cumulative MQTT
 distrust policy is version 3 with digest
 `b15421b151dab779eb5850e11267e76ba3480af9d87a28d8801b30a1fd6cf92c`.
 
-The actual `video-cloud-api` and `video-cloud-logingester` MQTT clients each
-wrote a receipt for the same successor-only root bundle, then restarted while
-retaining their own PVC-backed policy state. The pre-credential TLS probe using
-the withdrawn root failed, the broker recorded both client families reconnecting,
-and the Device direct-mTLS and MQTT QoS1 baseline passed. EMQX now obtains its
-MQTT server leaf through the managed `service:emqx-pki` client; its one-use
-bootstrap CA and temporary CertIssuer policy are absent. Staging, human login,
-and MFA were untouched.
+Corrected report `r3-mqtt-root-reverify-r2-20260914` rechecked the completed
+state without repeating the lifecycle operation. The actual `video-cloud-api`
+and `video-cloud-logingester` MQTT clients retain the same successor-only
+PVC-backed policy state and exact receipts. A unique rollout annotation replaced
+both Pods; their UIDs changed from `34fe1cdc…dda4c` to `ab543879…a463` and from
+`8d3eee32…023a` to `dfe8490e…21b`. All three deployments were 1/1 Ready after
+the rollout and both client families reconnected.
+
+The corrected rejection test creates a short-lived server leaf signed by the
+withdrawn Root. The withdrawn Root accepts that leaf as the control case; the
+roots actually loaded by both consumers reject it as an unknown authority. The
+probe supplies no MQTT credentials, so a TCP error or a successor-broker chain
+mismatch cannot count as Root rejection. Local test
+`TestMQTTRuntimeRootWithdrawalCutsSessionsAndReconnectsWithSuccessor` changes
+the certificate served at one broker endpoint, verifies that all four API MQTT
+connections and the log-ingester connection close within one second, then proves
+successor reconnection and QoS 1 publication. A reconstructed connection owner
+also accepts the successor. `TestConsumerAuthenticatedInstallAndRetry` and
+`TestAtomicRootRemovalRollbackAndRuntimeReload` prove failed installation sends
+no receipt, rollback is rejected and stale bootstrap input cannot restore a
+removed Root.
+
+The runner now preserves arbitrary prior distrust entries and requires exactly
+one operation-bound addition, so later rotations do not assume policy version
+zero. EMQX lifecycle lookup uses its managed `service:emqx-pki` issuance caller.
+The Device direct-mTLS and MQTT QoS 1 baseline passed after the corrected
+rollout. EMQX's one-use bootstrap CA and temporary CertIssuer policy remain
+absent. Staging, human login and MFA were untouched.

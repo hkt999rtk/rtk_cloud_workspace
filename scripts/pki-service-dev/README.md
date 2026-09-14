@@ -431,7 +431,20 @@ python3 scripts/pki-service-dev/mqtt_host.py \
   --phase verify-host-lifecycle --authority MQTT_ROOT_EVIDENCE \
   --intermediate INTERMEDIATE_EVIDENCE --publication MQTT_HOST_PUBLICATION_EVIDENCE \
   --output MQTT_HOST_LIFECYCLE_EVIDENCE
+python3 scripts/pki-service-dev/mqtt_host.py \
+  --phase verify-mqtt-root-withdrawal --authority MQTT_SUCCESSOR_ROOT_EVIDENCE \
+  --intermediate MQTT_SUCCESSOR_INTERMEDIATE_EVIDENCE \
+  --predecessor-authority MQTT_PREDECESSOR_ROOT_EVIDENCE \
+  --withdrawal MQTT_ROOT_WITHDRAWAL_EVIDENCE \
+  --output MQTT_ROOT_REVERIFICATION_EVIDENCE
 ```
+
+The withdrawal reverification phase is safe to run after the lifecycle operation
+has completed. It checks cumulative policy history, serves an old-Root test leaf
+for a positive-control and successor-only rejection pair, requires new Pod UIDs
+for both consumer restarts, verifies retained policy state and receipts, and runs
+the MQTT cutoff/reconnect plus failed-install/no-receipt source tests. It is
+dev-only and never repeats the Root revocation.
 
 If intermediate activation succeeded but a client failed before recording CRL
 receipts, keep the failed evidence and run `--phase
