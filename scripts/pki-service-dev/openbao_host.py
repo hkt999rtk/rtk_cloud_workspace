@@ -1736,7 +1736,7 @@ class OpenBaoHostRun(h.ServiceRun):
                                     OPENBAO_STATE_PVC,
                                     SECRETS_NS)['metadata']['uid']}
 
-    def lifecycle_prerequisites(self):
+    def lifecycle_prerequisites(self, require_sidecar=True):
         adoption = m.read(Path(self.args.adoption) / 'report.json')
         signer = m.read(Path(self.args.signer) / 'report.json')
         m.require(adoption['status'] == 'passed'
@@ -1752,16 +1752,33 @@ class OpenBaoHostRun(h.ServiceRun):
                   'successful server-only signer evidence required')
         root, issuer, _ = self.ready_intermediate('active')
         predecessor, _ = self.intermediate_predecessor()
-        pod = self.wait_openbao()
+        pod = self.wait_openbao() if require_sidecar else self.openbao_pod()
         owner = self.obj('statefulset', 'openbao', SECRETS_NS)
         containers = {item['name']: item for item in owner['spec'][
             'template']['spec']['containers']}
         worker = containers.get('openbao-pki', {})
         env = {item['name']: item for item in worker.get('env', [])}
+        state_path = env.get('OPENBAO_PKI_HOST_IDENTITY_STATE', {}).get(
+            'value')
+        transition = state_path != OPENBAO_HOST_STATE
+        if transition:
+            old_root = self.api('/issuers/' + predecessor['parent_issuer_id'])
+            m.require(re.fullmatch(
+                r'/var/lib/openbao-pki/host/server-[a-z0-9]+\.json',
+                state_path or '')
+                      and env.get('OPENBAO_PKI_HOST_ROOT_SHA256', {}).get(
+                          'value') == root['certificate_fingerprint_sha256']
+                      and env.get(
+                          'OPENBAO_PKI_HOST_IDENTITY_TRANSITION_FROM_STATE',
+                          {}).get('value') == OPENBAO_HOST_STATE
+                      and env.get(
+                          'OPENBAO_PKI_HOST_IDENTITY_TRANSITION_FROM_ROOT_SHA256',
+                          {}).get('value') == old_root[
+                              'certificate_fingerprint_sha256'],
+                      'OpenBao host Root transition settings changed')
         m.require(owner['spec']['replicas'] == 1
                   and owner['spec']['updateStrategy']['type'] == 'OnDelete'
-                  and env.get('OPENBAO_PKI_HOST_IDENTITY_STATE', {}).get(
-                      'value') == OPENBAO_HOST_STATE
+                  and (transition or state_path == OPENBAO_HOST_STATE)
                   and 'OPENBAO_PKI_SEED_CERT' not in env,
                   'managed OpenBao host ownership changed')
         return root, predecessor, issuer, owner, pod
@@ -1844,7 +1861,8 @@ class OpenBaoHostRun(h.ServiceRun):
 
     def recover_host(self):
         """Complete one retained host claim after its signer policy is repaired."""
-        _, predecessor, issuer, _, pod = self.lifecycle_prerequisites()
+        _, predecessor, issuer, _, pod = self.lifecycle_prerequisites(
+            require_sidecar=False)
         source = Path(self.args.recovery)
         report = m.read(source / 'report.json')
         intent = m.read(source / 'renewal-intent.json')
@@ -1864,10 +1882,87 @@ class OpenBaoHostRun(h.ServiceRun):
         m.require(len(pending) == 1,
                   'exactly one OpenBao successor host claim required')
         claim = pending[0]
+        raw = self.sql(
+            "SELECT row_to_json(t) FROM (SELECT request_id,csr_pem,ttl_days,"
+            "request_digest,created_at FROM pki_server_issuances WHERE "
+            "environment='dev' AND domain='openbao_tls' AND caller="
+            "'service:openbao' AND issuer_id='" + issuer['issuer_id'] +
+            "' AND request_id='" + claim['request_id'] + "' AND status="
+            "'issuing' AND revoked_at IS NULL) t;")
+        m.require(raw, 'OpenBao successor host claim disappeared')
+        claim = dict(claim, **json.loads(raw))
+        m.require(claim['csr_pem'] and re.fullmatch(
+            r'[0-9a-f]{64}', claim['request_digest'])
+                  and 1 <= claim['ttl_days'] <= 365,
+                  'OpenBao successor host claim differs')
+        public = lambda kind, pem: m.command(
+            [self.openssl, kind, '-pubkey', '-noout'], pem).strip()
+        expected = public('req', claim['csr_pem'])
+        serials = json.loads(self.bao([
+            'list', '-format=json', issuer['signer_reference'] + '/certs']))
+        m.require(isinstance(serials, list) and len(serials) == len(set(serials)),
+                  'invalid OpenBao successor host certificate inventory')
+        matches = []
+        for serial in serials:
+            m.require(re.fullmatch(r'[0-9a-fA-F:-]+', serial),
+                      'invalid OpenBao successor host certificate serial')
+            record = json.loads(self.bao([
+                'read', '-format=json', issuer['signer_reference'] +
+                '/cert/' + serial]))['data']
+            if public('x509', record['certificate']) == expected:
+                m.require(record.get('revocation_time') == 0,
+                          'matching OpenBao successor host leaf is revoked')
+                matches.append(serial)
+        m.require(len(matches) <= 1,
+                  'ambiguous OpenBao successor host provider result')
+        signed = False
+        if not matches:
+            marker = self.base / 'pki' / (
+                'openbao-host-recovery-' + claim['request_id'] + '.json')
+            if marker.exists():
+                existing = m.read(marker)
+                m.require(existing.get('request_id') == claim['request_id']
+                          and existing.get('request_digest') ==
+                          claim['request_digest'],
+                          'OpenBao host recovery marker differs')
+                m.require(False,
+                          'OpenBao host recovery signing was already started; inspect provider inventory')
+            else:
+                m.write(marker, {'request_id': claim['request_id'],
+                                 'request_digest': claim['request_digest'],
+                                 'at': m.stamp()})
+            horizon = (m.parse_time(issuer['not_after']) -
+                       dt.datetime.now(dt.timezone.utc) -
+                       dt.timedelta(days=30)).total_seconds()
+            ttl = min(claim['ttl_days'] * 24 * 60 * 60, int(horizon))
+            m.require(ttl > 60, 'OpenBao successor host validity window elapsed')
+            jwt = self.kube(['-n', NS, 'create', 'token', 'certissuer-pki',
+                             '--audience=openbao', '--duration=10m']).strip()
+            login = json.loads(self.bao([
+                'write', '-format=json', 'auth/kubernetes/login', '-'],
+                json.dumps({'role': 'certissuer-pki-dev', 'jwt': jwt})))
+            token = login['auth']['client_token']
+            try:
+                response = json.loads(self.bao([
+                    'write', '-format=json', issuer['signer_reference'] +
+                    '/sign/server', '-'], json.dumps({
+                        'csr': claim['csr_pem'],
+                        'common_name': OPENBAO_HOST_NAMES[0],
+                        'alt_names': ','.join(OPENBAO_HOST_NAMES),
+                        'exclude_cn_from_sans': True,
+                        'ttl': str(ttl) + 's'}), token=token))['data']
+            finally:
+                self.bao(['write', 'auth/token/revoke', '-'],
+                         json.dumps({'token': token}))
+            m.require(public('x509', response['certificate']) == expected,
+                      'OpenBao recovery provider returned another host key')
+            matches = [response['serial_number']]
+            signed = True
         recovered = self.api('/issuers/' + issuer['issuer_id'] +
                              '/reconcile-server', {
                                  'caller': 'service:openbao',
-                                 'request_id': claim['request_id']},
+                                 'request_id': claim['request_id'],
+                                 'serial_number': matches[0]},
                              role='approver')
         m.require(recovered.get('issuer_id') == issuer['issuer_id']
                   and recovered.get('request_id') == claim['request_id']
@@ -1896,6 +1991,7 @@ class OpenBaoHostRun(h.ServiceRun):
             'successor_fingerprint': current['state']['fingerprint'],
             'successor_issuer_id': issuer['issuer_id'],
             'original_csr_and_request_retained': True,
+            'provider_signed_during_recovery': signed,
             'new_owner_key': True, 'private_key_exported': False,
             'served_successor': True})
 
