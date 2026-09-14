@@ -46,3 +46,31 @@ func TestServiceStateExposesOnlyPublicMetadata(t *testing.T) {
 		t.Fatal("invalid key leaked")
 	}
 }
+
+func TestClearPendingRequiresExactRequest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "identity.json")
+	server := httptest.NewTLSServer(nil)
+	defer server.Close()
+	pair := server.TLS.Certificates[0]
+	key, _ := x509.MarshalPKCS8PrivateKey(pair.PrivateKey)
+	raw, _ := json.Marshal(map[string]any{"subject": "service:test", "current": map[string]string{
+		"private_key_pem":       string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: key})),
+		"certificate_chain_pem": string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: pair.Certificate[0]}))},
+		"pending": map[string]string{"request_id": "request-1", "private_key_pem": "pending-key"}})
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearPending(path, "other"); err == nil {
+		t.Fatal("wrong request cleared pending state")
+	}
+	if err := clearPending(path, "request-1"); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "pending-key") || !strings.Contains(string(stored), `"current"`) {
+		t.Fatal("pending cleanup changed retained identity")
+	}
+}

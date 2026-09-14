@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // Inspect inside the identity owner. Only public metadata and a state hash leave
@@ -22,6 +23,45 @@ type privateServiceState struct {
 	Pending *struct {
 		RequestID string `json:"request_id"`
 	} `json:"pending"`
+}
+
+// clearPending removes only the exact retained Dev claim. It never prints or
+// copies private key material and preserves the installed current identity.
+func clearPending(path, requestID string) error {
+	state, _, err := loadServiceState(path)
+	if err != nil {
+		return err
+	}
+	if state.Pending == nil || state.Pending.RequestID != requestID {
+		return fmt.Errorf("exact pending request is not retained")
+	}
+	state.Pending = nil
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".service-state-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func loadServiceState(path string) (state privateServiceState, raw []byte, err error) {
