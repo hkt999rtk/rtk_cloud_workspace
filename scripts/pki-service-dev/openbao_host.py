@@ -1553,9 +1553,17 @@ class OpenBaoHostRun(h.ServiceRun):
 
     def inspect_host_state(self, pod=None):
         name, probe = self.install_host_probe(pod)
+        owner = self.obj('statefulset', 'openbao', SECRETS_NS)
+        workers = {item['name']: item for item in owner['spec']['template'][
+                   'spec'].get('containers', [])}
+        path = next((item.get('value', '') for item in
+                     workers.get('openbao-pki', {}).get('env', [])
+                     if item['name'] == 'OPENBAO_PKI_HOST_IDENTITY_STATE'), '')
+        m.require(re.fullmatch(r'/var/lib/openbao-pki/host/server(?:-[a-z0-9]+)?\.json', path),
+                  'OpenBao host identity state location changed')
         return json.loads(self.kube([
             '-n', SECRETS_NS, 'exec', name, '-c', 'openbao-pki', '--',
-            probe, 'service-state', OPENBAO_HOST_STATE]))
+            probe, 'service-state', path]))
 
     def inspect_client_state(self, pod=None):
         name, probe = self.install_host_probe(pod)

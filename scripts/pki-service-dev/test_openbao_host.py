@@ -620,6 +620,18 @@ class OpenBaoHostTests(unittest.TestCase):
         self.assertEqual(owner['spec']['template']['spec']['containers'][0][
             'env'][0]['value'], 'a' * 64)
 
+    def test_host_state_uses_the_configured_successor_path(self):
+        runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
+        runner.install_host_probe = Mock(return_value=('openbao-0', 'probe'))
+        runner.obj = Mock(return_value={'spec': {'template': {'spec': {
+            'containers': [{'name': 'openbao-pki', 'env': [{
+                'name': 'OPENBAO_PKI_HOST_IDENTITY_STATE',
+                'value': '/var/lib/openbao-pki/host/server-v3.json'}]}]}}}})
+        runner.kube = Mock(return_value=json.dumps({'fingerprint': 'host'}))
+        self.assertEqual(runner.inspect_host_state(), {'fingerprint': 'host'})
+        self.assertIn('/var/lib/openbao-pki/host/server-v3.json',
+                      runner.kube.call_args.args[0])
+
     def test_server_only_transition_reuses_verified_signer_policy(self):
         runner = o.OpenBaoHostRun.__new__(o.OpenBaoHostRun)
         runner.args = SimpleNamespace(
