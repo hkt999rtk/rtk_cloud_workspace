@@ -583,6 +583,24 @@ class OpenBaoHostTests(unittest.TestCase):
                              ['new-root', 'old-root', 'old-intermediate',
                               'new-intermediate'])
 
+    def test_current_host_uses_the_shared_provider_root_overlap(self):
+        runner = object.__new__(o.OpenBaoHostRun)
+        roots = ('-----BEGIN CERTIFICATE-----\nYg==\n-----END CERTIFICATE-----\n'
+                 '-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n')
+        state = {'policy': {'environment': 'dev', 'trust_domain': 'openbao_tls'},
+                 'roots_pem': roots}
+        owner = {'spec': {'template': {'spec': {'containers': [{
+            'name': 'certissuer', 'env': [{'name': 'OPENBAO_SERVER_ROOT_STATE',
+            'value': '/var/lib/pki-host/identity/openbao-tls-root-policy-next.json'}]}]}}}}
+        controller = copy.deepcopy(owner)
+        controller['spec']['template']['spec']['containers'][0]['name'] = 'pki-controller'
+        runner.obj = Mock(side_effect=[owner, controller])
+        runner.kube = Mock(side_effect=[json.dumps(state), json.dumps(state)])
+        runner.openbao_root = Mock(return_value={'certificate_pem': (
+            '-----BEGIN CERTIFICATE-----\nYQ==\n-----END CERTIFICATE-----\n')})
+        self.assertEqual(runner.provider_transport_roots(),
+                         o.canonical_roots_pem(roots))
+
 
 if __name__ == '__main__':
     unittest.main()

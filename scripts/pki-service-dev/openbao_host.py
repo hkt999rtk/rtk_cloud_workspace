@@ -1628,6 +1628,33 @@ class OpenBaoHostRun(h.ServiceRun):
                                 if line)
                 if row['dns_names'] == OPENBAO_HOST_NAMES]
 
+    def provider_transport_roots(self):
+        """Read the exact durable Root-policy state used by both providers."""
+        states = []
+        for name in CONSUMERS:
+            owner = self.obj('deployment', name)
+            containers = owner['spec']['template']['spec'].get('containers', [])
+            m.require(len(containers) == 1 and containers[0]['name'] == name,
+                      'provider consumer topology changed: ' + name)
+            env = {item['name']: item.get('value')
+                   for item in containers[0].get('env', [])}
+            path = env.get('OPENBAO_SERVER_ROOT_STATE', '')
+            m.require(path.startswith(
+                '/var/lib/pki-host/identity/openbao-tls-root-policy'),
+                'provider Root-policy state location changed: ' + name)
+            states.append(json.loads(self.kube([
+                '-n', NS, 'exec', 'deployment/' + name, '--',
+                'cat', path])))
+        first = states[0]
+        roots_pem = canonical_roots_pem(first.get('roots_pem', ''))
+        m.require(all(item == first for item in states)
+                  and first.get('policy', {}).get('environment') == 'dev'
+                  and first['policy'].get('trust_domain') == 'openbao_tls'
+                  and self.openbao_root('active')['certificate_pem'].strip()
+                  in roots_pem,
+                  'provider Root-policy states differ')
+        return roots_pem
+
     def current_host(self, allowed_issuers, pod=None):
         pod = pod or self.openbao_pod()
         state = self.inspect_host_state(pod)
@@ -1642,8 +1669,10 @@ class OpenBaoHostRun(h.ServiceRun):
                   and selected[0]['status'] == 'succeeded'
                   and selected[0]['revoked_at'] is None,
                   'current OpenBao host is not registry-admitted')
+        # A retiring host is intentionally still served during a reviewed root
+        # overlap. Verify it with the same durable root pool that providers use.
         m.write(self.output / 'openbao-tls-root.pem',
-                self.openbao_root('active')['certificate_pem'])
+                self.provider_transport_roots())
         peer = self.openbao_peer('openbao-current', selected[0])
         return {'pod_uid': pod['metadata']['uid'], 'state': state,
                 'row': selected[0], 'rows': rows,
