@@ -489,6 +489,9 @@ class OpenBaoHostRun(h.ServiceRun):
                       'provider consumer image ownership changed: ' + name)
             workloads[name] = containers[0]['image']
         if recovery:
+            self.forward('am', 'video-cloud-dev-account-manager',
+                         'account-manager', 80)
+            self.accounts = m.read(self.foundation / 'accounts.json')
             self.report['recovery'] = {
                 'reconciled_from': str(Path(self.args.failed)),
                 'reason': 'consumer receipt deadline'}
