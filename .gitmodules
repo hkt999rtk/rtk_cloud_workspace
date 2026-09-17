@@ -26,7 +26,7 @@
 [submodule "repos/rtk_ameba_webrtc"]
 	path = repos/rtk_ameba_webrtc
 	url = git@github-work.com:hkt999rtk/rtk_ameba_webrtc.git
-	branch = codex/amebapro2-libdatachannel
+	branch = main
 [submodule "repos/amebapro2_cloud_examples"]
 	path = repos/amebapro2_cloud_examples
 	url = git@github-work.com:hkt999rtk/amebapro2_cloud_examples.git
