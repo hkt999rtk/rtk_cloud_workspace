@@ -539,7 +539,7 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	}
 	eventsRel := filepath.ToSlash(filepath.Join(moduleRel, "test-events.json"))
 	eventsPath := filepath.Join(outDir, filepath.FromSlash(eventsRel))
-	args := []string{"test", "-json", "-count=1"}
+	args := []string{"test", "-json", "-count=1", "-timeout=20m"}
 	args = append(args, module.Packages...)
 	args = append(args, "-coverprofile="+profilePath)
 	if profile == "pr" && len(module.CoverPackages) > 0 {
