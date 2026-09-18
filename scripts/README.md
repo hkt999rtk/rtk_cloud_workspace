@@ -562,7 +562,7 @@ PostgreSQL PVC expansion is not a normal rollout. `LKE_POSTGRES_STORAGE` affects
 
 ### `go run ./scripts/go/rtk-cloud -- staging-e2e-test`
 
-Kubernetes staging E2E compatibility orchestrator. It joins reset, rollout readiness, service query/port-forward, E2E data setup, Home MQTT simulation, and persisted runtime-log verification, producing sanitized `summary.json` and `test_report.md`. Data creation lives in `scripts/setup-staging-e2e-data.sh` / `staging-e2e-data-setup`.
+Kubernetes staging E2E compatibility orchestrator. It joins reset, rollout readiness, service query/port-forward, E2E data setup, Home MQTT simulation, and persisted runtime-log verification, producing sanitized `summary.json` and `test_report.md`. Data creation lives in `scripts/setup-staging-e2e-data.sh` / `staging-e2e-data-setup`. After binding, the setup grants each synthetic admin/member access only to the Products used by that user's bound devices; the authenticated staging operator must be the test Brand Cloud owner, and the transaction verifies every requested admission before MQTT begins.
 
 The operator entry point is `scripts/run-staging-e2e.sh`. Account Manager verification and password-reset mail use only the Realtek Connect Send Mail HTTP API. Before a full reset, provide these values in the operator process environment; never write the secret to Git, PRs, or logs:
 

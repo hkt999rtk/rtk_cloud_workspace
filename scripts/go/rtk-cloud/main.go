@@ -67,6 +67,7 @@ var commands = map[string]commandSpec{
 	"destroy-linode-staging-resources": {run: runDestroyLinodeStagingResources},
 	"docs-check":                       {run: runDocsCheck},
 	"generate-load-devices":            {run: runGenerateLoadDevices},
+	"grant-staging-product-access":     {run: runGrantStagingProductAccess},
 	"list-brandname-clouds":            {run: runListBrandnameClouds},
 	"logs-check":                       {run: runLogsCheck},
 	"lke-build-images":                 {run: runLKEBuildImages},
@@ -3279,6 +3280,7 @@ func runStagingE2EDataSetup(args []string) error {
 		"setup-brand":      firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_SETUP_BRAND_SCRIPT"), selfCommandPath("staging-e2e-data-setup")),
 		"generate-devices": firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT"), selfCommandPath("generate-load-devices")),
 		"bind-devices":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT"), selfCommandPath("bind-devices")),
+		"grant-access":     firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT"), selfCommandPath("grant-staging-product-access")),
 		"validate-bind":    firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT"), selfCommandPath("validate-device-bind")),
 	}
 	if strings.TrimSpace(*brandPlanFile) != "" {
@@ -3467,6 +3469,14 @@ func runStagingE2EDataSetup(args []string) error {
 	if bindFile == "" {
 		return fmt.Errorf("no device-bind test-data DB found for brand %s", *brandname)
 	}
+	if shouldRunStep("grant_product_access") {
+		args := []string{"--workspace", workspace, "--env-root", envRoot, "--brandname", *brandname}
+		if err := runStepWithEnv("grant_product_access", childEnv, commandWithArgs(scripts["grant-access"], args...)...); err != nil {
+			return err
+		}
+	} else {
+		skipStep("grant_product_access", "--from-step")
+	}
 	expectedPerUser := (*deviceCount + *userCount - 1) / *userCount
 	bindValidationDir := filepath.Join(*outDir, "bind-validation")
 	if shouldRunStep("validate_bind") {
@@ -3562,12 +3572,13 @@ func printE2EDataSetupPlan(workspace, envRoot, brandname string, userCount, devi
 	fmt.Fprintf(os.Stdout, "  - create users with %s\n", displayCommand(scripts["create-users"]))
 	fmt.Fprintf(os.Stdout, "  - generate/factory-enroll devices with %s\n", displayCommand(scripts["generate-devices"]))
 	fmt.Fprintf(os.Stdout, "  - bind/provision devices with %s\n", displayCommand(scripts["bind-devices"]))
+	fmt.Fprintf(os.Stdout, "  - grant bound synthetic users access to their Products with %s\n", displayCommand(scripts["grant-access"]))
 	fmt.Fprintf(os.Stdout, "  - validate SQLite bind data with %s\n", displayCommand(scripts["validate-bind"]))
 	fmt.Fprintf(os.Stdout, "test_data_db: %s\n", testDataDBPath(envRoot, brandname))
 }
 
 func e2eStepOrder() []string {
-	return []string{"create_brand", "create_users", "prepare_factory_production", "create_devices", "bind_devices", "validate_bind"}
+	return []string{"create_brand", "create_users", "prepare_factory_production", "create_devices", "bind_devices", "grant_product_access", "validate_bind"}
 }
 
 func e2eStepIndex(name string) int {
