@@ -77,6 +77,7 @@ var deploymentArchitectureKeys = architectureKeySet()
 
 var deploymentEnvironmentKeys = keySet(
 	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
+	"PRIVACY_POLICY_URL", "GOOGLE_ANALYTICS_MEASUREMENT_ID",
 	"TEST_LAB_ENABLED",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
@@ -172,8 +173,47 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
+	var qualification deploymentCredentialCheckOptions
+	var selectedChecks string
+	fs.BoolVar(&qualification.readOnly, "read-only", false, "credential qualification without DNS/storage writes or receipts")
+	fs.StringVar(&selectedChecks, "checks", "", "credential checks: linode,ghcr,dns,storage,tls,mounts (default: configured providers plus supplied local checks)")
+	fs.Func("image", "repeatable exact GHCR @sha256 image to pull for linux/amd64", func(v string) error { qualification.images = append(qualification.images, v); return nil })
+	fs.Func("manifest", "repeatable rendered workload JSON for Secret mount checks", func(v string) error { qualification.manifests = append(qualification.manifests, v); return nil })
+	fs.StringVar(&qualification.tls.cert, "tls-cert", "", "PEM leaf certificate and intermediate chain")
+	fs.StringVar(&qualification.tls.key, "tls-key", "", "private key file (0600)")
+	fs.StringVar(&qualification.tls.ca, "tls-ca", "", "trusted CA PEM bundle")
+	fs.StringVar(&qualification.tls.hostname, "tls-name", "", "actual server DNS name")
+	fs.StringVar(&qualification.tls.purpose, "tls-purpose", "server", "server or client")
+	fs.IntVar(&qualification.tls.minDays, "min-valid-days", 7, "required certificate-chain lifetime in days")
 	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
+	}
+	if action == "credentials-check" && fs.NArg() != 0 {
+		return errors.New("unexpected positional arguments; use --flag=value for boolean values")
+	}
+	qualificationFlags := keySet("read-only", "checks", "image", "manifest", "tls-cert", "tls-key", "tls-ca", "tls-name", "tls-purpose", "min-valid-days")
+	customQualification := false
+	fs.Visit(func(f *flag.Flag) {
+		if qualificationFlags[f.Name] {
+			customQualification = true
+		}
+	})
+	if customQualification {
+		if action != "credentials-check" {
+			return errors.New("qualification flags are only valid with deployment credentials-check")
+		}
+		if *createMissingObjectStorageBucket || *grantObjectStorageBucketAccess {
+			return errors.New("run credential repairs separately from scoped/read-only qualification")
+		}
+		if qualification.tls.cert == "" && (hasFlag(args[1:], "--tls-purpose") || hasFlag(args[1:], "--min-valid-days")) {
+			return errors.New("TLS purpose/lifetime flags require --tls-cert, --tls-key and --tls-ca")
+		}
+		if err := qualification.configureChecks(selectedChecks); err != nil {
+			return err
+		}
 	}
 	if !rtkCloudTestMode() {
 		if hasFlag(args[1:], "--env-file") || hasFlag(args[1:], "--shared-env-file") {
@@ -237,6 +277,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	}
 	if action == "credentials-check" || action == "create" || action == "upgrade" || action == "provision" || action == "test" {
 		credentialCheck := ops.credentials
+		if customQualification {
+			credentialCheck = func(cfg deploymentConfig, envFile string) error {
+				return defaultDeploymentCredentialChecker().checkWithOptions(cfg, envFile, qualification)
+			}
+		}
 		credentialsValidated := false
 		if *createMissingObjectStorageBucket {
 			credentialCheck = ops.bootstrapCredentials
@@ -621,6 +666,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
   rtk-cloud deployment credentials-check --environment NAME
+  rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test

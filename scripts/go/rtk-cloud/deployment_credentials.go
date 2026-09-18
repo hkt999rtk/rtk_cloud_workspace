@@ -23,12 +23,18 @@ type deploymentCredentialCheck struct {
 }
 
 type deploymentCredentialCheckOptions struct {
+	readOnly                         bool
+	selected                         map[string]bool
+	images                           []string
+	manifests                        []string
+	tls                              rolloutTLSOptions
 	createMissingObjectStorageBucket bool
 	grantObjectStorageBucketAccess   bool
 	envFile                          string
 }
 
 type deploymentCredentialChecker struct {
+	readOnly         bool
 	client           *http.Client
 	out              io.Writer
 	linodeAPIRoot    string
@@ -110,30 +116,79 @@ func (c deploymentCredentialChecker) check(cfg deploymentConfig, envFile string)
 }
 
 func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envFile string, options deploymentCredentialCheckOptions) error {
+	if options.readOnly && (options.createMissingObjectStorageBucket || options.grantObjectStorageBucketAccess) {
+		return errors.New("read-only credential checks cannot create buckets or replace credentials")
+	}
+	c.readOnly = options.readOnly
 	if c.client == nil {
 		c.client = &http.Client{Timeout: 15 * time.Second}
 	}
 	if c.out == nil {
 		c.out = io.Discard
 	}
-	values, fileCheck := deploymentCredentialProfileValues(cfg.Environment, envFile, defaultDeploymentSharedCredentialFile())
-	checks := []deploymentCredentialCheck{fileCheck}
-	if !fileCheck.Passed {
-		return c.render(checks)
+	wanted := func(name string) bool { return options.selected == nil || options.selected[name] }
+	var checks []deploymentCredentialCheck
+	values := map[string]string{}
+	fileCheck := deploymentCredentialCheck{Passed: true}
+	if wanted("linode") || wanted("ghcr") || wanted("dns") || wanted("storage") {
+		values, fileCheck = deploymentCredentialProfileValues(cfg.Environment, envFile, defaultDeploymentSharedCredentialFile())
+		checks = append(checks, fileCheck)
+	}
+	mediaEnabled := strings.EqualFold(strings.TrimSpace(cfg.Values["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"]), "true")
+	// An explicitly requested provider must never silently disappear from the report.
+	for _, name := range []string{"linode", "ghcr", "dns", "storage"} {
+		if !options.selected[name] {
+			continue
+		}
+		if ((name == "linode" || name == "ghcr") && cfg.Adapter != "lke") || (name == "dns" && cfg.DNSAdapter != "godaddy") || (name == "storage" && !mediaEnabled && cfg.Storage.ReleaseArtifacts.Bucket == "") {
+			checks = append(checks, deploymentCredentialCheck{Name: name, Detail: "requested check is not configured for this environment"})
+		}
+	}
+	if c.readOnly {
+		fmt.Fprintln(c.out, "Read-only qualification: no DNS/storage canaries or validation receipts; write access remains unverified.")
 	}
 
-	if cfg.Adapter == "lke" {
-		checks = append(checks, c.checkLinode(values))
-		checks = append(checks, c.checkGHCR(values)...)
+	if cfg.Adapter == "lke" && fileCheck.Passed {
+		if wanted("linode") {
+			checks = append(checks, c.checkLinode(values))
+		}
+		if wanted("ghcr") {
+			// Compare the raw selected files: SecretStore normalization must not hide
+			// newlines that would later be copied verbatim into a registry Secret.
+			if info, err := os.Stat(envFile); err == nil && info.IsDir() {
+				for _, name := range []string{"GHCR_PULL_USERNAME", "GHCR_PULL_TOKEN"} {
+					if raw, err := os.ReadFile(filepath.Join(envFile, name)); err == nil {
+						values[name] = string(raw)
+					}
+				}
+			}
+			if strings.ContainsAny(values["GHCR_PULL_USERNAME"]+values["GHCR_PULL_TOKEN"], "\r\n") {
+				checks = append(checks, deploymentCredentialCheck{Name: "GHCR pull", Detail: "canonical GHCR credential contains CR/LF; normalize before copying into Secrets"})
+			} else if len(options.images) == 0 {
+				checks = append(checks, c.checkGHCR(values)...)
+			} else {
+				for _, image := range uniqueNonEmpty(options.images...) {
+					checks = append(checks, c.checkRolloutImage(values, image))
+				}
+			}
+		}
 	}
-	if cfg.DNSAdapter == "godaddy" {
+	if wanted("dns") && cfg.DNSAdapter == "godaddy" && fileCheck.Passed {
 		checks = append(checks, c.checkGoDaddy(cfg, values))
 	}
-	if strings.EqualFold(strings.TrimSpace(cfg.Values["VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED"]), "true") {
-		checks = append(checks, c.checkObjectStorageWithOptions(cfg, values, options))
+	if wanted("storage") && fileCheck.Passed {
+		if mediaEnabled {
+			checks = append(checks, c.checkObjectStorageWithOptions(cfg, values, options))
+		}
 		if cfg.Storage.ReleaseArtifacts.Bucket != "" {
 			checks = append(checks, c.checkResolvedArtifactStorage(cfg, values))
 		}
+	}
+	if options.tls.cert != "" {
+		checks = append(checks, checkRolloutTLS(options.tls))
+	}
+	for _, path := range options.manifests {
+		checks = append(checks, checkRolloutMounts(path))
 	}
 	return c.render(checks)
 }
@@ -449,6 +504,9 @@ func (c deploymentCredentialChecker) checkGoDaddy(cfg deploymentConfig, values m
 	zone, err := adapter.DiscoverZone(context.Background(), adapterCtx)
 	if err != nil {
 		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
+	}
+	if c.readOnly {
+		return deploymentCredentialCheck{Name: "GoDaddy DNS", Passed: true, Detail: "authenticated zone discovery verified; record writes not tested"}
 	}
 	if err := validateDNSMutationAccess(context.Background(), adapter, adapterCtx, zone, cfg.Environment); err != nil {
 		return deploymentCredentialCheck{Name: "GoDaddy DNS", Detail: err.Error()}
