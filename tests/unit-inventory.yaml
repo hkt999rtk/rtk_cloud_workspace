@@ -1458,11 +1458,67 @@ cases:
       title: verification replay requires both invalid-link UI and server-side reuse rejection
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-client-javascript/test/device-certificate.test.ts#device%20installation%20validates%20independent%20path%2C%20profile%20and%20protected%20key%20before%20writing
+      module: cloud-client-javascript
+      language: javascript
+      source: test/device-certificate.test.ts
+      title: device installation validates independent path, profile and protected key before writing
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/device-key.test.ts#device%20key%20provisioning%20publishes%20one%20P-256%20identity%20across%20concurrent%20retries
+      module: cloud-client-javascript
+      language: javascript
+      source: test/device-key.test.ts
+      title: device key provisioning publishes one P-256 identity across concurrent retries
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/device-key.test.ts#device%20provisioning%20preserves%20invalid%2C%20exposed%20and%20symlinked%20existing%20files
+      module: cloud-client-javascript
+      language: javascript
+      source: test/device-key.test.ts
+      title: device provisioning preserves invalid, exposed and symlinked existing files
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/device-trust-lifetime.test.ts#revalidation%20errors%20cancel%20and%20close%20stops%20future%20validation
+      module: cloud-client-javascript
+      language: javascript
+      source: test/device-trust-lifetime.test.ts
+      title: revalidation errors cancel and close stops future validation
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/device-trust-lifetime.test.ts#signed%20deadline%20cancels%20owners%20even%20when%20revalidation%20never%20settles
+      module: cloud-client-javascript
+      language: javascript
+      source: test/device-trust-lifetime.test.ts
+      title: signed deadline cancels owners even when revalidation never settles
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/device-trust-lifetime.test.ts#trust%20failure%20is%20terminal%20and%20a%20late%20provider%20result%20cannot%20revive%20owners
+      module: cloud-client-javascript
+      language: javascript
+      source: test/device-trust-lifetime.test.ts
+      title: trust failure is terminal and a late provider result cannot revive owners
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/immutable-file.test.ts#concurrent%20identity%20versions%20cannot%20overwrite%20the%20winning%20complete%20file
+      module: cloud-client-javascript
+      language: javascript
+      source: test/immutable-file.test.ts
+      title: concurrent identity versions cannot overwrite the winning complete file
+      owner: rtk_cloud_client
+      status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#AWS%20JavaScript%20service%20SDK%20uses%20RTK%20custom%20routes%20and%20iotdevicegateway%20SigV4
       module: cloud-client-javascript
       language: javascript
       source: test/package.test.ts
       title: AWS JavaScript service SDK uses RTK custom routes and iotdevicegateway SigV4
+      owner: rtk_cloud_client
+      status: active
+    - canonical_key: js://cloud-client-javascript/test/package.test.ts#WebSocket%20lifetime%20cancellation%20closes%20open%20owners%20and%20rejects%20late%20callbacks
+      module: cloud-client-javascript
+      language: javascript
+      source: test/package.test.ts
+      title: WebSocket lifetime cancellation closes open owners and rejects late callbacks
       owner: rtk_cloud_client
       status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#applies%20WebSocket%20connect%20cancellation%20and%20timeout%20controls

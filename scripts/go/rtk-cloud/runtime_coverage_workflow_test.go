@@ -75,6 +75,30 @@ func TestCloudAdminE2EInitializesCanonicalRequirementSource(t *testing.T) {
 	}
 }
 
+func TestLocalizationWorkflowInitializesPrivateSubmodules(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "localization.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(raw)
+	for _, required := range []string{
+		"submodules: false",
+		"CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}",
+		"run: scripts/ci/init-submodules.sh",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Fatalf("Localization workflow is missing private submodule initialization %q", required)
+		}
+	}
+	if strings.Contains(workflow, "submodules: recursive") {
+		t.Fatal("Localization workflow must not initialize private submodules with the workspace GitHub token")
+	}
+}
+
 func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

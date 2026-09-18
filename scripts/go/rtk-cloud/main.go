@@ -1158,6 +1158,8 @@ func runSecretsCheck(args []string) error {
 	return nil
 }
 
+var runWorkspaceBaselineCmd = runCmd
+
 func runTestMatrix(args []string) error {
 	fs := flag.NewFlagSet("test-matrix", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -1180,7 +1182,7 @@ func runTestMatrix(args []string) error {
 	if err := runCmd(workspace, "git", "diff", "--check"); err != nil {
 		return err
 	}
-	if err := runCmd(workspace, "go", "test", "./scripts/go/..."); err != nil {
+	if err := runWorkspaceBaselineCmd(workspace, "go", "test", "-timeout=20m", "./scripts/go/..."); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout)
