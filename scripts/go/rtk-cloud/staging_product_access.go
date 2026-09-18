@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
@@ -92,9 +93,13 @@ func runGrantStagingProductAccess(args []string) error {
 	if err != nil {
 		return err
 	}
+	databaseName, err := stagingAccountManagerDatabaseName(kubeconfig, stack)
+	if err != nil {
+		return err
+	}
 	cmd := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "--request-timeout="+firstNonEmpty(os.Getenv("RTK_CLOUD_KUBECTL_REQUEST_TIMEOUT"), "20s"),
 		"-n", stack+"-platform", "exec", "-i", "postgresql-0", "--", "sh", "-ceu",
-		`PGPASSWORD="$POSTGRES_PASSWORD" exec psql -X -v ON_ERROR_STOP=1 -U postgres -d video_cloud -q -f -`)
+		`PGPASSWORD="$POSTGRES_PASSWORD" exec psql -X -v ON_ERROR_STOP=1 -U postgres -d "$1" -q -f -`, "sh", databaseName)
 	cmd.Stdin = strings.NewReader(sql)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -106,6 +111,36 @@ func runGrantStagingProductAccess(args []string) error {
 		"brand_cloud_id": artifact.BrandCloudID,
 		"grant_count":    len(grants),
 	})
+}
+
+func stagingAccountManagerDatabaseName(kubeconfig, stack string) (string, error) {
+	items, err := readK8SSecretEnv(kubeconfig, stack+"-account-manager", "account-manager-runtime", "DATABASE_URL")
+	if err != nil {
+		return "", fmt.Errorf("read Account Manager database configuration: %w", err)
+	}
+	if len(items) != 1 {
+		return "", errors.New("Account Manager database configuration is incomplete")
+	}
+	_, rawURL, ok := strings.Cut(items[0], "=")
+	if !ok {
+		return "", errors.New("Account Manager database configuration is malformed")
+	}
+	return databaseNameFromPostgresURL(rawURL)
+}
+
+func databaseNameFromPostgresURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", errors.New("Account Manager database URL is malformed")
+	}
+	databaseName := strings.TrimPrefix(parsed.EscapedPath(), "/")
+	if unescaped, err := url.PathUnescape(databaseName); err == nil {
+		databaseName = unescaped
+	}
+	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`).MatchString(databaseName) {
+		return "", errors.New("Account Manager database URL has an invalid database name")
+	}
+	return databaseName, nil
 }
 
 func stagingProductAccessGrants(assignments []bindAssignment, users map[string]userCredential) ([]stagingProductAccessGrant, error) {

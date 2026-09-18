@@ -42,6 +42,9 @@ func TestStagingProductAccessGrantsRejectIncompleteBindingData(t *testing.T) {
 			}
 		})
 	}
+	if _, err := databaseNameFromPostgresURL("postgres://host/not-valid-name!"); err == nil {
+		t.Fatal("expected unsafe database name to fail")
+	}
 }
 
 func TestBuildStagingProductAccessSQLIsTransactionalAndOwnerScoped(t *testing.T) {
@@ -73,5 +76,22 @@ func TestBuildStagingProductAccessSQLRejectsInvalidIDs(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("expected invalid Brand Cloud ID to fail")
+	}
+}
+
+func TestStagingAccountManagerDatabaseNameParsing(t *testing.T) {
+	for name, rawURL := range map[string]string{
+		"plain":   "postgres://user:secret@postgres.example/rtk_account_manager?sslmode=disable",
+		"escaped": "postgres://user:secret@postgres.example/rtk%5Faccount%5Fmanager",
+	} {
+		t.Run(name, func(t *testing.T) {
+			databaseName, err := databaseNameFromPostgresURL(rawURL)
+			if err != nil || databaseName != "rtk_account_manager" {
+				t.Fatalf("database name = %q, err=%v", databaseName, err)
+			}
+		})
+	}
+	if _, err := databaseNameFromPostgresURL("postgres://host/not-valid-name!"); err == nil {
+		t.Fatal("expected unsafe database name to fail")
 	}
 }
