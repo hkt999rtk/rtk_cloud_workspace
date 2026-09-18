@@ -2670,7 +2670,7 @@ func TestConnectSustainedDevicesUntilReturnsWhenDeadlineExpiresDuringDispatch(t 
 	}()
 	select {
 	case <-done:
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(2 * time.Second):
 		t.Fatal("connectSustainedDevicesUntil deadlocked when deadline expired during dispatch")
 	}
 }

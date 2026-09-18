@@ -4198,6 +4198,9 @@ func TestLKEVideoCloudMQTTUsageCheckpointDoesNotDependOnHandoffWorker(t *testing
 				"name: prepare-mqtt-usage-checkpoint",
 				"chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage",
 				"name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR\n              value: \"/var/lib/video-cloud/mqtt-usage\"",
+				"name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT",
+				"name: VIDEO_CLOUD_BILLING_USAGE_TOKEN",
+				"name: VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL",
 				"name: mqtt-usage-checkpoint\n              mountPath: /var/lib/video-cloud/mqtt-usage",
 				"claimName: video-cloud-mqttusage-checkpoint",
 			} {
@@ -6059,6 +6062,7 @@ func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT", fakeE2EDataCommand(t, commandLog, "grant-product-access", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
 	if err := runStagingE2EDataSetup([]string{
@@ -6106,6 +6110,7 @@ func TestRunStagingE2EDataSetupForLKESupportsMultipleFactoryPortForwards(t *test
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT", fakeE2EDataCommand(t, commandLog, "grant-product-access", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
 	if err := runStagingE2EDataSetup([]string{
@@ -6187,6 +6192,7 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT", fakeE2EDataCommand(t, commandLog, "grant-product-access", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
 	if err := runStagingE2EDataSetup([]string{
@@ -6207,7 +6213,7 @@ func TestRunStagingE2EDataSetupDefaultsToResumeCompleteArtifacts(t *testing.T) {
 			t.Fatalf("default data setup should reuse complete artifacts, got:\n%s", commands)
 		}
 	}
-	for _, expected := range []string{"create-brand ", "validate-bind "} {
+	for _, expected := range []string{"create-brand ", "grant-product-access ", "validate-bind "} {
 		if !strings.Contains(commands, expected) {
 			t.Fatalf("expected %s command, got:\n%s", expected, commands)
 		}
@@ -6232,6 +6238,7 @@ func TestRunStagingE2EDataSetupNoResumeDisablesLocalUserReuse(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT", fakeE2EDataCommand(t, commandLog, "grant-product-access", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
 	if err := runStagingE2EDataSetup([]string{
@@ -6271,6 +6278,7 @@ func TestRunStagingE2EDataSetupDoesNotResumeDeviceManifestWithWrongMix(t *testin
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT", fakeE2EDataCommand(t, commandLog, "grant-product-access", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
 	if err := runStagingE2EDataSetup([]string{
@@ -6310,6 +6318,7 @@ func TestRunStagingE2EDataSetupDoesNotResumeBindArtifactWithWrongUsers(t *testin
 	t.Setenv("CLOUD_STAGING_E2E_CREATE_USERS_SCRIPT", fakeE2EDataCommand(t, commandLog, "create-users", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_GENERATE_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "generate-devices", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_BIND_DEVICES_SCRIPT", fakeE2EDataCommand(t, commandLog, "bind-devices", envRoot))
+	t.Setenv("CLOUD_STAGING_E2E_GRANT_PRODUCT_ACCESS_SCRIPT", fakeE2EDataCommand(t, commandLog, "grant-product-access", envRoot))
 	t.Setenv("CLOUD_STAGING_E2E_VALIDATE_BIND_SCRIPT", fakeE2EDataCommand(t, commandLog, "validate-bind", envRoot))
 
 	if err := runStagingE2EDataSetup([]string{

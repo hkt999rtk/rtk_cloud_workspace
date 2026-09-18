@@ -85,6 +85,7 @@ func TestTestDataStoreWritesUsersDevicesAndBindings(t *testing.T) {
 		DeviceType:      "camera",
 		Category:        "ip_camera",
 		ServiceOptions:  []string{"mqtt", "video_streaming"},
+		ProductID:       "product-camera-001",
 		AccountDeviceID: "account-device-1",
 		OperationID:     "op-1",
 		Status:          "provision_requested",

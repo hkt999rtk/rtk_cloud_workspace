@@ -569,6 +569,7 @@ func (s *testDataStore) ReadBindAssignments(brandname string) ([]bindAssignment,
 			return nil, err
 		}
 		item.ClaimID = stored.ClaimID
+		item.ProductID = stored.ProductID
 		out = append(out, item)
 	}
 	return out, rows.Err()

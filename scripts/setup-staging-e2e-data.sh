@@ -68,8 +68,9 @@ Usage:
   scripts/setup-staging-e2e-data.sh [--plan] [args]
 
 Creates the staging E2E brand cloud, users, factory-enrolled devices, device
-bindings, and bind validation artifacts. It does not provision servers and does
-not run the live MQTT E2E test.
+bindings, owner-approved Product admissions for the bound synthetic users, and
+bind validation artifacts. It does not provision servers and does not run the
+live MQTT E2E test.
 
 Options:
   --plan                         Print the data setup plan only.
@@ -95,7 +96,7 @@ Options:
   --quiet                         Suppress periodic progress lines.
   --resume                        Reuse matching completed SQLite test data. Default.
   --no-resume                     Recreate users/devices/bind data even when SQLite test data is complete.
-  --from-step STEP                Start from create_brand, create_users, create_devices, bind_devices, or validate_bind.
+  --from-step STEP                Start from create_brand, create_users, create_devices, bind_devices, grant_product_access, or validate_bind.
   -h, --help                      Show this help.
 USAGE
 }
