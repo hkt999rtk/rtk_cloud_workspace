@@ -128,6 +128,25 @@ func TestRolloutSecretMountQualification(t *testing.T) {
 	}
 }
 
+func TestRolloutSecretMountQualificationAcceptsStatefulSetClaimTemplate(t *testing.T) {
+	raw := `{
+		"apiVersion":"apps/v1",
+		"kind":"StatefulSet",
+		"spec":{
+			"volumeClaimTemplates":[{"metadata":{"name":"data"}}],
+			"template":{"spec":{
+				"securityContext":{"runAsUser":10001,"fsGroup":10001},
+				"containers":[{"volumeMounts":[{"name":"data"},{"name":"pki"}]}],
+				"volumes":[{"name":"pki","secret":{"defaultMode":288}}]
+			}}
+		}
+	}`
+	path := rolloutWrite(t, filepath.Join(t.TempDir(), "statefulset.json"), raw, 0600)
+	if check := checkRolloutMounts(path); !check.Passed {
+		t.Fatalf("complete StatefulSet manifest rejected: %+v", check)
+	}
+}
+
 func TestRolloutReadOnlyDNSDoesNotWrite(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	backend := newDeploymentCredentialTestServer(t, deploymentCredentialTestServerOptions{})
