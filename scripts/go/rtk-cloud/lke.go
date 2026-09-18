@@ -6518,7 +6518,7 @@ stringData:
   VIDEO_CLOUD_EMQX_API_SECRET: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeHandoffRuntimeValue(env, lkeBillingInternalToken()), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeBillingInternalToken(), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
 }
 
 func lkeCloudLoggerRuntimeSecretManifest(env map[string]string) string {
@@ -6697,13 +6697,22 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
 	mqttUsageStrategy := ""
 	mqttUsageInitContainers := ""
 	if service.Name == "video-cloud-mqttusage" {
-		mqttUsageEnv = `            - name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL
+		mqttUsageEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL
               value: "5s"
             - name: VIDEO_CLOUD_MQTT_USAGE_PERSIST_INTERVAL
               value: "5s"
             - name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR
               value: "/var/lib/video-cloud/mqtt-usage"
-`
+            - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
+              value: "http://billing.%s.svc.cluster.local:80/v1/internal/billing/usage-facts"
+            - name: VIDEO_CLOUD_BILLING_USAGE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_BILLING_USAGE_TOKEN
+            - name: VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL
+              value: "10s"
+`, lkeNamespaceName(env, "billing"))
 		mqttUsageVolumeMount = `            - name: mqtt-usage-checkpoint
               mountPath: /var/lib/video-cloud/mqtt-usage
 `
@@ -6735,15 +6744,6 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN
-            - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
-              value: "http://billing.%s.svc.cluster.local:80/v1/internal/billing/usage-facts"
-            - name: VIDEO_CLOUD_BILLING_USAGE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: video-cloud-workers-runtime
-                  key: VIDEO_CLOUD_BILLING_USAGE_TOKEN
-            - name: VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL
-              value: "10s"
             - name: VIDEO_CLOUD_EMQX_API_URL
               value: "http://mqtt:18083/api/v5"
             - name: VIDEO_CLOUD_EMQX_API_KEY
@@ -6756,7 +6756,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                 secretKeyRef:
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_EMQX_API_SECRET
-`, lkeNamespaceName(env, "billing"))
+`)
 	}
 	body := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment

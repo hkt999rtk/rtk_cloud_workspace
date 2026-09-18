@@ -4198,6 +4198,9 @@ func TestLKEVideoCloudMQTTUsageCheckpointDoesNotDependOnHandoffWorker(t *testing
 				"name: prepare-mqtt-usage-checkpoint",
 				"chown 10001:10001 /var/lib/video-cloud/mqtt-usage && chmod 0700 /var/lib/video-cloud/mqtt-usage",
 				"name: VIDEO_CLOUD_MQTT_USAGE_CHECKPOINT_DIR\n              value: \"/var/lib/video-cloud/mqtt-usage\"",
+				"name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT",
+				"name: VIDEO_CLOUD_BILLING_USAGE_TOKEN",
+				"name: VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL",
 				"name: mqtt-usage-checkpoint\n              mountPath: /var/lib/video-cloud/mqtt-usage",
 				"claimName: video-cloud-mqttusage-checkpoint",
 			} {
