@@ -363,6 +363,10 @@ and every skipped/blocked check. Reports may contain only sanitized evidence.
 - Image-resolution failure: confirm that the GHCR image for the pinned service
   commit is published and the token has `read:packages`.
 - Unknown active-service limit: ask the Linode account owner; never guess a default.
+- Existing active services above the recorded limit: refresh the account value when
+  a current confirmation is available. The live capacity guard may continue only
+  when its reconciliation proves `additional_required=0`; any operation that adds
+  an active service remains blocked.
 - Deployment succeeds but tests fail: run acceptance first according to
   [`testing-operations.md`](testing-operations.md), then identify data, MQTT, API,
   database, or generator bottlenecks.

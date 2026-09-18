@@ -458,6 +458,34 @@ func TestLKELiveProviderServicesCountsExistingActiveLinodes(t *testing.T) {
 	}
 }
 
+func TestLKELiveProviderServicesAllowsNoGrowthAboveRecordedLimit(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeLinodeCurl(t, map[string]string{
+		"/volumes?page_size=500":       `{"data":[{"id":9001}],"results":1}`,
+		"/nodebalancers?page_size=500": `{"data":[],"results":0}`,
+		"/linode/instances?page_size=500": `{"data":[
+			{"id":1,"label":"general-1"},
+			{"id":2,"label":"unrelated-existing-service"}
+		],"results":2}`,
+		"/lke/clusters?page_size=500": `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
+		"/lke/clusters/12345/pools": `{"data":[
+			{"id":111,"type":"g6-standard-4","count":1,"labels":{"rtk.io/node-class":"general"}}
+		]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-staging",
+		"CLOUD_REGION":          "us-sea",
+		"LKE_NODE_TYPE":         "g6-standard-4",
+		"LKE_GENERAL_NODE_TYPE": "g6-standard-4",
+	}
+	plan := lkeProviderServicePlan{NodeServices: 1, GeneralNodes: 1, Limit: 1}
+
+	if err := lkeCheckLiveProviderActiveServices(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, plan); err != nil {
+		t.Fatalf("no-growth reconciliation should not be blocked by a stale recorded limit: %v", err)
+	}
+}
+
 func TestLKELiveProviderServicesAccountsForPlannedNodePoolShrink(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	fakeLinodeCurl(t, map[string]string{

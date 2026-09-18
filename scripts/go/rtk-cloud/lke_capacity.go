@@ -184,6 +184,10 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 		projected = maxInt(beforeShrinkPeak, afterReconcile)
 	}
 	if projected > plan.Limit {
+		if additional == 0 && projected <= current {
+			fmt.Fprintf(os.Stderr, "[lke] provider active services warning: current=%d exceeds configured limit=%d, but this reconciliation adds no active services; continuing without quota growth\n", current, plan.Limit)
+			return nil
+		}
 		return fmt.Errorf("LKE live provider capacity check failed: projected active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (current_active=%d current_instances=%d current_volumes=%d current_nodebalancers=%d reducible_lke_nodes=%d additional_required=%d edge_vms=%d coturn_vms=%d); delete unused Linode services or request a Linode quota increase before rerunning staging provision", projected, plan.Limit, current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, plan.EdgeVMs, plan.CoturnVMs)
 	}
 	fmt.Fprintf(os.Stderr, "[lke] provider active services ok: current=%d instances=%d volumes=%d nodebalancers=%d reducible_lke_nodes=%d additional_required=%d projected=%d limit=%d\n", current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, projected, plan.Limit)
