@@ -187,6 +187,45 @@ type rolloutPod struct {
 	} `json:"volumes"`
 }
 
+func includeStatefulSetClaimVolumes(value any) {
+	switch v := value.(type) {
+	case map[string]any:
+		if v["kind"] == "StatefulSet" {
+			spec, _ := v["spec"].(map[string]any)
+			template, _ := spec["template"].(map[string]any)
+			podSpec, _ := template["spec"].(map[string]any)
+			volumes, _ := podSpec["volumes"].([]any)
+			known := map[string]bool{}
+			for _, raw := range volumes {
+				volume, _ := raw.(map[string]any)
+				if name, _ := volume["name"].(string); name != "" {
+					known[name] = true
+				}
+			}
+			claims, _ := spec["volumeClaimTemplates"].([]any)
+			for _, raw := range claims {
+				claim, _ := raw.(map[string]any)
+				metadata, _ := claim["metadata"].(map[string]any)
+				name, _ := metadata["name"].(string)
+				if name != "" && !known[name] {
+					volumes = append(volumes, map[string]any{"name": name})
+					known[name] = true
+				}
+			}
+			if podSpec != nil {
+				podSpec["volumes"] = volumes
+			}
+		}
+		for _, child := range v {
+			includeStatefulSetClaimVolumes(child)
+		}
+	case []any:
+		for _, child := range v {
+			includeStatefulSetClaimVolumes(child)
+		}
+	}
+}
+
 func checkRolloutMounts(path string) deploymentCredentialCheck {
 	check := deploymentCredentialCheck{Name: "rollout Secret mounts " + filepath.Base(path)}
 	raw, err := os.ReadFile(path)
@@ -195,6 +234,7 @@ func checkRolloutMounts(path string) deploymentCredentialCheck {
 		check.Detail = "provide readable complete rendered workload JSON"
 		return check
 	}
+	includeStatefulSetClaimVolumes(document)
 	pods, secretMounts := 0, 0
 	var walk func(any) error
 	walk = func(value any) error {
