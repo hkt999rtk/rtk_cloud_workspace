@@ -6727,6 +6727,16 @@ func TestWaitK8SOnDeleteStatefulSetReadyPollsUntilReady(t *testing.T) {
 	}
 }
 
+func TestWaitK8SOnDeleteStatefulSetReadyAcceptsLiveStatusWithoutCurrentCounts(t *testing.T) {
+	query := func() ([]byte, error) {
+		return []byte(`{"metadata":{"generation":7},"spec":{"replicas":1},"status":{"observedGeneration":7,"replicas":1,"readyReplicas":1,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}`), nil
+	}
+	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
+	if err := waitK8SOnDeleteStatefulSetReadyWith(query, "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWaitK8SOnDeleteStatefulSetReadyReportsPollFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name       string

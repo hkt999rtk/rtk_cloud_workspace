@@ -4171,9 +4171,10 @@ func waitK8SOnDeleteStatefulSetReadyWith(query func() ([]byte, error), namespace
 				} `json:"spec"`
 				Status struct {
 					ObservedGeneration int64  `json:"observedGeneration"`
+					Replicas           *int32 `json:"replicas"`
 					ReadyReplicas      int32  `json:"readyReplicas"`
-					CurrentReplicas    int32  `json:"currentReplicas"`
-					UpdatedReplicas    int32  `json:"updatedReplicas"`
+					CurrentReplicas    *int32 `json:"currentReplicas"`
+					UpdatedReplicas    *int32 `json:"updatedReplicas"`
 					CurrentRevision    string `json:"currentRevision"`
 					UpdateRevision     string `json:"updateRevision"`
 				} `json:"status"`
@@ -4185,13 +4186,19 @@ func waitK8SOnDeleteStatefulSetReadyWith(query func() ([]byte, error), namespace
 				if state.Spec.Replicas != nil {
 					desired = *state.Spec.Replicas
 				}
-				revisionReady := state.Status.UpdateRevision == "" || state.Status.CurrentRevision == state.Status.UpdateRevision || state.Status.UpdatedReplicas == desired
-				replicasReady := state.Status.CurrentReplicas == desired || state.Status.UpdatedReplicas == desired
-				if state.Status.ObservedGeneration >= state.Metadata.Generation && state.Status.ReadyReplicas == desired && replicasReady && revisionReady {
+				reportedReplicas := state.Status.ReadyReplicas
+				if state.Status.Replicas != nil {
+					reportedReplicas = *state.Status.Replicas
+				} else if state.Status.CurrentReplicas != nil {
+					reportedReplicas = *state.Status.CurrentReplicas
+				} else if state.Status.UpdatedReplicas != nil {
+					reportedReplicas = *state.Status.UpdatedReplicas
+				}
+				if state.Status.ObservedGeneration >= state.Metadata.Generation && state.Status.ReadyReplicas == desired && reportedReplicas == desired {
 					fmt.Fprintf(os.Stderr, "statefulset %q OnDelete readiness verified\n", strings.TrimPrefix(name, "statefulset/"))
 					return nil
 				}
-				last = fmt.Sprintf("generation=%d/%d ready=%d current=%d updated=%d desired=%d revision=%s/%s", state.Status.ObservedGeneration, state.Metadata.Generation, state.Status.ReadyReplicas, state.Status.CurrentReplicas, state.Status.UpdatedReplicas, desired, state.Status.CurrentRevision, state.Status.UpdateRevision)
+				last = fmt.Sprintf("generation=%d/%d ready=%d replicas=%d desired=%d revision=%s/%s", state.Status.ObservedGeneration, state.Metadata.Generation, state.Status.ReadyReplicas, reportedReplicas, desired, state.Status.CurrentRevision, state.Status.UpdateRevision)
 			}
 		}
 		if time.Now().After(deadline) {
