@@ -9037,11 +9037,21 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	topologySpread := lkeTopologySpreadManifest(workload.Name)
 	probes := lkeDeploymentProbeManifest(workload.Name)
 	imagePullSecrets := lkeDeploymentImagePullSecretsManifest(env)
+	podSecurityContext := ""
 	replicas := lkeWorkloadReplicas(env, workload)
 	strategy := lkeDeploymentStrategyManifest(workload, temporaryVideoSurge)
 	volumeMounts := ""
 	volumes := ""
 	if workload.Key == "account-manager" {
+		podSecurityContext = `      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+`
 		checksumValues := []string{
 			lkeAccountManagerDatabaseURL(env),
 			lkeRuntimeSecretValue("job-authorization-token"),
@@ -9466,6 +9476,7 @@ spec:
     spec:
 %s
 %s
+%s
       containers:
         - name: app
           image: %s
@@ -9482,7 +9493,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, probes, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, podSecurityContext, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, probes, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeBlobEnvironmentManifest(env map[string]string, secretName string) string {
