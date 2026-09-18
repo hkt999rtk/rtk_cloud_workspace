@@ -4751,7 +4751,7 @@ func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, err
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
-	clientCertPEM, clientKeyPEM, err := newLKESignedCertificate(serviceCACert, serviceCAKey, "account-manager", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, algorithm)
+	clientCertPEM, clientKeyPEM, err := newLKESignedCertificate(serviceCACert, serviceCAKey, "service:account-manager", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, algorithm)
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
@@ -7782,6 +7782,11 @@ spec:
               value: pki/app
             - name: CERT_ISSUER_APP_OPENBAO_PKI_ROLE
               value: app-user
+            # Existing LKE environments can still hold the pre-managed-PKI
+            # account-manager client certificate. New material uses the
+            # service:account-manager identity from the PKI design.
+            - name: CERT_ISSUER_APP_CLIENT_CN_PATTERN
+              value: "^(account-manager|service:account-manager)$"
             - name: OPENBAO_ADDR
               value: %q
             - name: OPENBAO_CACERT

@@ -1687,6 +1687,7 @@ func TestRunProvisionLKEDeployAppliesRuntimeDependencies(t *testing.T) {
 		"CERT_ISSUER_OPENBAO_PKI_MOUNT\n              value: pki/device",
 		"CERT_ISSUER_OPENBAO_PKI_ROLE\n              value: factory-device",
 		"CERT_ISSUER_APP_SIGNER_PROVIDER\n              value: openbao",
+		"CERT_ISSUER_APP_CLIENT_CN_PATTERN\n              value: \"^(account-manager|service:account-manager)$\"",
 		"OPENBAO_ADDR\n              value: \"https://openbao.video-cloud-staging-secrets.svc.cluster.local:8200\"",
 		"OPENBAO_ROLE_ID_FILE\n              value: /etc/video-cloud/openbao/role_id",
 		"name: certissuer-openbao-auth",
@@ -3122,6 +3123,24 @@ func TestLKEGeneratedCertificatesSupportConfiguredP256(t *testing.T) {
 	}
 	if cert.KeyUsage&x509.KeyUsageDigitalSignature == 0 || cert.KeyUsage&x509.KeyUsageKeyEncipherment != 0 {
 		t.Fatalf("unexpected key usage: %v", cert.KeyUsage)
+	}
+}
+
+func TestLKECertIssuerMaterialUsesManagedAccountManagerIdentity(t *testing.T) {
+	material, err := newLKECertIssuerMaterial(map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(material.ClientCert))
+	if block == nil {
+		t.Fatal("Account Manager client certificate PEM is invalid")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert.Subject.CommonName != "service:account-manager" {
+		t.Fatalf("Account Manager client certificate CN = %q", cert.Subject.CommonName)
 	}
 }
 

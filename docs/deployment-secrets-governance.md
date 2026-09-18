@@ -107,6 +107,12 @@ OpenBao policies must be least-privilege:
 
 - `video-cloud-certissuer` may sign only approved PKI roles and read only the
   runtime values needed by `cmd/certissuer`.
+- The LKE Account Manager client identity is `service:account-manager`. During
+  the managed-PKI transition, certissuer also accepts the legacy
+  `account-manager` common name when it is signed by the same deployment-owned
+  certissuer service CA. The deployment preflight must verify the live mTLS
+  authorization path with `scripts/check-certissuer-app-mtls.sh` before running
+  staging or production acceptance.
 - `video-cloud-env-renderer` may read only the KV paths needed to render the
   target workload runtime environment. Legacy VM/systemd env rendering remains
   reference-only.
