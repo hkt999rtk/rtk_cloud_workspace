@@ -82,6 +82,55 @@ Never put `GHCR_PULL_TOKEN` in tracked `env/stack.env`, Git, a PR, or logs. Run 
 scripts/check-deployment-credentials.sh --environment staging
 ```
 
+Run applicable credential qualification **before** migrations, rollout, new
+credentials, or billable backup preparation. Start with the existing checker in
+read-only mode; scope targeted rollouts to the dependencies they actually use:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only
+# Only registry access for a targeted image update:
+scripts/check-deployment-credentials.sh --environment staging --read-only --checks ghcr
+# Use an actual reviewed CI digest (repeat --image for each affected image):
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --checks ghcr --image "$RELEASE_IMAGE"
+# Local TLS and complete rendered workload checks; no operator credentials needed:
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --checks tls,mounts --tls-cert "$SERVER_FULLCHAIN" --tls-key "$SERVER_KEY" \
+  --tls-ca "$TRUSTED_CA" --tls-name "$SERVICE_DNS" --min-valid-days 7 \
+  --manifest "$RENDERED_WORKLOAD_JSON"
+```
+
+`--checks` accepts `linode,ghcr,dns,storage,tls,mounts`. Without it, configured
+providers and supplied local checks run. An explicitly requested but unconfigured
+check fails. `--read-only` suppresses DNS/storage canaries and storage receipts;
+it still verifies advertised required Linode/key scopes. **Write ability remains
+unverified.** Without this flag, the existing temporary-write checks remain in
+place. Do not combine scoped qualification with bucket/key repair flags. Failures
+are aggregated with a nonzero exit; secrets and raw registry errors are not printed.
+
+- `--image` requires an exact `ghcr.io/...@sha256:...` reference. It verifies the
+  selected credential via token exchange and exact manifest access, then performs
+  a `linux/amd64` Docker pull with explicit auth in a private temporary config,
+  removed afterward. Docker must be running. Its layer cache may be reused; this
+  does not prove a cold node can download every blob or that live imagePullSecrets
+  match. Empty Docker config alone is not proof of anonymous access. Raw GHCR
+  credential files containing CR/LF fail, even if the SecretStore reader trims them.
+- TLS verifies private-key permissions, key-pair match, CA chain, EKU, server DNS,
+  and validity now and at the horizon (default seven days). For client mTLS use
+  `--tls-purpose client`; repeat the command for each affected identity. Inputs
+  must be the selected environment's actual files and trusted CA bundle.
+- Repeat `--manifest` for complete rendered workload **JSON** (Pod, controller or
+  List). Direct Secret volumes are checked against per-item modes, container/init
+  `runAsUser`, and Pod `fsGroup`. Partial patches, absent mounts, projected volumes,
+  or restricted mounts without provable access fail rather than claiming success.
+  This is a declaration check, not proof of live Secret contents or access.
+
+OpenBao health/capabilities/workload authorization, live Secret key bindings and
+actual container access, and acceptance-user login remain separate release gates.
+A scoped or read-only PASS alone is not deployment approval. Use the matching
+`deployment preflight --operation ...` for configuration/tooling prerequisites;
+it does not replace credentials-check. Recheck affected inputs after changes.
+
 By default, the command reads individual `0600` files only from `~/.config/rtk_cloud/<environment>/operator/env/`. Shared profiles, `--env-file`, and process-environment overrides are rejected; missing values fail closed. The environment-specific check covers Linode profile/LKE read access plus the required deployment read/write OAuth scopes, pull access to every registered service GHCR repository, and reversible GoDaddy TXT-record read/write/delete access. When clip direct upload is enabled it also checks Object Storage inventory, limited-key scope, signed listing, and a write/read/delete canary. The DNS and Object Storage probes use reserved preflight names and remove their canary data before returning. Failures return nonzero. `deployment create`, `deployment upgrade`, `deployment provision`, and `deployment test` first run the matching full deployment preflight and then the same credential checks before writing runtime files, resolving images, or creating cloud resources. `create` refuses a stack that already owns provider resources. `upgrade` requires an existing LKE stack and a bound PostgreSQL PVC, and never invokes reset or storage purge. Secret values are never printed; a redacted storage receipt is stored in ignored runtime state.
 
 If the only failure is HTTP 404 for the configured Object Storage bucket, explicitly create it and immediately repeat signed-read validation:

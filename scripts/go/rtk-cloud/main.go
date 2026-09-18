@@ -4173,6 +4173,7 @@ func waitK8SOnDeleteStatefulSetReadyWith(query func() ([]byte, error), namespace
 					ObservedGeneration int64  `json:"observedGeneration"`
 					ReadyReplicas      int32  `json:"readyReplicas"`
 					CurrentReplicas    int32  `json:"currentReplicas"`
+					UpdatedReplicas    int32  `json:"updatedReplicas"`
 					CurrentRevision    string `json:"currentRevision"`
 					UpdateRevision     string `json:"updateRevision"`
 				} `json:"status"`
@@ -4184,12 +4185,13 @@ func waitK8SOnDeleteStatefulSetReadyWith(query func() ([]byte, error), namespace
 				if state.Spec.Replicas != nil {
 					desired = *state.Spec.Replicas
 				}
-				revisionReady := state.Status.UpdateRevision == "" || state.Status.CurrentRevision == state.Status.UpdateRevision
-				if state.Status.ObservedGeneration >= state.Metadata.Generation && state.Status.ReadyReplicas == desired && state.Status.CurrentReplicas == desired && revisionReady {
+				revisionReady := state.Status.UpdateRevision == "" || state.Status.CurrentRevision == state.Status.UpdateRevision || state.Status.UpdatedReplicas == desired
+				replicasReady := state.Status.CurrentReplicas == desired || state.Status.UpdatedReplicas == desired
+				if state.Status.ObservedGeneration >= state.Metadata.Generation && state.Status.ReadyReplicas == desired && replicasReady && revisionReady {
 					fmt.Fprintf(os.Stderr, "statefulset %q OnDelete readiness verified\n", strings.TrimPrefix(name, "statefulset/"))
 					return nil
 				}
-				last = fmt.Sprintf("generation=%d/%d ready=%d current=%d desired=%d revision=%s/%s", state.Status.ObservedGeneration, state.Metadata.Generation, state.Status.ReadyReplicas, state.Status.CurrentReplicas, desired, state.Status.CurrentRevision, state.Status.UpdateRevision)
+				last = fmt.Sprintf("generation=%d/%d ready=%d current=%d updated=%d desired=%d revision=%s/%s", state.Status.ObservedGeneration, state.Metadata.Generation, state.Status.ReadyReplicas, state.Status.CurrentReplicas, state.Status.UpdatedReplicas, desired, state.Status.CurrentRevision, state.Status.UpdateRevision)
 			}
 		}
 		if time.Now().After(deadline) {

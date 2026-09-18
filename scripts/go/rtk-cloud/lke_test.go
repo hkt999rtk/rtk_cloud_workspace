@@ -6716,7 +6716,7 @@ func TestWaitK8SOnDeleteStatefulSetReadyPollsUntilReady(t *testing.T) {
 		if count == 1 {
 			return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":3,"readyReplicas":1,"currentReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}`), nil
 		}
-		return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"currentReplicas":2,"currentRevision":"openbao-new","updateRevision":"openbao-new"}}`), nil
+		return []byte(`{"metadata":{"generation":4},"spec":{"replicas":2},"status":{"observedGeneration":4,"readyReplicas":2,"updatedReplicas":2,"currentRevision":"openbao-old","updateRevision":"openbao-new"}}`), nil
 	}
 	t.Setenv("RTK_CLOUD_K8S_ROLLOUT_POLL", "1ms")
 	if err := waitK8SOnDeleteStatefulSetReadyWith(query, "video-cloud-staging-secrets", "statefulset/openbao", "--timeout=1s"); err != nil {

@@ -800,7 +800,7 @@ func TestResolveDeploymentConfigRejectsProviderKeyInEnvironment(t *testing.T) {
 
 func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
-	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CHIPSET_PROVIDER_ALLOWED_HOSTS=admin.dev.example.test\nAUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSOCIAL_LOGIN_CALLBACK_URL=https://admin.dev.example.test/api/auth/social/callback\nGOOGLE_LOGIN_ENABLED=true\nGOOGLE_OAUTH_CLIENT_ID=client.apps.googleusercontent.com\nGITHUB_LOGIN_ENABLED=true\nGITHUB_OAUTH_CLIENT_ID=github-client\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
+	appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "PRIVACY_POLICY_URL=https://frontend.dev.example.test/privacy\nGOOGLE_ANALYTICS_MEASUREMENT_ID=G-TEST123456\nCHIPSET_PROVIDER_ALLOWED_HOSTS=admin.dev.example.test\nAUTH_TOKEN_BASE_URL=https://admin.dev.example.test\nSOCIAL_LOGIN_CALLBACK_URL=https://admin.dev.example.test/api/auth/social/callback\nGOOGLE_LOGIN_ENABLED=true\nGOOGLE_OAUTH_CLIENT_ID=client.apps.googleusercontent.com\nGITHUB_LOGIN_ENABLED=true\nGITHUB_OAUTH_CLIENT_ID=github-client\nSENDMAIL_HTTP_BASE_URL=https://sm.realtekconnect.com\n")
 	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
 	if err != nil {
 		t.Fatal(err)
@@ -825,6 +825,12 @@ func TestResolveDeploymentConfigAllowsTrackedNonSecretServiceSettings(t *testing
 	}
 	if got := cfg.Values["CHIPSET_PROVIDER_ALLOWED_HOSTS"]; got != "admin.dev.example.test" {
 		t.Fatalf("CHIPSET_PROVIDER_ALLOWED_HOSTS = %q", got)
+	}
+	if got := cfg.Values["PRIVACY_POLICY_URL"]; got != "https://frontend.dev.example.test/privacy" {
+		t.Fatalf("PRIVACY_POLICY_URL = %q", got)
+	}
+	if got := cfg.Values["GOOGLE_ANALYTICS_MEASUREMENT_ID"]; got != "G-TEST123456" {
+		t.Fatalf("GOOGLE_ANALYTICS_MEASUREMENT_ID = %q", got)
 	}
 	if _, ok := cfg.Values["SENDMAIL_HTTP_BEARER_TOKEN"]; ok {
 		t.Fatal("secret bearer token was accepted as tracked environment configuration")

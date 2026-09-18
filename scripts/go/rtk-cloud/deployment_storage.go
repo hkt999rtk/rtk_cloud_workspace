@@ -455,6 +455,9 @@ func (c deploymentCredentialChecker) checkResolvedObjectStorage(cfg deploymentCo
 		return deploymentCredentialCheck{Name: "Linode runtime-media storage", Detail: err.Error()}
 	}
 	store := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, accessKey: access, secretKey: secret, region: target.Region}
+	if c.readOnly {
+		return c.checkStorageReadOnly(store, target.Prefix, "Linode runtime-media storage")
+	}
 	if err := c.validateStorageReadWriteCanary(store, target.Prefix); err != nil {
 		return deploymentCredentialCheck{Name: "Linode runtime-media storage", Detail: err.Error()}
 	}
@@ -501,6 +504,9 @@ func (c deploymentCredentialChecker) checkResolvedArtifactStorage(cfg deployment
 		return deploymentCredentialCheck{Name: "Linode release-artifact storage", Detail: err.Error()}
 	}
 	store := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, accessKey: access, secretKey: secret, region: target.Region}
+	if c.readOnly {
+		return c.checkStorageReadOnly(store, target.Prefix, "Linode release-artifact storage")
+	}
 	if err := c.validateStorageReadWriteCanary(store, target.Prefix); err != nil {
 		return deploymentCredentialCheck{Name: "Linode release-artifact storage", Detail: err.Error()}
 	}
