@@ -4398,6 +4398,26 @@ func TestLKEDeploymentResourcesCanBeOverriddenFromEnvRoot(t *testing.T) {
 	}
 }
 
+func TestLKEAccountManagerDeploymentRunsAsImageUser(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-staging.realtekconnect.com",
+	}
+	manifest := lkeDeploymentManifest(env, lkeWorkload{
+		Key:       "account-manager",
+		Name:      "account-manager",
+		Namespace: lkeNamespaceName(env, "account-manager"),
+		Image:     "account-manager:test",
+		Port:      8080,
+		Host:      "account-manager.video-cloud-staging.realtekconnect.com",
+	}, nil)
+	for _, want := range []string{"runAsNonRoot: true", "runAsUser: 10001", "runAsGroup: 10001", "fsGroup: 10001", "fsGroupChangePolicy: OnRootMismatch", "type: RuntimeDefault"} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("account-manager manifest missing %q:\n%s", want, manifest)
+		}
+	}
+}
+
 func TestLKEEMQXClusterStatusNodesSeparatesRunningAndStoppedNodes(t *testing.T) {
 	status := `Cluster status: #{running_nodes =>
                       ['emqx@10.2.2.153','emqx@10.2.3.163','emqx@10.2.3.33',
