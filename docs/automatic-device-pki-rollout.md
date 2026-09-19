@@ -39,7 +39,7 @@ linux/amd64 digests, still subject to environment-specific pull/preflight checks
 
 | Service | Merged commit | Published image digest |
 | --- | --- | --- |
-| Account Manager | `fbe07edefc754be529d21af26477b36c2b75e3be` | `ghcr.io/hkt999rtk/rtk_account_manager/account-manager@sha256:08604a009c927650106df15df7ac4650f1b51b7d08b7c722438cd6de2f392483` |
+| Account Manager | `44defddccc1cb91d574e2ae158052c404e1d7d0d` | `ghcr.io/hkt999rtk/rtk_account_manager/account-manager@sha256:a986bb3b3df32992aeedf43c1ec712a906eff920ae9b42d5bb7ee841bde39ab9` |
 | Cloud Admin | `155750061445c405b39ff5c4b8731194bcb03d96` | `ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin@sha256:ea3e46d8dbf506d102e62060710ecec88396c8f068d0ac61d169f815fa35ff6c` |
 | Video Cloud API/controller | `b4074b1cf59de1bbf8d5c2ffc17947ea56ac0591` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:f2d5f9bb80a76e08572cf8c05bdf196794761052c3e71d504172762b3dc7fd7a` |
 
