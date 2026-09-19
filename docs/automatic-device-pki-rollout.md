@@ -8,11 +8,12 @@ explicit non-production decision. Old Device CA identities and affected test
 certificates are not recoverable through this rollout; production keeps the
 separate backup and recovery gates in the Platform PKI contract.
 
-## Current qualification (2026-09-19)
+## Current qualification (2026-09-20)
 
-The contracts, Account Manager, Cloud Admin and Video Cloud changes are merged,
-and all three service main-branch images are published. They are **not yet
-deployed** to dev or staging. No live Device Root was changed.
+The contracts, Account Manager, Cloud Admin and Video Cloud implementation is
+merged, including the dev-only Root CRL recovery command. Live acceptance is
+**not complete**. Account Manager migration 078 is applied in dev; no live
+Device Root was changed.
 The following are separate evidence scopes; local PASS is not live acceptance:
 
 | Scope | Evidence | Result |
@@ -29,8 +30,8 @@ The following are separate evidence scopes; local PASS is not live acceptance:
 | Readiness UI | Chromium desktop and mobile exercise pending → ready Cloud polling, pending → failed → ready Product polling, and metadata management while PKI is pending | PASS, isolated BFF fixture plus mocked public readiness responses |
 | Owner transfer | Real Account Manager handoff commit/finalization with synthetic Billing receipts preserves Cloud/Product issuer and operation IDs, does not add CA jobs, and removes source owner's management access | PASS, disposable database; live certificate continuity still requires environment acceptance |
 | Regression checks | Account Manager store/API/database/OpenAPI/auth suite; Video Cloud PKI/provider/controller and trust-consumer race tests; Cloud Admin 196 tests and Vite build; controller renderer 7 tests | PASS locally and in merged service PR CI; repeat workspace integration gate after pin update |
-| dev live | Account Manager and PKI schema/grants applied; dedicated OpenBao policies installed but not bound to runtime identities; old Device reset dry-run completed without mutation | NOT COMPLETE; no new Root or consumer cutover |
-| staging live | No mutation and no protected-environment qualification for this release yet | NOT COMPLETE |
+| dev live | Migration 078 applied. Seven Cloud and 21 Product CA outbox jobs remain pending with zero attempts; PKI controller and certissuer have zero ready replicas while offline Service/OpenBao TLS Root CRLs are expired. The active offline keys were found in the `m1.local` dev SecretStore, so refresh the governed CRLs rather than rebuilding those Roots. | NOT COMPLETE |
+| staging live | No mutation. Read-only qualification gave a NO-GO verdict; full protected-environment gates remain incomplete. | NOT COMPLETE |
 
 Dev image publication attempt: the selected environment's existing registry
 credential successfully authenticates and pulls, but the actual push to
@@ -45,7 +46,11 @@ linux/amd64 digests, still subject to environment-specific pull/preflight checks
 | --- | --- | --- |
 | Account Manager | `44defddccc1cb91d574e2ae158052c404e1d7d0d` | `ghcr.io/hkt999rtk/rtk_account_manager/account-manager@sha256:a986bb3b3df32992aeedf43c1ec712a906eff920ae9b42d5bb7ee841bde39ab9` |
 | Cloud Admin | `155750061445c405b39ff5c4b8731194bcb03d96` | `ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin@sha256:ea3e46d8dbf506d102e62060710ecec88396c8f068d0ac61d169f815fa35ff6c` |
-| Video Cloud API/controller | `2331e18d11afe268ac0f2ccd50424f160f839f96` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:10a7d04a524902a2bd7b877a6a77182d82d2951b934dc1e03212fe5edd2e1528` |
+| Video Cloud API/controller | `ed215e7ad5f586312395d29be0a3da2475140905` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:5b4da7617f59b7db1bdfe63b6f48dd9207a944399641c3df92f98fb6fac087d3` |
+
+The Video Cloud digest was published by the successful main-branch release
+workflow for `ed215e7`; it contains the dev recovery command. Confirm the
+environment can pull this exact digest before using it in dev maintenance.
 
 The failed dev push is not a deployment artifact.
 
@@ -61,8 +66,10 @@ Source: canonical dev kubeconfig, `video-cloud-dev-platform/postgresql-0`,
 `video_cloud.pki_issuers` and `pki_certificate_bindings`. Re-read immediately before
 maintenance; this is not a concurrency precondition or a current backup.
 
-- Root: `c92fdbb1-f87b-4cab-80a6-fa77c2dce1d8` (offline custody location unrecorded).
-- Cloud CA: `b4da0b7b-42ff-4966-95cc-50eb77c706f0` (offline).
+- Root: `c92fdbb1-f87b-4cab-80a6-fa77c2dce1d8` (legacy offline key
+  verified on `m1.local`; see the contract inventory).
+- Cloud CA: `b4da0b7b-42ff-4966-95cc-50eb77c706f0` (legacy offline key
+  likewise verified on `m1.local`).
 - Active Product: `fab94fc3-0f2c-48ff-ab0f-7b9739bb0e61`, version 4,
   mount `pki-issuers/device/fab94fc3-0f2c-48ff-ab0f-7b9739bb0e61/v4`.
 - Other Product history: `760d3f92-c3f2-4676-8a4d-7d754324947d`,
@@ -79,6 +86,76 @@ maintenance; this is not a concurrency precondition or a current backup.
   sample environment names match each workload.
 - Existing App, Service, MQTT server and OpenBao transport roots are independent
   and excluded. Retain all OpenBao mounts, including historical Device mounts.
+
+### dev non-Device Root CRL recovery (read-only inventory, 2026-09-20)
+
+The active Service Root `697e8e86-5af6-4580-8456-7f91d17634f2` has public
+SHA-256 `32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb`.
+The active OpenBao TLS Root `ffd5f2b4-c675-47da-9534-e2e86820d8a1` has
+public SHA-256 `711e3a9f722acab6111a1bbed610693cf6b9e11fdd47a153727ec7805aa681b6`.
+Their encrypted offline keys and separate passphrase references were found in
+the `m1.local` dev SecretStore and their public keys match the registered
+certificates; exact custody paths are in `platform_pki.md` §8.4. Neither key nor
+passphrase is copied into this workspace. This is dev rehearsal custody, not a
+production backup or restore qualification. Their registered Root CRLs expired
+at 2026-09-17 07:17:30 UTC and 2026-09-18 02:08:42 UTC, respectively. The
+conditional authorization to rebuild these non-Device chains does not apply
+while the old keys remain available.
+
+The normal controller cannot import the first replacement Root CRL while its
+own Service/OpenBao transport admission rejects expired CRLs. The dev-only
+`pkicontroller recovery-import-dev-root-crl` command bridges that initial
+registry recovery. It accepts only an existing active dev Service or OpenBao
+TLS Root, checks the pinned certificate and the exact independently reviewed
+request digest against the signed CRL, verifies signature and freshness, and
+preserves prior revocations. By default it validates without changing the
+database; `--confirm dev` imports with a distinct audit actor. It never reads
+a private key, impersonates a human approver, or runs against staging or
+production. The offline signing request must be independently reviewed before
+the existing Root key is used.
+
+```sh
+# Bind PKI_DATABASE_URL privately to the selected dev controller database.
+PKI_ENVIRONMENT=dev pkicontroller recovery-import-dev-root-crl ROOT_UUID ROOT_SHA256 \
+    REVIEWED_REQUEST_JSON REVIEWED_REQUEST_SHA256 SIGNED_CRL_PEM
+# Repeat the same command with --confirm dev only after checking the dry run.
+```
+
+Importing the public CRL row alone does not restore controller readiness.
+Install the exact signed CRL on each real consumer's private trust state,
+reload it, and require its authenticated digest acknowledgment. Only after
+Root transport trust recovers should the normal worker refresh stale
+intermediate CRLs. Never fabricate receipts, disable CRL checks, or replace an
+unrelated Root or OpenBao mount. Re-read live workload volume references and
+preserve deployment rollback references immediately before maintenance.
+
+The Service Root CRL consumers below each own a distinct PVC; identical path
+strings across workloads do **not** imply shared state. `{service}` denotes
+the Service Root issuer ID above.
+
+| Consumer Deployment | PVC | Service Root CRL state path(s) |
+| --- | --- | --- |
+| `account-manager` | `account-manager-service-identity` | `/var/lib/account-pki/private/account-listener-crl-{service}.json` (listener and egress manifests) |
+| `certissuer` | `certissuer-service-identity` | `/var/lib/pki-host/identity/crls/{service}.json` |
+| `factoryenroll` | `factoryenroll-service-identity` | `/state/identity/crl-{service}.json`, `/state/identity/account-manager-crl-{service}.json` |
+| `pki-controller` | `pki-controller-service-identity` | `/var/lib/pki-host/identity/crls/{service}.json` |
+| `video-cloud-api` | `video-cloud-api-service-identity` | `/var/lib/video-cloud-api-pki/account-manager-crl-{service}.json` |
+| `video-cloud-logingester` | `video-cloud-logingester-mqtt-pki-state` | `/var/lib/mqtt-pki/identity/service-crls/{service}.json` |
+
+The controller and certissuer also hold the OpenBao TLS Root CRL at
+`/var/lib/pki-host/identity/openbao-tls-crl-ffd5f2b4-c675-47da-9534-e2e86820d8a1.json`
+in their respective PVCs. The observed public manifests were ConfigMaps
+`pki-service-client-crls-fba75443073d` and
+`pki-openbao-tls-crls-post-withdraw-0b0e251d-8286959f`.
+`pkitrust apply-crl` can atomically replace expired signed CRL state on disk,
+reject rollback or changed prior revocations, and tolerate an exact retry. It
+requires a runtime reload and never fabricates a consumer acknowledgment.
+
+The dev recovery importer passed a disposable PostgreSQL 16 test covering
+dry-run, apply, idempotent retry, and an unreviewed digest rejection. Focused
+`pkitrust` tests cover expired-state repair and signed monotonic history. These
+are local tests, not evidence that any live dev CRL was signed, installed, or
+acknowledged.
 
 ## Ordered environment procedure
 
