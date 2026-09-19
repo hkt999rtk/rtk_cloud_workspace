@@ -356,6 +356,126 @@ func TestRegisteredProductSmokeVerifiesDeviceTokenGrant(t *testing.T) {
 	}
 }
 
+func TestRegisteredProductGrantRejectsUnavailablePlatformFacts(t *testing.T) {
+	for _, tc := range []struct {
+		name, productID              string
+		productStatus, catalogStatus int
+		options                      []string
+		writes                       bool
+		revision                     int64
+	}{
+		{"Product request failed", "product-1", http.StatusServiceUnavailable, http.StatusOK, []string{"mqtt"}, true, 2},
+		{"Product lacks MQTT", "product-1", http.StatusOK, http.StatusOK, []string{"iot_shadow"}, true, 2},
+		{"catalog request failed", "product-1", http.StatusOK, http.StatusServiceUnavailable, []string{"mqtt"}, true, 2},
+		{"Product writes disabled", "product-1", http.StatusOK, http.StatusOK, []string{"mqtt"}, false, 2},
+		{"catalog revision missing", "product-1", http.StatusOK, http.StatusOK, []string{"mqtt"}, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/orgs/org-1/device-item-profiles/product-1" {
+					w.WriteHeader(tc.productStatus)
+					_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profile": map[string]any{
+						"id": tc.productID, "brand_cloud_id": "org-1", "service_options": tc.options,
+					}})
+					return
+				}
+				w.WriteHeader(tc.catalogStatus)
+				_ = json.NewEncoder(w).Encode(map[string]any{"catalog_revision": tc.revision, "product_writes_enabled": tc.writes,
+					"options": []map[string]any{{"code": "mqtt", "selectable": true}}})
+			}))
+			defer server.Close()
+			_, _, _, err := loadRegisteredProductGrant(context.Background(), apiClient{baseURL: server.URL, http: server.Client()}, "bearer", "org-1", "product-1")
+			if err == nil {
+				t.Fatal("unavailable Product or catalog facts were accepted")
+			}
+		})
+	}
+}
+
+func TestClaimTokenRejectsMissingOrWidenedProductGrant(t *testing.T) {
+	grant := &registeredProductGrant{ProductID: "product-1", ServiceOptions: []string{"mqtt"}, CatalogRevision: 2}
+	for _, tc := range []struct {
+		name      string
+		status    int
+		body      string
+		grant     *registeredProductGrant
+		wantError bool
+	}{
+		{"request failed", http.StatusServiceUnavailable, `{"error":"unavailable"}`, grant, true},
+		{"raw token missing", http.StatusOK, `{"claim_token":""}`, grant, true},
+		{"Product grant missing", http.StatusOK, `{"claim_token":"raw","device_claim_token":{"service_options":["mqtt"],"metadata":{"product_service_revision":0}}}`, grant, true},
+		{"legacy claim", http.StatusOK, `{"claim_token":"legacy"}`, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			token, _, _, _, err := createClaimToken(context.Background(), apiClient{baseURL: server.URL, http: server.Client()}, "bearer", "org-1", "device-1", tc.grant)
+			if (err != nil) != tc.wantError || (!tc.wantError && token != "legacy") {
+				t.Fatalf("claim token = %q, error = %v", token, err)
+			}
+		})
+	}
+}
+
+func TestDeviceTokenPublicKeyAndJWTRejectMalformedTrustData(t *testing.T) {
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongKeyDER, err := x509.MarshalPKIXPublicKey(&ecdsaKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"HTTP error", http.StatusServiceUnavailable, ""},
+		{"not PEM", http.StatusOK, "not PEM"},
+		{"invalid DER", http.StatusOK, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: []byte("invalid")}))},
+		{"wrong key type", http.StatusOK, string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: wrongKeyDER}))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			if _, err := fetchDeviceTokenPublicKey(context.Background(), server.Client(), server.URL); err == nil {
+				t.Fatal("untrusted device-token public key was accepted")
+			}
+		})
+	}
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closed.Close()
+	if _, err := fetchDeviceTokenPublicKey(context.Background(), closed.Client(), closed.URL); err == nil {
+		t.Fatal("unreachable public-key host was accepted")
+	}
+
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sign := func(header, payload string) string {
+		input := base64.RawURLEncoding.EncodeToString([]byte(header)) + "." + base64.RawURLEncoding.EncodeToString([]byte(payload))
+		return input + "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(input)))
+	}
+	validHeader := `{"alg":"EdDSA","typ":"JWT"}`
+	invalidPayload := base64.RawURLEncoding.EncodeToString([]byte(validHeader)) + ".!"
+	invalidPayload += "." + base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(invalidPayload)))
+	for _, raw := range []string{
+		"not-a-jwt", "!.e30.c2ln", sign(`{"alg":"HS256","typ":"JWT"}`, `{}`), invalidPayload, sign(validHeader, "not JSON"),
+	} {
+		if _, err := inspectDeviceTokenClaims(raw, publicKey); err == nil {
+			t.Fatalf("malformed device JWT was accepted: %q", raw)
+		}
+	}
+}
+
 func writeSmokeFixtures(t *testing.T) (string, string, *x509.Certificate) {
 	t.Helper()
 	accountDir := t.TempDir()
