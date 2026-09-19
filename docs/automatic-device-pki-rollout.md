@@ -6,7 +6,10 @@ production, offline key import, dual-chain migration, or unrelated data deletion
 
 ## Current qualification (2026-09-19)
 
-Implementation is local and **not yet deployed**. No live Device Root was changed.
+The contracts, Account Manager, Cloud Admin and Video Cloud changes are merged.
+The Cloud Admin and Video Cloud main-branch images are published; the Account
+Manager main-branch release is still running. They are **not yet deployed** to
+dev or staging. No live Device Root was changed.
 The following are separate evidence scopes; local PASS is not live acceptance:
 
 | Scope | Evidence | Result |
@@ -22,7 +25,7 @@ The following are separate evidence scopes; local PASS is not live acceptance:
 | Business requeue | Explicit non-production, one-Cloud inventory/apply; new operation IDs, audit, no disabled Product revival, repeated apply leaves pending jobs unchanged | PASS, disposable database |
 | Readiness UI | Chromium desktop and mobile exercise pending → ready Cloud polling, pending → failed → ready Product polling, and metadata management while PKI is pending | PASS, isolated BFF fixture plus mocked public readiness responses |
 | Owner transfer | Real Account Manager handoff commit/finalization with synthetic Billing receipts preserves Cloud/Product issuer and operation IDs, does not add CA jobs, and removes source owner's management access | PASS, disposable database; live certificate continuity still requires environment acceptance |
-| Regression checks | Account Manager store/API/database/OpenAPI/auth suite; Video Cloud PKI/provider/controller and trust-consumer race tests; Cloud Admin 196 tests and Vite build; controller renderer 7 tests | PASS in their recorded local runs; repeat after final edits |
+| Regression checks | Account Manager store/API/database/OpenAPI/auth suite; Video Cloud PKI/provider/controller and trust-consumer race tests; Cloud Admin 196 tests and Vite build; controller renderer 7 tests | PASS locally and in merged service PR CI; repeat workspace integration gate after pin update |
 | dev live | Public inventory only | NOT COMPLETE |
 | staging live | No mutation and no protected-environment qualification for this release yet | NOT COMPLETE |
 
@@ -32,6 +35,10 @@ credential successfully authenticates and pulls, but the actual push to
 was rejected with insufficient token scopes. The Linux/amd64 image build itself
 completed. No manifest was delivered and no live workload was patched. Use the
 canonical CI publication path; do not silently widen or borrow credentials.
+The subsequent Cloud Admin and Video Cloud canonical main-branch image releases
+succeeded. Deploy only reviewed immutable digests after every service release
+completes and the environment-specific pull/preflight checks pass; the failed
+dev push is not a deployment artifact.
 
 The Account Manager integration harness now resets its bootstrap-seal fixture,
 matching the store harness; otherwise another test package's sealed state could
