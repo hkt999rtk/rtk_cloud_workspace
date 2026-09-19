@@ -6,10 +6,9 @@ production, offline key import, dual-chain migration, or unrelated data deletion
 
 ## Current qualification (2026-09-19)
 
-The contracts, Account Manager, Cloud Admin and Video Cloud changes are merged.
-The Cloud Admin and Video Cloud main-branch images are published; the Account
-Manager main-branch release is still running. They are **not yet deployed** to
-dev or staging. No live Device Root was changed.
+The contracts, Account Manager, Cloud Admin and Video Cloud changes are merged,
+and all three service main-branch images are published. They are **not yet
+deployed** to dev or staging. No live Device Root was changed.
 The following are separate evidence scopes; local PASS is not live acceptance:
 
 | Scope | Evidence | Result |
@@ -35,10 +34,16 @@ credential successfully authenticates and pulls, but the actual push to
 was rejected with insufficient token scopes. The Linux/amd64 image build itself
 completed. No manifest was delivered and no live workload was patched. Use the
 canonical CI publication path; do not silently widen or borrow credentials.
-The subsequent Cloud Admin and Video Cloud canonical main-branch image releases
-succeeded. Deploy only reviewed immutable digests after every service release
-completes and the environment-specific pull/preflight checks pass; the failed
-dev push is not a deployment artifact.
+The subsequent canonical main-branch image releases succeeded. Candidate
+linux/amd64 digests, still subject to environment-specific pull/preflight checks:
+
+| Service | Merged commit | Published image digest |
+| --- | --- | --- |
+| Account Manager | `fbe07edefc754be529d21af26477b36c2b75e3be` | `ghcr.io/hkt999rtk/rtk_account_manager/account-manager@sha256:08604a009c927650106df15df7ac4650f1b51b7d08b7c722438cd6de2f392483` |
+| Cloud Admin | `155750061445c405b39ff5c4b8731194bcb03d96` | `ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin@sha256:ea3e46d8dbf506d102e62060710ecec88396c8f068d0ac61d169f815fa35ff6c` |
+| Video Cloud API/controller | `b4074b1cf59de1bbf8d5c2ffc17947ea56ac0591` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:f2d5f9bb80a76e08572cf8c05bdf196794761052c3e71d504172762b3dc7fd7a` |
+
+The failed dev push is not a deployment artifact.
 
 The Account Manager integration harness now resets its bootstrap-seal fixture,
 matching the store harness; otherwise another test package's sealed state could
