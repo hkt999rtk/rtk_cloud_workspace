@@ -118,6 +118,21 @@ func TestLKEMQTTFoundationRequiresExistingPrivatePlatformEndpoint(t *testing.T) 
 	if err := lkeRequireExistingServiceRegistrationEndpoint(env); err == nil {
 		t.Fatal("missing Account Manager registration endpoint was accepted")
 	}
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"public service", `{"spec":{"type":"LoadBalancer","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[]}}`},
+		{"wrong selector", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"other"},"ports":[]}}`},
+		{"missing ports", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"}}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", tc.body)
+			if err := lkeRequireExistingServiceRegistrationEndpoint(env); err == nil {
+				t.Fatal("invalid Account Manager registration endpoint was accepted")
+			}
+		})
+	}
 	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"http","port":80,"targetPort":"http"}]}}`)
 	if err := lkeRequireExistingServiceRegistrationEndpoint(env); err == nil {
 		t.Fatal("Account Manager HTTP-only Service was accepted")

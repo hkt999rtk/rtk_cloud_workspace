@@ -237,6 +237,13 @@ func TestPreflightAllowsFixtureSetupToCreateRuntimeBundle(t *testing.T) {
 
 func TestRunExecutesFixtureDevicePlatformEvidenceAndCleanup(t *testing.T) {
 	dir := t.TempDir()
+	toolBin := filepath.Join(dir, "tools")
+	if err := os.Mkdir(toolBin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestScript(t, toolBin, "xcodebuild", "exit 0\n")
+	writeTestScript(t, toolBin, "xcrun", "printf '%s\\n' '== Devices ==' '    iPhone 16 Pro (test-udid) (Shutdown)'\n")
+	t.Setenv("PATH", toolBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	ca := filepath.Join(dir, "ca.pem")
 	runtimeBundle := filepath.Join(dir, "runtime.json")
 	manifest := filepath.Join(dir, "resource-manifest.json")
