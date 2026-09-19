@@ -311,11 +311,25 @@ cases:
       title: accepted invitations use a validated explicit cloud and Product destination
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#catalog%20fetch%20preserves%20scoped%20registered%20options%20and%20rejects%20malformed%20data
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: catalog fetch preserves scoped registered options and rejects malformed data
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#cross-cloud%20Product%20and%20unproven%20totals%20are%20withheld
       module: cloud-admin-web
       language: javascript
       source: src/cloud-products.test.mjs
       title: cross-cloud Product and unproven totals are withheld
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#disabled%20Product%20write%20gate%20keeps%20the%20previous%20service%20choices
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: disabled Product write gate keeps the previous service choices
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#list%20preserves%20filtered%20totals%2C%20offset%20and%20cancellation%20in%20its%20explicit%20cloud
@@ -1047,6 +1061,34 @@ cases:
       language: javascript
       source: src/product-devices.test.mjs
       title: device responses reject wrong Product, duplicate IDs and missing totals
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#legacy%20write%20gate%20keeps%20legacy%20options%20and%20omits%20catalog%20revision
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-service-catalog.test.mjs
+      title: legacy write gate keeps legacy options and omits catalog revision
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#metadata-only%20Product%20edit%20does%20not%20rewrite%20grants%20when%20a%20plugin%20is%20unavailable
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-service-catalog.test.mjs
+      title: metadata-only Product edit does not rewrite grants when a plugin is unavailable
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#new%20Product%20sends%20observed%20catalog%20revision%20and%20exact%20plugin%20codes
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-service-catalog.test.mjs
+      title: new Product sends observed catalog revision and exact plugin codes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#registered%20service%20choices%20include%20plugin%20codes%20and%20preserve%20unavailable%20existing%20grants
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-service-catalog.test.mjs
+      title: registered service choices include plugin codes and preserve unavailable existing grants
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/routes.test.mjs#Brand%20Cloud%20navigation%20and%20route%20access%20are%20evaluated%20independently
