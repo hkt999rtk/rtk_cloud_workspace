@@ -136,6 +136,18 @@ func TestSharedLinuxWorkflowFanoutIsBounded(t *testing.T) {
 	if strings.Count(coverage, "max-parallel: 2") != 1 || strings.Count(coverage, "max-parallel: 1") != 1 {
 		t.Fatalf("coverage workflow must bound Go fanout at two and JavaScript fanout at one")
 	}
+	for _, required := range []string{
+		"Start isolated Video Cloud unit fixtures",
+		"Start isolated OpenBao Device CA fixture",
+		"RTK_AUTOMATIC_PKI_TEST_ADDR=http://127.0.0.1:${bao_port}",
+		"VIDEO_CLOUD_TEST_DSN=postgres://integration:integration_password@127.0.0.1:${pg_port}",
+		"Stop isolated Video Cloud unit fixtures",
+		"Stop isolated OpenBao Device CA fixture",
+	} {
+		if !strings.Contains(coverage, required) {
+			t.Fatalf("Video Cloud coverage workflow must retain its isolated Device CA fixture: missing %q", required)
+		}
+	}
 	admin := readWorkflow("cloud-admin-e2e.yml")
 	if strings.Count(admin, "max-parallel: 1") != 1 {
 		t.Fatalf("Cloud Admin desktop/mobile E2E must run serially")
