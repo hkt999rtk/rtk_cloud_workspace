@@ -3,6 +3,10 @@
 Authority: [platform_pki.md](../repos/rtk_cloud_contracts_doc/platform_pki.md),
 especially §§8–9. This runbook implements that specification; it does not authorize
 production, offline key import, dual-chain migration, or unrelated data deletion.
+The current dev/staging rebuild has no backup or restore-drill prerequisite by
+explicit non-production decision. Old Device CA identities and affected test
+certificates are not recoverable through this rollout; production keeps the
+separate backup and recovery gates in the Platform PKI contract.
 
 ## Current qualification (2026-09-19)
 
@@ -84,11 +88,14 @@ maintenance; this is not a concurrency precondition or a current backup.
    writing credentials into this document. Record source commits and dirty-input
    fingerprints. Use the workspace scoped `lke-build-images`; its Video Cloud
    build uses the service's canonical Dockerfile so PKI binaries are included.
-2. Fence Device enrollment/signing and Account Manager's automatic worker. Take a
-   matched, protected backup of Account Manager, PKI registry and OpenBao state
-   using the deployed storage backend's supported procedure; preserve seal custody
-   separately. Do not substitute a live file copy or public certificate export.
-   Verify isolated restore before replacing trust. Preserve business tables/PVCs.
+2. Fence Device enrollment/signing and Account Manager's automatic worker.
+   Record the existing Device issuer IDs, public fingerprints, bindings and
+   affected test-device chains before replacing trust. This dev/staging rebuild
+   intentionally has no matched backup or isolated restore gate: do not claim
+   that old Device identities can be recovered after reset. Keep OpenBao seal
+   access available for service continuity. Preserve business tables/PVCs and
+   all unrelated App, Service and transport-TLS mounts; do not clear the whole
+   database or OpenBao merely because test-device certificates will be replaced.
 3. Run explicit schema migrations with migration credentials; normal service
    credentials must not gain schema administration. Migration 078 backfills only
    pending metadata/jobs, not keys or old-CA adoption.
@@ -135,8 +142,9 @@ maintenance; this is not a concurrency precondition or a current backup.
     signup → verified account → Cloud ready → Product ready → Device enrollment.
     Verify owner transfer retains issuer fingerprints and removes old-owner rights,
     cross-Cloud signing is refused, and API/UI show independent PKI readiness.
-11. Record actual public Root identity, mount, backup/custody references and live
-    acceptance evidence in `platform_pki.md`. Only then repeat the qualified process
+11. Record actual public Root identity, mount, seal custody reference, explicit
+    absence of a non-production backup, and live acceptance evidence in
+    `platform_pki.md`. Only then repeat the qualified process
     for staging. Staging requires canonical CI-published images, scoped credential/
     mTLS checks and the protected-environment Go/No-Go procedure; do not promote a
     dev local image or interpret local tests as staging approval.
