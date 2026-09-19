@@ -29,7 +29,7 @@ The following are separate evidence scopes; local PASS is not live acceptance:
 | Readiness UI | Chromium desktop and mobile exercise pending → ready Cloud polling, pending → failed → ready Product polling, and metadata management while PKI is pending | PASS, isolated BFF fixture plus mocked public readiness responses |
 | Owner transfer | Real Account Manager handoff commit/finalization with synthetic Billing receipts preserves Cloud/Product issuer and operation IDs, does not add CA jobs, and removes source owner's management access | PASS, disposable database; live certificate continuity still requires environment acceptance |
 | Regression checks | Account Manager store/API/database/OpenAPI/auth suite; Video Cloud PKI/provider/controller and trust-consumer race tests; Cloud Admin 196 tests and Vite build; controller renderer 7 tests | PASS locally and in merged service PR CI; repeat workspace integration gate after pin update |
-| dev live | Public inventory only | NOT COMPLETE |
+| dev live | Account Manager and PKI schema/grants applied; dedicated OpenBao policies installed but not bound to runtime identities; old Device reset dry-run completed without mutation | NOT COMPLETE; no new Root or consumer cutover |
 | staging live | No mutation and no protected-environment qualification for this release yet | NOT COMPLETE |
 
 Dev image publication attempt: the selected environment's existing registry
@@ -45,7 +45,7 @@ linux/amd64 digests, still subject to environment-specific pull/preflight checks
 | --- | --- | --- |
 | Account Manager | `44defddccc1cb91d574e2ae158052c404e1d7d0d` | `ghcr.io/hkt999rtk/rtk_account_manager/account-manager@sha256:a986bb3b3df32992aeedf43c1ec712a906eff920ae9b42d5bb7ee841bde39ab9` |
 | Cloud Admin | `155750061445c405b39ff5c4b8731194bcb03d96` | `ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin@sha256:ea3e46d8dbf506d102e62060710ecec88396c8f068d0ac61d169f815fa35ff6c` |
-| Video Cloud API/controller | `b4074b1cf59de1bbf8d5c2ffc17947ea56ac0591` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:f2d5f9bb80a76e08572cf8c05bdf196794761052c3e71d504172762b3dc7fd7a` |
+| Video Cloud API/controller | `2331e18d11afe268ac0f2ccd50424f160f839f96` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:10a7d04a524902a2bd7b877a6a77182d82d2951b934dc1e03212fe5edd2e1528` |
 
 The failed dev push is not a deployment artifact.
 
@@ -107,11 +107,13 @@ maintenance; this is not a concurrency precondition or a current backup.
 5. For an existing governed Device Root, run `pkicontroller reset-device-pki
    OLD_ROOT_UUID` for the public dry-run, then the same command with `--confirm dev`
    (or `staging`) against the reviewed environment. This retains history/mounts,
-   marks bindings revoked and cancels old pending CA operations. It does not itself
-   distribute root removal: keep writers fenced until the new consumer manifests,
-   trust pools and root-policy state are installed. Never apply this to App/Service
-   roots. Staging's legacy shared `pki/root` must remain; an empty Device registry
-   does not require resetting a made-up governed Root.
+   marks bindings revoked, cancels old pending CA operations, and atomically
+   publishes the old Root in the cumulative distrust policy. This records the
+   removal but does not install it on consumers: keep writers fenced until the
+   new consumer manifests, trust pools and root-policy state are installed and
+   acknowledged. Never apply this to App/Service roots. Staging's legacy shared
+   `pki/root` must remain; an empty Device registry does not require resetting
+   a made-up governed Root.
 6. Choose and record one stable new Root UUID. Run `pkicontroller
    bootstrap-device-root ROOT_UUID` with the bootstrap identity and explicit
    `PKI_ENVIRONMENT`. Repeating the same UUID resumes/reconciles; another UUID
