@@ -220,6 +220,82 @@ func TestRunPrePRReportsGitStatusFailure(t *testing.T) {
 	}
 }
 
+func TestCoverageSelectorScopesPKIRendererOnlyGitlink(t *testing.T) {
+	selector, err := os.ReadFile(filepath.Join("..", "..", "ci", "select-coverage-jobs.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := newPrePRTestWorkspaceWithScript(t, string(selector))
+	serviceSource := t.TempDir()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(serviceSource, "init")
+	git(serviceSource, "config", "user.email", "pre-pr-test@example.invalid")
+	git(serviceSource, "config", "user.name", "Pre PR Test")
+	pkiDir := filepath.Join(serviceSource, "deploy", "pki")
+	if err := os.MkdirAll(pkiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pkiDir, "render-staging-controller.py"), []byte("# base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(serviceSource, "add", ".")
+	git(serviceSource, "commit", "-m", "base service")
+	git(workspace, "-c", "protocol.file.allow=always", "submodule", "add", serviceSource, "repos/rtk_video_cloud")
+	git(workspace, "commit", "-am", "base gitlink")
+	base := git(workspace, "rev-parse", "HEAD")
+	service := filepath.Join(workspace, "repos", "rtk_video_cloud")
+	git(service, "config", "user.email", "pre-pr-test@example.invalid")
+	git(service, "config", "user.name", "Pre PR Test")
+	if err := os.WriteFile(filepath.Join(service, "deploy", "pki", "render-staging-controller.py"), []byte("# changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "deploy", "pki", "README.md"), []byte("PKI renderer\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(service, "add", ".")
+	git(service, "commit", "-m", "renderer only")
+	git(workspace, "add", "repos/rtk_video_cloud")
+	git(workspace, "commit", "-m", "select renderer")
+	selectChecks := func(before string) prePRSelection {
+		t.Helper()
+		cmd := exec.Command("bash", "scripts/ci/select-coverage-jobs.sh", before, "HEAD", "pull_request")
+		cmd.Dir = workspace
+		cmd.Env = withoutEnvironmentKey(os.Environ(), "GITHUB_OUTPUT")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("selector: %v: %s", err, out)
+		}
+		selection, err := parsePrePRSelection(string(out))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return selection
+	}
+	if got := selectChecks(base); !got.Policy || len(got.GoModules) != 0 || got.VideoCloudPostgresEMQX {
+		t.Fatalf("renderer-only selection = %#v", got)
+	}
+	beforeGo := git(workspace, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(service, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(service, "add", ".")
+	git(service, "commit", "-m", "go change")
+	git(workspace, "add", "repos/rtk_video_cloud")
+	git(workspace, "commit", "-m", "select Go")
+	if got := selectChecks(beforeGo); !reflect.DeepEqual(got.GoModules, []string{"video-cloud", "godaddy-dns-toolkit"}) || !got.VideoCloudPostgresEMQX {
+		t.Fatalf("Go change selection = %#v", got)
+	}
+}
+
 func newPrePRTestWorkspace(t *testing.T) string {
 	t.Helper()
 	script := `#!/usr/bin/env bash

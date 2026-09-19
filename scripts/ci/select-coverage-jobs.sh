@@ -49,6 +49,23 @@ select_all() {
   video_cloud_postgres_emqx=true
 }
 
+# A gitlink has no paths in the parent diff. Avoid scheduling unrelated Go
+# coverage when the leaf commit changes only the PKI manifest renderer/docs.
+# Missing submodule history falls back to the full Video Cloud checks.
+video_cloud_pki_render_only() {
+  local before after paths path
+  before=$(git rev-parse "$base_ref:repos/rtk_video_cloud" 2>/dev/null) || return 1
+  after=$(git rev-parse "$head_ref:repos/rtk_video_cloud" 2>/dev/null) || return 1
+  paths=$(git -C repos/rtk_video_cloud diff --name-only "$before" "$after" 2>/dev/null) || return 1
+  [ -n "$paths" ] || return 1
+  while IFS= read -r path; do
+    case "$path" in
+      deploy/pki/*.py|deploy/pki/*.md) ;;
+      *) return 1 ;;
+    esac
+  done <<< "$paths"
+}
+
 if [ "$event_name" = "workflow_dispatch" ] || [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
   select_all
 else
@@ -97,6 +114,10 @@ else
         policy=true
         ;;
       repos/rtk_video_cloud|repos/rtk_video_cloud/*)
+        if [ "$changed" = "repos/rtk_video_cloud" ] && video_cloud_pki_render_only; then
+          policy=true
+          continue
+        fi
         add_unique video-cloud "${go_modules[@]}"
         add_unique godaddy-dns-toolkit "${go_modules[@]}"
         video_cloud_postgres_emqx=true
