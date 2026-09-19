@@ -1,5 +1,16 @@
 # RTK Cloud Secret Store
 
+Device PKI CA private keys are an exception to local operator file storage:
+Platform Device Root, Cloud (Brand) and Product keys are generated internally in
+the environment's OpenBao PKI engine and are never synchronized as PEM files.
+Only public chains/references and bounded workload credentials belong in local
+environment configuration. The verified Root inventory and automatic creation
+contract are in `repos/rtk_cloud_contracts_doc/platform_pki.md` section 8.
+Restore must pair protected OpenBao storage with the matching issuer registry,
+policies and public fingerprints, using separately controlled seal material.
+An isolated restore must prove signing with the original key and chain before
+writers are enabled; a missing key must not trigger silent regeneration.
+
 All local secret material is owned by one environment-specific directory:
 
 ```text

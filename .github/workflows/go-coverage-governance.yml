@@ -95,6 +95,36 @@ jobs:
           elif [ "${{ github.event_name }}" = "push" ]; then
             echo "base_ref=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
           fi
+      - name: Start isolated Video Cloud unit fixtures
+        if: matrix.module == 'video-cloud'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg="rtk-vc-unit-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bao="rtk-vc-unit-bao-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run -d --rm --name "$pg" -e POSTGRES_USER=integration -e POSTGRES_PASSWORD=integration_password -e POSTGRES_DB=integration -p 127.0.0.1::5432 postgres:16
+          docker run -d --rm --name "$bao" -p 127.0.0.1::8200 quay.io/openbao/openbao@sha256:6150c4a6b62067db6141c8da7a6a6b5763f4f47c315343d0c848b40fecdfd452 server -dev -dev-root-token-id=rtk-local-fixture -dev-listen-address=0.0.0.0:8200
+          pg_port="$(docker port "$pg" 5432/tcp | awk -F: '{print $NF}')"
+          bao_port="$(docker port "$bao" 8200/tcp | awk -F: '{print $NF}')"
+          ready=0
+          for attempt in {1..60}; do
+            if docker exec "$pg" pg_isready -U integration -d integration >/dev/null 2>&1; then
+              ready=$((ready + 1))
+            else
+              ready=0
+            fi
+            if [ "$ready" -ge 3 ] && curl --fail --silent "http://127.0.0.1:${bao_port}/v1/sys/health" >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -lt 3 ] || ! curl --fail --silent "http://127.0.0.1:${bao_port}/v1/sys/health" >/dev/null; then
+            echo 'isolated Video Cloud fixtures did not become ready' >&2
+            exit 1
+          fi
+          echo "VIDEO_CLOUD_TEST_DSN=postgres://integration:integration_password@127.0.0.1:${pg_port}/integration?sslmode=disable" >> "$GITHUB_ENV"
+          echo "RTK_AUTOMATIC_PKI_TEST_ADDR=http://127.0.0.1:${bao_port}" >> "$GITHUB_ENV"
+          echo 'GOFLAGS=-p=1' >> "$GITHUB_ENV"
       - name: Run governed unit coverage
         working-directory: scripts/go
         shell: bash
@@ -107,6 +137,11 @@ jobs:
             args+=(--base-ref "$BASE_REF" --head-ref HEAD)
           fi
           go run ./rtk-cloud -- test-coverage "${args[@]}"
+      - name: Stop isolated Video Cloud unit fixtures
+        if: always() && matrix.module == 'video-cloud'
+        shell: bash
+        run: |
+          docker stop "rtk-vc-unit-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" "rtk-vc-unit-bao-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true
       - name: Upload module evidence
         if: always()
         uses: actions/upload-artifact@v6
@@ -300,6 +335,22 @@ jobs:
         with:
           go-version: "1.26.3"
           cache: false
+      - name: Start isolated OpenBao Device CA fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          bao="rtk-vc-pr-bao-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run -d --rm --name "$bao" -p 127.0.0.1::8200 quay.io/openbao/openbao@sha256:6150c4a6b62067db6141c8da7a6a6b5763f4f47c315343d0c848b40fecdfd452 server -dev -dev-root-token-id=rtk-local-fixture -dev-listen-address=0.0.0.0:8200
+          bao_port="$(docker port "$bao" 8200/tcp | awk -F: '{print $NF}')"
+          for attempt in {1..60}; do
+            if curl --fail --silent "http://127.0.0.1:${bao_port}/v1/sys/health" >/dev/null; then
+              echo "RTK_AUTOMATIC_PKI_TEST_ADDR=http://127.0.0.1:${bao_port}" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo 'isolated OpenBao fixture did not become ready' >&2
+          exit 1
       - name: Start isolated EMQX
         working-directory: repos/rtk_video_cloud
         run: docker compose -f deploy/docker-compose.emqx.yml -f deploy/docker-compose.emqx.integration.yml up -d
@@ -338,6 +389,9 @@ jobs:
         if: always()
         working-directory: repos/rtk_video_cloud
         run: docker compose -f deploy/docker-compose.emqx.yml -f deploy/docker-compose.emqx.integration.yml down --volumes --remove-orphans
+      - name: Stop isolated OpenBao Device CA fixture
+        if: always()
+        run: docker stop "rtk-vc-pr-bao-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || true
       - name: Upload Video Cloud evidence
         if: always()
         uses: actions/upload-artifact@v6
