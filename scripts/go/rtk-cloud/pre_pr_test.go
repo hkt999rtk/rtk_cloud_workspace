@@ -269,6 +269,7 @@ func TestCoverageSelectorScopesPKIRendererOnlyGitlink(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("bash", "scripts/ci/select-coverage-jobs.sh", before, "HEAD", "pull_request")
 		cmd.Dir = workspace
+		cmd.Env = withoutEnvironmentKey(os.Environ(), "GITHUB_OUTPUT")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("selector: %v: %s", err, out)
