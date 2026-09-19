@@ -220,7 +220,7 @@ func TestRunPrePRReportsGitStatusFailure(t *testing.T) {
 	}
 }
 
-func TestCoverageSelectorScopesPKIRendererOnlyGitlink(t *testing.T) {
+func TestCoverageSelectorScopesPKISupportOnlyGitlink(t *testing.T) {
 	selector, err := os.ReadFile(filepath.Join("..", "..", "ci", "select-coverage-jobs.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -261,10 +261,16 @@ func TestCoverageSelectorScopesPKIRendererOnlyGitlink(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(service, "deploy", "pki", "README.md"), []byte("PKI renderer\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(filepath.Join(service, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(service, "docs", "pki-staging-rollout.md"), []byte("Staging PKI rollout\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	git(service, "add", ".")
-	git(service, "commit", "-m", "renderer only")
+	git(service, "commit", "-m", "PKI support only")
 	git(workspace, "add", "repos/rtk_video_cloud")
-	git(workspace, "commit", "-m", "select renderer")
+	git(workspace, "commit", "-m", "select PKI support")
 	selectChecks := func(before string) prePRSelection {
 		t.Helper()
 		cmd := exec.Command("bash", "scripts/ci/select-coverage-jobs.sh", before, "HEAD", "pull_request")
@@ -281,7 +287,7 @@ func TestCoverageSelectorScopesPKIRendererOnlyGitlink(t *testing.T) {
 		return selection
 	}
 	if got := selectChecks(base); !got.Policy || len(got.GoModules) != 0 || got.VideoCloudPostgresEMQX {
-		t.Fatalf("renderer-only selection = %#v", got)
+		t.Fatalf("PKI-support-only selection = %#v", got)
 	}
 	beforeGo := git(workspace, "rev-parse", "HEAD")
 	if err := os.WriteFile(filepath.Join(service, "main.go"), []byte("package main\n"), 0o644); err != nil {
