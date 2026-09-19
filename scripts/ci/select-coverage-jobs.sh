@@ -50,9 +50,10 @@ select_all() {
 }
 
 # A gitlink has no paths in the parent diff. Avoid scheduling unrelated Go
-# coverage when the leaf commit changes only the PKI manifest renderer/docs.
+# coverage when the leaf commit changes only the PKI manifest renderer or its
+# rollout instructions.
 # Missing submodule history falls back to the full Video Cloud checks.
-video_cloud_pki_render_only() {
+video_cloud_pki_support_only() {
   local before after paths path
   before=$(git rev-parse "$base_ref:repos/rtk_video_cloud" 2>/dev/null) || return 1
   after=$(git rev-parse "$head_ref:repos/rtk_video_cloud" 2>/dev/null) || return 1
@@ -60,7 +61,7 @@ video_cloud_pki_render_only() {
   [ -n "$paths" ] || return 1
   while IFS= read -r path; do
     case "$path" in
-      deploy/pki/*.py|deploy/pki/*.md) ;;
+      deploy/pki/*.py|deploy/pki/*.md|docs/pki-staging-rollout.md) ;;
       *) return 1 ;;
     esac
   done <<< "$paths"
@@ -114,7 +115,7 @@ else
         policy=true
         ;;
       repos/rtk_video_cloud|repos/rtk_video_cloud/*)
-        if [ "$changed" = "repos/rtk_video_cloud" ] && video_cloud_pki_render_only; then
+        if [ "$changed" = "repos/rtk_video_cloud" ] && video_cloud_pki_support_only; then
           policy=true
           continue
         fi
