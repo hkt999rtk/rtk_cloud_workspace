@@ -272,6 +272,18 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-VC-FACTORY-JOURNAL-001, REQ-MULTICLOUD-HANDOFF-001, REQ-MULTICLOUD-SHARING-001]
     status: active
+  - id: INT-AM-REGISTERED-FACTORY-001
+    title: Registered third-party Product grant survives real factory issuance and device token creation
+    layer: integration
+    owner: rtk_account_manager
+    source: repos/rtk_account_manager/internal/api/registered_service_factory_application_integration_test.go
+    selector: "./internal/api#TestIntegrationRegisteredPluginAcrossFactoryApplication"
+    method: PostgreSQL-backed Account Manager accepts MQTT and third-party option registration and ready heartbeats on its dedicated mTLS listener using distinct approved test service certificates, then activates the plugin and creates a revisioned Product and signed production run. A separately compiled Video Cloud factory application calls the real AM HTTP admission API. A widened service_options echo is rejected before signing; valid issuance persists the exact option set, Product revision and grant digest in the factory entitlement. The issued device certificate completes a real client-certificate TLS handshake to Video Cloud's token handler; the cryptographically verified JWT carries those exact options and revisions. Requires TEST_DATABASE_URL, TEST_FACTORY_APPLICATION_BINARY and TEST_FACTORY_APPLICATION_DSN; a skipped selector is not evidence. The test uses a local test CA and direct registration HTTP client, not the deployed Platform issuer or Video Cloud registrar process, and does not prove deployment or outage recovery.
+    runner: test-services
+    environments: [ci]
+    evidence: [json]
+    verifies: [REQ-CONTRACT-PROV-SERVICE-OPTIONS-001, REQ-VC-FACTORY-AUTH-001, REQ-CONTRACT-SVCREG-AUTHORITY-001, REQ-CONTRACT-SVCREG-FOUNDATION-001, REQ-CONTRACT-SVCREG-MANIFEST-001, REQ-CONTRACT-SVCREG-PRODUCT-001, REQ-CONTRACT-SVCREG-TOKEN-001, REQ-AM-REGISTERED-SERVICES-001]
+    status: active
   - id: INT-VC-MULTICLOUD-FLOW-001
     title: Factory application coordinates admission, signing and projections before completion
     layer: integration

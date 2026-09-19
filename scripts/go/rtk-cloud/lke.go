@@ -577,6 +577,8 @@ func lkeGHCRPullCredentials(env map[string]string) (string, string) {
 
 type lkePublicHTTPSRoute struct {
 	Host        string
+	Path        string
+	Exact       bool
 	Service     string
 	Namespace   string
 	ServicePort int
@@ -586,6 +588,16 @@ type lkePublicHTTPSRoute struct {
 
 func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if err := lkeValidatePublicEdge(env); err != nil {
+		return err
+	}
+	if lkeWebRTCServiceEdgeEnabled(env) {
+		if !lkeWebRTCServiceRegistrationEnabled(env) {
+			return fmt.Errorf("WebRTC edge cutover requires the registered WebRTC service workload")
+		}
+		if err := lkeRequireReadyWebRTCServiceEndpoint(env); err != nil {
+			return err
+		}
+	} else if err := lkePreventWebRTCEdgeRollbackOverlap(env); err != nil {
 		return err
 	}
 	routes := lkePublicHTTPSRoutes(env)
@@ -637,12 +649,13 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 			return err
 		}
 	}
-	for _, manifest := range lkePublicHTTPSIngressManifests(env, routes) {
+	// Admit the new upstream before ingress starts selecting it.
+	for _, manifest := range lkePublicHTTPSNetworkPolicyManifests(env, routes) {
 		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
 	}
-	for _, manifest := range lkePublicHTTPSNetworkPolicyManifests(env, routes) {
+	for _, manifest := range lkePublicHTTPSIngressManifests(env, routes) {
 		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
@@ -769,9 +782,10 @@ func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
 func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	videoNS := lkeNamespaceName(env, "video-cloud")
 	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
-	return []lkePublicHTTPSRoute{
+	deviceDomain := firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain)
+	routes := []lkePublicHTTPSRoute{
 		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
-		{Host: firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain), Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
+		{Host: deviceDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: env["VIDEO_CLOUD_CERTISSUER_DOMAIN"], Namespace: videoNS, Service: "certissuer", ServicePort: 9443, TargetPort: 9443, Protocol: "HTTPS"},
 		{Host: lkeTurnRegistryPublicDomain(env), Namespace: videoNS, Service: "video-cloud-turnregistry", ServicePort: 18190, TargetPort: 18190},
 		{Host: env["ACCOUNT_MANAGER_DOMAIN"], Namespace: lkeNamespaceName(env, "account-manager"), Service: "account-manager", ServicePort: 80, TargetPort: envIntDefault("LKE_ACCOUNT_MANAGER_PORT", 8080)},
@@ -780,6 +794,14 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
 		{Host: lkeFrontendPublicDomain(env), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
 	}
+	if lkeWebRTCServiceEdgeEnabled(env) {
+		for _, host := range []string{videoDomain, deviceDomain} {
+			for _, path := range lkeWebRTCServicePaths {
+				routes = append(routes, lkePublicHTTPSRoute{Host: host, Path: path, Exact: true, Namespace: videoNS, Service: "video-cloud-webrtcservice", ServicePort: 18082, TargetPort: 18082})
+			}
+		}
+	}
+	return routes
 }
 
 func lkeFrontendPublicDomain(env map[string]string) string {
@@ -1236,12 +1258,12 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
-		if strings.EqualFold(route.Protocol, "HTTPS") {
-			httpsRoutes = append(httpsRoutes, route)
-			continue
-		}
 		if lkeIsDeviceMTLSRoute(env, route) {
 			deviceMTLSRoutes = append(deviceMTLSRoutes, route)
+			continue
+		}
+		if strings.EqualFold(route.Protocol, "HTTPS") {
+			httpsRoutes = append(httpsRoutes, route)
 			continue
 		}
 		httpRoutes = append(httpRoutes, route)
@@ -1262,7 +1284,9 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 func lkeIsDeviceMTLSRoute(env map[string]string, route lkePublicHTTPSRoute) bool {
 	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
 	deviceHost := firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain)
-	return route.Host != "" && route.Host == deviceHost && route.Service == "video-cloud-api"
+	// Every route on the device host must retain the ingress client-certificate
+	// check, including a path routed to an optional service.
+	return route.Host != "" && route.Host == deviceHost
 }
 
 func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
@@ -1278,21 +1302,37 @@ func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
 
 func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []lkePublicHTTPSRoute, backendProtocol string, extraAnnotations string) string {
 	var rules strings.Builder
+	hostOrder := make([]string, 0, len(routes))
+	routesByHost := make(map[string][]lkePublicHTTPSRoute, len(routes))
 	for _, route := range routes {
 		if route.Host == "" {
 			continue
 		}
+		if _, found := routesByHost[route.Host]; !found {
+			hostOrder = append(hostOrder, route.Host)
+		}
+		routesByHost[route.Host] = append(routesByHost[route.Host], route)
+	}
+	for _, host := range hostOrder {
 		fmt.Fprintf(&rules, `    - host: %s
       http:
         paths:
-          - path: /
-            pathType: Prefix
+`, host)
+		for _, route := range routesByHost[host] {
+			path := firstNonEmpty(route.Path, "/")
+			pathType := "Prefix"
+			if route.Exact {
+				pathType = "Exact"
+			}
+			fmt.Fprintf(&rules, `          - path: %s
+            pathType: %s
             backend:
               service:
                 name: %s
                 port:
                   number: %d
-`, route.Host, lkePublicHTTPSBridgeServiceName(env, route), route.ServicePort)
+`, path, pathType, lkePublicHTTPSBridgeServiceName(env, route), route.ServicePort)
+		}
 	}
 	backendAnnotation := ""
 	if backendProtocol != "" {
@@ -1363,6 +1403,9 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowAccountManagerCertIssuerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminFactoryEnrollNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAccountManagerNetworkPolicyManifest(env))
+	if lkeAccountManagerServiceRegistrationEnabled(env) {
+		manifests = append(manifests, lkeAllowServiceRegistrationNetworkPolicyManifest(env))
+	}
 	manifests = append(manifests, lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowCloudAdminBillingNetworkPolicyManifest(env))
 	// Fleet overview and attention are first-class Cloud Admin features, so the
@@ -1374,6 +1417,12 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	manifests = append(manifests, lkeAllowBillingPaymentSimulatorNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env))
+	if lkeShadowHTTPCoreCutoverEnabled(env) {
+		manifests = append(manifests, lkeAllowVideoCloudAPIShadowGatewayNetworkPolicyManifest(env))
+	}
+	if lkeVideoStorageCoreCutoverEnabled(env) {
+		manifests = append(manifests, lkeAllowVideoCloudAPIStorageGatewayNetworkPolicyManifest(env))
+	}
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
@@ -1773,6 +1822,42 @@ spec:
 `, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
 }
 
+func lkeAllowServiceRegistrationNetworkPolicyManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-platform-service-registration
+  namespace: %s
+  labels:
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: account-manager
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - video-cloud-mqttfoundation
+                  - video-cloud-shadowworker
+                  - video-cloud-webrtcservice
+                  - video-cloud-videostorage
+      ports:
+        - protocol: TCP
+          port: 8443
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+}
+
 func lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env map[string]string) string {
 	return lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "account-manager", "account-manager", 8080)
 }
@@ -1846,6 +1931,13 @@ spec:
 }
 
 func lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env map[string]string) string {
+	webrtcSource := ""
+	if lkeWebRTCServiceRegistrationEnabled(env) {
+		webrtcSource = `        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-webrtcservice
+`
+	}
 	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1866,13 +1958,26 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: video-cloud-api
-      ports:
+%s      ports:
         - protocol: TCP
           port: 18190
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], webrtcSource)
 }
 
 func lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env map[string]string) string {
+	registeredClients := ""
+	if lkeMQTTFoundationRegistrationEnabled(env) {
+		registeredClients += `        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-mqttfoundation
+`
+	}
+	if lkeShadowWorkerRegistrationEnabled(env) {
+		registeredClients += `        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-shadowworker
+`
+	}
 	return fmt.Sprintf(`apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -1899,10 +2004,11 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: video-cloud-mqttusage
+%s
       ports:
         - protocol: TCP
           port: 1883
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"])
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], registeredClients)
 }
 
 func lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env map[string]string) string {
@@ -2209,6 +2315,100 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "account-manager") && lkeAccountManagerServiceRegistrationEnabled(env) {
+		if err := lkeRequireServiceRegistrationSecret(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeMQTTFoundationRegistrationEnabled(env) {
+		if !lkeAccountManagerServiceRegistrationEnabled(env) {
+			return fmt.Errorf("MQTT foundation registration requires the Account Manager service registration listener")
+		}
+		if err := lkeRequireMQTTFoundationIdentitySecret(env); err != nil {
+			return err
+		}
+		if !lkeWorkloadSelected(env, opts, "account-manager") {
+			if err := lkeRequireExistingServiceRegistrationEndpoint(env); err != nil {
+				return err
+			}
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeShadowWorkerRegistrationEnabled(env) {
+		if !lkeMQTTFoundationRegistrationEnabled(env) {
+			return fmt.Errorf("Shadow worker registration requires the MQTT foundation registrar")
+		}
+		if err := lkeRequireShadowWorkerIdentitySecret(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeShadowHTTPCoreCutoverEnabled(env) {
+		if !lkeShadowWorkerRegistrationEnabled(env) {
+			return fmt.Errorf("Shadow HTTP core cutover requires the registered Shadow worker")
+		}
+		if err := lkeRequireReadyShadowWorkerHTTPEndpoint(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeWebRTCServiceRegistrationEnabled(env) {
+		if !lkeMQTTFoundationRegistrationEnabled(env) {
+			return fmt.Errorf("WebRTC service registration requires the MQTT foundation registrar")
+		}
+		if err := lkeRequireWebRTCServiceIdentitySecret(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeVideoStorageServiceRegistrationEnabled(env) {
+		if !lkeMQTTFoundationRegistrationEnabled(env) {
+			return fmt.Errorf("video storage service registration requires the MQTT foundation registrar")
+		}
+		if !lkeClipDirectUploadEnabled(env) {
+			return fmt.Errorf("video storage service registration requires direct S3 clip upload")
+		}
+		if err := lkeRequireVideoStorageServiceIdentitySecret(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeWebRTCCoreCutoverEnabled(env) {
+		if !lkeWebRTCServiceEdgeEnabled(env) {
+			return fmt.Errorf("WebRTC core cutover requires the WebRTC edge route")
+		}
+		if !lkeWebRTCServiceRegistrationEnabled(env) {
+			return fmt.Errorf("WebRTC core cutover requires the registered WebRTC service workload")
+		}
+		if err := lkeRequireReadyWebRTCServiceEndpoint(env); err != nil {
+			return err
+		}
+		if err := lkeRequireActiveWebRTCEdgeRoutes(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeVideoStorageCoreCutoverEnabled(env) {
+		if !lkeVideoStorageServiceRegistrationEnabled(env) {
+			return fmt.Errorf("video storage core cutover requires the registered video storage workload")
+		}
+		if err := lkeRequireReadyVideoStorageServiceEndpoint(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && !lkeShadowWorkerRegistrationEnabled(env) {
+		if err := lkePreventShadowWorkerRollbackOverlap(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "account-manager") && lkeAccountManagerServiceRegistrationEnabled(env) {
+		// Targeted Account Manager rollouts do not necessarily reapply public
+		// ingress policies, so install this private listener policy here too.
+		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env)) {
+		// Targeted Video Cloud rollouts must admit the registrar to EMQX before
+		// either service's readiness probe can require a real broker connection.
+		if err := kubectlApply(lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
 		previousToken, err := lkeCurrentFleetReadToken(env)
 		if err != nil {
@@ -2261,6 +2461,17 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		certIssuerMaterial = &material
 	}
 	selectedWorkloads := lkeSelectedWorkloads(env, opts)
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeShadowHTTPCoreCutoverEnabled(env) {
+		// Admit the private upstream before the core rollout starts forwarding.
+		if err := kubectlApply(lkeAllowVideoCloudAPIShadowGatewayNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeVideoStorageCoreCutoverEnabled(env) {
+		if err := kubectlApply(lkeAllowVideoCloudAPIStorageGatewayNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
 	for _, workload := range selectedWorkloads {
 		if workload.Key == "cloud-logger" {
 			continue
@@ -2293,8 +2504,57 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeMQTTFoundationRegistrationEnabled(env) {
+		if err := kubectlApply(lkeMQTTFoundationDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeMQTTFoundationServiceManifest(env)); err != nil {
+			return err
+		}
+	}
 	if err := lkeWaitForRollouts(k8sRolloutTargetsFromEnv(selectedWorkloads)); err != nil {
 		return err
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeMQTTFoundationRegistrationEnabled(env) {
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-mqttfoundation", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeShadowWorkerRegistrationEnabled(env) {
+		if err := kubectlApply(lkeShadowWorkerDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeShadowWorkerServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-shadowworker", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeWebRTCServiceRegistrationEnabled(env) {
+		if err := kubectlApply(lkeAllowVideoCloudAPITurnRegistryNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeWebRTCServiceDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeWebRTCServiceServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-webrtcservice", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeVideoStorageServiceRegistrationEnabled(env) {
+		if err := kubectlApply(lkeVideoStorageServiceDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeVideoStorageServiceServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-videostorage", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
 	}
 	// A one-replica Fleet token rotation temporarily enables a surge. Keep it
 	// through the full workload manifest rollout because that manifest also
@@ -2569,6 +2829,10 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/metricsexpo
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/turnregistry ./cmd/turnregistry
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/logingester ./cmd/logingester
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttusage ./cmd/mqttusage
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttfoundation ./cmd/mqttfoundation
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/shadowworker ./cmd/shadowworker
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorage ./cmd/videostorage
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile
@@ -2589,6 +2853,10 @@ COPY --from=builder /out/metricsexporter /app/metricsexporter
 COPY --from=builder /out/turnregistry /app/turnregistry
 COPY --from=builder /out/logingester /app/logingester
 COPY --from=builder /out/mqttusage /app/mqttusage
+COPY --from=builder /out/mqttfoundation /app/mqttfoundation
+COPY --from=builder /out/shadowworker /app/shadowworker
+COPY --from=builder /out/webrtcservice /app/webrtcservice
+COPY --from=builder /out/videostorage /app/videostorage
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
 COPY --from=builder /out/clipreconcile /app/clipreconcile
@@ -9057,6 +9325,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	strategy := lkeDeploymentStrategyManifest(workload, temporaryVideoSurge)
 	volumeMounts := ""
 	volumes := ""
+	extraPorts := ""
 	if workload.Key == "account-manager" {
 		podSecurityContext = `      securityContext:
         runAsNonRoot: true
@@ -9105,6 +9374,23 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		if certIssuerMaterial != nil {
 			checksumValues = append(checksumValues, certIssuerMaterial.ClientCert, certIssuerMaterial.ServiceCA)
 		}
+		if lkeAccountManagerServiceRegistrationEnabled(env) {
+			checksumValues = append(checksumValues, "service-registration-enabled")
+			extraPorts = `            - name: service-registry
+              containerPort: 8443
+`
+			extraEnv += `            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
+              value: "8443"
+            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT
+              value: "/etc/rtk-account-manager/service-registration/tls.crt"
+            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY
+              value: "/etc/rtk-account-manager/service-registration/tls.key"
+            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CA
+              value: "/etc/rtk-account-manager/service-registration/client-ca.crt"
+            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CRL
+              value: "/etc/rtk-account-manager/service-registration/client.crl"
+`
+		}
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
 `, lkeConfigChecksum(checksumValues...))
@@ -9122,6 +9408,17 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
           secret:
             secretName: account-manager-certissuer-client
 `
+		if lkeAccountManagerServiceRegistrationEnabled(env) {
+			volumeMounts += `            - name: account-manager-service-registration-tls
+              mountPath: /etc/rtk-account-manager/service-registration
+              readOnly: true
+`
+			volumes += `        - name: account-manager-service-registration-tls
+          secret:
+            secretName: account-manager-service-registration-tls
+            defaultMode: 0440
+`
+		}
 	}
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
@@ -9382,6 +9679,28 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 			webrtcSignalingStoreTTLGrace,
 			lkeNamespaceName(env, "platform"),
 		)
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_SHADOW_WORKER_ENABLED
+              value: %q
+`, strconv.FormatBool(lkeShadowWorkerRegistrationEnabled(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_SHADOW_HTTP_SERVICE_CUTOVER_ENABLED
+              value: %q
+`, strconv.FormatBool(lkeShadowHTTPCoreCutoverEnabled(env)))
+		if lkeShadowHTTPCoreCutoverEnabled(env) {
+			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_SHADOW_HTTP_UPSTREAM_URL
+              value: %q
+`, "http://video-cloud-shadowworker."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:18081")
+		}
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_WEBRTC_SERVICE_CUTOVER_ENABLED
+              value: %q
+`, strconv.FormatBool(lkeWebRTCCoreCutoverEnabled(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_VIDEO_STORAGE_SERVICE_CUTOVER_ENABLED
+              value: %q
+`, strconv.FormatBool(lkeVideoStorageCoreCutoverEnabled(env)))
+		if lkeVideoStorageCoreCutoverEnabled(env) {
+			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_VIDEO_STORAGE_UPSTREAM_URL
+              value: %q
+`, "http://video-cloud-videostorage."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:18083")
+		}
 		extraEnv += lkeBlobEnvironmentManifest(env, "video-cloud-runtime")
 		volumeMounts = `          volumeMounts:
             - name: logger-spool
@@ -9500,7 +9819,7 @@ spec:
           ports:
             - name: http
               containerPort: %d
-%s
+%s%s
           env:
             - name: CLOUD_PROVIDER
               value: "lke"
@@ -9508,7 +9827,7 @@ spec:
               value: %q
             - name: SERVICE_PUBLIC_HOST
               value: %q
-%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, podSecurityContext, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, probes, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
+%s%s%s%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], replicas, strategy, workload.Name, templateAnnotations, workload.Name, env["CLOUD_STACK_NAME"], imagePullSecrets, topologySpread, podSecurityContext, workload.Image, lkeContainerResourcesManifest(env, workload.Name), workload.Port, extraPorts, probes, env["CLOUD_STACK_NAME"], workload.Host, extraEnv, envFrom, volumeMounts, volumes)
 }
 
 func lkeBlobEnvironmentManifest(env map[string]string, secretName string) string {
@@ -9777,6 +10096,16 @@ func lkeAccountManagerInternalURL(env map[string]string) string {
 	return "http://account-manager." + lkeNamespaceName(env, "account-manager") + ".svc.cluster.local:80"
 }
 
+func lkeAccountManagerServiceRegistrationEnabled(env map[string]string) bool {
+	raw := firstNonEmpty(os.Getenv("LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"), env["LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"], "false")
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 func lkeGrafanaInternalURL(env map[string]string) string {
 	return "http://video-cloud-grafana." + lkeNamespaceName(env, "observability") + ".svc.cluster.local:3000"
 }
@@ -9786,6 +10115,13 @@ func lkeGrafanaDashboardPath(env map[string]string) string {
 }
 
 func lkeServiceManifest(env map[string]string, workload lkeWorkload) string {
+	extraPorts := ""
+	if workload.Key == "account-manager" && lkeAccountManagerServiceRegistrationEnabled(env) {
+		extraPorts = `    - name: service-registry
+      port: 8443
+      targetPort: service-registry
+`
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: Service
 metadata:
@@ -9804,7 +10140,7 @@ spec:
     - name: http
       port: 80
       targetPort: %d
-`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, workload.Port)
+%s`, workload.Name, workload.Namespace, workload.Name, env["CLOUD_STACK_NAME"], workload.Name, workload.Port, extraPorts)
 }
 
 func ensureLKEKubeAccess(paths provisionPaths, env map[string]string, allowCreate bool) error {

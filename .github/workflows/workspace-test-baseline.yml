@@ -128,6 +128,35 @@ jobs:
             printf 'ACCOUNT_MANAGER_HANDOFF_CLIENT_DIR=%s/repos/rtk_account_manager\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
 
+      - name: Build independent Video Cloud factory fixture
+        working-directory: repos/rtk_video_cloud
+        shell: bash
+        env:
+          GOWORK: "off"
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/rtk-registered-factory.test"
+          go test -c -o "$fixture" ./internal/factoryenrollapp
+          {
+            printf 'TEST_FACTORY_APPLICATION_BINARY=%s\n' "$fixture"
+            printf 'TEST_FACTORY_APPLICATION_DSN=%s\n' "$TEST_DATABASE_URL"
+            printf 'VIDEO_CLOUD_SOURCE_ROOT=%s/repos/rtk_video_cloud\n' "$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
+      - name: Verify registered service to device token across real services
+        working-directory: repos/rtk_account_manager
+        env:
+          GOWORK: "off"
+          TEST_REGISTERED_SERVICE_CHAIN_REQUIRED: "1"
+        run: |
+          set -euo pipefail
+          evidence_dir="$GITHUB_WORKSPACE/.artifacts/test-runs/$FEATURE_EVIDENCE_RUN_ID/registered-service"
+          mkdir -p "$evidence_dir"
+          go test -json ./internal/api -run '^TestIntegrationRegisteredPluginAcrossFactoryApplication$' -count=1 -timeout=180s | tee "$evidence_dir/chain.json"
+          jq -e -s 'any(.Test == "TestIntegrationRegisteredPluginAcrossFactoryApplication" and .Action == "pass")' "$evidence_dir/chain.json" >/dev/null
+          go test -json ./cmd/server -run '^TestServiceRegistrationMTLSDrivesCatalogProductAndRun$' -count=1 -timeout=180s | tee "$evidence_dir/registrar.json"
+          jq -e -s 'any(.Test == "TestServiceRegistrationMTLSDrivesCatalogProductAndRun" and .Action == "pass")' "$evidence_dir/registrar.json" >/dev/null
+
       - name: Resolve comparison base
         id: diff
         shell: bash

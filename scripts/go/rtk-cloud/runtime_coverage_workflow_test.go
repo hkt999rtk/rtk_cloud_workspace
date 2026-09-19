@@ -52,6 +52,101 @@ func TestWorkspaceValidationRunsBeforeMerge(t *testing.T) {
 	}
 }
 
+func TestRegisteredServiceChainHasNonSkippingWorkspaceCIRunner(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	type workflowStep struct {
+		Name             string            `yaml:"name"`
+		WorkingDirectory string            `yaml:"working-directory"`
+		Run              string            `yaml:"run"`
+		Env              map[string]string `yaml:"env"`
+		With             map[string]string `yaml:"with"`
+	}
+	for name, jobName := range map[string]string{"go-coverage-governance.yml": "account-manager-postgres", "workspace-test-baseline.yml": "baseline"} {
+		raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow struct {
+			Jobs map[string]struct {
+				Steps []workflowStep `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(raw, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		job, ok := workflow.Jobs[jobName]
+		if !ok {
+			t.Fatalf("%s lacks job %s", name, jobName)
+		}
+		buildIndex, verifyIndex := -1, -1
+		for i, step := range job.Steps {
+			switch step.Name {
+			case "Build independent Video Cloud factory fixture":
+				buildIndex = i
+				if step.WorkingDirectory != "repos/rtk_video_cloud" || !strings.Contains(step.Run, "go test -c -o") || !strings.Contains(step.Run, "./internal/factoryenrollapp") {
+					t.Errorf("%s does not build the independent factory child", name)
+				}
+				if jobName == "baseline" {
+					for _, variable := range []string{"TEST_FACTORY_APPLICATION_BINARY", "TEST_FACTORY_APPLICATION_DSN", "VIDEO_CLOUD_SOURCE_ROOT"} {
+						if !strings.Contains(step.Run, variable) || !strings.Contains(step.Run, "$GITHUB_ENV") {
+							t.Errorf("%s does not export %s for its test", name, variable)
+						}
+					}
+				}
+			case "Verify registered service to device token across real services":
+				verifyIndex = i
+				if step.WorkingDirectory != "repos/rtk_account_manager" || !strings.Contains(step.Run, "TestIntegrationRegisteredPluginAcrossFactoryApplication") || !strings.Contains(step.Run, "TestServiceRegistrationMTLSDrivesCatalogProductAndRun") {
+					t.Errorf("%s does not execute both registered-service selectors", name)
+				}
+				if step.Env["TEST_REGISTERED_SERVICE_CHAIN_REQUIRED"] != "1" {
+					t.Errorf("%s may report a skipped registered-service test as success", name)
+				}
+				for _, evidence := range []string{"go test -json", "jq -e", "chain.json", "registrar.json"} {
+					if !strings.Contains(step.Run, evidence) {
+						t.Errorf("%s does not prove and record %s", name, evidence)
+					}
+				}
+				if jobName == "account-manager-postgres" {
+					for _, variable := range []string{"TEST_DATABASE_URL", "TEST_FACTORY_APPLICATION_BINARY", "TEST_FACTORY_APPLICATION_DSN", "VIDEO_CLOUD_SOURCE_ROOT"} {
+						if step.Env[variable] == "" {
+							t.Errorf("%s does not provide %s to the test", name, variable)
+						}
+					}
+				}
+			case "Upload Account Manager evidence":
+				if jobName == "account-manager-postgres" && !strings.Contains(step.With["path"], "registered-service/*.json") {
+					t.Errorf("%s does not upload cross-service JSON evidence", name)
+				}
+			case "Upload feature coverage audit":
+				if jobName == "baseline" && !strings.Contains(step.With["path"], "${{ env.FEATURE_EVIDENCE_RUN_ID }}/**") {
+					t.Errorf("%s does not upload its cross-service JSON evidence", name)
+				}
+			}
+		}
+		if buildIndex < 0 || verifyIndex <= buildIndex {
+			t.Errorf("%s must build the factory child before running the registered-service chain", name)
+		}
+	}
+	selector, err := os.ReadFile(filepath.Join(workspace, "scripts", "ci", "select-coverage-jobs.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(selector), ".github/workflows/workspace-test-baseline.yml") {
+		t.Fatal("baseline workflow changes must select the workspace policy job")
+	}
+	videoCase := strings.SplitN(string(selector), "repos/rtk_video_cloud|repos/rtk_video_cloud/*)", 2)
+	if len(videoCase) != 2 {
+		t.Fatal("coverage selector lacks Video Cloud case")
+	}
+	videoBody := strings.SplitN(videoCase[1], ";;", 2)
+	if len(videoBody) != 2 || !strings.Contains(videoBody[0], "account_manager_postgres=true") {
+		t.Fatal("Video Cloud changes must select the Account Manager PostgreSQL job that runs the cross-service chain")
+	}
+}
+
 func TestCloudAdminE2EInitializesCanonicalRequirementSource(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

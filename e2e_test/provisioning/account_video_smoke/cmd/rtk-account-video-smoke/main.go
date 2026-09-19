@@ -23,6 +23,7 @@ func main() {
 	flag.StringVar(&cfg.ArtifactDir, "artifact-dir", os.Getenv("ACCOUNT_VIDEO_SMOKE_ARTIFACT_DIR"), "artifact output directory")
 	flag.StringVar(&cfg.DeviceID, "device-id", os.Getenv("E2E_DEVICE_ID"), "optional factory-enrolled device id")
 	flag.StringVar(&cfg.DeviceName, "device-name", env("E2E_DEVICE_NAME", "Factory Enrolled Device"), "device name for claim resolve")
+	flag.StringVar(&cfg.ProductID, "product-id", os.Getenv("E2E_PRODUCT_ID"), "optional registered-service Product ID; verifies the exact Product grant in the device token")
 	flag.StringVar(&cfg.ClaimToken, "claim-token", os.Getenv("E2E_CLAIM_TOKEN"), "optional raw Claim Token; redacted from reports")
 	flag.BoolVar(&cfg.StrictBlocked, "strict-blocked", envBool("ACCOUNT_VIDEO_SMOKE_STRICT_BLOCKED"), "exit non-zero on BLOCKED")
 	flag.BoolVar(&planOnly, "plan-only", false, "only validate required inputs and write a BLOCKED/PASS plan")

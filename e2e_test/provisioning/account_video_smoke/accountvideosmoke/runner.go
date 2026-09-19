@@ -3,9 +3,12 @@ package accountvideosmoke
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -32,6 +36,9 @@ func Plan(cfg Config) Result {
 	}
 	if cfg.VideoCloudBaseURL == "" {
 		result.add("validate_config", StatusBlocked, "VIDEO_CLOUD_BASE_URL is not configured", 0, "")
+	}
+	if cfg.ProductID != "" && cfg.ClaimToken != "" {
+		result.add("validate_config", StatusBlocked, "Product-bound smoke must create its own Claim Token; omit E2E_CLAIM_TOKEN", 0, "")
 	}
 	if _, err := LoadAccountFixture(cfg.AccountUsersDir); err != nil {
 		result.add("load_account_fixture", StatusBlocked, err.Error(), 0, "")
@@ -80,6 +87,10 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		result.add("validate_config", StatusBlocked, "VIDEO_CLOUD_BASE_URL is not configured", 0, "")
 		return result.finish(), nil
 	}
+	if cfg.ProductID != "" && cfg.ClaimToken != "" {
+		result.add("validate_config", StatusBlocked, "Product-bound smoke must create its own Claim Token; omit E2E_CLAIM_TOKEN", 0, "")
+		return result.finish(), nil
+	}
 	result.add("validate_config", StatusPass, "required base URLs configured", 0, "")
 
 	accountFixture, err := LoadAccountFixture(cfg.AccountUsersDir)
@@ -105,21 +116,39 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		return result.finish(), nil
 	}
 	result.add("account_login", StatusPass, "test user login succeeded", status, "access token redacted")
+	var grant *registeredProductGrant
+	if cfg.ProductID != "" {
+		loaded, code, evidence, err := loadRegisteredProductGrant(ctx, am, loginToken, accountFixture.OrganizationID, cfg.ProductID)
+		if err != nil {
+			stepStatus := StatusFail
+			if errors.Is(err, errBlocked) {
+				stepStatus = StatusBlocked
+			}
+			result.add("load_registered_product_grant", stepStatus, err.Error(), code, evidence)
+			return result.finish(), nil
+		}
+		grant = &loaded
+		result.add("load_registered_product_grant", StatusPass, "Product grant matches live registered catalog", code,
+			fmt.Sprintf("product_id=%s catalog_revision=%d service_options=%s", loaded.ProductID, loaded.CatalogRevision, strings.Join(loaded.ServiceOptions, ",")))
+	}
 
 	claimToken := cfg.ClaimToken
+	var claimRevision int64
 	if claimToken == "" {
 		adminToken, ok, status, evidence := platformAdminToken(ctx, am)
 		if !ok {
 			result.add("create_claim_token", StatusBlocked, "platform-admin credentials or ACCOUNT_MANAGER_PLATFORM_ADMIN_TOKEN are required to create a Claim Token", status, evidence)
 			return result.finish(), nil
 		}
-		raw, status, evidence, err := createClaimToken(ctx, am, adminToken, accountFixture.OrganizationID, certset.DeviceID)
+		raw, revision, status, evidence, err := createClaimToken(ctx, am, adminToken, accountFixture.OrganizationID, certset.DeviceID, grant)
 		if err != nil {
 			result.add("create_claim_token", StatusFail, err.Error(), status, evidence)
 			return result.finish(), nil
 		}
 		claimToken = raw
-		result.add("create_claim_token", StatusPass, "Claim Token created", status, "raw Claim Token redacted")
+		claimRevision = revision
+		result.add("create_claim_token", StatusPass, "Claim Token created", status,
+			fmt.Sprintf("raw Claim Token redacted; product_service_revision=%d", claimRevision))
 	} else {
 		result.add("create_claim_token", StatusSkip, "E2E_CLAIM_TOKEN provided; admin create skipped", 0, "raw Claim Token redacted")
 	}
@@ -130,6 +159,10 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		return result.finish(), nil
 	}
 	result.add("resolve_claim_token", StatusPass, "Claim Token resolved", status, fmt.Sprintf("device_id=%s video_cloud_devid=%s", resolve.Device.ID, resolve.ProvisionInput.VideoCloudDeviceID))
+	if grant != nil && resolve.Device.DeviceItemProfileID != grant.ProductID {
+		result.add("verify_resolved_product", StatusFail, "resolved Device is not bound to the selected Product", status, "")
+		return result.finish(), nil
+	}
 
 	status, evidence, err = startProvision(ctx, am, loginToken, accountFixture.OrganizationID, resolve.Device.ID, resolve.ProvisionInput)
 	if err != nil {
@@ -145,7 +178,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 	}
 	result.add("read_account_provisioning", StatusPass, "account-side provisioning state read", status, evidence)
 
-	status, evidence, err = deviceMTLSTokenSmoke(ctx, cfg, certset)
+	status, evidence, err = deviceMTLSTokenSmoke(ctx, cfg, certset, grant, claimRevision, accountFixture.OrganizationID)
 	if errors.Is(err, errBlocked) {
 		result.add("device_mtls_token_smoke", StatusBlocked, strings.TrimPrefix(err.Error(), errBlocked.Error()+": "), status, evidence)
 		return result.finish(), nil
@@ -154,7 +187,7 @@ func Run(ctx context.Context, cfg Config) (Result, error) {
 		result.add("device_mtls_token_smoke", StatusFail, err.Error(), status, evidence)
 		return result.finish(), nil
 	}
-	result.add("device_mtls_token_smoke", StatusPass, "device mTLS token request succeeded", status, evidence)
+	result.add("device_mtls_token_smoke", StatusPass, "device mTLS token request and grant verification succeeded", status, evidence)
 
 	return result.finish(), nil
 }
@@ -277,11 +310,73 @@ func platformAdminToken(ctx context.Context, client apiClient) (string, bool, in
 	return token, true, status, "platform admin login succeeded"
 }
 
-func createClaimToken(ctx context.Context, client apiClient, bearer, orgID, devid string) (string, int, string, error) {
+type registeredProductGrant struct {
+	ProductID       string
+	ServiceOptions  []string
+	CatalogRevision int64
+}
+
+func loadRegisteredProductGrant(ctx context.Context, client apiClient, bearer, orgID, productID string) (registeredProductGrant, int, string, error) {
+	var product struct {
+		DeviceItemProfile struct {
+			ID             string   `json:"id"`
+			BrandCloudID   string   `json:"brand_cloud_id"`
+			ServiceOptions []string `json:"service_options"`
+		} `json:"device_item_profile"`
+	}
+	path := fmt.Sprintf("/v1/orgs/%s/device-item-profiles/%s", url.PathEscape(orgID), url.PathEscape(productID))
+	status, evidence, err := client.getJSON(ctx, path, bearer, &product)
+	if err != nil {
+		return registeredProductGrant{}, status, evidence, err
+	}
+	options := product.DeviceItemProfile.ServiceOptions
+	if product.DeviceItemProfile.ID != productID || product.DeviceItemProfile.BrandCloudID != orgID || len(options) == 0 || !slices.Contains(options, "mqtt") {
+		return registeredProductGrant{}, status, evidence, errors.New("Product response lacks the selected cloud, Product, or MQTT grant")
+	}
+	var catalog struct {
+		CatalogRevision      int64 `json:"catalog_revision"`
+		ProductWritesEnabled bool  `json:"product_writes_enabled"`
+		Options              []struct {
+			Code       string `json:"code"`
+			Selectable bool   `json:"selectable"`
+		} `json:"options"`
+	}
+	status, evidence, err = client.getJSON(ctx, "/v1/platform/service-options?brand_cloud_id="+url.QueryEscape(orgID), bearer, &catalog)
+	if err != nil {
+		return registeredProductGrant{}, status, evidence, err
+	}
+	if !catalog.ProductWritesEnabled || catalog.CatalogRevision < 1 {
+		return registeredProductGrant{}, status, evidence, fmt.Errorf("%w: registered Product writes are not enabled", errBlocked)
+	}
+	for _, selected := range options {
+		found := false
+		for _, candidate := range catalog.Options {
+			if candidate.Code == selected && candidate.Selectable {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return registeredProductGrant{}, status, evidence, fmt.Errorf("%w: selected option %q is not currently registered and selectable", errBlocked, selected)
+		}
+	}
+	return registeredProductGrant{ProductID: productID, ServiceOptions: options, CatalogRevision: catalog.CatalogRevision}, status, evidence, nil
+}
+
+func sameServiceOptionSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
+}
+
+func createClaimToken(ctx context.Context, client apiClient, bearer, orgID, devid string, grant *registeredProductGrant) (string, int64, int, string, error) {
 	expires := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
 	req := map[string]any{
 		"organization_id":   orgID,
-		"category":          "ip_camera",
 		"video_cloud_devid": devid,
 		"activity_id":       "activity-" + time.Now().UTC().Format("20060102T150405Z"),
 		"clip_public_key":   "e2e-smoke-clip-public-key",
@@ -290,23 +385,41 @@ func createClaimToken(ctx context.Context, client apiClient, bearer, orgID, devi
 			"source": "workspace-account-video-smoke",
 		},
 	}
+	if grant == nil {
+		req["category"] = "ip_camera"
+	} else {
+		req["device_item_profile_id"] = grant.ProductID
+		req["service_options"] = grant.ServiceOptions
+	}
 	var resp struct {
-		ClaimToken string `json:"claim_token"`
+		ClaimToken       string `json:"claim_token"`
+		DeviceClaimToken struct {
+			ServiceOptions []string `json:"service_options"`
+			Metadata       struct {
+				ProductServiceRevision int64  `json:"product_service_revision"`
+				ServiceGrantSHA256     string `json:"service_grant_sha256"`
+			} `json:"metadata"`
+		} `json:"device_claim_token"`
 	}
 	status, evidence, err := client.postJSON(ctx, "/v1/admin/device-claim-tokens", bearer, req, &resp)
 	if err != nil {
-		return "", status, evidence, err
+		return "", 0, status, evidence, err
 	}
 	if resp.ClaimToken == "" {
-		return "", status, evidence, errors.New("claim token create response did not include generated raw token")
+		return "", 0, status, evidence, errors.New("claim token create response did not include generated raw token")
 	}
-	return resp.ClaimToken, status, evidence, nil
+	if grant != nil && (!sameServiceOptionSet(resp.DeviceClaimToken.ServiceOptions, grant.ServiceOptions) ||
+		resp.DeviceClaimToken.Metadata.ProductServiceRevision < 1 || len(resp.DeviceClaimToken.Metadata.ServiceGrantSHA256) != 64) {
+		return "", 0, status, evidence, errors.New("Claim Token grant does not match the registered Product")
+	}
+	return resp.ClaimToken, resp.DeviceClaimToken.Metadata.ProductServiceRevision, status, evidence, nil
 }
 
 type claimResolveResponse struct {
 	ClaimID string `json:"claim_id"`
 	Device  struct {
-		ID string `json:"id"`
+		ID                  string `json:"id"`
+		DeviceItemProfileID string `json:"device_item_profile_id"`
 	} `json:"device"`
 	ProvisionInput provisionInput `json:"provision_input"`
 }
@@ -357,17 +470,26 @@ func pollProvisioning(ctx context.Context, client apiClient, bearer, orgID, devi
 		if err != nil {
 			return status, evidence, err
 		}
-		if resp.Readiness.State != "" {
+		if resp.Readiness.ProductState == "failed" || resp.Readiness.State == "failed" {
+			return status, evidence, errors.New("provisioning reported a failed readiness state")
+		}
+		if resp.Readiness.State == "ready" && (resp.Readiness.ProductState == "activated" || resp.Readiness.ProductState == "online") {
 			return status, fmt.Sprintf("readiness=%s product_state=%s", resp.Readiness.State, resp.Readiness.ProductState), nil
 		}
-		time.Sleep(interval)
+		if i+1 < attempts {
+			select {
+			case <-ctx.Done():
+				return status, evidence, ctx.Err()
+			case <-time.After(interval):
+			}
+		}
 	}
-	return lastStatus, lastEvidence, errors.New("provisioning state did not expose readiness before poll attempts ended")
+	return lastStatus, lastEvidence, errors.New("provisioning did not reach ready/activated before poll attempts ended")
 }
 
 var errBlocked = errors.New("blocked")
 
-func deviceMTLSTokenSmoke(ctx context.Context, cfg Config, certset DeviceCertset) (int, string, error) {
+func deviceMTLSTokenSmoke(ctx context.Context, cfg Config, certset DeviceCertset, grant *registeredProductGrant, claimRevision int64, brandCloudID string) (int, string, error) {
 	base := strings.TrimRight(cfg.VideoCloudDeviceBaseURL, "/")
 	if base == "" {
 		base = strings.TrimRight(os.Getenv("VIDEO_CLOUD_DEVICE_BASE_URL"), "/")
@@ -412,7 +534,103 @@ func deviceMTLSTokenSmoke(ctx context.Context, cfg Config, certset DeviceCertset
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return resp.StatusCode, evidence, fmt.Errorf("device mTLS token request returned HTTP %d", resp.StatusCode)
 	}
+	if grant != nil {
+		var issued struct {
+			AccessToken string `json:"access_token"`
+		}
+		if err := json.Unmarshal(b, &issued); err != nil || issued.AccessToken == "" {
+			return resp.StatusCode, evidence, errors.New("device token response omitted a parseable access token")
+		}
+		publicKey, err := fetchDeviceTokenPublicKey(ctx, client, base)
+		if err != nil {
+			return resp.StatusCode, "", err
+		}
+		claims, err := inspectDeviceTokenClaims(issued.AccessToken, publicKey)
+		if err != nil {
+			return resp.StatusCode, "", err
+		}
+		if claims.Scope != "device" || claims.SubjectID != certset.DeviceID || claims.BrandCloudID != brandCloudID ||
+			!sameServiceOptionSet(claims.ServiceOptions, grant.ServiceOptions) ||
+			claims.ProductServiceRevision != claimRevision || claims.EntitlementRevision < 1 || claims.ExpiresAt <= float64(time.Now().Unix()) {
+			return resp.StatusCode, "", errors.New("device token scope, identity, service grant, or revision does not match the Product")
+		}
+		return resp.StatusCode, fmt.Sprintf("service_options=%s product_service_revision=%d entitlement_revision=%d; JWT signature verified with device-host public key",
+			strings.Join(claims.ServiceOptions, ","), claims.ProductServiceRevision, claims.EntitlementRevision), nil
+	}
 	return resp.StatusCode, "token response received; token redacted", nil
+}
+
+type inspectedDeviceTokenClaims struct {
+	Scope                  string   `json:"scope"`
+	SubjectID              string   `json:"subject_id"`
+	BrandCloudID           string   `json:"brand_cloud_id"`
+	ServiceOptions         []string `json:"service_options"`
+	ProductServiceRevision int64    `json:"product_service_revision"`
+	EntitlementRevision    int64    `json:"entitlement_revision"`
+	ExpiresAt              float64  `json:"exp"`
+}
+
+func fetchDeviceTokenPublicKey(ctx context.Context, client *http.Client, base string) (ed25519.PublicKey, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/get/token.pubkey", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return nil, errors.New("device token public key request failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("device token public key request returned HTTP %d", response.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 8<<10))
+	if err != nil {
+		return nil, errors.New("device token public key could not be read")
+	}
+	block, rest := pem.Decode(body)
+	if block == nil || block.Type != "PUBLIC KEY" || len(strings.TrimSpace(string(rest))) != 0 {
+		return nil, errors.New("device token public key is not a single PEM public key")
+	}
+	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, errors.New("device token public key is invalid")
+	}
+	key, ok := parsed.(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("device token public key is not Ed25519")
+	}
+	return key, nil
+}
+
+func inspectDeviceTokenClaims(raw string, publicKey ed25519.PublicKey) (inspectedDeviceTokenClaims, error) {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
+		return inspectedDeviceTokenClaims{}, errors.New("device access token is not a compact JWT")
+	}
+	header, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return inspectedDeviceTokenClaims{}, errors.New("device access token has an invalid JWT header")
+	}
+	var tokenHeader struct {
+		Algorithm string `json:"alg"`
+		Type      string `json:"typ"`
+	}
+	if err := json.Unmarshal(header, &tokenHeader); err != nil || tokenHeader.Algorithm != "EdDSA" || tokenHeader.Type != "JWT" {
+		return inspectedDeviceTokenClaims{}, errors.New("device access token has an unsupported JWT header")
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !ed25519.Verify(publicKey, []byte(parts[0]+"."+parts[1]), signature) {
+		return inspectedDeviceTokenClaims{}, errors.New("device access token signature is invalid")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return inspectedDeviceTokenClaims{}, errors.New("device access token has an invalid JWT payload")
+	}
+	var claims inspectedDeviceTokenClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return inspectedDeviceTokenClaims{}, errors.New("device access token has invalid claims")
+	}
+	return claims, nil
 }
 
 func WriteArtifacts(result Result, artifactDir string) error {

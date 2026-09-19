@@ -54,6 +54,18 @@ Useful optional inputs:
 | `E2E_CLAIM_TOKEN` | Existing raw Claim Token; skips platform-admin Claim Token creation. |
 | `E2E_DEVICE_ID` | Select a specific `devid` from the certset. |
 | `ACCOUNT_VIDEO_SMOKE_STRICT_BLOCKED=1` | Exit non-zero on `BLOCKED` as well as `FAIL`. |
+| `E2E_PRODUCT_ID` | Enable registered-service Product mode for an already factory-enrolled device belonging to this Product. The runner reads the Product and live catalog, creates a Product-bound Claim Token, and checks the exact grant in the device token. Do not also set `E2E_CLAIM_TOKEN`. |
+
+For the registered-service acceptance path, set `E2E_PRODUCT_ID` to a Product
+containing MQTT and at least one registered plugin option, use a certset issued
+for that Product, and provide a platform-admin credential. The runner requires
+every selected option to be currently selectable in the live catalog. It waits
+for `ready` with product state `activated` or `online`, then compares the token's
+service-option set and Product revision to the Product-bound Claim Token and
+requires a positive entitlement revision. A pending activation, extra option,
+or stale revision is a failure. It fetches `/get/token.pubkey` over the same
+device mTLS host and verifies the Ed25519 JWT signature before inspecting
+claims. The public-key route must remain reachable during this smoke.
 
 ## Target Flow
 
@@ -78,6 +90,11 @@ with the missing configuration or service dependency. It does not report pass
 for a flow that cannot reach platform-admin Claim Token creation, account-side
 provisioning, video-side lifecycle projection, or device-facing mTLS token
 issuance.
+
+Product mode verifies an already registered, selectable catalog entry; it does
+not perform service-certificate enrollment or a new registration during the
+smoke. A complete registration-to-device-token acceptance run must record that
+registration separately and use the same environment and Product.
 
 Reports redact private keys, raw bearer tokens, raw Claim Tokens, HMAC secrets,
 certificate bodies, CSRs, and common secret-bearing URLs or environment values.

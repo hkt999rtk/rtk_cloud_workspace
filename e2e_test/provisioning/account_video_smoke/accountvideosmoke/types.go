@@ -23,6 +23,7 @@ type Config struct {
 	ArtifactDir              string        `json:"artifact_dir"`
 	DeviceID                 string        `json:"device_id,omitempty"`
 	DeviceName               string        `json:"device_name,omitempty"`
+	ProductID                string        `json:"product_id,omitempty"`
 	ClaimToken               string        `json:"-"`
 	StrictBlocked            bool          `json:"strict_blocked"`
 	Timeout                  time.Duration `json:"timeout"`

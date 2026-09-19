@@ -5268,6 +5268,10 @@ func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T)
 		"go build -trimpath -o /out/turnregistry ./cmd/turnregistry",
 		"go build -trimpath -o /out/logingester ./cmd/logingester",
 		"go build -trimpath -o /out/mqttusage ./cmd/mqttusage",
+		"go build -trimpath -o /out/mqttfoundation ./cmd/mqttfoundation",
+		"go build -trimpath -o /out/shadowworker ./cmd/shadowworker",
+		"go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice",
+		"go build -trimpath -o /out/videostorage ./cmd/videostorage",
 		"go build -trimpath -o /out/clipverifier ./cmd/clipverifier",
 		"go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight",
 		"go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile",
@@ -5279,6 +5283,10 @@ func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T)
 		"COPY --from=builder /out/turnregistry /app/turnregistry",
 		"COPY --from=builder /out/logingester /app/logingester",
 		"COPY --from=builder /out/mqttusage /app/mqttusage",
+		"COPY --from=builder /out/mqttfoundation /app/mqttfoundation",
+		"COPY --from=builder /out/shadowworker /app/shadowworker",
+		"COPY --from=builder /out/webrtcservice /app/webrtcservice",
+		"COPY --from=builder /out/videostorage /app/videostorage",
 		"COPY --from=builder /out/clipverifier /app/clipverifier",
 		"COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight",
 		"COPY --from=builder /out/clipreconcile /app/clipreconcile",
@@ -6891,6 +6899,124 @@ if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
   printf '{"data":{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM="}}\n'
   exit 0
 fi
+if [[ "$*" == *"get secret account-manager-service-registration-tls -o json"* ]]; then
+  if [[ -n "${FAKE_SERVICE_REGISTRATION_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_SERVICE_REGISTRATION_SECRET_JSON"
+    exit 0
+  fi
+  printf 'service registration Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get secret mqtt-foundation-platform-identity -o json"* ]]; then
+  if [[ -n "${FAKE_MQTT_FOUNDATION_IDENTITY_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_MQTT_FOUNDATION_IDENTITY_SECRET_JSON"
+    exit 0
+  fi
+  printf 'MQTT foundation identity Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get secret shadow-worker-platform-identity -o json"* ]]; then
+  if [[ -n "${FAKE_SHADOW_WORKER_IDENTITY_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_SHADOW_WORKER_IDENTITY_SECRET_JSON"
+    exit 0
+  fi
+  printf 'Shadow worker identity Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get secret webrtc-service-platform-identity -o json"* ]]; then
+  if [[ -n "${FAKE_WEBRTC_SERVICE_IDENTITY_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_WEBRTC_SERVICE_IDENTITY_SECRET_JSON"
+    exit 0
+  fi
+  printf 'WebRTC service identity Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get secret video-storage-service-platform-identity -o json"* ]]; then
+  if [[ -n "${FAKE_VIDEO_STORAGE_SERVICE_IDENTITY_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_VIDEO_STORAGE_SERVICE_IDENTITY_SECRET_JSON"
+    exit 0
+  fi
+  printf 'video storage service identity Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get service account-manager -o json"* ]]; then
+  if [[ -n "${FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON"
+    exit 0
+  fi
+  printf 'Account Manager registration Service is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get service video-cloud-webrtcservice -o json"* ]]; then
+  if [[ -n "${FAKE_WEBRTC_SERVICE_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_WEBRTC_SERVICE_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-webrtcservice -o json"* ]]; then
+  if [[ -n "${FAKE_WEBRTC_ENDPOINTSLICES_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_WEBRTC_ENDPOINTSLICES_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get service video-cloud-videostorage -o json"* ]]; then
+  if [[ -n "${FAKE_VIDEO_STORAGE_SERVICE_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_VIDEO_STORAGE_SERVICE_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-videostorage -o json"* ]]; then
+  if [[ -n "${FAKE_VIDEO_STORAGE_ENDPOINTSLICES_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_VIDEO_STORAGE_ENDPOINTSLICES_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get service video-cloud-shadowworker -o json"* ]]; then
+  if [[ -n "${FAKE_SHADOW_WORKER_SERVICE_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_SHADOW_WORKER_SERVICE_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-shadowworker -o json"* ]]; then
+  if [[ -n "${FAKE_SHADOW_WORKER_ENDPOINTSLICES_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_SHADOW_WORKER_ENDPOINTSLICES_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get ingress video-cloud-staging-public -o json"* ]]; then
+  if [[ -n "${FAKE_WEBRTC_PUBLIC_INGRESS_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_WEBRTC_PUBLIC_INGRESS_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get ingress video-cloud-staging-device-mtls -o json"* ]]; then
+  if [[ -n "${FAKE_WEBRTC_DEVICE_INGRESS_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_WEBRTC_DEVICE_INGRESS_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o json"* ]]; then
+  if [[ -n "${FAKE_WEBRTC_CORE_DEPLOYMENT_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_WEBRTC_CORE_DEPLOYMENT_JSON"
+  fi
+  exit 0
+fi
 if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
   printf '{"data":{"VIDEO_CLOUD_AUTH_SECRET":"dGVzdC12aWRlby1hdXRo","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4="}}\n'
   exit 0
@@ -6921,6 +7047,12 @@ if [[ "$*" == *"get secret cloud-admin-billing-client --ignore-not-found=true -o
 fi
 if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o name"* ]]; then
   printf 'deployment/video-cloud-api\n'
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-shadowworker --ignore-not-found=true -o name"* ]]; then
+  if [[ "${FAKE_SHADOW_WORKER_DEPLOYMENT_PRESENT:-}" == "1" ]]; then
+    printf 'deployment/video-cloud-shadowworker\n'
+  fi
   exit 0
 fi
 if [[ "$*" == *"get deployment cloud-admin --ignore-not-found=true -o name"* ]]; then
