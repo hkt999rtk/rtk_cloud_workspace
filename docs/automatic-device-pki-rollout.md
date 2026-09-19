@@ -46,12 +46,11 @@ linux/amd64 digests, still subject to environment-specific pull/preflight checks
 | --- | --- | --- |
 | Account Manager | `44defddccc1cb91d574e2ae158052c404e1d7d0d` | `ghcr.io/hkt999rtk/rtk_account_manager/account-manager@sha256:a986bb3b3df32992aeedf43c1ec712a906eff920ae9b42d5bb7ee841bde39ab9` |
 | Cloud Admin | `155750061445c405b39ff5c4b8731194bcb03d96` | `ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin@sha256:ea3e46d8dbf506d102e62060710ecec88396c8f068d0ac61d169f815fa35ff6c` |
-| Video Cloud API/controller | `2331e18d11afe268ac0f2ccd50424f160f839f96` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:10a7d04a524902a2bd7b877a6a77182d82d2951b934dc1e03212fe5edd2e1528` |
+| Video Cloud API/controller | `ed215e7ad5f586312395d29be0a3da2475140905` | `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:5b4da7617f59b7db1bdfe63b6f48dd9207a944399641c3df92f98fb6fac087d3` |
 
-The listed Video Cloud digest predates merged recovery commit
-`ed215e7ad5f586312395d29be0a3da2475140905`; do not use that old image
-for the recovery command. Select and verify a canonical published image that
-contains the command before attempting dev maintenance.
+The Video Cloud digest was published by the successful main-branch release
+workflow for `ed215e7`; it contains the dev recovery command. Confirm the
+environment can pull this exact digest before using it in dev maintenance.
 
 The failed dev push is not a deployment artifact.
 
