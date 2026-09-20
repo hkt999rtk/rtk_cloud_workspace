@@ -408,8 +408,8 @@ carry and enforce them.
 
 | Phase | Owner and concrete work | Completion evidence |
 | --- | --- | --- |
-| 0. Design first | Contracts design, workspace architecture/plan, and service design transition notes | Shared ownership and migration rules are reviewable; documentation checks pass |
-| 1. Contract schemas and core registration | Contracts: OpenAPI routes, manifest/response schemas, error contracts, fixtures, requirement/test mapping. Account Manager: durable registry, manifest revisions, instance leases, scoped catalog and publication operations. PKI/deployment: workload enrollment and namespace binding | Positive registration; wrong trust domain/environment, name takeover, conflicting manifest, stale publication, invalid dependency, replay, and expired/revoked certificate tests |
+| 0. Design first | Contracts design, workspace architecture/plan, service design transition notes, and the new-environment Internal Service PKI bootstrap ceremony | Shared ownership, bootstrap allowlist, revoke/seal gate, and migration rules are reviewable; documentation checks pass |
+| 1. Contract schemas and core registration | Contracts: OpenAPI routes, manifest/response schemas, error contracts, fixtures, requirement/test mapping. Account Manager: durable registry, manifest revisions, instance leases, scoped catalog and publication operations. PKI/deployment: deployment bootstrap session, generated short-lived bootstrap leaf, initial identity issuance, installation acknowledgement, CRL revocation, and sealed session | Positive registration; wrong trust domain/environment, name takeover, conflicting manifest, stale publication, invalid dependency, replay, expired/revoked workload certificate, expired/sealed bootstrap session, unallowlisted subject, and incomplete-installation refusal tests |
 | 2. Service adapters and optional startup | Video Cloud: registration/renewal/drain adapters for MQTT, Shadow, WebRTC, storage; manifests use existing option codes. Deployment: core-first startup, service-specific readiness, endpoint references, and independent optional dependencies | Start platform+MQTT with no optional services, TURN, or media storage; register several replicas; expire one/all; recover; rotate a certificate without changing service ownership |
 | 3. Product and production context | Account Manager: authoritative transactional catalog validation, Product service revisions, pinned production runs/JWT digest. Cloud Admin: catalog-driven create/edit UI and explicit unavailable states | MQTT-only creation; selectable registered plugin; unknown/unregistered selection rejected; catalog race handled; existing Product metadata edits survive plugin outage; old devices gain no services |
 | 4. Factory, tokens, and enforcement | Account Manager and Video Cloud: trusted entitlement snapshot/projection delivery; factory echo equality; extensible option parsing; revisioned issuance/recovery/refresh; route/topic/session checks. SDKs: preserve known/unknown claims without granting unknown features | Body tampering, run revision mismatch, cross-tenant substitution, revoked entitlement on refresh, dependent-option removal, and expired/stale projections fail safely; MQTT-only device denied each plugin |
@@ -467,7 +467,10 @@ only at cutover. Dynamic catalog display must not imply that a new grant is usab
 - Update Go, JavaScript, Android, iOS, Native, and Ameba/FreeRTOS consumers and
   fixtures where they enumerate capabilities or derive them from device type.
   Unknown option codes must not unlock local operations.
-- Reuse existing service certificate issuance and secret injection. Deploy
+- Use a deployment-generated, short-lived bootstrap X.509 leaf only for the
+  fixed initial internal-identity allowlist. Revoke it and delete its Secret and
+  bootstrap-only policy after every identity passes mTLS installation checks.
+  Reuse the resulting service certificate issuance and secret injection. Deploy
   Platform Server and PKI before service registration; deploy MQTT before new
   MQTT-dependent Product grants. Optional plugin failure must not block core
   health, identity, registration, or MQTT traffic.
@@ -507,6 +510,19 @@ only at cutover. Dynamic catalog display must not imply that a new grant is usab
 No live migration, cloud rollout, or production activation has been performed.
 Their future delivery should follow the owning RTK PR/CI
 and deployment workflows with the concrete evidence above.
+
+### Deployment flow diagram
+
+The first-trust deployment gate is shown in the companion [deployment flow
+diagram](service-deployment-flow.html). It is part of this design: the
+deployment controller creates one scoped session, the one-shot bootstrap Job
+installs the initial identities, each MQTT or optional-service workload
+acknowledges its own verified mTLS identity through `PKI_BOOTSTRAP_SESSION_ID`,
+and the controller must revoke the bootstrap leaf, publish and acknowledge its
+CRL, and seal the session before optional services start. The session variable
+is removed after sealing; it is not a runtime credential.
+
+<iframe src="service-deployment-flow.html" title="Service deployment first-trust flow" style="width:100%;height:760px;border:1px solid #c8ced8;background:#f5f5f5" loading="lazy"></iframe>
 
 ## 6. Acceptance Scenarios
 
