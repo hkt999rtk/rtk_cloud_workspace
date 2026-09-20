@@ -261,6 +261,176 @@ the default persistent-staging update command. Use it only for an explicitly
 authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
 test script grants permission to reset an existing environment.
 
+### Registered-service listener (opt-in, not deployed)
+
+`LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED` defaults to `false`. When
+reviewed and enabled, the LKE renderer adds a private `account-manager`
+Service port `8443`, the matching Account Manager mTLS listener settings, and
+an ingress NetworkPolicy limited to the MQTT foundation, Shadow worker,
+WebRTC service, and video-storage service Pod identities in the Video Cloud
+namespace. It does not add a public ingress route or enable Product writes.
+
+Before enabling the flag, provision the environment-local Kubernetes Secret
+`account-manager-service-registration-tls` in the Account Manager namespace
+with `tls.crt` (server certificate and chain), `tls.key`, `client-ca.crt`, and
+the current issuer-signed `client.crl`. The rendered Pod mounts it read-only
+at mode `0440` with `fsGroup: 10001`; the workload deployment step must reject
+missing or invalid material before applying selected workloads. For each
+MQTT or optional-service identity, qualify its client key/certificate pair, exact
+approved service CN, client-auth purpose, validity, trust chain against this
+listener's client CA, and issuer-signed current CRL (including revocation).
+Also verify that the identity Secret's server CA validates the listener's
+server certificate for its private DNS name. This cross-Secret verification
+is a local pre-deploy gate, not proof of the Platform issuer's live registry
+receipt or workload approval. The renderer does **not** issue or rotate the
+certificates. Qualify the server DNS name
+`account-manager.<stack>-account-manager.svc.cluster.local`, client-CA chain,
+server key match, CRL issuer/currentness, file access, and every affected
+rendered workload with the protected-environment credential/TLS preflight.
+The registration URL for clients is the private Service origin on port 8443.
+Rotate the mounted CRL atomically; the listener rereads it on every request.
+Rotating the server certificate/key also requires an Account Manager rollout,
+because the listener loads that pair at startup. Do not enable plugin Pods or
+the Product-write gate until registration, denial, lease expiry, and CRL
+rotation pass with the actual issuer and workloads.
+
+The Video Cloud LKE image build paths include the independent
+`mqttfoundation`, `shadowworker`, `webrtcservice`, and `videostorage` binaries.
+`LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED` is a separate default-off deploy
+flag for one MQTT foundation registrar. It requires the Account Manager listener
+flag and an existing `mqtt-foundation-platform-identity` Secret in the Video
+Cloud namespace with `client.crt`, `client.key`, and `server-ca.crt`. The
+renderer checks the certificate/key pair, trust and revocation against the
+Account Manager listener Secret before the workload step mutates Kubernetes. A
+targeted Video Cloud rollout also checks that the existing Account Manager
+Service exposes its private `8443` port. The registrar runs under a fixed
+`mqtt-foundation-0` instance ID with a `Recreate` strategy, so the Platform
+workload approval must bind that exact instance to its platform-issued client
+certificate subject, issuer fingerprint, service ID `mqtt`, and option `mqtt`.
+Do not reuse this identity for another replica. Restart the registrar after
+client certificate/key rotation so its mTLS client loads the new identity, and
+verify the replacement approval before draining the old one. The flag controls
+creation and updates, not retirement of an already-deployed registrar; drain
+or suspend it explicitly before removing its workload. No optional plugin Pods
+or gateway routes are deployed by this flag. It does not enable Product writes.
+
+`LKE_SHADOW_WORKER_REGISTRATION_ENABLED` is a separate default-off Shadow
+worker rollout flag. It requires the MQTT foundation flag and a distinct
+`shadow-worker-platform-identity` Secret with the same three client identity
+keys. Its one `shadow-worker-0` instance must be approved for service `shadow`
+and option `iot_shadow`, with `mqtt` as the declared dependency. The renderer
+adds private EMQX ingress for that Pod and uses the existing Video Cloud
+namespace access to PostgreSQL and Redis. Enabling the flag also makes the
+core API stop consuming Shadow MQTT requests before the worker rollout is
+waited on. Plan for a temporary Shadow-request outage during this cutover;
+verify the old API replicas have completed rollout, the worker is registered
+and ready, and one request produces one response before enabling new Product
+grants. The core API still serves HTTP Shadow routes, so this is not the final
+route-ownership split. As with MQTT, turning the deploy flag off does not
+retire an already-running worker. The workload step rejects a core rollback
+while the worker Deployment still exists; drain and remove that Deployment
+before returning MQTT Shadow subscriptions to the API.
+
+Shadow HTTP handoff is a second default-off step. The registered worker now
+serves the two Shadow route families on its private port `18081`; it uses the
+same token/SigV4 secret as core and refuses HTTP requests when its Platform
+lease or dependencies are unavailable. After the worker is independently
+registered and verified, set `LKE_SHADOW_HTTP_CORE_CUTOVER_ENABLED=true` for a
+separate core rollout. The renderer first requires its private Service and a
+ready EndpointSlice, opens core-to-worker ingress, and sets core's fixed
+private upstream. Existing public and device-mTLS ingress stays on core.
+Verify bearer and SigV4 authorization (including the original signed Host),
+adjacent non-Shadow routes, option grants, and upstream-outage `503` before
+release. Rollback resets the HTTP flag and waits for core handlers to return
+before removing the worker. The first Shadow registration leaves `iot_shadow`
+visible but suspended. Keep it unselectable during the private worker/cutover
+window; after the live HTTP and MQTT routes are both verified, a platform
+administrator may activate service `shadow`. Registration and heartbeats do
+not activate it. Check any older already-active row before enabling Product
+writes; the new default does not rewrite existing catalog state.
+
+`LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED` is a separate default-off WebRTC
+process rollout flag. It requires the MQTT foundation flag and its own
+`webrtc-service-platform-identity` Secret in the Video Cloud namespace with
+`client.crt`, `client.key`, and `server-ca.crt`. Account Manager must approve
+the exact service `webrtc`, instance `webrtc-service-0`, certificate identity,
+option `video_streaming`, and dependency `mqtt` before startup. The Pod has a
+private ClusterIP Service on port `18082`; readiness requires its Platform
+lease, PostgreSQL, and Redis signaling store, and its process rejects plugin
+requests without the lease. The renderer gives this Pod the same TURN registry
+access as the core API. This flag does **not** publish WebRTC ingress paths or
+remove the core WebRTC handlers, so it can be verified before route cutover.
+Use the existing CI-built Video Cloud image, rotate the Secret only with a
+matching approval and Pod restart, and do not reuse the fixed identity for a
+second replica. Turning the flag off does not delete an existing Pod. External
+route and core-handler cutover remain separate, coordinated release steps.
+
+The WebRTC HTTP handoff uses two additional default-off flags. After the
+independent Pod is registered and ready, set
+`LKE_WEBRTC_SERVICE_EDGE_ENABLED=true` and apply public HTTPS. The renderer
+checks the private `video-cloud-webrtcservice` ClusterIP Service and a ready
+port-`18082` EndpointSlice before adding exact WebRTC paths on both the public
+Video Cloud host and the device-mTLS host. It applies backend NetworkPolicy
+before ingress. Test authenticated APP offer/ICE/answer/close flows, device
+answer through the mTLS host, unrelated core routes, and the unready/expired
+registration response before proceeding. This flag alone leaves core handlers
+available for rollback.
+
+The first WebRTC registration leaves `video_streaming` suspended. Only after
+the live public and device-mTLS ingress rules have been observed
+pointing all four exact paths at the WebRTC bridge Service should
+`LKE_WEBRTC_CORE_CUTOVER_ENABLED=true` be used for a separate Video Cloud
+workload rollout. The deployment step rejects core cutover if the edge flag,
+registered workload flag, ready EndpointSlice, or observed live routes are
+missing. A combined first `--deploy --dns` activation cannot bypass this
+ordering because workloads deploy before ingress. Roll back by setting the
+core cutover flag to `false` and waiting for its rollout first; then set the
+edge flag to `false` and apply public HTTPS. Activate service `webrtc` through
+the platform-admin status operation only after both route ownership and
+authenticated calls are verified; otherwise keep it suspended. The edge step
+refuses to remove WebRTC routes while the live core Deployment still has handlers disabled or
+has not completed restoration. These are local safety checks, not a staging
+`GO` verdict or an end-to-end proof of authenticated media behavior.
+
+`LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED` is a separate default-off,
+private video-storage Pod rollout. It requires the MQTT foundation flag,
+direct S3 clip upload configuration and credentials, the existing clip crypto
+key in `video-cloud-runtime`, and its own
+`video-storage-service-platform-identity` Secret (`client.crt`, `client.key`,
+`server-ca.crt`). Account Manager must approve service `video-storage`,
+instance `video-storage-service-0`, option `video_storage`, dependency `mqtt`,
+and the exact certificate identity. The Pod serves a private ClusterIP Service
+on port `18083`; `/readyz` depends on its Platform lease, PostgreSQL, and S3.
+It does not start MQTT or WebRTC signaling. The renderer checks the identity
+Secret before mutating selected workloads, but does not issue/renew that
+certificate or publish public storage routes. Core continues to own all clip,
+download, upload, and playback paths by default.
+
+Storage HTTP handoff uses the separate default-off
+`LKE_VIDEO_STORAGE_CORE_CUTOVER_ENABLED=true` switch. Deploy and observe the
+registered storage Pod first, then perform a separate core rollout. The
+renderer checks that its port-`18083` private Service has a ready EndpointSlice
+before any selected-workload mutation, opens a NetworkPolicy only from core to
+that Pod, and sets core's fixed private upstream URL. The existing public and
+device-mTLS ingress routes stay on core; its gateway forwards only legacy
+storage URLs and the recognized `/v1/devices/{id}/…` media segment shapes.
+The first storage registration leaves `video_storage` visible but suspended.
+Keep it suspended while this private Pod is registered but core has not cut
+over; readiness alone must not expose a new Product choice. A platform
+administrator may activate service `video-storage` only after verifying the
+cutover and authorization on both hosts. Existing active rows need an explicit
+inventory/suspension before Product writes; first-registration defaults do
+not alter them.
+Never route the broad `/v1/devices/` prefix to the Pod. On storage outage the
+gateway returns `503`, with no local fallback. Verify both hosts, Product grant
+enforcement, device mTLS, rejection of forged client-certificate headers on
+the public host, non-media pass-through, and outage/recovery before
+release. Rollback requires restoring core S3/clip-key dependencies and the
+cutover flag to `false`, then waiting for the core rollout; do not remove the
+private Pod while core still forwards to it. Authenticated media E2E and
+approved Platform identity are still required before enabling storage Product
+options for a release.
+
 ### 2026-09-07 Findings and Remaining Work
 
 - Staging ran the selected CI-built service revisions; missing tags were not the

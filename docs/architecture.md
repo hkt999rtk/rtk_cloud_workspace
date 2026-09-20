@@ -31,6 +31,11 @@ not become a second contract source of truth.
   behavior. It is a backend identity, tenant, authorization, entitlement,
   registry, and provisioning control-plane service; it should not own product
   Web UI.
+- The proposed service registry and Product service catalog extend that Account
+  Manager control plane. MQTT remains the foundational device service; Shadow,
+  WebRTC, and storage are independently deployable optional services. Their
+  registration and authorization target is specified in
+  [`service_registration.md`](../repos/rtk_cloud_contracts_doc/service_registration.md).
 - `rtk_cloud_frontend` owns the public website content and lead/contact
   experience for users learning about Realtek Cloud.
 - `rtk_cloud_admin` owns the B2B admin dashboard/BFF for fleet, provisioning,

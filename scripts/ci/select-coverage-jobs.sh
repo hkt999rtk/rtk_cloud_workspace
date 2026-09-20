@@ -76,7 +76,7 @@ else
   done < <(git diff --name-only "$base_ref" "$head_ref")
   for changed in "${changed_files[@]}"; do
     case "$changed" in
-      scripts/go/*|go.work|go.work.sum|.github/workflows/go-coverage-governance.yml|scripts/ci/select-coverage-jobs.sh)
+      scripts/go/*|go.work|go.work.sum|.github/workflows/go-coverage-governance.yml|.github/workflows/workspace-test-baseline.yml|scripts/ci/select-coverage-jobs.sh)
         add_unique workspace-tooling "${go_modules[@]}"
         policy=true
         ;;
@@ -122,6 +122,9 @@ else
         add_unique video-cloud "${go_modules[@]}"
         add_unique godaddy-dns-toolkit "${go_modules[@]}"
         video_cloud_postgres_emqx=true
+        # The Account Manager PostgreSQL job runs the registered-service
+        # chain against an independently compiled Video Cloud factory child.
+        account_manager_postgres=true
         policy=true
         ;;
       repos/rtk_cloud_contracts_doc|repos/rtk_cloud_contracts_doc/*|tests/*|docs/test-*|docs/spec-test-*)

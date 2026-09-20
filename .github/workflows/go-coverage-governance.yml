@@ -240,17 +240,44 @@ jobs:
         with:
           go-version: "1.26.3"
           cache: false
+      - name: Build independent Video Cloud factory fixture
+        working-directory: repos/rtk_video_cloud
+        env:
+          GOWORK: "off"
+        run: go test -c -o "$RUNNER_TEMP/rtk-registered-factory.test" ./internal/factoryenrollapp
       - name: Run integration-aware coverage
         working-directory: scripts/go
         env:
           TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
         run: go run ./rtk-cloud -- test-coverage --profile pr --module account-manager --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
+      - name: Verify registered service to device token across real services
+        working-directory: repos/rtk_account_manager
+        env:
+          GOWORK: "off"
+          TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+          TEST_FACTORY_APPLICATION_DSN: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
+          TEST_FACTORY_APPLICATION_BINARY: ${{ runner.temp }}/rtk-registered-factory.test
+          TEST_REGISTERED_SERVICE_CHAIN_REQUIRED: "1"
+          VIDEO_CLOUD_SOURCE_ROOT: ${{ github.workspace }}/repos/rtk_video_cloud
+        run: |
+          set -euo pipefail
+          evidence_dir="$GITHUB_WORKSPACE/.artifacts/test-runs/gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr/registered-service"
+          mkdir -p "$evidence_dir"
+          go test -json ./internal/api -run '^TestIntegrationRegisteredPluginAcrossFactoryApplication$' -count=1 -timeout=180s | tee "$evidence_dir/chain.json"
+          jq -e 'any(.Test == "TestIntegrationRegisteredPluginAcrossFactoryApplication" and .Action == "pass")' -s "$evidence_dir/chain.json" >/dev/null
+          go test -json ./cmd/server -run '^TestServiceRegistrationMTLSDrivesCatalogProductAndRun$' -count=1 -timeout=180s | tee "$evidence_dir/registrar.json"
+          jq -e 'any(.Test == "TestServiceRegistrationMTLSDrivesCatalogProductAndRun" and .Action == "pass")' -s "$evidence_dir/registrar.json" >/dev/null
       - name: Upload Account Manager evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: go-coverage-pr-account-manager-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/coverage/**
+          # The cross-service selector must have an explicit pass event; package
+          # success after a Go test skip is not acceptance evidence.
+          # Keep its raw Go test events alongside the coverage report.
+          path: |
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/coverage/**
+            .artifacts/test-runs/gh-${{ github.run_id }}-${{ github.run_attempt }}-account-manager-pr/registered-service/*.json
           if-no-files-found: error
           include-hidden-files: true
           retention-days: ${{ github.event_name == 'pull_request' && 30 || 90 }}
