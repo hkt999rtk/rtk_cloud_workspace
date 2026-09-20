@@ -342,6 +342,21 @@ func TestStartVideoCloudPRFixturesCleansUpWhenStartupFails(t *testing.T) {
 	}
 }
 
+func TestRunPrePRFixtureCommandPassesDirectoryAndEnvironment(t *testing.T) {
+	workspace := t.TempDir()
+	output, err := runPrePRFixtureCommand(workspace, []string{"RTK_FIXTURE_TEST=ready"}, "sh", "-c", "printf '%s:%s' \"$RTK_FIXTURE_TEST\" \"$PWD\"")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(output), "ready:"+resolvedWorkspace; got != want {
+		t.Fatalf("fixture command output = %q, want %q", got, want)
+	}
+}
+
 func TestRunPrePRReportsGitStatusFailure(t *testing.T) {
 	t.Setenv("RTK_CLOUD_WORKSPACE", filepath.Join(t.TempDir(), "missing"))
 	err := runPrePR([]string{"--dry-run"})
