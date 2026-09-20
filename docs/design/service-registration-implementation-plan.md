@@ -1,7 +1,7 @@
 # Registered Services Architecture: Implementation Plan
 
-Status: source implementation merged in the leaf repositories; workspace
-integration and environment rollout remain open. Not deployed.
+Status: source implementation and workspace integration are merged; environment
+rollout remains open. Not deployed.
 
 Owner: rtk_cloud_workspace.
 
@@ -15,12 +15,15 @@ their owning repositories. This is not a completed deployment, migration, or
 release.
 
 Source delivery checkpoint (2026-09-20): contracts PR #161, Cloud Client PR
-#562, Account Manager PR #330, Video Cloud PR #668, Cloud Admin PR #400, and
-Ameba PR #9 are merged. Their CI gates passed, including Account Manager's
-PostgreSQL report, Video Cloud's Postgres/EMQX integration, Cloud Admin's UI
-validation, and Ameba's Linux, macOS, sanitizer, and QEMU jobs. The workspace
-gitlink/orchestration PR and its integrated CI gate remain open; these leaf
-results do not qualify a live environment or enable Product writes.
+#562, Account Manager PR #330 (with coverage repair PR #331), Video Cloud PR
+#668, Cloud Admin PR #400, Ameba PR #9, and workspace integration PR #477 are
+merged. Their CI gates passed, including Account Manager's PostgreSQL report,
+Video Cloud's Postgres/EMQX integration, Cloud Admin's UI validation, and
+Ameba's Linux, macOS, sanitizer, and QEMU jobs. Workspace PR #477 merged at
+`120edd262359b25ca05b7c02e216682799da676f`; its integrated gate also passed
+mobile and desktop E2E, catalog/policy checks, and coverage aggregate/redaction.
+These source results do not qualify a live environment or enable Product
+writes.
 
 ## 1. Design Entry Point
 
