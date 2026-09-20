@@ -142,6 +142,19 @@ signed CRL preserved it. The guarded dev importer recorded all five new CRLs,
 acknowledged the Root and intermediate digests. Controller, certissuer and
 Account Manager are ready again; temporary recovery Pods were removed.
 
+The independent MQTT Root `236fcedc-6b31-4d7f-b91a-d6aa4415e805` was also
+expired (its #2 CRL ended 2026-09-17 23:03 UTC). Its matching encrypted dev
+rehearsal key was recovered from `m1.local` into the local dev SecretStore;
+the private key never entered Kubernetes. A separately reviewed, empty,
+self-signed Root CRL #3 was signature-checked, dry-run imported, then imported
+by the dev-only recovery command with digest
+`2c696fe620836eded32c34a6787bf1fc6161bc46d517add3221a47b7f6dedb07` and
+validity through 2026-09-23 02:45 UTC. Both actual MQTT trust consumers
+(`video-cloud-api` and `video-cloud-logingester`) acknowledged that exact
+digest; restarting `mqtt-pki` completed with both its MQTT host and broker
+containers ready. This is a dev recovery record, not a production custody or
+backup assertion.
+
 Before the intermediate CRLs expire on 2026-09-23, deploy a controller that accepts
 `PKI_SERVER_CRL_DOMAIN=service,mqtt,openbao_tls` and renews only descendants of
 non-revoked Roots. Keep the three domains' required-consumer sets distinct.

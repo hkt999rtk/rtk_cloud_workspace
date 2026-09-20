@@ -212,6 +212,51 @@ EOF
 	}
 }
 
+func TestRunPrePRUsesLocalPRFixtureForVideoCloud(t *testing.T) {
+	script := `#!/usr/bin/env bash
+cat <<'EOF'
+policy=false
+go_modules=["video-cloud","godaddy-dns-toolkit"]
+node_modules=[]
+account_manager_postgres=false
+billing_postgres=false
+video_cloud_postgres_emqx=true
+EOF
+`
+	workspace := newPrePRTestWorkspaceWithScript(t, script)
+	t.Setenv("RTK_CLOUD_WORKSPACE", workspace)
+	originalCmd, originalCoverage, originalFixtures := prePRRunCmd, prePRRunCoverage, prePRStartVideoCloudPRFixtures
+	t.Cleanup(func() {
+		prePRRunCmd, prePRRunCoverage, prePRStartVideoCloudPRFixtures = originalCmd, originalCoverage, originalFixtures
+	})
+	prePRRunCmd = func(_ string, _ string, _ ...string) error { return nil }
+	calls := []string{}
+	prePRRunCoverage = func(args []string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	fixtures := 0
+	prePRStartVideoCloudPRFixtures = func(string) (func(), error) {
+		fixtures++
+		return func() {}, nil
+	}
+	if err := runPrePR([]string{"--base", "HEAD", "--head", "HEAD", "--run-id", "video-pr"}); err != nil {
+		t.Fatal(err)
+	}
+	if fixtures != 1 {
+		t.Fatalf("fixture starts = %d, want 1", fixtures)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"--profile pr --module video-cloud --base-ref HEAD --head-ref HEAD --run-id video-pr-video-cloud-pr",
+		"--profile unit --module godaddy-dns-toolkit --base-ref HEAD --head-ref HEAD --run-id video-pr-go",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("calls missing %q:\n%s", want, joined)
+		}
+	}
+}
+
 func TestRunPrePRReportsGitStatusFailure(t *testing.T) {
 	t.Setenv("RTK_CLOUD_WORKSPACE", filepath.Join(t.TempDir(), "missing"))
 	err := runPrePR([]string{"--dry-run"})
