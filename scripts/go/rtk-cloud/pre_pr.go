@@ -32,6 +32,7 @@ var (
 	prePRRunInventory              = runTestInventory
 	prePRRunUI                     = runTestUI
 	prePRStartVideoCloudPRFixtures = startVideoCloudPRFixtures
+	prePRRunFixtureCommand         = runPrePRFixtureCommand
 )
 
 func runPrePR(args []string) error {
@@ -245,34 +246,46 @@ func removePrePRModule(values []string, remove string) []string {
 	return filtered
 }
 
+// runPrePRFixtureCommand is the narrow command boundary used by the local
+// fixture. Keeping it separate makes all lifecycle behaviour testable without
+// requiring Docker in the workspace-tooling unit suite.
+func runPrePRFixtureCommand(dir string, env []string, name string, args ...string) ([]byte, error) {
+	command := exec.Command(name, args...)
+	command.Dir = dir
+	if env != nil {
+		command.Env = env
+	}
+	return command.CombinedOutput()
+}
+
 // startVideoCloudPRFixtures supplies the same isolated dependencies as the
 // repository PR profile. The short-lived credentials are local test values and
 // are placed in this process only after the workspace baseline checks finish.
 func startVideoCloudPRFixtures(workspace string) (func(), error) {
-	if err := exec.Command("docker", "info").Run(); err != nil {
+	if _, err := prePRRunFixtureCommand("", nil, "docker", "info"); err != nil {
 		return nil, errors.New("Docker is required for local Video Cloud PostgreSQL/EMQX coverage")
 	}
 	runKey := fmt.Sprintf("pre-pr-%d", time.Now().UTC().UnixNano())
 	postgresName, emqxName := "rtk-video-"+runKey+"-pg", "rtk-video-"+runKey+"-emqx"
 	cleanup := func() {
-		_ = exec.Command("docker", "rm", "--force", emqxName).Run()
-		_ = exec.Command("docker", "rm", "--force", postgresName).Run()
+		_, _ = prePRRunFixtureCommand("", nil, "docker", "rm", "--force", emqxName)
+		_, _ = prePRRunFixtureCommand("", nil, "docker", "rm", "--force", postgresName)
 	}
 	fail := func(err error) (func(), error) { cleanup(); return nil, err }
-	if err := exec.Command("docker", "run", "--detach", "--name", postgresName,
+	if _, err := prePRRunFixtureCommand("", nil, "docker", "run", "--detach", "--name", postgresName,
 		"--label", "rtk.local-ci=video-cloud-pre-pr", "--env", "POSTGRES_DB=video_cloud_test",
 		"--env", "POSTGRES_USER=video_cloud", "--env", "POSTGRES_PASSWORD=local_integration_only",
-		"--publish", "127.0.0.1::5432", "postgres:16").Run(); err != nil {
+		"--publish", "127.0.0.1::5432", "postgres:16"); err != nil {
 		return fail(fmt.Errorf("start local PostgreSQL fixture: %w", err))
 	}
-	if err := exec.Command("docker", "run", "--detach", "--name", emqxName,
+	if _, err := prePRRunFixtureCommand("", nil, "docker", "run", "--detach", "--name", emqxName,
 		"--label", "rtk.local-ci=video-cloud-pre-pr", "--env", "EMQX_NAME=video_cloud_emqx",
 		"--env", "EMQX_HOST=127.0.0.1", "--env", "EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN=false",
-		"--env", "EMQX_MQTT__MAX_INFLIGHT=10", "--publish", "127.0.0.1::1883", "emqx/emqx:latest").Run(); err != nil {
+		"--env", "EMQX_MQTT__MAX_INFLIGHT=10", "--publish", "127.0.0.1::1883", "emqx/emqx:latest"); err != nil {
 		return fail(fmt.Errorf("start local EMQX fixture: %w", err))
 	}
 	port := func(container, port string) (string, error) {
-		raw, err := exec.Command("docker", "port", container, port).Output()
+		raw, err := prePRRunFixtureCommand("", nil, "docker", "port", container, port)
 		if err != nil {
 			return "", err
 		}
@@ -287,10 +300,13 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	if err != nil {
 		return fail(fmt.Errorf("discover local EMQX port: %w", err))
 	}
-	ready := func(command *exec.Cmd) bool { return command.Run() == nil }
+	ready := func(dir string, env []string, name string, args ...string) bool {
+		_, err := prePRRunFixtureCommand(dir, env, name, args...)
+		return err == nil
+	}
 	postgresReady := false
 	for attempt := 0; attempt < 30; attempt++ {
-		if ready(exec.Command("docker", "exec", postgresName, "pg_isready", "-U", "video_cloud", "-d", "video_cloud_test")) {
+		if ready("", nil, "docker", "exec", postgresName, "pg_isready", "-U", "video_cloud", "-d", "video_cloud_test") {
 			postgresReady = true
 			break
 		}
@@ -301,10 +317,7 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	}
 	mqttReady := false
 	for attempt := 0; attempt < 30; attempt++ {
-		command := exec.Command("go", "test", "./internal/mqtt", "-run", "^TestBrokerPublishSubscribeIntegration$", "-count=1")
-		command.Dir = filepath.Join(workspace, "repos", "rtk_video_cloud")
-		command.Env = append(os.Environ(), "GOWORK=off", "VIDEO_CLOUD_MQTT_TEST_ADDR=127.0.0.1:"+emqxPort)
-		if ready(command) {
+		if ready(filepath.Join(workspace, "repos", "rtk_video_cloud"), append(os.Environ(), "GOWORK=off", "VIDEO_CLOUD_MQTT_TEST_ADDR=127.0.0.1:"+emqxPort), "go", "test", "./internal/mqtt", "-run", "^TestBrokerPublishSubscribeIntegration$", "-count=1") {
 			mqttReady = true
 			break
 		}
