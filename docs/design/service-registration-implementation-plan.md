@@ -1,6 +1,7 @@
 # Registered Services Architecture: Implementation Plan
 
-Status: draft target; local implementation in progress, not deployed.
+Status: source implementation merged in the leaf repositories; workspace
+integration and environment rollout remain open. Not deployed.
 
 Owner: rtk_cloud_workspace.
 
@@ -8,9 +9,18 @@ Last reviewed: 2026-09-20.
 
 Classification: supporting-note.
 
-Applies to: the MQTT foundation and optional-service architecture. Initial
-registry, Product, factory, and Cloud Admin code exists locally. This is not a
-completed architecture, deployment, migration, or release.
+Applies to: the MQTT foundation and optional-service architecture. Registry,
+Product, factory, Cloud Admin, service-process, and SDK changes are merged in
+their owning repositories. This is not a completed deployment, migration, or
+release.
+
+Source delivery checkpoint (2026-09-20): contracts PR #161, Cloud Client PR
+#562, Account Manager PR #330, Video Cloud PR #668, Cloud Admin PR #400, and
+Ameba PR #9 are merged. Their CI gates passed, including Account Manager's
+PostgreSQL report, Video Cloud's Postgres/EMQX integration, Cloud Admin's UI
+validation, and Ameba's Linux, macOS, sanitizer, and QEMU jobs. The workspace
+gitlink/orchestration PR and its integrated CI gate remain open; these leaf
+results do not qualify a live environment or enable Product writes.
 
 ## 1. Design Entry Point
 
@@ -35,8 +45,9 @@ Reviewed local snapshot: workspace `006f8586`, contracts `7fd4dc6`, Account
 Manager `db70846`, Video Cloud `e81aed0`, and Cloud Admin `913eea6`.
 These are code/document observations, not deployed-environment evidence.
 
-As of this local worktree, Account Manager has a dedicated mTLS registry listener,
-approved workload option codes, immutable manifests, publication CAS, heartbeat
+In the integrated source snapshot, Account Manager has a dedicated mTLS
+registry listener, approved workload option codes, immutable manifests,
+publication CAS, heartbeat
 leases, catalog read, Product grant revisions, run-pinned JWTs, and factory
 admission checks. Cloud Admin reads the catalog, while Video Cloud factory
 enrollment derives options from the signed run context. Account Manager
@@ -238,11 +249,11 @@ MQTT credential extractor now requires `mqtt` in `service_options` for a
 revisioned token, ignores unknown option codes, and still accepts legacy tokens
 without revision/option claims. This is a local preflight check after verified
 TLS, not JWT signature verification or a replacement for broker authorization.
-Its native host test passes; the full Ameba ARM script is currently blocked by
-the installed GCC 9.3.1 versus its required 10.3.x toolchain and the SDK root
-is absent. Other SDKs have not gained local feature gates, so plugin access
-remains subject to server-side authorization and end-to-end compatibility
-validation is still pending.
+Its native host test and the pinned GCC 10.3.1 ARM/QEMU CI suite pass on the
+merged Ameba PR. The local workspace checkout still lacks that pinned ARM
+toolchain and SDK root; other SDKs have not gained local feature gates, so
+plugin access remains subject to server-side authorization. End-to-end SDK
+compatibility validation is still pending.
 A 2026-09-20 read-only staging inventory is explicitly `NO-GO` for cutover:
 current staging has no new registrar/optional-service workloads, dedicated
 registration listener or plugin ingress routes, and no CI-published image for
