@@ -30,7 +30,7 @@ The following are separate evidence scopes; local PASS is not live acceptance:
 | Readiness UI | Chromium desktop and mobile exercise pending → ready Cloud polling, pending → failed → ready Product polling, and metadata management while PKI is pending | PASS, isolated BFF fixture plus mocked public readiness responses |
 | Owner transfer | Real Account Manager handoff commit/finalization with synthetic Billing receipts preserves Cloud/Product issuer and operation IDs, does not add CA jobs, and removes source owner's management access | PASS, disposable database; live certificate continuity still requires environment acceptance |
 | Regression checks | Account Manager store/API/database/OpenAPI/auth suite; Video Cloud PKI/provider/controller and trust-consumer race tests; Cloud Admin 196 tests and Vite build; controller renderer 7 tests | PASS locally and in merged service PR CI; repeat workspace integration gate after pin update |
-| dev live | Migration 078 applied. Seven Cloud and 21 Product CA outbox jobs remain pending with zero attempts; PKI controller and certissuer have zero ready replicas while offline Service/OpenBao TLS Root CRLs are expired. The active offline keys were found in the `m1.local` dev SecretStore, so refresh the governed CRLs rather than rebuilding those Roots. | NOT COMPLETE |
+| dev live | Migration 078 applied; 28 CA outbox jobs were pending with zero attempts at last check. The available offline keys were copied into the local dev SecretStore and matched to the registered Roots. Both Root CRLs (#3) and five Service/OpenBao TLS intermediate CRLs were renewed, installed, and acknowledged by their actual consumers. Controller, certissuer and Account Manager returned to ready. The new Device Root and signup → Device enrollment acceptance remain pending. | PARTIAL |
 | staging live | No mutation. Read-only qualification gave a NO-GO verdict; full protected-environment gates remain incomplete. | NOT COMPLETE |
 
 Dev image publication attempt: the selected environment's existing registry
@@ -87,7 +87,7 @@ maintenance; this is not a concurrency precondition or a current backup.
 - Existing App, Service, MQTT server and OpenBao transport roots are independent
   and excluded. Retain all OpenBao mounts, including historical Device mounts.
 
-### dev non-Device Root CRL recovery (read-only inventory, 2026-09-20)
+### dev non-Device Root and intermediate CRL recovery (2026-09-20)
 
 The active Service Root `697e8e86-5af6-4580-8456-7f91d17634f2` has public
 SHA-256 `32bbbfd220db619ebcf54af5f62221ed49635e58ddaa42e67730676f073704eb`.
@@ -123,11 +123,69 @@ PKI_ENVIRONMENT=dev pkicontroller recovery-import-dev-root-crl ROOT_UUID ROOT_SH
 
 Importing the public CRL row alone does not restore controller readiness.
 Install the exact signed CRL on each real consumer's private trust state,
-reload it, and require its authenticated digest acknowledgment. Only after
-Root transport trust recovers should the normal worker refresh stale
-intermediate CRLs. Never fabricate receipts, disable CRL checks, or replace an
-unrelated Root or OpenBao mount. Re-read live workload volume references and
-preserve deployment rollback references immediately before maintenance.
+reload it, and require its authenticated digest acknowledgment. Never fabricate
+receipts, disable CRL checks, or replace an unrelated Root or OpenBao mount.
+Re-read live workload volume references and preserve deployment rollback
+references immediately before maintenance.
+
+The 2026-09-20 dev recovery imported both signed Root CRLs as #3 and verified
+all nine affected private state files at the new digest. Restarting the
+controller and certissuer, then Account Manager, exposed a second dependency:
+the Service intermediates in their pinned manifests, and the active OpenBao
+TLS intermediate, had also expired. The deployed controller enables
+`PKI_SERVER_CRL_DOMAIN=mqtt` only. Five exact OpenBao mounts were rotated with
+the scoped `pki-controller-dev` Kubernetes-auth identity over a normally
+validated OpenBao TLS connection. One Service mount already had a higher
+provider CRL number and one prior revocation not yet in the registry; the new
+signed CRL preserved it. The guarded dev importer recorded all five new CRLs,
+25 intermediate private state files were verified, and the actual consumers
+acknowledged the Root and intermediate digests. Controller, certissuer and
+Account Manager are ready again; temporary recovery Pods were removed.
+
+The independent MQTT Root `236fcedc-6b31-4d7f-b91a-d6aa4415e805` was also
+expired (its #2 CRL ended 2026-09-17 23:03 UTC). Its matching encrypted dev
+rehearsal key was recovered from `m1.local` into the local dev SecretStore;
+the private key never entered Kubernetes. A separately reviewed, empty,
+self-signed Root CRL #3 was signature-checked, dry-run imported, then imported
+by the dev-only recovery command with digest
+`2c696fe620836eded32c34a6787bf1fc6161bc46d517add3221a47b7f6dedb07` and
+validity through 2026-09-23 02:45 UTC. Both actual MQTT trust consumers
+(`video-cloud-api` and `video-cloud-logingester`) acknowledged that exact
+digest; restarting `mqtt-pki` completed with both its MQTT host and broker
+containers ready. This is a dev recovery record, not a production custody or
+backup assertion.
+
+Before the intermediate CRLs expire on 2026-09-23, deploy a controller that accepts
+`PKI_SERVER_CRL_DOMAIN=service,mqtt,openbao_tls` and renews only descendants of
+non-revoked Roots. Keep the three domains' required-consumer sets distinct.
+Verify its actual `/healthz` report and future CRL rotation before relying on
+the current short-lived intermediate CRLs; the offline Service/OpenBao TLS Root
+CRLs remain separate custody work.
+
+The dev-only intermediate recovery must use the existing issuer's OpenBao
+mount and a short-lived, scoped `pki-controller-dev` Kubernetes-auth identity;
+the OpenBao TLS connection must still validate the pinned environment Root,
+hostname, and certificate chain. Read the prior signed CRL before rotation,
+retain all prior revocations, and verify the new CRL's signature, freshness,
+issuer fingerprint, mount, monotonic number, and prior digest. Import it
+through a guarded, audited dev-only command with dry-run and explicit confirm;
+never write `pki_crls` directly or impersonate a human approver. Then install
+the new public CRL on each pinned PVC, reload the real consumers, and require
+their authenticated digest acknowledgments. This exceptional recovery cannot
+replace ongoing automatic intermediate CRL maintenance.
+
+The guarded import interface requires separately reviewed public pins for the
+existing issuer certificate, exact OpenBao mount, prior registry CRL digest,
+and newly rotated signed CRL digest. It performs a read-only validation by
+default; only `--confirm dev` writes the signed record and audit event.
+
+```sh
+# Bind PKI_DATABASE_URL privately to the selected dev controller database.
+PKI_ENVIRONMENT=dev pkicontroller recovery-import-dev-intermediate-crl \
+    ISSUER_UUID ISSUER_CERT_SHA256 EXACT_MOUNT PRIOR_CRL_SHA256 \
+    NEW_CRL_SHA256 SIGNED_CRL_PEM
+# Repeat with --confirm dev after the dry run and independent signature review.
+```
 
 The Service Root CRL consumers below each own a distinct PVC; identical path
 strings across workloads do **not** imply shared state. `{service}` denotes
@@ -151,11 +209,12 @@ in their respective PVCs. The observed public manifests were ConfigMaps
 reject rollback or changed prior revocations, and tolerate an exact retry. It
 requires a runtime reload and never fabricates a consumer acknowledgment.
 
-The dev recovery importer passed a disposable PostgreSQL 16 test covering
+The Root recovery importer passed a disposable PostgreSQL 16 test covering
 dry-run, apply, idempotent retry, and an unreviewed digest rejection. Focused
-`pkitrust` tests cover expired-state repair and signed monotonic history. These
-are local tests, not evidence that any live dev CRL was signed, installed, or
-acknowledged.
+`pkitrust` tests cover expired-state repair and signed monotonic history. The
+two live Root #3 registry imports and nine disk installations are recorded
+separately above; neither test evidence nor disk installation is a runtime
+acknowledgment.
 
 ## Ordered environment procedure
 

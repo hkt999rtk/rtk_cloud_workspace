@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -209,6 +210,150 @@ EOF
 		if !strings.Contains(joined, want) {
 			t.Fatalf("calls missing %q:\n%s", want, joined)
 		}
+	}
+}
+
+func TestRunPrePRUsesLocalPRFixtureForVideoCloud(t *testing.T) {
+	script := `#!/usr/bin/env bash
+cat <<'EOF'
+policy=false
+go_modules=["video-cloud","godaddy-dns-toolkit"]
+node_modules=[]
+account_manager_postgres=false
+billing_postgres=false
+video_cloud_postgres_emqx=true
+EOF
+`
+	workspace := newPrePRTestWorkspaceWithScript(t, script)
+	t.Setenv("RTK_CLOUD_WORKSPACE", workspace)
+	originalCmd, originalCoverage, originalFixtures := prePRRunCmd, prePRRunCoverage, prePRStartVideoCloudPRFixtures
+	t.Cleanup(func() {
+		prePRRunCmd, prePRRunCoverage, prePRStartVideoCloudPRFixtures = originalCmd, originalCoverage, originalFixtures
+	})
+	prePRRunCmd = func(_ string, _ string, _ ...string) error { return nil }
+	calls := []string{}
+	prePRRunCoverage = func(args []string) error {
+		calls = append(calls, strings.Join(args, " "))
+		return nil
+	}
+	fixtures := 0
+	prePRStartVideoCloudPRFixtures = func(string) (func(), error) {
+		fixtures++
+		return func() {}, nil
+	}
+	if err := runPrePR([]string{"--base", "HEAD", "--head", "HEAD", "--run-id", "video-pr"}); err != nil {
+		t.Fatal(err)
+	}
+	if fixtures != 1 {
+		t.Fatalf("fixture starts = %d, want 1", fixtures)
+	}
+	joined := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"--profile pr --module video-cloud --base-ref HEAD --head-ref HEAD --run-id video-pr-video-cloud-pr",
+		"--profile unit --module godaddy-dns-toolkit --base-ref HEAD --head-ref HEAD --run-id video-pr-go",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("calls missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestStartVideoCloudPRFixturesUsesIsolatedDependenciesAndRestoresEnvironment(t *testing.T) {
+	original := prePRRunFixtureCommand
+	t.Cleanup(func() { prePRRunFixtureCommand = original })
+	t.Setenv("VIDEO_CLOUD_TEST_DSN", "postgres://existing")
+	t.Setenv("VIDEO_CLOUD_MQTT_TEST_ADDR", "existing-mqtt")
+	type call struct {
+		dir  string
+		name string
+		args []string
+		env  []string
+	}
+	calls := []call{}
+	prePRRunFixtureCommand = func(dir string, env []string, name string, args ...string) ([]byte, error) {
+		calls = append(calls, call{dir: dir, name: name, args: append([]string(nil), args...), env: append([]string(nil), env...)})
+		if name == "docker" && len(args) >= 3 && args[0] == "port" {
+			switch args[2] {
+			case "5432/tcp":
+				return []byte("127.0.0.1:15432\n"), nil
+			case "1883/tcp":
+				return []byte("127.0.0.1:11883\n"), nil
+			}
+		}
+		return nil, nil
+	}
+	workspace := t.TempDir()
+	cleanup, err := startVideoCloudPRFixtures(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("VIDEO_CLOUD_TEST_DSN"); !strings.Contains(got, "127.0.0.1:15432/video_cloud_test") {
+		t.Fatalf("fixture DSN = %q", got)
+	}
+	if got := os.Getenv("VIDEO_CLOUD_MQTT_TEST_ADDR"); got != "127.0.0.1:11883" {
+		t.Fatalf("fixture MQTT address = %q", got)
+	}
+	cleanup()
+	if got := os.Getenv("VIDEO_CLOUD_TEST_DSN"); got != "postgres://existing" {
+		t.Fatalf("restored DSN = %q", got)
+	}
+	if got := os.Getenv("VIDEO_CLOUD_MQTT_TEST_ADDR"); got != "existing-mqtt" {
+		t.Fatalf("restored MQTT address = %q", got)
+	}
+	joined := make([]string, 0, len(calls))
+	for _, recorded := range calls {
+		joined = append(joined, recorded.name+" "+strings.Join(recorded.args, " "))
+	}
+	for _, want := range []string{
+		"docker info",
+		"docker run --detach --name rtk-video-",
+		"docker port rtk-video-",
+		"docker exec rtk-video-",
+		"go test ./internal/mqtt -run ^TestBrokerPublishSubscribeIntegration$ -count=1",
+		"docker rm --force rtk-video-",
+	} {
+		if !strings.Contains(strings.Join(joined, "\n"), want) {
+			t.Fatalf("fixture calls missing %q:\n%s", want, strings.Join(joined, "\n"))
+		}
+	}
+	for _, recorded := range calls {
+		if recorded.name == "go" && !strings.Contains(strings.Join(recorded.env, "\n"), "VIDEO_CLOUD_MQTT_TEST_ADDR=127.0.0.1:11883") {
+			t.Fatalf("MQTT readiness environment = %v", recorded.env)
+		}
+	}
+}
+
+func TestStartVideoCloudPRFixturesCleansUpWhenStartupFails(t *testing.T) {
+	original := prePRRunFixtureCommand
+	t.Cleanup(func() { prePRRunFixtureCommand = original })
+	calls := []string{}
+	prePRRunFixtureCommand = func(_ string, _ []string, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		if name == "docker" && len(args) > 0 && args[0] == "run" {
+			return nil, errors.New("fixture unavailable")
+		}
+		return nil, nil
+	}
+	if _, err := startVideoCloudPRFixtures(t.TempDir()); err == nil || !strings.Contains(err.Error(), "start local PostgreSQL fixture") {
+		t.Fatalf("error = %v", err)
+	}
+	if got := strings.Join(calls, "\n"); strings.Count(got, "docker rm --force") != 2 {
+		t.Fatalf("cleanup calls = %s", got)
+	}
+}
+
+func TestRunPrePRFixtureCommandPassesDirectoryAndEnvironment(t *testing.T) {
+	workspace := t.TempDir()
+	output, err := runPrePRFixtureCommand(workspace, []string{"RTK_FIXTURE_TEST=ready"}, "sh", "-c", "printf '%s:%s' \"$RTK_FIXTURE_TEST\" \"$PWD\"")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolvedWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(output), "ready:"+resolvedWorkspace; got != want {
+		t.Fatalf("fixture command output = %q, want %q", got, want)
 	}
 }
 
