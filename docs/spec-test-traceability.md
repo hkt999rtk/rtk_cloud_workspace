@@ -87,7 +87,7 @@
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-SESSION-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-SESSION-001` | `workflow` | `2f39152c7d67` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-UPSTREAM-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UPSTREAM-001` | `` | `b8166bd97890` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BILLING-001` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `independent` | `991b017b1a04` | `service` | `active` | `UI-CA-BILLING-001`, `UI-CA-BILLING-002`, `UI-CA-BILLING-003`, `UI-CA-BILLING-004`, `UI-CA-BILLING-005`, `UI-CA-BILLING-006`, `UI-CA-BILLING-007`, `UI-CA-BILLING-008`, `UI-CA-BILLING-009`, `UI-CA-BILLING-STG-001`, `UI-CA-BILLING-STG-002`, `UI-CA-BILLING-STG-003`, `UI-CA-ENTERPRISE-BILLING-001`, `UI-CA-INVOICE-001`, `UI-CA-INVOICE-002`, `UI-CA-INVOICE-003` | `test-ui` |
-| `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-UI-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `` | `a6855d9b5058` | `service` | `active` | `UI-CA-ACCESS-003`, `UI-CA-ACCESS-004`, `UI-CA-ACCESS-005`, `UI-CA-AUTH-002`, `UI-CA-CONSOLE-NAV-001`, `UI-CA-CONSOLE-NAV-002`, `UI-CA-CONSOLE-NAV-003`, `UI-CA-CONSOLE-NAV-007`, `UI-CA-CONSOLE-PERF-001`, `UI-CA-ENTERPRISE-DIALOG-001`, `UI-CA-ENTERPRISE-DOCS-001`, `UI-CA-ENTERPRISE-LAYOUT-001`, `UI-CA-FLEETPAGE-004`, `UI-CA-FLEETPAGE-006`, `UI-CA-FLEETPAGE-007`, `UI-CA-FLEETPAGE-008`, `UI-CA-REFRESH-LAYOUT-001`, `UI-CA-SDK-LOAD-001`, `UI-CA-SDK-LOAD-004`, `UI-CA-SDK-PERF-001`, `UI-CA-WEBHOOK-001`, `UNIT-CA-WEBHOOK-001`, `UNIT-CA-WEBHOOK-002`, `UNIT-CA-WEBHOOK-003`, `UNIT-CA-WEBHOOK-004` | `test-coverage`, `test-ui` |
+| `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-UI-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `independent` | `6c525dc3883c` | `service` | `active` | `UI-CA-ACCESS-003`, `UI-CA-ACCESS-004`, `UI-CA-ACCESS-005`, `UI-CA-AUTH-002`, `UI-CA-CONSOLE-NAV-001`, `UI-CA-CONSOLE-NAV-002`, `UI-CA-CONSOLE-NAV-003`, `UI-CA-CONSOLE-NAV-007`, `UI-CA-CONSOLE-PERF-001`, `UI-CA-ENTERPRISE-DIALOG-001`, `UI-CA-ENTERPRISE-DOCS-001`, `UI-CA-ENTERPRISE-LAYOUT-001`, `UI-CA-FLEETPAGE-004`, `UI-CA-FLEETPAGE-006`, `UI-CA-FLEETPAGE-007`, `UI-CA-FLEETPAGE-008`, `UI-CA-REFRESH-LAYOUT-001`, `UI-CA-SDK-LOAD-001`, `UI-CA-SDK-LOAD-004`, `UI-CA-SDK-PERF-001`, `UI-CA-WEBHOOK-001`, `UNIT-CA-WEBHOOK-001`, `UNIT-CA-WEBHOOK-002`, `UNIT-CA-WEBHOOK-003`, `UNIT-CA-WEBHOOK-004` | `test-coverage`, `test-ui` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-PKI-TEST-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-PKI-TEST-001` | `independent` | `589699accfaf` | `service` | `active` | `UNIT-CA-PKI-001`, `UNIT-CA-PKI-002`, `UNIT-CA-PKI-003`, `UNIT-CA-PKI-004` | `test-coverage` |
 | `repos/rtk_cloud_admin/docs/spec.md#REQ-CA-BFF-BREAK-GLASS-001` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-BREAK-GLASS-001` | `` | `1c6048689db5` | `service` | `active` | `INT-CA-BFF-SERVICE-001` | `test-services` |
 | `repos/rtk_cloud_contracts_doc/brand_cloud_admin.md#REQ-CA-BRAND-PROFILE-001` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-PROFILE-001` | `independent` | `61d6083cce19` | `canonical` | `active` | `INT-AM-BRANDPROFILE-001` | `test-services` |
@@ -561,8 +561,8 @@
 | `SPEC-CONTRACT-OPENAPI#actOnChipsetProvider` | `POST /v1/admin/chipset-providers/{providerId}/{action}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `d507088d7107` |
 | `SPEC-CONTRACT-OPENAPI#approveQuotaRaiseRequest` | `POST /v1/admin/quota-raise-requests/{requestId}/approve` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `28fd2aeb7f28` |
 | `SPEC-CONTRACT-OPENAPI#declineQuotaRaiseRequest` | `POST /v1/admin/quota-raise-requests/{requestId}/decline` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6630b068f119` |
-| `SPEC-CONTRACT-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `` | — | `15d364f27515` |
-| `SPEC-CONTRACT-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `` | — | `5a6b5e7e16d5` |
+| `SPEC-CONTRACT-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `8160444499bf` |
+| `SPEC-CONTRACT-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `8425f48325f0` |
 | `SPEC-CONTRACT-OPENAPI#loginAccountUser` | `POST /v1/auth/login` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `09db91e0fd22` |
 | `SPEC-CONTRACT-OPENAPI#activateAccountEmailSignIn` | `POST /v1/auth/login/activate` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `bb96f02e6893` |
 | `SPEC-CONTRACT-OPENAPI#logoutAccountUser` | `POST /v1/auth/logout` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `41d20d15ecbd` |
@@ -603,10 +603,10 @@
 | `SPEC-CONTRACT-OPENAPI#createMultipartClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/multipart` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `41f0b413ca11` |
 | `SPEC-CONTRACT-OPENAPI#getDirectClipUpload` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `0fcb641b1edd` |
 | `SPEC-CONTRACT-OPENAPI#completeDirectClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/complete` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `dee5dbb9812a` |
-| `SPEC-CONTRACT-OPENAPI#abortMultipartClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/abort` | `FEAT-VC-CLIP-001` | — | `a3272a0b0b60` |
-| `SPEC-CONTRACT-OPENAPI#completeMultipartClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/complete` | `FEAT-VC-CLIP-001` | — | `6bcb87148e1d` |
-| `SPEC-CONTRACT-OPENAPI#listMultipartClipParts` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}/parts` | `FEAT-VC-CLIP-001` | — | `b15519a31b79` |
-| `SPEC-CONTRACT-OPENAPI#authorizeMultipartClipPart` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/parts/{part_number}` | `FEAT-VC-CLIP-001` | — | `cfa80668e491` |
+| `SPEC-CONTRACT-OPENAPI#abortMultipartClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/abort` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `fb9fb5ec9590` |
+| `SPEC-CONTRACT-OPENAPI#completeMultipartClipUpload` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/complete` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `8d5e9c4265b1` |
+| `SPEC-CONTRACT-OPENAPI#listMultipartClipParts` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}/parts` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `520e421ec1d0` |
+| `SPEC-CONTRACT-OPENAPI#authorizeMultipartClipPart` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/parts/{part_number}` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `7c210ceb2664` |
 | `SPEC-CONTRACT-OPENAPI#factoryEnroll` | `POST /v1/factory/enroll` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-FACTORY-ENROLL-001`, `REQ-CONTRACT-PROV-SIGNOFF-001` | `781a75e0a1c9` |
 | `SPEC-CONTRACT-OPENAPI#activateDeviceFromAccountManager` | `POST /v1/internal/account-manager/devices/{devid}/activate` | `FEAT-PROV-ONBOARD-001` | `REQ-CONTRACT-PROV-ACTIVATION-001` | `ae3cc831c318` |
 | `SPEC-CONTRACT-OPENAPI#applyAccountManagerDeviceEntitlement` | `PUT /v1/internal/account-manager/devices/{devid}/entitlement` | `FEAT-CONTRACT-SERVICE-REGISTRATION-001` | `REQ-CONTRACT-SVCREG-TOKEN-001` | `e4b1a924f750` |
@@ -1051,10 +1051,10 @@
 | `SPEC-CA-OPENAPI#previewScopedBrandCloudUpdatePlanScope` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/scope-preview` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `690f91bb939e` |
 | `SPEC-CA-OPENAPI#getScopedBrandCloudUpdatePlan` | `GET /api/developer/brand-clouds/{brandCloudID}/update-plans/{planID}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `f19a0eade442` |
 | `SPEC-CA-OPENAPI#actOnScopedBrandCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans/{planID}/{action}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `4ede0b15eb57` |
-| `SPEC-CA-OPENAPI#getBrandCloudWebhookEventReceipts` | `GET /api/developer/brand-clouds/{brandCloudID}/webhook/events/{eventID}/receipts` | `` | — | `a261d8565312` |
-| `SPEC-CA-OPENAPI#deleteBrandCloudWebhookSubscription` | `DELETE /api/developer/brand-clouds/{brandCloudID}/webhook/subscription` | `` | — | `4de6eb51b4d6` |
-| `SPEC-CA-OPENAPI#getBrandCloudWebhookSubscription` | `GET /api/developer/brand-clouds/{brandCloudID}/webhook/subscription` | `` | — | `efa343158b78` |
-| `SPEC-CA-OPENAPI#putBrandCloudWebhookSubscription` | `PUT /api/developer/brand-clouds/{brandCloudID}/webhook/subscription` | `` | — | `e03dbaffc318` |
+| `SPEC-CA-OPENAPI#getBrandCloudWebhookEventReceipts` | `GET /api/developer/brand-clouds/{brandCloudID}/webhook/events/{eventID}/receipts` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `b225608dc818` |
+| `SPEC-CA-OPENAPI#deleteBrandCloudWebhookSubscription` | `DELETE /api/developer/brand-clouds/{brandCloudID}/webhook/subscription` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `32068bc3af46` |
+| `SPEC-CA-OPENAPI#getBrandCloudWebhookSubscription` | `GET /api/developer/brand-clouds/{brandCloudID}/webhook/subscription` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `e7cf79316559` |
+| `SPEC-CA-OPENAPI#putBrandCloudWebhookSubscription` | `PUT /api/developer/brand-clouds/{brandCloudID}/webhook/subscription` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `3909ec76b684` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsets` | `GET /api/developer/chipsets` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `c1be29c8622c` |
 | `SPEC-CA-OPENAPI#getApiDeveloperChipsetsByChipsetId` | `GET /api/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `f67498038c78` |
 | `SPEC-CA-OPENAPI#getCloudFleetAttention` | `GET /api/developer/clouds/{brandCloudID}/fleet/attention` | `FEAT-CONTRACT-FLEET-ANALYTICS-001` | `REQ-FLEET-ANALYTICS-DEFINITIONS-001`, `REQ-FLEET-ANALYTICS-SCOPE-001`, `REQ-FLEET-ANALYTICS-QUALITY-001` | `c48ab1479009` |
@@ -1224,12 +1224,12 @@
 | `SPEC-VC-OPENAPI#postThingsByThingNameShadow` | `POST /things/{thingName}/shadow` | `FEAT-HOME-SHADOW-001` | `REQ-E2E-HOME-SHADOW-003` | `350ae07b34af` |
 | `SPEC-VC-OPENAPI#postTotalClips` | `POST /total_clips` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `ae8bf691c019` |
 | `SPEC-VC-OPENAPI#postUploadClip` | `POST /upload_clip` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `01a0be4b3fc3` |
-| `SPEC-VC-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `` | — | `15d364f27515` |
-| `SPEC-VC-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `` | — | `5a6b5e7e16d5` |
-| `SPEC-VC-OPENAPI#getBrandWebhookEventReceipts` | `GET /v1/brand/webhook/events/{event_id}/receipts` | `` | — | `d573b6a66e86` |
-| `SPEC-VC-OPENAPI#deleteBrandWebhookSubscription` | `DELETE /v1/brand/webhook/subscription` | `` | — | `fe675677255a` |
-| `SPEC-VC-OPENAPI#getBrandWebhookSubscription` | `GET /v1/brand/webhook/subscription` | `` | — | `a0d0dbff43a6` |
-| `SPEC-VC-OPENAPI#putBrandWebhookSubscription` | `PUT /v1/brand/webhook/subscription` | `` | — | `4fbe901c86f8` |
+| `SPEC-VC-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `8160444499bf` |
+| `SPEC-VC-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `8425f48325f0` |
+| `SPEC-VC-OPENAPI#getBrandWebhookEventReceipts` | `GET /v1/brand/webhook/events/{event_id}/receipts` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `790be9c7e13a` |
+| `SPEC-VC-OPENAPI#deleteBrandWebhookSubscription` | `DELETE /v1/brand/webhook/subscription` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `0239247fbd9f` |
+| `SPEC-VC-OPENAPI#getBrandWebhookSubscription` | `GET /v1/brand/webhook/subscription` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `b098ef3fe6f0` |
+| `SPEC-VC-OPENAPI#putBrandWebhookSubscription` | `PUT /v1/brand/webhook/subscription` | `FEAT-CA-BFF-001` | `REQ-CA-BFF-UI-001` | `da4bd98d99b6` |
 | `SPEC-VC-OPENAPI#checkDeviceOta` | `POST /v1/device/ota/check` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `9c103befeab1` |
 | `SPEC-VC-OPENAPI#createDeviceOtaArtifactToken` | `POST /v1/device/ota/deployments/{deployment_id}/artifact-token` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `58fa5fa849d4` |
 | `SPEC-VC-OPENAPI#reportDeviceOtaEvent` | `POST /v1/device/ota/deployments/{deployment_id}/events` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `a10e50502bc1` |
@@ -1237,10 +1237,10 @@
 | `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdMultipartClipUploads` | `POST /v1/devices/{device_id}/clip-uploads/multipart` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `93b59095261a` |
 | `SPEC-VC-OPENAPI#getV1DevicesByDeviceIdClipUploadsByUploadId` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `5a46611aa361` |
 | `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdClipUploadsByUploadIdComplete` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/complete` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `73f314b9ff18` |
-| `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdMultipartClipAbort` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/abort` | `FEAT-VC-CLIP-001` | — | `97c86021720c` |
-| `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdMultipartClipComplete` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/complete` | `FEAT-VC-CLIP-001` | — | `6bcc422be940` |
-| `SPEC-VC-OPENAPI#getV1DevicesByDeviceIdClipUploadParts` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}/parts` | `FEAT-VC-CLIP-001` | — | `592e13dd3767` |
-| `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdClipUploadPart` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/parts/{part_number}` | `FEAT-VC-CLIP-001` | — | `d2800d0da264` |
+| `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdMultipartClipAbort` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/abort` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `94115b501199` |
+| `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdMultipartClipComplete` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/multipart/complete` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `95e2c7925cac` |
+| `SPEC-VC-OPENAPI#getV1DevicesByDeviceIdClipUploadParts` | `GET /v1/devices/{device_id}/clip-uploads/{upload_id}/parts` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `2ca031fc5f12` |
+| `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdClipUploadPart` | `POST /v1/devices/{device_id}/clip-uploads/{upload_id}/parts/{part_number}` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `22d6f5836639` |
 | `SPEC-VC-OPENAPI#postV1DevicesByDeviceIdClipsByClipIdPlaybackSession` | `POST /v1/devices/{device_id}/clips/{clip_id}/playback-session` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `86cc4e533431` |
 | `SPEC-VC-OPENAPI#postV1InternalMqttAuthenticate` | `POST /v1/internal/mqtt/authenticate` | `FEAT-CA-OBS-001` | `REQ-UI-CA-SOURCE-004` | `06e9599e67ff` |
 | `SPEC-VC-OPENAPI#getV1MediaPlaybackKey` | `GET /v1/media/playback-key` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `ed1ccbc9598e` |
@@ -1645,7 +1645,6 @@
 
 | Spec | Section and line | Authority | Status | Candidate revision | Statement |
 | --- | --- | --- | --- | --- | --- |
-| `repos/rtk_account_manager/docs/spec.md` | `2.1 V2 Scope: Provisioning And Cross-Service Lifecycle Delivery@L174` | `service` | `required` | `5b5870cc6d3f` | fail, but its result must not overwrite the projection of a newer activity. |
 | `repos/rtk_cloud_admin/docs/roles.md` | `RTK Cloud Admin — Role Definitions@L18` | `draft` | `planned` | `0ce425e55647` | rtk_video_cloud backend developers (telemetry, firmware, and stream APIs must |
 | `repos/rtk_cloud_admin/docs/roles.md` | `Three-Tier Architecture@L40` | `draft` | `planned` | `5ab164b3f034` | persona, but route guards and enabled UI actions must use explicit |
 | `repos/rtk_cloud_admin/docs/roles.md` | `Platform Admin@L110` | `draft` | `planned` | `8740c5426d64` | this customer's devices?" cannot answer it from the console today and must |
@@ -1836,11 +1835,6 @@
 
 | Code | Source | Reference | Blocking | Assessment |
 | --- | --- | --- | --- | --- |
-| `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_account_manager/docs/spec.md` | `2.1 V2 Scope: Provisioning And Cross-Service Lifecycle Delivery@L174` | `true` | normative clause 5b5870cc6d3f requires a stable FEAT-*/REQ-* source mapping: fail, but its result must not overwrite the projection of a newer activity. |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `deleteBrandCloudWebhookSubscription` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getBrandCloudWebhookEventReceipts` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `getBrandCloudWebhookSubscription` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_admin/docs/openapi.yaml` | `putBrandCloudWebhookSubscription` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_admin/docs/roles.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/roles.md` | `Capability Projection Contract@L289` | `false` | normative clause d119c9ed0c84 requires a stable FEAT-*/REQ-* source mapping: not human roles and must not be displayed as ACL labels. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_admin/docs/roles.md` | `Field-Level Visibility Rules@L302` | `false` | normative clause 56db3ec9a934 requires a stable FEAT-*/REQ-* source mapping: Backend handlers and frontend components must enforce these rules consistently. |
@@ -1981,12 +1975,6 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Purpose And Current Baseline@L33` | `false` | normative clause 6e5b1d908db1 requires a stable FEAT-*/REQ-* source mapping: `model` is descriptive compatibility metadata and MUST NOT be used as a tenant, |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Recovery And Rollback@L362` | `false` | normative clause 5b6c3cccbde8 requires a stable FEAT-*/REQ-* source mapping: versions. It MUST persist rollback intent before selecting the previous slot and |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/firmware_campaign.md` | `Recovery And Rollback@L363` | `false` | normative clause f05b95c351a5 requires a stable FEAT-*/REQ-* source mapping: MUST NOT report `rolled_back` until it has observed the previous slot and |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `abortMultipartClipUpload` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `authorizeMultipartClipPart` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `completeMultipartClipUpload` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `getAppDeviceOtaStatus` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `listMultipartClipParts` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_cloud_contracts_doc/openapi.yaml` | `requestAppDeviceOta` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `Account-Manager Claim Resolve Endpoint@L201` | `false` | normative clause 2b38cf3b431b requires a stable FEAT-*/REQ-* source mapping: Failure cases must distinguish invalid token, expired token, already claimed, |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/product_onboarding.md` | `Account-Manager Claim Resolve Endpoint@L203` | `false` | normative clause 83350a36e143 requires a stable FEAT-*/REQ-* source mapping: and service-unavailable errors. Permission decisions must follow |
@@ -2035,16 +2023,6 @@
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/product_readiness.md` | `Required Source Facts@L97` | `false` | normative clause 6906088ad560 requires a stable FEAT-*/REQ-* source mapping: A product readiness projection must be derived from these source fact families. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_cloud_contracts_doc/product_readiness.md` | `Required Source Facts@L99` | `false` | normative clause 2ababc5e9a5b requires a stable FEAT-*/REQ-* source mapping: readiness API surface must preserve their meaning. |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_cloud_contracts_doc/service_registration.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `deleteBrandWebhookSubscription` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `getAppDeviceOtaStatus` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `getBrandWebhookEventReceipts` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `getBrandWebhookSubscription` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `getV1DevicesByDeviceIdClipUploadParts` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `postV1DevicesByDeviceIdClipUploadPart` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `postV1DevicesByDeviceIdMultipartClipAbort` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `postV1DevicesByDeviceIdMultipartClipComplete` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `putBrandWebhookSubscription` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
-| `UNMAPPED_OPERATION` | `repos/rtk_video_cloud/docs/openapi.yaml` | `requestAppDeviceOta` | `true` | public OpenAPI operation lacks x-rtk-feature-id or x-rtk-requirement-ids |
 | `REQUIREMENT_INVENTORY_REVIEW_REQUIRED` | `repos/rtk_video_cloud/docs/turn-registry-design.md` | `` | `false` | source owner has not confirmed that every normative clause has a stable FEAT-*/REQ-* mapping |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_video_cloud/docs/turn-registry-design.md` | `API contract (minimum set)@L173` | `false` | normative clause 066c55459bad requires a stable FEAT-*/REQ-* source mapping: TURN deployments should use the TURN-specific `/v1/turn/nodes/*` contract. |
 | `UNSPECIFIED_NORMATIVE_CLAUSE` | `repos/rtk_video_cloud/docs/turn-registry-design.md` | `API contract (minimum set)@L97` | `false` | normative clause e6fa37588ff0 requires a stable FEAT-*/REQ-* source mapping: > All node APIs should use authenticated node identity (mTLS, JWT, or signed |
