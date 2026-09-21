@@ -561,8 +561,8 @@
 | `SPEC-CONTRACT-OPENAPI#actOnChipsetProvider` | `POST /v1/admin/chipset-providers/{providerId}/{action}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `d507088d7107` |
 | `SPEC-CONTRACT-OPENAPI#approveQuotaRaiseRequest` | `POST /v1/admin/quota-raise-requests/{requestId}/approve` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `28fd2aeb7f28` |
 | `SPEC-CONTRACT-OPENAPI#declineQuotaRaiseRequest` | `POST /v1/admin/quota-raise-requests/{requestId}/decline` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `6630b068f119` |
-| `SPEC-CONTRACT-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `` | — | `a171bef83d17` |
-| `SPEC-CONTRACT-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `` | — | `1a6992d5f6c4` |
+| `SPEC-CONTRACT-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `` | — | `15d364f27515` |
+| `SPEC-CONTRACT-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `` | — | `5a6b5e7e16d5` |
 | `SPEC-CONTRACT-OPENAPI#loginAccountUser` | `POST /v1/auth/login` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `09db91e0fd22` |
 | `SPEC-CONTRACT-OPENAPI#activateAccountEmailSignIn` | `POST /v1/auth/login/activate` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `bb96f02e6893` |
 | `SPEC-CONTRACT-OPENAPI#logoutAccountUser` | `POST /v1/auth/logout` | `FEAT-CA-BRAND-001` | `REQ-CA-BRAND-IDENTITY-001` | `41d20d15ecbd` |
@@ -1224,8 +1224,8 @@
 | `SPEC-VC-OPENAPI#postThingsByThingNameShadow` | `POST /things/{thingName}/shadow` | `FEAT-HOME-SHADOW-001` | `REQ-E2E-HOME-SHADOW-003` | `350ae07b34af` |
 | `SPEC-VC-OPENAPI#postTotalClips` | `POST /total_clips` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `ae8bf691c019` |
 | `SPEC-VC-OPENAPI#postUploadClip` | `POST /upload_clip` | `FEAT-VC-CLIP-001` | `REQ-E2E-VC-CLIP-001` | `01a0be4b3fc3` |
-| `SPEC-VC-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `` | — | `a171bef83d17` |
-| `SPEC-VC-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `` | — | `1a6992d5f6c4` |
+| `SPEC-VC-OPENAPI#getAppDeviceOtaStatus` | `GET /v1/app/ota/devices/{device_id}` | `` | — | `15d364f27515` |
+| `SPEC-VC-OPENAPI#requestAppDeviceOta` | `POST /v1/app/ota/devices/{device_id}:request` | `` | — | `5a6b5e7e16d5` |
 | `SPEC-VC-OPENAPI#getBrandWebhookEventReceipts` | `GET /v1/brand/webhook/events/{event_id}/receipts` | `` | — | `d573b6a66e86` |
 | `SPEC-VC-OPENAPI#deleteBrandWebhookSubscription` | `DELETE /v1/brand/webhook/subscription` | `` | — | `fe675677255a` |
 | `SPEC-VC-OPENAPI#getBrandWebhookSubscription` | `GET /v1/brand/webhook/subscription` | `` | — | `a0d0dbff43a6` |
