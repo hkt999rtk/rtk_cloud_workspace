@@ -205,6 +205,30 @@ cases:
       title: summarizes Brand Clouds by operational status
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/brand-webhook.test.mjs#missing%20subscription%20remains%20a%20usable%20owner-scoped%20configuration%20state
+      module: cloud-admin-web
+      language: javascript
+      source: src/brand-webhook.test.mjs
+      title: missing subscription remains a usable owner-scoped configuration state
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-WEBHOOK-003
+    - canonical_key: js://cloud-admin-web/src/brand-webhook.test.mjs#webhook%20paths%20stay%20within%20one%20canonical%20cloud%20and%20one%20event%20segment
+      module: cloud-admin-web
+      language: javascript
+      source: src/brand-webhook.test.mjs
+      title: webhook paths stay within one canonical cloud and one event segment
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-WEBHOOK-001
+    - canonical_key: js://cloud-admin-web/src/brand-webhook.test.mjs#webhook%20writes%20carry%20the%20observed%20ownership%20version%2C%20never%20a%20browser%20tenant%20header
+      module: cloud-admin-web
+      language: javascript
+      source: src/brand-webhook.test.mjs
+      title: webhook writes carry the observed ownership version, never a browser tenant header
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-WEBHOOK-002
     - canonical_key: js://cloud-admin-web/src/certificateBundle.test.mjs#browser%20PKI%20helper%20creates%20P-256%20PKCS%238%20and%20sends%20only%20a%20CSR-shaped%20value
       module: cloud-admin-web
       language: javascript
