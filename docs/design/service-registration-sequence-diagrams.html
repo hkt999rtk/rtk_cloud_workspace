@@ -1,185 +1,39 @@
 <!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Service registration — control plane and enforcement sequences</title>
-  <style>
-    :root { --paper:#f5f5f5; --ink:#2d3142; --muted:#697386; --line:#c8ced8; --blue:#2e5aa8; --coral:#eb6c36; --blue-pale:#e8effa; --coral-pale:#fff0e9; --panel:#ffffff; }
-    * { box-sizing:border-box; }
-    body { margin:0; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    main { width:min(1180px,calc(100% - 48px)); margin:0 auto; padding:58px 0 72px; }
-    header { border-top:4px solid var(--coral); padding-top:21px; margin-bottom:34px; }
-    .eyebrow,.tag { font:600 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.11em; text-transform:uppercase; color:var(--blue); }
-    h1 { font-size:clamp(30px,4vw,48px); line-height:1.08; letter-spacing:-.045em; margin:10px 0 13px; max-width:850px; }
-    .lede { color:var(--muted); font-size:16px; line-height:1.65; max-width:815px; margin:0; }
-    .relationship { display:grid; grid-template-columns:1fr auto 1.35fr; gap:14px; align-items:center; margin:28px 0 38px; }
-    .relationship .node { min-height:84px; padding:16px 18px; background:var(--panel); border:1px solid var(--line); }
-    .relationship .node strong { display:block; margin:4px 0; font-size:17px; }
-    .relationship .node p { margin:0; color:var(--muted); font-size:13px; line-height:1.4; }
-    .relationship .foundation { border-left:4px solid var(--blue); }
-    .relationship .plugin { border-left:4px solid var(--coral); }
-    .relationship .arrow { color:var(--blue); font:600 24px/1 Geist,sans-serif; }
-    section { margin-top:44px; }
-    h2 { display:flex; gap:12px; align-items:baseline; font-size:22px; letter-spacing:-.025em; margin:0 0 8px; }
-    h2 span { font:600 10px/1 "JetBrains Mono",monospace; letter-spacing:.09em; color:var(--coral); }
-    .section-copy { color:var(--muted); font-size:14px; line-height:1.55; margin:0 0 15px; }
-    .diagram-frame { background:var(--panel); border:1px solid var(--line); box-shadow:0 9px 24px rgba(45,49,66,.06); overflow-x:auto; }
-    svg { display:block; min-width:980px; width:100%; height:auto; }
-    .svg-title { font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.1em; fill:var(--blue); }
-    .actor-title { font:600 14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:var(--ink); }
-    .actor-sub { font:500 9px ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.04em; fill:var(--muted); }
-    .message { font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:var(--ink); }
-    .message code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
-    .guard { font:600 10px ui-monospace,SFMono-Regular,Menlo,monospace; fill:var(--ink); }
-    .note { font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; fill:var(--muted); }
-    .caption-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:16px; }
-    .caption-grid div { border-top:1px solid var(--line); padding-top:10px; font-size:13px; line-height:1.5; color:var(--muted); }
-    .caption-grid strong { display:block; color:var(--ink); font-size:12px; margin-bottom:3px; }
-    footer { margin-top:42px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; line-height:1.55; }
-    footer a { color:var(--blue); }
-    @media (max-width:700px) { main { width:min(100% - 28px,1180px); padding-top:32px; } .relationship,.caption-grid { grid-template-columns:1fr; } .relationship .arrow { transform:rotate(90deg); justify-self:center; } }
-  </style>
-</head>
-<body>
-<main>
-  <header>
-    <div class="eyebrow">RTK Cloud · service registration</div>
-    <h1>Register a service capability. Grant it to a Product. Then a device may use it.</h1>
-    <p class="lede">MQTT is the required foundation; Shadow, WebRTC, and video storage are pluggable services. On a new deployment, a short-lived bootstrap X.509 leaf provisions the initial internal identities, then is revoked after verified installation. Platform Server is authoritative for the service catalog and Product grants. Factory writes only the fixed authorization into the device token, and each runtime validates it locally.</p>
-  </header>
-
-  <div class="relationship" aria-label="Service dependency relationship">
-    <div class="node foundation"><span class="tag">Foundation</span><strong>mqtt</strong><p>Required for every newly created or explicitly migrated Product.</p></div>
-    <div class="arrow" aria-hidden="true">→</div>
-    <div class="node plugin"><span class="tag">Registered plugins</span><strong>shadow · webrtc · video-storage</strong><p>Each declares <code>requires: [mqtt]</code>; registration still requires activation and a Product grant.</p></div>
-  </div>
-
-  <section>
-    <h2><span>01 / CONTROL PLANE</span>Service capability registration and Product grants</h2>
-    <p class="section-copy">This path establishes which services are selectable and which Product may use them. Service registration verifies the mTLS identity and manifest; it never directly grants a device any entitlement.</p>
-    <div class="diagram-frame">
-      <svg viewBox="0 0 1120 650" role="img" aria-labelledby="cp-title cp-desc">
-        <title id="cp-title">Control-plane sequence: service registration and Product grant</title>
-        <desc id="cp-desc">A service runtime registers its manifest with Platform Server using platform-signed mTLS. Cloud Admin reads the service catalog and saves a Product grant. The immutable grant revision is then available to Factory.</desc>
-        <defs>
-          <marker id="cp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2e5aa8"/></marker>
-          <marker id="cp-return" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#697386"/></marker>
-          <marker id="cp-success" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#eb6c36"/></marker>
-        </defs>
-        <text x="34" y="34" class="svg-title">SERVICE CAPABILITY ≠ DEVICE ENTITLEMENT</text>
-
-        <!-- lifelines, fragment, and activation bars sit behind message strokes -->
-        <g stroke="#c8ced8" stroke-width="1" stroke-dasharray="5 6">
-          <line x1="125" y1="132" x2="125" y2="570"/><line x1="345" y1="132" x2="345" y2="570"/><line x1="565" y1="132" x2="565" y2="570"/><line x1="785" y1="132" x2="785" y2="570"/><line x1="995" y1="132" x2="995" y2="570"/>
-        </g>
-        <g fill="#e8effa" stroke="#2e5aa8" stroke-width="1"><rect x="340" y="182" width="10" height="306"/><rect x="780" y="450" width="10" height="38"/></g>
-        <g stroke-linecap="square" fill="none">
-          <line x1="125" y1="190" x2="337" y2="190" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#cp-arrow)"/>
-          <line x1="345" y1="236" x2="133" y2="236" stroke="#697386" stroke-width="1.35" stroke-dasharray="5 4" marker-end="url(#cp-return)"/>
-          <line x1="565" y1="286" x2="353" y2="286" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#cp-arrow)"/>
-          <line x1="565" y1="332" x2="353" y2="332" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#cp-arrow)"/>
-          <line x1="345" y1="378" x2="557" y2="378" stroke="#eb6c36" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#cp-success)"/>
-          <line x1="785" y1="428" x2="353" y2="428" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#cp-arrow)"/>
-          <line x1="345" y1="474" x2="777" y2="474" stroke="#697386" stroke-width="1.35" stroke-dasharray="5 4" marker-end="url(#cp-return)"/>
-        </g>
-
-        <!-- label masks keep text clear of message strokes -->
-        <g fill="#ffffff"><rect x="149" y="166" width="160" height="16"/><rect x="146" y="212" width="166" height="16"/><rect x="386" y="262" width="145" height="16"/><rect x="384" y="308" width="150" height="16"/><rect x="389" y="354" width="132" height="16"/><rect x="430" y="404" width="162" height="16"/><rect x="432" y="450" width="177" height="16"/></g>
-        <g class="message">
-          <text x="151" y="177">PUT …/instances/… · mTLS REGISTER</text>
-          <text x="148" y="223">201 accepted · lease + manifest revision</text>
-          <text x="388" y="273">GET service-options catalog</text>
-          <text x="386" y="319">SAVE Product grant · catalog revision</text>
-          <text x="391" y="365" fill="#b44b20">PIN immutable grant revision</text>
-          <text x="432" y="415">GET Product grant for device run</text>
-          <text x="434" y="461">effective options + exact revision binding</text>
-        </g>
-
-        <!-- actors are deliberately above the arrows and labels -->
-        <g>
-          <g transform="translate(45 70)"><rect width="160" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Service runtime</text><text x="14" y="45" class="actor-sub">MQTT / OPTIONAL PLUGIN</text></g>
-          <g transform="translate(250 70)"><rect width="190" height="62" fill="#e8effa" stroke="#2e5aa8" stroke-width="1.4"/><text x="14" y="24" class="actor-title">Platform Server</text><text x="14" y="45" class="actor-sub">REGISTRY · CATALOG · GRANTS</text></g>
-          <g transform="translate(485 70)"><rect width="160" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Cloud Admin</text><text x="14" y="45" class="actor-sub">PRODUCT UI</text></g>
-          <g transform="translate(710 70)"><rect width="150" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Factory</text><text x="14" y="45" class="actor-sub">TOKEN ISSUER</text></g>
-          <g transform="translate(920 70)"><rect width="150" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Device</text><text x="14" y="45" class="actor-sub">RUNTIME CLIENT</text></g>
-        </g>
-
-        <line x1="34" y1="592" x2="1086" y2="592" stroke="#c8ced8"/>
-        <g class="note"><rect x="38" y="610" width="10" height="10" fill="#2e5aa8"/><text x="56" y="620">solid = authenticated call</text><line x1="230" y1="615" x2="262" y2="615" stroke="#697386" stroke-dasharray="5 4"/><text x="271" y="620">dashed = response</text><rect x="438" y="610" width="10" height="10" fill="#eb6c36"/><text x="456" y="620">coral = persisted authorization boundary</text><text x="770" y="620">Service registration alone does not issue a device grant.</text></g>
-      </svg>
-    </div>
-    <div class="caption-grid">
-      <div><strong>Platform authority</strong>It verifies service identity, stores versioned manifests, publishes a tenant/environment-scoped catalog, and persists Product grants.</div>
-      <div><strong>Service authority</strong>A runtime may declare options and dependencies only for its own service ID; it cannot register capability for another service.</div>
-      <div><strong>Activation is not registration</strong>An optional service can start suspended. Its registered option still needs platform activation and a Product grant.</div>
-    </div>
-  </section>
-
-  <section>
-    <h2><span>02 / DATA PLANE</span>Token issuance and local runtime enforcement</h2>
-    <p class="section-copy">This path establishes what the device may call now. The runtime does not look up the registry for every request; each service validates the Platform-signed token's option, revision, and device scope locally.</p>
-    <div class="diagram-frame">
-      <svg viewBox="0 0 1120 710" role="img" aria-labelledby="dp-title dp-desc">
-        <title id="dp-title">Data-plane sequence: token issuance and service enforcement</title>
-        <desc id="dp-desc">Factory resolves a Product grant from Platform Server and signs device token claims. The device presents the token to MQTT or an optional service. Each service locally verifies the signature and bound options, allowing the authorized path and denying absent, stale, revoked, or suspended options.</desc>
-        <defs>
-          <marker id="dp-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2e5aa8"/></marker>
-          <marker id="dp-return" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#697386"/></marker>
-        </defs>
-        <text x="34" y="34" class="svg-title">TOKEN CARRIES THE AUTHORIZATION SNAPSHOT</text>
-
-        <g stroke="#c8ced8" stroke-width="1" stroke-dasharray="5 6">
-          <line x1="125" y1="132" x2="125" y2="630"/><line x1="345" y1="132" x2="345" y2="630"/><line x1="565" y1="132" x2="565" y2="630"/><line x1="785" y1="132" x2="785" y2="630"/><line x1="995" y1="132" x2="995" y2="630"/>
-        </g>
-        <rect x="340" y="180" width="10" height="80" fill="#e8effa" stroke="#2e5aa8"/><rect x="560" y="304" width="10" height="248" fill="#fff0e9" stroke="#eb6c36"/>
-        <g fill="none"><rect x="522" y="288" width="548" height="278" fill="#fbfcfe" stroke="#c8ced8"/><path d="M522 288h48v21h-48z" fill="#e8effa" stroke="#2e5aa8"/><line x1="522" y1="431" x2="1070" y2="431" stroke="#c8ced8"/></g>
-        <g stroke-linecap="square" fill="none">
-          <line x1="125" y1="190" x2="337" y2="190" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#dp-arrow)"/>
-          <line x1="345" y1="236" x2="133" y2="236" stroke="#697386" stroke-width="1.35" stroke-dasharray="5 4" marker-end="url(#dp-return)"/>
-          <line x1="345" y1="272" x2="777" y2="272" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#dp-arrow)"/>
-          <line x1="785" y1="318" x2="987" y2="318" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#dp-arrow)"/>
-          <line x1="995" y1="362" x2="573" y2="362" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#dp-arrow)"/>
-          <line x1="565" y1="402" x2="987" y2="402" stroke="#697386" stroke-width="1.35" stroke-dasharray="5 4" marker-end="url(#dp-return)"/>
-          <line x1="995" y1="478" x2="573" y2="478" stroke="#2e5aa8" stroke-width="1.7" marker-end="url(#dp-arrow)"/>
-          <line x1="565" y1="522" x2="987" y2="522" stroke="#697386" stroke-width="1.35" stroke-dasharray="5 4" marker-end="url(#dp-return)"/>
-        </g>
-
-        <g fill="#ffffff"><rect x="154" y="166" width="145" height="16"/><rect x="153" y="212" width="160" height="16"/><rect x="457" y="248" width="172" height="16"/><rect x="807" y="294" width="148" height="16"/><rect x="668" y="338" width="185" height="16"/><rect x="691" y="378" width="155" height="16"/><rect x="678" y="454" width="177" height="16"/><rect x="699" y="498" width="148" height="16"/></g>
-        <g class="message">
-          <text x="156" y="177">resolve Product grant</text>
-          <text x="155" y="223">effective options + revision</text>
-          <text x="459" y="259">issue signed device JWT</text>
-          <text x="809" y="305">receive device token</text>
-          <text x="670" y="349">present JWT to MQTT / plugin</text>
-          <text x="693" y="389">allow granted operation</text>
-          <text x="680" y="465">present JWT to optional service</text>
-          <text x="701" y="509">deny 403 / ACL reject</text>
-        </g>
-        <g><text x="533" y="304" class="guard">ALT</text><text x="584" y="331" class="guard">[token includes mqtt + service option; revision valid]</text><text x="584" y="451" class="guard">[option absent, stale, revoked, or service suspended]</text></g>
-
-        <g>
-          <g transform="translate(45 70)"><rect width="160" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Platform Server</text><text x="14" y="45" class="actor-sub">GRANT AUTHORITY</text></g>
-          <g transform="translate(270 70)"><rect width="150" height="62" fill="#e8effa" stroke="#2e5aa8" stroke-width="1.4"/><text x="14" y="24" class="actor-title">Factory</text><text x="14" y="45" class="actor-sub">TOKEN ISSUER</text></g>
-          <g transform="translate(475 70)"><rect width="180" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Service runtime</text><text x="14" y="45" class="actor-sub">MQTT / OPTIONAL PLUGIN</text></g>
-          <g transform="translate(705 70)"><rect width="160" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Device token</text><text x="14" y="45" class="actor-sub">SIGNED JWT CLAIMS</text></g>
-          <g transform="translate(920 70)"><rect width="150" height="62" fill="#fff" stroke="#c8ced8"/><text x="14" y="24" class="actor-title">Device</text><text x="14" y="45" class="actor-sub">RUNTIME CLIENT</text></g>
-        </g>
-
-        <line x1="34" y1="652" x2="1086" y2="652" stroke="#c8ced8"/>
-        <g class="note"><rect x="38" y="670" width="10" height="10" fill="#2e5aa8"/><text x="56" y="680">solid = authenticated call</text><line x1="230" y1="675" x2="262" y2="675" stroke="#697386" stroke-dasharray="5 4"/><text x="271" y="680">dashed = service result</text><text x="448" y="680">JWT binds service_options, Product grant revision, tenant and device scope.</text></g>
-      </svg>
-    </div>
-    <div class="caption-grid">
-      <div><strong>The token is an authorization snapshot</strong>Factory cannot expand a grant from request content. It signs only Platform-resolved effective options and the exact grant revision.</div>
-      <div><strong>Every runtime enforces locally</strong>MQTT and each optional runtime validate the signature, issuer/audience/lifetime, tenant/device scope, option, and revision.</div>
-      <div><strong>The result is deterministic</strong>A device carrying only <code>mqtt</code> may connect to MQTT; Shadow, WebRTC, and video-storage requests without their matching option are denied.</div>
-    </div>
-  </section>
-
-  <footer>
-    Design basis: <a href="../../repos/rtk_cloud_contracts_doc/service_registration.md">service registration contract</a> and the <a href="service-registration-implementation-plan.md">implementation plan</a>. This diagram describes the merged source contract; environment rollout and staging deployment are intentionally out of scope.
-  </footer>
-</main>
-</body>
-</html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Service registration and runtime enforcement</title><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap">
+<style>body{margin:0;background:#f5f5f5;color:#2d3142;font-family:Geist,Arial,sans-serif}main{max-width:1180px;margin:auto;padding:48px 24px 68px}.eyebrow{font:500 8px 'Geist Mono',monospace;letter-spacing:.16em;color:#4f5d75}h1{font:400 clamp(32px,5vw,54px)/1.04 'Instrument Serif',serif;margin:10px 0 12px}.lede{max-width:760px;line-height:1.6;color:#4f5d75}figure{margin:42px 0 0}figcaption{border-top:1px solid rgba(45,49,66,.12);padding:12px 0 0;font-size:14px;font-weight:600}svg{display:block;width:100%;height:auto;margin-top:12px;overflow:visible}footer{margin-top:44px;padding-top:12px;border-top:1px solid rgba(45,49,66,.12);font:8px 'Geist Mono',monospace;color:#4f5d75}</style></head>
+<body><main><p class="eyebrow">RTK CLOUD · SEQUENCE DIAGRAM</p><h1>Service registration and runtime enforcement</h1><p class="lede">Current-state review: service registration does not itself grant a device entitlement; the Product grant is carried into token issuance and enforced locally.</p><figure><figcaption>Control plane · register capability and grant Product access</figcaption><svg viewBox="0 0 1120 562" role="img" aria-labelledby="service-registration-control-title service-registration-control-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="service-registration-control-title">Service registration and Product grant</title>
+<desc id="service-registration-control-desc">A service registers its manifest before Platform Server records a Product grant.</desc>
+<defs>
+  <marker id="service-registration-control-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+  <marker id="service-registration-control-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+  <marker id="service-registration-control-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<text x="32" y="32" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" letter-spacing=".16em">SEQUENCE · CURRENT-STATE REVIEW</text>
+<line x1="84" y1="124" x2="84" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><line x1="401" y1="124" x2="401" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><line x1="719" y1="124" x2="719" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><line x1="1036" y1="124" x2="1036" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><rect x="52" y="168" width="1016" height="242" rx="4" fill="rgba(45,49,66,.02)" stroke="rgba(45,49,66,.22)" stroke-width="1"/><rect x="52" y="168" width="52" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,.22)" stroke-width="1"/><text x="78" y="180" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".1em">OPT</text><text x="116" y="182" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">[registered capability requires a Product grant]</text><line x1="84" y1="204" x2="401" y2="204" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#service-registration-control-arrow)"/><rect x="152.2" y="183" width="181.0" height="12" rx="2" fill="#f5f5f5"/><text x="242.7" y="192" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Register mTLS service manifest</text><line x1="401" y1="248" x2="84" y2="248" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#service-registration-control-arrow)"/><rect x="160.4" y="227" width="164.5" height="12" rx="2" fill="#f5f5f5"/><text x="242.7" y="236" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Manifest revision and lease</text><line x1="719" y1="292" x2="401" y2="292" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#service-registration-control-arrow)"/><rect x="497.0" y="271" width="126.0" height="12" rx="2" fill="#f5f5f5"/><text x="560.0" y="280" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Read service catalog</text><line x1="719" y1="336" x2="401" y2="336" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#service-registration-control-arrow)"/><rect x="480.5" y="315" width="159.0" height="12" rx="2" fill="#f5f5f5"/><text x="560.0" y="324" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Save Product service grant</text><line x1="401" y1="380" x2="1036" y2="380" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#service-registration-control-arrow)"/><rect x="644.7" y="359" width="148.0" height="12" rx="2" fill="#f5f5f5"/><text x="718.7" y="368" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Persisted grant revision</text>
+<rect x="12" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="84" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Service runtime</text><text x="84" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text><rect x="329" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="401" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Platform Server</text><text x="401" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text><rect x="647" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="719" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Cloud Admin</text><text x="719" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text><rect x="964" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="1036" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Factory</text><text x="1036" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text>
+<line x1="32" y1="516" x2="1088" y2="516" stroke="rgba(45,49,66,.12)"/>
+<text x="32" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" letter-spacing=".12em">LEGEND</text>
+<line x1="124" y1="534" x2="156" y2="534" stroke="#4f5d75" marker-end="url(#service-registration-control-arrow)"/><text x="168" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">CALL</text>
+<line x1="244" y1="534" x2="276" y2="534" stroke="#4f5d75" stroke-dasharray="5,4" marker-end="url(#service-registration-control-arrow)"/><text x="288" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">RETURN / ASYNC</text>
+<line x1="450" y1="534" x2="482" y2="534" stroke="#eb6c36" marker-end="url(#service-registration-control-accent)"/><text x="494" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">HEADLINE OUTCOME</text>
+</svg></figure><figure><figcaption>Data plane · issue a token and enforce it locally</figcaption><svg viewBox="0 0 1120 562" role="img" aria-labelledby="service-registration-enforcement-title service-registration-enforcement-desc" xmlns="http://www.w3.org/2000/svg">
+<title id="service-registration-enforcement-title">Token issuance and local enforcement</title>
+<desc id="service-registration-enforcement-desc">Factory issues a token from a Product grant and the target runtime enforces its option locally.</desc>
+<defs>
+  <marker id="service-registration-enforcement-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#4f5d75"/></marker>
+  <marker id="service-registration-enforcement-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="#eb6c36"/></marker>
+  <marker id="service-registration-enforcement-open" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polyline points="0 0,8 3,0 6" fill="none" stroke="#4f5d75" stroke-width="1.2"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#f5f5f5"/>
+<text x="32" y="32" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" letter-spacing=".16em">SEQUENCE · CURRENT-STATE REVIEW</text>
+<line x1="84" y1="124" x2="84" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><line x1="401" y1="124" x2="401" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><line x1="719" y1="124" x2="719" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><line x1="1036" y1="124" x2="1036" y2="492" stroke="rgba(45,49,66,.22)" stroke-width="1" stroke-dasharray="3,3"/><rect x="52" y="168" width="1016" height="242" rx="4" fill="rgba(45,49,66,.02)" stroke="rgba(45,49,66,.22)" stroke-width="1"/><rect x="52" y="168" width="52" height="16" rx="2" fill="#f5f5f5" stroke="rgba(45,49,66,.22)" stroke-width="1"/><text x="78" y="180" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".1em">ALT</text><text x="116" y="182" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">[token option and revision are valid]</text><line x1="401" y1="204" x2="84" y2="204" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#service-registration-enforcement-arrow)"/><rect x="176.9" y="183" width="131.5" height="12" rx="2" fill="#f5f5f5"/><text x="242.7" y="192" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Resolve Product grant</text><line x1="84" y1="248" x2="401" y2="248" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#service-registration-enforcement-arrow)"/><rect x="152.2" y="227" width="181.0" height="12" rx="2" fill="#f5f5f5"/><text x="242.7" y="236" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Effective options and revision</text><line x1="401" y1="292" x2="719" y2="292" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#service-registration-enforcement-arrow)"/><rect x="483.2" y="271" width="153.5" height="12" rx="2" fill="#f5f5f5"/><text x="560.0" y="280" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Issue signed device token</text><line x1="719" y1="336" x2="1036" y2="336" stroke="#4f5d75" stroke-width="1.2" marker-end="url(#service-registration-enforcement-arrow)"/><rect x="773.1" y="315" width="208.5" height="12" rx="2" fill="#f5f5f5"/><text x="877.3" y="324" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Present token for service operation</text><line x1="1036" y1="380" x2="719" y2="380" stroke="#4f5d75" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#service-registration-enforcement-arrow)"/><rect x="737.3" y="359" width="280.0" height="12" rx="2" fill="#f5f5f5"/><text x="877.3" y="368" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle">Allow matching option; deny absent or stale option</text>
+<rect x="12" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="84" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Platform Server</text><text x="84" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text><rect x="329" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="401" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Factory</text><text x="401" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text><rect x="647" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="719" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">Device</text><text x="719" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text><rect x="964" y="60" width="144" height="64" rx="6" fill="#fff" stroke="#2d3142" stroke-width="1"/><text x="1036" y="86" fill="#2d3142" font-size="12" font-weight="600" font-family="Geist, sans-serif" text-anchor="middle">MQTT / service runtime</text><text x="1036" y="105" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" text-anchor="middle" letter-spacing=".08em">PARTICIPANT</text>
+<line x1="32" y1="516" x2="1088" y2="516" stroke="rgba(45,49,66,.12)"/>
+<text x="32" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace" letter-spacing=".12em">LEGEND</text>
+<line x1="124" y1="534" x2="156" y2="534" stroke="#4f5d75" marker-end="url(#service-registration-enforcement-arrow)"/><text x="168" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">CALL</text>
+<line x1="244" y1="534" x2="276" y2="534" stroke="#4f5d75" stroke-dasharray="5,4" marker-end="url(#service-registration-enforcement-arrow)"/><text x="288" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">RETURN / ASYNC</text>
+<line x1="450" y1="534" x2="482" y2="534" stroke="#eb6c36" marker-end="url(#service-registration-enforcement-accent)"/><text x="494" y="538" fill="#4f5d75" font-size="8" font-family="Geist Mono, monospace">HEADLINE OUTCOME</text>
+</svg></figure><footer>Current-state review: implemented evidence is distinguished from Partial/TBD contract boundaries. Generated from the reviewed documentation inventory.</footer></main></body></html>

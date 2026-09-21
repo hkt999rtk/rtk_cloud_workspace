@@ -274,6 +274,9 @@ modules:
       - { test_id: UNIT-CA-PKI-001, canonical_key: "js://cloud-admin-web/src/certificateBundle.test.mjs#browser%20PKI%20helper%20creates%20P-256%20PKCS%238%20and%20sends%20only%20a%20CSR-shaped%20value", purpose: Browser test issuance must keep the generated private key out of the CSR-shaped request value. }
       - { test_id: UNIT-CA-ERROR-001, canonical_key: "js://cloud-admin-web/src/http.test.mjs#userFacingSSOError%20hides%20internal%20SSO%20configuration%20details", purpose: Browser-facing SSO failures must not expose internal configuration. }
       - { test_id: UNIT-CA-MULTICLOUD-001, canonical_key: "js://cloud-admin-web/src/cloud-scope.test.mjs#cloudConsolePath%20emits%20canonical%20multi-cloud%20URLs", purpose: Customer navigation must preserve the explicit cloud scope in canonical console URLs. }
+      - { test_id: UNIT-CA-WEBHOOK-001, canonical_key: "js://cloud-admin-web/src/brand-webhook.test.mjs#webhook%20paths%20stay%20within%20one%20canonical%20cloud%20and%20one%20event%20segment", purpose: Brand webhook browser routes must preserve one validated Cloud and event scope. }
+      - { test_id: UNIT-CA-WEBHOOK-002, canonical_key: "js://cloud-admin-web/src/brand-webhook.test.mjs#webhook%20writes%20carry%20the%20observed%20ownership%20version%2C%20never%20a%20browser%20tenant%20header", purpose: Brand webhook writes must bind the observed ownership revision without browser-provided tenant authority. }
+      - { test_id: UNIT-CA-WEBHOOK-003, canonical_key: "js://cloud-admin-web/src/brand-webhook.test.mjs#missing%20subscription%20remains%20a%20usable%20owner-scoped%20configuration%20state", purpose: Missing subscriptions must remain owner-scoped configuration state without weakening receipt failures. }
     purpose: Protect Cloud Admin browser-helper logic across lines branches and functions.
     method: Run Node unit tests with V8 coverage instrumentation and TestStream individual-case inventory.
 
