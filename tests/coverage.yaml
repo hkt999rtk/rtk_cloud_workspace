@@ -84,11 +84,12 @@ modules:
       - { package: rtk_account_manager/internal/auth, risk: critical, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/store, risk: critical, minimum_statement_percent: 4.0, pr_minimum_statement_percent: 80.0, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/database, risk: critical, minimum_statement_percent: 30.6, pr_minimum_statement_percent: 84.0, target_statement_percent: 80.0 }
+      - { package: rtk_account_manager/internal/schemamaintenance, risk: critical, minimum_statement_percent: 8.0, pr_minimum_statement_percent: 60.0, target_statement_percent: 80.0 }
       - { package: rtk_account_manager/internal/usercache, risk: high, minimum_statement_percent: 81.0, pr_minimum_statement_percent: 81.0, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/internal/worker/inbox, risk: high, minimum_statement_percent: 90.2, pr_minimum_statement_percent: 90.2, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/internal/worker/outbox, risk: high, minimum_statement_percent: 83.6, pr_minimum_statement_percent: 83.6, target_statement_percent: 70.0 }
       - { package: rtk_account_manager/cmd/server, risk: wiring, exclusion_reason: Server bootstrap is covered by API integration and deployed readiness tests. }
-      - { package: rtk_account_manager/cmd/migrate, risk: wiring, exclusion_reason: Migration entrypoint delegates to internal/database and is covered by schema integration tests. }
+      - { package: rtk_account_manager/cmd/migrate, risk: wiring, exclusion_reason: Migration entrypoint delegates to database and schema maintenance packages and is covered by schema integration tests. }
     critical_cases:
       - test_id: UNIT-AM-AUTH-001
         canonical_key: go://account-manager/internal/auth#TestOIDCTokenErrorsDoNotContainProviderTokens
