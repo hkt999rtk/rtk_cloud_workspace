@@ -1,6 +1,6 @@
 # Database simplification schema delta
 
-The predecessor is a source-derived snapshot. The current Account Manager, Video Cloud, and Admin catalogs were independently initialized and compared with source extraction in disposable PostgreSQL/SQLite. These are local verification results, not deployed-environment observations.
+Predecessor and current Account Manager, Video Cloud, and Admin catalogs were independently initialized and compared with source extraction in disposable PostgreSQL/SQLite; the original static predecessor snapshot is retained separately. These are local verification results, not deployed-environment observations.
 
 | Owner | Retired business tables | Added columns |
 | --- | --- | --- |

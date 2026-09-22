@@ -12,11 +12,11 @@ Latest user scope update: use the new ER document on main as the editing baselin
 - [ ] D: authoritative OTA columns, revision checks and atomic events
 - [ ] E: canonical OTA only across server, Admin, SDKs and contracts
 - [ ] Full local gates, required CI, leaf merges and integration revisions
-- [ ] Qualified dev backup/recovery and coordinated dev validation
+- [ ] Coordinated dev validation (rollback rehearsal waived by user)
 
 ## Boundaries
 
-Dev business data may be rebuilt. Staging and production are excluded. PKI keys, roots and infrastructure credentials are not disposable. Billing and PKI models are unchanged. All changes are made in isolated worktrees; the original checkout remains intact.
+Dev business data may be rebuilt. Staging and production are excluded. Rollback rehearsal is not required under the latest user instruction. PKI keys, roots and infrastructure credentials are not disposable. Billing and PKI models are unchanged. All changes are made in isolated worktrees; the original checkout remains intact.
 
 The pre-change source schema is in `tests/fixtures/database-simplification/schema-before.json`; it is a static baseline, not a live deployment inventory.
 
@@ -24,12 +24,14 @@ The pre-change source schema is in `tests/fixtures/database-simplification/schem
 
 All work is in the isolated `codex/database-simplification` worktrees. No shared
 dev, staging or production data or deployment has been changed. No PR has yet
-been published or merged; full gates, CI and dev recovery remain outstanding.
+been published or merged; full gates, CI and coordinated dev validation remain outstanding.
 
 - Account Manager migrations 083/084 consolidate audit domains and retire tenant
   identity storage after reconciliation. Offline check/apply/verify and startup
   compatibility checks are implemented. Scoped tenant-cache retirement is
-  available through `user-cache retire-tenant-identity`.
+  available through `user-cache retire-tenant-identity`. Unused tenant-scoped store
+  interfaces and activation mail rendering are removed; queued retired activation
+  messages expire during migration while global login messages remain deliverable.
 - Video Cloud retires seven tables and legacy firmware runtime routes. OTA core
   columns and internal revisions are authoritative; event/state writes are
   atomic. Parent locks prohibit late deployment creation after cancellation.
@@ -74,13 +76,13 @@ Outstanding before delivery:
 2. Qualify retained legacy-data disposition: current cleanup blocks all nonempty
    old firmware tables; it does not yet implement a trusted ownership/integrity
    mapping for historical rows. Staging/prod data has not been inspected.
-3. Capture index uniqueness/query-plan evidence and complete live predecessor
-   fixtures/catalog evidence; catalog snapshots must be regenerated if schema
-   changes further.
+3. Keep catalog captures aligned with any subsequent schema changes; independent
+   predecessor and current catalogs and index query-plan evidence are now captured.
 4. Freshly fetch all repositories before publishing, complete local pre-PR gates,
    publish leaf PRs and required CI, then integrate exact merged revisions.
-5. Inventory scoped dev data, qualify backup/restore in isolation, perform the
-   coordinated dev cutover and validate restart, worker recovery and rollback.
+5. Inventory scoped dev data, perform the coordinated dev cutover and validate
+   consistency, service restart and worker recovery. The user explicitly waived
+   backup/rollback rehearsal as a delivery condition on 2026-09-22.
 6. Keep the regenerated ER document aligned with the final merged leaf revisions, following the latest user instruction.
 
 Additional local verification:
@@ -100,3 +102,14 @@ Additional local verification:
   audit catalog rendering and fragment navigation were inspected.
 - Dev workload/PVC inventory was read using environment-local kubeconfig;
   no workloads, data, certificates, or credentials were changed.
+
+- Independently initialized predecessor catalogs now cover all three changed
+  services: Account Manager 92 tables, Video Cloud/PKI 71, Admin 16. Old Admin
+  TEXT-primary-key nullability exposed a static-baseline error, corrected by
+  the parser without altering SQLite schema. The fixture README records it.
+- A complete old Video Cloud database with populated OTA rows was dumped,
+  upgraded, verified, restored, and restarted with its old initializer. All 71
+  catalog tables and the old JSON/column discrepancy were restored exactly.
+- The repository recovery adapter's real PostgreSQL and Redis round trips pass.
+  This is retained evidence only; further rollback rehearsal is not a delivery
+  gate under the latest user instruction. Shared-dev cutover remains pending.

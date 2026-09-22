@@ -1,0 +1,4079 @@
+{
+  "billing_usage_collector_receipts": {
+    "columns": {
+      "logger_content_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "receipt_sequence": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "received_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "store_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "usage_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "billing_usage_collector_receipts_usage_id_fkey": {
+        "cols": [
+          "usage_id"
+        ],
+        "parent": "usage_event_receipts",
+        "target": [
+          "usage_id"
+        ]
+      }
+    },
+    "pk": [
+      "store_id",
+      "receipt_sequence"
+    ],
+    "unique": {
+      "billing_usage_collector_receipts_pkey": [
+        "store_id",
+        "receipt_sequence"
+      ],
+      "billing_usage_collector_receipts_usage_id_key": [
+        "usage_id"
+      ]
+    }
+  },
+  "billing_usage_collector_state": {
+    "columns": {
+      "collector_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "cursor": {
+        "nn": true,
+        "type": "text"
+      },
+      "high_water": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "last_sequence": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "store_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "collector_id"
+    ],
+    "unique": {
+      "billing_usage_collector_state_pkey": [
+        "collector_id"
+      ]
+    }
+  },
+  "billing_usage_fact_outbox": {
+    "columns": {
+      "attempts": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "delivered_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "fact_usage_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_attempt_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "payload_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "producer_usage_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "billing_usage_fact_outbox_producer_usage_id_fkey": {
+        "cols": [
+          "producer_usage_id"
+        ],
+        "parent": "usage_event_receipts",
+        "target": [
+          "usage_id"
+        ]
+      }
+    },
+    "pk": [
+      "fact_usage_id"
+    ],
+    "unique": {
+      "billing_usage_fact_outbox_pkey": [
+        "fact_usage_id"
+      ]
+    }
+  },
+  "brand_webhook_outbox": {
+    "columns": {
+      "attempts": {
+        "nn": true,
+        "type": "integer"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "dead_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "delivered_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_sub_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "lease_generation": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "lease_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "next_attempt_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "occurred_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "org_id",
+      "device_id",
+      "event_id"
+    ],
+    "unique": {
+      "brand_webhook_outbox_pkey": [
+        "org_id",
+        "device_id",
+        "event_id"
+      ]
+    }
+  },
+  "brand_webhook_receipts": {
+    "columns": {
+      "attempt": {
+        "nn": true,
+        "type": "integer"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "error": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "observed_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "outcome": {
+        "nn": true,
+        "type": "text"
+      },
+      "status_code": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {
+      "brand_webhook_receipts_org_id_device_id_event_id_fkey": {
+        "cols": [
+          "org_id",
+          "device_id",
+          "event_id"
+        ],
+        "parent": "brand_webhook_outbox",
+        "target": [
+          "org_id",
+          "device_id",
+          "event_id"
+        ]
+      }
+    },
+    "pk": [
+      "org_id",
+      "device_id",
+      "event_id",
+      "attempt"
+    ],
+    "unique": {
+      "brand_webhook_receipts_pkey": [
+        "org_id",
+        "device_id",
+        "event_id",
+        "attempt"
+      ]
+    }
+  },
+  "brand_webhook_subscriptions": {
+    "columns": {
+      "enabled": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "endpoint_url": {
+        "nn": true,
+        "type": "text"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "secret_ciphertext": {
+        "nn": true,
+        "type": "bytea"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "org_id"
+    ],
+    "unique": {
+      "brand_webhook_subscriptions_pkey": [
+        "org_id"
+      ]
+    }
+  },
+  "cert_issue_events": {
+    "columns": {
+      "cert_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_sans": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "csr_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "csr_subject": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "duration_ms": {
+        "nn": true,
+        "type": "integer"
+      },
+      "error_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "error_message": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "outcome": {
+        "nn": true,
+        "type": "text"
+      },
+      "remote_ip": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "signed_serial": {
+        "nn": true,
+        "type": "text"
+      },
+      "ttl_days": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "cert_issue_events_pkey": [
+        "id"
+      ]
+    }
+  },
+  "cert_issue_requests": {
+    "columns": {
+      "cert_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_chain_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_sans": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "csr_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "csr_subject": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "error_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "error_message": {
+        "nn": true,
+        "type": "text"
+      },
+      "factory_claim_token": {
+        "nn": true,
+        "type": "text"
+      },
+      "not_after": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "not_before": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "request_fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_status": {
+        "nn": true,
+        "type": "text"
+      },
+      "signed_serial": {
+        "nn": true,
+        "type": "text"
+      },
+      "ttl_days": {
+        "nn": true,
+        "type": "integer"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "request_id"
+    ],
+    "unique": {
+      "cert_issue_requests_pkey": [
+        "request_id"
+      ]
+    }
+  },
+  "clip_metadata": {
+    "columns": {
+      "clip_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "expires_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "metadata": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id",
+      "clip_id"
+    ],
+    "unique": {
+      "clip_metadata_pkey": [
+        "device_id",
+        "clip_id"
+      ]
+    }
+  },
+  "clip_upload_parts": {
+    "columns": {
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "part_number": {
+        "nn": true,
+        "type": "integer"
+      },
+      "sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "size_bytes": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "upload_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "clip_upload_parts_upload_id_fkey": {
+        "cols": [
+          "upload_id"
+        ],
+        "parent": "clip_uploads",
+        "target": [
+          "upload_id"
+        ]
+      }
+    },
+    "pk": [
+      "upload_id",
+      "part_number"
+    ],
+    "unique": {
+      "clip_upload_parts_pkey": [
+        "upload_id",
+        "part_number"
+      ]
+    }
+  },
+  "clip_uploads": {
+    "columns": {
+      "activation_epoch": {
+        "nn": true,
+        "type": "text"
+      },
+      "attempts": {
+        "nn": true,
+        "type": "integer"
+      },
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "cleanup_completed_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "cleanup_next_attempt_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "clip_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "clipkey": {
+        "nn": true,
+        "type": "text"
+      },
+      "content_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "duration_ms": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "encryption_algorithm": {
+        "nn": true,
+        "type": "text"
+      },
+      "end_time_ms": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "error_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "error_message": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "expires_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "lease_owner": {
+        "nn": true,
+        "type": "text"
+      },
+      "lease_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "metadata": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "multipart_upload_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "next_attempt_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "object_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "ready_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "size_bytes": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "start_time_ms": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "thumbnail_content_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "thumbnail_object_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "thumbnail_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "thumbnail_size_bytes": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "transfer_mode": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "upload_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "upload_id"
+    ],
+    "unique": {
+      "clip_uploads_device_id_clip_id_key": [
+        "device_id",
+        "clip_id"
+      ],
+      "clip_uploads_pkey": [
+        "upload_id"
+      ]
+    }
+  },
+  "device_command_messages": {
+    "columns": {
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "device_command_messages_pkey": [
+        "id"
+      ]
+    }
+  },
+  "device_event_acceptances": {
+    "columns": {
+      "accepted_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_sub_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload_sha256": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id",
+      "event_id"
+    ],
+    "unique": {
+      "device_event_acceptances_pkey": [
+        "device_id",
+        "event_id"
+      ]
+    }
+  },
+  "device_logs": {
+    "columns": {
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "detail": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "kind": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "device_logs_pkey": [
+        "id"
+      ]
+    }
+  },
+  "device_presence_outbox": {
+    "columns": {
+      "account_device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "attempts": {
+        "nn": true,
+        "type": "integer"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "delivered_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "generation": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "lease_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "next_attempt_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "observed_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id"
+    ],
+    "unique": {
+      "device_presence_outbox_pkey": [
+        "device_id"
+      ]
+    }
+  },
+  "device_runtime_log_gaps": {
+    "columns": {
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "expected_seq": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "id": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "observed_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "observed_seq": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "stream_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "device_runtime_log_gaps_pkey": [
+        "id"
+      ]
+    }
+  },
+  "device_runtime_logs": {
+    "columns": {
+      "attrs": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "level": {
+        "nn": true,
+        "type": "text"
+      },
+      "message": {
+        "nn": true,
+        "type": "text"
+      },
+      "occurred_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "seq": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "source": {
+        "nn": true,
+        "type": "text"
+      },
+      "stream_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "device_runtime_logs_device_id_stream_id_seq_key": [
+        "device_id",
+        "stream_id",
+        "seq"
+      ],
+      "device_runtime_logs_pkey": [
+        "id"
+      ]
+    }
+  },
+  "device_socket_sessions": {
+    "columns": {
+      "address": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "instance_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_seen_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "session_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "transport": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id"
+    ],
+    "unique": {
+      "device_socket_sessions_pkey": [
+        "device_id"
+      ]
+    }
+  },
+  "device_transfer_fences": {
+    "columns": {
+      "account_device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "reservation_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id"
+    ],
+    "unique": {
+      "device_transfer_fences_pkey": [
+        "device_id"
+      ]
+    }
+  },
+  "devices": {
+    "columns": {
+      "account_device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "activated": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "activation_epoch": {
+        "nn": true,
+        "type": "text"
+      },
+      "activity_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "address": {
+        "nn": true,
+        "type": "text"
+      },
+      "auth_revoked_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "config": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "device_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "firmware_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "info": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "last_seen_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "location": {
+        "nn": true,
+        "type": "text"
+      },
+      "model": {
+        "nn": true,
+        "type": "text"
+      },
+      "online": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "provisioned": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "upgrading": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "user_key": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "devices_pkey": [
+        "id"
+      ]
+    }
+  },
+  "factory_cloud_handoffs": {
+    "columns": {
+      "canceled_count": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "cloud_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "committed_ownership_version": {
+        "nn": false,
+        "type": "bigint"
+      },
+      "completed_count": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "cutoff": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "decided_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "decision_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "decision_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "drain_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "hold_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "operation_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "ownership_version": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "phase": {
+        "nn": true,
+        "type": "text"
+      },
+      "source_user_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "target_user_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "operation_id"
+    ],
+    "unique": {
+      "factory_cloud_handoffs_pkey": [
+        "operation_id"
+      ]
+    }
+  },
+  "factory_device_entitlements": {
+    "columns": {
+      "allowed_services": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "certificate_serial": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "entitlement_revision": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "entitlement_state": {
+        "nn": true,
+        "type": "text"
+      },
+      "factory_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "metadata": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "serial_number": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id"
+    ],
+    "unique": {
+      "factory_device_entitlements_pkey": [
+        "device_id"
+      ]
+    }
+  },
+  "factory_enrollment_journal": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "cancellation_requested": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "evidence_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "product_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "production_run_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "reservation_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "production_run_id",
+      "request_id"
+    ],
+    "unique": {
+      "factory_enrollment_journal_pkey": [
+        "production_run_id",
+        "request_id"
+      ],
+      "factory_enrollment_journal_reservation_id_key": [
+        "reservation_id"
+      ]
+    }
+  },
+  "firmware_campaigns": {
+    "columns": {
+      "audit_metadata": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "created_by": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "model": {
+        "nn": true,
+        "type": "text"
+      },
+      "policy": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "selector": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "target_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "updated_by": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "firmware_campaigns_pkey": [
+        "id"
+      ]
+    }
+  },
+  "firmware_releases": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "manifest": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "manifest_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "min_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "model": {
+        "nn": true,
+        "type": "text"
+      },
+      "object_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "product_profile_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "release_note": {
+        "nn": true,
+        "type": "text"
+      },
+      "version": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "model",
+      "version"
+    ],
+    "unique": {
+      "firmware_releases_pkey": [
+        "model",
+        "version"
+      ]
+    }
+  },
+  "firmware_rollouts": {
+    "columns": {
+      "campaign_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "current_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "model": {
+        "nn": true,
+        "type": "text"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "target_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id",
+      "model"
+    ],
+    "unique": {
+      "firmware_rollouts_pkey": [
+        "device_id",
+        "model"
+      ]
+    }
+  },
+  "firmware_targets": {
+    "columns": {
+      "model": {
+        "nn": true,
+        "type": "text"
+      },
+      "target_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "model"
+    ],
+    "unique": {
+      "firmware_targets_pkey": [
+        "model"
+      ]
+    }
+  },
+  "legacy_device_states": {
+    "columns": {
+      "address": {
+        "nn": true,
+        "type": "text"
+      },
+      "connected": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "key_time": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "reg_expiry": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "reg_time": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "register": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "session_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "device_id"
+    ],
+    "unique": {
+      "legacy_device_states_pkey": [
+        "device_id"
+      ]
+    }
+  },
+  "mqtt_usage_windows": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "brandname": {
+        "nn": true,
+        "type": "text"
+      },
+      "broker_node": {
+        "nn": true,
+        "type": "text"
+      },
+      "delivery_bytes": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "delivery_count": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "publish_bytes": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "publish_count": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "received_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "record_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "window_end": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "window_start": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "record_id"
+    ],
+    "unique": {
+      "mqtt_usage_windows_pkey": [
+        "record_id"
+      ]
+    }
+  },
+  "notification_dead_letters": {
+    "columns": {
+      "attempts": {
+        "nn": true,
+        "type": "integer"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "notification_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "notification_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "notifier_class": {
+        "nn": true,
+        "type": "text"
+      },
+      "recorded_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "notification_dead_letters_pkey": [
+        "id"
+      ]
+    }
+  },
+  "notification_deliveries": {
+    "columns": {
+      "delivered_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "notification_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "notifier_class": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "notifier_class",
+      "notification_id"
+    ],
+    "unique": {
+      "notification_deliveries_pkey": [
+        "notifier_class",
+        "notification_id"
+      ]
+    }
+  },
+  "ota_campaign_dispatch_state": {
+    "columns": {
+      "campaign_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_dispatch_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "next_permit_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "ota_campaign_dispatch_state_campaign_id_fkey": {
+        "cols": [
+          "campaign_id"
+        ],
+        "parent": "ota_campaigns",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "campaign_id"
+    ],
+    "unique": {
+      "ota_campaign_dispatch_state_pkey": [
+        "campaign_id"
+      ]
+    }
+  },
+  "ota_campaign_targets": {
+    "columns": {
+      "attempt_count": {
+        "nn": true,
+        "type": "integer"
+      },
+      "campaign_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "command_sent_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_error_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "lease_owner": {
+        "nn": true,
+        "type": "text"
+      },
+      "lease_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "next_attempt_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "ota_campaign_targets_campaign_id_fkey": {
+        "cols": [
+          "campaign_id"
+        ],
+        "parent": "ota_campaigns",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "campaign_id",
+      "device_id"
+    ],
+    "unique": {
+      "ota_campaign_targets_pkey": [
+        "campaign_id",
+        "device_id"
+      ]
+    }
+  },
+  "ota_campaigns": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "product_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "release_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "ota_campaigns_release_id_fkey": {
+        "cols": [
+          "release_id"
+        ],
+        "parent": "ota_releases",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "ota_campaigns_pkey": [
+        "id"
+      ]
+    }
+  },
+  "ota_deployment_events": {
+    "columns": {
+      "deployment_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "received_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "sequence": {
+        "nn": true,
+        "type": "bigint"
+      }
+    },
+    "fks": {
+      "ota_deployment_events_deployment_id_fkey": {
+        "cols": [
+          "deployment_id"
+        ],
+        "parent": "ota_deployments",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "deployment_id",
+      "sequence"
+    ],
+    "unique": {
+      "ota_deployment_events_pkey": [
+        "deployment_id",
+        "sequence"
+      ]
+    }
+  },
+  "ota_deployments": {
+    "columns": {
+      "campaign_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_sequence": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "release_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "ota_deployments_campaign_id_fkey": {
+        "cols": [
+          "campaign_id"
+        ],
+        "parent": "ota_campaigns",
+        "target": [
+          "id"
+        ]
+      },
+      "ota_deployments_release_id_fkey": {
+        "cols": [
+          "release_id"
+        ],
+        "parent": "ota_releases",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "ota_deployments_pkey": [
+        "id"
+      ]
+    }
+  },
+  "ota_global_dispatch_state": {
+    "columns": {
+      "id": {
+        "nn": true,
+        "type": "smallint"
+      },
+      "next_permit_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "ota_global_dispatch_state_pkey": [
+        "id"
+      ]
+    }
+  },
+  "ota_legacy_migrations": {
+    "columns": {
+      "canonical_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "migration_state": {
+        "nn": true,
+        "type": "text"
+      },
+      "reason_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "source_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "source_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "source_type",
+      "source_key"
+    ],
+    "unique": {
+      "ota_legacy_migrations_pkey": [
+        "source_type",
+        "source_key"
+      ]
+    }
+  },
+  "ota_releases": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "build_number": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "product_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "version": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "ota_releases_brand_cloud_id_product_id_version_build_number_key": [
+        "brand_cloud_id",
+        "product_id",
+        "version",
+        "build_number"
+      ],
+      "ota_releases_pkey": [
+        "id"
+      ]
+    }
+  },
+  "pki_app_issuances": {
+    "columns": {
+      "caller": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "claim_token": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "context_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": false,
+        "type": "text"
+      },
+      "issued_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "request_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "revoked_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "subject": {
+        "nn": true,
+        "type": "text"
+      },
+      "ttl_days": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {
+      "pki_app_issuances_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "environment",
+      "caller",
+      "request_id"
+    ],
+    "unique": {
+      "pki_app_issuances_fingerprint_key": [
+        "fingerprint"
+      ],
+      "pki_app_issuances_pkey": [
+        "environment",
+        "caller",
+        "request_id"
+      ]
+    }
+  },
+  "pki_app_revocations": {
+    "columns": {
+      "crl_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "reason": {
+        "nn": true,
+        "type": "text"
+      },
+      "requested_by": {
+        "nn": true,
+        "type": "text"
+      },
+      "revoked_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "pki_app_revocations_fingerprint_fkey": {
+        "cols": [
+          "fingerprint"
+        ],
+        "parent": "pki_app_issuances",
+        "target": [
+          "fingerprint"
+        ]
+      },
+      "pki_app_revocations_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "fingerprint"
+    ],
+    "unique": {
+      "pki_app_revocations_pkey": [
+        "fingerprint"
+      ]
+    }
+  },
+  "pki_approvals": {
+    "columns": {
+      "approved_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "auth_time": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "operation_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "principal_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "role": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "pki_approvals_operation_id_fkey": {
+        "cols": [
+          "operation_id"
+        ],
+        "parent": "pki_operations",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "operation_id",
+      "principal_id"
+    ],
+    "unique": {
+      "pki_approvals_pkey": [
+        "operation_id",
+        "principal_id"
+      ]
+    }
+  },
+  "pki_audit": {
+    "columns": {
+      "actor": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "event": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "operation_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "sequence": {
+        "nn": true,
+        "type": "bigint"
+      }
+    },
+    "fks": {
+      "pki_audit_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      },
+      "pki_audit_operation_id_fkey": {
+        "cols": [
+          "operation_id"
+        ],
+        "parent": "pki_operations",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "sequence"
+    ],
+    "unique": {
+      "pki_audit_pkey": [
+        "sequence"
+      ]
+    }
+  },
+  "pki_bundle_acknowledgments": {
+    "columns": {
+      "acknowledged_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "bundle_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "consumer_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      }
+    },
+    "fks": {
+      "pki_bundle_acknowledgments_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "issuer_id",
+      "bundle_version",
+      "consumer_id"
+    ],
+    "unique": {
+      "pki_bundle_acknowledgments_pkey": [
+        "issuer_id",
+        "bundle_version",
+        "consumer_id"
+      ]
+    }
+  },
+  "pki_certificate_bindings": {
+    "columns": {
+      "cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "legacy_operation_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "legacy_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "not_after": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "product_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "replaced_by": {
+        "nn": false,
+        "type": "text"
+      },
+      "replacement_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "revoked_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "serial": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "pki_certificate_bindings_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      },
+      "pki_certificate_bindings_legacy_operation_id_fkey": {
+        "cols": [
+          "legacy_operation_id"
+        ],
+        "parent": "pki_legacy_imports",
+        "target": [
+          "operation_id"
+        ]
+      },
+      "pki_certificate_bindings_replaced_by_fkey": {
+        "cols": [
+          "replaced_by"
+        ],
+        "parent": "pki_certificate_bindings",
+        "target": [
+          "fingerprint"
+        ]
+      }
+    },
+    "pk": [
+      "fingerprint"
+    ],
+    "unique": {
+      "pki_certificate_bindings_pkey": [
+        "fingerprint"
+      ]
+    }
+  },
+  "pki_crl_acknowledgments": {
+    "columns": {
+      "acknowledged_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "consumer_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      }
+    },
+    "fks": {
+      "pki_crl_acknowledgments_issuer_id_digest_fkey": {
+        "cols": [
+          "issuer_id",
+          "digest"
+        ],
+        "parent": "pki_crls",
+        "target": [
+          "issuer_id",
+          "digest"
+        ]
+      }
+    },
+    "pk": [
+      "issuer_id",
+      "digest",
+      "consumer_id"
+    ],
+    "unique": {
+      "pki_crl_acknowledgments_pkey": [
+        "issuer_id",
+        "digest",
+        "consumer_id"
+      ]
+    }
+  },
+  "pki_crls": {
+    "columns": {
+      "digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "imported_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "imported_by": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "next_update": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "number": {
+        "nn": true,
+        "type": "numeric(49,0)"
+      },
+      "pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "this_update": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "pki_crls_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "issuer_id",
+      "digest"
+    ],
+    "unique": {
+      "pki_crls_issuer_id_number_key": [
+        "issuer_id",
+        "number"
+      ],
+      "pki_crls_pkey": [
+        "issuer_id",
+        "digest"
+      ]
+    }
+  },
+  "pki_deployment_bootstrap_sessions": {
+    "columns": {
+      "bootstrap_fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "caller": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "crl_acknowledged": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "deployment_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "expires_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "installed_subjects": {
+        "nn": true,
+        "type": "text[]"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "revoked_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "root_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "sealed_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "session_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "subjects": {
+        "nn": true,
+        "type": "text[]"
+      }
+    },
+    "fks": {
+      "pki_deployment_bootstrap_sessions_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "session_id"
+    ],
+    "unique": {
+      "pki_deployment_bootstrap_sessions_environment_caller_key": [
+        "environment",
+        "caller"
+      ],
+      "pki_deployment_bootstrap_sessions_environment_deployment_id_key": [
+        "environment",
+        "deployment_id"
+      ],
+      "pki_deployment_bootstrap_sessions_pkey": [
+        "session_id"
+      ]
+    }
+  },
+  "pki_issuers": {
+    "columns": {
+      "cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "document": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "domain": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "kind": {
+        "nn": true,
+        "type": "text"
+      },
+      "lock_marker": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "parent_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "product_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "version": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {
+      "pki_issuers_parent_id_fkey": {
+        "cols": [
+          "parent_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "pki_issuers_environment_domain_cloud_id_product_id_kind_ver_key": [
+        "environment",
+        "domain",
+        "cloud_id",
+        "product_id",
+        "kind",
+        "version"
+      ],
+      "pki_issuers_pkey": [
+        "id"
+      ]
+    }
+  },
+  "pki_legacy_imports": {
+    "columns": {
+      "document": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "operation_id": {
+        "nn": true,
+        "type": "uuid"
+      }
+    },
+    "fks": {
+      "pki_legacy_imports_operation_id_fkey": {
+        "cols": [
+          "operation_id"
+        ],
+        "parent": "pki_operations",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "operation_id"
+    ],
+    "unique": {
+      "pki_legacy_imports_pkey": [
+        "operation_id"
+      ]
+    }
+  },
+  "pki_legacy_windows": {
+    "columns": {
+      "accept_until": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "started_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "environment"
+    ],
+    "unique": {
+      "pki_legacy_windows_pkey": [
+        "environment"
+      ]
+    }
+  },
+  "pki_operations": {
+    "columns": {
+      "action": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "created_by": {
+        "nn": true,
+        "type": "text"
+      },
+      "digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "idempotency_key": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "reason": {
+        "nn": true,
+        "type": "text"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "pki_operations_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "pki_operations_created_by_idempotency_key_key": [
+        "created_by",
+        "idempotency_key"
+      ],
+      "pki_operations_pkey": [
+        "id"
+      ]
+    }
+  },
+  "pki_replacements": {
+    "columns": {
+      "acknowledged_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "certificate_chain_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "old_fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "overlap_until": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "request_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "ttl_days": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {
+      "pki_replacements_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      },
+      "pki_replacements_old_fingerprint_fkey": {
+        "cols": [
+          "old_fingerprint"
+        ],
+        "parent": "pki_certificate_bindings",
+        "target": [
+          "fingerprint"
+        ]
+      }
+    },
+    "pk": [
+      "request_id"
+    ],
+    "unique": {
+      "pki_replacements_old_fingerprint_key": [
+        "old_fingerprint"
+      ],
+      "pki_replacements_pkey": [
+        "request_id"
+      ]
+    }
+  },
+  "pki_root_distrust": {
+    "columns": {
+      "certificate_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "domain": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "operation_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "public_key_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "version": {
+        "nn": true,
+        "type": "bigint"
+      }
+    },
+    "fks": {
+      "pki_root_distrust_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      },
+      "pki_root_distrust_operation_id_fkey": {
+        "cols": [
+          "operation_id"
+        ],
+        "parent": "pki_operations",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "issuer_id"
+    ],
+    "unique": {
+      "pki_root_distrust_operation_id_key": [
+        "operation_id"
+      ],
+      "pki_root_distrust_pkey": [
+        "issuer_id"
+      ],
+      "pki_root_distrust_version_key": [
+        "version"
+      ]
+    }
+  },
+  "pki_root_distrust_acknowledgments": {
+    "columns": {
+      "acknowledged_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "consumer_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "domain": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "loaded_roots_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "policy_sha256": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "environment",
+      "domain",
+      "policy_sha256",
+      "consumer_id",
+      "loaded_roots_sha256"
+    ],
+    "unique": {
+      "pki_root_distrust_acknowledgments_pkey": [
+        "environment",
+        "domain",
+        "policy_sha256",
+        "consumer_id",
+        "loaded_roots_sha256"
+      ]
+    }
+  },
+  "pki_server_issuances": {
+    "columns": {
+      "caller": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "claim_token": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "context_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "dns_names": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "domain": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": false,
+        "type": "text"
+      },
+      "issued_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "request_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "revoked_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "ttl_days": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {
+      "pki_server_issuances_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "environment",
+      "domain",
+      "caller",
+      "request_id"
+    ],
+    "unique": {
+      "pki_server_issuances_fingerprint_key": [
+        "fingerprint"
+      ],
+      "pki_server_issuances_pkey": [
+        "environment",
+        "domain",
+        "caller",
+        "request_id"
+      ]
+    }
+  },
+  "pki_server_revocations": {
+    "columns": {
+      "crl_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "reason": {
+        "nn": true,
+        "type": "text"
+      },
+      "requested_by": {
+        "nn": true,
+        "type": "text"
+      },
+      "revoked_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "pki_server_revocations_fingerprint_fkey": {
+        "cols": [
+          "fingerprint"
+        ],
+        "parent": "pki_server_issuances",
+        "target": [
+          "fingerprint"
+        ]
+      },
+      "pki_server_revocations_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "fingerprint"
+    ],
+    "unique": {
+      "pki_server_revocations_pkey": [
+        "fingerprint"
+      ]
+    }
+  },
+  "pki_service_client_issuances": {
+    "columns": {
+      "caller": {
+        "nn": true,
+        "type": "text"
+      },
+      "certificate_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "claim_token": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "context_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "csr_pem": {
+        "nn": true,
+        "type": "text"
+      },
+      "environment": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": false,
+        "type": "text"
+      },
+      "issued_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "request_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "revoked_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "status": {
+        "nn": true,
+        "type": "text"
+      },
+      "subject": {
+        "nn": true,
+        "type": "text"
+      },
+      "ttl_days": {
+        "nn": true,
+        "type": "integer"
+      }
+    },
+    "fks": {
+      "pki_service_client_issuances_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "environment",
+      "caller",
+      "request_id"
+    ],
+    "unique": {
+      "pki_service_client_issuances_fingerprint_key": [
+        "fingerprint"
+      ],
+      "pki_service_client_issuances_pkey": [
+        "environment",
+        "caller",
+        "request_id"
+      ]
+    }
+  },
+  "pki_service_client_revocations": {
+    "columns": {
+      "crl_digest": {
+        "nn": true,
+        "type": "text"
+      },
+      "fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "reason": {
+        "nn": true,
+        "type": "text"
+      },
+      "requested_by": {
+        "nn": true,
+        "type": "text"
+      },
+      "revoked_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {
+      "pki_service_client_revocations_fingerprint_fkey": {
+        "cols": [
+          "fingerprint"
+        ],
+        "parent": "pki_service_client_issuances",
+        "target": [
+          "fingerprint"
+        ]
+      },
+      "pki_service_client_revocations_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "fingerprint"
+    ],
+    "unique": {
+      "pki_service_client_revocations_pkey": [
+        "fingerprint"
+      ]
+    }
+  },
+  "pki_signing_claims": {
+    "columns": {
+      "cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "issuer_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "product_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_fingerprint": {
+        "nn": true,
+        "type": "text"
+      },
+      "request_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {
+      "pki_signing_claims_issuer_id_fkey": {
+        "cols": [
+          "issuer_id"
+        ],
+        "parent": "pki_issuers",
+        "target": [
+          "id"
+        ]
+      }
+    },
+    "pk": [
+      "request_id"
+    ],
+    "unique": {
+      "pki_signing_claims_pkey": [
+        "request_id"
+      ]
+    }
+  },
+  "product_telemetry_events": {
+    "columns": {
+      "account_device_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "campaign_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "correlation_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "customer_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "event_type": {
+        "nn": true,
+        "type": "text"
+      },
+      "firmware_version": {
+        "nn": true,
+        "type": "text"
+      },
+      "hardware_revision": {
+        "nn": true,
+        "type": "text"
+      },
+      "model": {
+        "nn": true,
+        "type": "text"
+      },
+      "occurred_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "org_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "readiness_state": {
+        "nn": true,
+        "type": "text"
+      },
+      "received_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "rollout_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "sample_window": {
+        "nn": true,
+        "type": "text"
+      },
+      "schema_version": {
+        "nn": true,
+        "type": "integer"
+      },
+      "serial_number_hash": {
+        "nn": true,
+        "type": "text"
+      },
+      "source": {
+        "nn": true,
+        "type": "text"
+      },
+      "user_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "video_cloud_devid": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "video_cloud_devid",
+      "event_id"
+    ],
+    "unique": {
+      "product_telemetry_events_pkey": [
+        "video_cloud_devid",
+        "event_id"
+      ]
+    }
+  },
+  "refresh_tokens": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "brandname": {
+        "nn": true,
+        "type": "text"
+      },
+      "expires_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "refresh_token": {
+        "nn": true,
+        "type": "text"
+      },
+      "scope": {
+        "nn": true,
+        "type": "text"
+      },
+      "subject_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "refresh_token"
+    ],
+    "unique": {
+      "refresh_tokens_pkey": [
+        "refresh_token"
+      ]
+    }
+  },
+  "registry_nodes": {
+    "columns": {
+      "current_sessions": {
+        "nn": true,
+        "type": "integer"
+      },
+      "endpoint_host": {
+        "nn": true,
+        "type": "text"
+      },
+      "kind": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_seen_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "max_sessions": {
+        "nn": true,
+        "type": "integer"
+      },
+      "metadata": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "node_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "region": {
+        "nn": true,
+        "type": "text"
+      },
+      "registered_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "version": {
+        "nn": true,
+        "type": "text"
+      },
+      "weight": {
+        "nn": true,
+        "type": "integer"
+      },
+      "zone": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "kind",
+      "node_id"
+    ],
+    "unique": {
+      "registry_nodes_pkey": [
+        "kind",
+        "node_id"
+      ]
+    }
+  },
+  "relay_geolinks": {
+    "columns": {
+      "country_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "priority": {
+        "nn": true,
+        "type": "integer"
+      },
+      "region": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "country_code",
+      "region"
+    ],
+    "unique": {
+      "relay_geolinks_pkey": [
+        "country_code",
+        "region"
+      ]
+    }
+  },
+  "relay_nodes": {
+    "columns": {
+      "healthy": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "id": {
+        "nn": true,
+        "type": "text"
+      },
+      "load": {
+        "nn": true,
+        "type": "integer"
+      },
+      "name": {
+        "nn": true,
+        "type": "text"
+      },
+      "region": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "url": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "relay_nodes_pkey": [
+        "id"
+      ]
+    }
+  },
+  "resource_cloud_deletions": {
+    "columns": {
+      "authorization_version": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "cancellation_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "cancellation_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "cloud_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "cutoff": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "empty": {
+        "nn": true,
+        "type": "boolean"
+      },
+      "operation_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "owner_user_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "ownership_version": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "phase": {
+        "nn": true,
+        "type": "text"
+      },
+      "receipt_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "operation_id"
+    ],
+    "unique": {
+      "resource_cloud_deletions_pkey": [
+        "operation_id"
+      ]
+    }
+  },
+  "resource_cloud_handoffs": {
+    "columns": {
+      "canceled_count": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "cloud_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "committed_ownership_version": {
+        "nn": false,
+        "type": "bigint"
+      },
+      "completed_count": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "created_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "cutoff": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "decided_at": {
+        "nn": false,
+        "type": "timestamp with time zone"
+      },
+      "decision_id": {
+        "nn": false,
+        "type": "uuid"
+      },
+      "decision_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "drain_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "evidence_sha256": {
+        "nn": false,
+        "type": "text"
+      },
+      "hold_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "operation_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "ownership_version": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "participant": {
+        "nn": true,
+        "type": "text"
+      },
+      "phase": {
+        "nn": true,
+        "type": "text"
+      },
+      "source_user_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "target_user_id": {
+        "nn": true,
+        "type": "uuid"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "participant",
+      "operation_id"
+    ],
+    "unique": {
+      "resource_cloud_handoffs_pkey": [
+        "participant",
+        "operation_id"
+      ]
+    }
+  },
+  "runtime_config": {
+    "columns": {
+      "key": {
+        "nn": true,
+        "type": "text"
+      },
+      "value": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "key"
+    ],
+    "unique": {
+      "runtime_config_pkey": [
+        "key"
+      ]
+    }
+  },
+  "turn_nodes": {
+    "columns": {
+      "current_sessions": {
+        "nn": true,
+        "type": "integer"
+      },
+      "last_error": {
+        "nn": true,
+        "type": "text"
+      },
+      "last_seen_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "max_sessions": {
+        "nn": true,
+        "type": "integer"
+      },
+      "metadata": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "node_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "public_host": {
+        "nn": true,
+        "type": "text"
+      },
+      "region": {
+        "nn": true,
+        "type": "text"
+      },
+      "registered_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "registration_token_hash": {
+        "nn": true,
+        "type": "text"
+      },
+      "secret_version": {
+        "nn": true,
+        "type": "integer"
+      },
+      "state": {
+        "nn": true,
+        "type": "text"
+      },
+      "tcp_port": {
+        "nn": true,
+        "type": "integer"
+      },
+      "tls_port": {
+        "nn": true,
+        "type": "integer"
+      },
+      "udp_port": {
+        "nn": true,
+        "type": "integer"
+      },
+      "updated_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "weight": {
+        "nn": true,
+        "type": "integer"
+      },
+      "zone": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "node_id"
+    ],
+    "unique": {
+      "turn_nodes_pkey": [
+        "node_id"
+      ]
+    }
+  },
+  "usage_event_receipts": {
+    "columns": {
+      "payload": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "payload_sha256": {
+        "nn": true,
+        "type": "text"
+      },
+      "received_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "usage_id": {
+        "nn": true,
+        "type": "text"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "usage_id"
+    ],
+    "unique": {
+      "usage_event_receipts_pkey": [
+        "usage_id"
+      ]
+    }
+  },
+  "usage_facts": {
+    "columns": {
+      "brand_cloud_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "dimensions": {
+        "nn": true,
+        "type": "jsonb"
+      },
+      "event_time": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "meter_epoch": {
+        "nn": true,
+        "type": "text"
+      },
+      "metric_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "quantity": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "received_at": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "sequence": {
+        "nn": true,
+        "type": "bigint"
+      },
+      "service_code": {
+        "nn": true,
+        "type": "text"
+      },
+      "source": {
+        "nn": true,
+        "type": "text"
+      },
+      "unit": {
+        "nn": true,
+        "type": "text"
+      },
+      "usage_id": {
+        "nn": true,
+        "type": "text"
+      },
+      "window_end": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      },
+      "window_start": {
+        "nn": true,
+        "type": "timestamp with time zone"
+      }
+    },
+    "fks": {},
+    "pk": [
+      "usage_id",
+      "metric_code"
+    ],
+    "unique": {
+      "usage_facts_pkey": [
+        "usage_id",
+        "metric_code"
+      ]
+    }
+  }
+}
