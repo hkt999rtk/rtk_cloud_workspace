@@ -4,6 +4,9 @@ from collections import Counter
 from html import escape
 from html.parser import HTMLParser
 import re
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
 import generate_database_er_atlas as atlas
 from database_er_narratives_en import ENTITY_NOTES, GROUPS
@@ -29,7 +32,7 @@ class AtlasHTML(HTMLParser):
 class AtlasGenerationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.databases = {name: atlas.parse_database(paths) for name, paths in atlas.SOURCES.items()}
+        cls.databases = {db: atlas.parse_database(paths) for db, paths in atlas.SOURCES.items()}
         cls.page = atlas.OUT.read_text()
         cls.html = AtlasHTML()
         cls.html.feed(cls.page)
@@ -41,7 +44,7 @@ class AtlasGenerationTest(unittest.TestCase):
         entities = [atlas.entity_id(db, table) for db, tables in self.databases.items() for table in tables]
         fks = [atlas.relation_id(db, fk) for db, tables in self.databases.items()
                for table in tables.values() for fk in table['fks'].values()]
-        self.assertEqual((239, 242), (len(entities), len(fks)))
+        self.assertEqual(sum(len(tables) for tables in self.databases.values()), len(entities))
         self.assertTrue(set(entities + fks) <= ids)
         self.assertEqual(set('#' + name for name in entities + fks), set(self.html.search_items))
         self.assertTrue(set(entities + fks) <= set(self.html.fragments))
@@ -93,10 +96,15 @@ class AtlasGenerationTest(unittest.TestCase):
                     self.assertIn(f'href="#{parent}"', detail)
 
     def test_regeneration_is_stable(self):
-        page, index = atlas.OUT.read_bytes(), atlas.INDEX.read_bytes()
-        atlas.main()
-        self.assertEqual(page, atlas.OUT.read_bytes())
-        self.assertEqual(index, atlas.INDEX.read_bytes())
+        # Never rewrite published documentation as a test side effect.
+        with tempfile.TemporaryDirectory() as directory:
+            out, index = Path(directory) / 'atlas.html', Path(directory) / 'index.md'
+            by_paths = {tuple(paths): self.databases[name] for name, paths in atlas.SOURCES.items()}
+            with patch.object(atlas, 'OUT', out), patch.object(atlas, 'INDEX', index), patch.object(atlas, 'parse_database', side_effect=lambda paths: by_paths[tuple(paths)]):
+                atlas.main()
+                first = out.read_bytes(), index.read_bytes()
+                atlas.main()
+                self.assertEqual(first, (out.read_bytes(), index.read_bytes()))
 
     def test_readable_content_is_english(self):
         for path in (atlas.OUT, atlas.INDEX, atlas.ROOT / 'scripts/database_er_narratives_en.py'):

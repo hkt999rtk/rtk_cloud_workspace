@@ -1608,13 +1608,6 @@ cases:
       title: exports JavaScript SDK metadata
       owner: rtk_cloud_client
       status: active
-    - canonical_key: js://cloud-client-javascript/test/package.test.ts#exposes%20firmware%20campaign%20vocabulary%20and%20report%20field%20helpers
-      module: cloud-client-javascript
-      language: javascript
-      source: test/package.test.ts
-      title: exposes firmware campaign vocabulary and report field helpers
-      owner: rtk_cloud_client
-      status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#exposes%20local%20onboarding%20interface%20with%20explicit%20unsupported%20behavior
       module: cloud-client-javascript
       language: javascript
@@ -1649,13 +1642,6 @@ cases:
       language: javascript
       source: test/package.test.ts
       title: implements canonical device-centric HTTP helpers
-      owner: rtk_cloud_client
-      status: active
-    - canonical_key: js://cloud-client-javascript/test/package.test.ts#implements%20firmware%20compatibility%20helpers%20with%20fixtures
-      module: cloud-client-javascript
-      language: javascript
-      source: test/package.test.ts
-      title: implements firmware compatibility helpers with fixtures
       owner: rtk_cloud_client
       status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#implements%20media%20library%20JSON%20and%20logs%20helpers%20with%20fixtures
@@ -1708,11 +1694,11 @@ cases:
       title: normalizes legacy route error bodies before falling back to HTTP status
       owner: rtk_cloud_client
       status: active
-    - canonical_key: js://cloud-client-javascript/test/package.test.ts#preserves%20firmware%20legacy%20errors%20and%20binary%20download%20headers
+    - canonical_key: js://cloud-client-javascript/test/package.test.ts#preserves%20Product%20OTA%20event%20sequence%20and%20conflict%20evidence
       module: cloud-client-javascript
       language: javascript
       source: test/package.test.ts
-      title: preserves firmware legacy errors and binary download headers
+      title: preserves Product OTA event sequence and conflict evidence
       owner: rtk_cloud_client
       status: active
     - canonical_key: js://cloud-client-javascript/test/package.test.ts#preserves%20media%20library%20route%20failures%20and%20logs%20headers

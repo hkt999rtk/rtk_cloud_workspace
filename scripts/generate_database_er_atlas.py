@@ -30,6 +30,8 @@ IDENT = r'[a-z_][a-z0-9_]*'
 CREATE = re.compile(rf'CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?({IDENT})\s*\(', re.I)
 ALTER = re.compile(rf'ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?({IDENT})\s+([^;]+)', re.I)
 UNIQUE = re.compile(rf'CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?({IDENT})\s+ON\s+({IDENT})\s*\(([^;]+)', re.I)
+DROP_TABLE = re.compile(rf'DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?({IDENT})(?:\s+(RESTRICT|CASCADE))?\s*;', re.I)
+DROP_INDEX = re.compile(rf'DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?({IDENT})\s*;', re.I)
 REF = re.compile(rf'REFERENCES\s+({IDENT})\s*\(([^)]+)\)', re.I)
 
 
@@ -99,7 +101,7 @@ def add_definition(table, definition, source):
         column, rest = match.groups()
         column = column.lower()
         dtype = re.split(r'\s+(?:NOT\s+NULL|NULL|PRIMARY|UNIQUE|REFERENCES|DEFAULT|CHECK|COLLATE|CONSTRAINT|GENERATED)\b', rest, maxsplit=1, flags=re.I)[0]
-        table['columns'][column] = {'type': dtype.lower(), 'nn': bool(re.search(r'NOT NULL|PRIMARY KEY', rest, re.I))}
+        table['columns'][column] = {'type': dtype.lower(), 'nn': bool(re.search(r'NOT NULL', rest, re.I) or (re.search(r'PRIMARY KEY', rest, re.I) and (table.get('_dialect', 'postgres') != 'sqlite' or dtype.lower() == 'integer')))}
         cols = (column,)
         if re.search(r'PRIMARY KEY', rest, re.I):
             table['pk'] = cols
@@ -113,42 +115,126 @@ def add_definition(table, definition, source):
         table['fks'][cname] = {'child': table['name'], 'cols': cols, 'parent': target.lower(), 'target': keys(target_cols), 'source': source, 'constraint': cname}
 
 
-def apply_alter(table, text, source):
+def rename_column(tables, table, old, new):
+    if old not in table['columns']:
+        if new in table['columns']: return  # historical conditional repair
+        raise ValueError(f"Unknown rename column: {table['name']}.{old}")
+    table['columns'] = {new if c == old else c: v for c, v in table['columns'].items()}
+    replace = lambda cols: tuple(new if c == old else c for c in cols)
+    table['pk'] = replace(table['pk'])
+    table['unique'] = {k: replace(v) for k, v in table['unique'].items()}
+    for t in tables.values():
+        for fk in t['fks'].values():
+            if fk['child'] == table['name']: fk['cols'] = replace(fk['cols'])
+            if fk['parent'] == table['name']: fk['target'] = replace(fk['target'])
+
+
+def apply_alter(table, text, source, tables=None):
+    tables = tables if tables is not None else {table['name']: table}
     for action in split_sql(text):
         action = re.sub(r'\s+', ' ', action).strip()
-        add = re.match(r'ADD\s+(?:COLUMN\s+)?(?:IF NOT EXISTS\s+)?(.+)', action, re.I)
+        add = re.fullmatch(r'ADD\s+(?:COLUMN\s+)?(?:IF NOT EXISTS\s+)?(.+)', action, re.I)
         if add:
-            add_definition(table, add.group(1), source)
+            definition = add.group(1)
+            col = definition.split()[0].lower()
+            if 'IF NOT EXISTS' not in action.upper() or col not in table['columns']:
+                add_definition(table, definition, source)
             continue
-        drop = re.match(rf'DROP CONSTRAINT\s+(?:IF EXISTS\s+)?({IDENT})', action, re.I)
+        drop = re.fullmatch(rf'DROP CONSTRAINT\s+(?:IF EXISTS\s+)?({IDENT})(?: RESTRICT)?', action, re.I)
         if drop:
-            table['fks'].pop(drop.group(1).lower(), None)
-            table['unique'].pop(drop.group(1).lower(), None)
-        nullable = re.match(rf'ALTER COLUMN\s+({IDENT})\s+(SET|DROP) NOT NULL', action, re.I)
-        if nullable and nullable.group(1).lower() in table['columns']:
+            name = drop.group(1).lower()
+            if name == table['name'] + '_pkey': table['pk'] = ()
+            table['fks'].pop(name, None)
+            table['unique'].pop(name, None)
+            continue
+        drop = re.fullmatch(rf'DROP COLUMN\s+(?:IF EXISTS\s+)?({IDENT})(?: RESTRICT)?', action, re.I)
+        if drop:
+            col = drop.group(1).lower()
+            table['columns'].pop(col, None)
+            table['pk'] = tuple(c for c in table['pk'] if c != col)
+            table['unique'] = {k: v for k, v in table['unique'].items() if col not in v}
+            table['fks'] = {k: v for k, v in table['fks'].items() if col not in v['cols']}
+            continue
+        rename = re.fullmatch(rf'RENAME COLUMN ({IDENT}) TO ({IDENT})', action, re.I)
+        if rename:
+            rename_column(tables, table, *[x.lower() for x in rename.groups()])
+            continue
+        rename = re.fullmatch(rf'RENAME TO ({IDENT})', action, re.I)
+        if rename:
+            old, new = table['name'], rename.group(1).lower()
+            if new in tables: raise ValueError(f'Duplicate table rename: {new}')
+            tables[new] = tables.pop(old)
+            table['name'] = new
+            for t in tables.values():
+                for fk in t['fks'].values():
+                    if fk['child'] == old: fk['child'] = new
+                    if fk['parent'] == old: fk['parent'] = new
+            continue
+        nullable = re.fullmatch(rf'ALTER COLUMN\s+({IDENT})\s+(SET|DROP) NOT NULL', action, re.I)
+        if nullable:
             table['columns'][nullable.group(1).lower()]['nn'] = nullable.group(2).upper() == 'SET'
+            continue
+        dtype = re.fullmatch(rf'ALTER COLUMN ({IDENT}) (?:SET DATA )?TYPE (.+?)(?: USING .+)?', action, re.I)
+        if dtype:
+            table['columns'][dtype.group(1).lower()]['type'] = dtype.group(2).lower()
+            continue
+        # These operations do not change the ER attributes represented here.
+        if re.fullmatch(rf'ALTER COLUMN {IDENT} (?:SET DEFAULT .+|DROP DEFAULT)', action, re.I): continue
+        if re.fullmatch(rf'(?:ENABLE|DISABLE) TRIGGER {IDENT}|VALIDATE CONSTRAINT {IDENT}', action, re.I): continue
+        raise ValueError(f'Unsupported ALTER TABLE in {source}: {action}')
 
 
-def parse_database(paths):
+def sql_blocks(file):
+    raw = file.read_text()
+    if file.suffix != '.go': return [raw]
+    # Only the initializer owns runtime DDL; Reset is a test helper, not a migration.
+    if file.as_posix().endswith('/internal/postgres/postgres.go'):
+        raw = raw[raw.index('func EnsureSchema('):]
+        raw = re.split(r'\nfunc ', raw, maxsplit=1)[0]
+    return re.findall(r'`([^`]*)`', raw, re.S)
+
+
+def parse_database(paths, *, dialect=None):
+    if dialect is None:
+        dialect = 'sqlite' if any('repos/rtk_cloud_admin/' in p or 'repos/rtk_cloud_frontend/' in p for p in paths) else 'postgres'
     tables = {}
     for file in source_files(paths):
-        raw = file.read_text()
-        blocks = re.findall(r'`([^`]*)`', raw, re.S) if file.suffix == '.go' else [raw]
+        blocks = sql_blocks(file)
         for block in blocks:
             text = re.sub(r'--[^\n]*', '', block)
             events = [(m.start(), 'create', m) for m in CREATE.finditer(text)]
             events += [(m.start(), 'alter', m) for m in ALTER.finditer(text)]
             events += [(m.start(), 'unique', m) for m in UNIQUE.finditer(text)]
+            events += [(m.start(), 'drop_table', m) for m in DROP_TABLE.finditer(text)]
+            events += [(m.start(), 'drop_index', m) for m in DROP_INDEX.finditer(text)]
             source = file.relative_to(ROOT).as_posix()
+            recognized = {position for position, _, _ in events}
+            # A schema-changing statement outside our supported grammar must
+            # fail extraction rather than disappear from the diagram silently.
+            for ddl in re.finditer(r'\b(?:CREATE\s+(?:(?:TEMP|TEMPORARY|UNLOGGED)\s+)?TABLE|ALTER\s+TABLE|DROP\s+TABLE|CREATE\s+UNIQUE\s+INDEX|DROP\s+INDEX)\b', text, re.I):
+                # Migration-local temporary tables are deliberately excluded
+                # from the persistent business catalog.
+                if re.match(r'CREATE\s+(?:TEMP|TEMPORARY)\s+TABLE', ddl.group(), re.I):
+                    continue
+                if ddl.start() not in recognized:
+                    snippet = text[ddl.start():].split(';', 1)[0][:180]
+                    raise ValueError(f'Unsupported DDL in {source}: {snippet}')
             for _, kind, match in sorted(events, key=lambda event: event[0]):
                 if kind == 'create':
                     name = match.group(1).lower()
                     if name in tables: continue
-                    table = tables[name] = {'name': name, 'columns': {}, 'pk': (), 'unique': {}, 'fks': {}, 'source': source}
+                    table = tables[name] = {'_dialect': dialect, 'name': name, 'columns': {}, 'pk': (), 'unique': {}, 'fks': {}, 'source': source}
                     for item in split_sql(body_at(text, match.end() - 1)):
                         add_definition(table, item, source)
                 elif kind == 'alter' and match.group(1).lower() in tables:
-                    apply_alter(tables[match.group(1).lower()], match.group(2), source)
+                    apply_alter(tables[match.group(1).lower()], match.group(2), source, tables)
+                elif kind == 'drop_table':
+                    if match.group(2) and match.group(2).upper() == 'CASCADE':
+                        raise ValueError(f'Unsupported cascading table removal in {source}')
+                    tables.pop(match.group(1).lower(), None)
+                elif kind == 'drop_index':
+                    for table in tables.values():
+                        table['unique'].pop(match.group(1).lower(), None)
                 elif kind == 'unique':
                     index, name, tail = match.groups()
                     if name.lower() in tables and not re.search(r'\bWHERE\b', tail, re.I):
@@ -157,7 +243,8 @@ def parse_database(paths):
                             tables[name.lower()]['unique'][index.lower()] = cols
     for table in tables.values():
         for column in table['pk']:
-            table['columns'][column]['nn'] = True
+            if dialect != 'sqlite' or table['columns'][column]['type'] == 'integer':
+                table['columns'][column]['nn'] = True
         for fk in table['fks'].values():
             assert fk['parent'] in tables, f"Unresolved table {fk}"
             parent = tables[fk['parent']]
@@ -507,7 +594,7 @@ These are service schema collections, not a claim that there are exactly five ph
 
 ## Sources and reproducibility
 
-The generator reads Account Manager and Billing migrations in filename order, Video Cloud runtime PostgreSQL schema and PKI DDL, Cloud Admin SQLite migrations, and Frontend SQLite repository initializers. It incorporates literal `ALTER TABLE` column additions, nullability changes, FK additions/removals, and unconditional unique indexes. Table attributes omitted from a drawing are available in its database’s full entity catalog. Each entity explanation links to its checked-in schema source. The descriptions express the schema's data responsibility and intended operation context, informed by representative runtime call sites; they are not proof of activity in any deployed database.
+The generator reads Account Manager and Billing migrations in filename order, Video Cloud runtime PostgreSQL schema and PKI DDL, Cloud Admin SQLite migrations, and Frontend SQLite repository initializers. It applies literal migration table/index deletion, column addition/removal/rename, table rename, nullability changes, FK additions/removals, and unconditional unique indexes in source order. Test reset helpers are excluded; unsupported persistent table/index DDL fails explicitly. Table attributes omitted from a drawing are available in its database’s full entity catalog. Each entity explanation links to its checked-in schema source. The descriptions express the schema's data responsibility and intended operation context, informed by representative runtime call sites; they are not proof of activity in any deployed database.
 
 The revision below is each checkout's base commit. The generated model also
 includes any uncommitted changes to the listed source files in the current
@@ -521,7 +608,7 @@ Refresh from the workspace root with `python3 scripts/generate_database_er_atlas
 
 ## Interpretation boundary
 
-This is a static model of literal checked-in DDL, not a migration execution engine or live database introspection. Conditional historical repair branches and dynamically constructed SQL require review if their behavior changes.
+This is a static model of literal checked-in DDL, not a migration execution engine or live database introspection. Conditional historical repair branches and dynamically constructed SQL require review if their behavior changes. Account Manager, Video Cloud, and Admin extraction is also compared with independently initialized PostgreSQL/SQLite catalogs using `scripts/check_database_er_catalog.py`; the stored local catalog fixtures and upgrade tests are under `tests/fixtures/database-simplification` and the service repositories. This does not assert that any deployed environment has already upgraded.
 
 Dashed orange Overall links are **logical references, not enforced database foreign keys**. They use no Crow’s-foot cardinality because the cited source does not establish one. Each link names both endpoint columns and links to its checked-in code or contract evidence. Currently evidenced mappings are Account Manager `organizations.id` to Billing `commercial_accounts.organization_id`, Account Manager `organizations.id` to Video Cloud `devices.org_id`, and Account Manager `devices.id` to Video Cloud `devices.account_device_id`. The Account Manager device UUID and Video Cloud `devices.id` are deliberately not equated. No Cloud Admin or Cloud Frontend cross-service link is inferred from similar column names alone. The only Crow’s-foot lines represent declared FKs in the extracted DDL.
 

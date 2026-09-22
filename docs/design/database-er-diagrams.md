@@ -4,9 +4,9 @@ Open the [Crow’s-foot ER atlas](database-er-atlas.html).
 
 ## Notation and navigation
 
-The single-file atlas opens with an **Overall** view of five schema owners and only evidence-backed cross-service mappings. Select a service to reach reviewed topical groups of at most eight entities. Every group explains the data domain and operation context; every entity has its own data-purpose and usage-scenario description. Group membership is editorial, **not** an extra FK or a claim that every member is directly connected. All 239 entities, including isolated tables, occur in exactly one group. The description inventory is maintained in `scripts/database_er_narratives_en.py`; regeneration fails when a new DDL table lacks a group or explanation.
+The single-file atlas opens with an **Overall** view of five schema owners and only evidence-backed cross-service mappings. Select a service to reach reviewed topical groups of at most eight entities. Every group explains the data domain and operation context; every entity has its own data-purpose and usage-scenario description. Group membership is editorial, **not** an extra FK or a claim that every member is directly connected. All 224 entities, including isolated tables, occur in exactly one group. The description inventory is maintained in `scripts/database_er_narratives_en.py`; regeneration fails when a new DDL table lacks a group or explanation.
 
-Search indexes all 239 entities and 242 FK relationships. Entity nodes open complete columns, descriptions, and outgoing/incoming FK lists. Each FK detail explicitly links both the referencing (child) and referenced (parent) entity; the parent catalog links back to every child that references it. Relationship lines, R labels, and group links open a stable relationship anchor. Direct `file://...#entity-...` or `#relation-...` links expand the containing details; browser Back/Forward follows those anchors. Return links lead to Overall.
+Search indexes all 224 entities and 235 FK relationships. Entity nodes open complete columns, descriptions, and outgoing/incoming FK lists. Each FK detail explicitly links both the referencing (child) and referenced (parent) entity; the parent catalog links back to every child that references it. Relationship lines, R labels, and group links open a stable relationship anchor. Direct `file://...#entity-...` or `#relation-...` links expand the containing details; browser Back/Forward follows those anchors. Return links lead to Overall.
 
 Each Crow’s-foot detail diagram places a referencing entity beside the entities it references. Both endpoints of every extracted foreign key appear together. Related entities may recur in several diagrams; the complete entity catalog links to every occurrence. Diagrams have at most four entity boxes and three relationships. Native expandable sections keep the document navigable; fixed minimum drawing width preserves readable text on smaller screens.
 
@@ -21,17 +21,17 @@ Each Crow’s-foot detail diagram places a referencing entity beside the entitie
 
 | Schema owner | Tables | Declared relationships | Models |
 | --- | ---: | ---: | ---: |
-| Account Manager | 92 | 131 | 81 |
+| Account Manager | 88 | 124 | 77 |
 | Billing | 55 | 71 | 47 |
-| Video Cloud | 71 | 37 | 28 |
-| Cloud Admin | 16 | 2 | 2 |
+| Video Cloud | 64 | 37 | 28 |
+| Cloud Admin | 12 | 2 | 2 |
 | Cloud Frontend | 5 | 1 | 1 |
 
 These are service schema collections, not a claim that there are exactly five physical database instances. Video Cloud includes the PKI registry; Frontend includes its SQLite analytics/search/leads schemas. Runtime stores without relational DDL, external provider storage, and Redis keyspaces have no SQL ER model here. Schema migration metadata tables are included where defined by these sources.
 
 ## Sources and reproducibility
 
-The generator reads Account Manager and Billing migrations in filename order, Video Cloud runtime PostgreSQL schema and PKI DDL, Cloud Admin SQLite migrations, and Frontend SQLite repository initializers. It incorporates literal `ALTER TABLE` column additions, nullability changes, FK additions/removals, and unconditional unique indexes. Table attributes omitted from a drawing are available in its database’s full entity catalog. Each entity explanation links to its checked-in schema source. The descriptions express the schema's data responsibility and intended operation context, informed by representative runtime call sites; they are not proof of activity in any deployed database.
+The generator reads Account Manager and Billing migrations in filename order, Video Cloud runtime PostgreSQL schema and PKI DDL, Cloud Admin SQLite migrations, and Frontend SQLite repository initializers. It applies literal migration table/index deletion, column addition/removal/rename, table rename, nullability changes, FK additions/removals, and unconditional unique indexes in source order. Test reset helpers are excluded; unsupported persistent table/index DDL fails explicitly. Table attributes omitted from a drawing are available in its database’s full entity catalog. Each entity explanation links to its checked-in schema source. The descriptions express the schema's data responsibility and intended operation context, informed by representative runtime call sites; they are not proof of activity in any deployed database.
 
 The revision below is each checkout's base commit. The generated model also
 includes any uncommitted changes to the listed source files in the current
@@ -39,17 +39,17 @@ workspace; it is not necessarily a pure snapshot of those commits.
 
 | Source checkout | Base commit |
 | --- | --- |
-| Account Manager | `e82d50e622df` |
+| Account Manager | `5c63c1526199` |
 | Billing | `026016a9e797` |
-| Video Cloud | `5041964d6023` |
-| Cloud Admin | `8063ab2616b7` |
+| Video Cloud | `1a2ae267ff9b` |
+| Cloud Admin | `4d93e5ce5f0b` |
 | Cloud Frontend | `6a7f3fb15cbc` |
 
 Refresh from the workspace root with `python3 scripts/generate_database_er_atlas.py`. The process reads source files only; it never opens a deployed database. Exact source paths appear in the entity catalog.
 
 ## Interpretation boundary
 
-This is a static model of literal checked-in DDL, not a migration execution engine or live database introspection. Conditional historical repair branches and dynamically constructed SQL require review if their behavior changes.
+This is a static model of literal checked-in DDL, not a migration execution engine or live database introspection. Conditional historical repair branches and dynamically constructed SQL require review if their behavior changes. Account Manager, Video Cloud, and Admin extraction is also compared with independently initialized PostgreSQL/SQLite catalogs using `scripts/check_database_er_catalog.py`; the stored local catalog fixtures and upgrade tests are under `tests/fixtures/database-simplification` and the service repositories. This does not assert that any deployed environment has already upgraded.
 
 Dashed orange Overall links are **logical references, not enforced database foreign keys**. They use no Crow’s-foot cardinality because the cited source does not establish one. Each link names both endpoint columns and links to its checked-in code or contract evidence. Currently evidenced mappings are Account Manager `organizations.id` to Billing `commercial_accounts.organization_id`, Account Manager `organizations.id` to Video Cloud `devices.org_id`, and Account Manager `devices.id` to Video Cloud `devices.account_device_id`. The Account Manager device UUID and Video Cloud `devices.id` are deliberately not equated. No Cloud Admin or Cloud Frontend cross-service link is inferred from similar column names alone. The only Crow’s-foot lines represent declared FKs in the extracted DDL.
 
