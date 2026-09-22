@@ -62,6 +62,10 @@ func pemCertificates(raw []byte) ([]*x509.Certificate, error) {
 }
 
 func pemCRLs(raw []byte) ([]*x509.RevocationList, error) {
+	// DER is binary: trimming it can remove a valid trailing signature byte.
+	if list, err := x509.ParseRevocationList(raw); err == nil {
+		return []*x509.RevocationList{list}, nil
+	}
 	var lists []*x509.RevocationList
 	for len(bytes.TrimSpace(raw)) > 0 {
 		block, rest := pem.Decode(raw)
