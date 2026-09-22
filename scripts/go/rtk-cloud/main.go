@@ -4274,6 +4274,10 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 		factoryPorts = []string{factoryPort}
 	}
 	mqttPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_PORT"), "18883")
+	mqttService := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_MQTT_SERVICE"), "mqtt")
+	if mqttService != "mqtt" && mqttService != "mqtt-pki" {
+		return nil, nil, fmt.Errorf("unsupported MQTT service %q", mqttService)
+	}
 	loggerPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_LOGGER_PORT"), "18090")
 	type portForwardSpec struct {
 		ns          string
@@ -4292,7 +4296,7 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 		factoryURLs = append(factoryURLs, "http://127.0.0.1:"+port)
 	}
 	if includeMQTT {
-		forwards = append(forwards, portForwardSpec{ns: stack + "-video-cloud", service: "mqtt", port: "mqtts", local: mqttPort})
+		forwards = append(forwards, portForwardSpec{ns: stack + "-video-cloud", service: mqttService, port: "mqtts", local: mqttPort})
 		forwards = append(forwards, portForwardSpec{ns: stack + "-logger", service: "cloud-logger", port: "http", local: loggerPort})
 	}
 	cmds := []*exec.Cmd{}

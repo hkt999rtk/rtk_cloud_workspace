@@ -38,6 +38,10 @@ func TestPrepareFactoryProductionCredentialUsesAccountManagerIssuance(t *testing
 			}
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"production_run": map[string]string{"id": "production-001"}, "factory_jwt": productionJWT})
+		case "GET /v1/admin/brand-clouds/brand-001/device-item-profiles/profile-001":
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profile": map[string]string{"pki_status": "ready", "pki_issuer_id": "issuer-001"}})
+		case "GET /v1/platform/pki/issuers/issuer-001":
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "active"})
 		default:
 			http.Error(w, "unexpected request", http.StatusNotFound)
 		}
@@ -310,6 +314,10 @@ func TestPrepareFactoryProductionCredentialsCreatesProductPerDeviceType(t *testi
 			runBatches = append(runBatches, payload["batch_id"].(string))
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"production_run": map[string]string{"id": "run-" + payload["batch_id"].(string)}, "factory_jwt": "jwt-" + payload["batch_id"].(string)})
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/device-item-profiles/profile-"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_item_profile": map[string]string{"pki_status": "ready", "pki_issuer_id": "issuer-ready"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/platform/pki/issuers/issuer-ready":
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "active"})
 		default:
 			http.Error(w, "unexpected request", http.StatusNotFound)
 		}
@@ -418,6 +426,116 @@ func TestFactoryProductionAPIErrorsDoNotReturnCredentials(t *testing.T) {
 	}
 	if run, jwt, err := createFactoryProductionRun(ctx, "token", "brand", "profile", "run", 1, time.Now()); err == nil || run != "" || jwt != "" || !strings.Contains(err.Error(), "HTTP 503") {
 		t.Fatalf("run=%s jwt=%s err=%v", run, jwt, err)
+	}
+}
+
+func TestFactoryProductionRunWaitsOnlyForPendingProductPKI(t *testing.T) {
+	oldSleep := factoryProductionPKIRetrySleep
+	factoryProductionPKIRetrySleep = func(time.Duration) {}
+	t.Cleanup(func() { factoryProductionPKIRetrySleep = oldSleep })
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/production-runs") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if requests < 3 {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":{"code":"pki_not_ready"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"production_run":{"id":"run-ready"},"factory_jwt":"jwt-ready"}`))
+	}))
+	defer server.Close()
+	run, jwt, err := createFactoryProductionRun(accountManagerContext{BaseURL: server.URL}, "token", "brand", "profile", "batch", 1, time.Now())
+	if err != nil || run != "run-ready" || jwt != "jwt-ready" || requests != 3 {
+		t.Fatalf("run=%q jwt=%q requests=%d err=%v", run, jwt, requests, err)
+	}
+
+	conflicts := 0
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conflicts++
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"duplicate_batch"}}`))
+	}))
+	defer other.Close()
+	if _, _, err := createFactoryProductionRun(accountManagerContext{BaseURL: other.URL}, "token", "brand", "profile", "batch", 1, time.Now()); err == nil || !strings.Contains(err.Error(), "duplicate_batch") || conflicts != 1 {
+		t.Fatalf("unrelated conflict retried: calls=%d err=%v", conflicts, err)
+	}
+
+	pendingCalls := 0
+	pending := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pendingCalls++
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"pki_not_ready"}}`))
+	}))
+	defer pending.Close()
+	if _, _, err := createFactoryProductionRun(accountManagerContext{BaseURL: pending.URL}, "token", "brand", "profile", "batch", 1, time.Now()); err == nil || !strings.Contains(err.Error(), "pki_not_ready") || pendingCalls != 90 {
+		t.Fatalf("pending PKI did not stop at its retry bound: calls=%d err=%v", pendingCalls, err)
+	}
+}
+
+func TestFactoryProductionWaitsForControllerActivation(t *testing.T) {
+	oldSleep := factoryProductionPKIRetrySleep
+	factoryProductionPKIRetrySleep = func(time.Duration) {}
+	t.Cleanup(func() { factoryProductionPKIRetrySleep = oldSleep })
+	profiles, issuers := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/admin/brand-clouds/brand/device-item-profiles/product":
+			profiles++
+			if profiles == 1 {
+				_, _ = w.Write([]byte(`{"device_item_profile":{"pki_status":"pending"}}`))
+			} else {
+				_, _ = w.Write([]byte(`{"device_item_profile":{"pki_status":"ready","pki_issuer_id":"issuer"}}`))
+			}
+		case "/v1/platform/pki/issuers/issuer":
+			issuers++
+			if issuers == 1 {
+				_, _ = w.Write([]byte(`{"status":"ready"}`))
+			} else {
+				_, _ = w.Write([]byte(`{"status":"active"}`))
+			}
+		default:
+			http.Error(w, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	if err := waitFactoryProductIssuerActive(accountManagerContext{BaseURL: server.URL}, "token", "brand", "product"); err != nil || profiles != 3 || issuers != 2 {
+		t.Fatalf("profiles=%d issuers=%d err=%v", profiles, issuers, err)
+	}
+}
+
+func TestFactoryProductionIssuerWaitRejectsFailedAndUnauthorizedStates(t *testing.T) {
+	for _, tc := range []struct {
+		name, profile, issuer, want string
+		profileStatus, issuerStatus int
+	}{
+		{"profile unavailable", `{"error":{"code":"unavailable"}}`, "", "HTTP 503", 503, 0},
+		{"profile malformed", `{`, "", "unexpected end", 200, 0},
+		{"profile failed", `{"device_item_profile":{"pki_status":"failed"}}`, "", "Product PKI failed", 200, 0},
+		{"issuer denied", `{"device_item_profile":{"pki_status":"ready","pki_issuer_id":"issuer"}}`, `{"error":{"code":"denied"}}`, "HTTP 403", 200, 403},
+		{"issuer malformed", `{"device_item_profile":{"pki_status":"ready","pki_issuer_id":"issuer"}}`, `{`, "unexpected end", 200, 200},
+		{"issuer retired", `{"device_item_profile":{"pki_status":"ready","pki_issuer_id":"issuer"}}`, `{"status":"retired"}`, `status "retired"`, 200, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/v1/platform/pki/issuers/") {
+					w.WriteHeader(tc.issuerStatus)
+					_, _ = w.Write([]byte(tc.issuer))
+					return
+				}
+				w.WriteHeader(tc.profileStatus)
+				_, _ = w.Write([]byte(tc.profile))
+			}))
+			defer server.Close()
+			if err := waitFactoryProductIssuerActive(accountManagerContext{BaseURL: server.URL}, "token", "brand", "product"); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 

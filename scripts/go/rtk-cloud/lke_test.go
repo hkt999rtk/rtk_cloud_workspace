@@ -6056,6 +6056,40 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	}
 }
 
+func TestStartK8SE2EPortForwardsCanTargetPKIMQTTService(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
+	t.Setenv("CLOUD_STAGING_E2E_ACCOUNT_MANAGER_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", freeTCPPort(t))
+	t.Setenv("LKE_CLOUD_LOGGER_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_SERVICE", "mqtt-pki")
+
+	_, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	log := readTestFile(t, kubectlLog)
+	if !strings.Contains(log, "PF_START svc/mqtt-pki") || strings.Contains(log, "PF_START svc/mqtt\n") {
+		t.Fatalf("expected only the PKI MQTT service port-forward, got:\n%s", log)
+	}
+}
+
+func TestStartK8SE2EPortForwardsRejectsUnknownMQTTService(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "apiVersion: v1\n")
+	t.Setenv("CLOUD_STAGING_E2E_MQTT_SERVICE", "production-mqtt")
+
+	_, _, err := startK8SE2EPortForwards(workspace, envRoot)
+	if err == nil || !strings.Contains(err.Error(), "unsupported MQTT service") {
+		t.Fatalf("unexpected MQTT service error = %v", err)
+	}
+}
+
 func TestRunStagingE2EDataSetupForLKEStartsPortForwards(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	kubectlLog := fakeKubectlForK8SE2EPortForwards(t)
