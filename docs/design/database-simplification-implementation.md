@@ -6,12 +6,12 @@ Latest user scope update: use the new ER document on main as the editing baselin
 
 ## Delivery checklist
 
-- [ ] A: source inventory, old-schema fixtures, ER DDL handling and live catalog parity
-- [ ] B: three duplicate indexes and seven retired tables
-- [ ] C: retired tenant identities and unified audit storage
-- [ ] D: authoritative OTA columns, revision checks and atomic events
-- [ ] E: canonical OTA only across server, Admin, SDKs and contracts
-- [ ] Full local gates, required CI, leaf merges and integration revisions
+- [x] A: source inventory, old-schema fixtures, ER DDL handling and live catalog parity
+- [x] B: three duplicate indexes and seven retired tables
+- [x] C: retired tenant identities and unified audit storage
+- [x] D: authoritative OTA columns, revision checks and atomic events
+- [x] E: canonical OTA only across server, Admin, SDKs and contracts
+- [ ] Final workspace gate, CI and merge of exact integration revisions
 - [ ] Coordinated dev validation (rollback rehearsal waived by user)
 
 ## Boundaries
@@ -23,8 +23,17 @@ The pre-change source schema is in `tests/fixtures/database-simplification/schem
 ## Implementation evidence (local, 2026-09-22)
 
 All work is in the isolated `codex/database-simplification` worktrees. No shared
-dev, staging or production data or deployment has been changed. No PR has yet
-been published or merged; full gates, CI and coordinated dev validation remain outstanding.
+dev, staging or production data or deployment has been changed. The five leaf
+PRs have passed their applicable CI and merged; workspace CI and coordinated
+dev validation remain outstanding.
+
+| Repository | PR | Merged main commit |
+|---|---|---|
+| Contracts | [#168](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/168) | `7f55243f5fb195af2b7bc78d214ee8ed46915f62` |
+| Account Manager | [#334](https://github.com/hkt999rtk/rtk_account_manager/pull/334) | `5c63c1526199a2e92f23810efc7be5ef493f3492` |
+| Video Cloud | [#674](https://github.com/hkt999rtk/rtk_video_cloud/pull/674) | `1a2ae267ff9bd1eb9146fd7f43653a9d7513b43d` |
+| Cloud Admin | [#403](https://github.com/hkt999rtk/rtk_cloud_admin/pull/403) | `4d93e5ce5f0b05b9f106bcdeca7a41adcceb4fe2` |
+| SDK | [#564](https://github.com/hkt999rtk/rtk_cloud_client/pull/564) | `3a5d6299c944c8f942d627183241a1f77679e138` |
 
 - Account Manager migrations 083/084 consolidate audit domains and retire tenant
   identity storage after reconciliation. Offline check/apply/verify and startup
@@ -71,19 +80,16 @@ Executed local evidence:
 
 Outstanding before delivery:
 
-1. Complete remaining runtime/document/test inventories and service gates,
-   including PostgreSQL/MQTT, API contract fidelity, mobile/UI and client fixtures.
+1. Run the final workspace gate and CI against the exact merged leaf commits;
+   publish and merge the integration revision.
 2. Qualify retained legacy-data disposition: current cleanup blocks all nonempty
    old firmware tables; it does not yet implement a trusted ownership/integrity
    mapping for historical rows. Staging/prod data has not been inspected.
-3. Keep catalog captures aligned with any subsequent schema changes; independent
-   predecessor and current catalogs and index query-plan evidence are now captured.
-4. Freshly fetch all repositories before publishing, complete local pre-PR gates,
-   publish leaf PRs and required CI, then integrate exact merged revisions.
-5. Inventory scoped dev data, perform the coordinated dev cutover and validate
+3. Inventory scoped dev data, perform the coordinated dev cutover and validate
    consistency, service restart and worker recovery. The user explicitly waived
    backup/rollback rehearsal as a delivery condition on 2026-09-22.
-6. Keep the regenerated ER document aligned with the final merged leaf revisions, following the latest user instruction.
+4. Record the actual dev results and a deployable version set. Keep the
+   regenerated ER document aligned with the merged leaf revisions.
 
 Additional local verification:
 
@@ -116,12 +122,14 @@ Additional local verification:
 
 Latest integration check:
 
-- The complete local gate at `91a5e31d` passed Video Cloud PostgreSQL/MQTT,
-  workspace tooling, Account Manager, Go SDK and DNS coverage. It stopped at the
-  Admin store package ratchet (79.17% below 80%); later UI stages did not run in
-  this attempt. New real SQLite tests cover failed cleanup rollback/retry,
-  future schemas, restored redundant indexes and unavailable databases. Admin's
-  full Go suite now passes with store coverage at 80.4%; the full gate must rerun.
+- The complete local pre-PR gate at `e8a8a22f` passed Video Cloud
+  PostgreSQL/MQTT, all selected Go and JavaScript coverage, and Cloud Admin
+  desktop/mobile fixture E2E. This was before replacing leaf PR heads with their
+  exact merged commits; the final workspace gate is still required.
+- An earlier gate exposed Admin store coverage at 79.17% below its 80% ratchet.
+  Real SQLite tests for cleanup rollback/retry, future schemas, restored indexes
+  and unavailable databases brought it to 80.4% in the full Admin suite. No
+  coverage threshold was reduced.
 - Real PostgreSQL cross-service tests pass for registered service/factory
   enrollment, Billing cloud creation, mTLS catalog/product/production-run
   registration, cloud deletion and ownership handoff. These are isolated
@@ -134,3 +142,7 @@ Latest integration check:
 - A dev-only Account Manager image built successfully, but publishing was
   rejected because the existing registry credential lacks write scope. No new
   image was deployed. Use canonical CI-published packages after verified merges.
+- Leaf PR CI caught a Video Cloud Go formatting lapse and a native SDK test
+  still pinned to the old contract commit. Both were corrected; all required
+  PR checks subsequently passed. The SDK native test also confirms the new OTA
+  event fixture and rejects the retired firmware campaign fixture.

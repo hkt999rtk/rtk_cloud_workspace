@@ -39,10 +39,10 @@ workspace; it is not necessarily a pure snapshot of those commits.
 
 | Source checkout | Base commit |
 | --- | --- |
-| Account Manager | `cf8d10b1012f` |
+| Account Manager | `5c63c1526199` |
 | Billing | `026016a9e797` |
-| Video Cloud | `cd3f50f395f4` |
-| Cloud Admin | `1bbeb8e18494` |
+| Video Cloud | `1a2ae267ff9b` |
+| Cloud Admin | `4d93e5ce5f0b` |
 | Cloud Frontend | `6a7f3fb15cbc` |
 
 Refresh from the workspace root with `python3 scripts/generate_database_er_atlas.py`. The process reads source files only; it never opens a deployed database. Exact source paths appear in the entity catalog.
