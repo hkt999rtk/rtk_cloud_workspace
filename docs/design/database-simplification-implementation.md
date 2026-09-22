@@ -38,7 +38,7 @@ Account Manager historical migrations advanced from 078 through 082 before simpl
 
 Of 24 deployments with desired replicas above zero across Account Manager, Admin, Video Cloud and Billing, 23 are ready. `video-cloud-api-pki` is restarting: controller CRL reads return HTTP 503 because the existing Device Root, Brand and Product CRLs expired on 2026-09-17/18. Root and Brand are offline authorities, so the controller cannot sign their replacements. Draft signing requests are prepared locally under `/tmp/rtk-db-dev-pki-crl-recovery/` (Root CRL 4, Brand CRL 11, preserving 7 Brand revocations); independent review, signing and import remain outstanding. Product CRL renewal and all consumer acknowledgments must follow the existing PKI procedure. Security checks were not disabled.
 
-The live acceptance run reached platform-admin login and Brand Cloud setup, then app-certificate bootstrap repeatedly failed while the PKI dependency was unavailable. It was stopped before device/MQTT/lifecycle assertions. Local Product OTA and SDK suites passed; a full live Product OTA workflow has not been claimed. The replacement Account Manager image from #335 also remains to be installed after its merge so the dev image set matches the final source revision.
+The live acceptance run reached platform-admin login and Brand Cloud setup, then app-certificate bootstrap repeatedly failed while the PKI dependency was unavailable. It was stopped before device/MQTT/lifecycle assertions. Local Product OTA and SDK suites passed; a full live Product OTA workflow has not been claimed. The final Account Manager image from #335 (`sha256:b1ed32d5b70b1d787a6b3c04690ef85b692d25249729deef01d394300889b9fb`) was installed by digest after its merge; its API and four workers are ready without restarts, and schema verification passes.
 
 ## Protected-environment blockers
 
@@ -47,6 +47,5 @@ A read-only staging inventory found Account Manager schema 082, no remaining ten
 ## Remaining delivery steps
 
 1. Pass workspace #484 CI with the exact Account Manager main revision and merge it.
-2. Install that exact Account Manager image in dev and verify service restart and schema compatibility.
-3. Complete the established offline PKI CRL ceremony for the dev Root and Brand, renew the Product CRL, install/acknowledge them, then rerun the full dev data, MQTT, billing, lifecycle and Product OTA acceptance matrix.
-4. Record the final merged workspace commit, CI and dev acceptance results. Staging/prod promotion is a separate operation after their data blockers are resolved.
+2. Complete the established offline PKI CRL ceremony for the dev Root and Brand, renew the Product CRL, install/acknowledge them, then rerun the full dev data, MQTT, billing, lifecycle and Product OTA acceptance matrix.
+3. Record the final merged workspace commit, CI and dev acceptance results. Staging/prod promotion is a separate operation after their data blockers are resolved.
