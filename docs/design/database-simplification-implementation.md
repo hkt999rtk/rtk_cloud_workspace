@@ -113,3 +113,24 @@ Additional local verification:
 - The repository recovery adapter's real PostgreSQL and Redis round trips pass.
   This is retained evidence only; further rollback rehearsal is not a delivery
   gate under the latest user instruction. Shared-dev cutover remains pending.
+
+Latest integration check:
+
+- The complete local gate at `91a5e31d` passed Video Cloud PostgreSQL/MQTT,
+  workspace tooling, Account Manager, Go SDK and DNS coverage. It stopped at the
+  Admin store package ratchet (79.17% below 80%); later UI stages did not run in
+  this attempt. New real SQLite tests cover failed cleanup rollback/retry,
+  future schemas, restored redundant indexes and unavailable databases. Admin's
+  full Go suite now passes with store coverage at 80.4%; the full gate must rerun.
+- Real PostgreSQL cross-service tests pass for registered service/factory
+  enrollment, Billing cloud creation, mTLS catalog/product/production-run
+  registration, cloud deletion and ownership handoff. These are isolated
+  integration tests, not shared-dev acceptance.
+- Dev read-only inventory found source Account Manager schema 078, no audit ID
+  collisions, no remaining legacy tenant identities/tokens and no rows in the
+  seven retired Video Cloud tables. Historical migrations through 082 must run
+  before the simplification maintenance check. Existing cloud/device identities
+  can be preserved; shared-dev mutation remains pending.
+- A dev-only Account Manager image built successfully, but publishing was
+  rejected because the existing registry credential lacks write scope. No new
+  image was deployed. Use canonical CI-published packages after verified merges.

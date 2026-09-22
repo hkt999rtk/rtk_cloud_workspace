@@ -42,7 +42,7 @@ workspace; it is not necessarily a pure snapshot of those commits.
 | Account Manager | `cf8d10b1012f` |
 | Billing | `026016a9e797` |
 | Video Cloud | `cd3f50f395f4` |
-| Cloud Admin | `cee044d821af` |
+| Cloud Admin | `1bbeb8e18494` |
 | Cloud Frontend | `6a7f3fb15cbc` |
 
 Refresh from the workspace root with `python3 scripts/generate_database_er_atlas.py`. The process reads source files only; it never opens a deployed database. Exact source paths appear in the entity catalog.
