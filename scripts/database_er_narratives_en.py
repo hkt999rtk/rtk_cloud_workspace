@@ -9,10 +9,10 @@ GROUPS = {
     'Account Manager': (
         ('Organizations and sign-in identities', 'Organization, membership, human-account identity, and sign-in credentials.', 'Used when creating organizations, inviting or disabling members, signing in, or linking identities.',
          'organizations organization_members users user_identities identity_providers oidc_login_states refresh_tokens auth_tokens'),
-        ('Roles and access policy', 'Roles, permissions, scopes, member activation, and ACL audit evidence.', 'Used for authorization decisions, role assignment, external-group mapping, and access-change audits.',
-         'roles permissions role_permissions role_assignments external_group_mappings acl_audit_events organization_member_activation_holds quota_raise_requests'),
-        ('Brand Cloud membership', 'Brand Cloud users, memberships, invitations, and product admission.', 'Used for Brand Cloud registration, invitations, owner transfers, and admission review.',
-         'brand_cloud_users brand_cloud_memberships brand_cloud_member_invitations brand_cloud_owner_transfers brand_cloud_refresh_tokens brand_cloud_user_migrations brand_cloud_end_users brand_cloud_product_admissions'),
+        ('Roles and access policy', 'Roles, permissions, scopes, and member activation.', 'Used for authorization decisions, role assignment, external-group mapping, and access-policy updates.',
+         'roles permissions role_permissions role_assignments external_group_mappings organization_member_activation_holds quota_raise_requests'),
+        ('Brand Cloud membership', 'Invitations, owner transfers, identity migration evidence, end-user links, and product admission.', 'Global users and organization memberships own administrator identity; these records coordinate invitations, ownership, and admission.',
+         'brand_cloud_member_invitations brand_cloud_owner_transfers brand_cloud_user_migrations brand_cloud_end_users brand_cloud_product_admissions'),
         ('End users and device bindings', 'End-user identities, session credentials, and their device access.', 'Used when app users sign in, establish a Brand Cloud identity, or bind a device.',
          'end_users end_user_identities end_user_refresh_tokens device_user_bindings'),
         ('Device and product registry', 'Devices, groups, tags, product profiles, and service-entitlement snapshots.', 'Used when registering devices, organizing fleets, configuring product services, or deriving entitlements.',
@@ -59,14 +59,12 @@ GROUPS = {
     ),
     'Video Cloud': (
         ('Devices and connections', 'Video Cloud devices, live connections, commands, and runtime records.', 'Used for device activation, connect/disconnect events, command delivery, and runtime-state recording.',
-         'devices device_socket_sessions legacy_device_states device_transfer_fences device_presence_outbox device_command_messages device_logs device_runtime_logs'),
+         'devices device_socket_sessions device_transfer_fences device_presence_outbox device_command_messages device_logs device_runtime_logs'),
         ('Events and runtime telemetry', 'Sequence gaps, product events, notification deduplication, and runtime settings.', 'Used when accepting device events, tracking log sequences, retrying notifications, or validating tokens.',
          'device_runtime_log_gaps product_telemetry_events device_event_acceptances notification_deliveries notification_dead_letters runtime_config refresh_tokens'),
         ('Video clips', 'Clip uploads, multipart integrity, and clip metadata.', 'Used when a device uploads or resumes a clip, finalizes its parts, queries it, or expires it.',
          'clip_uploads clip_upload_parts clip_metadata'),
-        ('Firmware releases', 'Available firmware, target versions, campaigns, and per-device rollout results.', 'Used to publish firmware, set version targets, or track an existing rollout.',
-         'firmware_releases firmware_targets firmware_campaigns firmware_rollouts'),
-        ('OTA campaigns and dispatch', 'OTA releases, campaigns, target devices, dispatch throttles, and deployment outcomes.', 'Used to create campaigns, schedule devices, send commands, receive deployment events, or migrate legacy data.',
+        ('OTA campaigns and dispatch', 'OTA releases, campaigns, target devices, dispatch throttles, and deployment outcomes.', 'Used to create campaigns, schedule devices, send commands, atomically receive deployment events, or retain migration evidence.',
          'ota_releases ota_campaigns ota_campaign_targets ota_campaign_dispatch_state ota_global_dispatch_state ota_deployments ota_deployment_events ota_legacy_migrations'),
         ('Factory enrollment and resource handoff', 'Factory entitlements, device-identity evidence, and cloud-resource handoff or deletion state.', 'Used when factory devices request certificates or cloud ownership and resource lifecycles change.',
          'factory_enrollment_journal factory_device_entitlements factory_cloud_handoffs resource_cloud_handoffs resource_cloud_deletions'),
@@ -80,12 +78,12 @@ GROUPS = {
          'pki_app_issuances pki_app_revocations pki_server_issuances pki_server_revocations pki_service_client_issuances pki_service_client_revocations'),
         ('PKI trust distribution', 'CRLs, bundle acknowledgments, root-distrust policy, and deployment bootstrap.', 'Used to distribute certificate state, confirm consumers updated trust data, or transition legacy trust windows.',
          'pki_crls pki_crl_acknowledgments pki_bundle_acknowledgments pki_root_distrust pki_root_distrust_acknowledgments pki_legacy_windows pki_deployment_bootstrap_sessions'),
-        ('Node discovery and device certificates', 'Service and TURN nodes, device-certificate requests, and relay-routing schema.', 'Node discovery and CSR issuance have runtime paths; direct non-DDL reads or writes of the relay tables were not found.',
-         'registry_nodes relay_nodes relay_geolinks turn_nodes cert_issue_requests cert_issue_events'),
+        ('Node discovery and device certificates', 'Service and TURN nodes and device-certificate requests.', 'Used to discover service nodes, route sessions, and process device certificate requests.',
+         'registry_nodes turn_nodes cert_issue_requests cert_issue_events'),
     ),
     'Cloud Admin': (
-        ('Administrator sign-in and upstream projection schema', 'Sessions and schema for integration settings and upstream organization, device, and operation snapshots.', 'Sessions have runtime reads and writes; no non-DDL synchronization reads or writes were found for the upstream projection tables.',
-         'platform_admins sessions upstream_organizations upstream_devices upstream_operations integration_settings'),
+        ('Administrator sessions and integration settings', 'Global-user sessions and integration configuration.', 'Used for authenticated Admin sessions and integration settings; upstream identity is owned by Account Manager.',
+         'sessions integration_settings'),
         ('Device operations view', 'Administrative device and operation views, readiness layers, and audit events.', 'Used to show device details, investigate operation status, or record administrative actions.',
          'devices operations readiness_facts audit_events'),
         ('Batch jobs', 'Batch jobs, per-item processing, action receipts, and provisioning or OTA scope previews.', 'Used to submit bulk device work, retry failed items, or preview an operation scope.',
@@ -104,19 +102,15 @@ GROUPS = {
 # is taken from parse_database() and displayed beside each note in the atlas.
 NOTE_ROWS = {
     'Account Manager': '''
-acl_audit_events | ACL audit events with actor, subject, action, and change payload. | Recorded after access-control or role changes for traceability.
 app_certificates | App CSRs, issued certificates, chains, and fingerprints. | Used when app identity certificates are requested, inspected, or rotated.
-audit_events | Account and organization audit records with actor, subject, and payload. | Retained after significant account, membership, or device operations.
+audit_events | General and ACL audit records separated by audit_domain, with preserved historical actor IDs. | General queries exclude ACL events; new ACL actors are validated without clearing history after user deletion.
 auth_tokens | Hashed verification or recovery tokens, purposes, and expiry times. | Issued and consumed for email verification or account recovery.
 brand_cloud_billing_creation_outbox | Brand Cloud creation events for Billing, including retry leases. | Queued after cloud creation for asynchronous Billing delivery.
 brand_cloud_end_users | Brand Cloud–end-user associations, aliases, and consent state. | Used when app users enter a Brand Cloud, change consent, or inspect the association.
 brand_cloud_member_invitations | Membership invitation targets, roles, tokens, and status. | Used when inviting members, accepting invitations, or letting them expire.
-brand_cloud_memberships | Brand Cloud user roles and membership status. | Consulted for Brand Cloud access decisions or role changes.
 brand_cloud_owner_transfers | Owner-transfer requests, recipients, tokens, and acceptance state. | Used when an owner starts a transfer and the recipient accepts or cancels it.
 brand_cloud_product_admissions | User and organization product admissions, provenance, and approvers. | Used to review product eligibility or its approval evidence.
-brand_cloud_refresh_tokens | Hashed Brand Cloud refresh tokens and revocation times. | Defined for Brand Cloud session renewal; no direct non-DDL read or write path was found.
 brand_cloud_user_migrations | Outcomes and conflicts when legacy Brand Cloud identities are mapped to shared users. | Written during the human-identity consolidation migration and checked for conflicts.
-brand_cloud_users | Brand Cloud login accounts, email verification, and display details. | Used for Brand Cloud registration, verification, and sign-in.
 chipset_information_providers | Chipset-information provider manifest URLs, versions, and snapshots. | Used when reading or updating chipset and SDK information sources.
 cloud_deletion_cancellations | Cloud-deletion cancellation decisions and decision hashes. | Stores evidence when a deletion that can still be canceled is canceled.
 cloud_deletion_close_attempts | Billing closure attempts with readiness hashes and settlement IDs. | Used when retrying closure or confirming that an attempt used the same evidence.
@@ -278,22 +272,17 @@ devices | Video Cloud device IDs, activation and online state, connections, and 
 factory_cloud_handoffs | Factory-cloud handoff operations, owners, and hold or drain evidence. | Used while preparing and completing factory-cloud ownership handoffs.
 factory_device_entitlements | Factory device, certificate, and allowed-service entitlement revisions. | Used to validate service access after enrollment or revoke an entitlement.
 factory_enrollment_journal | Factory enrollment requests, reservations, devices, and phase evidence. | Tracks, retries, or cancels work from certificate request through projection.
-firmware_campaigns | Model-targeted firmware rollout campaigns and policy. | Used to start or track firmware rollouts.
-firmware_releases | Firmware objects, manifests, and publication details by model and version. | Used to publish downloadable firmware and select a compatible version.
-firmware_rollouts | Per-device upgrade targets, current versions, states, and errors. | Used to dispatch updates and record device results.
-firmware_targets | Designated target versions for device models. | Queried when a device checks whether it needs an upgrade.
-legacy_device_states | Legacy-protocol connections, registration and key times, and device state. | Supports legacy device connectivity and state migration.
 mqtt_usage_windows | MQTT broker traffic quantities and metering windows. | Aggregates publish and delivery bytes and counts periodically.
 notification_dead_letters | Failed notification IDs, attempt counts, and last errors. | Retained for investigation after repeated delivery failure.
 notification_deliveries | Deduplication keys and delivery times of successful notifications. | Checked before sending to avoid duplicate delivery.
 ota_campaign_dispatch_state | Next permitted dispatch times for OTA campaigns. | Updated while rate-limiting a campaign and scheduling its next device batch.
 ota_campaign_targets | Target device states, attempts, leases, and errors for campaigns. | Used to schedule, dispatch, retry, or finish OTA work per device.
-ota_campaigns | OTA campaigns, product and release links, state, and configuration payloads. | Used to create or stop upgrade campaigns.
+ota_campaigns | Product and release links, authoritative campaign state and timestamps, internal revision, and extension-only payload. | Revision-checked updates and ownership handoff prevent a stale writer from reviving canceled campaigns.
 ota_deployment_events | Ordered event payloads reported for individual deployments. | Deduplicates and tracks device-reported upgrade progress.
-ota_deployments | Per-device OTA deployments, states, and latest event sequence numbers. | Used to dispatch upgrades and summarize device outcomes.
+ota_deployments | Per-device status, event sequence, timestamps, internal revision, and extension-only payload. | Event deduplication, sequence advancement, and status updates commit atomically; canceled work cannot be revived by stale updates.
 ota_global_dispatch_state | Next globally permitted OTA dispatch time shared across campaigns. | Enforces an overall OTA dispatch load limit.
-ota_legacy_migrations | Legacy OTA sources mapped to canonical IDs and migration results. | Prevents repeat migration and records failures during a model upgrade.
-ota_releases | Product OTA versions, builds, states, and payloads. | Used to create, publish, or retire app or product upgrade content.
+ota_legacy_migrations | Retained legacy-to-Product OTA migration evidence. | Preserves historical reconciliation metadata; offline cleanup blocks unresolved legacy records.
+ota_releases | Product release identity, version, build, authoritative state and timestamps, internal revision, and extension-only payload. | Used to create, publish, or revoke immutable firmware releases with revision-checked updates.
 pki_app_issuances | App-certificate CSRs, issuers, request digests, and issuance results. | Used for app identity issuance or idempotent retry.
 pki_app_revocations | App-certificate fingerprints, revocation reasons, and CRL digests. | Used when an app certificate expires or is revoked.
 pki_approvals | Approvers, roles, and digests for sensitive PKI operations. | Collects authorization evidence before root or issuer changes.
@@ -318,8 +307,6 @@ pki_signing_claims | Traceable device, cloud, and product claims for individual 
 product_telemetry_events | Product-level event schema, source, and account or device identifiers. | Used to validate inbound telemetry and derive later product state.
 refresh_tokens | Video Cloud refresh tokens associated with principals and scopes. | Used for Video Cloud API session renewal or expiration checks.
 registry_nodes | Service-registry node regions, endpoints, weights, and capacity. | Used to discover available backends and allocate connections.
-relay_geolinks | Country-code priorities for relay regions. | Schema defines geographic routing data; no direct non-DDL read or write path was found.
-relay_nodes | Relay node URLs, regions, load, and health state. | Schema defines relay selection data; no direct non-DDL read or write path was found.
 resource_cloud_deletions | Cloud, owner, phase, and receipts for Video Cloud resource deletion. | Freezes and cleans Video Cloud resources during Account Manager–coordinated cloud deletion.
 resource_cloud_handoffs | Video Cloud handoff participants, cutoffs, and hold evidence. | Pauses new work and confirms resource transfer when a cloud owner changes.
 runtime_config | Persistent Video Cloud key/value runtime settings. | Read or written at startup or when a persistent setting changes.
@@ -336,14 +323,10 @@ devices | Device, organization, status, and Video Cloud ID shown in the admin in
 integration_settings | Integration key/value settings, sources, and update times. | Defined in schema for integration configuration; no direct non-DDL read or write path was found.
 operations | Device-operation summaries, organizations, status, and upstream operation IDs. | Used to display recent operations and outcomes in the admin console.
 ota_scope_previews | OTA target scopes, hashes, match counts, and data freshness. | Used to preview affected devices before dispatch.
-platform_admins | Local platform-admin emails, password hashes, and roles. | Used for admin-console sign-in and role checks.
 provisioning_sources | Imported provisioning files, checksums, products, and device-ID lists. | Used when uploading factory or device lists for bulk provisioning.
 readiness_facts | Per-device readiness-layer states, errors, and operations. | Defined in schema for layered readiness projection; no direct non-DDL read or write path was found.
 schema_migrations | Applied Cloud Admin SQLite migration versions and names. | Checked at startup or upgrade to establish database structure.
 sessions | Admin or upstream session principals, tokens, organizations, and expiry. | Used on sign-in, refresh, and active-organization switches.
-upstream_devices | Reserved fields and synchronization times for upstream device projections. | Only DDL was found, with no non-DDL synchronization read or write path; this is not a cross-database FK.
-upstream_operations | Reserved states and sources for upstream operation projections. | Only DDL was found, with no non-DDL synchronization read or write path.
-upstream_organizations | Reserved names, roles, and synchronization times for upstream organization projections. | Only DDL was found, with no non-DDL synchronization read or write path.
 ''',
     'Cloud Frontend': '''
 analytics_events | Website page, call-to-action, dwell-time, and referral analytics events. | Records visitor behavior while they browse or interact with website elements.

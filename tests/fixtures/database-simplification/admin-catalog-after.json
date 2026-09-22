@@ -1,0 +1,711 @@
+{
+  "schema_migrations": {
+    "columns": {
+      "version": {
+        "type": "integer",
+        "nn": true
+      },
+      "name": {
+        "type": "text",
+        "nn": true
+      },
+      "applied_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "version"
+    ],
+    "unique": {
+      "primary": [
+        "version"
+      ]
+    },
+    "fks": {}
+  },
+  "devices": {
+    "columns": {
+      "id": {
+        "type": "text",
+        "nn": false
+      },
+      "organization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "organization": {
+        "type": "text",
+        "nn": true
+      },
+      "name": {
+        "type": "text",
+        "nn": true
+      },
+      "category": {
+        "type": "text",
+        "nn": true
+      },
+      "model": {
+        "type": "text",
+        "nn": true
+      },
+      "serial_number": {
+        "type": "text",
+        "nn": true
+      },
+      "video_cloud_devid": {
+        "type": "text",
+        "nn": true
+      },
+      "status": {
+        "type": "text",
+        "nn": true
+      },
+      "readiness": {
+        "type": "text",
+        "nn": true
+      },
+      "last_seen_at": {
+        "type": "text",
+        "nn": true
+      },
+      "updated_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_devices_1": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "operations": {
+    "columns": {
+      "id": {
+        "type": "text",
+        "nn": false
+      },
+      "device_id": {
+        "type": "text",
+        "nn": true
+      },
+      "device_name": {
+        "type": "text",
+        "nn": true
+      },
+      "organization": {
+        "type": "text",
+        "nn": true
+      },
+      "type": {
+        "type": "text",
+        "nn": true
+      },
+      "state": {
+        "type": "text",
+        "nn": true
+      },
+      "message": {
+        "type": "text",
+        "nn": true
+      },
+      "updated_at": {
+        "type": "text",
+        "nn": true
+      },
+      "upstream_operation_id": {
+        "type": "text",
+        "nn": false
+      },
+      "upstream_state": {
+        "type": "text",
+        "nn": false
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_operations_1": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "audit_events": {
+    "columns": {
+      "id": {
+        "type": "integer",
+        "nn": true
+      },
+      "actor": {
+        "type": "text",
+        "nn": true
+      },
+      "action": {
+        "type": "text",
+        "nn": true
+      },
+      "target": {
+        "type": "text",
+        "nn": true
+      },
+      "created_at": {
+        "type": "text",
+        "nn": true
+      },
+      "actor_kind": {
+        "type": "text",
+        "nn": true
+      },
+      "organization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "result": {
+        "type": "text",
+        "nn": true
+      },
+      "request_id": {
+        "type": "text",
+        "nn": true
+      },
+      "upstream_operation_id": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "sessions": {
+    "columns": {
+      "id": {
+        "type": "text",
+        "nn": false
+      },
+      "kind": {
+        "type": "text",
+        "nn": true
+      },
+      "subject": {
+        "type": "text",
+        "nn": true
+      },
+      "email": {
+        "type": "text",
+        "nn": true
+      },
+      "access_token": {
+        "type": "text",
+        "nn": true
+      },
+      "refresh_token": {
+        "type": "text",
+        "nn": true
+      },
+      "active_org_id": {
+        "type": "text",
+        "nn": true
+      },
+      "expires_at": {
+        "type": "text",
+        "nn": true
+      },
+      "created_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_sessions_1": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "readiness_facts": {
+    "columns": {
+      "id": {
+        "type": "integer",
+        "nn": true
+      },
+      "device_id": {
+        "type": "text",
+        "nn": true
+      },
+      "organization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "layer": {
+        "type": "text",
+        "nn": true
+      },
+      "state": {
+        "type": "text",
+        "nn": true
+      },
+      "detail": {
+        "type": "text",
+        "nn": true
+      },
+      "retryable": {
+        "type": "integer",
+        "nn": true
+      },
+      "error_code": {
+        "type": "text",
+        "nn": true
+      },
+      "operation_id": {
+        "type": "text",
+        "nn": true
+      },
+      "source": {
+        "type": "text",
+        "nn": true
+      },
+      "fetched_at": {
+        "type": "text",
+        "nn": true
+      },
+      "updated_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_readiness_facts_1": [
+        "device_id",
+        "layer"
+      ]
+    },
+    "fks": {}
+  },
+  "integration_settings": {
+    "columns": {
+      "key": {
+        "type": "text",
+        "nn": false
+      },
+      "value": {
+        "type": "text",
+        "nn": true
+      },
+      "source": {
+        "type": "text",
+        "nn": true
+      },
+      "updated_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "key"
+    ],
+    "unique": {
+      "primary": [
+        "key"
+      ],
+      "sqlite_autoindex_integration_settings_1": [
+        "key"
+      ]
+    },
+    "fks": {}
+  },
+  "batch_jobs": {
+    "columns": {
+      "id": {
+        "type": "text",
+        "nn": false
+      },
+      "organization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "type": {
+        "type": "text",
+        "nn": true
+      },
+      "name": {
+        "type": "text",
+        "nn": true
+      },
+      "created_by": {
+        "type": "text",
+        "nn": true
+      },
+      "scope_json": {
+        "type": "text",
+        "nn": true
+      },
+      "state": {
+        "type": "text",
+        "nn": true
+      },
+      "total": {
+        "type": "integer",
+        "nn": true
+      },
+      "completed": {
+        "type": "integer",
+        "nn": true
+      },
+      "failed": {
+        "type": "integer",
+        "nn": true
+      },
+      "skipped": {
+        "type": "integer",
+        "nn": true
+      },
+      "created_at": {
+        "type": "text",
+        "nn": true
+      },
+      "updated_at": {
+        "type": "text",
+        "nn": true
+      },
+      "result_json": {
+        "type": "text",
+        "nn": true
+      },
+      "idempotency_key": {
+        "type": "text",
+        "nn": true
+      },
+      "authorization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "authorization_status": {
+        "type": "text",
+        "nn": true
+      },
+      "state_version": {
+        "type": "integer",
+        "nn": true
+      },
+      "checkpoint_json": {
+        "type": "text",
+        "nn": true
+      },
+      "failure_code": {
+        "type": "text",
+        "nn": true
+      },
+      "lease_owner": {
+        "type": "text",
+        "nn": true
+      },
+      "lease_until": {
+        "type": "text",
+        "nn": true
+      },
+      "started_at": {
+        "type": "text",
+        "nn": true
+      },
+      "paused_at": {
+        "type": "text",
+        "nn": true
+      },
+      "cancelled_at": {
+        "type": "text",
+        "nn": true
+      },
+      "completed_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_batch_jobs_1": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "provisioning_sources": {
+    "columns": {
+      "id": {
+        "type": "text",
+        "nn": false
+      },
+      "organization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "product_id": {
+        "type": "text",
+        "nn": true
+      },
+      "production_run": {
+        "type": "text",
+        "nn": true
+      },
+      "filename": {
+        "type": "text",
+        "nn": true
+      },
+      "checksum": {
+        "type": "text",
+        "nn": true
+      },
+      "row_count": {
+        "type": "integer",
+        "nn": true
+      },
+      "device_ids_json": {
+        "type": "text",
+        "nn": true
+      },
+      "created_at": {
+        "type": "text",
+        "nn": true
+      },
+      "expires_at": {
+        "type": "text",
+        "nn": true
+      },
+      "idempotency_key": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_provisioning_sources_1": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "ota_scope_previews": {
+    "columns": {
+      "id": {
+        "type": "text",
+        "nn": false
+      },
+      "organization_id": {
+        "type": "text",
+        "nn": true
+      },
+      "product_id": {
+        "type": "text",
+        "nn": true
+      },
+      "scope_json": {
+        "type": "text",
+        "nn": true
+      },
+      "scope_hash": {
+        "type": "text",
+        "nn": true
+      },
+      "target_count": {
+        "type": "integer",
+        "nn": true
+      },
+      "matched_count": {
+        "type": "integer",
+        "nn": true
+      },
+      "excluded_count": {
+        "type": "integer",
+        "nn": true
+      },
+      "source_freshness": {
+        "type": "text",
+        "nn": true
+      },
+      "expires_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "id"
+    ],
+    "unique": {
+      "primary": [
+        "id"
+      ],
+      "sqlite_autoindex_ota_scope_previews_1": [
+        "id"
+      ]
+    },
+    "fks": {}
+  },
+  "batch_job_items": {
+    "columns": {
+      "job_id": {
+        "type": "text",
+        "nn": true
+      },
+      "item_key": {
+        "type": "text",
+        "nn": true
+      },
+      "position": {
+        "type": "integer",
+        "nn": true
+      },
+      "state": {
+        "type": "text",
+        "nn": true
+      },
+      "attempt": {
+        "type": "integer",
+        "nn": true
+      },
+      "failure_code": {
+        "type": "text",
+        "nn": true
+      },
+      "failure_reason": {
+        "type": "text",
+        "nn": true
+      },
+      "retryable": {
+        "type": "integer",
+        "nn": true
+      },
+      "upstream_operation_id": {
+        "type": "text",
+        "nn": true
+      },
+      "updated_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "job_id",
+      "item_key"
+    ],
+    "unique": {
+      "primary": [
+        "job_id",
+        "item_key"
+      ],
+      "sqlite_autoindex_batch_job_items_1": [
+        "job_id",
+        "item_key"
+      ]
+    },
+    "fks": {
+      "0": {
+        "parent": "batch_jobs",
+        "cols": [
+          "job_id"
+        ],
+        "target": [
+          "id"
+        ]
+      }
+    }
+  },
+  "batch_job_action_receipts": {
+    "columns": {
+      "job_id": {
+        "type": "text",
+        "nn": true
+      },
+      "action_key": {
+        "type": "text",
+        "nn": true
+      },
+      "action": {
+        "type": "text",
+        "nn": true
+      },
+      "from_state": {
+        "type": "text",
+        "nn": true
+      },
+      "to_state": {
+        "type": "text",
+        "nn": true
+      },
+      "state_version": {
+        "type": "integer",
+        "nn": true
+      },
+      "created_at": {
+        "type": "text",
+        "nn": true
+      }
+    },
+    "pk": [
+      "job_id",
+      "action_key"
+    ],
+    "unique": {
+      "primary": [
+        "job_id",
+        "action_key"
+      ],
+      "sqlite_autoindex_batch_job_action_receipts_1": [
+        "job_id",
+        "action_key"
+      ]
+    },
+    "fks": {
+      "0": {
+        "parent": "batch_jobs",
+        "cols": [
+          "job_id"
+        ],
+        "target": [
+          "id"
+        ]
+      }
+    }
+  }
+}

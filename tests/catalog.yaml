@@ -1162,8 +1162,8 @@ cases:
     layer: integration
     owner: rtk_account_manager
     source: repos/rtk_account_manager/internal/api/integration_test.go
-    selector: "./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery,./internal/store#TestBrandCloudLoginActivationTokenIsTenantScoped"
-    method: PostgreSQL-backed global auth tests cover verification and reset purposes, enumeration-safe throttling, expiry and replay rejection. Retained legacy token-store tests verify historical tenant separation only and do not enable retired tenant authentication routes.
+    selector: "./internal/api#TestIntegrationEmailVerificationAndPasswordRecovery,./internal/api#TestIntegrationRetiredTenantAuthenticationAndTokensRejected"
+    method: PostgreSQL-backed global auth tests cover verification and reset purposes, enumeration-safe throttling, expiry and replay rejection. Retired tenant authentication and tokens are rejected; all active account-token flows use global users.
     runner: test-services
     environments: [ci]
     evidence: [json, junit]

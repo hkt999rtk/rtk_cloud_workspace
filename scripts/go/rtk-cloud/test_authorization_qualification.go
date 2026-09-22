@@ -412,7 +412,7 @@ var authorizationQualificationSpecs = slices.Concat([]authorizationQualification
 		TestID: "INT-AM-IDENTITY-TOKEN-001", Repository: "rtk_account_manager",
 		Targets: []authorizationQualificationTarget{
 			{Package: "./internal/api", GoTest: "TestIntegrationEmailVerificationAndPasswordRecovery"},
-			{Package: "./internal/store", GoTest: "TestBrandCloudLoginActivationTokenIsTenantScoped"},
+			{Package: "./internal/api", GoTest: "TestIntegrationRetiredTenantAuthenticationAndTokensRejected"},
 		},
 		Assertions: map[string]map[string]string{
 			"REQ-AM-ONE-TIME-TOKEN-001": {
