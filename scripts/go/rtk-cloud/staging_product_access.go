@@ -45,9 +45,14 @@ func runGrantStagingProductAccess(args []string) error {
 	if err != nil {
 		return err
 	}
-	stackEnv, _ := readEnvFile(envRoot + "/env/stack.env")
-	if firstNonEmpty(stackEnv["CLOUD_ENV_NAME"], os.Getenv("CLOUD_ENV_NAME")) != "staging" {
-		return errors.New("grant-staging-product-access is restricted to the staging environment")
+	stackEnv, err := readEnvFile(envRoot + "/env/stack.env")
+	if err != nil {
+		return err
+	}
+	environment := stackEnv["CLOUD_ENV_NAME"]
+	stack := stackEnv["CLOUD_STACK_NAME"]
+	if (environment != "dev" && environment != "staging") || stack != "video-cloud-"+environment {
+		return errors.New("synthetic Product access grant requires the dev or staging stack")
 	}
 	store, err := openTestDataStore(envRoot, *brandname)
 	if err != nil {
@@ -88,7 +93,6 @@ func runGrantStagingProductAccess(args []string) error {
 	if err != nil {
 		return err
 	}
-	stack := firstNonEmpty(stackEnv["CLOUD_STACK_NAME"], "video-cloud-staging")
 	kubeconfig, err := ensureK8SKubeconfig(workspace, envRoot, stack)
 	if err != nil {
 		return err

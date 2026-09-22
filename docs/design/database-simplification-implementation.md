@@ -1,6 +1,6 @@
 # Database simplification implementation
 
-Status: database simplification code and workspace integration are merged. Dev schema maintenance passed, and the dev Device PKI chain was rebuilt after its CRLs expired. Live factory enrollment remains blocked by a certissuer Product issuer rejection under investigation. Staging and production have not been changed.
+Status: database simplification code and workspace integration are merged. Dev schema maintenance passed, the dev Device PKI chain was rebuilt, and fresh P-256 factory enrollment and data setup pass. Full dev MQTT, Billing-event, lifecycle and live Product OTA acceptance remain blocked by a split legacy/PKI MQTT runtime and token-policy mismatch. Staging and production have not been changed.
 
 The isolated workspace was based on main commit `8d66b65c`, including the newer ER HTML document. The original tracked source checkout remains untouched. The user waived a rollback rehearsal; this does not waive schema, data or service verification.
 
@@ -19,7 +19,7 @@ The isolated workspace was based on main commit `8d66b65c`, including the newer 
 |---|---|---|
 | Contracts | [#168](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/168) | `7f55243f5fb195af2b7bc78d214ee8ed46915f62` |
 | Account Manager | [#334](https://github.com/hkt999rtk/rtk_account_manager/pull/334), [#335](https://github.com/hkt999rtk/rtk_account_manager/pull/335) | `6a3fd7f0cf771321898bc6ee091f67e3f3cda4e5` |
-| Video Cloud | [#674](https://github.com/hkt999rtk/rtk_video_cloud/pull/674), [#675](https://github.com/hkt999rtk/rtk_video_cloud/pull/675) | `f40d9f72548516e5c68d553c8977d170c65e5573` |
+| Video Cloud | [#674](https://github.com/hkt999rtk/rtk_video_cloud/pull/674), [#675](https://github.com/hkt999rtk/rtk_video_cloud/pull/675), [#676](https://github.com/hkt999rtk/rtk_video_cloud/pull/676), [#677](https://github.com/hkt999rtk/rtk_video_cloud/pull/677) | `08c904c1bb4237f3e3049742b5dd067728616d1e` |
 | Cloud Admin | [#403](https://github.com/hkt999rtk/rtk_cloud_admin/pull/403) | `4d93e5ce5f0b05b9f106bcdeca7a41adcceb4fe2` |
 | SDK | [#564](https://github.com/hkt999rtk/rtk_cloud_client/pull/564) | `3a5d6299c944c8f942d627183241a1f77679e138` |
 | Workspace integration | [#484](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/484) | `eecbb5a3a0acc8c84d33771bee8ae2a4d1f07d80` |
@@ -32,7 +32,7 @@ The complete local pre-PR gate `db-simplification-final` passed against disposab
 
 Workspace [#484](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/484) merged only after all required and applicable checks passed. The final [coverage run](https://github.com/hkt999rtk/rtk_cloud_workspace/actions/runs/35732660373) passed Account Manager and Video Cloud PostgreSQL coverage, MQTT, governed Go/JavaScript coverage, catalog/policy checks and aggregate redaction. [Desktop/mobile E2E](https://github.com/hkt999rtk/rtk_cloud_workspace/actions/runs/35732660533), [OpenAPI](https://github.com/hkt999rtk/rtk_cloud_workspace/actions/runs/35732660360) and [submodule pointer](https://github.com/hkt999rtk/rtk_cloud_workspace/actions/runs/35732660344) checks passed. Billing's separate PostgreSQL job was outside the affected-job selector; cross-service Billing behavior was exercised in the local gate.
 
-## Dev cutover observations (2026-09-22)
+## Dev cutover observations (2026-09-22 to 2026-09-23)
 
 Only the `video-cloud-dev` stack was mutated. Writers, workers and MQTT were frozen during offline maintenance, then restored. Canonical CI-built images were installed by digest for Account Manager, Video Cloud and Admin; Billing and EMQX images were unchanged. Dev database/PVC scope was checked before mutation; no cluster-wide or shared PVC deletion, certificate replacement, Root CA change or Billing schema change was performed. Existing cloud/device identities were retained.
 
@@ -44,7 +44,9 @@ The old dev Device Root `c92fdbb1-f87b-4cab-80a6-fa77c2dce1d8` was reset during 
 
 Account Manager's 28 automatic Cloud/Product CA jobs initially failed because the Video Cloud management proxy omitted `POST /v1/pki/automatic` from its exact route allowlist. The route fix and regression test passed the local pre-PR gate and Video Cloud CI in [#675](https://github.com/hkt999rtk/rtk_video_cloud/pull/675), merged as `f40d9f72548516e5c68d553c8977d170c65e5573`. Its published image `sha256:9c89d33947811c7c0bd1a20e8c173f9f49eaaaa26ee552cc9d20e1788aca6eca` runs in the dev Account Manager management sidecar. After a fenced, read-only-checked requeue, all 28 original jobs reached ready. Four additional Product jobs created by live acceptance also reached ready. The controller has one active new Root, seven active Brand issuers and 25 active Product issuers.
 
-The earlier live acceptance run stopped at App certificate bootstrap while the old Device CRLs were expired. After the new Device chain was activated, App certificate bootstrap passed. The acceptance tooling now waits for Product CA creation and controller activation before requesting factory device enrollment; focused tests cover pending, active, failed, denied and bounded retry cases. Factory enrollment still fails at certissuer with `product_issuer_denied` despite an active Product issuer and a persisted reservation, so device/MQTT/lifecycle assertions and a full live Product OTA workflow have not passed. Local Product OTA and SDK suites passed. The final Account Manager image from #335 (`sha256:b1ed32d5b70b1d787a6b3c04690ef85b692d25249729deef01d394300889b9fb`) remains installed; its API and four workers are ready, and schema verification passes.
+The earlier live acceptance run stopped at App certificate bootstrap while the old Device CRLs were expired. After the new Device chain was activated, App certificate bootstrap passed. The acceptance tooling now waits for Product CA creation and controller activation before requesting factory device enrollment; focused tests cover pending, active, failed, denied and bounded retry cases. Video Cloud #677 corrected Product issuer selection to parse a device CSR instead of applying CA-only constraints. The dev device profile is now explicitly P-256, matching the current OpenBao signing role. Fresh one-device and two-device factory enrollment, binding, provisioning and Product-access validation pass. An Ed25519 attempt reached issuer selection but remained unresolved during signing; it is not an accepted dev algorithm.
+
+The live MQTT run found and corrected a stale broker-auth key in the dev Video Cloud Secret, after which App and device authentication and device-to-App telemetry passed on the legacy `mqtt` service. The shadow command did not complete because Video Cloud consumes shadow requests from the separate `mqtt-pki` service. Directly testing `mqtt-pki` then showed its MQTT App-PKI policy requires certificate-bound App tokens, while the public token path does not issue those claims. A temporary policy change also caused device-token issuance to fail and was removed. Billing log/ledger checks cannot receive a new usage event until this MQTT path is unified; preserved Billing rows remain intact. Two fresh devices satisfy the lifecycle fixture, but transport readiness fails at device-token issuance. A full live Product OTA workflow therefore remains pending. Local Product OTA, concurrency and SDK suites passed. The final Account Manager image from #335 (`sha256:b1ed32d5b70b1d787a6b3c04690ef85b692d25249729deef01d394300889b9fb`) remains installed; its API and four workers are ready, and schema verification passes.
 
 ## Protected-environment blockers
 
@@ -52,5 +54,6 @@ A read-only staging inventory found Account Manager schema 082, no remaining ten
 
 ## Remaining delivery steps
 
-1. Distinguish and resolve certissuer's Product issuer selection rejection in dev, then rerun factory enrollment and the full dev data, MQTT, billing, lifecycle and Product OTA acceptance matrix. Record the resulting dev pass/fail evidence.
-2. Resolve the four staging legacy-firmware rows through a reviewed data disposition before a protected-environment upgrade. Inspect production through its own authorized environment before planning production promotion.
+1. Converge the dev public MQTT endpoint, Video Cloud shadow consumer and MQTT App-PKI token policy on one broker path. Then rerun MQTT, Billing-event, lifecycle and live Product OTA acceptance and record the evidence.
+2. Decide whether Ed25519 device CSRs will be supported by the OpenBao signing role. Until then, keep dev device enrollment explicitly P-256 and reject unsupported algorithms before reservation.
+3. Resolve the four staging legacy-firmware rows through a reviewed data disposition before a protected-environment upgrade. Inspect production through its own authorized environment before planning production promotion.
