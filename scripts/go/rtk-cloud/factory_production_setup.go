@@ -27,6 +27,8 @@ type factoryProductionBundlePreparer func(string, string, string, string, int, s
 
 const runtimeFactoryProductionID = "runtime-e2e"
 
+var factoryProductionPKIRetrySleep = time.Sleep
+
 type factoryProductionPreparer func(string, string, string, string, int, time.Time) (factoryProductionCredential, error)
 
 func useProvidedFactoryProductionCredential(logsDir, runID, productionJWT string) ([]string, e2eStep, error) {
@@ -161,6 +163,9 @@ func prepareFactoryProductionCredential(workspace, envRoot, brandname, runID str
 	if err != nil {
 		return factoryProductionCredential{}, err
 	}
+	if err := waitFactoryProductIssuerActive(ctx, token, brandID, profileID); err != nil {
+		return factoryProductionCredential{}, err
+	}
 	return factoryProductionCredential{JWT: jwt, BrandCloudID: brandID, DeviceItemProfileID: profileID, ProductionRunID: productionRunID, BatchID: runID}, nil
 }
 
@@ -205,6 +210,9 @@ func prepareFactoryProductionCredentials(workspace, envRoot, brandname, runID st
 		}
 		productionRunID, jwt, err := createFactoryProductionRun(ctx, token, brandID, profileID, typedRunID, count, now)
 		if err != nil {
+			return nil, err
+		}
+		if err := waitFactoryProductIssuerActive(ctx, token, brandID, profileID); err != nil {
 			return nil, err
 		}
 		credentials[deviceType.Name] = factoryProductionCredential{
@@ -298,12 +306,20 @@ func createFactoryProductionRun(ctx accountManagerContext, token, brandID, profi
 		return "", "", err
 	}
 	endpoint := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/device-item-profiles/%s/production-runs", ctx.BaseURL, url.PathEscape(brandID), url.PathEscape(profileID))
-	body, status, err := curlJSONStatus(endpoint, token, payload)
-	if err != nil {
-		return "", "", err
-	}
-	if status != http.StatusCreated {
-		return "", "", fmt.Errorf("create factory production run failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+	var body []byte
+	for attempt := 0; ; attempt++ {
+		var status int
+		body, status, err = curlJSONStatus(endpoint, token, payload)
+		if err != nil {
+			return "", "", err
+		}
+		if status == http.StatusCreated {
+			break
+		}
+		if status != http.StatusConflict || accountAPIErrorCode(body) != "pki_not_ready" || attempt >= 89 {
+			return "", "", fmt.Errorf("create factory production run failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+		}
+		factoryProductionPKIRetrySleep(2 * time.Second)
 	}
 	var created struct {
 		ProductionRun struct {
@@ -318,6 +334,57 @@ func createFactoryProductionRun(ctx accountManagerContext, token, brandID, profi
 		return "", "", errors.New("create factory production run returned incomplete credential data")
 	}
 	return created.ProductionRun.ID, created.JWT, nil
+}
+
+func waitFactoryProductIssuerActive(ctx accountManagerContext, token, brandID, profileID string) error {
+	profileURL := fmt.Sprintf("%s/v1/admin/brand-clouds/%s/device-item-profiles/%s", ctx.BaseURL, url.PathEscape(brandID), url.PathEscape(profileID))
+	for attempt := 0; attempt < 90; attempt++ {
+		body, status, err := curlJSONStatus(profileURL, token, nil)
+		if err != nil {
+			return err
+		}
+		if status != http.StatusOK {
+			return fmt.Errorf("read factory Product PKI status failed: HTTP %d%s", status, accountAPIErrorSuffix(body))
+		}
+		var profile struct {
+			Product struct {
+				PKIStatus   string `json:"pki_status"`
+				PKIIssuerID string `json:"pki_issuer_id"`
+			} `json:"device_item_profile"`
+		}
+		if err := json.Unmarshal(body, &profile); err != nil {
+			return err
+		}
+		if profile.Product.PKIStatus == "failed" {
+			return fmt.Errorf("factory Product PKI failed for profile %s", profileID)
+		}
+		if profile.Product.PKIStatus == "ready" && profile.Product.PKIIssuerID != "" {
+			issuerURL := ctx.BaseURL + "/v1/platform/pki/issuers/" + url.PathEscape(profile.Product.PKIIssuerID)
+			issuerBody, issuerStatus, err := curlJSONStatus(issuerURL, token, nil)
+			if err != nil {
+				return err
+			}
+			if issuerStatus != http.StatusOK {
+				return fmt.Errorf("read factory Product issuer failed: HTTP %d%s", issuerStatus, accountAPIErrorSuffix(issuerBody))
+			}
+			var issuer struct {
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal(issuerBody, &issuer); err != nil {
+				return err
+			}
+			if issuer.Status == "active" {
+				return nil
+			}
+			if issuer.Status != "ready" {
+				return fmt.Errorf("factory Product issuer %s has status %q", profile.Product.PKIIssuerID, issuer.Status)
+			}
+		}
+		if attempt < 89 {
+			factoryProductionPKIRetrySleep(2 * time.Second)
+		}
+	}
+	return fmt.Errorf("factory Product issuer did not become active for profile %s", profileID)
 }
 
 func writeFactoryProductionSetupEvidence(path, runID, brandname string, credential factoryProductionCredential) error {

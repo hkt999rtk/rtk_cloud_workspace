@@ -1,6 +1,6 @@
 # Database simplification implementation
 
-Status: code and the workspace integration PR are merged. Dev schema maintenance and most service checks passed; full live acceptance is blocked by expired PKI CRLs. Staging and production have not been changed.
+Status: database simplification code and workspace integration are merged. Dev schema maintenance passed, and the dev Device PKI chain was rebuilt after its CRLs expired. Live factory enrollment remains blocked by a certissuer Product issuer rejection under investigation. Staging and production have not been changed.
 
 The isolated workspace was based on main commit `8d66b65c`, including the newer ER HTML document. The original tracked source checkout remains untouched. The user waived a rollback rehearsal; this does not waive schema, data or service verification.
 
@@ -11,7 +11,7 @@ The isolated workspace was based on main commit `8d66b65c`, including the newer 
 - Product OTA columns are authoritative. Release, campaign and deployment writes use internal revisions, and deployment event deduplication/sequence changes are atomic. Handoff cancellation is visible to API and workers.
 - Old model-keyed firmware routes, tables, workers and client methods are removed. Contracts, Go/JavaScript/Android/Swift/native SDKs, examples and Admin use Product OTA.
 - Account Manager and Admin have offline schema maintenance commands; Video Cloud has an explicit cleanup command. Runtime startup rejects incompatible schemas instead of dropping data.
-- Billing and PKI data models and keys are unchanged.
+- Billing and PKI data models are unchanged. During dev acceptance, the dev Device Root and its descendants were deliberately reissued after the old chain's CRLs expired; service, app, MQTT, OpenBao transport and Billing authorities were retained.
 
 ## Version set
 
@@ -19,7 +19,7 @@ The isolated workspace was based on main commit `8d66b65c`, including the newer 
 |---|---|---|
 | Contracts | [#168](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/168) | `7f55243f5fb195af2b7bc78d214ee8ed46915f62` |
 | Account Manager | [#334](https://github.com/hkt999rtk/rtk_account_manager/pull/334), [#335](https://github.com/hkt999rtk/rtk_account_manager/pull/335) | `6a3fd7f0cf771321898bc6ee091f67e3f3cda4e5` |
-| Video Cloud | [#674](https://github.com/hkt999rtk/rtk_video_cloud/pull/674) | `1a2ae267ff9bd1eb9146fd7f43653a9d7513b43d` |
+| Video Cloud | [#674](https://github.com/hkt999rtk/rtk_video_cloud/pull/674), [#675](https://github.com/hkt999rtk/rtk_video_cloud/pull/675) | `f40d9f72548516e5c68d553c8977d170c65e5573` |
 | Cloud Admin | [#403](https://github.com/hkt999rtk/rtk_cloud_admin/pull/403) | `4d93e5ce5f0b05b9f106bcdeca7a41adcceb4fe2` |
 | SDK | [#564](https://github.com/hkt999rtk/rtk_cloud_client/pull/564) | `3a5d6299c944c8f942d627183241a1f77679e138` |
 | Workspace integration | [#484](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/484) | `eecbb5a3a0acc8c84d33771bee8ae2a4d1f07d80` |
@@ -40,9 +40,11 @@ The dev image manifest points to the merged workspace commit above and the exact
 
 Account Manager historical migrations advanced from 078 through 082 before simplification 083/084. The offline check/apply/verify completed; four retired identity/audit tables are absent. The 4,383 general and 3 ACL audit rows retained their pre-cutover content hashes exactly. Video Cloud maintenance completed with seven retired tables absent, three OTA revision columns present, 146 devices and 11 sessions retained. Billing still has 4 usage records and 7 cloud receipts. Admin's running SQLite database passed schema version 11 verification. The old `/create_firmware_campaign` and `/firmware_upgrade` routes return HTTP 404; Video Cloud health returns HTTP 200.
 
-Of 24 deployments with desired replicas above zero across Account Manager, Admin, Video Cloud and Billing, 23 are ready. `video-cloud-api-pki` is restarting: controller CRL reads return HTTP 503 because the existing Device Root, Brand and Product CRLs expired on 2026-09-17/18. Root and Brand are offline authorities, so the controller cannot sign their replacements. Draft signing requests are prepared locally under `/tmp/rtk-db-dev-pki-crl-recovery/` (Root CRL 4, Brand CRL 11, preserving 7 Brand revocations); independent review, signing and import remain outstanding. Product CRL renewal and all consumer acknowledgments must follow the existing PKI procedure. Security checks were not disabled.
+The old dev Device Root `c92fdbb1-f87b-4cab-80a6-fa77c2dce1d8` was reset during a fenced maintenance window. Eleven descendant issuers and 44 device bindings were marked revoked, and the old Root remains in the cumulative distrust policy. The replacement OpenBao-backed Root `ad5f7da3-97d7-4655-86e4-4365f3256d67` has certificate SHA-256 `1faac429c8b91ed85b120a6918ee957db4e91bf960f60ef32c73f4e59a28cf9c`. Its activation followed genuine broker and API consumer acknowledgments. `video-cloud-api-pki`, `mqtt-pki`, controller, certissuer, factoryenroll, Account Manager and Video Cloud API are ready. Root/bootstrap jobs and public evidence are held under `/tmp/rtk-dev-device-pki-rebuild-20260922/`; no private Device Root key was exported.
 
-The live acceptance run reached platform-admin login and Brand Cloud setup, then app-certificate bootstrap repeatedly failed while the PKI dependency was unavailable. It was stopped before device/MQTT/lifecycle assertions. Local Product OTA and SDK suites passed; a full live Product OTA workflow has not been claimed. The final Account Manager image from #335 (`sha256:b1ed32d5b70b1d787a6b3c04690ef85b692d25249729deef01d394300889b9fb`) was installed by digest after its merge; its API and four workers are ready without restarts, and schema verification passes.
+Account Manager's 28 automatic Cloud/Product CA jobs initially failed because the Video Cloud management proxy omitted `POST /v1/pki/automatic` from its exact route allowlist. The route fix and regression test passed the local pre-PR gate and Video Cloud CI in [#675](https://github.com/hkt999rtk/rtk_video_cloud/pull/675), merged as `f40d9f72548516e5c68d553c8977d170c65e5573`. Its published image `sha256:9c89d33947811c7c0bd1a20e8c173f9f49eaaaa26ee552cc9d20e1788aca6eca` runs in the dev Account Manager management sidecar. After a fenced, read-only-checked requeue, all 28 original jobs reached ready. Four additional Product jobs created by live acceptance also reached ready. The controller has one active new Root, seven active Brand issuers and 25 active Product issuers.
+
+The earlier live acceptance run stopped at App certificate bootstrap while the old Device CRLs were expired. After the new Device chain was activated, App certificate bootstrap passed. The acceptance tooling now waits for Product CA creation and controller activation before requesting factory device enrollment; focused tests cover pending, active, failed, denied and bounded retry cases. Factory enrollment still fails at certissuer with `product_issuer_denied` despite an active Product issuer and a persisted reservation, so device/MQTT/lifecycle assertions and a full live Product OTA workflow have not passed. Local Product OTA and SDK suites passed. The final Account Manager image from #335 (`sha256:b1ed32d5b70b1d787a6b3c04690ef85b692d25249729deef01d394300889b9fb`) remains installed; its API and four workers are ready, and schema verification passes.
 
 ## Protected-environment blockers
 
@@ -50,5 +52,5 @@ A read-only staging inventory found Account Manager schema 082, no remaining ten
 
 ## Remaining delivery steps
 
-1. Complete the established offline PKI CRL ceremony for the dev Root and Brand, renew the Product CRL, install/acknowledge them, then rerun the full dev data, MQTT, billing, lifecycle and Product OTA acceptance matrix. Record the resulting dev pass/fail evidence.
+1. Distinguish and resolve certissuer's Product issuer selection rejection in dev, then rerun factory enrollment and the full dev data, MQTT, billing, lifecycle and Product OTA acceptance matrix. Record the resulting dev pass/fail evidence.
 2. Resolve the four staging legacy-firmware rows through a reviewed data disposition before a protected-environment upgrade. Inspect production through its own authorized environment before planning production promotion.
