@@ -426,7 +426,7 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 
 func runSecrets(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory> --environment NAME [--config-root PATH]")
+		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory|sync-missing-bindings> --environment NAME [--config-root PATH]")
 		return nil
 	}
 	action := args[0]
@@ -436,6 +436,7 @@ func runSecrets(args []string) error {
 	configRoot := fs.String("config-root", "", "RTK Cloud config root")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for migration")
+	dryRun := fs.Bool("dry-run", false, "report missing Kubernetes bindings without writing")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -475,6 +476,11 @@ func runSecrets(args []string) error {
 		return migrateSecrets(store, *workspace)
 	case "verify":
 		return verifySecretStore(os.Stdout, store, *workspace)
+	case "sync-missing-bindings":
+		if !*dryRun && *confirm != "video-cloud-"+store.Environment {
+			return fmt.Errorf("--confirm video-cloud-%s is required", store.Environment)
+		}
+		return syncMissingSecretBindings(os.Stdout, store, *dryRun)
 	case "inventory":
 		return printSecretInventory(os.Stdout, store)
 	default:

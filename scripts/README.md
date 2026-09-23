@@ -131,6 +131,12 @@ A scoped or read-only PASS alone is not deployment approval. Use the matching
 `deployment preflight --operation ...` for configuration/tooling prerequisites;
 it does not replace credentials-check. Recheck affected inputs after changes.
 
+When `secrets verify` finds a missing Kubernetes mirror key, inspect the repair
+with `go run ./scripts/go/rtk-cloud -- secrets sync-missing-bindings --environment dev --dry-run`.
+Apply with `--confirm video-cloud-dev` in place of `--dry-run`, then repeat
+`secrets verify`. This only adds absent keys from the canonical SecretStore;
+it refuses missing Secret objects and differing values.
+
 By default, the command reads individual `0600` files only from `~/.config/rtk_cloud/<environment>/operator/env/`. Shared profiles, `--env-file`, and process-environment overrides are rejected; missing values fail closed. The environment-specific check covers Linode profile/LKE read access plus the required deployment read/write OAuth scopes, pull access to every registered service GHCR repository, and reversible GoDaddy TXT-record read/write/delete access. When clip direct upload is enabled it also checks Object Storage inventory, limited-key scope, signed listing, and a write/read/delete canary. The DNS and Object Storage probes use reserved preflight names and remove their canary data before returning. Failures return nonzero. `deployment create`, `deployment upgrade`, `deployment provision`, and `deployment test` first run the matching full deployment preflight and then the same credential checks before writing runtime files, resolving images, or creating cloud resources. `create` refuses a stack that already owns provider resources. `upgrade` requires an existing LKE stack and a bound PostgreSQL PVC, and never invokes reset or storage purge. Secret values are never printed; a redacted storage receipt is stored in ignored runtime state.
 
 If the only failure is HTTP 404 for the configured Object Storage bucket, explicitly create it and immediately repeat signed-read validation:

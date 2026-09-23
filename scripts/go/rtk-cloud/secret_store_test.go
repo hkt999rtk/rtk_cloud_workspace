@@ -909,6 +909,71 @@ func TestSecretStoreK8SBindingsRequireEveryConsumer(t *testing.T) {
 	}
 }
 
+func TestSyncMissingSecretBindingsPreservesExistingValues(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	allKeys := map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		for _, binding := range entry.K8SBinding {
+			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+		}
+	}
+	before := map[string]string{}
+	for key, value := range allKeys {
+		if key != "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN" {
+			before[key] = value
+		}
+	}
+	good, _ := json.Marshal(map[string]any{"data": allKeys})
+	missing, _ := json.Marshal(map[string]any{"data": before})
+	dir := t.TempDir()
+	marker, patchPath := filepath.Join(dir, "patched"), filepath.Join(dir, "patch.json")
+	kubectl := filepath.Join(dir, "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'patch secret account-manager-runtime'*) cat > '%s'; touch '%s' ;;\n  *'get secret account-manager-runtime -o json'*) if [ -f '%s' ]; then printf '%%s' '%s'; else printf '%%s' '%s'; fi ;;\n  *'get secret '*'-o json'*) printf '%%s' '%s' ;;\nesac\n", patchPath, marker, marker, good, missing, good)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	var output bytes.Buffer
+	if err := syncMissingSecretBindings(&output, store, true); err != nil || !strings.Contains(output.String(), "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN") {
+		t.Fatalf("dry-run result = %q, %v", output.String(), err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("dry-run patched a Secret", err)
+	}
+	output.Reset()
+	if err := syncMissingSecretBindings(&output, store, false); err != nil {
+		t.Fatal(err)
+	}
+	var patch struct {
+		Data map[string]string `json:"data"`
+	}
+	raw, err := os.ReadFile(patchPath)
+	if err != nil || json.Unmarshal(raw, &patch) != nil || len(patch.Data) != 1 || patch.Data["ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"] != allKeys["ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"] {
+		t.Fatal("sync did not patch exactly the missing key", err)
+	}
+	output.Reset()
+	if err := syncMissingSecretBindings(&output, store, false); err != nil || output.Len() != 0 {
+		t.Fatalf("repeat sync changed Kubernetes Secret: %q, %v", output.String(), err)
+	}
+	allKeys["ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"] = base64.StdEncoding.EncodeToString([]byte("different"))
+	conflict, _ := json.Marshal(map[string]any{"data": allKeys})
+	script = fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'patch secret '*) exit 99 ;;\n  *'get secret '*'-o json'*) printf '%%s' '%s' ;;\nesac\n", conflict)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncMissingSecretBindings(io.Discard, store, false); err == nil || !strings.Contains(err.Error(), "automatic replacement is refused") {
+		t.Fatalf("conflicting binding was overwritten: %v", err)
+	}
+}
+
 func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "dev")
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
