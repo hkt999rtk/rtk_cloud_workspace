@@ -20,7 +20,7 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | Check tracked configuration | `deployment preflight --operation plan` | No |
 | Create a new environment | `deployment plan` -> `deployment provision` | Provision does |
 | Upgrade persistent staging | Reviewed plan and CI image provenance -> `deployment upgrade` (or a scoped existing-workload rollout) | Updates selected resources; never implies reset |
-| Check Console release features | `deployment console-check --environment NAME --cloud-id UUID --product-id UUID` | Creates private login sessions; otherwise GET/HEAD only |
+| Check Console release features | `deployment console-check --environment NAME --cloud-id UUID --product-id UUID --test-account-id UUID` | Uses an existing Test Lab account; creates private login sessions, otherwise GET/HEAD only |
 | Take over an existing environment | Transfer matching non-secret controller state and SecretStore -> `deployment preflight --operation acceptance` | Preflight does not |
 | Restore core data after deployment | [Matched backup/restore procedure](backup-restore.md) under a maintenance/write fence | Explicit restore replaces selected datasets after a safety backup |
 | Accept an existing environment | `deployment acceptance` | Creates or updates test data; does not rebuild the deployment |
@@ -211,8 +211,8 @@ different results. Do not report a complete staging release from ready Pods,
    broader migration/worker orchestration.
 5. **Console gate.** Run the maintained check below and inspect its JSON report.
    Any `FAIL` or `SKIP` produces a nonzero exit. Use an explicitly selected
-   qualification Cloud owned by the selected environment's bootstrap admin and
-   its Product; the checker creates neither. It reads `runtime/platform-admin`
+   qualification Cloud owned by the selected environment's bootstrap admin,
+   its Product, and an existing Test Lab account; the checker creates none of them. It reads `runtime/platform-admin`
    and optional `operator/env/ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL`
    from that environment's SecretStore, holds cookies in memory, refuses redirects
    and does not print API bodies or secrets.
@@ -220,7 +220,8 @@ different results. Do not report a complete staging release from ready Pods,
    ```sh
    go run ./scripts/go/rtk-cloud -- deployment console-check \
      --environment staging --cloud-id <qualification-cloud-uuid> \
-     --product-id <qualification-product-uuid>
+     --product-id <qualification-product-uuid> \
+     --test-account-id <existing-test-lab-account-uuid>
    ```
 
    The checker verifies configured social providers are visible, private admin

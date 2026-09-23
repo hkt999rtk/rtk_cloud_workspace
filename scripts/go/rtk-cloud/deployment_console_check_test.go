@@ -15,7 +15,7 @@ import (
 // Fake-server qualification must catch content/configuration regressions even
 // when every workload and every HTTP endpoint would otherwise appear healthy.
 func TestConsoleChecksCatchStagingRegressions(t *testing.T) {
-	for _, scenario := range []string{"healthy", "missing-google", "stale-snapshot", "empty-board", "missing-model", "model-html", "empty-sdk", "wrong-ownership", "test-lab-disabled", "no-product", "login-failed", "html-fallback"} {
+	for _, scenario := range []string{"healthy", "missing-google", "stale-snapshot", "empty-board", "missing-model", "model-html", "empty-sdk", "wrong-ownership", "test-lab-disabled", "no-product", "no-test-account", "invalid-test-lab-response", "login-failed", "html-fallback"} {
 		t.Run(scenario, func(t *testing.T) {
 			manifest := []byte(`{"manifest_version":"1"}`)
 			var server *httptest.Server
@@ -82,8 +82,13 @@ func TestConsoleChecksCatchStagingRegressions(t *testing.T) {
 					if r.URL.Query().Get("product_id") != "product" {
 						t.Error("wrong product scope")
 					}
+					if r.URL.Query().Get("account_id") != "account" {
+						t.Error("missing test account scope")
+					}
 					if scenario == "test-lab-disabled" {
 						w.WriteHeader(404)
+					} else if scenario == "invalid-test-lab-response" {
+						fmt.Fprint(w, `{}`)
 					} else {
 						fmt.Fprint(w, `{"devices":[]}`)
 					}
@@ -113,7 +118,11 @@ func TestConsoleChecksCatchStagingRegressions(t *testing.T) {
 			if scenario == "no-product" {
 				product = ""
 			}
-			results := collectConsoleChecks(context.Background(), consoleCheckClient{server.URL, httpClient}, map[string]string{"GOOGLE_LOGIN_ENABLED": "true", "GITHUB_LOGIN_ENABLED": "true", "TEST_LAB_ENABLED": "true"}, "fixture@test.invalid", "never-print-password", "cloud", product)
+			account := "account"
+			if scenario == "no-test-account" {
+				account = ""
+			}
+			results := collectConsoleChecks(context.Background(), consoleCheckClient{server.URL, httpClient}, map[string]string{"GOOGLE_LOGIN_ENABLED": "true", "GITHUB_LOGIN_ENABLED": "true", "TEST_LAB_ENABLED": "true"}, "fixture@test.invalid", "never-print-password", "cloud", product, account)
 			failed := false
 			for _, r := range results {
 				if r.Status != "PASS" {
@@ -147,7 +156,7 @@ func TestConsoleCheckDoesNotFollowRedirectOrProviderURL(t *testing.T) {
 }
 
 func TestConsoleCheckRequiresExplicitValidFixture(t *testing.T) {
-	for _, args := range [][]string{nil, {"--cloud-id", "../other"}, {"--cloud-id", "00000000-0000-0000-0000-000000000000", "--product-id", "bad"}, {"--unknown"}} {
+	for _, args := range [][]string{nil, {"--cloud-id", "../other"}, {"--cloud-id", "00000000-0000-0000-0000-000000000000", "--product-id", "bad"}, {"--cloud-id", "00000000-0000-0000-0000-000000000000", "--test-account-id", "bad"}, {"--unknown"}} {
 		if err := runDeploymentWithOperations(append([]string{"console-check"}, args...), deploymentOperations{}); err == nil {
 			t.Fatal("invalid input accepted")
 		}
