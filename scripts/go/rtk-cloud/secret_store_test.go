@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func makeIsolatedTestSecretStore(t *testing.T, environment string) secretStore {
@@ -869,6 +872,218 @@ func TestSecretStoreK8SBindingFailureModes(t *testing.T) {
 	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "read canonical secret postgres") {
 		t.Fatalf("missing canonical secret error = %v", err)
 	}
+}
+
+func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	valid := rolloutTLSFixture(t, time.Now().Add(30*24*time.Hour), x509.ExtKeyUsageServerAuth)
+	certPEM, err := os.ReadFile(valid.cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile(valid.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "pki-controller-tls"},
+		"data":     map[string]string{"tls.crt": base64.StdEncoding.EncodeToString(certPEM), "tls.key": base64.StdEncoding.EncodeToString(keyPEM)},
+	}}})
+	deployments, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"name": "video-cloud-api-pki", "generation": 2},
+		"spec":     map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"env": []any{map[string]any{"name": "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"}}}}}}},
+		"status":   map[string]any{"observedGeneration": 2, "updatedReplicas": 1, "availableReplicas": 1, "unavailableReplicas": 0},
+	}}})
+	kubectl := writeSecretRuntimeKubectl(t, secrets, deployments)
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SRuntime(store, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSecretStoreK8SRuntimeReportsCertificateAndIdentityFailuresTogether(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	expired := rolloutTLSFixture(t, time.Now().Add(-time.Hour), x509.ExtKeyUsageServerAuth)
+	certPEM, err := os.ReadFile(expired.cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile(expired.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "pki-controller-tls"},
+		"data":     map[string]string{"tls.crt": base64.StdEncoding.EncodeToString(certPEM), "tls.key": base64.StdEncoding.EncodeToString(keyPEM)},
+	}}})
+	deployments, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"name": "video-cloud-api-pki", "generation": 3},
+		"spec":     map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"env": []any{map[string]any{"name": "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"}}}}}}},
+		"status":   map[string]any{"observedGeneration": 3, "updatedReplicas": 1, "availableReplicas": 0, "unavailableReplicas": 1},
+	}}})
+	kubectl := writeSecretRuntimeKubectl(t, secrets, deployments)
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifySecretStoreK8SRuntime(store, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "not currently valid") || !strings.Contains(err.Error(), "identity is not proven") {
+		t.Fatalf("combined live validation error = %v", err)
+	}
+}
+
+func TestSecretStoreK8SRuntimeRejectsEmptyServiceClientRegistry(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	secrets := []byte(`{"items":[]}`)
+	deployments := []byte(`{"items":[{"metadata":{"name":"pki-controller","generation":1},"spec":{"replicas":1,"template":{"spec":{"containers":[{"env":[{"name":"PKI_SERVICE_CLIENT_SERVICE_ROOT_ID","value":"root-id"},{"name":"PKI_SERVICE_CLIENT_ROOT_SHA256","value":"0123456789abcdef"},{"name":"PKI_REQUIRED_CONSUMERS_SERVICE","value":"api,controller"}]}]}}},"status":{"observedGeneration":1,"updatedReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}]}`)
+	pods := []byte(`{"items":[{"metadata":{"name":"pki-controller-1"}}]}`)
+	report := []byte("pki authorization denied\n" + `{"status":"service-client-registry-inventory-incomplete","issuances":0,"pending_issuances":0,"invalid_records":0,"unpublished_revocations":0,"missing_acknowledgments":0}`)
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get secrets --all-namespaces -o json'*) printf '%%s' '%s' ;;\n  *'get deployments -o json'*) printf '%%s' '%s' ;;\n  *'get pods -l app.kubernetes.io/name=pki-controller -o json'*) printf '%%s' '%s' ;;\n  *'recovery-inventory-service-client'*) printf '%%s' '%s'; exit 1 ;;\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '{\"sessions\":[],\"active_caller_index\":true,\"legacy_caller_constraint\":false}' ;;\n  *) exit 1 ;;\nesac\n", secrets, deployments, pods, report)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err := verifySecretStoreK8SRuntime(store, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "issuances=0") {
+		t.Fatalf("empty registry error = %v", err)
+	}
+}
+
+func TestLiveDeploymentBootstrapSessionCheckRejectsActiveAndExpiredOwners(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	sessions, err := json.Marshal(liveDeploymentBootstrapReport{ActiveCallerIndex: true, Sessions: []liveDeploymentBootstrapSession{
+		{Caller: "service:pki-controller", DeploymentID: "old-deployment", ExpiresAt: now.Add(-time.Minute)},
+		{Caller: "service:certissuer", DeploymentID: "current-deployment", ExpiresAt: now.Add(time.Minute)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '%s' ;;\n  *) exit 1 ;;\nesac\n", sessions)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifyLiveDeploymentBootstrapSessions("/tmp/kubeconfig", "video-cloud-dev-platform", now)
+	if err == nil || !strings.Contains(err.Error(), "expired but still active") || !strings.Contains(err.Error(), "service:certissuer") {
+		t.Fatalf("bootstrap ownership error = %v", err)
+	}
+}
+
+func TestCertIssuerBootstrapPrecheckRejectsUnsupportedAndUnreachableConfiguration(t *testing.T) {
+	decode := func(t *testing.T, env string) liveDeploymentList {
+		t.Helper()
+		var deployments liveDeploymentList
+		raw := fmt.Sprintf(`{"items":[{"metadata":{"name":"certissuer"},"spec":{"template":{"spec":{"containers":[{"env":%s}]}}}}]}`, env)
+		if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+			t.Fatal(err)
+		}
+		return deployments
+	}
+	crl := decode(t, `[{"name":"OPENBAO_SERVER_CRL_MANIFEST","value":"/run/crl.json"}]`)
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", crl); err == nil || !strings.Contains(err.Error(), "before that deployment contract exists") {
+		t.Fatalf("CRL precheck error = %v", err)
+	}
+	base := `[{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA","value":"/run/root.pem"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT","value":"/run/bootstrap.crt"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY","value":"/run/bootstrap.key"},{"name":"PKI_BOOTSTRAP_SESSION_ID","value":"session"},{"name":"CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN","value":"^service-provisioner$"}]`
+	invalid := decode(t, strings.Replace(base, `^service-provisioner$`, `[`, 1))
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", invalid); err == nil || !strings.Contains(err.Error(), "pattern is invalid") {
+		t.Fatalf("caller pattern precheck error = %v", err)
+	}
+	allowed := decode(t, base)
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s' '{\"items\":[]}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", allowed); err == nil || !strings.Contains(err.Error(), "NetworkPolicy") {
+		t.Fatalf("network policy precheck error = %v", err)
+	}
+	policy := `{"items":[{"metadata":{"name":"allow-service-host-renewal"},"spec":{"ingress":[{"from":[{"podSelector":{"matchLabels":{"rtk.realtek.com/pki-bootstrap":"true"}}}]}]}}]}`
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s' '"+policy+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", allowed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCertIssuerStaticServingChainPrecheck(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	fixture := rolloutTLSFixture(t, now.Add(24*time.Hour), x509.ExtKeyUsageServerAuth)
+	leaf, err := os.ReadFile(fixture.cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(fixture.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := os.ReadFile(fixture.ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(t *testing.T, ca []byte, managed bool) (liveSecretList, liveDeploymentList) {
+		t.Helper()
+		secretsRaw, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+			"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "certissuer-runtime"},
+			"data": map[string]string{
+				"tls.crt": base64.StdEncoding.EncodeToString(leaf),
+				"tls.key": base64.StdEncoding.EncodeToString(key),
+				"ca.crt":  base64.StdEncoding.EncodeToString(ca),
+			},
+		}}})
+		env := []any{map[string]any{"name": "CERT_ISSUER_SERVER_CERT", "value": "/etc/video-cloud/certissuer/tls.crt"}}
+		if managed {
+			env = append(env, map[string]any{"name": "CERT_ISSUER_HOST_IDENTITY_STATE", "value": "/var/lib/pki-host/identity/state.json"})
+		}
+		deploymentsRaw, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+			"metadata": map[string]any{"name": "certissuer"},
+			"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+				"containers": []any{map[string]any{"env": env, "volumeMounts": []any{map[string]any{"name": "runtime", "mountPath": "/etc/video-cloud/certissuer"}}}},
+				"volumes":    []any{map[string]any{"name": "runtime", "secret": map[string]any{"secretName": "certissuer-runtime"}}},
+			}}},
+		}}})
+		var secrets liveSecretList
+		var deployments liveDeploymentList
+		if json.Unmarshal(secretsRaw, &secrets) != nil || json.Unmarshal(deploymentsRaw, &deployments) != nil {
+			t.Fatal("cannot decode static serving fixtures")
+		}
+		return secrets, deployments
+	}
+	secrets, deployments := decode(t, issuer, false)
+	if err := verifyCertIssuerStaticServingChain("video-cloud-dev-video-cloud", secrets, deployments, now); err != nil {
+		t.Fatal(err)
+	}
+	other := rolloutTLSFixture(t, now.Add(24*time.Hour), x509.ExtKeyUsageServerAuth)
+	unrelatedCA, err := os.ReadFile(other.ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, deployments = decode(t, unrelatedCA, false)
+	if err := verifyCertIssuerStaticServingChain("video-cloud-dev-video-cloud", secrets, deployments, now); err == nil || !strings.Contains(err.Error(), "no usable issuer chain") {
+		t.Fatalf("untrusted static cert error = %v", err)
+	}
+	secrets, deployments = decode(t, unrelatedCA, true)
+	if err := verifyCertIssuerStaticServingChain("video-cloud-dev-video-cloud", secrets, deployments, now); err != nil {
+		t.Fatalf("managed host identity must not depend on the static seed chain: %v", err)
+	}
+}
+
+func writeSecretRuntimeKubectl(t *testing.T, secrets, deployments []byte) string {
+	t.Helper()
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get secrets --all-namespaces -o json'*) printf '%%s' '%s' ;;\n  *'get deployments -o json'*) printf '%%s' '%s' ;;\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '{\"sessions\":[],\"active_caller_index\":true,\"legacy_caller_constraint\":false}' ;;\n  *) exit 1 ;;\nesac\n", string(secrets), string(deployments))
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return kubectl
 }
 
 func TestSecretMigrationRejectsInvalidLiveK8SMetadata(t *testing.T) {
