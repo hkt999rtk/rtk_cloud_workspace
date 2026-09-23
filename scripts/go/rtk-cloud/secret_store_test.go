@@ -976,7 +976,7 @@ func TestSecretStoreK8SRuntimeRejectsEmptyServiceClientRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	secrets := []byte(`{"items":[]}`)
-	deployments := []byte(`{"items":[{"metadata":{"name":"pki-controller","generation":1},"spec":{"replicas":1,"template":{"spec":{"containers":[{"env":[{"name":"PKI_SERVICE_CLIENT_SERVICE_ROOT_ID","value":"root-id"},{"name":"PKI_SERVICE_CLIENT_ROOT_SHA256","value":"0123456789abcdef"},{"name":"PKI_REQUIRED_CONSUMERS_SERVICE","value":"api,controller"}]}]}}},"status":{"observedGeneration":1,"updatedReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}]}`)
+	deployments := []byte(`{"items":[{"metadata":{"name":"pki-controller","generation":1},"spec":{"replicas":1,"template":{"spec":{"containers":[{"env":[{"name":"RTK_DEPLOYMENT_SERVICE_ISSUER_ID","value":"intermediate-id"},{"name":"PKI_SERVICE_CLIENT_ROOT_SHA256","value":"0123456789abcdef"},{"name":"PKI_REQUIRED_CONSUMERS_SERVICE","value":"api,controller"}]}]}}},"status":{"observedGeneration":1,"updatedReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}]}`)
 	pods := []byte(`{"items":[{"metadata":{"name":"pki-controller-1"}}]}`)
 	report := []byte("pki authorization denied\n" + `{"status":"service-client-registry-inventory-incomplete","issuances":0,"pending_issuances":0,"invalid_records":0,"unpublished_revocations":0,"missing_acknowledgments":0}`)
 	kubectl := filepath.Join(t.TempDir(), "kubectl")
@@ -1009,6 +1009,26 @@ func TestLiveDeploymentBootstrapSessionCheckRejectsActiveAndExpiredOwners(t *tes
 	err = verifyLiveDeploymentBootstrapSessions("/tmp/kubeconfig", "video-cloud-dev-platform", now)
 	if err == nil || !strings.Contains(err.Error(), "expired but still active") || !strings.Contains(err.Error(), "service:certissuer") {
 		t.Fatalf("bootstrap ownership error = %v", err)
+	}
+}
+
+func TestLiveDeploymentBootstrapSessionCheckRejectsPendingServiceClientIssuance(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	report, err := json.Marshal(liveDeploymentBootstrapReport{ActiveCallerIndex: true, PendingCount: 2, PendingIssuances: []livePendingServiceClientIssuance{
+		{Caller: "service:certissuer", RequestID: "retained-request", CreatedAt: now.Add(-time.Hour)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '%s' ;;\n  *) exit 1 ;;\nesac\n", report)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifyLiveDeploymentBootstrapSessions("/tmp/kubeconfig", "video-cloud-dev-platform", now)
+	if err == nil || !strings.Contains(err.Error(), "pending Service client issuance caller=service:certissuer request=retained-request") || !strings.Contains(err.Error(), "1 additional pending") {
+		t.Fatalf("pending signing error = %v", err)
 	}
 }
 

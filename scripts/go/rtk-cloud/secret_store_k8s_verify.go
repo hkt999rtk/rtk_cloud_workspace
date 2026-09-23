@@ -84,10 +84,18 @@ type liveDeploymentBootstrapSession struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
+type livePendingServiceClientIssuance struct {
+	Caller    string    `json:"caller"`
+	RequestID string    `json:"request_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type liveDeploymentBootstrapReport struct {
-	Sessions               []liveDeploymentBootstrapSession `json:"sessions"`
-	ActiveCallerIndex      bool                             `json:"active_caller_index"`
-	LegacyCallerConstraint bool                             `json:"legacy_caller_constraint"`
+	Sessions               []liveDeploymentBootstrapSession   `json:"sessions"`
+	PendingIssuances       []livePendingServiceClientIssuance `json:"pending_issuances"`
+	PendingCount           int                                `json:"pending_count"`
+	ActiveCallerIndex      bool                               `json:"active_caller_index"`
+	LegacyCallerConstraint bool                               `json:"legacy_caller_constraint"`
 }
 
 // verifySecretStoreK8SRuntime is a read-only live check. It validates every
@@ -415,8 +423,8 @@ func parsePEMCertificates(raw []byte) ([]*x509.Certificate, error) {
 }
 
 // verifyLiveDeploymentBootstrapSessions prevents a second signing attempt from
-// starting while an earlier deployment bootstrap still owns its caller. This
-// is intentionally read-only and reports only non-secret session metadata.
+// starting while an earlier deployment bootstrap owns its caller or a Service
+// client issuance still awaits reconciliation. It reports only non-secret metadata.
 func verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace string, now time.Time) error {
 	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
 	if err != nil {
@@ -426,7 +434,7 @@ func verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace string, now tim
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return errors.New("PostgreSQL Pod is unavailable for deployment bootstrap verification")
 	}
-	query := `SELECT json_build_object('sessions',COALESCE((SELECT json_agg(json_build_object('caller',caller,'deployment_id',deployment_id,'expires_at',expires_at) ORDER BY created_at) FROM public.pki_deployment_bootstrap_sessions WHERE status='active'),'[]'::json),'active_caller_index',EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='pki_deployment_bootstrap_sessions' AND indexname='pki_deployment_bootstrap_sessions_active_caller_idx' AND indexdef LIKE '%WHERE (status = ''active''::text)%'),'legacy_caller_constraint',EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.pki_deployment_bootstrap_sessions'::regclass AND conname='pki_deployment_bootstrap_sessions_environment_caller_key'))`
+	query := `SELECT json_build_object('sessions',COALESCE((SELECT json_agg(json_build_object('caller',caller,'deployment_id',deployment_id,'expires_at',expires_at) ORDER BY created_at) FROM public.pki_deployment_bootstrap_sessions WHERE status='active'),'[]'::json),'pending_issuances',COALESCE((SELECT json_agg(json_build_object('caller',caller,'request_id',request_id,'created_at',created_at) ORDER BY created_at) FROM (SELECT caller,request_id,created_at FROM public.pki_service_client_issuances WHERE status='issuing' ORDER BY created_at LIMIT 20) pending),'[]'::json),'pending_count',(SELECT count(*) FROM public.pki_service_client_issuances WHERE status='issuing'),'active_caller_index',EXISTS(SELECT 1 FROM pg_indexes WHERE schemaname='public' AND tablename='pki_deployment_bootstrap_sessions' AND indexname='pki_deployment_bootstrap_sessions_active_caller_idx' AND indexdef LIKE '%WHERE (status = ''active''::text)%'),'legacy_caller_constraint',EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='public.pki_deployment_bootstrap_sessions'::regclass AND conname='pki_deployment_bootstrap_sessions_environment_caller_key'))`
 	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
 	var report liveDeploymentBootstrapReport
 	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &report) != nil {
@@ -435,10 +443,10 @@ func verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace string, now tim
 	if !report.ActiveCallerIndex || report.LegacyCallerConstraint {
 		return errors.New("deployment bootstrap caller schema is outdated; active-only caller ownership migration is required before signing")
 	}
-	if len(report.Sessions) == 0 {
+	if len(report.Sessions) == 0 && report.PendingCount == 0 {
 		return nil
 	}
-	issues := make([]string, 0, len(report.Sessions))
+	issues := make([]string, 0, len(report.Sessions)+len(report.PendingIssuances))
 	for _, session := range report.Sessions {
 		state := "active"
 		if !now.Before(session.ExpiresAt) {
@@ -446,7 +454,13 @@ func verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace string, now tim
 		}
 		issues = append(issues, fmt.Sprintf("caller=%s deployment=%s state=%s", session.Caller, session.DeploymentID, state))
 	}
-	return fmt.Errorf("deployment bootstrap session already owns a caller; seal or expire it before signing: %s", strings.Join(issues, ", "))
+	for _, pending := range report.PendingIssuances {
+		issues = append(issues, fmt.Sprintf("pending Service client issuance caller=%s request=%s created=%s", pending.Caller, pending.RequestID, pending.CreatedAt.UTC().Format(time.RFC3339)))
+	}
+	if report.PendingCount > len(report.PendingIssuances) {
+		issues = append(issues, fmt.Sprintf("%d additional pending Service client issuances", report.PendingCount-len(report.PendingIssuances)))
+	}
+	return fmt.Errorf("deployment signing state requires reconciliation before another signing attempt: %s", strings.Join(issues, ", "))
 }
 
 func deploymentUsesPKI(deployment liveDeployment) bool {
@@ -485,11 +499,13 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 			settings[item.Name] = item.Value
 		}
 	}
-	rootID := settings["PKI_SERVICE_CLIENT_SERVICE_ROOT_ID"]
+	// The inventory command takes the active Service intermediate, not the
+	// Service Root used by the optional dynamic root consumer.
+	issuerID := settings["RTK_DEPLOYMENT_SERVICE_ISSUER_ID"]
 	rootSHA := settings["PKI_SERVICE_CLIENT_ROOT_SHA256"]
 	consumers := settings["PKI_REQUIRED_CONSUMERS_SERVICE"]
-	if rootID == "" || rootSHA == "" || consumers == "" {
-		return errors.New("pki-controller Service client registry settings are incomplete")
+	if issuerID == "" || rootSHA == "" || consumers == "" {
+		return errors.New("pki-controller Service client registry issuer settings are incomplete")
 	}
 	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=pki-controller", "-o", "json").Output()
 	if err != nil {
@@ -499,7 +515,7 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
 		return errors.New("pki-controller Pod is unavailable for Service client registry verification")
 	}
-	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "/app/pkicontroller", "recovery-inventory-service-client", rootID, rootSHA, consumers).CombinedOutput()
+	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "/app/pkicontroller", "recovery-inventory-service-client", issuerID, rootSHA, consumers).CombinedOutput()
 	start, end := strings.IndexByte(string(output), '{'), strings.LastIndexByte(string(output), '}')
 	var report struct {
 		Status                 string `json:"status"`
