@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func makeIsolatedTestSecretStore(t *testing.T, environment string) secretStore {
@@ -869,6 +872,487 @@ func TestSecretStoreK8SBindingFailureModes(t *testing.T) {
 	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "read canonical secret postgres") {
 		t.Fatalf("missing canonical secret error = %v", err)
 	}
+}
+
+func TestSecretStoreK8SBindingsRequireEveryConsumer(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	allKeys := map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		for _, binding := range entry.K8SBinding {
+			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+		}
+	}
+	withoutAdminJobToken := map[string]string{}
+	for key, value := range allKeys {
+		if key != "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN" {
+			withoutAdminJobToken[key] = value
+		}
+	}
+	good, _ := json.Marshal(map[string]any{"data": allKeys})
+	bad, _ := json.Marshal(map[string]any{"data": withoutAdminJobToken})
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *cloud-admin-billing-client*) printf '%%s\\n' '%s' ;;\n  *) printf '%%s\\n' '%s' ;;\nesac\n", bad, good)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "job-authorization-token") || !strings.Contains(err.Error(), "cloud-admin-billing-client") {
+		t.Fatalf("second consumer with missing binding was accepted: %v", err)
+	}
+}
+
+func TestSyncMissingSecretBindingsPreservesExistingValues(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	allKeys := map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		for _, binding := range entry.K8SBinding {
+			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+		}
+	}
+	before := map[string]string{}
+	for key, value := range allKeys {
+		if key != "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN" {
+			before[key] = value
+		}
+	}
+	good, _ := json.Marshal(map[string]any{"data": allKeys})
+	missing, _ := json.Marshal(map[string]any{"data": before})
+	dir := t.TempDir()
+	marker, patchPath := filepath.Join(dir, "patched"), filepath.Join(dir, "patch.json")
+	kubectl := filepath.Join(dir, "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'patch secret account-manager-runtime'*) cat > '%s'; touch '%s' ;;\n  *'get secret account-manager-runtime -o json'*) if [ -f '%s' ]; then printf '%%s' '%s'; else printf '%%s' '%s'; fi ;;\n  *'get secret '*'-o json'*) printf '%%s' '%s' ;;\nesac\n", patchPath, marker, marker, good, missing, good)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	var output bytes.Buffer
+	if err := syncMissingSecretBindings(&output, store, true); err != nil || !strings.Contains(output.String(), "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN") {
+		t.Fatalf("dry-run result = %q, %v", output.String(), err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("dry-run patched a Secret", err)
+	}
+	output.Reset()
+	if err := syncMissingSecretBindings(&output, store, false); err != nil {
+		t.Fatal(err)
+	}
+	var patch struct {
+		Data map[string]string `json:"data"`
+	}
+	raw, err := os.ReadFile(patchPath)
+	if err != nil || json.Unmarshal(raw, &patch) != nil || len(patch.Data) != 1 || patch.Data["ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"] != allKeys["ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"] {
+		t.Fatal("sync did not patch exactly the missing key", err)
+	}
+	output.Reset()
+	if err := syncMissingSecretBindings(&output, store, false); err != nil || output.Len() != 0 {
+		t.Fatalf("repeat sync changed Kubernetes Secret: %q, %v", output.String(), err)
+	}
+	allKeys["ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN"] = base64.StdEncoding.EncodeToString([]byte("different"))
+	conflict, _ := json.Marshal(map[string]any{"data": allKeys})
+	script = fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'patch secret '*) exit 99 ;;\n  *'get secret '*'-o json'*) printf '%%s' '%s' ;;\nesac\n", conflict)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncMissingSecretBindings(io.Discard, store, false); err == nil || !strings.Contains(err.Error(), "automatic replacement is refused") {
+		t.Fatalf("conflicting binding was overwritten: %v", err)
+	}
+}
+
+func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	valid := rolloutTLSFixture(t, time.Now().Add(30*24*time.Hour), x509.ExtKeyUsageServerAuth)
+	certPEM, err := os.ReadFile(valid.cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile(valid.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "pki-controller-tls"},
+		"data":     map[string]string{"tls.crt": base64.StdEncoding.EncodeToString(certPEM), "tls.key": base64.StdEncoding.EncodeToString(keyPEM)},
+	}}})
+	deployments, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"name": "video-cloud-api-pki", "generation": 2},
+		"spec":     map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"env": []any{map[string]any{"name": "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"}}}}}}},
+		"status":   map[string]any{"observedGeneration": 2, "updatedReplicas": 1, "availableReplicas": 1, "unavailableReplicas": 0},
+	}}})
+	kubectl := writeSecretRuntimeKubectl(t, secrets, deployments)
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SRuntime(store, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLiveAccountManagerEnvironmentRejectsWrongSecretValue(t *testing.T) {
+	namespace := "video-cloud-dev-account-manager"
+	secret := "account-manager-runtime"
+	for _, tc := range []struct {
+		name string
+		data map[string]string
+		want string
+	}{
+		{"matching", map[string]string{"ACCOUNT_MANAGER_ENV": base64.StdEncoding.EncodeToString([]byte("dev"))}, ""},
+		{"staging", map[string]string{"ACCOUNT_MANAGER_ENV": base64.StdEncoding.EncodeToString([]byte("staging"))}, "does not match"},
+		{"missing", map[string]string{}, "missing ACCOUNT_MANAGER_ENV"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyLiveAccountManagerEnvironment("dev", namespace, secret, tc.data)
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("environment check = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T) {
+	var deployments liveDeploymentList
+	raw := `{"items":[{"metadata":{"name":"pki-controller"},"spec":{"template":{"spec":{"containers":[{"name":"pki-controller","env":[{"name":"PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE","value":"video-cloud-api,pkibroker"}]}]}}}},{"metadata":{"name":"video-cloud-api-pki"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[]}]}}}},{"metadata":{"name":"mqtt-pki"},"spec":{"template":{"spec":{"containers":[{"name":"pkibroker","env":[]}]}}}}]}`
+	if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	err := verifyAutomaticDeviceTrustConsumers(deployments)
+	if err == nil || !strings.Contains(err.Error(), "video-cloud-api-pki") || !strings.Contains(err.Error(), "mqtt-pki/pkibroker") {
+		t.Fatalf("missing Product CA consumers = %v", err)
+	}
+	deployments.Items[1].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[1].Spec.Template.Spec.Containers[0].Env,
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR", Value: "/run/automatic-device"},
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS", Value: "true"})
+	deployments.Items[2].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[2].Spec.Template.Spec.Containers[0].Env,
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR", Value: "/run/automatic-device"},
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "PKI_BROKER_REQUIRE_CRLS", Value: "true"},
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED", Value: "true"})
+	if err := verifyAutomaticDeviceTrustConsumers(deployments); err != nil {
+		t.Fatalf("configured Product CA consumers = %v", err)
+	}
+}
+
+func TestSecretStoreK8SRuntimeReportsCertificateAndIdentityFailuresTogether(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	expired := rolloutTLSFixture(t, time.Now().Add(-time.Hour), x509.ExtKeyUsageServerAuth)
+	certPEM, err := os.ReadFile(expired.cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPEM, err := os.ReadFile(expired.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "pki-controller-tls"},
+		"data":     map[string]string{"tls.crt": base64.StdEncoding.EncodeToString(certPEM), "tls.key": base64.StdEncoding.EncodeToString(keyPEM)},
+	}}})
+	deployments, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+		"metadata": map[string]any{"name": "video-cloud-api-pki", "generation": 3},
+		"spec":     map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"env": []any{map[string]any{"name": "VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"}}}}}}},
+		"status":   map[string]any{"observedGeneration": 3, "updatedReplicas": 1, "availableReplicas": 0, "unavailableReplicas": 1},
+	}}})
+	kubectl := writeSecretRuntimeKubectl(t, secrets, deployments)
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifySecretStoreK8SRuntime(store, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "not currently valid") || !strings.Contains(err.Error(), "identity is not proven") {
+		t.Fatalf("combined live validation error = %v", err)
+	}
+}
+
+func TestSecretStoreK8SRuntimeRejectsIncompleteServiceClientInventory(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	secrets := []byte(`{"items":[]}`)
+	deployments := []byte(`{"items":[{"metadata":{"name":"pki-controller","generation":1},"spec":{"replicas":1,"template":{"spec":{"containers":[{"env":[{"name":"RTK_DEPLOYMENT_SERVICE_ISSUER_ID","value":"intermediate-id"},{"name":"PKI_SERVICE_CLIENT_ROOT_SHA256","value":"0123456789abcdef"},{"name":"PKI_REQUIRED_CONSUMERS_SERVICE","value":"api,controller"}]}]}}},"status":{"observedGeneration":1,"updatedReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}]}`)
+	pods := []byte(`{"items":[{"metadata":{"name":"pki-controller-1"}}]}`)
+	report := []byte("pki authorization denied\n" + `{"status":"service-client-registry-inventory-incomplete","issuances":0,"pending_issuances":0,"invalid_records":0,"unpublished_revocations":0,"missing_acknowledgments":0}`)
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get secrets --all-namespaces -o json'*) printf '%%s' '%s' ;;\n  *'get deployments -o json'*) printf '%%s' '%s' ;;\n  *'get pods -l app.kubernetes.io/name=pki-controller -o json'*) printf '%%s' '%s' ;;\n  *'recovery-inventory-service-client'*) printf '%%s' '%s'; exit 1 ;;\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '{\"sessions\":[],\"active_caller_index\":true,\"legacy_caller_constraint\":false}' ;;\n  *) exit 1 ;;\nesac\n", secrets, deployments, pods, report)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err := verifySecretStoreK8SRuntime(store, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "inventory did not complete") {
+		t.Fatalf("empty registry error = %v", err)
+	}
+}
+
+func TestAccountManagerPKIPrecheckRejectsOldConsumerAndSocketMismatch(t *testing.T) {
+	decode := func(t *testing.T, sidecarEnv string) liveDeploymentList {
+		t.Helper()
+		var deployments liveDeploymentList
+		raw := fmt.Sprintf(`{"items":[{"metadata":{"name":"account-manager"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"APP_CERT_ISSUER_SOCKET","value":"/run/account-pki/private/controller.sock"}]},{"name":"pkimanagement","env":%s}]}}}}]}`, sidecarEnv)
+		if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+			t.Fatal(err)
+		}
+		return deployments
+	}
+	old := decode(t, `[{"name":"PKI_MANAGEMENT_SOCKET","value":"/run/account-pki/private/controller.sock"},{"name":"PKI_MANAGEMENT_ISSUER_SERVER_CRL_MANIFEST","value":"/run/crls.json"}]`)
+	if err := verifyAccountManagerPKIConfiguration(old); err == nil || !strings.Contains(err.Error(), "PKI_MANAGEMENT_ISSUER_SERVER_CRL_MANIFEST") {
+		t.Fatalf("old CRL consumer precheck error = %v", err)
+	}
+	mismatch := decode(t, `[{"name":"PKI_MANAGEMENT_SOCKET","value":"/run/other.sock"}]`)
+	if err := verifyAccountManagerPKIConfiguration(mismatch); err == nil || !strings.Contains(err.Error(), "different managed socket") {
+		t.Fatalf("managed socket mismatch precheck error = %v", err)
+	}
+	good := decode(t, `[{"name":"PKI_MANAGEMENT_SOCKET","value":"/run/account-pki/private/controller.sock"},{"name":"PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_BUNDLE_MANIFEST","value":"/run/bundles.json"},{"name":"PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_PKI_CONTROLLER_URL","value":"https://controller.example.test"},{"name":"PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_MANAGEMENT_CA","value":"/run/root.pem"}]`)
+	if err := verifyAccountManagerPKIConfiguration(good); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLiveDeploymentBootstrapSessionCheckRejectsActiveAndExpiredOwners(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	sessions, err := json.Marshal(liveDeploymentBootstrapReport{ActiveCallerIndex: true, Sessions: []liveDeploymentBootstrapSession{
+		{Caller: "service:pki-controller", DeploymentID: "old-deployment", ExpiresAt: now.Add(-time.Minute)},
+		{Caller: "service:certissuer", DeploymentID: "current-deployment", ExpiresAt: now.Add(time.Minute)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '%s' ;;\n  *) exit 1 ;;\nesac\n", sessions)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifyLiveDeploymentBootstrapSessions("/tmp/kubeconfig", "video-cloud-dev-platform", now)
+	if err == nil || !strings.Contains(err.Error(), "expired but still active") || !strings.Contains(err.Error(), "service:certissuer") {
+		t.Fatalf("bootstrap ownership error = %v", err)
+	}
+}
+
+func TestLiveDeploymentBootstrapSessionCheckRejectsPendingServiceClientIssuance(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	report, err := json.Marshal(liveDeploymentBootstrapReport{ActiveCallerIndex: true, PendingCount: 2, PendingIssuances: []livePendingServiceClientIssuance{
+		{Caller: "service:certissuer", RequestID: "retained-request", CreatedAt: now.Add(-time.Hour)},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '%s' ;;\n  *) exit 1 ;;\nesac\n", report)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err = verifyLiveDeploymentBootstrapSessions("/tmp/kubeconfig", "video-cloud-dev-platform", now)
+	if err == nil || !strings.Contains(err.Error(), "pending Service client issuance caller=service:certissuer request=retained-request") || !strings.Contains(err.Error(), "1 additional pending") {
+		t.Fatalf("pending signing error = %v", err)
+	}
+}
+
+func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
+	const rootID = "697e8e86-5af6-4580-8456-7f91d17634f2"
+	var deployments liveDeploymentList
+	raw := `{"items":[{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID","value":"` + rootID + `"},{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE","value":"/private/root.json"}]}]}}}}]}`
+	if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := "#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_root_distrust'*) printf '%s' '[]' ;;\n  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments)
+	if err == nil || !strings.Contains(err.Error(), rootID) || !strings.Contains(err.Error(), "video-cloud-api/app") {
+		t.Fatalf("missing root policy error = %v", err)
+	}
+	script = strings.Replace(script, "'[]'", "'[\""+rootID+"\"]'", 1)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err != nil {
+		t.Fatalf("present root policy: %v", err)
+	}
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[1].Value = ""
+	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("incomplete root policy error = %v", err)
+	}
+}
+
+func TestSelectedStackMetadataRejectsDifferentEnvironment(t *testing.T) {
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(store.Root, "env"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Root, "env", "stack.env")
+	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=staging\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySelectedStackMetadata(store); err == nil || !strings.Contains(err.Error(), "video-cloud-staging") {
+		t.Fatalf("environment mismatch error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=dev\nCLOUD_STACK_NAME=video-cloud-dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySelectedStackMetadata(store); err == nil || !strings.Contains(err.Error(), "CERTIFICATE_APP_CSR_KEY_ALGORITHMS") {
+		t.Fatalf("missing certificate policy error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=dev\nCLOUD_STACK_NAME=video-cloud-dev\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=p256\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySelectedStackMetadata(store); err != nil {
+		t.Fatalf("matching environment: %v", err)
+	}
+}
+
+func TestCertIssuerBootstrapPrecheckRejectsUnsupportedAndUnreachableConfiguration(t *testing.T) {
+	decode := func(t *testing.T, env string) liveDeploymentList {
+		t.Helper()
+		var deployments liveDeploymentList
+		raw := fmt.Sprintf(`{"items":[{"metadata":{"name":"certissuer"},"spec":{"template":{"spec":{"containers":[{"env":%s}]}}}}]}`, env)
+		if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+			t.Fatal(err)
+		}
+		return deployments
+	}
+	crl := decode(t, `[{"name":"OPENBAO_SERVER_CRL_MANIFEST","value":"/run/crl.json"}]`)
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", crl); err == nil || !strings.Contains(err.Error(), "before that deployment contract exists") {
+		t.Fatalf("CRL precheck error = %v", err)
+	}
+	base := `[{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA","value":"/run/root.pem"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT","value":"/run/bootstrap.crt"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY","value":"/run/bootstrap.key"},{"name":"PKI_BOOTSTRAP_SESSION_ID","value":"session"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID","value":"session"},{"name":"CERT_ISSUER_HOST_RENEWAL_URL","value":"https://127.0.0.1:9443"},{"name":"CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN","value":"^service-provisioner$"}]`
+	mismatchedSession := decode(t, strings.Replace(base, `"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID","value":"session"`, `"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID","value":"other"`, 1))
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", mismatchedSession); err == nil || !strings.Contains(err.Error(), "same session") {
+		t.Fatalf("session binding precheck error = %v", err)
+	}
+	serviceEndpoint := decode(t, strings.Replace(base, `https://127.0.0.1:9443`, `https://certissuer.video-cloud-dev-video-cloud.svc:9443`, 1))
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", serviceEndpoint); err == nil || !strings.Contains(err.Error(), "readiness") {
+		t.Fatalf("self-enrollment endpoint precheck error = %v", err)
+	}
+	invalid := decode(t, strings.Replace(base, `^service-provisioner$`, `[`, 1))
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", invalid); err == nil || !strings.Contains(err.Error(), "pattern is invalid") {
+		t.Fatalf("caller pattern precheck error = %v", err)
+	}
+	allowed := decode(t, base)
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s' '{\"items\":[]}'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", allowed); err == nil || !strings.Contains(err.Error(), "NetworkPolicy") {
+		t.Fatalf("network policy precheck error = %v", err)
+	}
+	policy := `{"items":[{"metadata":{"name":"allow-service-host-renewal"},"spec":{"ingress":[{"from":[{"podSelector":{"matchLabels":{"rtk.realtek.com/pki-bootstrap":"true"}}}]}]}}]}`
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nprintf '%s' '"+policy+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", allowed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCertIssuerStaticServingChainPrecheck(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	fixture := rolloutTLSFixture(t, now.Add(24*time.Hour), x509.ExtKeyUsageServerAuth)
+	leaf, err := os.ReadFile(fixture.cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(fixture.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := os.ReadFile(fixture.ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decode := func(t *testing.T, ca []byte, managed bool) (liveSecretList, liveDeploymentList) {
+		t.Helper()
+		secretsRaw, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+			"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "certissuer-runtime"},
+			"data": map[string]string{
+				"tls.crt": base64.StdEncoding.EncodeToString(leaf),
+				"tls.key": base64.StdEncoding.EncodeToString(key),
+				"ca.crt":  base64.StdEncoding.EncodeToString(ca),
+			},
+		}}})
+		env := []any{map[string]any{"name": "CERT_ISSUER_SERVER_CERT", "value": "/etc/video-cloud/certissuer/tls.crt"}}
+		if managed {
+			env = append(env, map[string]any{"name": "CERT_ISSUER_HOST_IDENTITY_STATE", "value": "/var/lib/pki-host/identity/state.json"})
+		}
+		deploymentsRaw, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
+			"metadata": map[string]any{"name": "certissuer"},
+			"spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+				"containers": []any{map[string]any{"env": env, "volumeMounts": []any{map[string]any{"name": "runtime", "mountPath": "/etc/video-cloud/certissuer"}}}},
+				"volumes":    []any{map[string]any{"name": "runtime", "secret": map[string]any{"secretName": "certissuer-runtime"}}},
+			}}},
+		}}})
+		var secrets liveSecretList
+		var deployments liveDeploymentList
+		if json.Unmarshal(secretsRaw, &secrets) != nil || json.Unmarshal(deploymentsRaw, &deployments) != nil {
+			t.Fatal("cannot decode static serving fixtures")
+		}
+		return secrets, deployments
+	}
+	secrets, deployments := decode(t, issuer, false)
+	if err := verifyCertIssuerStaticServingChain("video-cloud-dev-video-cloud", secrets, deployments, now); err != nil {
+		t.Fatal(err)
+	}
+	other := rolloutTLSFixture(t, now.Add(24*time.Hour), x509.ExtKeyUsageServerAuth)
+	unrelatedCA, err := os.ReadFile(other.ca)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets, deployments = decode(t, unrelatedCA, false)
+	if err := verifyCertIssuerStaticServingChain("video-cloud-dev-video-cloud", secrets, deployments, now); err == nil || !strings.Contains(err.Error(), "no usable issuer chain") {
+		t.Fatalf("untrusted static cert error = %v", err)
+	}
+	secrets, deployments = decode(t, unrelatedCA, true)
+	if err := verifyCertIssuerStaticServingChain("video-cloud-dev-video-cloud", secrets, deployments, now); err != nil {
+		t.Fatalf("managed host identity must not depend on the static seed chain: %v", err)
+	}
+}
+
+func writeSecretRuntimeKubectl(t *testing.T, secrets, deployments []byte) string {
+	t.Helper()
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get secrets --all-namespaces -o json'*) printf '%%s' '%s' ;;\n  *'get deployments -o json'*) printf '%%s' '%s' ;;\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '{\"sessions\":[],\"active_caller_index\":true,\"legacy_caller_constraint\":false}' ;;\n  *) exit 1 ;;\nesac\n", string(secrets), string(deployments))
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return kubectl
 }
 
 func TestSecretMigrationRejectsInvalidLiveK8SMetadata(t *testing.T) {

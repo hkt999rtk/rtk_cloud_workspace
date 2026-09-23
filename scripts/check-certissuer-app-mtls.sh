@@ -31,7 +31,14 @@ fi
 
 # An authenticated but incomplete request must pass mTLS authorization and fail
 # request validation with HTTP 400. It cannot issue or rotate a certificate.
-RESPONSE="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$ACCOUNT_NAMESPACE" exec "$POD" -- sh -c '
+SOCKET="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$ACCOUNT_NAMESPACE" exec "$POD" -c app -- sh -c 'printf "%s" "${APP_CERT_ISSUER_SOCKET:-}"')"
+if [[ -n "$SOCKET" ]]; then
+	RESPONSE="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$ACCOUNT_NAMESPACE" exec -i "$POD" -c app -- perl - < "$ROOT/scripts/check-certissuer-app-socket.pl")" || {
+		printf 'FAIL: managed CertIssuer socket request could not be completed\n' >&2
+		exit 1
+	}
+else
+	RESPONSE="$(kubectl --kubeconfig "$KUBECONFIG_PATH" -n "$ACCOUNT_NAMESPACE" exec "$POD" -c app -- sh -c '
 set -eu
 host="${APP_CERT_ISSUER_BASE_URL#https://}"
 host="${host%%/*}"
@@ -46,9 +53,10 @@ body="{}"
   -cert "$APP_CERT_ISSUER_CLIENT_CERT" -key "$APP_CERT_ISSUER_CLIENT_KEY" \
   -CAfile "$APP_CERT_ISSUER_CA_FILE" 2>/dev/null
 ')" || {
-	printf 'FAIL: certissuer mTLS request could not be completed\n' >&2
-	exit 1
-}
+		printf 'FAIL: certissuer mTLS request could not be completed\n' >&2
+		exit 1
+	}
+fi
 
 STATUS="$(printf '%s\n' "$RESPONSE" | awk 'NR == 1 {print $2}')"
 CODE="$(printf '%s\n' "$RESPONSE" | tr -d '\r\n' | sed -n 's/.*"code":"\([^"]*\)".*/\1/p')"

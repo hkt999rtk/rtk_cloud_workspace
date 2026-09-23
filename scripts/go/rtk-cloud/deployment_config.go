@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -103,7 +105,7 @@ func architectureKeySet() map[string]bool {
 		"NODE_CLASS_BROKER_MIN_VCPU", "NODE_CLASS_BROKER_MIN_MEMORY_GIB",
 		"NODE_CLASS_DATABASE_MIN_VCPU", "NODE_CLASS_DATABASE_MIN_MEMORY_GIB",
 		"MQTT_HARD_ANTI_AFFINITY", "POSTGRES_LIMIT_MEMORY", "CLOUD_LOGGER_LIMIT_MEMORY",
-		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED", "VIDEO_CLOUD_CLIP_VERIFIER_NODE_CLASS",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED", "VIDEO_CLOUD_CLIP_VERIFIER_NODE_CLASS", "VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON",
 		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM", "CERTIFICATE_APP_CSR_KEY_ALGORITHMS", "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS",
 		"EDGE_REPLICAS", "EDGE_MAX_CONNECTIONS", "TURN_REPLICAS", "TURN_MIN_PORT", "TURN_MAX_PORT",
 	)
@@ -202,7 +204,8 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	})
 	if customQualification {
-		if action != "credentials-check" {
+		preflightReadOnlyOnly := action == "preflight" && qualification.readOnly && selectedChecks == "" && len(qualification.images) == 0 && len(qualification.manifests) == 0 && qualification.tls.cert == "" && qualification.tls.key == "" && qualification.tls.ca == "" && qualification.tls.hostname == "" && !hasFlag(args[1:], "--tls-purpose") && !hasFlag(args[1:], "--min-valid-days")
+		if action != "credentials-check" && !preflightReadOnlyOnly {
 			return errors.New("qualification flags are only valid with deployment credentials-check")
 		}
 		if *createMissingObjectStorageBucket || *grantObjectStorageBucketAccess {
@@ -879,6 +882,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 			return deploymentConfig{}, err
 		}
 	}
+	if err := validateDeploymentOTATrustedManifestKeys(values["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"]); err != nil {
+		return deploymentConfig{}, err
+	}
 	turnMin, _ := strconv.Atoi(values["TURN_MIN_PORT"])
 	turnMax, _ := strconv.Atoi(values["TURN_MAX_PORT"])
 	if turnMin > turnMax {
@@ -906,6 +912,26 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity, Storage: storage}, nil
+}
+
+func validateDeploymentOTATrustedManifestKeys(raw string) error {
+	var keys map[string]string
+	if err := json.Unmarshal([]byte(raw), &keys); err != nil || keys == nil {
+		return errors.New("VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON must be a JSON object")
+	}
+	for id, encoded := range keys {
+		if strings.TrimSpace(id) == "" {
+			return errors.New("VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON key IDs must not be empty")
+		}
+		decoded, err := hex.DecodeString(encoded)
+		if err != nil || len(decoded) != 32 {
+			decoded, err = base64.StdEncoding.DecodeString(encoded)
+		}
+		if err != nil || len(decoded) != 32 {
+			return fmt.Errorf("VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON key %q must be a 32-byte Ed25519 public key encoded as hex or standard base64", id)
+		}
+	}
+	return nil
 }
 
 func deploymentCertificateAlgorithm(key, raw string) (string, error) {

@@ -426,7 +426,7 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 
 func runSecrets(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory> --environment NAME [--config-root PATH]")
+		fmt.Fprintln(os.Stdout, "Usage: rtk-cloud secrets <init|ensure|plan|migrate|verify|inventory|sync-missing-bindings> --environment NAME [--config-root PATH]")
 		return nil
 	}
 	action := args[0]
@@ -436,6 +436,7 @@ func runSecrets(args []string) error {
 	configRoot := fs.String("config-root", "", "RTK Cloud config root")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for migration")
+	dryRun := fs.Bool("dry-run", false, "report missing Kubernetes bindings without writing")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -475,6 +476,11 @@ func runSecrets(args []string) error {
 		return migrateSecrets(store, *workspace)
 	case "verify":
 		return verifySecretStore(os.Stdout, store, *workspace)
+	case "sync-missing-bindings":
+		if !*dryRun && *confirm != "video-cloud-"+store.Environment {
+			return fmt.Errorf("--confirm video-cloud-%s is required", store.Environment)
+		}
+		return syncMissingSecretBindings(os.Stdout, store, *dryRun)
 	case "inventory":
 		return printSecretInventory(os.Stdout, store)
 	default:
@@ -892,19 +898,26 @@ func isSensitiveArtifactPath(path string) bool {
 }
 
 func verifySecretStore(out io.Writer, store secretStore, workspace string) error {
+	var failures []string
 	if err := verifySecretStoreContents(store); err != nil {
-		return err
+		failures = append(failures, err.Error())
 	}
 	if err := verifySecretStoreK8SBindings(store); err != nil {
-		return err
+		failures = append(failures, err.Error())
+	}
+	if err := verifySecretStoreK8SRuntime(store, time.Now()); err != nil {
+		failures = append(failures, err.Error())
 	}
 	legacyRoot := filepath.Join(workspace, "cloud_env", store.Environment, "runtime")
 	for _, path := range []string{filepath.Join(legacyRoot, "state", "secrets"), filepath.Join(legacyRoot, "state", "kubeconfig.yaml"), filepath.Join(legacyRoot, "state", "openbao"), filepath.Join(legacyRoot, "services", "video-cloud", "video-cloud.env")} {
 		if _, err := os.Lstat(path); err == nil {
-			return fmt.Errorf("legacy sensitive path still exists: %s", path)
+			failures = append(failures, fmt.Sprintf("legacy sensitive path still exists: %s", path))
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
+			failures = append(failures, err.Error())
 		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("secret verification failed:\n- %s", strings.Join(failures, "\n- "))
 	}
 	fmt.Fprintf(out, "verified %s secret store\n", store.Environment)
 	return nil
@@ -921,40 +934,43 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 		return err
 	}
 	stack := "video-cloud-" + store.Environment
+	var failures []string
 	for _, entry := range rtkSecretCatalog() {
 		if len(entry.K8SBinding) == 0 {
 			continue
 		}
 		canonical, err := store.readRuntime(entry.ID)
 		if err != nil {
-			return fmt.Errorf("read canonical secret %s: %w", entry.ID, err)
+			failures = append(failures, fmt.Sprintf("read canonical secret %s", entry.ID))
+			continue
 		}
-		matched := false
 		for _, binding := range entry.K8SBinding {
+			bindingName := stack + binding.NamespaceSuffix + "/" + binding.Secret + ":" + binding.Key
 			cmd := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+binding.NamespaceSuffix, "get", "secret", binding.Secret, "-o", "json")
 			out, commandErr := cmd.Output()
 			if commandErr != nil {
+				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
 				continue
 			}
 			var payload struct {
 				Data map[string]string `json:"data"`
 			}
 			if json.Unmarshal(out, &payload) != nil {
-				return fmt.Errorf("K8s binding for %s returned invalid metadata", entry.ID)
+				failures = append(failures, fmt.Sprintf("K8s binding for %s at %s returned invalid metadata", entry.ID, bindingName))
+				continue
 			}
 			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(payload.Data[binding.Key]))
 			if decodeErr != nil || len(value) == 0 {
+				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
 				continue
 			}
 			if strings.TrimSpace(string(value)) != canonical {
-				return fmt.Errorf("K8s mirror differs from canonical secret: %s", entry.ID)
+				failures = append(failures, fmt.Sprintf("K8s mirror differs from canonical secret %s at %s", entry.ID, bindingName))
 			}
-			matched = true
-			break
 		}
-		if !matched {
-			return fmt.Errorf("K8s binding is missing for canonical secret: %s", entry.ID)
-		}
+	}
+	if len(failures) > 0 {
+		return errors.New(strings.Join(failures, "; "))
 	}
 	return nil
 }

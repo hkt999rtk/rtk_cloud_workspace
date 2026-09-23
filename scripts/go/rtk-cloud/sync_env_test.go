@@ -1,10 +1,27 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestSyncTextFileKeepsEnvironmentPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "services", "cloud-logger", "logger.env")
+	if changed, err := syncTextFile(path, "CLOUD_LOGGER_DOMAIN=dev.example\n", false); err != nil || !changed {
+		t.Fatalf("write environment file: changed=%v err=%v", changed, err)
+	}
+	for _, target := range []string{filepath.Dir(path), path} {
+		info, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("environment path %s is accessible to other users", target)
+		}
+	}
+}
 
 func TestSyncEnvCheckFailsWhenGeneratedFilesDrift(t *testing.T) {
 	workspace, envRoot := writeSyncEnvFixture(t)

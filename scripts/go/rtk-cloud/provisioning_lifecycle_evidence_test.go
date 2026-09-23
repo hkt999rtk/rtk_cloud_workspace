@@ -115,8 +115,11 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	originalDeviceToken := requestLifecycleDeviceToken
 	originalRelayTest := executeLifecycleVideoRelayTest
 	appTokenCalls := 0
-	requestLifecycleAppToken = func(_ string, _ tls.Certificate, deviceID string) (videoRelayTokenResponse, error) {
+	appTokenBaseURLs := []string{}
+	deviceTokenBaseURL := ""
+	requestLifecycleAppToken = func(baseURL string, _ tls.Certificate, deviceID string) (videoRelayTokenResponse, error) {
 		appTokenCalls++
+		appTokenBaseURLs = append(appTokenBaseURLs, baseURL)
 		if deviceID == "device-deactivate" {
 			return videoRelayTokenResponse{AccessToken: "deactivation-owner-app-token"}, nil
 		}
@@ -125,7 +128,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 		}
 		return videoRelayTokenResponse{}, errors.New("owner binding absent")
 	}
-	requestLifecycleDeviceToken = func(string, tls.Certificate) (string, error) {
+	requestLifecycleDeviceToken = func(baseURL string, _ tls.Certificate) (string, error) {
+		deviceTokenBaseURL = baseURL
 		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"scope":"device","subject_id":"device-unprovision","service_options":["mqtt","video_streaming"]}`))
 		return "header." + payload + ".signature", nil
 	}
@@ -141,6 +145,8 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	t.Setenv("ACCOUNT_MANAGER_BASE_URL", server.URL)
 	t.Setenv("VIDEO_CLOUD_BASE_URL", server.URL)
 	t.Setenv("VIDEO_CLOUD_TOKEN_BASE_URL", server.URL)
+	t.Setenv("VIDEO_CLOUD_APP_TOKEN_BASE_URL", "https://app-pki.example.test")
+	t.Setenv("VIDEO_CLOUD_DEVICE_TOKEN_BASE_URL", "https://device-pki.example.test")
 	t.Setenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN", "admin-token")
 	outDir := t.TempDir()
 	workspace, err := workspaceRoot()
@@ -156,6 +162,14 @@ func TestRunProvisioningLifecycleEvidenceQualifiesDeactivationAndUnprovision(t *
 	}
 	if !deactivated || !registryDisabled || registryDeleteCalls != 2 || !registryUpdateRejected || !registryStatusUpdateRejected || !unprovisioned || appTokenCalls != 3 {
 		t.Fatalf("deactivated=%t registry_disabled=%t delete_calls=%d update_rejected=%t status_update_rejected=%t unprovisioned=%t app_token_calls=%d", deactivated, registryDisabled, registryDeleteCalls, registryUpdateRejected, registryStatusUpdateRejected, unprovisioned, appTokenCalls)
+	}
+	for _, baseURL := range appTokenBaseURLs {
+		if baseURL != "https://app-pki.example.test" {
+			t.Fatalf("app token base URL = %q", baseURL)
+		}
+	}
+	if deviceTokenBaseURL != "https://device-pki.example.test" {
+		t.Fatalf("device token base URL = %q", deviceTokenBaseURL)
 	}
 	var result map[string]any
 	resultBytes, err := os.ReadFile(filepath.Join(outDir, "results.json"))

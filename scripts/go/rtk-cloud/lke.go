@@ -2032,6 +2032,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: mqtt
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mqtt-pki
       ports:
         - protocol: TCP
           port: 19400
@@ -8340,7 +8343,7 @@ func lkeObjectStorageCredential(env map[string]string, name string) string {
 }
 
 func lkeAccountManagerSecretManifest(env map[string]string) string {
-	accountEnv := firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging")
+	accountEnv := firstNonEmpty(env["CLOUD_ENV_NAME"], os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], "staging")
 	authBaseURL := firstNonEmpty(os.Getenv("AUTH_TOKEN_BASE_URL"), env["AUTH_TOKEN_BASE_URL"])
 	if authBaseURL == "" && strings.TrimSpace(env["FRONTEND_DOMAIN"]) != "" {
 		authBaseURL = "https://" + strings.TrimSpace(env["FRONTEND_DOMAIN"])
@@ -9475,6 +9478,8 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
               value: ":8080"
             - name: VIDEO_CLOUD_API_BASE_URL
               value: %q
+            - name: VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON
+              value: %q
             - name: VIDEO_CLOUD_DB_DSN
               value: "postgres://postgres:$(POSTGRES_PASSWORD)@postgresql.%s.svc.cluster.local:5432/video_cloud?sslmode=disable"
             - name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS
@@ -9642,6 +9647,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 `,
 			lkeVideoCloudAppVersion(env, workload.Image),
 			lkeVideoCloudAPIBaseURL(env),
+			env["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"],
 			lkeNamespaceName(env, "platform"),
 			lkeVideoCloudAPIDBMaxOpenConns(env),
 			lkeVideoCloudAPIDBMaxIdleConns(env),
@@ -9894,6 +9900,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")),
 		lkeClipPrivateKeyPEM(),
 		lkeVideoCloudAPIBaseURL(env),
+		env["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"],
 		env["VIDEO_CLOUD_BLOB_ENDPOINT"],
 		env["VIDEO_CLOUD_BLOB_REGION"],
 		env["VIDEO_CLOUD_BLOB_BUCKET"],

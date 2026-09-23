@@ -3662,6 +3662,7 @@ func runSelectedDeviceProbes(assignments []assignment, certs []certRecord, brand
 }
 
 func readDeviceInfoWithAppToken(apiBaseURL, deviceID, token string, cert tls.Certificate) error {
+	apiBaseURL = tokenBaseURLForScope(apiBaseURL, "app")
 	endpoint := strings.TrimRight(strings.TrimSpace(apiBaseURL), "/") + "/api/devices/" + url.PathEscape(deviceID) + "/info"
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -5158,6 +5159,7 @@ func requestTokenRetryBackoff(attempt int) time.Duration {
 }
 
 func requestTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, deviceID, scope, service string, timeout time.Duration) (tokenBundle, error) {
+	apiBaseURL = tokenBaseURLForScope(apiBaseURL, scope)
 	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 	if apiBaseURL == "" || strings.Contains(apiBaseURL, "unknown") {
 		return tokenBundle{}, errors.New("missing video cloud API base URL for mTLS token bootstrap")
@@ -5211,6 +5213,17 @@ func requestTokenBundleWithTimeout(apiBaseURL string, cert tls.Certificate, devi
 	}
 	token.issuedAt = time.Now()
 	return token, nil
+}
+
+func tokenBaseURLForScope(fallback, scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "app":
+		return firstNonEmpty(os.Getenv("VIDEO_CLOUD_APP_TOKEN_BASE_URL"), fallback)
+	case "device":
+		return firstNonEmpty(os.Getenv("VIDEO_CLOUD_DEVICE_TOKEN_BASE_URL"), fallback)
+	default:
+		return fallback
+	}
 }
 
 func safeHTTPErrorDetail(payload []byte) string {

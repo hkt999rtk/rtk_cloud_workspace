@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type deploymentPreflightChecks struct {
@@ -92,6 +93,20 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 			reporter.fail("secret-store", err)
 		} else {
 			reporter.pass("secret-store", "required canonical secret IDs are configured")
+			if operation == "acceptance" {
+				var liveFailures []string
+				if err := verifySecretStoreK8SBindings(store); err != nil {
+					liveFailures = append(liveFailures, err.Error())
+				}
+				if err := verifySecretStoreK8SRuntime(store, time.Now()); err != nil {
+					liveFailures = append(liveFailures, err.Error())
+				}
+				if len(liveFailures) > 0 {
+					reporter.fail("live-secrets", errors.New(strings.Join(liveFailures, "; ")))
+				} else {
+					reporter.pass("live-secrets", "canonical mirrors, certificate key pairs, validity, and PKI-backed workload identities are healthy")
+				}
+			}
 		}
 	}
 

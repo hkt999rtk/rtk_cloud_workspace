@@ -292,6 +292,65 @@ func TestRequestAppTokenSendsTrustedCertHeadersForHTTPPortForward(t *testing.T) 
 	}
 }
 
+func TestTokenRequestsUseScopeSpecificPKIEndpoints(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	appRequests := 0
+	appServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appRequests++
+		if r.URL.Path == "/api/devices/device-1/info" {
+			writeJSON(t, w, map[string]string{"status": "ok", "devid": "device-1"})
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] != "app" {
+			t.Fatalf("app endpoint scope = %#v", body["scope"])
+		}
+		writeJSON(t, w, map[string]string{"scope": "app", "access_token": "app-token"})
+	}))
+	defer appServer.Close()
+	deviceRequests := 0
+	deviceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deviceRequests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["scope"] != "device" {
+			t.Fatalf("device endpoint scope = %#v", body["scope"])
+		}
+		writeJSON(t, w, map[string]string{"access_token": "device-token"})
+	}))
+	defer deviceServer.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("fallback token endpoint was used")
+	}))
+	defer fallback.Close()
+	t.Setenv("VIDEO_CLOUD_APP_TOKEN_BASE_URL", appServer.URL)
+	t.Setenv("VIDEO_CLOUD_DEVICE_TOKEN_BASE_URL", deviceServer.URL)
+
+	appToken, err := requestAppToken(fallback.URL, cert, "device-1")
+	if err != nil || appToken.AccessToken != "app-token" {
+		t.Fatalf("requestAppToken() token = %#v, err = %v", appToken, err)
+	}
+	deviceToken, err := requestDeviceToken(fallback.URL, cert, "device-1")
+	if err != nil || deviceToken != "device-token" {
+		t.Fatalf("requestDeviceToken() token = %q, err = %v", deviceToken, err)
+	}
+	if err := readDeviceInfoWithAppToken(fallback.URL, "device-1", appToken.AccessToken, cert); err != nil {
+		t.Fatal(err)
+	}
+	if appRequests != 2 || deviceRequests != 1 {
+		t.Fatalf("requests app=%d device=%d, want app=2 device=1", appRequests, deviceRequests)
+	}
+}
+
 func TestManagedTokenRefreshesAtHalfLifetimeBeforeUse(t *testing.T) {
 	certPEM, keyPEM, _ := testAppMaterial(t, "app-user:user-1")
 	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))

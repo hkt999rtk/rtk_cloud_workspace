@@ -337,10 +337,23 @@ func TestOTADownloadGetsFreshArtifactAuthorizationOnRetry(t *testing.T) {
 	var mu sync.Mutex
 	tokenCalls := 0
 	downloadCalls := 0
+	wantAntiRollbackCounter := testOTARuntimeConfig().AntiRollbackCounter
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		switch {
 		case strings.HasSuffix(req.URL.Path, "/artifact-token"):
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				t.Errorf("decode artifact token request: %v", err)
+				http.Error(w, "invalid request", http.StatusBadRequest)
+				return
+			}
+			counter, ok := body["anti_rollback_counter"].(float64)
+			if got := int(counter); !ok || got != wantAntiRollbackCounter {
+				t.Errorf("anti_rollback_counter = %#v, want %d", body["anti_rollback_counter"], wantAntiRollbackCounter)
+				http.Error(w, "invalid counter", http.StatusBadRequest)
+				return
+			}
 			mu.Lock()
 			tokenCalls++
 			token := tokenCalls

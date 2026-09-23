@@ -684,7 +684,8 @@ func otaHardwareAllowed(allowed []string, current string) bool {
 func (r *otaDeviceRunner) artifactAuthorization(ctx context.Context, manager *tokenManager, assignment otaAssignment, result *otaDeviceResult) (otaArtifactAuthorization, error) {
 	var response otaArtifactAuthorization
 	path := "/v1/device/ota/deployments/" + assignment.DeploymentID + "/artifact-token"
-	if err := r.doDeviceJSON(ctx, manager, http.MethodPost, path, nil, &response, "artifact_token", result); err != nil {
+	body := map[string]any{"anti_rollback_counter": r.config.AntiRollbackCounter}
+	if err := r.doDeviceJSON(ctx, manager, http.MethodPost, path, body, &response, "artifact_token", result); err != nil {
 		return response, err
 	}
 	if response.DeploymentID != assignment.DeploymentID || response.ReleaseID != assignment.ReleaseID || strings.TrimSpace(response.URL) == "" {

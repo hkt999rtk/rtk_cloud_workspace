@@ -94,6 +94,8 @@ func runProvisioningLifecycleEvidence(args []string) error {
 		os.Getenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE"),
 		videoBaseURL,
 	), "/")
+	appTokenBaseURL := strings.TrimRight(videoRelayTokenBaseURLForScope(videoTokenBaseURL, "app"), "/")
+	deviceTokenBaseURL := strings.TrimRight(videoRelayTokenBaseURLForScope(videoTokenBaseURL, "device"), "/")
 	videoAdminToken := strings.TrimSpace(os.Getenv("VIDEO_CLOUD_LOAD_ADMIN_TOKEN"))
 	if videoBaseURL == "" || videoAdminToken == "" {
 		return errors.New("VIDEO_CLOUD_BASE_URL and VIDEO_CLOUD_LOAD_ADMIN_TOKEN are required")
@@ -155,14 +157,14 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	if strings.TrimSpace(credentialBefore.CertPEM) == "" || strings.TrimSpace(credentialBefore.FactoryEnrollResponseRedactedJSON) == "" {
 		return errors.New("unprovision qualification is missing factory enrollment identity evidence")
 	}
-	formerOwnerAppToken, err := requestLifecycleAppToken(videoTokenBaseURL, formerOwnerAppCertificate, unprovision.DeviceID)
+	formerOwnerAppToken, err := requestLifecycleAppToken(appTokenBaseURL, formerOwnerAppCertificate, unprovision.DeviceID)
 	if err != nil {
 		return fmt.Errorf("mint former-owner pre-unprovision app token: %w", err)
 	}
 	if err := readCanonicalDeviceInfo(videoBaseURL, formerOwnerAppToken.AccessToken, unprovision.DeviceID); err != nil {
 		return fmt.Errorf("verify former-owner pre-unprovision access: %w", err)
 	}
-	deactivationOwnerAppToken, err := requestLifecycleAppToken(videoTokenBaseURL, deactivationOwnerAppCertificate, deactivation.DeviceID)
+	deactivationOwnerAppToken, err := requestLifecycleAppToken(appTokenBaseURL, deactivationOwnerAppCertificate, deactivation.DeviceID)
 	if err != nil {
 		return fmt.Errorf("mint owner app token for account provisioning qualification: %w", err)
 	}
@@ -196,7 +198,7 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	} else if present {
 		return errors.New("unprovisioned device remains visible to the previous owner")
 	}
-	if err := verifyFormerOwnerAccessRevoked(ctx, videoBaseURL, videoTokenBaseURL, artifact.BrandCloudID, unprovision, unprovisionToken, formerOwnerAppToken.AccessToken, formerOwnerAppCertificate, *runID); err != nil {
+	if err := verifyFormerOwnerAccessRevoked(ctx, videoBaseURL, appTokenBaseURL, artifact.BrandCloudID, unprovision, unprovisionToken, formerOwnerAppToken.AccessToken, formerOwnerAppCertificate, *runID); err != nil {
 		return err
 	}
 	store, err = openTestDataStore(envRoot, *brandname)
@@ -216,7 +218,7 @@ func runProvisioningLifecycleEvidence(args []string) error {
 	if err != nil {
 		return err
 	}
-	deviceAccessToken, err := requestLifecycleDeviceToken(videoTokenBaseURL, deviceCertificate)
+	deviceAccessToken, err := requestLifecycleDeviceToken(deviceTokenBaseURL, deviceCertificate)
 	if err != nil {
 		return fmt.Errorf("reissue factory device token after unprovision: %w", err)
 	}
