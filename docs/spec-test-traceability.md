@@ -63,7 +63,7 @@
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-REGISTERED-SERVICES-001` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `independent` | `79421d0e2edd` | `service` | `planned` | `INT-AM-REGISTERED-FACTORY-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-AM-EMAIL-DELIVERY-001` | `FEAT-AM-SIGNUP-001` | `REQ-AM-EMAIL-DELIVERY-001` | `independent` | `8c8162c43618` | `service` | `active` | `INT-AM-SIGNUP-EMAIL-001` | `test-services` |
 | `repos/rtk_account_manager/docs/spec.md#REQ-E2E-CA-SIGNUP-EMAIL-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `workflow` | `9640268f55d8` | `service` | `active` | `E2E-CA-SIGNUP-EMAIL-001` | `test-live` |
-| `repos/rtk_account_manager/docs/spec.md#REQ-E2E-LOAD-ACCOUNT-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-LOAD-ACCOUNT-001` | `` | `aa759ea750c6` | `service` | `active` | `E2E-LOAD-ACCOUNT-001` | `test-live` |
+| `repos/rtk_account_manager/docs/spec.md#REQ-E2E-LOAD-ACCOUNT-001` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-LOAD-ACCOUNT-001` | `` | `0e547aa2040d` | `service` | `active` | `E2E-LOAD-ACCOUNT-001` | `test-live` |
 | `repos/rtk_cloud_contracts_doc/billing_service.md#REQ-BILL-OWNERSHIP-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-OWNERSHIP-001` | `independent` | `eb1cb0e70a6f` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
 | `repos/rtk_cloud_contracts_doc/billing_service.md#REQ-BILL-SERVICE-AUTH-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-SERVICE-AUTH-001` | `independent` | `582c74eed62c` | `canonical` | `active` | `INT-BILL-API-001`, `INT-BILL-BOUNDARY-001`, `LIVE-STG-BILLING-DOCUMENT-001`, `UNIT-BILL-CONFIG-001`, `UNIT-BILL-IDENTITY-001` | `test-coverage`, `test-payment` |
 | `repos/rtk_cloud_contracts_doc/billing_service.md#REQ-BILL-ACCESS-001` | `FEAT-BILL-SERVICE-001` | `REQ-BILL-ACCESS-001` | `independent` | `1333eae910e3` | `canonical` | `active` | `INT-BILL-BOUNDARY-001` | `test-coverage` |
@@ -680,7 +680,7 @@
 | `SPEC-AM-OPENAPI#disableDeviceItemProfile` | `POST /v1/admin/brand-clouds/{brandCloudId}/device-item-profiles/{profileId}/disable` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `f3936e8fbba3` |
 | `SPEC-AM-OPENAPI#createProductionRun` | `POST /v1/admin/brand-clouds/{brandCloudId}/device-item-profiles/{profileId}/production-runs` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `2f65d62b3139` |
 | `SPEC-AM-OPENAPI#listBrandCloudAccounts` | `GET /v1/admin/brand-clouds/{brandCloudId}/users` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `bf20ee0eaebd` |
-| `SPEC-AM-OPENAPI#provisionBrandCloudAccountUser` | `POST /v1/admin/brand-clouds/{brandCloudId}/users` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `19a9c7d1dbea` |
+| `SPEC-AM-OPENAPI#provisionBrandCloudAccountUser` | `POST /v1/admin/brand-clouds/{brandCloudId}/users` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `03e90f026347` |
 | `SPEC-AM-OPENAPI#removeBrandCloudMembership` | `DELETE /v1/admin/brand-clouds/{brandCloudId}/users/{userId}` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `1a2864c2000c` |
 | `SPEC-AM-OPENAPI#disableBrandCloudMembership` | `POST /v1/admin/brand-clouds/{brandCloudId}/users/{userId}/disable` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `8b8a23005f5f` |
 | `SPEC-AM-OPENAPI#enableBrandCloudMembership` | `POST /v1/admin/brand-clouds/{brandCloudId}/users/{userId}/enable` | `FEAT-CA-BRAND-001` | `REQ-UI-CA-CLOUD-004` | `6db7142148ef` |

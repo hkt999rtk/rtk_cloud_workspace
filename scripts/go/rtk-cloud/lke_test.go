@@ -2700,6 +2700,17 @@ func TestAccountManagerSecretUsesSelectedStackEnvironment(t *testing.T) {
 	if !strings.Contains(manifest, "ACCOUNT_MANAGER_ENV: \"dev\"") {
 		t.Fatal("Account Manager Secret did not use the selected dev environment")
 	}
+	if !strings.Contains(manifest, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"false\"") {
+		t.Fatal("dev immediate test-account provisioning must be disabled by default")
+	}
+	manifest = lkeAccountManagerSecretManifest(map[string]string{
+		"CLOUD_ENV_NAME":   "dev",
+		"CLOUD_STACK_NAME": "video-cloud-dev",
+		"ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS": "true",
+	})
+	if !strings.Contains(manifest, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"true\"") {
+		t.Fatal("explicit dev test-account flag was not rendered")
+	}
 }
 
 func TestRestrictPrivateE2EArtifacts(t *testing.T) {
