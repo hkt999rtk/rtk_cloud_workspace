@@ -874,6 +874,41 @@ func TestSecretStoreK8SBindingFailureModes(t *testing.T) {
 	}
 }
 
+func TestSecretStoreK8SBindingsRequireEveryConsumer(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	allKeys := map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		for _, binding := range entry.K8SBinding {
+			allKeys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+		}
+	}
+	withoutAdminJobToken := map[string]string{}
+	for key, value := range allKeys {
+		if key != "ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN" {
+			withoutAdminJobToken[key] = value
+		}
+	}
+	good, _ := json.Marshal(map[string]any{"data": allKeys})
+	bad, _ := json.Marshal(map[string]any{"data": withoutAdminJobToken})
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *cloud-admin-billing-client*) printf '%%s\\n' '%s' ;;\n  *) printf '%%s\\n' '%s' ;;\nesac\n", bad, good)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "job-authorization-token") || !strings.Contains(err.Error(), "cloud-admin-billing-client") {
+		t.Fatalf("second consumer with missing binding was accepted: %v", err)
+	}
+}
+
 func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "dev")
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
