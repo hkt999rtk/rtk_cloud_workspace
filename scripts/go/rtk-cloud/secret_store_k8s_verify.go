@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -54,6 +56,9 @@ type liveDeployment struct {
 					Secret struct {
 						SecretName string `json:"secretName"`
 					} `json:"secret"`
+					ConfigMap struct {
+						Name string `json:"name"`
+					} `json:"configMap"`
 					PersistentVolumeClaim any `json:"persistentVolumeClaim"`
 				} `json:"volumes"`
 			} `json:"spec"`
@@ -168,7 +173,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
-			if err := verifyAutomaticDeviceTrustConsumers(deployments); err != nil {
+			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now); err != nil {
 				failures = append(failures, err.Error())
 			}
 			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", deployments); err != nil {
@@ -221,7 +226,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 
 // Product CA creation waits for receipts from these workloads. If either
 // automatic trust consumer is disabled, a new Product remains pending forever.
-func verifyAutomaticDeviceTrustConsumers(deployments liveDeploymentList) error {
+func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace string, deployments liveDeploymentList, now time.Time) error {
 	settings := map[string]map[string]string{}
 	for _, deployment := range deployments.Items {
 		for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -235,6 +240,9 @@ func verifyAutomaticDeviceTrustConsumers(deployments liveDeploymentList) error {
 	controller := settings["pki-controller/pki-controller"]
 	if controller == nil {
 		return nil
+	}
+	if controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "" {
+		return verifyDevFixedDeviceRootTrust(environment, kubeconfig, namespace, deployments, settings, now)
 	}
 	consumers := firstNonEmpty(controller["PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE"], controller["PKI_REQUIRED_CONSUMERS_DEVICE"])
 	var missing []string
@@ -256,6 +264,79 @@ func verifyAutomaticDeviceTrustConsumers(deployments liveDeploymentList) error {
 		return fmt.Errorf("Product PKI cannot activate new issuers: required bundle consumers are not configured: %s", strings.Join(missing, "; "))
 	}
 	return nil
+}
+
+// The dev shortcut is valid only when both consumers use the same fixed Root
+// as the controller and registry status enforcement remains enabled.
+func verifyDevFixedDeviceRootTrust(environment, kubeconfig, namespace string, deployments liveDeploymentList, settings map[string]map[string]string, now time.Time) error {
+	controller := settings["pki-controller/pki-controller"]
+	if environment != "dev" || controller["PKI_ENVIRONMENT"] != "dev" || controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "true" || controller["PKI_DEVICE_ROOT_ID"] == "" || len(controller["PKI_DEVICE_ROOT_SHA256"]) != 64 {
+		return errors.New("dev fixed Device Root trust requires the dev controller and its Root ID/fingerprint pin")
+	}
+	api := settings["video-cloud-api-pki/app"]
+	if api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"] != "true" || api["VIDEO_CLOUD_AUTH_MTLS_REQUIRED"] != "true" || api["VIDEO_CLOUD_AUTH_DISABLE_ACL"] == "true" || api["VIDEO_CLOUD_AUTH_TRUSTED_CERT_HEADERS"] == "true" || api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS"] != "false" || api["VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_STATE"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_CRL"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_OCSP_URL"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_REVOCATION"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"] == "" {
+		return errors.New("dev fixed Device Root trust requires API direct mTLS, Product PKI, static Root and registry enforcement without CRL consumers")
+	}
+	broker := settings["mqtt-pki/pkibroker"]
+	if broker["PKI_ENVIRONMENT"] != "dev" || broker["PKI_BROKER_REQUIRE_CRLS"] != "false" || broker["PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR"] != "" || broker["PKI_BROKER_DEVICE_CRL_MANIFEST"] != "" || broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] == "true" {
+		return errors.New("dev fixed Device Root trust requires broker registry enforcement without dynamic Device trust or CRLs")
+	}
+	for _, target := range []struct{ deployment, container, path string }{
+		{"video-cloud-api-pki", "app", api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"]},
+		{"mqtt-pki", "pkibroker", "/run/pki-device/roots.pem"},
+	} {
+		if err := verifyMountedDeviceRoot(kubeconfig, namespace, deployments, target.deployment, target.container, target.path, controller["PKI_DEVICE_ROOT_SHA256"], now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func verifyMountedDeviceRoot(kubeconfig, namespace string, deployments liveDeploymentList, deploymentName, containerName, path, fingerprint string, now time.Time) error {
+	for _, deployment := range deployments.Items {
+		if deployment.Metadata.Name != deploymentName {
+			continue
+		}
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name != containerName {
+				continue
+			}
+			for _, mount := range container.VolumeMounts {
+				if !strings.HasPrefix(path, mount.MountPath+"/") {
+					continue
+				}
+				key := strings.TrimPrefix(path, mount.MountPath+"/")
+				for _, volume := range deployment.Spec.Template.Spec.Volumes {
+					if volume.Name == mount.Name && volume.ConfigMap.Name != "" {
+						raw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "configmap", volume.ConfigMap.Name, "-o", "json").Output()
+						if err != nil {
+							return fmt.Errorf("%s fixed Device Root ConfigMap is unreadable", deploymentName)
+						}
+						var config struct {
+							Data map[string]string `json:"data"`
+						}
+						if json.Unmarshal(raw, &config) != nil {
+							return fmt.Errorf("%s fixed Device Root ConfigMap is invalid", deploymentName)
+						}
+						block, rest := pem.Decode([]byte(config.Data[key]))
+						if block == nil || block.Type != "CERTIFICATE" || len(strings.TrimSpace(string(rest))) != 0 {
+							return fmt.Errorf("%s must pin exactly one Device Root", deploymentName)
+						}
+						cert, err := x509.ParseCertificate(block.Bytes)
+						if err != nil || !cert.IsCA || cert.CheckSignatureFrom(cert) != nil || now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) {
+							return fmt.Errorf("%s fixed Device Root is invalid or expired", deploymentName)
+						}
+						digest := sha256.Sum256(cert.Raw)
+						if hex.EncodeToString(digest[:]) != fingerprint {
+							return fmt.Errorf("%s fixed Device Root differs from controller pin", deploymentName)
+						}
+						return nil
+					}
+				}
+			}
+		}
+	}
+	return fmt.Errorf("%s fixed Device Root is not mounted at %s", deploymentName, path)
 }
 
 func verifyLiveAccountManagerEnvironment(environment, namespace, name string, data map[string]string) error {

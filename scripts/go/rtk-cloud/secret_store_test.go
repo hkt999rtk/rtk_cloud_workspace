@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -863,14 +865,54 @@ func TestSecretStoreK8SBindingFailureModes(t *testing.T) {
 	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "binding is missing") {
-		t.Fatalf("missing K8s binding error = %v", err)
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "cannot read Kubernetes Secret") {
+		t.Fatalf("unreadable K8s Secret error = %v", err)
 	}
 	if err := os.Remove(filepath.Join(store.RuntimeDir(), "postgres")); err != nil {
 		t.Fatal(err)
 	}
 	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "read canonical secret postgres") {
 		t.Fatalf("missing canonical secret error = %v", err)
+	}
+}
+
+func TestSecretStoreK8SBindingsRetryAndReadEachSecretOnce(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "dev")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]string{}
+	secrets := map[string]bool{}
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+		for _, binding := range entry.K8SBinding {
+			keys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
+			secrets[binding.NamespaceSuffix+"/"+binding.Secret] = true
+		}
+	}
+	response, err := json.Marshal(map[string]any{"data": keys})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	responseFile, marker, calls := filepath.Join(dir, "response.json"), filepath.Join(dir, "failed-once"), filepath.Join(dir, "calls")
+	if err := os.WriteFile(responseFile, response, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(dir, "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\nprintf 'x\\n' >> '%s'\nif [ ! -f '%s' ]; then touch '%s'; exit 1; fi\ncat '%s'\n", calls, marker, marker, responseFile)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := os.ReadFile(calls)
+	if err != nil || strings.Count(string(observed), "x\n") != len(secrets)+1 {
+		t.Fatalf("Kubernetes Secret reads = %d, want %d: %v", strings.Count(string(observed), "x\n"), len(secrets)+1, err)
 	}
 }
 
@@ -1031,7 +1073,7 @@ func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T
 	if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
 		t.Fatal(err)
 	}
-	err := verifyAutomaticDeviceTrustConsumers(deployments)
+	err := verifyAutomaticDeviceTrustConsumers("dev", "", "", deployments, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "video-cloud-api-pki") || !strings.Contains(err.Error(), "mqtt-pki/pkibroker") {
 		t.Fatalf("missing Product CA consumers = %v", err)
 	}
@@ -1057,8 +1099,73 @@ func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T
 			Name  string `json:"name"`
 			Value string `json:"value"`
 		}{Name: "PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED", Value: "true"})
-	if err := verifyAutomaticDeviceTrustConsumers(deployments); err != nil {
+	if err := verifyAutomaticDeviceTrustConsumers("dev", "", "", deployments, time.Now()); err != nil {
 		t.Fatalf("configured Product CA consumers = %v", err)
+	}
+}
+
+func TestAutomaticDeviceTrustPrecheckDevFixedRoot(t *testing.T) {
+	root, cert, _ := testSigningCA(t, "dev-device-root", nil, nil, 101)
+	digest := sha256.Sum256(cert.Raw)
+	configuration, err := json.Marshal(map[string]any{"data": map[string]string{"roots.pem": root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "root-config.json")
+	if err := os.WriteFile(file, configuration, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte("#!/bin/sh\ncat '"+file+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	var deployments liveDeploymentList
+	raw := `{"items":[{"metadata":{"name":"pki-controller"},"spec":{"template":{"spec":{"containers":[{"name":"pki-controller","env":[{"name":"PKI_ENVIRONMENT","value":"dev"},{"name":"PKI_DEV_FIXED_DEVICE_ROOT_TRUST","value":"true"},{"name":"PKI_DEVICE_ROOT_ID","value":"root-id"},{"name":"PKI_DEVICE_ROOT_SHA256","value":"PIN"}]}]}}}},{"metadata":{"name":"video-cloud-api-pki"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED","value":"true"},{"name":"VIDEO_CLOUD_AUTH_MTLS_REQUIRED","value":"true"},{"name":"VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS","value":"false"},{"name":"VIDEO_CLOUD_AUTH_DEVICE_CA_CERT","value":"/run/pki-device/roots.pem"}],"volumeMounts":[{"name":"pki-device","mountPath":"/run/pki-device"}]}],"volumes":[{"name":"pki-device","configMap":{"name":"api-root"}}]}}}},{"metadata":{"name":"mqtt-pki"},"spec":{"template":{"spec":{"containers":[{"name":"pkibroker","env":[{"name":"PKI_ENVIRONMENT","value":"dev"},{"name":"PKI_BROKER_REQUIRE_CRLS","value":"false"}],"volumeMounts":[{"name":"pki-device","mountPath":"/run/pki-device"}]}],"volumes":[{"name":"pki-device","configMap":{"name":"broker-root"}}]}}}}]}`
+	if err := json.Unmarshal([]byte(strings.Replace(raw, "PIN", hex.EncodeToString(digest[:]), 1)), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	check := func(environment string) error {
+		return verifyAutomaticDeviceTrustConsumers(environment, "kubeconfig", "dev-namespace", deployments, time.Now())
+	}
+	if err := check("dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := check("staging"); err == nil {
+		t.Fatal("fixed Root mode accepted staging")
+	}
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[3].Value = strings.Repeat("0", 64)
+	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "differs") {
+		t.Fatalf("mismatched Root pin: %v", err)
+	}
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[3].Value = hex.EncodeToString(digest[:])
+	api := &deployments.Items[1].Spec.Template.Spec.Containers[0]
+	api.Env = append(api.Env, struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}{Name: "VIDEO_CLOUD_AUTH_DEVICE_CA_CRL", Value: "/run/device.crl"})
+	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "API direct mTLS") {
+		t.Fatalf("API CRL setting was admitted: %v", err)
+	}
+	api.Env = api.Env[:len(api.Env)-1]
+	broker := &deployments.Items[2].Spec.Template.Spec.Containers[0]
+	broker.Env[1].Value = "true"
+	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "broker registry") {
+		t.Fatalf("broker CRL setting was admitted: %v", err)
+	}
+	broker.Env[1].Value = "false"
+	mounts := broker.VolumeMounts
+	broker.VolumeMounts = nil
+	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "not mounted") {
+		t.Fatalf("missing broker Root was admitted: %v", err)
+	}
+	broker.VolumeMounts = mounts
+	invalid, _ := json.Marshal(map[string]any{"data": map[string]string{"roots.pem": "not a certificate"}})
+	if err := os.WriteFile(file, invalid, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("invalid Root material was admitted: %v", err)
 	}
 }
 
