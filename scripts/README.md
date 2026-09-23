@@ -88,7 +88,7 @@ read-only mode; scope targeted rollouts to the dependencies they actually use:
 
 ```sh
 scripts/check-deployment-credentials.sh --environment staging --read-only
-# Only registry access for a targeted image update:
+# Registry provider checks for a targeted image update (SecretStore verification still runs):
 scripts/check-deployment-credentials.sh --environment staging --read-only --checks ghcr
 # Use an actual reviewed CI digest (repeat --image for each affected image):
 scripts/check-deployment-credentials.sh --environment staging --read-only \
@@ -130,6 +130,12 @@ actual container access, and acceptance-user login remain separate release gates
 A scoped or read-only PASS alone is not deployment approval. Use the matching
 `deployment preflight --operation ...` for configuration/tooling prerequisites;
 it does not replace credentials-check. Recheck affected inputs after changes.
+The credential checker verifies the selected environment's live SecretStore and
+Kubernetes bindings before scoped provider checks. Its Service client registry
+inventory is required once the controller declares any Service registry setting.
+Before adoption, it instead verifies that no Service issuer or pending issuance
+exists and checks any retained bootstrap sessions. A planned Service registry
+cutover still needs its target workload and post-rollout checks.
 
 When `secrets verify` finds a missing Kubernetes mirror key, inspect the repair
 with `go run ./scripts/go/rtk-cloud -- secrets sync-missing-bindings --environment dev --dry-run`.

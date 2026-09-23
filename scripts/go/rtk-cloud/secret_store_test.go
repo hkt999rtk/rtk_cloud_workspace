@@ -1079,25 +1079,30 @@ func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T
 	}
 	deployments.Items[1].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[1].Spec.Template.Spec.Containers[0].Env,
 		struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name      string `json:"name"`
+			Value     string `json:"value"`
+			ValueFrom any    `json:"valueFrom"`
 		}{Name: "VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR", Value: "/run/automatic-device"},
 		struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name      string `json:"name"`
+			Value     string `json:"value"`
+			ValueFrom any    `json:"valueFrom"`
 		}{Name: "VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS", Value: "true"})
 	deployments.Items[2].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[2].Spec.Template.Spec.Containers[0].Env,
 		struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name      string `json:"name"`
+			Value     string `json:"value"`
+			ValueFrom any    `json:"valueFrom"`
 		}{Name: "PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR", Value: "/run/automatic-device"},
 		struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name      string `json:"name"`
+			Value     string `json:"value"`
+			ValueFrom any    `json:"valueFrom"`
 		}{Name: "PKI_BROKER_REQUIRE_CRLS", Value: "true"},
 		struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name      string `json:"name"`
+			Value     string `json:"value"`
+			ValueFrom any    `json:"valueFrom"`
 		}{Name: "PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED", Value: "true"})
 	if err := verifyAutomaticDeviceTrustConsumers("dev", "", "", deployments, time.Now()); err != nil {
 		t.Fatalf("configured Product CA consumers = %v", err)
@@ -1141,8 +1146,9 @@ func TestAutomaticDeviceTrustPrecheckDevFixedRoot(t *testing.T) {
 	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[3].Value = hex.EncodeToString(digest[:])
 	api := &deployments.Items[1].Spec.Template.Spec.Containers[0]
 	api.Env = append(api.Env, struct {
-		Name  string `json:"name"`
-		Value string `json:"value"`
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		ValueFrom any    `json:"valueFrom"`
 	}{Name: "VIDEO_CLOUD_AUTH_DEVICE_CA_CRL", Value: "/run/device.crl"})
 	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "API direct mTLS") {
 		t.Fatalf("API CRL setting was admitted: %v", err)
@@ -1218,6 +1224,65 @@ func TestSecretStoreK8SRuntimeRejectsIncompleteServiceClientInventory(t *testing
 	err := verifySecretStoreK8SRuntime(store, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "inventory did not complete") {
 		t.Fatalf("empty registry error = %v", err)
+	}
+}
+
+func TestSecretStoreK8SRuntimeAllowsUnadoptedServiceClientRegistry(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	deployments := []byte(`{"items":[{"metadata":{"name":"pki-controller","generation":1},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"pki-controller","env":[{"name":"PKI_ENVIRONMENT","value":"staging"}]}]}}},"status":{"observedGeneration":1,"updatedReplicas":1,"availableReplicas":1,"unavailableReplicas":0}}]}`)
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get secrets --all-namespaces -o json'*) printf '%%s' '{\"items\":[]}' ;;\n  *'get deployments -o json'*) printf '%%s' '%s' ;;\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'service_issuers'*) printf '%%s' '{\"bootstrap_table\":false,\"service_issuers\":0,\"pending_issuances\":0}' ;;\n  *) exit 1 ;;\nesac\n", deployments)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SRuntime(store, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceClientRegistryInputsTreatsPartialConfigurationAsAdoption(t *testing.T) {
+	var deployments liveDeploymentList
+	if err := json.Unmarshal([]byte(`{"items":[{"metadata":{"name":"pki-controller"},"spec":{"template":{"spec":{"containers":[{"env":[{"name":"PKI_SERVICE_CLIENT_ROOT_SHA256","value":"partial"}]}]}}}}]}`), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	present, configured := serviceClientRegistryInputs(deployments)
+	if !present || !configured {
+		t.Fatal("partial Service registry configuration was treated as disabled")
+	}
+	if err := verifyLiveServiceClientRegistry("", "", deployments); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("partial Service registry configuration error = %v", err)
+	}
+}
+
+func TestUnadoptedServiceClientRegistryRejectsStrandedState(t *testing.T) {
+	now := time.Now().UTC()
+	for _, test := range []struct {
+		name, state, report, want string
+	}{
+		{"empty", `{"bootstrap_table":false,"service_issuers":0,"pending_issuances":0}`, "", ""},
+		{"issuer", `{"bootstrap_table":false,"service_issuers":1,"pending_issuances":0}`, "", "issuers=1"},
+		{"pending", `{"bootstrap_table":false,"service_issuers":0,"pending_issuances":1}`, "", "pending_issuances=1"},
+		{"active session", `{"bootstrap_table":true,"service_issuers":0,"pending_issuances":0}`, `{"sessions":[{"caller":"service:certissuer","deployment_id":"old","expires_at":"2026-01-01T00:00:00Z"}],"active_caller_index":true}`, "expired but still active"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			kubectl := filepath.Join(t.TempDir(), "kubectl")
+			script := fmt.Sprintf("#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'service_issuers'*) printf '%%s' '%s' ;;\n  *'pki_deployment_bootstrap_sessions'*) printf '%%s' '%s' ;;\n  *) exit 1 ;;\nesac\n", test.state, test.report)
+			if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+			err := verifyUnadoptedServiceClientRegistry("/tmp/kubeconfig", "video-cloud-staging-platform", now)
+			if test.want == "" && err != nil {
+				t.Fatal(err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
