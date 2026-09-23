@@ -1121,6 +1121,36 @@ func TestLiveDeploymentBootstrapSessionCheckRejectsPendingServiceClientIssuance(
 	}
 }
 
+func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
+	const rootID = "697e8e86-5af6-4580-8456-7f91d17634f2"
+	var deployments liveDeploymentList
+	raw := `{"items":[{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID","value":"` + rootID + `"},{"name":"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE","value":"/private/root.json"}]}]}}}}]}`
+	if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := "#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_root_distrust'*) printf '%s' '[]' ;;\n  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments)
+	if err == nil || !strings.Contains(err.Error(), rootID) || !strings.Contains(err.Error(), "video-cloud-api/app") {
+		t.Fatalf("missing root policy error = %v", err)
+	}
+	script = strings.Replace(script, "'[]'", "'[\""+rootID+"\"]'", 1)
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err != nil {
+		t.Fatalf("present root policy: %v", err)
+	}
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[1].Value = ""
+	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("incomplete root policy error = %v", err)
+	}
+}
+
 func TestCertIssuerBootstrapPrecheckRejectsUnsupportedAndUnreachableConfiguration(t *testing.T) {
 	decode := func(t *testing.T, env string) liveDeploymentList {
 		t.Helper()

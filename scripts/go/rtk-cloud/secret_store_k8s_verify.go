@@ -162,6 +162,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
+			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", deployments); err != nil {
+				failures = append(failures, err.Error())
+			}
 			if err := verifyCertIssuerStaticServingChain(namespace, secrets, deployments, now); err != nil {
 				failures = append(failures, err.Error())
 			}
@@ -205,6 +208,87 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	}
 	sort.Strings(failures)
 	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
+}
+
+// Dynamic root consumers fetch a policy before serving. A deployment can have
+// valid certificates and Secrets yet loop on controller HTTP 503 when its root
+// ID has no policy row (for example after a dev database rebuild).
+func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deployments liveDeploymentList) error {
+	fields := [][2]string{
+		{"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE"},
+		{"VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_RENEWAL_SERVICE_ROOT_STATE"},
+		{"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVICE_ROOT_ID", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_SERVICE_ROOT_STATE"},
+		{"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_RENEWAL_SERVICE_ROOT_ID", "VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_RENEWAL_SERVICE_ROOT_STATE"},
+		{"VIDEO_CLOUD_MQTT_ROOT_ID", "VIDEO_CLOUD_MQTT_ROOT_STATE"},
+		{"VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_ROOT_ID", "VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_STATE"},
+		{"VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_ROOT_ID", "VIDEO_CLOUD_AUTH_APP_ROOT_TRUST_STATE"},
+		{"PKI_BROKER_DEVICE_ROOT_ID", "PKI_BROKER_DEVICE_ROOT_STATE"},
+		{"PKI_BROKER_APP_ROOT_ID", "PKI_BROKER_APP_ROOT_STATE"},
+		{"FACTORY_ENROLL_CERT_ISSUER_SERVICE_ROOT_ID", "FACTORY_ENROLL_CERT_ISSUER_SERVICE_ROOT_STATE"},
+		{"FACTORY_ENROLL_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "FACTORY_ENROLL_ACCOUNT_MANAGER_SERVICE_ROOT_STATE"},
+		{"PKI_TURN_APP_ROOT_ID", "PKI_TURN_APP_ROOT_STATE"},
+	}
+	references := map[string][]string{}
+	canonicalUUID := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	for _, deployment := range deployments.Items {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			settings := map[string]string{}
+			for _, env := range container.Env {
+				settings[env.Name] = strings.TrimSpace(env.Value)
+			}
+			for _, field := range fields {
+				id, state := settings[field[0]], settings[field[1]]
+				if id == "" && state == "" {
+					continue
+				}
+				label := deployment.Metadata.Name + "/" + container.Name + " " + field[0]
+				if id == "" || state == "" || !canonicalUUID.MatchString(id) {
+					return fmt.Errorf("dynamic root policy reference is incomplete: %s", label)
+				}
+				references[id] = append(references[id], label)
+			}
+		}
+	}
+	if len(references) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(references))
+	for id := range references {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+	if err != nil {
+		return errors.New("cannot read PostgreSQL Pod metadata for root policy verification")
+	}
+	var pods livePodList
+	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
+		return errors.New("PostgreSQL Pod is unavailable for root policy verification")
+	}
+	quoted := make([]string, len(ids))
+	for i, id := range ids {
+		quoted[i] = "'" + id + "'"
+	}
+	query := "SELECT COALESCE(json_agg(issuer_id ORDER BY issuer_id),'[]'::json) FROM (SELECT DISTINCT issuer_id::text AS issuer_id FROM public.pki_root_distrust WHERE issuer_id::text IN (" + strings.Join(quoted, ",") + ")) policies"
+	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
+	var present []string
+	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &present) != nil {
+		return errors.New("dynamic root policy verification did not return valid database metadata")
+	}
+	found := map[string]bool{}
+	for _, id := range present {
+		found[id] = true
+	}
+	var missing []string
+	for _, id := range ids {
+		if !found[id] {
+			missing = append(missing, strings.Join(references[id], ", ")+" references root "+id)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("dynamic root policy is missing from the PKI registry: %s", strings.Join(missing, "; "))
+	}
+	return nil
 }
 
 // The Service bundle is the current admission path. An older sidecar with
