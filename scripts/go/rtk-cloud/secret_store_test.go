@@ -1004,6 +1004,64 @@ func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T)
 	}
 }
 
+func TestLiveAccountManagerEnvironmentRejectsWrongSecretValue(t *testing.T) {
+	namespace := "video-cloud-dev-account-manager"
+	secret := "account-manager-runtime"
+	for _, tc := range []struct {
+		name string
+		data map[string]string
+		want string
+	}{
+		{"matching", map[string]string{"ACCOUNT_MANAGER_ENV": base64.StdEncoding.EncodeToString([]byte("dev"))}, ""},
+		{"staging", map[string]string{"ACCOUNT_MANAGER_ENV": base64.StdEncoding.EncodeToString([]byte("staging"))}, "does not match"},
+		{"missing", map[string]string{}, "missing ACCOUNT_MANAGER_ENV"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyLiveAccountManagerEnvironment("dev", namespace, secret, tc.data)
+			if tc.want == "" && err != nil || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("environment check = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T) {
+	var deployments liveDeploymentList
+	raw := `{"items":[{"metadata":{"name":"pki-controller"},"spec":{"template":{"spec":{"containers":[{"name":"pki-controller","env":[{"name":"PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE","value":"video-cloud-api,pkibroker"}]}]}}}},{"metadata":{"name":"video-cloud-api-pki"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[]}]}}}},{"metadata":{"name":"mqtt-pki"},"spec":{"template":{"spec":{"containers":[{"name":"pkibroker","env":[]}]}}}}]}`
+	if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	err := verifyAutomaticDeviceTrustConsumers(deployments)
+	if err == nil || !strings.Contains(err.Error(), "video-cloud-api-pki") || !strings.Contains(err.Error(), "mqtt-pki/pkibroker") {
+		t.Fatalf("missing Product CA consumers = %v", err)
+	}
+	deployments.Items[1].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[1].Spec.Template.Spec.Containers[0].Env,
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR", Value: "/run/automatic-device"},
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS", Value: "true"})
+	deployments.Items[2].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[2].Spec.Template.Spec.Containers[0].Env,
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR", Value: "/run/automatic-device"},
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "PKI_BROKER_REQUIRE_CRLS", Value: "true"},
+		struct {
+			Name  string `json:"name"`
+			Value string `json:"value"`
+		}{Name: "PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED", Value: "true"})
+	if err := verifyAutomaticDeviceTrustConsumers(deployments); err != nil {
+		t.Fatalf("configured Product CA consumers = %v", err)
+	}
+}
+
 func TestSecretStoreK8SRuntimeReportsCertificateAndIdentityFailuresTogether(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "dev")
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {

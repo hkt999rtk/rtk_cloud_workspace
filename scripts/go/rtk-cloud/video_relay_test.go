@@ -585,6 +585,42 @@ func TestVideoRelayTokenRequestsUseExpectedScopes(t *testing.T) {
 	}
 }
 
+func TestVideoRelayTokenRequestsUseScopeSpecificPKIEndpoints(t *testing.T) {
+	appRequests := 0
+	appServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		appRequests++
+		_, _ = w.Write([]byte(`{"scope":"app","access_token":"token-app"}`))
+	}))
+	defer appServer.Close()
+	deviceRequests := 0
+	deviceServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deviceRequests++
+		_, _ = w.Write([]byte(`{"scope":"device","access_token":"token-device"}`))
+	}))
+	defer deviceServer.Close()
+	fallbackRequests := 0
+	fallback := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackRequests++
+		http.Error(w, "unexpected fallback", http.StatusBadGateway)
+	}))
+	defer fallback.Close()
+	t.Setenv("VIDEO_CLOUD_APP_TOKEN_BASE_URL", appServer.URL)
+	t.Setenv("VIDEO_CLOUD_DEVICE_TOKEN_BASE_URL", deviceServer.URL)
+
+	cert := testTLSCertificate(t)
+	deviceToken, err := requestVideoRelayDeviceToken(fallback.URL, cert)
+	if err != nil || deviceToken != "token-device" {
+		t.Fatalf("device token = %q, err = %v", deviceToken, err)
+	}
+	appToken, err := requestVideoRelayAppToken(fallback.URL, cert, "cam-1")
+	if err != nil || appToken.AccessToken != "token-app" {
+		t.Fatalf("app token = %#v, err = %v", appToken, err)
+	}
+	if appRequests != 1 || deviceRequests != 1 || fallbackRequests != 0 {
+		t.Fatalf("requests app=%d device=%d fallback=%d", appRequests, deviceRequests, fallbackRequests)
+	}
+}
+
 func TestVideoRelayTokenRequestRetriesTransientFailures(t *testing.T) {
 	attempts := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

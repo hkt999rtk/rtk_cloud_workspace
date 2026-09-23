@@ -1592,6 +1592,9 @@ func requestVideoRelayTokenWithTimeout(apiBaseURL string, cert tls.Certificate, 
 }
 
 func requestVideoRelayTokenOnce(apiBaseURL string, cert tls.Certificate, payload map[string]any, requestTimeout time.Duration) (videoRelayTokenResponse, error) {
+	if scope, _ := payload["scope"].(string); strings.TrimSpace(scope) != "" {
+		apiBaseURL = videoRelayTokenBaseURLForScope(apiBaseURL, scope)
+	}
 	apiBaseURL = strings.TrimRight(strings.TrimSpace(apiBaseURL), "/")
 	if apiBaseURL == "" {
 		return videoRelayTokenResponse{}, errors.New("missing video cloud API URL")
@@ -1623,6 +1626,17 @@ func requestVideoRelayTokenOnce(apiBaseURL string, cert tls.Certificate, payload
 		return out, errors.New("request_token response missing access_token")
 	}
 	return out, nil
+}
+
+func videoRelayTokenBaseURLForScope(fallback, scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "app":
+		return firstNonEmpty(os.Getenv("VIDEO_CLOUD_APP_TOKEN_BASE_URL"), fallback)
+	case "device":
+		return firstNonEmpty(os.Getenv("VIDEO_CLOUD_DEVICE_TOKEN_BASE_URL"), fallback)
+	default:
+		return fallback
+	}
 }
 
 func isRetryableVideoRelayTokenError(err error) bool {

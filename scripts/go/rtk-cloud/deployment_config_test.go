@@ -451,6 +451,15 @@ func TestDeploymentPreflightPlanIsReadOnly(t *testing.T) {
 	}
 }
 
+func TestDeploymentPreflightAcceptsExplicitReadOnlyFlag(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	if err := runDeploymentWithOperations([]string{
+		"preflight", "--workspace", workspace, "--environment", "staging", "--operation", "plan", "--read-only",
+	}, deploymentOperations{}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDeploymentPreflightProvisionChecksInputsWithoutSecrets(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
@@ -979,6 +988,39 @@ func TestResolveDeploymentConfigValidatesCertificateAlgorithms(t *testing.T) {
 	}
 }
 
+func TestResolveDeploymentConfigValidatesOTATrustedManifestKeys(t *testing.T) {
+	tests := []struct {
+		name      string
+		override  string
+		wantError string
+	}{
+		{name: "empty object", override: "{}"},
+		{name: "base64 key", override: `{"dev":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`},
+		{name: "malformed JSON", override: "not-json", wantError: "must be a JSON object"},
+		{name: "wrong key length", override: `{"dev":"AA=="}`, wantError: "must be a 32-byte Ed25519 public key"},
+		{name: "empty key ID", override: `{"":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`, wantError: "key IDs must not be empty"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "staging", "lke")
+			writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "overrides", "architecture.env"), "VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON="+tc.override+"\n")
+			cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("resolveDeploymentConfig() error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Values["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"] != tc.override {
+				t.Fatalf("trusted manifest keys = %q", cfg.Values["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"])
+			}
+		})
+	}
+}
+
 func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
@@ -1074,7 +1116,7 @@ func writeDeploymentFixture(t *testing.T, environment, adapter string) string {
 		}
 		fmt.Fprintf(&workloads, "%s_MIN_REPLICAS=%d\n%s_NODE_CLASS=%s\n%s_REQUEST_CPU=100m\n%s_REQUEST_MEMORY=128Mi\n", spec.Prefix, replicas, spec.Prefix, nodeClass, spec.Prefix, spec.Prefix)
 	}
-	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nCERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
+	workloads.WriteString("MQTT_HARD_ANTI_AFFINITY=true\nPOSTGRES_LIMIT_MEMORY=4Gi\nCLOUD_LOGGER_LIMIT_MEMORY=2Gi\nVIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON={}\nCERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM=ed25519\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=ed25519,p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=ed25519,p256\nEDGE_REPLICAS=1\nEDGE_MAX_CONNECTIONS=400000\nTURN_REPLICAS=1\nTURN_MIN_PORT=49152\nTURN_MAX_PORT=49200\n")
 	files := map[string]string{
 		"cloud_deploy/architectures/kubernetes/architecture.env":   "DEPLOYMENT_RUNTIME=kubernetes\nNODE_CLASS_LABEL_KEY=rtk.io/node-class\nDEFAULT_WORKLOAD_NODE_CLASS=general\n",
 		"cloud_deploy/architectures/kubernetes/capacity.env":       "CAPACITY_TARGET_CONNECTIONS=1000\nCAPACITY_CONNECTIONS_PER_MQTT_POD=20000\nCAPACITY_ACTIVE_DEVICES=1000\nCAPACITY_ACTIVE_DEVICES_PER_API_POD=40000\nCAPACITY_SYSTEM_RESERVED_CPU_MILLI=1000\nCAPACITY_SYSTEM_RESERVED_MEMORY_MIB=1536\n",

@@ -863,10 +863,13 @@ func syncTextFile(path, want string, check bool) (bool, error) {
 	if check {
 		return true, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return false, err
 	}
-	return true, os.WriteFile(path, []byte(want), 0o644)
+	if err := os.WriteFile(path, []byte(want), 0o600); err != nil {
+		return false, err
+	}
+	return true, os.Chmod(path, 0o600)
 }
 
 type linodeList[T any] struct {
@@ -2987,9 +2990,14 @@ func runStagingE2EMultiBrandDataSetup(cfg stagingE2EMultiBrandConfig) error {
 		cfg.BrandPlanFile = resolvedPath
 	}
 	logsDir := filepath.Join(cfg.OutDir, "logs")
-	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return err
 	}
+	defer func() {
+		if err := restrictPrivateE2EArtifacts(cfg.EnvRoot, cfg.OutDir); err != nil {
+			fmt.Fprintln(os.Stderr, "restrict E2E artifact permissions:", err)
+		}
+	}()
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
 		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: cfg.Quiet}, argv...)
@@ -3314,9 +3322,14 @@ func runStagingE2EDataSetup(args []string) error {
 		*outDir = filepath.Join(envRoot, "artifacts", "staging-e2e-data", time.Now().UTC().Format("20060102T150405Z"))
 	}
 	logsDir := filepath.Join(*outDir, "logs")
-	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return err
 	}
+	defer func() {
+		if err := restrictPrivateE2EArtifacts(envRoot, *outDir); err != nil {
+			fmt.Fprintln(os.Stderr, "restrict E2E artifact permissions:", err)
+		}
+	}()
 	steps := []e2eStep{}
 	childEnv, cleanup, err := startK8SE2EDataSetupPortForwardsIfNeeded(workspace, envRoot)
 	if err != nil {
@@ -4014,6 +4027,10 @@ func ensureK8SKubeconfig(workspace, envRoot, stack string) (string, error) {
 	if path := firstNonEmpty(os.Getenv("RTK_CLOUD_KUBECONFIG"), os.Getenv("RTK_CLOUD_LKE_KUBECONFIG"), os.Getenv("CLOUD_STAGING_K8S_KUBECONFIG"), os.Getenv("KUBECONFIG")); path != "" {
 		return path, nil
 	}
+	managedKubeconfig := filepath.Join(envRoot, "kube", "kubeconfig.yaml")
+	if info, err := os.Stat(managedKubeconfig); err == nil && !info.IsDir() {
+		return managedKubeconfig, nil
+	}
 	envRootKubeconfig := filepath.Join(envRoot, "state", "kubeconfig.yaml")
 	if info, err := os.Stat(envRootKubeconfig); err == nil && !info.IsDir() {
 		return envRootKubeconfig, nil
@@ -4278,6 +4295,8 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 	if mqttService != "mqtt" && mqttService != "mqtt-pki" {
 		return nil, nil, fmt.Errorf("unsupported MQTT service %q", mqttService)
 	}
+	deviceTokenPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_DEVICE_TOKEN_PORT"), "18444")
+	appTokenPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_APP_TOKEN_PORT"), "18445")
 	loggerPort := firstNonEmpty(os.Getenv("CLOUD_STAGING_E2E_LOGGER_PORT"), "18090")
 	type portForwardSpec struct {
 		ns          string
@@ -4297,6 +4316,12 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 	}
 	if includeMQTT {
 		forwards = append(forwards, portForwardSpec{ns: stack + "-video-cloud", service: mqttService, port: "mqtts", local: mqttPort})
+		if mqttService == "mqtt-pki" {
+			forwards = append(forwards,
+				portForwardSpec{ns: stack + "-video-cloud", service: "video-cloud-api-pki", port: "https", local: deviceTokenPort},
+				portForwardSpec{ns: stack + "-video-cloud", service: "video-cloud-api-app-pki", port: "https", local: appTokenPort},
+			)
+		}
 		forwards = append(forwards, portForwardSpec{ns: stack + "-logger", service: "cloud-logger", port: "http", local: loggerPort})
 	}
 	cmds := []*exec.Cmd{}
@@ -4362,6 +4387,12 @@ func startK8SE2EPortForwardsForServices(workspace, envRoot string, includeMQTT b
 	}
 	if includeMQTT {
 		env = append(env, "VIDEO_CLOUD_MQTT_ADDR=127.0.0.1:"+mqttPort)
+		if mqttService == "mqtt-pki" {
+			env = append(env,
+				"VIDEO_CLOUD_DEVICE_TOKEN_BASE_URL=https://127.0.0.1:"+deviceTokenPort,
+				"VIDEO_CLOUD_APP_TOKEN_BASE_URL=https://127.0.0.1:"+appTokenPort,
+			)
+		}
 		env = append(env, "VIDEO_CLOUD_LOGGER_ENDPOINT=http://127.0.0.1:"+loggerPort)
 	}
 	if secretEnv, err := readK8SSecretEnv(kubeconfig, stack+"-account-manager", "account-manager-runtime", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL", "ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD", "ACCOUNT_MANAGER_INTERNAL_AUTH_TOKEN"); err == nil {
@@ -4733,6 +4764,25 @@ func runEnvironmentAcceptance(args []string) error {
 	}))
 }
 
+// E2E data may include tokens and signing material, so leave generated files
+// private even when a child command exits before completing its step.
+func restrictPrivateE2EArtifacts(envRoot, outDir string) error {
+	root := filepath.Join(envRoot, "artifacts")
+	rel, err := filepath.Rel(root, outDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return nil
+	}
+	return filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+		return os.Chmod(path, info.Mode().Perm()&^0o077)
+	})
+}
+
 func runStagingE2ETest(args []string) error {
 	fs := flag.NewFlagSet("staging-e2e-test", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -4862,9 +4912,14 @@ func runStagingE2ETest(args []string) error {
 		*outDir = filepath.Join(envRoot, "artifacts", "staging-e2e", time.Now().UTC().Format("20060102T150405Z"))
 	}
 	logsDir := filepath.Join(*outDir, "logs")
-	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+	if err := os.MkdirAll(logsDir, 0o700); err != nil {
 		return err
 	}
+	defer func() {
+		if err := restrictPrivateE2EArtifacts(envRoot, *outDir); err != nil {
+			fmt.Fprintln(os.Stderr, "restrict E2E artifact permissions:", err)
+		}
+	}()
 	steps := []e2eStep{}
 	runStep := func(name string, argv ...string) error {
 		step, err := runE2EStepWithOptions(name, filepath.Join(logsDir, name+".log"), e2eStepOptions{Quiet: *quiet}, argv...)

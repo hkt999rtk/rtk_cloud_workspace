@@ -129,6 +129,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			continue
 		}
 		label := secret.Metadata.Namespace + "/" + secret.Metadata.Name
+		if err := verifyLiveAccountManagerEnvironment(store.Environment, secret.Metadata.Namespace, secret.Metadata.Name, secret.Data); err != nil {
+			failures = append(failures, err.Error())
+		}
 		for _, pair := range [][2]string{{"tls.crt", "tls.key"}, {"client.crt", "client.key"}, {"cert.pem", "key.pem"}} {
 			certEncoded, certOK := secret.Data[pair[0]]
 			keyEncoded, keyOK := secret.Data[pair[1]]
@@ -163,6 +166,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			failures = append(failures, "live Video Cloud deployment metadata is invalid")
 		} else {
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
+				failures = append(failures, err.Error())
+			}
+			if err := verifyAutomaticDeviceTrustConsumers(deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
 			if err := verifyLiveRootPolicyReferences(kubeconfig, stack+"-platform", deployments); err != nil {
@@ -211,6 +217,60 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	}
 	sort.Strings(failures)
 	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
+}
+
+// Product CA creation waits for receipts from these workloads. If either
+// automatic trust consumer is disabled, a new Product remains pending forever.
+func verifyAutomaticDeviceTrustConsumers(deployments liveDeploymentList) error {
+	settings := map[string]map[string]string{}
+	for _, deployment := range deployments.Items {
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			key := deployment.Metadata.Name + "/" + container.Name
+			settings[key] = map[string]string{}
+			for _, env := range container.Env {
+				settings[key][env.Name] = strings.TrimSpace(env.Value)
+			}
+		}
+	}
+	controller := settings["pki-controller/pki-controller"]
+	if controller == nil {
+		return nil
+	}
+	consumers := firstNonEmpty(controller["PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE"], controller["PKI_REQUIRED_CONSUMERS_DEVICE"])
+	var missing []string
+	for _, consumer := range strings.Split(consumers, ",") {
+		switch strings.TrimSpace(consumer) {
+		case "video-cloud-api":
+			api := settings["video-cloud-api-pki/app"]
+			if api["VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR"] == "" || api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS"] != "true" {
+				missing = append(missing, "video-cloud-api-pki automatic Device trust and Product CRL enforcement")
+			}
+		case "pkibroker":
+			broker := settings["mqtt-pki/pkibroker"]
+			if broker["PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR"] == "" || broker["PKI_BROKER_REQUIRE_CRLS"] != "true" || broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] != "true" {
+				missing = append(missing, "mqtt-pki/pkibroker automatic Device trust and CRL enforcement")
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("Product PKI cannot activate new issuers: required bundle consumers are not configured: %s", strings.Join(missing, "; "))
+	}
+	return nil
+}
+
+func verifyLiveAccountManagerEnvironment(environment, namespace, name string, data map[string]string) error {
+	if namespace != "video-cloud-"+environment+"-account-manager" || name != "account-manager-runtime" {
+		return nil
+	}
+	encoded, ok := data["ACCOUNT_MANAGER_ENV"]
+	if !ok {
+		return errors.New("Account Manager runtime Secret is missing ACCOUNT_MANAGER_ENV")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || strings.TrimSpace(string(raw)) != environment {
+		return fmt.Errorf("Account Manager runtime Secret ACCOUNT_MANAGER_ENV does not match selected %s environment", environment)
+	}
+	return nil
 }
 
 func verifySelectedStackMetadata(store secretStore) error {

@@ -247,6 +247,22 @@ func TestEnsureK8SKubeconfigPrefersEnvRootState(t *testing.T) {
 	}
 }
 
+func TestEnsureK8SKubeconfigUsesSelectedSecretStore(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "")
+	t.Setenv("RTK_CLOUD_LKE_KUBECONFIG", "")
+	t.Setenv("CLOUD_STAGING_K8S_KUBECONFIG", "")
+	t.Setenv("KUBECONFIG", "")
+	t.Setenv("LINODE_TOKEN", "")
+	managed := filepath.Join(envRoot, "kube", "kubeconfig.yaml")
+	writeTestFile(t, managed, "selected environment kubeconfig\n")
+	writeTestFile(t, filepath.Join(envRoot, "state", "kubeconfig.yaml"), "stale state kubeconfig\n")
+	got, err := ensureK8SKubeconfig(workspace, envRoot, "video-cloud-dev")
+	if err != nil || got != managed {
+		t.Fatalf("selected kubeconfig = %q, %v; want %q", got, err, managed)
+	}
+}
+
 func TestRunProvisionLKEApplyDiscoversClusterByLabel(t *testing.T) {
 	workspace, envRoot := makeLKETestEnv(t)
 	encodedKubeconfig := base64.StdEncoding.EncodeToString([]byte("apiVersion: v1\nclusters: []\n"))
@@ -723,6 +739,35 @@ func TestLKEVideoCloudRuntimeChecksumTracksAPIBaseURL(t *testing.T) {
 	}
 	if lkeVideoCloudRuntimeChecksum(base) == lkeVideoCloudRuntimeChecksum(changed) {
 		t.Fatal("API base URL change must change the video-cloud runtime checksum")
+	}
+}
+
+func TestLKEVideoCloudManifestAndChecksumTrackOTATrustedManifestKeys(t *testing.T) {
+	base := map[string]string{
+		"CLOUD_STACK_NAME":                           "video-cloud-dev",
+		"VIDEO_CLOUD_DOMAIN":                         "video.example.test",
+		"VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON": `{"key-a":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`,
+	}
+	changed := make(map[string]string, len(base))
+	for key, value := range base {
+		changed[key] = value
+	}
+	changed["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"] = `{"key-b":"BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="}`
+	if lkeVideoCloudRuntimeChecksum(base) == lkeVideoCloudRuntimeChecksum(changed) {
+		t.Fatal("OTA manifest trust rotation must change the video-cloud runtime checksum")
+	}
+	var manifest string
+	for _, workload := range lkeWorkloads(base) {
+		if workload.Key == "video-cloud" {
+			manifest = lkeDeploymentManifest(base, workload, nil)
+			break
+		}
+	}
+	if manifest == "" {
+		t.Fatal("video-cloud workload not found")
+	}
+	if !strings.Contains(manifest, "name: VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON") || !strings.Contains(manifest, "value: "+strconv.Quote(base["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"])) {
+		t.Fatalf("video-cloud deployment missing OTA manifest trust configuration:\n%s", manifest)
 	}
 }
 
@@ -2646,6 +2691,41 @@ func TestLKECertificateBundleStagingConfiguration(t *testing.T) {
 	}
 }
 
+func TestAccountManagerSecretUsesSelectedStackEnvironment(t *testing.T) {
+	t.Setenv("ACCOUNT_MANAGER_ENV", "staging")
+	manifest := lkeAccountManagerSecretManifest(map[string]string{
+		"CLOUD_ENV_NAME":   "dev",
+		"CLOUD_STACK_NAME": "video-cloud-dev",
+	})
+	if !strings.Contains(manifest, "ACCOUNT_MANAGER_ENV: \"dev\"") {
+		t.Fatal("Account Manager Secret did not use the selected dev environment")
+	}
+}
+
+func TestRestrictPrivateE2EArtifacts(t *testing.T) {
+	envRoot := t.TempDir()
+	outDir := filepath.Join(envRoot, "artifacts", "staging-e2e", "run")
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(outDir, "credential.json")
+	if err := os.WriteFile(file, []byte(`{"token":"test"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := restrictPrivateE2EArtifacts(envRoot, outDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(envRoot, "artifacts"), outDir, file} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("artifact %s remains accessible to other users: %v", path, info.Mode().Perm())
+		}
+	}
+}
+
 func TestLKESDKPortalBaseURLOverride(t *testing.T) {
 	env := map[string]string{
 		"VIDEO_CLOUD_DOMAIN": "video.example.test",
@@ -3820,6 +3900,16 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 	}
 	if strings.Contains(mqtt, "kind: Deployment") {
 		t.Fatalf("MQTT must be a StatefulSet, got Deployment:\n%s", mqtt)
+	}
+}
+
+func TestLKEEMQXMQTTUsagePolicyAllowsLegacyAndPKIBrokers(t *testing.T) {
+	manifest := lkeAllowEMQXMQTTUsageNetworkPolicyManifest(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"})
+	for _, broker := range []string{"mqtt", "mqtt-pki"} {
+		want := "app.kubernetes.io/name: " + broker
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("expected %q in MQTT usage ingress policy:\n%s", want, manifest)
+		}
 	}
 }
 
@@ -6064,6 +6154,8 @@ func TestStartK8SE2EPortForwardsCanTargetPKIMQTTService(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_DEVICE_TOKEN_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_APP_TOKEN_PORT", freeTCPPort(t))
 	t.Setenv("LKE_CLOUD_LOGGER_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_SERVICE", "mqtt-pki")
 
@@ -6076,6 +6168,11 @@ func TestStartK8SE2EPortForwardsCanTargetPKIMQTTService(t *testing.T) {
 	log := readTestFile(t, kubectlLog)
 	if !strings.Contains(log, "PF_START svc/mqtt-pki") || strings.Contains(log, "PF_START svc/mqtt\n") {
 		t.Fatalf("expected only the PKI MQTT service port-forward, got:\n%s", log)
+	}
+	for _, service := range []string{"svc/video-cloud-api-pki", "svc/video-cloud-api-app-pki"} {
+		if !strings.Contains(log, "PF_START "+service) {
+			t.Fatalf("expected PKI token service port-forward for %s, got:\n%s", service, log)
+		}
 	}
 }
 
@@ -7348,7 +7445,7 @@ if [[ "$*" == *" get svc "* ]]; then
     mqtt) port=8883 ;;
     *) port=80 ;;
   esac
-  printf '{"spec":{"ports":[{"name":"http","port":%s},{"name":"mqtts","port":8883}]}}\n' "$port"
+  printf '{"spec":{"ports":[{"name":"http","port":%s},{"name":"https","port":8443},{"name":"mqtts","port":8883}]}}\n' "$port"
   exit 0
 fi
 if [[ "$*" == *" get secret "* ]]; then
