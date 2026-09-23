@@ -935,6 +935,10 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 	}
 	stack := "video-cloud-" + store.Environment
 	var failures []string
+	// A single Secret often carries several catalog bindings. Read it once so
+	// one transient API failure cannot appear as several missing credentials.
+	seen := make(map[string]map[string]string)
+	unreadable := make(map[string]bool)
 	for _, entry := range rtkSecretCatalog() {
 		if len(entry.K8SBinding) == 0 {
 			continue
@@ -945,21 +949,41 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			continue
 		}
 		for _, binding := range entry.K8SBinding {
-			bindingName := stack + binding.NamespaceSuffix + "/" + binding.Secret + ":" + binding.Key
-			cmd := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+binding.NamespaceSuffix, "get", "secret", binding.Secret, "-o", "json")
-			out, commandErr := cmd.Output()
-			if commandErr != nil {
-				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
+			secretName := stack + binding.NamespaceSuffix + "/" + binding.Secret
+			bindingName := secretName + ":" + binding.Key
+			data, loaded := seen[secretName]
+			if !loaded && !unreadable[secretName] {
+				var out []byte
+				var commandErr error
+				for attempt := 0; attempt < 2; attempt++ {
+					if attempt != 0 {
+						time.Sleep(200 * time.Millisecond)
+					}
+					out, commandErr = exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+binding.NamespaceSuffix, "get", "secret", binding.Secret, "-o", "json").Output()
+					if commandErr == nil {
+						break
+					}
+				}
+				if commandErr != nil {
+					failures = append(failures, fmt.Sprintf("cannot read Kubernetes Secret %s while verifying bindings", secretName))
+					unreadable[secretName] = true
+					continue
+				}
+				var payload struct {
+					Data map[string]string `json:"data"`
+				}
+				if json.Unmarshal(out, &payload) != nil || payload.Data == nil {
+					failures = append(failures, fmt.Sprintf("K8s binding for %s at %s returned invalid metadata", entry.ID, bindingName))
+					unreadable[secretName] = true
+					continue
+				}
+				data = payload.Data
+				seen[secretName] = data
+			}
+			if unreadable[secretName] {
 				continue
 			}
-			var payload struct {
-				Data map[string]string `json:"data"`
-			}
-			if json.Unmarshal(out, &payload) != nil {
-				failures = append(failures, fmt.Sprintf("K8s binding for %s at %s returned invalid metadata", entry.ID, bindingName))
-				continue
-			}
-			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(payload.Data[binding.Key]))
+			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(data[binding.Key]))
 			if decodeErr != nil || len(value) == 0 {
 				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
 				continue
