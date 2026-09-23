@@ -39,7 +39,8 @@ type liveDeployment struct {
 		Template struct {
 			Spec struct {
 				Containers []struct {
-					Env []struct {
+					Name string `json:"name"`
+					Env  []struct {
 						Name  string `json:"name"`
 						Value string `json:"value"`
 					} `json:"env"`
@@ -184,6 +185,18 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			}
 		}
 	}
+	accountNamespace := stack + "-account-manager"
+	accountRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", accountNamespace, "get", "deployments", "-o", "json").Output()
+	if err != nil {
+		failures = append(failures, "cannot read live Account Manager deployment status")
+	} else {
+		var deployments liveDeploymentList
+		if json.Unmarshal(accountRaw, &deployments) != nil {
+			failures = append(failures, "live Account Manager deployment metadata is invalid")
+		} else if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
+			failures = append(failures, err.Error())
+		}
+	}
 	if err := verifyLiveDeploymentBootstrapSessions(kubeconfig, stack+"-platform", now); err != nil {
 		failures = append(failures, err.Error())
 	}
@@ -192,6 +205,45 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	}
 	sort.Strings(failures)
 	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
+}
+
+// The Service bundle is the current admission path. An older sidecar with
+// optional CRL/root consumers enabled can be Ready while its local signing
+// socket still returns 503, so inspect that configuration before rollout.
+func verifyAccountManagerPKIConfiguration(deployments liveDeploymentList) error {
+	for _, deployment := range deployments.Items {
+		if deployment.Metadata.Name != "account-manager" {
+			continue
+		}
+		var appSocket, managementSocket string
+		var unsupported []string
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			for _, env := range container.Env {
+				if container.Name == "app" && env.Name == "APP_CERT_ISSUER_SOCKET" {
+					appSocket = env.Value
+				}
+				if container.Name != "pkimanagement" {
+					continue
+				}
+				if env.Name == "PKI_MANAGEMENT_SOCKET" {
+					managementSocket = env.Value
+				}
+				accountClient := strings.HasPrefix(env.Name, "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_")
+				serviceOrigin := strings.HasPrefix(env.Name, "PKI_MANAGEMENT_ISSUER_") || strings.HasPrefix(env.Name, "PKI_MANAGEMENT_CONTROLLER_")
+				if (accountClient || serviceOrigin) && (strings.Contains(env.Name, "_CRL_MANIFEST") || strings.Contains(env.Name, "_SERVICE_ROOT_") || serviceOrigin && (strings.HasSuffix(env.Name, "_PKI_CONTROLLER_URL") || strings.HasSuffix(env.Name, "_MANAGEMENT_CA"))) && strings.TrimSpace(env.Value) != "" {
+					unsupported = append(unsupported, env.Name)
+				}
+			}
+		}
+		if len(unsupported) > 0 {
+			sort.Strings(unsupported)
+			return fmt.Errorf("Account Manager sidecar enables CRL/root-consumer settings before that deployment contract exists: %s", strings.Join(unsupported, ","))
+		}
+		if appSocket != "" && (managementSocket == "" || appSocket != managementSocket) {
+			return errors.New("Account Manager app and PKI sidecar use different managed socket paths")
+		}
+	}
+	return nil
 }
 
 func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deployments liveDeploymentList) error {

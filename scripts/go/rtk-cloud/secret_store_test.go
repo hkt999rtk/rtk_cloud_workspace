@@ -991,6 +991,30 @@ func TestSecretStoreK8SRuntimeRejectsEmptyServiceClientRegistry(t *testing.T) {
 	}
 }
 
+func TestAccountManagerPKIPrecheckRejectsOldConsumerAndSocketMismatch(t *testing.T) {
+	decode := func(t *testing.T, sidecarEnv string) liveDeploymentList {
+		t.Helper()
+		var deployments liveDeploymentList
+		raw := fmt.Sprintf(`{"items":[{"metadata":{"name":"account-manager"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"APP_CERT_ISSUER_SOCKET","value":"/run/account-pki/private/controller.sock"}]},{"name":"pkimanagement","env":%s}]}}}}]}`, sidecarEnv)
+		if err := json.Unmarshal([]byte(raw), &deployments); err != nil {
+			t.Fatal(err)
+		}
+		return deployments
+	}
+	old := decode(t, `[{"name":"PKI_MANAGEMENT_SOCKET","value":"/run/account-pki/private/controller.sock"},{"name":"PKI_MANAGEMENT_ISSUER_SERVER_CRL_MANIFEST","value":"/run/crls.json"}]`)
+	if err := verifyAccountManagerPKIConfiguration(old); err == nil || !strings.Contains(err.Error(), "PKI_MANAGEMENT_ISSUER_SERVER_CRL_MANIFEST") {
+		t.Fatalf("old CRL consumer precheck error = %v", err)
+	}
+	mismatch := decode(t, `[{"name":"PKI_MANAGEMENT_SOCKET","value":"/run/other.sock"}]`)
+	if err := verifyAccountManagerPKIConfiguration(mismatch); err == nil || !strings.Contains(err.Error(), "different managed socket") {
+		t.Fatalf("managed socket mismatch precheck error = %v", err)
+	}
+	good := decode(t, `[{"name":"PKI_MANAGEMENT_SOCKET","value":"/run/account-pki/private/controller.sock"},{"name":"PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_BUNDLE_MANIFEST","value":"/run/bundles.json"},{"name":"PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_PKI_CONTROLLER_URL","value":"https://controller.example.test"},{"name":"PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_MANAGEMENT_CA","value":"/run/root.pem"}]`)
+	if err := verifyAccountManagerPKIConfiguration(good); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLiveDeploymentBootstrapSessionCheckRejectsActiveAndExpiredOwners(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	sessions, err := json.Marshal(liveDeploymentBootstrapReport{ActiveCallerIndex: true, Sessions: []liveDeploymentBootstrapSession{
