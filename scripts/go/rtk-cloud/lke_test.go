@@ -2723,10 +2723,18 @@ func TestRestrictPrivateE2EArtifacts(t *testing.T) {
 	if err := os.WriteFile(file, []byte(`{"token":"test"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	deviceDir := filepath.Join(envRoot, "devices", "test_device")
+	if err := os.MkdirAll(deviceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deviceFile := filepath.Join(deviceDir, "loadtest.env")
+	if err := os.WriteFile(deviceFile, []byte("DEVICE_ID=test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := restrictPrivateE2EArtifacts(envRoot, outDir); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{filepath.Join(envRoot, "artifacts"), outDir, file} {
+	for _, path := range []string{filepath.Join(envRoot, "artifacts"), outDir, file, filepath.Join(envRoot, "devices"), deviceDir, deviceFile} {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)

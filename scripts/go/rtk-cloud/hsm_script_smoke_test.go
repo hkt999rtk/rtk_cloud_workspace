@@ -133,8 +133,12 @@ func TestGenerateLoadDevicesGenerateOnlyWritesSQLite(t *testing.T) {
 	for _, rel := range []string{
 		"summary.json",
 	} {
-		if _, err := os.Stat(filepath.Join(outDir, rel)); err != nil {
+		info, err := os.Stat(filepath.Join(outDir, rel))
+		if err != nil {
 			t.Fatalf("expected generated artifact %s: %v", rel, err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("generated artifact %s is not private: %v", rel, info.Mode().Perm())
 		}
 	}
 	for _, rel := range []string{

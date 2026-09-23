@@ -2147,7 +2147,7 @@ type generatedDevice struct {
 	Warning              string   `json:"warning"`
 }
 
-func runGenerateLoadDevices(args []string) error {
+func runGenerateLoadDevices(args []string) (retErr error) {
 	fs := flag.NewFlagSet("generate-load-devices", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	count := fs.Int("count", 100, "device count")
@@ -2257,10 +2257,15 @@ func runGenerateLoadDevices(args []string) error {
 			return fmt.Errorf("remove existing output directory for --force: %w", err)
 		}
 	}
-	if err := os.MkdirAll(*outDir, 0o755); err != nil {
+	if err := os.MkdirAll(*outDir, 0o700); err != nil {
 		return err
 	}
 	*outDir, _ = filepath.Abs(*outDir)
+	defer func() {
+		if err := restrictPrivateTree(*outDir); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("restrict generated device permissions: %w", err))
+		}
+	}()
 	opensslLog := filepath.Join(*outDir, "openssl.log")
 	if err := os.WriteFile(opensslLog, nil, 0o644); err != nil {
 		return err
@@ -4771,6 +4776,20 @@ func restrictPrivateE2EArtifacts(envRoot, outDir string) error {
 	rel, err := filepath.Rel(root, outDir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return nil
+	}
+	for _, path := range []string{root, filepath.Join(envRoot, "devices")} {
+		if err := restrictPrivateTree(path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func restrictPrivateTree(root string) error {
+	if _, err := os.Lstat(root); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
 	}
 	return filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
