@@ -84,6 +84,7 @@ func runDeploymentConsoleCheck(args []string) error {
 	workspace := fs.String("workspace", "", "workspace root")
 	cloud := fs.String("cloud-id", "", "owned qualification Cloud UUID (no data is created)")
 	product := fs.String("product-id", "", "qualification Product UUID for enabled Test Lab")
+	account := fs.String("test-account-id", "", "existing Test Lab account UUID for enabled Test Lab")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -91,8 +92,8 @@ func runDeploymentConsoleCheck(args []string) error {
 		return errors.New("unexpected console-check argument")
 	}
 	idPattern := regexp.MustCompile(`^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$`)
-	if !idPattern.MatchString(*cloud) || (*product != "" && !idPattern.MatchString(*product)) {
-		return errors.New("--cloud-id must be a UUID; --product-id must be a UUID when provided")
+	if !idPattern.MatchString(*cloud) || (*product != "" && !idPattern.MatchString(*product)) || (*account != "" && !idPattern.MatchString(*account)) {
+		return errors.New("--cloud-id must be a UUID; --product-id and --test-account-id must be UUIDs when provided")
 	}
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, "")
 	if err != nil {
@@ -123,7 +124,7 @@ func runDeploymentConsoleCheck(args []string) error {
 	client := consoleCheckClient{origin, &http.Client{Jar: jar, Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	results := collectConsoleChecks(ctx, client, cfg.Values, email, password, *cloud, *product)
+	results := collectConsoleChecks(ctx, client, cfg.Values, email, password, *cloud, *product, *account)
 	if err := json.NewEncoder(os.Stdout).Encode(struct {
 		Environment string               `json:"environment"`
 		Checks      []consoleCheckResult `json:"checks"`
@@ -139,7 +140,7 @@ func runDeploymentConsoleCheck(args []string) error {
 	return nil
 }
 
-func collectConsoleChecks(ctx context.Context, c consoleCheckClient, desired map[string]string, email, password, cloud, product string) []consoleCheckResult {
+func collectConsoleChecks(ctx context.Context, c consoleCheckClient, desired map[string]string, email, password, cloud, product, account string) []consoleCheckResult {
 	var results []consoleCheckResult
 	check := func(name string, run func() error) bool {
 		err := run()
@@ -223,13 +224,20 @@ func collectConsoleChecks(ctx context.Context, c consoleCheckClient, desired map
 		return nil
 	})
 	if strings.EqualFold(desired["TEST_LAB_ENABLED"], "true") {
-		if product == "" {
-			results = append(results, consoleCheckResult{"Test Lab read route", "SKIP", "enabled Test Lab requires --product-id"})
+		if product == "" || account == "" {
+			results = append(results, consoleCheckResult{"Test Lab read route", "SKIP", "enabled Test Lab requires --product-id and --test-account-id"})
 		} else {
 			check("Test Lab read route", func() error {
 				var body map[string]json.RawMessage
-				_, err := c.json(ctx, "/api/developer/brand-clouds/"+cloud+"/test-lab/manage/devices?product_id="+product, &body)
-				return err
+				_, err := c.json(ctx, "/api/developer/brand-clouds/"+cloud+"/test-lab/manage/devices?product_id="+product+"&account_id="+account, &body)
+				if err != nil {
+					return err
+				}
+				var devices []json.RawMessage
+				if json.Unmarshal(body["devices"], &devices) != nil {
+					return errors.New("Test Lab device list is missing")
+				}
+				return nil
 			})
 		}
 	}
