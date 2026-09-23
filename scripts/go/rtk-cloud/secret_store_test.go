@@ -970,7 +970,7 @@ func TestSecretStoreK8SRuntimeReportsCertificateAndIdentityFailuresTogether(t *t
 	}
 }
 
-func TestSecretStoreK8SRuntimeRejectsEmptyServiceClientRegistry(t *testing.T) {
+func TestSecretStoreK8SRuntimeRejectsIncompleteServiceClientInventory(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "dev")
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
 		t.Fatal(err)
@@ -986,7 +986,7 @@ func TestSecretStoreK8SRuntimeRejectsEmptyServiceClientRegistry(t *testing.T) {
 	}
 	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
 	err := verifySecretStoreK8SRuntime(store, time.Now())
-	if err == nil || !strings.Contains(err.Error(), "issuances=0") {
+	if err == nil || !strings.Contains(err.Error(), "inventory did not complete") {
 		t.Fatalf("empty registry error = %v", err)
 	}
 }
