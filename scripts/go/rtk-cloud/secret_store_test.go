@@ -1151,6 +1151,29 @@ func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
 	}
 }
 
+func TestSelectedStackMetadataRejectsDifferentEnvironment(t *testing.T) {
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(store.Root, "env"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Root, "env", "stack.env")
+	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=staging\nCLOUD_STACK_NAME=video-cloud-staging\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySelectedStackMetadata(store); err == nil || !strings.Contains(err.Error(), "video-cloud-staging") {
+		t.Fatalf("environment mismatch error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=dev\nCLOUD_STACK_NAME=video-cloud-dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifySelectedStackMetadata(store); err != nil {
+		t.Fatalf("matching environment: %v", err)
+	}
+}
+
 func TestCertIssuerBootstrapPrecheckRejectsUnsupportedAndUnreachableConfiguration(t *testing.T) {
 	decode := func(t *testing.T, env string) liveDeploymentList {
 		t.Helper()

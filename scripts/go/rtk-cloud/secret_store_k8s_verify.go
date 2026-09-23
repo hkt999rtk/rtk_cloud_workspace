@@ -105,6 +105,9 @@ type liveDeploymentBootstrapReport struct {
 // identities held on PVCs whose authorization can only be proven by the running
 // service. It deliberately has no CRL or OCSP dependency.
 func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
+	if err := verifySelectedStackMetadata(store); err != nil {
+		return err
+	}
 	kubeconfig := store.KubeconfigPath()
 	if _, err := os.Stat(kubeconfig); errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -208,6 +211,22 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	}
 	sort.Strings(failures)
 	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
+}
+
+func verifySelectedStackMetadata(store secretStore) error {
+	path := filepath.Join(store.Root, "env", "stack.env")
+	values, err := readEnvFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return errors.New("selected environment stack metadata cannot be read")
+	}
+	expected := "video-cloud-" + store.Environment
+	if values["CLOUD_ENV_NAME"] != store.Environment || values["CLOUD_STACK_NAME"] != expected {
+		return fmt.Errorf("selected %s environment metadata points to CLOUD_ENV_NAME=%q CLOUD_STACK_NAME=%q; run sync-env for the selected environment before E2E or deployment", store.Environment, values["CLOUD_ENV_NAME"], values["CLOUD_STACK_NAME"])
+	}
+	return nil
 }
 
 // Dynamic root consumers fetch a policy before serving. A deployment can have
