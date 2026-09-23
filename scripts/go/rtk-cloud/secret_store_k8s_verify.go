@@ -226,6 +226,11 @@ func verifySelectedStackMetadata(store secretStore) error {
 	if values["CLOUD_ENV_NAME"] != store.Environment || values["CLOUD_STACK_NAME"] != expected {
 		return fmt.Errorf("selected %s environment metadata points to CLOUD_ENV_NAME=%q CLOUD_STACK_NAME=%q; run sync-env for the selected environment before E2E or deployment", store.Environment, values["CLOUD_ENV_NAME"], values["CLOUD_STACK_NAME"])
 	}
+	for _, key := range []string{"CERTIFICATE_APP_CSR_KEY_ALGORITHMS", "CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS"} {
+		if _, err := deploymentCertificateAlgorithms(key, values[key]); err != nil {
+			return fmt.Errorf("selected %s environment has invalid %s: %w", store.Environment, key, err)
+		}
+	}
 	return nil
 }
 

@@ -1169,6 +1169,12 @@ func TestSelectedStackMetadataRejectsDifferentEnvironment(t *testing.T) {
 	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=dev\nCLOUD_STACK_NAME=video-cloud-dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := verifySelectedStackMetadata(store); err == nil || !strings.Contains(err.Error(), "CERTIFICATE_APP_CSR_KEY_ALGORITHMS") {
+		t.Fatalf("missing certificate policy error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("CLOUD_ENV_NAME=dev\nCLOUD_STACK_NAME=video-cloud-dev\nCERTIFICATE_APP_CSR_KEY_ALGORITHMS=p256\nCERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS=p256\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := verifySelectedStackMetadata(store); err != nil {
 		t.Fatalf("matching environment: %v", err)
 	}
