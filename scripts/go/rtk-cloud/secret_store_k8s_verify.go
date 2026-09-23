@@ -43,8 +43,9 @@ type liveDeployment struct {
 				Containers []struct {
 					Name string `json:"name"`
 					Env  []struct {
-						Name  string `json:"name"`
-						Value string `json:"value"`
+						Name      string `json:"name"`
+						Value     string `json:"value"`
+						ValueFrom any    `json:"valueFrom"`
 					} `json:"env"`
 					VolumeMounts []struct {
 						Name      string `json:"name"`
@@ -162,6 +163,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	}
 
 	namespace := stack + "-video-cloud"
+	serviceClientController, serviceClientRegistryConfigured := false, false
 	deploymentRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "deployments", "-o", "json").Output()
 	if err != nil {
 		failures = append(failures, "cannot read live Video Cloud deployment status")
@@ -170,6 +172,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		if json.Unmarshal(deploymentRaw, &deployments) != nil {
 			failures = append(failures, "live Video Cloud deployment metadata is invalid")
 		} else {
+			serviceClientController, serviceClientRegistryConfigured = serviceClientRegistryInputs(deployments)
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
@@ -197,8 +200,14 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 					failures = append(failures, fmt.Sprintf("%s/%s PKI-backed identity is not proven by an available current workload", namespace, deployment.Metadata.Name))
 				}
 			}
-			if err := verifyLiveServiceClientRegistry(kubeconfig, namespace, deployments); err != nil {
-				failures = append(failures, err.Error())
+			if serviceClientController {
+				if serviceClientRegistryConfigured {
+					if err := verifyLiveServiceClientRegistry(kubeconfig, namespace, deployments); err != nil {
+						failures = append(failures, err.Error())
+					}
+				} else if err := verifyUnadoptedServiceClientRegistry(kubeconfig, stack+"-platform", now); err != nil {
+					failures = append(failures, err.Error())
+				}
 			}
 		}
 	}
@@ -214,8 +223,10 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			failures = append(failures, err.Error())
 		}
 	}
-	if err := verifyLiveDeploymentBootstrapSessions(kubeconfig, stack+"-platform", now); err != nil {
-		failures = append(failures, err.Error())
+	if serviceClientController && serviceClientRegistryConfigured {
+		if err := verifyLiveDeploymentBootstrapSessions(kubeconfig, stack+"-platform", now); err != nil {
+			failures = append(failures, err.Error())
+		}
 	}
 	if len(failures) == 0 {
 		return nil
@@ -781,6 +792,55 @@ func deploymentUsesPKI(deployment liveDeployment) bool {
 		}
 	}
 	return false
+}
+
+// The managed Service client registry is adopted explicitly. An older
+// controller with none of these inputs still needs a database check for
+// stranded issuers or signing requests, but it cannot run the new inventory.
+func serviceClientRegistryInputs(deployments liveDeploymentList) (controllerPresent, configured bool) {
+	for _, deployment := range deployments.Items {
+		if deployment.Metadata.Name != "pki-controller" {
+			continue
+		}
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			for _, item := range container.Env {
+				switch item.Name {
+				case "RTK_DEPLOYMENT_SERVICE_ISSUER_ID", "PKI_SERVICE_CLIENT_ROOT_SHA256", "PKI_REQUIRED_CONSUMERS_SERVICE":
+					configured = configured || strings.TrimSpace(item.Value) != "" || item.ValueFrom != nil
+				}
+			}
+		}
+		return true, configured
+	}
+	return false, false
+}
+
+func verifyUnadoptedServiceClientRegistry(kubeconfig, namespace string, now time.Time) error {
+	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+	if err != nil {
+		return errors.New("cannot read PostgreSQL Pod metadata for Service client registry verification")
+	}
+	var pods livePodList
+	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
+		return errors.New("PostgreSQL Pod is unavailable for Service client registry verification")
+	}
+	query := `SELECT json_build_object('bootstrap_table',to_regclass('public.pki_deployment_bootstrap_sessions') IS NOT NULL,'service_issuers',(SELECT count(*) FROM public.pki_issuers WHERE domain='service'),'pending_issuances',(SELECT count(*) FROM public.pki_service_client_issuances WHERE status='issuing'))`
+	output, commandErr := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
+	var state struct {
+		BootstrapTable   bool `json:"bootstrap_table"`
+		ServiceIssuers   int  `json:"service_issuers"`
+		PendingIssuances int  `json:"pending_issuances"`
+	}
+	if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &state) != nil {
+		return errors.New("unadopted Service client registry verification did not return valid database metadata")
+	}
+	if state.ServiceIssuers != 0 || state.PendingIssuances != 0 {
+		return fmt.Errorf("Service client registry is not configured but has issuers=%d pending_issuances=%d", state.ServiceIssuers, state.PendingIssuances)
+	}
+	if state.BootstrapTable {
+		return verifyLiveDeploymentBootstrapSessions(kubeconfig, namespace, now)
+	}
+	return nil
 }
 
 func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments liveDeploymentList) error {
