@@ -991,7 +991,15 @@ func TestCertIssuerBootstrapPrecheckRejectsUnsupportedAndUnreachableConfiguratio
 	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", crl); err == nil || !strings.Contains(err.Error(), "before that deployment contract exists") {
 		t.Fatalf("CRL precheck error = %v", err)
 	}
-	base := `[{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA","value":"/run/root.pem"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT","value":"/run/bootstrap.crt"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY","value":"/run/bootstrap.key"},{"name":"PKI_BOOTSTRAP_SESSION_ID","value":"session"},{"name":"CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN","value":"^service-provisioner$"}]`
+	base := `[{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT","value":"service:certissuer"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA","value":"/run/root.pem"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT","value":"/run/bootstrap.crt"},{"name":"CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY","value":"/run/bootstrap.key"},{"name":"PKI_BOOTSTRAP_SESSION_ID","value":"session"},{"name":"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID","value":"session"},{"name":"CERT_ISSUER_HOST_RENEWAL_URL","value":"https://127.0.0.1:9443"},{"name":"CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN","value":"^service-provisioner$"}]`
+	mismatchedSession := decode(t, strings.Replace(base, `"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID","value":"session"`, `"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID","value":"other"`, 1))
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", mismatchedSession); err == nil || !strings.Contains(err.Error(), "same session") {
+		t.Fatalf("session binding precheck error = %v", err)
+	}
+	serviceEndpoint := decode(t, strings.Replace(base, `https://127.0.0.1:9443`, `https://certissuer.video-cloud-dev-video-cloud.svc:9443`, 1))
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", serviceEndpoint); err == nil || !strings.Contains(err.Error(), "readiness") {
+		t.Fatalf("self-enrollment endpoint precheck error = %v", err)
+	}
 	invalid := decode(t, strings.Replace(base, `^service-provisioner$`, `[`, 1))
 	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", invalid); err == nil || !strings.Contains(err.Error(), "pattern is invalid") {
 		t.Fatalf("caller pattern precheck error = %v", err)

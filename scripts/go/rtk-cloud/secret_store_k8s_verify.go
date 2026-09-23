@@ -8,6 +8,8 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -225,8 +227,16 @@ func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deploy
 		return nil
 	}
 	subject := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT"])
-	if subject != caller || settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY"] == "" || settings["PKI_BOOTSTRAP_SESSION_ID"] == "" {
+	sessionID := strings.TrimSpace(settings["PKI_BOOTSTRAP_SESSION_ID"])
+	if subject != caller || settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY"] == "" || sessionID == "" {
 		return errors.New("certissuer bootstrap caller requires matching subject, CA, client cert/key and session id")
+	}
+	if strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID"]) != sessionID {
+		return errors.New("certissuer bootstrap handler and managed client must use the same session id")
+	}
+	renewal, err := url.Parse(strings.TrimSpace(settings["CERT_ISSUER_HOST_RENEWAL_URL"]))
+	if err != nil || renewal.Scheme != "https" || !isLoopbackHost(renewal.Hostname()) {
+		return errors.New("certissuer first-trust renewal URL must use loopback so Pod readiness cannot block self-enrollment")
 	}
 	if pattern := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_PROVISIONER_CN_PATTERN"]); pattern != "" {
 		if _, err := regexp.Compile(pattern); err != nil {
@@ -266,6 +276,14 @@ func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deploy
 		}
 	}
 	return errors.New("NetworkPolicy does not admit the labeled certissuer bootstrap Job")
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return true
+	}
+	address := net.ParseIP(strings.TrimSpace(host))
+	return address != nil && address.IsLoopback()
 }
 
 // verifyCertIssuerStaticServingChain catches a bootstrap dead end before a
