@@ -1147,6 +1147,43 @@ func TestExecuteAndCleanupPaymentLiveCompletesSimulatorQualification(t *testing.
 			}
 			_, _ = w.Write([]byte(`{"invoices":[]}`))
 		case r.URL.Path == "/v1/internal/billing/pricing-versions" && r.Method == http.MethodPost:
+			var payload struct {
+				Currency string `json:"currency"`
+				Rates    []struct {
+					ServiceCode    string `json:"service_code"`
+					MetricCode     string `json:"metric_code"`
+					Unit           string `json:"unit"`
+					UnitPriceMinor int64  `json:"unit_price_minor"`
+					UnitPriceScale int    `json:"unit_price_scale"`
+				} `json:"rates"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Currency != "TWD" || len(payload.Rates) != 5 {
+				t.Fatalf("qualification rate set is incomplete: %+v", payload)
+			}
+			wanted := map[string]struct {
+				unit  string
+				minor int64
+				scale int
+			}{
+				"publish_count": {"requests", 32, 6}, "delivery_count": {"requests", 32, 6},
+				"publish_bytes": {"bytes", 0, 0}, "delivery_bytes": {"bytes", 0, 0},
+			}
+			for _, rate := range payload.Rates {
+				if rate.ServiceCode != "mqtt" {
+					continue
+				}
+				w, ok := wanted[rate.MetricCode]
+				if !ok || rate.Unit != w.unit || rate.UnitPriceMinor != w.minor || rate.UnitPriceScale != w.scale {
+					t.Fatalf("unexpected MQTT rate: %+v", rate)
+				}
+				delete(wanted, rate.MetricCode)
+			}
+			if len(wanted) != 0 {
+				t.Fatalf("missing MQTT rates: %v", wanted)
+			}
 			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification"}}`))
 		case r.URL.Path == "/v1/internal/billing/pricing-versions/pricing-qualification/activate" && r.Method == http.MethodPost:
 			_, _ = w.Write([]byte(`{"pricing_version":{"id":"pricing-qualification","status":"active"}}`))
