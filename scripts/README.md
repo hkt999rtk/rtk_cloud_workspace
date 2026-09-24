@@ -90,6 +90,10 @@ read-only mode; scope targeted rollouts to the dependencies they actually use:
 scripts/check-deployment-credentials.sh --environment staging --read-only
 # Registry provider checks for a targeted image update (SecretStore verification still runs):
 scripts/check-deployment-credentials.sh --environment staging --read-only --checks ghcr
+# Before a protected Video Cloud PKI schema migration, also require its
+# separate migration-owner binding (missing/wrong role/password fails closed):
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-pki-migration
 # Use an actual reviewed CI digest (repeat --image for each affected image):
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --checks ghcr --image "$RELEASE_IMAGE"
@@ -115,6 +119,13 @@ are aggregated with a nonzero exit; secrets and raw registry errors are not prin
   does not prove a cold node can download every blob or that live imagePullSecrets
   match. Empty Docker config alone is not proof of anonymous access. Raw GHCR
   credential files containing CR/LF fail, even if the SecretStore reader trims them.
+- `--require-pki-migration` is an opt-in live Secret gate for an offline PKI
+  schema upgrade. It verifies `pki-migration-database:url` in the selected Video
+  Cloud namespace against that environment's canonical PostgreSQL migration
+  credential, database and host, without printing the URL. The ordinary
+  controller runtime identity is not a migration substitute. Re-run after
+  creating the binding and before the migration Job; remove the temporary
+  binding after the upgrade if it is no longer needed.
 - TLS verifies private-key permissions, key-pair match, CA chain, EKU, server DNS,
   and validity now and at the horizon (default seven days). For client mTLS use
   `--tls-purpose client`; repeat the command for each affected identity. Inputs

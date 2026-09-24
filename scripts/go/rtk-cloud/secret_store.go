@@ -437,11 +437,15 @@ func runSecrets(args []string) error {
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "stack confirmation for migration")
 	dryRun := fs.Bool("dry-run", false, "report missing Kubernetes bindings without writing")
+	requirePKIMigration := fs.Bool("require-pki-migration", false, "verify the protected PKI migration database Secret against this environment's canonical PostgreSQL credential")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if *environment == "" {
 		return errors.New("--environment is required")
+	}
+	if *requirePKIMigration && action != "verify" {
+		return errors.New("--require-pki-migration is only valid with secrets verify")
 	}
 	store, err := newSecretStore(*configRoot, *environment)
 	if err != nil {
@@ -475,6 +479,11 @@ func runSecrets(args []string) error {
 		}
 		return migrateSecrets(store, *workspace)
 	case "verify":
+		if *requirePKIMigration {
+			if err := verifyPKIMigrationDatabaseSecret(store); err != nil {
+				return err
+			}
+		}
 		return verifySecretStore(os.Stdout, store, *workspace)
 	case "sync-missing-bindings":
 		if !*dryRun && *confirm != "video-cloud-"+store.Environment {
