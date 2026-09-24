@@ -209,6 +209,10 @@ different results. Do not report a complete staging release from ready Pods,
    the selected revision requires one. Do not assume a successful API rollout
    updated every auxiliary workload. This guardrail change does not rewrite that
    broader migration/worker orchestration.
+   Before a protected Video Cloud PKI schema migration, run
+   `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
+   this checks the separate
+   migration-owner Secret instead of accepting the controller runtime login.
 5. **Console gate.** Run the maintained check below and inspect its JSON report.
    Any `FAIL` or `SKIP` produces a nonzero exit. Use an explicitly selected
    qualification Cloud owned by the selected environment's bootstrap admin,

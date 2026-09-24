@@ -31,6 +31,57 @@ type liveSecretList struct {
 	} `json:"items"`
 }
 
+// verifyPKIMigrationDatabaseSecret is an opt-in gate for an offline PKI schema
+// upgrade. Runtime controller credentials cannot replace the migration owner.
+// Compare in memory so neither the Secret nor the canonical password is logged.
+func verifyPKIMigrationDatabaseSecret(store secretStore) error {
+	canonical, err := store.readRuntime("postgres")
+	if err != nil || canonical == "" {
+		return errors.New("cannot read canonical PostgreSQL migration credential")
+	}
+	kubeconfig := store.KubeconfigPath()
+	if info, err := os.Stat(kubeconfig); err != nil || info.Size() == 0 {
+		return errors.New("PKI migration requires the selected environment kubeconfig")
+	}
+	namespace := "video-cloud-" + store.Environment + "-video-cloud"
+	out, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace,
+		"get", "secret", "pki-migration-database", "-o", "json").Output()
+	if err != nil {
+		return fmt.Errorf("PKI migration requires Kubernetes Secret %s/pki-migration-database:url", namespace)
+	}
+	var secret struct {
+		Data map[string]string `json:"data"`
+	}
+	if json.Unmarshal(out, &secret) != nil {
+		return errors.New("PKI migration database Secret has invalid metadata")
+	}
+	encoded := secret.Data["url"]
+	value, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(value) == 0 {
+		return errors.New("PKI migration database Secret has no usable url key")
+	}
+	if err := validatePKIMigrationDatabaseURL(string(value), store.Environment, canonical); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePKIMigrationDatabaseURL(raw, environment, password string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return errors.New("PKI migration database Secret URL is invalid")
+	}
+	actualPassword, hasPassword := u.User.Password()
+	expectedHost := "postgresql.video-cloud-" + environment + "-platform.svc.cluster.local"
+	if u.Scheme != "postgres" || u.User.Username() != "postgres" || !hasPassword ||
+		actualPassword != password || u.Hostname() != expectedHost || u.Port() != "5432" ||
+		u.Path != "/video_cloud" || u.Query().Get("sslmode") != "disable" ||
+		len(u.Query()) != 1 || u.Fragment != "" {
+		return errors.New("PKI migration database Secret does not match the selected environment's migration owner, database or canonical credential")
+	}
+	return nil
+}
+
 type liveDeployment struct {
 	Metadata struct {
 		Name       string `json:"name"`
