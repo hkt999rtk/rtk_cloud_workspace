@@ -1,6 +1,6 @@
 # RTK localization tool
 
-English is the source locale. The tool stores SHA-256 checksums with every translation so only changed strings are sent to the translation provider. `translate` writes drafts only; approved translations remain a Git-reviewed decision.
+English is the source locale. The tool stores SHA-256 source checksums and a fingerprint of the source, locale, policy version, and glossary with every translation. A glossary or policy change makes an existing translation stale even when its English text is unchanged. `translate` writes drafts only; approved translations remain a Git-reviewed decision.
 
 ```sh
 node tools/localization/localization.mjs check --catalog path/to/catalog.json --translations path/to/translations
