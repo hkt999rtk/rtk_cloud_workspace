@@ -390,7 +390,10 @@ func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace stri
 	}
 	consumers := firstNonEmpty(controller["PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE"], controller["PKI_REQUIRED_CONSUMERS_DEVICE"])
 	if consumers == "" {
-		return errors.New("Product PKI controller has no Device trust consumers")
+		if controller["PKI_DEVICE_ROOT_ID"] != "" || controller["PKI_DEVICE_ROOT_SHA256"] != "" {
+			return errors.New("Product PKI controller has no Device trust consumers")
+		}
+		return nil
 	}
 	var missing []string
 	for _, consumer := range strings.Split(consumers, ",") {

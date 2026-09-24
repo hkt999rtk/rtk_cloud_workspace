@@ -1160,6 +1160,11 @@ func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T
 		t.Fatalf("configured Product CA consumers = %v", err)
 	}
 	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[0].Value = ""
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[0].Spec.Template.Spec.Containers[0].Env, struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		ValueFrom any    `json:"valueFrom"`
+	}{Name: "PKI_DEVICE_ROOT_ID", Value: "root-id"})
 	if err := verifyAutomaticDeviceTrustConsumers("dev", "", "", deployments, time.Now()); err == nil || !strings.Contains(err.Error(), "no Device trust consumers") {
 		t.Fatalf("empty consumer list was admitted: %v", err)
 	}
