@@ -19,8 +19,9 @@ the upstream Product usage migration `060_product_usage_dimension.sql`. It
 checks that existing monetary rows are TWD and adds an index for effective
 pricing history. A newly activated version retires the prior active version at
 the new effective date. Older unclosed periods can still select the rate that
-was valid at their start; ambiguous historical intervals fail closed. Already
-issued invoices remain immutable.
+was valid at their start; ambiguous historical intervals and uncovered gaps
+fail closed. Activation rejects a cutover that would change an already issued
+invoice; issued invoices remain immutable.
 
 Staging activation requires a reviewed effective date, a fresh check that no
 issued invoice is repriced, and rates for MQTT publish/delivery counts plus
