@@ -1159,6 +1159,15 @@ func TestAutomaticDeviceTrustPrecheckRejectsUnacknowledgedProductCA(t *testing.T
 	if err := verifyAutomaticDeviceTrustConsumers("dev", "", "", deployments, time.Now()); err != nil {
 		t.Fatalf("configured Product CA consumers = %v", err)
 	}
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[0].Value = ""
+	deployments.Items[0].Spec.Template.Spec.Containers[0].Env = append(deployments.Items[0].Spec.Template.Spec.Containers[0].Env, struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		ValueFrom any    `json:"valueFrom"`
+	}{Name: "PKI_DEVICE_ROOT_ID", Value: "root-id"})
+	if err := verifyAutomaticDeviceTrustConsumers("dev", "", "", deployments, time.Now()); err == nil || !strings.Contains(err.Error(), "no Device trust consumers") {
+		t.Fatalf("empty consumer list was admitted: %v", err)
+	}
 }
 
 func TestAutomaticDeviceTrustPrecheckDevFixedRoot(t *testing.T) {
@@ -1191,12 +1200,34 @@ func TestAutomaticDeviceTrustPrecheckDevFixedRoot(t *testing.T) {
 	if err := check("staging"); err == nil {
 		t.Fatal("fixed Root mode accepted staging")
 	}
+	controller := &deployments.Items[0].Spec.Template.Spec.Containers[0]
+	controller.Env[0].Value = "staging"
+	controller.Env[1].Name = "PKI_FIXED_DEVICE_ROOT_TRUST"
+	deployments.Items[2].Spec.Template.Spec.Containers[0].Env[0].Value = "staging"
+	if err := check("staging"); err != nil {
+		t.Fatalf("staging fixed Root trust: %v", err)
+	}
+	if err := check("dev"); err == nil {
+		t.Fatal("staging Root admitted as dev")
+	}
+	controller.Env[0].Value = "dev"
+	controller.Env[1].Name = "PKI_DEV_FIXED_DEVICE_ROOT_TRUST"
+	deployments.Items[2].Spec.Template.Spec.Containers[0].Env[0].Value = "dev"
+	api := &deployments.Items[1].Spec.Template.Spec.Containers[0]
+	api.Env = append(api.Env, struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		ValueFrom any    `json:"valueFrom"`
+	}{Name: "VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS", Value: "true"})
+	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "API direct mTLS") {
+		t.Fatalf("trusted certificate headers were admitted: %v", err)
+	}
+	api.Env = api.Env[:len(api.Env)-1]
 	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[3].Value = strings.Repeat("0", 64)
 	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "differs") {
 		t.Fatalf("mismatched Root pin: %v", err)
 	}
 	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[3].Value = hex.EncodeToString(digest[:])
-	api := &deployments.Items[1].Spec.Template.Spec.Containers[0]
 	api.Env = append(api.Env, struct {
 		Name      string `json:"name"`
 		Value     string `json:"value"`

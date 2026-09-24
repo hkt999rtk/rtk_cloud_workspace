@@ -385,10 +385,16 @@ func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace stri
 	if controller == nil {
 		return nil
 	}
-	if controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "" {
-		return verifyDevFixedDeviceRootTrust(environment, kubeconfig, namespace, deployments, settings, now)
+	if controller["PKI_FIXED_DEVICE_ROOT_TRUST"] != "" || controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "" {
+		return verifyFixedDeviceRootTrust(environment, kubeconfig, namespace, deployments, settings, now)
 	}
 	consumers := firstNonEmpty(controller["PKI_REQUIRED_BUNDLE_CONSUMERS_DEVICE"], controller["PKI_REQUIRED_CONSUMERS_DEVICE"])
+	if consumers == "" {
+		if controller["PKI_DEVICE_ROOT_ID"] != "" || controller["PKI_DEVICE_ROOT_SHA256"] != "" {
+			return errors.New("Product PKI controller has no Device trust consumers")
+		}
+		return nil
+	}
 	var missing []string
 	for _, consumer := range strings.Split(consumers, ",") {
 		switch strings.TrimSpace(consumer) {
@@ -410,20 +416,21 @@ func verifyAutomaticDeviceTrustConsumers(environment, kubeconfig, namespace stri
 	return nil
 }
 
-// The dev shortcut is valid only when both consumers use the same fixed Root
+// Fixed trust is valid only when both consumers use the same fixed Root
 // as the controller and registry status enforcement remains enabled.
-func verifyDevFixedDeviceRootTrust(environment, kubeconfig, namespace string, deployments liveDeploymentList, settings map[string]map[string]string, now time.Time) error {
+func verifyFixedDeviceRootTrust(environment, kubeconfig, namespace string, deployments liveDeploymentList, settings map[string]map[string]string, now time.Time) error {
 	controller := settings["pki-controller/pki-controller"]
-	if environment != "dev" || controller["PKI_ENVIRONMENT"] != "dev" || controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"] != "true" || controller["PKI_DEVICE_ROOT_ID"] == "" || len(controller["PKI_DEVICE_ROOT_SHA256"]) != 64 {
-		return errors.New("dev fixed Device Root trust requires the dev controller and its Root ID/fingerprint pin")
+	fixed, legacy := controller["PKI_FIXED_DEVICE_ROOT_TRUST"], controller["PKI_DEV_FIXED_DEVICE_ROOT_TRUST"]
+	if (environment != "dev" && environment != "staging") || controller["PKI_ENVIRONMENT"] != environment || (fixed != "true" && legacy != "true") || (fixed != "" && legacy != "") || (legacy != "" && environment != "dev") || controller["PKI_DEVICE_ROOT_ID"] == "" || len(controller["PKI_DEVICE_ROOT_SHA256"]) != 64 {
+		return errors.New("fixed Device Root trust requires a matching non-production controller and its Root ID/fingerprint pin")
 	}
 	api := settings["video-cloud-api-pki/app"]
-	if api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"] != "true" || api["VIDEO_CLOUD_AUTH_MTLS_REQUIRED"] != "true" || api["VIDEO_CLOUD_AUTH_DISABLE_ACL"] == "true" || api["VIDEO_CLOUD_AUTH_TRUSTED_CERT_HEADERS"] == "true" || api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS"] != "false" || api["VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_STATE"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_CRL"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_OCSP_URL"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_REVOCATION"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"] == "" {
-		return errors.New("dev fixed Device Root trust requires API direct mTLS, Product PKI, static Root and registry enforcement without CRL consumers")
+	if api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_ENABLED"] != "true" || api["VIDEO_CLOUD_AUTH_MTLS_REQUIRED"] != "true" || api["VIDEO_CLOUD_AUTH_DISABLE_ACL"] == "true" || api["VIDEO_CLOUD_AUTH_TRUSTED_CLIENT_CERT_HEADERS"] == "true" || api["VIDEO_CLOUD_AUTH_PRODUCT_PKI_REQUIRE_CRLS"] != "false" || api["VIDEO_CLOUD_AUTH_DEVICE_AUTOMATIC_STATE_DIR"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_ROOT_TRUST_STATE"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_CRL"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_OCSP_URL"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_REVOCATION"] != "" || api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"] == "" {
+		return errors.New("fixed Device Root trust requires API direct mTLS, Product PKI, static Root and registry enforcement without CRL consumers")
 	}
 	broker := settings["mqtt-pki/pkibroker"]
-	if broker["PKI_ENVIRONMENT"] != "dev" || broker["PKI_BROKER_REQUIRE_CRLS"] != "false" || broker["PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR"] != "" || broker["PKI_BROKER_DEVICE_CRL_MANIFEST"] != "" || broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] == "true" {
-		return errors.New("dev fixed Device Root trust requires broker registry enforcement without dynamic Device trust or CRLs")
+	if broker["PKI_ENVIRONMENT"] != environment || broker["PKI_BROKER_REQUIRE_CRLS"] != "false" || broker["PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR"] != "" || broker["PKI_BROKER_DEVICE_CRL_MANIFEST"] != "" || broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] == "true" {
+		return errors.New("fixed Device Root trust requires broker registry enforcement without dynamic Device trust or CRLs")
 	}
 	for _, target := range []struct{ deployment, container, path string }{
 		{"video-cloud-api-pki", "app", api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"]},
