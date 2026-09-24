@@ -438,6 +438,7 @@ func runSecrets(args []string) error {
 	confirm := fs.String("confirm", "", "stack confirmation for migration")
 	dryRun := fs.Bool("dry-run", false, "report missing Kubernetes bindings without writing")
 	requirePKIMigration := fs.Bool("require-pki-migration", false, "verify the protected PKI migration database Secret against this environment's canonical PostgreSQL credential")
+	requireProductPKI := fs.Bool("require-product-pki", false, "verify the protected Device Root and Product PKI registry are ready for lifecycle acceptance")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -446,6 +447,9 @@ func runSecrets(args []string) error {
 	}
 	if *requirePKIMigration && action != "verify" {
 		return errors.New("--require-pki-migration is only valid with secrets verify")
+	}
+	if *requireProductPKI && action != "verify" {
+		return errors.New("--require-product-pki is only valid with secrets verify")
 	}
 	store, err := newSecretStore(*configRoot, *environment)
 	if err != nil {
@@ -481,6 +485,11 @@ func runSecrets(args []string) error {
 	case "verify":
 		if *requirePKIMigration {
 			if err := verifyPKIMigrationDatabaseSecret(store); err != nil {
+				return err
+			}
+		}
+		if *requireProductPKI {
+			if err := verifyProductPKIReadiness(store); err != nil {
 				return err
 			}
 		}

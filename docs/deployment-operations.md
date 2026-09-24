@@ -213,6 +213,11 @@ different results. Do not report a complete staging release from ready Pods,
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate
    migration-owner Secret instead of accepting the controller runtime login.
+   Before Product PKI lifecycle acceptance, add --require-product-pki to
+   verify that the controller pins an active Device Root in its registry.
+   Before the write fence, run the full credential check without --read-only
+   and then deployment plan so the validated runtime-media storage receipt
+   populates the blob endpoint used by the deployer.
 5. **Console gate.** Run the maintained check below and inspect its JSON report.
    Any `FAIL` or `SKIP` produces a nonzero exit. Use an explicitly selected
    qualification Cloud owned by the selected environment's bootstrap admin,

@@ -5,10 +5,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 environment=""
 require_pki_migration=false
+require_product_pki=false
 arguments=()
 for argument in "$@"; do
   if [[ "$argument" == "--require-pki-migration" ]]; then
     require_pki_migration=true
+  elif [[ "$argument" == "--require-product-pki" ]]; then
+    require_product_pki=true
   else
     arguments+=("$argument")
   fi
@@ -35,9 +38,12 @@ if [[ -n "$environment" ]]; then
   if [[ "$require_pki_migration" == true ]]; then
     secret_flags+=(--require-pki-migration)
   fi
+  if [[ "$require_product_pki" == true ]]; then
+    secret_flags+=(--require-product-pki)
+  fi
   go run "$ROOT/scripts/go/rtk-cloud" -- secrets verify --environment "$environment" "${secret_flags[@]}"
-elif [[ "$require_pki_migration" == true ]]; then
-  echo "--require-pki-migration requires --environment" >&2
+elif [[ "$require_pki_migration" == true || "$require_product_pki" == true ]]; then
+  echo "PKI qualification flags require --environment" >&2
   exit 2
 fi
 

@@ -82,6 +82,88 @@ func validatePKIMigrationDatabaseURL(raw, environment, password string) error {
 	return nil
 }
 
+// verifyProductPKIReadiness is an opt-in precondition for staging lifecycle
+// acceptance. A listening controller and valid database credential do not
+// prove that its pinned Device Root exists in the registry.
+func verifyProductPKIReadiness(store secretStore) error {
+	kubeconfig := store.KubeconfigPath()
+	if info, err := os.Stat(kubeconfig); err != nil || info.Size() == 0 {
+		return errors.New("Product PKI requires the selected environment kubeconfig")
+	}
+	namespace := "video-cloud-" + store.Environment + "-video-cloud"
+	raw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", namespace,
+		"get", "deployment", "pki-controller", "-o", "json").Output()
+	if err != nil {
+		return errors.New("Product PKI controller deployment is unavailable")
+	}
+	var deployment liveDeployment
+	if json.Unmarshal(raw, &deployment) != nil {
+		return errors.New("Product PKI controller deployment metadata is invalid")
+	}
+	rootID, fingerprint, err := productPKIRootPin(deployment, store.Environment)
+	if err != nil {
+		return err
+	}
+	platform := "video-cloud-" + store.Environment + "-platform"
+	podsRaw, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platform,
+		"get", "pods", "-l", "app.kubernetes.io/name=postgresql", "-o", "json").Output()
+	if err != nil {
+		return errors.New("Product PKI cannot read PostgreSQL Pod metadata")
+	}
+	var pods livePodList
+	if json.Unmarshal(podsRaw, &pods) != nil || len(pods.Items) == 0 || pods.Items[0].Metadata.Name == "" {
+		return errors.New("Product PKI requires an available PostgreSQL Pod")
+	}
+	query := "SELECT document FROM public.pki_issuers WHERE id='" + rootID + "'::uuid"
+	row, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platform,
+		"exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d",
+		"video_cloud", "-At", "-c", query).Output()
+	if err != nil {
+		return errors.New("Product PKI Device Root registry query failed")
+	}
+	var issuer struct {
+		Environment string `json:"environment"`
+		Domain      string `json:"trust_domain"`
+		Kind        string `json:"kind"`
+		Status      string `json:"status"`
+		Provider    string `json:"signer_provider"`
+		Fingerprint string `json:"certificate_fingerprint_sha256"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(string(row))), &issuer) != nil ||
+		issuer.Environment != store.Environment || issuer.Domain != "device" ||
+		issuer.Kind != "root" || issuer.Status != "active" ||
+		issuer.Provider != "openbao" || issuer.Fingerprint != fingerprint {
+		return errors.New("Product PKI pinned Device Root is absent, inactive or mismatched in the registry")
+	}
+	return nil
+}
+
+func productPKIRootPin(deployment liveDeployment, environment string) (string, string, error) {
+	if deployment.Metadata.Name != "pki-controller" {
+		return "", "", errors.New("Product PKI controller deployment identity is invalid")
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name != "pki-controller" {
+			continue
+		}
+		settings := map[string]string{}
+		for _, env := range container.Env {
+			settings[env.Name] = strings.TrimSpace(env.Value)
+		}
+		id, fingerprint := settings["PKI_DEVICE_ROOT_ID"], settings["PKI_DEVICE_ROOT_SHA256"]
+		if settings["PKI_ENVIRONMENT"] != environment ||
+			!regexp.MustCompile(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`).MatchString(id) ||
+			len(fingerprint) != 64 {
+			return "", "", errors.New("Product PKI controller has no complete environment-specific Device Root pin")
+		}
+		if _, err := hex.DecodeString(fingerprint); err != nil || strings.ToLower(fingerprint) != fingerprint {
+			return "", "", errors.New("Product PKI Device Root fingerprint is invalid")
+		}
+		return id, fingerprint, nil
+	}
+	return "", "", errors.New("Product PKI controller container is unavailable")
+}
+
 type liveDeployment struct {
 	Metadata struct {
 		Name       string `json:"name"`
