@@ -20,7 +20,7 @@ completion date. A code change alone does not make a row complete.
 | C07 | In progress | Account, invoice, payment and handoff currency consistency | Billing, Account Manager and Admin PRs; cross-service checks |
 | C08 | In progress | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR, desktop and mobile UI checks |
 | C09 | In progress | Unit, PostgreSQL, cross-service and UI regression matrix | Local pre-PR and required CI results |
-| C10 | Not started | Isolated migration and restore rehearsal; staging TWD MQTT plan and end-to-end verification | Sanitized protected-environment GO report, precheck, catalog, invoice and restart evidence |
+| C10 | In progress | Isolated migration and restore rehearsal; staging TWD MQTT plan and end-to-end verification | Isolated PostgreSQL 059→060→061, re-run, schema parity and old NT$200 invoice checks passed; staging remains NO-GO pending exact CI images and final preflight, catalog, invoice and restart evidence |
 | C11 | In progress | Test catalog, release notes, schema difference and final progress reconciliation | Workspace PR and linked merged leaf revisions |
 
 Staging activation gate: prove no issued invoice is repriced; verify the
