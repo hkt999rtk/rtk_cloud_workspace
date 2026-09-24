@@ -37,5 +37,10 @@ issued invoice is repriced, and rates for MQTT publish/delivery counts plus
 publish/delivery bytes. Count metrics are proposed at NT$32 per million;
 byte metrics carry a zero rate. Production activation is outside this release.
 
+The Billing release image now uses the repository-owned GHCR package
+`ghcr.io/hkt999rtk/rtk_billing/billing-twd`. The former `billing` package
+remains available as the staging rollback image; the new image must have a
+successful main-branch publication and exact-digest pull before rollout.
+
 See [the delivery ledger](billing-twd-currency-progress.md) for the merged PRs,
 test results, staging evidence, and any remaining qualification limits.

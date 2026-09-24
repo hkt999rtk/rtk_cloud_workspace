@@ -412,7 +412,7 @@ func lkeServiceImageSources() []lkeServiceImageSource {
 	return []lkeServiceImageSource{
 		{Key: "video-cloud", Name: "video-cloud-api", EnvKey: "LKE_VIDEO_CLOUD_IMAGE", RepoName: "rtk_video_cloud", RepoPath: filepath.Join("repos", "rtk_video_cloud")},
 		{Key: "account-manager", Name: "account-manager", EnvKey: "LKE_ACCOUNT_MANAGER_IMAGE", RepoName: "rtk_account_manager", RepoPath: filepath.Join("repos", "rtk_account_manager")},
-		{Key: "billing", Name: "billing", EnvKey: "LKE_BILLING_IMAGE", RepoName: "rtk_billing", RepoPath: filepath.Join("repos", "rtk_billing")},
+		{Key: "billing", Name: "billing-twd", EnvKey: "LKE_BILLING_IMAGE", RepoName: "rtk_billing", RepoPath: filepath.Join("repos", "rtk_billing")},
 		{Key: "cloud-admin", Name: "cloud-admin", EnvKey: "LKE_CLOUD_ADMIN_IMAGE", RepoName: "rtk_cloud_admin", RepoPath: filepath.Join("repos", "rtk_cloud_admin")},
 		{Key: "frontend", Name: "frontend", EnvKey: "LKE_FRONTEND_IMAGE", RepoName: "rtk_cloud_frontend", RepoPath: filepath.Join("repos", "rtk_cloud_frontend")},
 		{Key: "cloud-logger", Name: "rtk-cloud-logger", EnvKey: "LKE_CLOUD_LOGGER_IMAGE", RepoName: "rtk_cloud_logger", RepoPath: filepath.Join("repos", "rtk_cloud_logger")},

@@ -18,8 +18,8 @@ completion date. A code change alone does not make a row complete.
 | C05 | Complete, 2026-09-24 | Terminal migration; old-data and fresh-schema parity | Billing PR #19; isolated PostgreSQL 059→060→061/re-run, old NT$200 invoice preserved, fresh/upgraded schema catalog parity |
 | C06 | Complete, 2026-09-24 | Historical pricing interval selection and guarded activation | Billing PR #19; PostgreSQL historical selection, overlap, gap and issued-invoice conflict tests |
 | C07 | Complete, 2026-09-24 | Account, invoice, payment and handoff currency consistency | Billing PR #19, Account Manager [PR #339](https://github.com/hkt999rtk/rtk_account_manager/pull/339), Admin PR #406; [Account Manager CI](https://github.com/hkt999rtk/rtk_account_manager/actions/runs/35996193476) and cross-service tests passed |
-| C08 | In progress | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR #406 passed; [follow-up PR #407](https://github.com/hkt999rtk/rtk_cloud_admin/pull/407) removes one remaining 5% sample claim; 207 web tests and 6 targeted desktop/mobile invoice cases passed, CI pending |
-| C09 | In progress | Unit, PostgreSQL, cross-service and UI regression matrix | Local pre-PR gate passed twice; Billing #19, Account Manager #339 and Admin #406 CI passed; follow-up #20/#407 and workspace CI pending |
+| C08 | Complete, 2026-09-24 | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR #406 and [PR #407](https://github.com/hkt999rtk/rtk_cloud_admin/pull/407), [follow-up CI](https://github.com/hkt999rtk/rtk_cloud_admin/actions/runs/35998794324); 207 web tests and targeted desktop/mobile invoice cases passed |
+| C09 | In progress | Unit, PostgreSQL, cross-service and UI regression matrix | Local pre-PR gate passed twice; Billing #19/#20/#21, Account Manager #339 and Admin #406/#407 CI passed; workspace CI and staging cross-service qualification pending |
 | C10 | In progress | Isolated migration and restore rehearsal; staging TWD MQTT plan and end-to-end verification | Isolated PostgreSQL 059→060→061, re-run, schema parity and old NT$200 invoice checks passed; staging remains NO-GO pending exact CI images and final preflight, catalog, invoice and restart evidence |
 | C11 | In progress | Test catalog, release notes, schema difference and final progress reconciliation | Workspace PR and linked merged leaf revisions |
 
@@ -40,3 +40,11 @@ leaf PR publication, including Go, PostgreSQL-backed service tests, Admin web
 tests, desktop/mobile UI and spec inventories. The workspace gate will be rerun
 against the final merged leaf revisions before its own PR. The staging
 qualification remains separate from code and CI acceptance.
+
+Merged source revisions for the coordinated release: contracts `4ea7306`,
+Billing `f1614c0`, Account Manager `a8f6bf5`, and Cloud Admin `62e10df`.
+The workspace PR must pin these exact commits. The Billing image-publication
+repair is [PR #20](https://github.com/hkt999rtk/rtk_billing/pull/20)
+and [PR #21](https://github.com/hkt999rtk/rtk_billing/pull/21);
+the canonical main-branch image release and staging digest pull remain separate
+gates from its passing PR CI.
