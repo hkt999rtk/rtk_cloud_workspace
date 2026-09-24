@@ -12,13 +12,13 @@ completion date. A code change alone does not make a row complete.
 | ID | Status | Deliverable | Required completion evidence |
 | --- | --- | --- | --- |
 | C01 | Complete, 2026-09-24 | Reconcile contract, Billing, Admin, Account Manager and the abandoned USD migration draft | Investigation in the TWD proposal; no USD migration published |
-| C02 | In progress | TWD retail draft and conversion ledger; USD vendor benchmarks remain labeled | Admin PR, reviewed rate table, UI check |
-| C03 | In progress | Contract, OpenAPI, JSON Schema and money-unit rules | Contracts PR and spec checks |
-| C04 | In progress | Central currency representation with TWD-only transaction policy | Billing PR and USD/CNY representation tests |
-| C05 | In progress | Terminal migration; old-data and fresh-schema parity | Billing PR, PostgreSQL migration/re-run evidence |
-| C06 | In progress | Historical pricing interval selection and guarded activation | Billing PR, old/new-period and conflict tests |
+| C02 | Complete, 2026-09-24 | TWD retail draft and conversion ledger; USD vendor benchmarks remain labeled | Admin [PR #406](https://github.com/hkt999rtk/rtk_cloud_admin/pull/406), [CI](https://github.com/hkt999rtk/rtk_cloud_admin/actions/runs/35995238265), pricing table and UI checks |
+| C03 | Complete, 2026-09-24 | Contract, OpenAPI, JSON Schema and money-unit rules | Contracts [PR #169](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/169); workspace spec checks passed |
+| C04 | Complete, 2026-09-24 | Central currency representation with TWD-only transaction policy | Billing [PR #19](https://github.com/hkt999rtk/rtk_billing/pull/19), [CI](https://github.com/hkt999rtk/rtk_billing/actions/runs/35995218357); TWD/USD/CNY integer arithmetic tests |
+| C05 | Complete, 2026-09-24 | Terminal migration; old-data and fresh-schema parity | Billing PR #19; isolated PostgreSQL 059→060→061/re-run, old NT$200 invoice preserved, fresh/upgraded schema catalog parity |
+| C06 | Complete, 2026-09-24 | Historical pricing interval selection and guarded activation | Billing PR #19; PostgreSQL historical selection, overlap, gap and issued-invoice conflict tests |
 | C07 | In progress | Account, invoice, payment and handoff currency consistency | Billing, Account Manager and Admin PRs; cross-service checks |
-| C08 | In progress | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR, desktop and mobile UI checks |
+| C08 | Complete, 2026-09-24 | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR #406; 207 web tests, desktop/mobile E2E and local pre-PR gate passed |
 | C09 | In progress | Unit, PostgreSQL, cross-service and UI regression matrix | Local pre-PR and required CI results |
 | C10 | In progress | Isolated migration and restore rehearsal; staging TWD MQTT plan and end-to-end verification | Isolated PostgreSQL 059→060→061, re-run, schema parity and old NT$200 invoice checks passed; staging remains NO-GO pending exact CI images and final preflight, catalog, invoice and restart evidence |
 | C11 | In progress | Test catalog, release notes, schema difference and final progress reconciliation | Workspace PR and linked merged leaf revisions |
@@ -34,3 +34,9 @@ Future USD/CNY cutover requires a new rate version and effective date, account
 and ledger migration/closure, tax and provider qualification, historical TWD
 snapshot preservation, contract version and dedicated end-to-end tests. Do not
 turn on another currency by editing a constant alone.
+
+Local integration gate: `pre-pr --base origin/main` passed on 2026-09-24 before
+leaf PR publication, including Go, PostgreSQL-backed service tests, Admin web
+tests, desktop/mobile UI and spec inventories. The workspace gate will be rerun
+against the final merged leaf revisions before its own PR. The staging
+qualification remains separate from code and CI acceptance.
