@@ -17,9 +17,9 @@ completion date. A code change alone does not make a row complete.
 | C04 | Complete, 2026-09-24 | Central currency representation with TWD-only transaction policy | Billing [PR #19](https://github.com/hkt999rtk/rtk_billing/pull/19), [CI](https://github.com/hkt999rtk/rtk_billing/actions/runs/35995218357); TWD/USD/CNY integer arithmetic tests |
 | C05 | Complete, 2026-09-24 | Terminal migration; old-data and fresh-schema parity | Billing PR #19; isolated PostgreSQL 059→060→061/re-run, old NT$200 invoice preserved, fresh/upgraded schema catalog parity |
 | C06 | Complete, 2026-09-24 | Historical pricing interval selection and guarded activation | Billing PR #19; PostgreSQL historical selection, overlap, gap and issued-invoice conflict tests |
-| C07 | In progress | Account, invoice, payment and handoff currency consistency | Billing, Account Manager and Admin PRs; cross-service checks |
-| C08 | Complete, 2026-09-24 | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR #406; 207 web tests, desktop/mobile E2E and local pre-PR gate passed |
-| C09 | In progress | Unit, PostgreSQL, cross-service and UI regression matrix | Local pre-PR and required CI results |
+| C07 | Complete, 2026-09-24 | Account, invoice, payment and handoff currency consistency | Billing PR #19, Account Manager [PR #339](https://github.com/hkt999rtk/rtk_account_manager/pull/339), Admin PR #406; [Account Manager CI](https://github.com/hkt999rtk/rtk_account_manager/actions/runs/35996193476) and cross-service tests passed |
+| C08 | In progress | TWD Admin rate card, real-money display and tax-neutral sample | Admin PR #406 passed; [follow-up PR #407](https://github.com/hkt999rtk/rtk_cloud_admin/pull/407) removes one remaining 5% sample claim; 207 web tests and 6 targeted desktop/mobile invoice cases passed, CI pending |
+| C09 | In progress | Unit, PostgreSQL, cross-service and UI regression matrix | Local pre-PR gate passed twice; Billing #19, Account Manager #339 and Admin #406 CI passed; follow-up #20/#407 and workspace CI pending |
 | C10 | In progress | Isolated migration and restore rehearsal; staging TWD MQTT plan and end-to-end verification | Isolated PostgreSQL 059→060→061, re-run, schema parity and old NT$200 invoice checks passed; staging remains NO-GO pending exact CI images and final preflight, catalog, invoice and restart evidence |
 | C11 | In progress | Test catalog, release notes, schema difference and final progress reconciliation | Workspace PR and linked merged leaf revisions |
 

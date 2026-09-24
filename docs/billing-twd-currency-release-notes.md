@@ -23,6 +23,15 @@ was valid at their start; ambiguous historical intervals and uncovered gaps
 fail closed. Activation rejects a cutover that would change an already issued
 invoice; issued invoices remain immutable.
 
+The database difference is limited to the already ordered Product usage
+dimension migration `060` (nullable `product_id` on usage facts and invoice
+lines, plus its indexes) and this release's `061` history index and TWD data
+guard. No currency constraint is relaxed, no customer amount is converted, and
+no business table is added or removed by the currency change. A fresh database
+and an upgraded 059 fixture had identical final table, column, and index
+catalogs; the fixture's issued NT$200 invoice was unchanged after re-running
+the migration.
+
 Staging activation requires a reviewed effective date, a fresh check that no
 issued invoice is repriced, and rates for MQTT publish/delivery counts plus
 publish/delivery bytes. Count metrics are proposed at NT$32 per million;
