@@ -1420,6 +1420,9 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	if lkeShadowHTTPCoreCutoverEnabled(env) {
 		manifests = append(manifests, lkeAllowVideoCloudAPIShadowGatewayNetworkPolicyManifest(env))
 	}
+	if lkeLoggerHTTPCoreCutoverEnabled(env) {
+		manifests = append(manifests, lkeAllowVideoCloudAPILoggerNetworkPolicyManifest(env))
+	}
 	if lkeVideoStorageCoreCutoverEnabled(env) {
 		manifests = append(manifests, lkeAllowVideoCloudAPIStorageGatewayNetworkPolicyManifest(env))
 	}
@@ -1504,8 +1507,10 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: %s
           podSelector:
-            matchLabels:
-              app.kubernetes.io/name: video-cloud-mqttusage
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [video-cloud-mqttusage, video-cloud-logingester]
       ports:
         - { protocol: TCP, port: 8080 }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"), lkeNamespaceName(env, "video-cloud"))
@@ -1851,7 +1856,8 @@ spec:
                   - video-cloud-mqttfoundation
                   - video-cloud-shadowworker
                   - video-cloud-webrtcservice
-                  - video-cloud-videostorage
+              - video-cloud-videostorage
+              - video-cloud-logingester
       ports:
         - protocol: TCP
           port: 8443
@@ -2323,6 +2329,14 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeLoggerServiceRegistrationEnabled(env) {
+		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeMQTTFoundationRegistrationEnabled(env) {
 		if !lkeAccountManagerServiceRegistrationEnabled(env) {
 			return fmt.Errorf("MQTT foundation registration requires the Account Manager service registration listener")
@@ -2341,6 +2355,25 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return fmt.Errorf("Shadow worker registration requires the MQTT foundation registrar")
 		}
 		if err := lkeRequireShadowWorkerIdentitySecret(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeLoggerServiceRegistrationEnabled(env) {
+		if !lkeMQTTFoundationRegistrationEnabled(env) {
+			return fmt.Errorf("Logger registration requires the MQTT foundation registrar")
+		}
+		if err := lkeRequireLoggerServiceIdentitySecret(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeLoggerHTTPCoreCutoverEnabled(env) || lkeLoggerMQTTCoreCutoverEnabled(env)) && !lkeLoggerServiceRegistrationEnabled(env) {
+		return fmt.Errorf("Logger cutover requires the registered Logger service")
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeLoggerHTTPCoreCutoverEnabled(env) || lkeLoggerMQTTCoreCutoverEnabled(env)) && !lkeLoggerRetentionStorageEnabled(env) {
+		return fmt.Errorf("Logger cutover requires verified Loki retention storage")
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeLoggerHTTPCoreCutoverEnabled(env) || lkeLoggerMQTTCoreCutoverEnabled(env)) {
+		if err := lkeRequireReadyLoggerEndpoint(env); err != nil {
 			return err
 		}
 	}
@@ -2467,6 +2500,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeShadowHTTPCoreCutoverEnabled(env) {
 		// Admit the private upstream before the core rollout starts forwarding.
 		if err := kubectlApply(lkeAllowVideoCloudAPIShadowGatewayNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeLoggerHTTPCoreCutoverEnabled(env) {
+		if err := kubectlApply(lkeAllowVideoCloudAPILoggerNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -3828,8 +3866,11 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	if !lkeWorkloadSelected(env, opts, "cloud-logger") {
 		return nil
 	}
-	for _, manifest := range []string{
-		lkeLokiConfigManifest(env),
+	manifests := []string{lkeLokiConfigManifest(env)}
+	if lkeLoggerRetentionStorageEnabled(env) {
+		manifests = append(manifests, lkeLokiPVCManifest(env))
+	}
+	manifests = append(manifests,
 		lkeLokiDeploymentManifest(env),
 		lkeLokiServiceManifest(env),
 		lkeAllowCloudLoggerLokiNetworkPolicyManifest(env),
@@ -3839,7 +3880,8 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 		lkeLogCollectorConfigManifest(env),
 		lkeLogCollectorDaemonSetManifest(env),
 		lkeAllowLogCollectorLokiNetworkPolicyManifest(env),
-	} {
+	)
+	for _, manifest := range manifests {
 		if err := kubectlApply(manifest); err != nil {
 			return err
 		}
@@ -6117,6 +6159,7 @@ stringData:
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN: %q
+  VIDEO_CLOUD_LOGGER_SUPPORT_READ_TOKEN: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
   VIDEO_CLOUD_TURN_SHARED_SECRET: %q
@@ -6126,7 +6169,7 @@ stringData:
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
   clip-private-key.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeRuntimeSecretValue("ota-bff-token"), lkeInternalAuthToken(), fleetReadToken, previousFleetReadToken, lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeRuntimeSecretValue("ota-bff-token"), lkeInternalAuthToken(), fleetReadToken, previousFleetReadToken, lkeRuntimeSecretValue("logger-support-read-token"), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
 }
 
 func lkeClipPrivateKeyPEM() string {
@@ -6955,12 +6998,81 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
 `, firstNonEmpty(service.PortName, "http"), service.Port)
 	}
 	logIngesterEnv := ""
+	loggerIdentityMount := ""
+	loggerIdentityVolume := ""
 	if service.Name == "video-cloud-logingester" {
 		logIngesterEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY
               value: %q
             - name: VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT
               value: %q
 `, firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOG_INGESTER_MQTT_HANDLER_CONCURRENCY"), env["LKE_VIDEO_CLOUD_LOG_INGESTER_MQTT_HANDLER_CONCURRENCY"], "1"), firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT"), env["LKE_VIDEO_CLOUD_LOG_INGESTER_WORKER_COUNT"], "1"))
+		if lkeLoggerServiceRegistrationEnabled(env) {
+			ports += `          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+`
+			logIngesterEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_LOGGER_SERVICE_ENABLED
+              value: "true"
+            - name: VIDEO_CLOUD_LOGGER_SERVICE_INSTANCE_ID
+              value: "logger-service-0"
+            - name: VIDEO_CLOUD_LOGGER_SERVICE_ENDPOINT_REF
+              value: "logger"
+            - name: VIDEO_CLOUD_LOGGER_SERVICE_REGISTRATION_URL
+              value: "https://account-manager.%s.svc.cluster.local:8443"
+            - name: VIDEO_CLOUD_LOGGER_SERVICE_CLIENT_CERT
+              value: "/etc/video_cloud/platform-service/client.crt"
+            - name: VIDEO_CLOUD_LOGGER_SERVICE_CLIENT_KEY
+              value: "/etc/video_cloud/platform-service/client.key"
+            - name: VIDEO_CLOUD_LOGGER_SERVICE_SERVER_CA
+              value: "/etc/video_cloud/platform-service/server-ca.crt"
+            - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_URL
+              value: %q
+            - name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN
+            - name: VIDEO_CLOUD_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_AUTH_SECRET
+            - name: VIDEO_CLOUD_LOGGER_SUPPORT_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_LOGGER_SUPPORT_READ_TOKEN
+            - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
+              value: "http://billing.%s.svc.cluster.local:80/v1/internal/billing/usage-facts"
+            - name: VIDEO_CLOUD_BILLING_USAGE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-workers-runtime
+                  key: VIDEO_CLOUD_BILLING_USAGE_TOKEN
+            - name: VIDEO_CLOUD_DB_ENSURE_SCHEMA
+              value: "false"
+            - name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED
+              value: %q
+            - name: VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED
+              value: %q
+`, lkeNamespaceName(env, "account-manager"), lkeAccountManagerInternalURL(env), lkeNamespaceName(env, "billing"), strconv.FormatBool(lkeLoggerMQTTCoreCutoverEnabled(env)), strconv.FormatBool(lkeLoggerBillingFactsEnabled(env)))
+			loggerIdentityMount = `            - name: logger-platform-identity
+              mountPath: /etc/video_cloud/platform-service
+              readOnly: true
+`
+			loggerIdentityVolume = fmt.Sprintf(`        - name: logger-platform-identity
+          secret:
+            secretName: %s
+            defaultMode: 0440
+`, loggerServiceIdentitySecretName)
+		}
 	}
 	clipVerifierEnv := ""
 	if service.Name == "video-cloud-clipverifier" {
@@ -7161,7 +7273,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume)
+%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount+loggerIdentityMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(env, service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume+loggerIdentityVolume)
 	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
 	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
 	return body
@@ -7186,8 +7298,11 @@ spec:
 `, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_MQTT_USAGE_STORAGE"), env["LKE_VIDEO_CLOUD_MQTT_USAGE_STORAGE"], "5Gi"))
 }
 
-func lkeVideoCloudAuxiliaryMQTTCleanSession(service lkeVideoCloudAuxiliaryService) string {
+func lkeVideoCloudAuxiliaryMQTTCleanSession(env map[string]string, service lkeVideoCloudAuxiliaryService) string {
 	if service.Name == "video-cloud-logingester" {
+		if lkeLoggerServiceRegistrationEnabled(env) && lkeLoggerMQTTCoreCutoverEnabled(env) {
+			return "false"
+		}
 		return firstNonEmpty(os.Getenv("LKE_VIDEO_CLOUD_LOGINGESTER_MQTT_CLEAN_SESSION"), "true")
 	}
 	return "true"
@@ -7335,6 +7450,26 @@ spec:
 }
 
 func lkeLokiConfigManifest(env map[string]string) string {
+	retention := ""
+	if lkeLoggerRetentionStorageEnabled(env) {
+		retention = `      retention_stream:
+        - selector: '{retention_tier="7d"}'
+          priority: 10
+          period: 168h
+        - selector: '{retention_tier="30d"}'
+          priority: 10
+          period: 720h
+        - selector: '{retention_tier="90d"}'
+          priority: 10
+          period: 2160h
+    compactor:
+      working_directory: /loki/compactor
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      delete_request_store: filesystem
+`
+	}
 	return fmt.Sprintf(`apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7372,11 +7507,35 @@ data:
     limits_config:
       allow_structured_metadata: false
       retention_period: 24h
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"])
+%s`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], retention)
+}
+
+func lkeLokiPVCManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: video-cloud-loki-data
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: video-cloud-loki
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: %s
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOKI_DATA_STORAGE"), env["LKE_LOKI_DATA_STORAGE"], "100Gi"))
 }
 
 func lkeLokiDeploymentManifest(env map[string]string) string {
 	checksum := lkeConfigChecksum(lkeLokiConfigManifest(env))
+	dataVolume := `          emptyDir: {}`
+	if lkeLoggerRetentionStorageEnabled(env) {
+		dataVolume = `          persistentVolumeClaim:
+            claimName: video-cloud-loki-data`
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -7421,8 +7580,8 @@ spec:
           configMap:
             name: video-cloud-loki-config
         - name: data
-          emptyDir: {}
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOKI_IMAGE"), env["LKE_LOKI_IMAGE"], "grafana/loki:3.5.1"), lkeContainerResourcesManifest(env, "loki"))
+%s
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOKI_IMAGE"), env["LKE_LOKI_IMAGE"], "grafana/loki:3.5.1"), lkeContainerResourcesManifest(env, "loki"), dataVolume)
 }
 
 func lkeLokiServiceManifest(env map[string]string) string {
@@ -9698,6 +9857,16 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_SHADOW_HTTP_SERVICE_CUTOVER_ENABLED
               value: %q
 `, strconv.FormatBool(lkeShadowHTTPCoreCutoverEnabled(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_LOGGER_HTTP_SERVICE_CUTOVER_ENABLED
+              value: %q
+            - name: VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED
+              value: %q
+`, strconv.FormatBool(lkeLoggerHTTPCoreCutoverEnabled(env)), strconv.FormatBool(lkeLoggerMQTTCoreCutoverEnabled(env)))
+		if lkeLoggerHTTPCoreCutoverEnabled(env) {
+			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_LOGGER_HTTP_UPSTREAM_URL
+              value: %q
+`, "http://video-cloud-logingester."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:19300")
+		}
 		if lkeShadowHTTPCoreCutoverEnabled(env) {
 			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_SHADOW_HTTP_UPSTREAM_URL
               value: %q
