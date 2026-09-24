@@ -1433,6 +1433,41 @@ cases:
       title: streamWorstDeviceRows sorts worst devices by failure priority
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab-runtime.test.mjs#audio%20RTP%20diagnostics%20keep%20send%20and%20receive%20directions%20distinct
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab-runtime.test.mjs
+      title: audio RTP diagnostics keep send and receive directions distinct
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab-runtime.test.mjs#microphone%20requires%20explicit%20action%20and%20survives%20credential%20reconnect
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab-runtime.test.mjs
+      title: microphone requires explicit action and survives credential reconnect
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab-runtime.test.mjs#playback%20renews%20an%20old%20Test%20Lab%20lease%20before%20starting%20its%20ten-minute%20window
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab-runtime.test.mjs
+      title: playback renews an old Test Lab lease before starting its ten-minute window
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab-runtime.test.mjs#rejected%20AV%20offer%20retries%20once%20with%20video%20only
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab-runtime.test.mjs
+      title: rejected AV offer retries once with video only
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/test-lab-runtime.test.mjs#service%20outage%20does%20not%20retry%20the%20offer%20or%20send%20a%20stop%20for%20an%20unopened%20stream
+      module: cloud-admin-web
+      language: javascript
+      source: src/test-lab-runtime.test.mjs
+      title: service outage does not retry the offer or send a stop for an unopened stream
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/test-lab.test.mjs#ICE%20gathering%20waits%20for%20completion%20and%20releases%20event%20listeners
       module: cloud-admin-web
       language: javascript
