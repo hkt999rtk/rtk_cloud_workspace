@@ -50,6 +50,13 @@ Short-lived access and admin tokens are never persisted. Their long-lived
 signing secret is stored under `runtime/`; tokens are minted in memory when
 needed.
 
+Product OTA uses a separate `runtime/ota-bff-token` service credential, mirrored
+to Video Cloud and Cloud Admin as `VIDEO_CLOUD_OTA_BFF_TOKEN`. It is accepted
+only on operator OTA routes after Cloud Admin has checked the active tenant and
+member capability. Do not use a short-lived admin token as the persistent
+Cloud Admin credential. Run `secrets ensure` for an existing environment before
+applying the new runtime bindings, then `secrets verify` after deployment.
+
 ## Backup and Recovery Boundary
 
 Follow [Core Backup and Restore](backup-restore.md) for the matched OpenBao,

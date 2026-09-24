@@ -31,6 +31,14 @@ func makeIsolatedTestSecretStore(t *testing.T, environment string) secretStore {
 	return store
 }
 
+func TestOTABFFCredentialHasBothRuntimeBindings(t *testing.T) {
+	bindings := catalogK8SBindings("ota-bff-token")
+	if len(bindings) != 2 || bindings[0].Secret != "video-cloud-runtime" || bindings[0].Key != "VIDEO_CLOUD_OTA_BFF_TOKEN" ||
+		bindings[1].Secret != "cloud-admin-billing-client" || bindings[1].Key != "VIDEO_CLOUD_OTA_BFF_TOKEN" {
+		t.Fatalf("OTA BFF runtime bindings = %#v", bindings)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Package tests use isolated fixture paths. Production execution never sets
 	// this test-only marker and therefore uses the canonical SecretStore.

@@ -324,6 +324,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
 		{"job-authorization-token", "account-manager,cloud-admin", "manual"},
 		{"fleet-read-token", "video-cloud,cloud-admin", "manual"},
+		{"ota-bff-token", "video-cloud,cloud-admin", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
 		{"billing-cloud-creation", "account-manager,billing", "manual"},
 		{"billing-handoff", "account-manager,billing", "manual"},
@@ -376,6 +377,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"fleet-read-token": {
 			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
 			{"-admin", "cloud-admin-billing-client", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
+		},
+		"ota-bff-token": {
+			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_OTA_BFF_TOKEN"},
+			{"-admin", "cloud-admin-billing-client", "VIDEO_CLOUD_OTA_BFF_TOKEN"},
 		},
 		"billing-internal-token": {
 			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
