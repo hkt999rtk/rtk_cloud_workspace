@@ -6113,6 +6113,7 @@ type: Opaque
 stringData:
   POSTGRES_PASSWORD: %q
   VIDEO_CLOUD_AUTH_SECRET: %q
+  VIDEO_CLOUD_OTA_BFF_TOKEN: %q
   VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_PREVIOUS_TOKEN: %q
@@ -6125,7 +6126,7 @@ stringData:
   AWS_ACCESS_KEY_ID: %q
   AWS_SECRET_ACCESS_KEY: %q
   clip-private-key.pem: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeInternalAuthToken(), fleetReadToken, previousFleetReadToken, lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("video-auth"), lkeRuntimeSecretValue("ota-bff-token"), lkeInternalAuthToken(), fleetReadToken, previousFleetReadToken, lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"), lkeRuntimeSecretValue("turn-shared"), lkeRuntimeSecretValue("mqtt-broker-auth"), lkeRuntimeSecretValue("mqtt-server-password"), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeObjectStorageCredential(env, "LINODE_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OBJ_SECRET_ACCESS_KEY"), lkeClipPrivateKeyPEM())
 }
 
 func lkeClipPrivateKeyPEM() string {
@@ -8604,8 +8605,9 @@ type: Opaque
 stringData:
   BILLING_SERVICE_TOKEN: %q
   VIDEO_CLOUD_FLEET_READ_TOKEN: %q
+  VIDEO_CLOUD_OTA_BFF_TOKEN: %q
   ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN: %q
-`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), fleetReadToken, lkeRuntimeSecretValue("job-authorization-token"))
+`, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), fleetReadToken, lkeRuntimeSecretValue("ota-bff-token"), lkeRuntimeSecretValue("job-authorization-token"))
 }
 
 func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
@@ -9474,6 +9476,11 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
                 secretKeyRef:
                   name: video-cloud-runtime
                   key: VIDEO_CLOUD_AUTH_SECRET
+            - name: VIDEO_CLOUD_OTA_BFF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: video-cloud-runtime
+                  key: VIDEO_CLOUD_OTA_BFF_TOKEN
             - name: VIDEO_CLOUD_API_ADDR
               value: ":8080"
             - name: VIDEO_CLOUD_API_BASE_URL
@@ -9889,6 +9896,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 	return lkeConfigChecksum(
 		lkeRuntimeSecretValue("postgres"),
 		lkeRuntimeSecretValue("video-auth"),
+		lkeRuntimeSecretValue("ota-bff-token"),
 		lkeRuntimeSecretValue("fleet-read-token"),
 		lkeRuntimeSecretValue("mqtt-broker-auth"),
 		lkeRuntimeSecretValue("mqtt-server-password"),
@@ -9915,6 +9923,7 @@ func lkeCloudAdminRuntimeChecksum() string {
 	return lkeConfigChecksum(
 		lkeBillingServiceToken(),
 		lkeRuntimeSecretValue("fleet-read-token"),
+		lkeRuntimeSecretValue("ota-bff-token"),
 		lkeRuntimeSecretValue("job-authorization-token"),
 	)
 }

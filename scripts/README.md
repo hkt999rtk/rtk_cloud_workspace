@@ -94,6 +94,9 @@ scripts/check-deployment-credentials.sh --environment staging --read-only --chec
 # separate migration-owner binding (missing/wrong role/password fails closed):
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --require-pki-migration
+# Before Product PKI lifecycle acceptance, require a pinned, active Device Root:
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-product-pki
 # Use an actual reviewed CI digest (repeat --image for each affected image):
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --checks ghcr --image "$RELEASE_IMAGE"
@@ -111,6 +114,10 @@ it still verifies advertised required Linode/key scopes. **Write ability remains
 unverified.** Without this flag, the existing temporary-write checks remain in
 place. Do not combine scoped qualification with bucket/key repair flags. Failures
 are aggregated with a nonzero exit; secrets and raw registry errors are not printed.
+Before a protected rollout with direct clip upload, run the full credential
+check without --read-only before the write fence, then run deployment plan.
+The full check creates the validated runtime-media receipt that the deployer
+needs to populate the blob endpoint; the read-only check does not.
 
 - `--image` requires an exact `ghcr.io/...@sha256:...` reference. It verifies the
   selected credential via token exchange and exact manifest access, then performs
@@ -126,6 +133,11 @@ are aggregated with a nonzero exit; secrets and raw registry errors are not prin
   controller runtime identity is not a migration substitute. Re-run after
   creating the binding and before the migration Job; remove the temporary
   binding after the upgrade if it is no longer needed.
+- --require-product-pki checks the selected controller's Device Root ID and
+  fingerprint against an active OpenBao-backed Device Root in the PKI registry.
+  A Ready controller without this pin cannot provision Brand/Product CAs. This
+  gate is read-only; it does not create a Root or enable CRL/OCSP. Run it before
+  lifecycle acceptance that creates Product-scoped devices.
 - TLS verifies private-key permissions, key-pair match, CA chain, EKU, server DNS,
   and validity now and at the horizon (default seven days). For client mTLS use
   `--tls-purpose client`; repeat the command for each affected identity. Inputs

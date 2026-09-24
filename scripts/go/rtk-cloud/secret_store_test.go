@@ -31,6 +31,14 @@ func makeIsolatedTestSecretStore(t *testing.T, environment string) secretStore {
 	return store
 }
 
+func TestOTABFFCredentialHasBothRuntimeBindings(t *testing.T) {
+	bindings := catalogK8SBindings("ota-bff-token")
+	if len(bindings) != 2 || bindings[0].Secret != "video-cloud-runtime" || bindings[0].Key != "VIDEO_CLOUD_OTA_BFF_TOKEN" ||
+		bindings[1].Secret != "cloud-admin-billing-client" || bindings[1].Key != "VIDEO_CLOUD_OTA_BFF_TOKEN" {
+		t.Fatalf("OTA BFF runtime bindings = %#v", bindings)
+	}
+}
+
 func TestMain(m *testing.M) {
 	// Package tests use isolated fixture paths. Production execution never sets
 	// this test-only marker and therefore uses the canonical SecretStore.
@@ -659,6 +667,50 @@ func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
 	}
 	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "postgres") {
 		t.Fatalf("K8s mirror mismatch error = %v", err)
+	}
+}
+
+func TestSecretStoreAllowsEmptyHandoffBindingsOnlyWhenWorkerAbsent(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	secretData := map[string]map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+		for _, binding := range entry.K8SBinding {
+			if secretData[binding.Secret] == nil {
+				secretData[binding.Secret] = map[string]string{}
+			}
+			secretData[binding.Secret][binding.Key] = "Y2Fub25pY2Fs"
+			if handoffOnlySecret(entry.ID) {
+				secretData[binding.Secret][binding.Key] = ""
+			}
+		}
+	}
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\ncase \"$*\" in\n  *'get deployment account-manager-handoff-worker'*) printf '%s\\n' \"${FAKE_HANDOFF_WORKER:-}\" ;;\n")
+	for secret, data := range secretData {
+		payload, err := json.Marshal(map[string]any{"data": data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&script, "  *%s*) printf '%%s\\n' '%s' ;;\n", secret, payload)
+	}
+	script.WriteString("  *) exit 1 ;;\nesac\n")
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte(script.String()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err != nil {
+		t.Fatalf("inactive handoff bindings: %v", err)
+	}
+	t.Setenv("FAKE_HANDOFF_WORKER", "deployment.apps/account-manager-handoff-worker")
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "billing-handoff") {
+		t.Fatalf("active worker accepted empty handoff binding: %v", err)
 	}
 }
 

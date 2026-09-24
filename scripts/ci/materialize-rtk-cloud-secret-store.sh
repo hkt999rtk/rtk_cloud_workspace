@@ -63,6 +63,7 @@ bootstrap_runtime_secret() {
 }
 
 bootstrap_runtime_secret mqtt-usage-settlement RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN
+bootstrap_runtime_secret ota-bff-token RTK_CLOUD_OTA_BFF_TOKEN
 
 # GitHub-provided job secrets may be injected as environment variables. This
 # allowlist is CI-only and does not change deployment credential precedence.

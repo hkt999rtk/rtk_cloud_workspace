@@ -108,6 +108,7 @@ jobs:
         env:
           RTK_CLOUD_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_SECRET_BUNDLE }}
           RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: ${{ secrets.RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN }}
+          RTK_CLOUD_OTA_BFF_TOKEN: ${{ secrets.RTK_CLOUD_OTA_BFF_TOKEN }}
           RTK_CLOUD_IMAP_OPERATOR_BUNDLE: ${{ secrets.RTK_CLOUD_IMAP_OPERATOR_BUNDLE }}
         shell: bash
         run: |

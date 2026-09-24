@@ -5,10 +5,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 environment=""
 require_pki_migration=false
+require_product_pki=false
 arguments=()
 for argument in "$@"; do
   if [[ "$argument" == "--require-pki-migration" ]]; then
     require_pki_migration=true
+  elif [[ "$argument" == "--require-product-pki" ]]; then
+    require_product_pki=true
   else
     arguments+=("$argument")
   fi
@@ -31,13 +34,16 @@ if [[ -n "$environment" ]]; then
   # PVCs are detached from the PKI registry after a database restore/rebuild.
   # Keep this read-only verification in the standard deployment check so that
   # such a stack is a NO-GO before any rollout starts.
-  secret_flags=()
+  secret_args=(--environment "$environment")
   if [[ "$require_pki_migration" == true ]]; then
-    secret_flags+=(--require-pki-migration)
+    secret_args+=(--require-pki-migration)
   fi
-  go run "$ROOT/scripts/go/rtk-cloud" -- secrets verify --environment "$environment" "${secret_flags[@]}"
-elif [[ "$require_pki_migration" == true ]]; then
-  echo "--require-pki-migration requires --environment" >&2
+  if [[ "$require_product_pki" == true ]]; then
+    secret_args+=(--require-product-pki)
+  fi
+  go run "$ROOT/scripts/go/rtk-cloud" -- secrets verify "${secret_args[@]}"
+elif [[ "$require_pki_migration" == true || "$require_product_pki" == true ]]; then
+  echo "PKI qualification flags require --environment" >&2
   exit 2
 fi
 

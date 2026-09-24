@@ -50,6 +50,13 @@ Short-lived access and admin tokens are never persisted. Their long-lived
 signing secret is stored under `runtime/`; tokens are minted in memory when
 needed.
 
+Product OTA uses a separate `runtime/ota-bff-token` service credential, mirrored
+to Video Cloud and Cloud Admin as `VIDEO_CLOUD_OTA_BFF_TOKEN`. It is accepted
+only on operator OTA routes after Cloud Admin has checked the active tenant and
+member capability. Do not use a short-lived admin token as the persistent
+Cloud Admin credential. Run `secrets ensure` for an existing environment before
+applying the new runtime bindings, then `secrets verify` after deployment.
+
 ## Backup and Recovery Boundary
 
 Follow [Core Backup and Restore](backup-restore.md) for the matched OpenBao,
@@ -102,6 +109,12 @@ that catalog key. Materialization refuses a mismatch if both sources contain
 the entry. Rotate the staging and runtime-coverage bundles to include the same
 value, then remove this transition input; it never replaces other missing
 catalog entries.
+
+The Product OTA rollout uses the same narrow transition for `ota-bff-token`:
+`RTK_CLOUD_OTA_BFF_TOKEN` supplies staging jobs and
+`RTK_CLOUD_RUNTIME_COVERAGE_OTA_BFF_TOKEN` supplies isolated runtime coverage.
+The two environments must use different values. Add each to its opaque bundle
+after the rollout and remove the transition inputs once verified.
 
 Staging email qualifications additionally require the staging environment
 secret `RTK_CLOUD_IMAP_OPERATOR_BUNDLE`, containing the six `IMAP_*` operator

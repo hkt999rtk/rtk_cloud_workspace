@@ -324,6 +324,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
 		{"job-authorization-token", "account-manager,cloud-admin", "manual"},
 		{"fleet-read-token", "video-cloud,cloud-admin", "manual"},
+		{"ota-bff-token", "video-cloud,cloud-admin", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
 		{"billing-cloud-creation", "account-manager,billing", "manual"},
 		{"billing-handoff", "account-manager,billing", "manual"},
@@ -376,6 +377,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"fleet-read-token": {
 			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
 			{"-admin", "cloud-admin-billing-client", "VIDEO_CLOUD_FLEET_READ_TOKEN"},
+		},
+		"ota-bff-token": {
+			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_OTA_BFF_TOKEN"},
+			{"-admin", "cloud-admin-billing-client", "VIDEO_CLOUD_OTA_BFF_TOKEN"},
 		},
 		"billing-internal-token": {
 			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
@@ -438,6 +443,7 @@ func runSecrets(args []string) error {
 	confirm := fs.String("confirm", "", "stack confirmation for migration")
 	dryRun := fs.Bool("dry-run", false, "report missing Kubernetes bindings without writing")
 	requirePKIMigration := fs.Bool("require-pki-migration", false, "verify the protected PKI migration database Secret against this environment's canonical PostgreSQL credential")
+	requireProductPKI := fs.Bool("require-product-pki", false, "verify the protected Device Root and Product PKI registry are ready for lifecycle acceptance")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -446,6 +452,9 @@ func runSecrets(args []string) error {
 	}
 	if *requirePKIMigration && action != "verify" {
 		return errors.New("--require-pki-migration is only valid with secrets verify")
+	}
+	if *requireProductPKI && action != "verify" {
+		return errors.New("--require-product-pki is only valid with secrets verify")
 	}
 	store, err := newSecretStore(*configRoot, *environment)
 	if err != nil {
@@ -481,6 +490,11 @@ func runSecrets(args []string) error {
 	case "verify":
 		if *requirePKIMigration {
 			if err := verifyPKIMigrationDatabaseSecret(store); err != nil {
+				return err
+			}
+		}
+		if *requireProductPKI {
+			if err := verifyProductPKIReadiness(store); err != nil {
 				return err
 			}
 		}
@@ -948,6 +962,8 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 	// one transient API failure cannot appear as several missing credentials.
 	seen := make(map[string]map[string]string)
 	unreadable := make(map[string]bool)
+	handoffWorkerChecked := false
+	handoffWorkerEnabled := false
 	for _, entry := range rtkSecretCatalog() {
 		if len(entry.K8SBinding) == 0 {
 			continue
@@ -992,7 +1008,32 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			if unreadable[secretName] {
 				continue
 			}
-			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(data[binding.Key]))
+			encoded, present := data[binding.Key]
+			if !present {
+				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
+				continue
+			}
+			if encoded == "" && handoffOnlySecret(entry.ID) {
+				if !handoffWorkerChecked {
+					handoffWorkerChecked = true
+					out, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+"-account-manager",
+						"get", "deployment", "account-manager-handoff-worker", "--ignore-not-found=true", "-o", "name").Output()
+					if err != nil {
+						return errors.New("cannot inspect Account Manager handoff worker while verifying inactive Secret bindings")
+					}
+					switch strings.TrimSpace(string(out)) {
+					case "":
+					case "deployment.apps/account-manager-handoff-worker":
+						handoffWorkerEnabled = true
+					default:
+						return errors.New("unexpected Account Manager handoff worker metadata")
+					}
+				}
+				if !handoffWorkerEnabled {
+					continue
+				}
+			}
+			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 			if decodeErr != nil || len(value) == 0 {
 				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
 				continue
@@ -1006,6 +1047,16 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 		return errors.New(strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func handoffOnlySecret(id string) bool {
+	switch id {
+	case "billing-handoff", "factory-handoff", "video-control-handoff", "mqtt-usage-handoff",
+		"mqtt-usage-settlement", "emqx-handoff-api-key", "emqx-handoff-api-secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func verifySecretStoreContents(store secretStore) error {
