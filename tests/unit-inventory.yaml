@@ -772,11 +772,11 @@ cases:
       title: invoice usage respects the stored quantity scale and missing data
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#sample%20invoice%20balances%20at%205%20percent%20tax%20without%20an%20issued%20identity%20or%20payment%20document
+    - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#sample%20invoice%20is%20before%20tax%20without%20an%20issued%20identity%20or%20payment%20document
       module: cloud-admin-web
       language: javascript
       source: src/invoice-document.test.mjs
-      title: sample invoice balances at 5 percent tax without an issued identity or payment document
+      title: sample invoice is before tax without an issued identity or payment document
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/live-auth-script.test.mjs#email-signup-live-e2e.mjs%20follows%20the%20canonical%20sign-in%20button%20label
@@ -1347,6 +1347,13 @@ cases:
       language: javascript
       source: src/sdk-page.test.mjs
       title: SDK bridge stays within normal same-origin console routes
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#TWD%20proposal%20uses%20the%20reviewed%20fixed%20planning%20conversion
+      module: cloud-admin-web
+      language: javascript
+      source: src/service-pricing.test.mjs
+      title: TWD proposal uses the reviewed fixed planning conversion
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/source-state.test.mjs#sourceAvailable%20only%20treats%20available%20source%20status%20as%20available

@@ -1170,10 +1170,18 @@ func seedPaymentLiveInvoice(ctx context.Context, client *http.Client, cfg paymen
 	headers := map[string]string{"X-Request-Id": "invoice-seed-" + cfg.RunID}
 	pricingBody := map[string]any{
 		"plan_key": "qualification", "version": version, "currency": "TWD", "effective_from": periodStart,
-		"rates": []map[string]any{{
-			"service_code": "qualification", "metric_code": "staging_units", "description": "Staging qualification units",
-			"unit": "unit", "unit_price_minor": 2, "unit_price_scale": 0, "rounding_mode": "half_up", "tax_rate_basis_points": 0,
-		}},
+		"rates": []map[string]any{
+			{"service_code": "qualification", "metric_code": "staging_units", "description": "Staging qualification units",
+				"unit": "unit", "unit_price_minor": 2, "unit_price_scale": 0, "rounding_mode": "half_up", "tax_rate_basis_points": 0},
+			{"service_code": "mqtt", "metric_code": "publish_count", "description": "MQTT accepted publishes",
+				"unit": "requests", "unit_price_minor": 32, "unit_price_scale": 6, "rounding_mode": "half_up", "tax_rate_basis_points": 0},
+			{"service_code": "mqtt", "metric_code": "delivery_count", "description": "MQTT subscriber deliveries",
+				"unit": "requests", "unit_price_minor": 32, "unit_price_scale": 6, "rounding_mode": "half_up", "tax_rate_basis_points": 0},
+			{"service_code": "mqtt", "metric_code": "publish_bytes", "description": "MQTT observed publish bytes (included)",
+				"unit": "bytes", "unit_price_minor": 0, "unit_price_scale": 0, "rounding_mode": "half_up", "tax_rate_basis_points": 0},
+			{"service_code": "mqtt", "metric_code": "delivery_bytes", "description": "MQTT observed delivery bytes (included)",
+				"unit": "bytes", "unit_price_minor": 0, "unit_price_scale": 0, "rounding_mode": "half_up", "tax_rate_basis_points": 0},
+		},
 	}
 	var pricing map[string]any
 	if err := paymentLiveJSON(ctx, client, http.MethodPost, internalBase+"/pricing-versions", internalToken, headers, pricingBody, &pricing); err != nil {

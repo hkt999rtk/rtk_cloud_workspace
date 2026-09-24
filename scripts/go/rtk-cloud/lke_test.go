@@ -1543,7 +1543,7 @@ func TestRunLKEResolveImagesWritesPinnedSubmoduleManifest(t *testing.T) {
 		`"LKE_POSTGRES_IMAGE": "postgres:16-alpine"`,
 		`"LKE_VIDEO_CLOUD_IMAGE": "ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api:sha-` + commits["rtk_video_cloud"] + `"`,
 		`"LKE_ACCOUNT_MANAGER_IMAGE": "ghcr.io/hkt999rtk/rtk_account_manager/account-manager:sha-` + commits["rtk_account_manager"] + `"`,
-		`"LKE_BILLING_IMAGE": "ghcr.io/hkt999rtk/rtk_billing/billing:sha-` + commits["rtk_billing"] + `"`,
+		`"LKE_BILLING_IMAGE": "ghcr.io/hkt999rtk/rtk_billing/billing-twd:sha-` + commits["rtk_billing"] + `"`,
 		`"LKE_CLOUD_ADMIN_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-` + commits["rtk_cloud_admin"] + `"`,
 		`"LKE_FRONTEND_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_frontend/frontend:sha-` + commits["rtk_cloud_frontend"] + `"`,
 		`"LKE_CLOUD_LOGGER_IMAGE": "ghcr.io/hkt999rtk/rtk_cloud_logger/rtk-cloud-logger:sha-` + commits["rtk_cloud_logger"] + `"`,
