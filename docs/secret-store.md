@@ -110,6 +110,12 @@ the entry. Rotate the staging and runtime-coverage bundles to include the same
 value, then remove this transition input; it never replaces other missing
 catalog entries.
 
+The Product OTA rollout uses the same narrow transition for `ota-bff-token`:
+`RTK_CLOUD_OTA_BFF_TOKEN` supplies staging jobs and
+`RTK_CLOUD_RUNTIME_COVERAGE_OTA_BFF_TOKEN` supplies isolated runtime coverage.
+The two environments must use different values. Add each to its opaque bundle
+after the rollout and remove the transition inputs once verified.
+
 Staging email qualifications additionally require the staging environment
 secret `RTK_CLOUD_IMAP_OPERATOR_BUNDLE`, containing the six `IMAP_*` operator
 settings. The workflow merges it into the job-local bundle before

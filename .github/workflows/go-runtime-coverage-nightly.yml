@@ -356,6 +356,7 @@ jobs:
         env:
           RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE: ${{ secrets.RTK_CLOUD_RUNTIME_COVERAGE_SECRET_BUNDLE }}
           RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN: ${{ secrets.RTK_CLOUD_MQTT_USAGE_SETTLEMENT_TOKEN }}
+          RTK_CLOUD_OTA_BFF_TOKEN: ${{ secrets.RTK_CLOUD_RUNTIME_COVERAGE_OTA_BFF_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
