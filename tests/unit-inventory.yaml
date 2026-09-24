@@ -1087,6 +1087,13 @@ cases:
       title: device responses reject wrong Product, duplicate IDs and missing totals
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#Logger%20retention%20is%20sent%20only%20when%20the%20registered%20option%20is%20selected
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-service-catalog.test.mjs
+      title: Logger retention is sent only when the registered option is selected
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#legacy%20write%20gate%20keeps%20legacy%20options%20and%20omits%20catalog%20revision
       module: cloud-admin-web
       language: javascript

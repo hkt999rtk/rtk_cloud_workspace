@@ -7092,6 +7092,14 @@ if [[ "$*" == *"get secret video-storage-service-platform-identity -o json"* ]];
   printf 'video storage service identity Secret is absent\n' >&2
   exit 1
 fi
+if [[ "$*" == *"get secret logger-service-platform-identity -o json"* ]]; then
+  if [[ -n "${FAKE_LOGGER_SERVICE_IDENTITY_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOGGER_SERVICE_IDENTITY_SECRET_JSON"
+    exit 0
+  fi
+  printf 'Logger service identity Secret is absent\n' >&2
+  exit 1
+fi
 if [[ "$*" == *"get service account-manager -o json"* ]]; then
   if [[ -n "${FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON"
@@ -7127,6 +7135,22 @@ fi
 if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-videostorage -o json"* ]]; then
   if [[ -n "${FAKE_VIDEO_STORAGE_ENDPOINTSLICES_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_VIDEO_STORAGE_ENDPOINTSLICES_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get service video-cloud-logingester -o json"* ]]; then
+  if [[ -n "${FAKE_LOGGER_SERVICE_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOGGER_SERVICE_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-logingester -o json"* ]]; then
+  if [[ -n "${FAKE_LOGGER_ENDPOINTSLICES_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOGGER_ENDPOINTSLICES_JSON"
   else
     printf '{"items":[]}\n'
   fi

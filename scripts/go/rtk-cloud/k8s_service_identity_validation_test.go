@@ -79,7 +79,7 @@ func newLKEPlatformCertificateFixture(t *testing.T, env map[string]string) lkePl
 		}),
 		identities: map[string]map[string]any{}, issuer: ca, issuerKey: caKey, serials: map[string]*big.Int{}, now: now,
 	}
-	for index, subject := range []string{"service:mqtt", "service:shadow", "service:webrtc", "service:video-storage"} {
+	for index, subject := range []string{"service:mqtt", "service:shadow", "service:webrtc", "service:video-storage", "service:logger"} {
 		serial := big.NewInt(int64(index + 3))
 		key, cert := lkeTestLeaf(t, ca, caKey, serial, pkix.Name{CommonName: subject}, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, now)
 		fixture.identities[subject] = lkeTestSecret(map[string][]byte{"client.crt": cert, "client.key": key, "server-ca.crt": caPEM})
@@ -134,6 +134,7 @@ func setFakeLKEPlatformIdentitySecrets(t *testing.T, env map[string]string) lkeP
 		"FAKE_SHADOW_WORKER_IDENTITY_SECRET_JSON":         "service:shadow",
 		"FAKE_WEBRTC_SERVICE_IDENTITY_SECRET_JSON":        "service:webrtc",
 		"FAKE_VIDEO_STORAGE_SERVICE_IDENTITY_SECRET_JSON": "service:video-storage",
+		"FAKE_LOGGER_SERVICE_IDENTITY_SECRET_JSON":        "service:logger",
 	} {
 		t.Setenv(key, lkeTestSecretJSON(t, fixture.identities[subject]))
 	}
