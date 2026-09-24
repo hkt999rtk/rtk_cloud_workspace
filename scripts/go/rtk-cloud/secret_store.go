@@ -962,6 +962,8 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 	// one transient API failure cannot appear as several missing credentials.
 	seen := make(map[string]map[string]string)
 	unreadable := make(map[string]bool)
+	handoffWorkerChecked := false
+	handoffWorkerEnabled := false
 	for _, entry := range rtkSecretCatalog() {
 		if len(entry.K8SBinding) == 0 {
 			continue
@@ -1006,7 +1008,32 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 			if unreadable[secretName] {
 				continue
 			}
-			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(data[binding.Key]))
+			encoded, present := data[binding.Key]
+			if !present {
+				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
+				continue
+			}
+			if encoded == "" && handoffOnlySecret(entry.ID) {
+				if !handoffWorkerChecked {
+					handoffWorkerChecked = true
+					out, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", stack+"-account-manager",
+						"get", "deployment", "account-manager-handoff-worker", "--ignore-not-found=true", "-o", "name").Output()
+					if err != nil {
+						return errors.New("cannot inspect Account Manager handoff worker while verifying inactive Secret bindings")
+					}
+					switch strings.TrimSpace(string(out)) {
+					case "":
+					case "deployment.apps/account-manager-handoff-worker":
+						handoffWorkerEnabled = true
+					default:
+						return errors.New("unexpected Account Manager handoff worker metadata")
+					}
+				}
+				if !handoffWorkerEnabled {
+					continue
+				}
+			}
+			value, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
 			if decodeErr != nil || len(value) == 0 {
 				failures = append(failures, fmt.Sprintf("K8s binding is missing for canonical secret %s at %s", entry.ID, bindingName))
 				continue
@@ -1020,6 +1047,16 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 		return errors.New(strings.Join(failures, "; "))
 	}
 	return nil
+}
+
+func handoffOnlySecret(id string) bool {
+	switch id {
+	case "billing-handoff", "factory-handoff", "video-control-handoff", "mqtt-usage-handoff",
+		"mqtt-usage-settlement", "emqx-handoff-api-key", "emqx-handoff-api-secret":
+		return true
+	default:
+		return false
+	}
 }
 
 func verifySecretStoreContents(store secretStore) error {

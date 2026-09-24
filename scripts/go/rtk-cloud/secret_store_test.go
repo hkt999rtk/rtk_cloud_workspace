@@ -670,6 +670,50 @@ func TestSecretStoreVerifiesK8SMirrorBindings(t *testing.T) {
 	}
 }
 
+func TestSecretStoreAllowsEmptyHandoffBindingsOnlyWhenWorkerAbsent(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	secretData := map[string]map[string]string{}
+	for _, entry := range rtkSecretCatalog() {
+		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
+			t.Fatal(err)
+		}
+		for _, binding := range entry.K8SBinding {
+			if secretData[binding.Secret] == nil {
+				secretData[binding.Secret] = map[string]string{}
+			}
+			secretData[binding.Secret][binding.Key] = "Y2Fub25pY2Fs"
+			if handoffOnlySecret(entry.ID) {
+				secretData[binding.Secret][binding.Key] = ""
+			}
+		}
+	}
+	var script strings.Builder
+	script.WriteString("#!/bin/sh\ncase \"$*\" in\n  *'get deployment account-manager-handoff-worker'*) printf '%s\\n' \"${FAKE_HANDOFF_WORKER:-}\" ;;\n")
+	for secret, data := range secretData {
+		payload, err := json.Marshal(map[string]any{"data": data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&script, "  *%s*) printf '%%s\\n' '%s' ;;\n", secret, payload)
+	}
+	script.WriteString("  *) exit 1 ;;\nesac\n")
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	if err := os.WriteFile(kubectl, []byte(script.String()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifySecretStoreK8SBindings(store); err != nil {
+		t.Fatalf("inactive handoff bindings: %v", err)
+	}
+	t.Setenv("FAKE_HANDOFF_WORKER", "deployment.apps/account-manager-handoff-worker")
+	if err := verifySecretStoreK8SBindings(store); err == nil || !strings.Contains(err.Error(), "billing-handoff") {
+		t.Fatalf("active worker accepted empty handoff binding: %v", err)
+	}
+}
+
 func TestSecretsEnsureAddsMissingCredentialsWithoutRotation(t *testing.T) {
 	configRoot := filepath.Join(t.TempDir(), "rtk_cloud")
 	workspace := t.TempDir()
