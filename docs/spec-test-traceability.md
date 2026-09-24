@@ -1042,7 +1042,7 @@
 | `SPEC-CA-OPENAPI#consoleTestLabgetdevices` | `GET /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/devices` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `78acb3f0f297` |
 | `SPEC-CA-OPENAPI#consoleTestLabgetdevicesdeviceId` | `GET /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/devices/{deviceId}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `b760d8c561f5` |
 | `SPEC-CA-OPENAPI#consoleTestLabpostdevicesdeviceIdaction` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/manage/devices/{deviceId}/{action}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `2a0747a9fb85` |
-| `SPEC-CA-OPENAPI#createTestLabSession` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/sessions` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `02e43faf091d` |
+| `SPEC-CA-OPENAPI#createTestLabSession` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/sessions` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `8488cce0c038` |
 | `SPEC-CA-OPENAPI#executeTestLabAction` | `POST /api/developer/brand-clouds/{brandCloudID}/test-lab/sessions/{labID}/{action}` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-TESTLAB-001` | `996d3acffbaf` |
 | `SPEC-CA-OPENAPI#createScopedBrandCloudUpdatePlan` | `POST /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `2aef693e40a8` |
 | `SPEC-CA-OPENAPI#listScopedBrandCloudUpdatePlans` | `GET /api/developer/brand-clouds/{brandCloudID}/update-plans` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-OTA-001` | `42b98537ca47` |
