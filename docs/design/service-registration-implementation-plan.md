@@ -642,10 +642,13 @@ not a substitute for the authenticated device completion receipt.
 
 The producer seal requires a persisted, reviewed CDN operational export for
 the same organization and UTC month with no unresolved anomaly. A missing,
-failed or incomplete export leaves the period unsealed even when its customer
+failed or incomplete export blocks the producer seal even when its customer
 meter counts are zero. The export digest and receipt count are bound to the
-producer seal; DataStream delivery and collector qualification remain part of
-protected-environment activation. Product disable and release revoke preserve
+new producer seal. An immutable seal prepared by a pre-review build may be
+retried with its original payload only after a positive review is recorded;
+the historical payload is never rewritten. DataStream delivery and collector
+qualification remain part of protected-environment activation. Product
+disable and release revoke preserve
 objects and history until explicit
 physical deletion. Existing CDN URLs can remain usable for their bounded
 expiry, at most ten minutes, while new grants stop upon revocation. After
