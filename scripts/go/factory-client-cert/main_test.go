@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
 	"os"
 	"path/filepath"
@@ -70,6 +72,74 @@ func TestFactoryClientCertificateLifecycle(t *testing.T) {
 	}
 	if len(crl.RevokedCertificateEntries) != 1 || crl.RevokedCertificateEntries[0].SerialNumber.Cmp(cert.SerialNumber) != 0 {
 		t.Fatalf("revocation missing: %#v", crl.RevokedCertificateEntries)
+	}
+}
+
+func TestFactoryClientCAPublishUsesSelectedIngressNamespace(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dev", "pki", "factory-client-ca")
+	if err := initCA(dir, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishCA(filepath.Join(root, "dev"), dir, "bad_stack"); err == nil {
+		t.Fatal("invalid stack accepted")
+	}
+	if err := publishCA(filepath.Join(root, "dev"), dir, "rtk-dev"); err == nil {
+		t.Fatal("missing kubeconfig accepted")
+	}
+	kubeconfig := filepath.Join(root, "dev", "kube", "kubeconfig.yaml")
+	if err := os.MkdirAll(filepath.Dir(kubeconfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(kubeconfig, []byte("test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(root, "applied.json")
+	t.Setenv("FAKE_KUBECTL_OUTPUT", output)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	script := "#!/bin/sh\ncase \"$3\" in\n  get) test \"$4\" = namespace && test \"$5\" = rtk-dev-ingress ;;\n  apply) cat > \"$FAKE_KUBECTL_OUTPUT\" ;;\n  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := publishCA(filepath.Join(root, "dev"), dir, "rtk-dev"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var secret struct {
+		Metadata struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		t.Fatal(err)
+	}
+	if secret.Metadata.Name != "rtk-dev-factory-client-ca" || secret.Metadata.Namespace != "rtk-dev-ingress" {
+		t.Fatalf("wrong secret target: %+v", secret.Metadata)
+	}
+	if len(secret.Data) != 2 || secret.Data["ca.key"] != "" {
+		t.Fatalf("unexpected secret keys: %v", secret.Data)
+	}
+	for _, name := range []string{"ca.crt", "ca.crl"} {
+		want, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := base64.StdEncoding.DecodeString(secret.Data[name])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(want) {
+			t.Errorf("%s not published intact", name)
+		}
 	}
 }
 
