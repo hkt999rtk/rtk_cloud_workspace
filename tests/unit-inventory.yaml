@@ -420,6 +420,13 @@ cases:
       title: sharing defaults require explicit nonempty Product scope; whole cloud needs consent
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/developer-docs-cache.test.mjs#Developer%20Docs%20shares%20one%20download%20and%20refreshes%20after%20a%20day
+      module: cloud-admin-web
+      language: javascript
+      source: src/developer-docs-cache.test.mjs
+      title: Developer Docs shares one download and refreshes after a day
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/developer-docs.test.mjs#chapter%20navigation%20retains%20Cloud%20context%2C%20and%20sign-in%20returns%20to%20the%20requested%20chapter
       module: cloud-admin-web
       language: javascript
