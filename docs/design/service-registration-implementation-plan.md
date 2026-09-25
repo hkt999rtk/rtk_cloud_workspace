@@ -622,9 +622,13 @@ disable and release revoke preserve objects and history until explicit
 physical deletion. Existing CDN URLs can remain usable for their bounded
 expiry, at most ten minutes, while new grants stop upon revocation. After
 Product OTA disable, an authenticated device may report an already assigned
-deployment only with its recorded pre-disable artifact grant, matching frozen
-release, hash and size, within 48 hours after that URL expires. This does not
+deployment only with its previously issued artifact grant that passed an
+enabled Product-grant check, matching frozen release, hash and size, within
+48 hours after that URL expires. This does not
 issue another URL or assignment. A valid `downloaded` report creates its
 single receipt in the server acceptance month, including when that month is
 later than disable; the producer must seal that later month before Billing
-can charge it. The proposed OTA rates remain inactive.
+can charge it. A disable racing with the grant check/response is bounded by
+the issued URL's ten-minute expiry; the grant row records the checked Product
+revision and digest, not strict wall-clock precedence over disable. The
+proposed OTA rates remain inactive.
