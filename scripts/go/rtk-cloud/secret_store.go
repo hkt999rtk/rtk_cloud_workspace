@@ -71,11 +71,12 @@ func sensitiveEnvironmentPath(paths provisionPaths, category string, elements ..
 		return filepath.Join(parts...)
 	}
 	base := map[string]string{
-		"kube":         filepath.Join(activeSecretEnvironmentRoot, "kube"),
-		"certissuer":   filepath.Join(activeSecretEnvironmentRoot, "pki", "certissuer"),
-		"mqtt-tls":     filepath.Join(activeSecretEnvironmentRoot, "pki", "mqtt"),
-		"public-https": filepath.Join(activeSecretEnvironmentRoot, "pki", "public-https"),
-		"openbao":      filepath.Join(activeSecretEnvironmentRoot, "openbao"),
+		"kube":              filepath.Join(activeSecretEnvironmentRoot, "kube"),
+		"certissuer":        filepath.Join(activeSecretEnvironmentRoot, "pki", "certissuer"),
+		"mqtt-tls":          filepath.Join(activeSecretEnvironmentRoot, "pki", "mqtt"),
+		"public-https":      filepath.Join(activeSecretEnvironmentRoot, "pki", "public-https"),
+		"factory-client-ca": filepath.Join(activeSecretEnvironmentRoot, "pki", "factory-client-ca"),
+		"openbao":           filepath.Join(activeSecretEnvironmentRoot, "openbao"),
 	}[category]
 	if base == "" {
 		panic("unsupported sensitive path category: " + category)

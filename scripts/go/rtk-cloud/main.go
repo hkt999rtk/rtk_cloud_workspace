@@ -553,6 +553,7 @@ func runCheckCertificates(args []string) error {
 	accountDomain := firstNonEmpty(stackEnv["ACCOUNT_MANAGER_DOMAIN"], envFileValue(accountEnv, "ACCOUNT_MANAGER_DOMAIN"))
 	adminDomain := firstNonEmpty(stackEnv["CLOUD_ADMIN_DOMAIN"], envFileValue(adminEnv, "CLOUD_ADMIN_DOMAIN"))
 	loggerDomain := firstNonEmpty(stackEnv["CLOUD_LOGGER_DOMAIN"], loggerEnv["CLOUD_LOGGER_DOMAIN"], loggerState["CLOUD_LOGGER_DOMAIN"], "logger."+videoDomain)
+	factoryDomain := firstNonEmpty(stackEnv["FACTORY_ENROLL_DOMAIN"], "factory-enroll."+videoDomain)
 	targets := []struct {
 		name   string
 		domain string
@@ -563,6 +564,13 @@ func runCheckCertificates(args []string) error {
 		{"account-manager", accountDomain, filepath.Join(envRoot, "certificates", accountDomain)},
 		{"cloud-admin", adminDomain, filepath.Join(envRoot, "certificates", adminDomain)},
 		{"cloud-logger", loggerDomain, filepath.Join(envRoot, "certificates", loggerDomain)},
+	}
+	if stackEnv["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		targets = append(targets, struct {
+			name   string
+			domain string
+			dir    string
+		}{"factory-enroll", factoryDomain, filepath.Join(envRoot, "certificates", videoDomain)})
 	}
 	results := []certCheckResult{}
 	overall := "pass"

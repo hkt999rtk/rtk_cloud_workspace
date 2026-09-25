@@ -35,6 +35,7 @@ var generatedKeys = []string{
 	"CLOUD_STACK_NAME",
 	"VIDEO_CLOUD_DOMAIN",
 	"VIDEO_CLOUD_CERTISSUER_DOMAIN",
+	"FACTORY_ENROLL_DOMAIN",
 	"ACCOUNT_MANAGER_DOMAIN",
 	"CLOUD_ADMIN_DOMAIN",
 	"CLOUD_LOGGER_DOMAIN",
@@ -181,6 +182,9 @@ func Derive(values map[string]string) map[string]string {
 	out["CLOUD_STACK_NAME"] = stack
 	out["VIDEO_CLOUD_DOMAIN"] = stack + "." + dnsRoot
 	out["VIDEO_CLOUD_CERTISSUER_DOMAIN"] = "certissuer." + stack + "." + dnsRoot
+	if strings.TrimSpace(out["FACTORY_ENROLL_DOMAIN"]) == "" {
+		out["FACTORY_ENROLL_DOMAIN"] = "factory-enroll." + stack + "." + dnsRoot
+	}
 	out["ACCOUNT_MANAGER_DOMAIN"] = "account-manager." + stack + "." + dnsRoot
 	out["CLOUD_ADMIN_DOMAIN"] = "admin." + stack + "." + dnsRoot
 	out["CLOUD_LOGGER_DOMAIN"] = "logger." + stack + "." + dnsRoot
