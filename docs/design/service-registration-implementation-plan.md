@@ -580,3 +580,86 @@ provisioning. Exact wire schemas belong in OpenAPI before implementation.
 Phase 4 must define and test a maximum authorization-staleness window across
 token TTL, projection age, and active sessions before release. Until then,
 do not claim that grant removal immediately ends existing sessions.
+
+## 8. Product OTA Service And Billing Extension (2026-09-25)
+
+Status: target design approved for implementation in this worktree; no
+commercial OTA price is active and no staging CDN or invoice evidence is
+recorded by this section. This extends the existing optional-service plan
+without treating the source-level registration code as a deployed service.
+
+The canonical cross-repository contract is
+[Product OTA Delivery And Billing](../../repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md).
+It defines the data-plane, four authoritative meters, Product and device
+authorization, operational reconciliation, exact units, and activation gate.
+The shared [firmware campaign](../../repos/rtk_cloud_contracts_doc/firmware_campaign.md),
+[service registration](../../repos/rtk_cloud_contracts_doc/service_registration.md),
+[usage](../../repos/rtk_cloud_contracts_doc/billing_usage.md), and
+[pricing/invoicing](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md)
+contracts own their general boundaries. Video Cloud's
+[OTA implementation design](../../repos/rtk_video_cloud/docs/ota-billing-design.md)
+maps the contract to local paths and state. Billing's
+[OTA billing design](../../repos/rtk_billing/docs/ota-device-task-billing.md)
+owns pricing representation and invoice qualification. Cloud Admin's
+[pricing research](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)
+is a non-binding commercial reference.
+
+| Step | Owner and change | Done evidence |
+| --- | --- | --- |
+| 1. Contract first | Update the five canonical OTA/service/usage/pricing documents and this cross-repo plan; mark current source separately from target behavior. | Documentation links and workspace `docs-check` / `contracts-check` pass. |
+| 2. Product and service gate | Account Manager approves and registers `ota` with `mqtt` dependency; OTA runs independently with its own workload identity, readiness and lease. Cloud Admin uses the selected Product's `ota` service option to show the dashboard or explicit disabled message; the backend validates the latest revisioned grant before new OTA operations. | Suspended-first, lease loss, Product edit/migration, device grant and background dispatch tests. |
+| 3. Direct CDN delivery | Video Cloud emits path-scoped, at-most-ten-minute Akamai URLs for a private Linode/Akamai Object Storage origin; firmware downloads Range bytes directly and reports verified completion. | Staging CDN, private origin, Range, expiry, revocation and no-API-byte-proxy evidence. |
+| 4. Authoritative usage | Persist immutable first-assignment, first verified download, physical object write, and UTC-month byte-time receipts, each atomically paired with a shared Billing outbox fact; reconcile remote object inventory and CDN edge logs. | Database crash/replay, changed-payload rejection, object inventory, month-boundary and outbox-recovery tests. |
+| 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates. Account Manager's Platform seal lists every Product with an OTA-enabled grant revision before month end; producer and fact Products must be a subset of that historical set. Finance approves a future effective version only after staging qualification. | Missing-seal denial, producer-only unauthorized Product, retired/zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
+
+During migration, core keeps its existing OTA control-plane handlers and
+historical `ota/` objects until the dedicated service passes cutover checks.
+Before deploying the updated core with active OTA campaigns, operators must
+qualify CDN signing and private-origin delivery for those legacy objects;
+core does not serve firmware bytes through an internal GET endpoint. Without
+CDN configuration, it refuses a download grant. Historical core device
+reports retain their prior evidence and transition rules until cutover, while
+the registered billable service requires the verified SHA-256, size, and
+downloaded-before-installing sequence. The dedicated
+service writes new firmware only under `ota-billable-v1/`; its object inventory,
+write and storage receipts, and producer seal cover that namespace. Historical
+objects have no new upload-attempt evidence and must not be turned into
+retroactive charges. They require the separate documented legacy cleanup path.
+Device OTA requests after cutover must reach the dedicated service through a
+direct edge route that preserves verified client mTLS identity; core rejects a
+misrouted device request rather than forwarding it through an HTTP proxy.
+Before submitting the Platform monthly seal, Account Manager fences concurrent
+grant writes and verifies each historical grant digest. An empty verified OTA
+seal can close a zero-usage month only when the active rate version contains
+OTA rates alone; other priced services retain their usage-completeness gate.
+
+The proposed customer rates before tax are NT$96/1,000 assignments,
+NT$0.96/GiB accepted successful downloads, NT$0.96/GiB-month of stored OTA
+objects, and NT$144/million successful object creations. No additional
+OTA customer object-read or raw CDN egress charge is proposed. Akamai edge
+logs serve provider-cost reconciliation and anomaly investigation; they are
+not a substitute for the authenticated device completion receipt.
+
+The producer seal requires a persisted, reviewed CDN operational export for
+the same organization and UTC month with no unresolved anomaly. A missing,
+failed or incomplete export blocks the producer seal even when its customer
+meter counts are zero. The export digest and receipt count are bound to the
+new producer seal. An immutable seal prepared by a pre-review build may be
+retried with its original payload only after a positive review is recorded;
+the historical payload is never rewritten. DataStream delivery and collector
+qualification remain part of protected-environment activation. Product
+disable and release revoke preserve
+objects and history until explicit
+physical deletion. Existing CDN URLs can remain usable for their bounded
+expiry, at most ten minutes, while new grants stop upon revocation. After
+Product OTA disable, an authenticated device may report an already assigned
+deployment only with its previously issued artifact grant that passed an
+enabled Product-grant check, matching frozen release, hash and size, within
+48 hours after that URL expires. This does not
+issue another URL or assignment. A valid `downloaded` report creates its
+single receipt in the server acceptance month, including when that month is
+later than disable; the producer must seal that later month before Billing
+can charge it. A disable racing with the grant check/response is bounded by
+the issued URL's ten-minute expiry; the grant row records the checked Product
+revision and digest, not strict wall-clock precedence over disable. The
+proposed OTA rates remain inactive.

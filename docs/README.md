@@ -31,6 +31,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Canonical contract | Platform Root of Trust, Platform Admin bootstrap, CA hierarchy, certificate lifecycle, rollover, revocation, custody, and recovery. |
 | [Registered services target](../repos/rtk_cloud_contracts_doc/service_registration.md) | Draft contract | MQTT foundation, platform-authenticated service registration, and Product/device entitlement flow. |
 | [Registered services implementation plan](design/service-registration-implementation-plan.md) | Supporting note | Cross-repository implementation order, migration, and acceptance scenarios. |
+| [Product OTA delivery and billing contract](../repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md) | Draft contract | Independent OTA service, Product gating, CDN delivery, four usage meters, and source-complete invoice close. |
 | [lke-migration-inventory.md](lke-migration-inventory.md) | Supporting note | Historical LKE migration inventory and original gates; current deployment authority is the Deployment Operations Guide and provider-neutral architecture. |
 | [cost/README.md](cost/README.md) | Index | AWS cost estimation materials, including service mapping, sizing worksheet, pricing sources, and support-plan assumptions. |
 | [persistence-cache-refactor-roadmap.md](persistence-cache-refactor-roadmap.md) | Source | Cross-repo persistence boundary audit and Redis/cache-readiness issue roadmap. |

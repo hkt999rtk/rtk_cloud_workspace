@@ -21,6 +21,7 @@ sources:
   - { id: SPEC-CONTRACT-STREAMING, path: repos/rtk_cloud_contracts_doc/streaming.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
   - { id: SPEC-CONTRACT-MEDIA, path: repos/rtk_cloud_contracts_doc/snapshot_and_media.md, parser: markdown, authority: canonical, owner: rtk_video_cloud }
   - { id: SPEC-CONTRACT-FIRMWARE, path: repos/rtk_cloud_contracts_doc/firmware_campaign.md, parser: markdown, authority: proposed, owner: rtk_cloud_admin }
+  - { id: SPEC-CONTRACT-OTA-DELIVERY-BILLING, path: repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md, parser: markdown, authority: draft, owner: cloud_platform }
   - { id: SPEC-CONTRACT-LOGGING, path: repos/rtk_cloud_contracts_doc/service_logging.md, parser: markdown, authority: canonical, owner: rtk_cloud_logger }
   - { id: SPEC-CONTRACT-LOGGING-OPERATIONS, path: repos/rtk_cloud_contracts_doc/service_logging_operations.yaml, parser: operations, authority: canonical, owner: rtk_cloud_logger }
   - { id: SPEC-CONTRACT-BILLING-SERVICE, path: repos/rtk_cloud_contracts_doc/billing_service.md, parser: markdown, authority: canonical, owner: rtk_billing }
