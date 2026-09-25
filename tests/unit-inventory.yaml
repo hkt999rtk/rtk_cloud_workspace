@@ -532,6 +532,13 @@ cases:
       title: formal factory sequence is linked in every language and separates Test Lab
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#OTA%20dashboard%20eligibility%20follows%20the%20selected%20Product%20service
+      module: cloud-admin-web
+      language: javascript
+      source: src/firmware.test.mjs
+      title: OTA dashboard eligibility follows the selected Product service
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20campaign%20actions%20follow%20campaign%20state%20and%20permission
       module: cloud-admin-web
       language: javascript
