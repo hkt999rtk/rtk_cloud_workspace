@@ -114,6 +114,13 @@ cases:
       title: billing money treats TWD as a zero-decimal currency
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/billing.test.mjs#billing%20states%20and%20ledger%20reasons%20use%20customer-facing%20labels
+      module: cloud-admin-web
+      language: javascript
+      source: src/billing.test.mjs
+      title: billing states and ledger reasons use customer-facing labels
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/billing.test.mjs#consent%20evidence%20is%20versioned%20and%20digest-shaped
       module: cloud-admin-web
       language: javascript
