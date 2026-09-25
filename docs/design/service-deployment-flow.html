@@ -44,6 +44,7 @@
     <div class="eyebrow">RTK Cloud · deployment design</div>
     <h1>First trust is a deployment gate, not a runtime fallback.</h1>
     <p class="lede">A new environment creates one short-lived bootstrap leaf, installs the initial internal identities, proves each workload can use its own mTLS certificate, and only then enables MQTT and optional services. The bootstrap leaf is revoked, its CRL is acknowledged, and the session is sealed before normal operation.</p>
+    <p class="lede">The separate public factory hostname, client mTLS boundary and Product signing sequence are documented in the <a href="factory-enrollment-public-gateway.md">factory enrollment design</a>. Cloud Test Lab is a development test flow and is not for mass production.</p>
   </header>
   <div class="frame">
     <svg viewBox="0 0 1200 720" role="img" aria-labelledby="deployment-flow-title deployment-flow-desc">
