@@ -518,6 +518,13 @@ cases:
       title: evidence reporter writes stable evidence and preserves a prior passing case
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/factory-enrollment-docs.test.mjs#formal%20factory%20sequence%20is%20linked%20in%20every%20language%20and%20separates%20Test%20Lab
+      module: cloud-admin-web
+      language: javascript
+      source: src/factory-enrollment-docs.test.mjs
+      title: formal factory sequence is linked in every language and separates Test Lab
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20campaign%20actions%20follow%20campaign%20state%20and%20permission
       module: cloud-admin-web
       language: javascript
@@ -1064,6 +1071,13 @@ cases:
       language: javascript
       source: src/pro2-firmware-burner.test.mjs
       title: canceling a PRO2 burn stops the workflow instead of reporting completion
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/pro2-terms.test.mjs#PRO2%20terms%20translations%20remain%20tied%20to%20the%20reviewed%20English%20draft
+      module: cloud-admin-web
+      language: javascript
+      source: src/pro2-terms.test.mjs
+      title: PRO2 terms translations remain tied to the reviewed English draft
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/product-devices.test.mjs#device%20URLs%20require%20all%20three%20explicit%20identities

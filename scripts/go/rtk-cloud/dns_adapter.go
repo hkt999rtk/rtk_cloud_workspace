@@ -74,6 +74,9 @@ func buildGenericDNSPlan(cfg deploymentConfig) genericDNSPlan {
 	} {
 		records = append(records, dnsRecordSet{Name: item.host, Type: "A", Values: []string{"runtime:" + item.target}, TTL: ttl, Purpose: item.purpose})
 	}
+	if cfg.Values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		records = append(records, dnsRecordSet{Name: cfg.Values["FACTORY_ENROLL_DOMAIN"], Type: "A", Values: []string{"runtime:public-edge"}, TTL: ttl, Purpose: "factory-enrollment-mtls"})
+	}
 	return genericDNSPlan{RootDomain: root, Records: records}
 }
 

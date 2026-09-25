@@ -81,6 +81,7 @@ var deploymentEnvironmentKeys = keySet(
 	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
 	"PRIVACY_POLICY_URL", "GOOGLE_ANALYTICS_MEASUREMENT_ID",
 	"TEST_LAB_ENABLED",
+	"FACTORY_ENROLL_PUBLIC_ENABLED", "FACTORY_ENROLL_DOMAIN",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
@@ -89,6 +90,7 @@ var deploymentEnvironmentKeys = keySet(
 
 var deploymentEnvironmentServiceKeys = keySet(
 	"TEST_LAB_ENABLED",
+	"FACTORY_ENROLL_PUBLIC_ENABLED", "FACTORY_ENROLL_DOMAIN",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
@@ -775,6 +777,17 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	for k, v := range envIdentity {
 		values[k] = v
 	}
+	if strings.TrimSpace(values["FACTORY_ENROLL_DOMAIN"]) == "" {
+		values["FACTORY_ENROLL_DOMAIN"] = "factory-enroll." + values["CLOUD_STACK_NAME"] + "." + values["CLOUD_DNS_ROOT_DOMAIN"]
+	}
+	if enabled := values["FACTORY_ENROLL_PUBLIC_ENABLED"]; enabled != "" && enabled != "true" && enabled != "false" {
+		return deploymentConfig{}, errors.New("FACTORY_ENROLL_PUBLIC_ENABLED must be true or false")
+	}
+	if values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		if err := validateFactoryEnrollmentDomain(values["FACTORY_ENROLL_DOMAIN"], values["CLOUD_STACK_NAME"], values["CLOUD_DNS_ROOT_DOMAIN"]); err != nil {
+			return deploymentConfig{}, err
+		}
+	}
 	for k, v := range selection {
 		values[k] = v
 	}
@@ -912,6 +925,29 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		return deploymentConfig{}, err
 	}
 	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity, Storage: storage}, nil
+}
+
+func validateFactoryEnrollmentDomain(domain, stack, root string) error {
+	if len(domain) > 253 || !strings.HasSuffix(domain, "."+root) || domain == root || domain != strings.ToLower(domain) {
+		return errors.New("FACTORY_ENROLL_DOMAIN must be a lowercase hostname beneath CLOUD_DNS_ROOT_DOMAIN")
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return errors.New("FACTORY_ENROLL_DOMAIN contains an invalid DNS label")
+		}
+		for _, c := range label {
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return errors.New("FACTORY_ENROLL_DOMAIN contains an invalid DNS character")
+			}
+		}
+	}
+	base := stack + "." + root
+	for _, prefix := range []string{"", "device.", "certissuer.", "turnregistry.", "account-manager.", "admin.", "frontend.", "logger.", "turn.", "billing.", "payment-simulator."} {
+		if domain == prefix+base {
+			return errors.New("FACTORY_ENROLL_DOMAIN must be independent of existing service hostnames")
+		}
+	}
+	return nil
 }
 
 func validateDeploymentOTATrustedManifestKeys(raw string) error {
