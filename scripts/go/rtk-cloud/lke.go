@@ -751,7 +751,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.enableHttp=false",
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
-		"--set-json", lkeIngressNoIndexHelmValue(),
+		"--set-json", lkeIngressNoIndexHelmValue(env),
 		"--set", "controller.ingressClassResource.default=false",
 		"--set", "controller.replicaCount=" + lkeIngressReplicas(env),
 		"--set", "controller.resources.requests.cpu=" + firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_CPU"), env["LKE_INGRESS_REQUEST_CPU"], "500m"),
@@ -1263,10 +1263,15 @@ func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA 
 
 func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
 	httpRoutes := []lkePublicHTTPSRoute{}
+	frontendRoutes := []lkePublicHTTPSRoute{}
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	factoryMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
+		if !lkeDisableSearchIndexing(env) && route.Service == "frontend" && route.Namespace == lkeNamespaceName(env, "frontend") {
+			frontendRoutes = append(frontendRoutes, route)
+			continue
+		}
 		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" && route.Host == env["FACTORY_ENROLL_DOMAIN"] {
 			factoryMTLSRoutes = append(factoryMTLSRoutes, route)
 			continue
@@ -1283,16 +1288,19 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	}
 	manifests := []string{}
 	if len(httpRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", lkePrivateIngressAnnotations(env, "")))
+	}
+	if len(frontendRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-frontend", frontendRoutes, "", ""))
 	}
 	if len(deviceMTLSRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkeDeviceMTLSIngressAnnotations(env)))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeDeviceMTLSIngressAnnotations(env))))
 	}
 	if len(factoryMTLSRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-factory-mtls", factoryMTLSRoutes, "", lkeFactoryMTLSIngressAnnotations(env)))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-factory-mtls", factoryMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeFactoryMTLSIngressAnnotations(env))))
 	}
 	if len(httpsRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", lkePrivateIngressAnnotations(env, "")))
 	}
 	return manifests
 }
@@ -10018,12 +10026,14 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	}
 	if workload.Key == "frontend" {
 		extraEnv += fmt.Sprintf(`            - name: DISABLE_SEARCH_INDEXING
-              value: "true"
+              value: %q
+            - name: PUBLIC_BASE_URL
+              value: %q
             - name: SERVICE_LOGIN_URL
               value: %q
             - name: GOOGLE_ANALYTICS_MEASUREMENT_ID
               value: %q
-`, firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"), lkeEnvValue(env, "GOOGLE_ANALYTICS_MEASUREMENT_ID"))
+`, strconv.FormatBool(lkeDisableSearchIndexing(env)), lkeEnvValue(env, "PUBLIC_BASE_URL"), firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"), lkeEnvValue(env, "GOOGLE_ANALYTICS_MEASUREMENT_ID"))
 	}
 	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
 		envFrom = `          envFrom:
