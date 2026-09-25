@@ -607,10 +607,10 @@ is a non-binding commercial reference.
 | Step | Owner and change | Done evidence |
 | --- | --- | --- |
 | 1. Contract first | Update the five canonical OTA/service/usage/pricing documents and this cross-repo plan; mark current source separately from target behavior. | Documentation links and workspace `docs-check` / `contracts-check` pass. |
-| 2. Product and service gate | Account Manager approves and registers `ota` with `mqtt` dependency; OTA runs independently with its own workload identity, readiness and lease. Cloud Admin uses the selected Product's `ota` service option to show the dashboard or explicit disabled message; the backend validates the latest revisioned grant before OTA operations. | Suspended-first, lease loss, Product edit/migration, device grant and background dispatch tests. |
+| 2. Product and service gate | Account Manager approves and registers `ota` with `mqtt` dependency; OTA runs independently with its own workload identity, readiness and lease. Cloud Admin uses the selected Product's `ota` service option to show the dashboard or explicit disabled message; the backend validates the latest revisioned grant before new OTA operations. | Suspended-first, lease loss, Product edit/migration, device grant and background dispatch tests. |
 | 3. Direct CDN delivery | Video Cloud emits path-scoped, at-most-ten-minute Akamai URLs for a private Linode/Akamai Object Storage origin; firmware downloads Range bytes directly and reports verified completion. | Staging CDN, private origin, Range, expiry, revocation and no-API-byte-proxy evidence. |
 | 4. Authoritative usage | Persist immutable first-assignment, first verified download, physical object write, and UTC-month byte-time receipts, each atomically paired with a shared Billing outbox fact; reconcile remote object inventory and CDN edge logs. | Database crash/replay, changed-payload rejection, object inventory, month-boundary and outbox-recovery tests. |
-| 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates; blocks close on missing expected Product or producer evidence. Finance approves a future effective version only after staging qualification. | Missing-seal denial, zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
+| 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates. Account Manager's Platform seal lists every Product with an OTA-enabled grant revision before month end; producer and fact Products must be a subset of that historical set. Finance approves a future effective version only after staging qualification. | Missing-seal denial, producer-only unauthorized Product, retired/zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
 
 The proposed customer rates before tax are NT$96/1,000 assignments,
 NT$0.96/GiB accepted successful downloads, NT$0.96/GiB-month of stored OTA
@@ -620,4 +620,11 @@ logs serve provider-cost reconciliation and anomaly investigation; they are
 not a substitute for the authenticated device completion receipt. Product
 disable and release revoke preserve objects and history until explicit
 physical deletion. Existing CDN URLs can remain usable for their bounded
-expiry, at most ten minutes, while new grants stop upon revocation.
+expiry, at most ten minutes, while new grants stop upon revocation. After
+Product OTA disable, an authenticated device may report an already assigned
+deployment only with its recorded pre-disable artifact grant, matching frozen
+release, hash and size, within 48 hours after that URL expires. This does not
+issue another URL or assignment. A valid `downloaded` report creates its
+single receipt in the server acceptance month, including when that month is
+later than disable; the producer must seal that later month before Billing
+can charge it. The proposed OTA rates remain inactive.
