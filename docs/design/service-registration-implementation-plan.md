@@ -612,6 +612,20 @@ is a non-binding commercial reference.
 | 4. Authoritative usage | Persist immutable first-assignment, first verified download, physical object write, and UTC-month byte-time receipts, each atomically paired with a shared Billing outbox fact; reconcile remote object inventory and CDN edge logs. | Database crash/replay, changed-payload rejection, object inventory, month-boundary and outbox-recovery tests. |
 | 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates. Account Manager's Platform seal lists every Product with an OTA-enabled grant revision before month end; producer and fact Products must be a subset of that historical set. Finance approves a future effective version only after staging qualification. | Missing-seal denial, producer-only unauthorized Product, retired/zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
 
+During migration, core keeps its existing OTA handlers and historical `ota/`
+objects until the dedicated service passes cutover checks. The dedicated
+service writes new firmware only under `ota-billable-v1/`; its object inventory,
+write and storage receipts, and producer seal cover that namespace. Historical
+objects have no new upload-attempt evidence and must not be turned into
+retroactive charges. They require the separate documented legacy cleanup path.
+Device OTA requests after cutover must reach the dedicated service through a
+direct edge route that preserves verified client mTLS identity; core rejects a
+misrouted device request rather than forwarding it through an HTTP proxy.
+Before submitting the Platform monthly seal, Account Manager fences concurrent
+grant writes and verifies each historical grant digest. An empty verified OTA
+seal can close a zero-usage month only when the active rate version contains
+OTA rates alone; other priced services retain their usage-completeness gate.
+
 The proposed customer rates before tax are NT$96/1,000 assignments,
 NT$0.96/GiB accepted successful downloads, NT$0.96/GiB-month of stored OTA
 objects, and NT$144/million successful object creations. No additional
