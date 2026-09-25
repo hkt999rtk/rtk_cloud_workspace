@@ -140,6 +140,7 @@ CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 CLOUD_STACK_NAME=video-cloud-staging
 VIDEO_CLOUD_DOMAIN=video-cloud-staging.realtekconnect.com
 VIDEO_CLOUD_CERTISSUER_DOMAIN=certissuer.video-cloud-staging.realtekconnect.com
+FACTORY_ENROLL_DOMAIN=factory-enroll.video-cloud-staging.realtekconnect.com
 ACCOUNT_MANAGER_DOMAIN=account-manager.video-cloud-staging.realtekconnect.com
 CLOUD_ADMIN_DOMAIN=admin.video-cloud-staging.realtekconnect.com
 CLOUD_LOGGER_DOMAIN=logger.video-cloud-staging.realtekconnect.com
