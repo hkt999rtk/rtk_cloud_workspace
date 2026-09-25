@@ -4298,6 +4298,7 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 
 func isSafeLKEOperatorStackOverride(key string) bool {
 	safeRuntimeKeys := map[string]bool{
+		"FACTORY_ENROLL_PUBLIC_ENABLED":          true,
 		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": true,
 		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":     true,
 		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":  true,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFactoryClientCertificateLifecycle(t *testing.T) {
@@ -140,6 +141,89 @@ func TestFactoryClientCAPublishUsesSelectedIngressNamespace(t *testing.T) {
 		if string(got) != string(want) {
 			t.Errorf("%s not published intact", name)
 		}
+	}
+}
+
+func TestFactoryClientCAPublishRejectsStaleOrUnrelatedCRL(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dev", "pki", "factory-client-ca")
+	other := filepath.Join(root, "other", "pki", "factory-client-ca")
+	for _, item := range []struct{ dir, environment string }{{dir, "dev"}, {other, "other"}} {
+		if err := initCA(item.dir, item.environment); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ca, err := os.ReadFile(filepath.Join(dir, "ca.crt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	crl, err := os.ReadFile(filepath.Join(dir, "ca.crl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCRL, err := os.ReadFile(filepath.Join(other, "ca.crl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validatePublishTrust(ca, crl, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		ca, crl []byte
+		at      time.Time
+	}{
+		{"expired", ca, crl, time.Now().Add(8 * 24 * time.Hour)},
+		{"unrelated", ca, otherCRL, time.Now().UTC()},
+		{"malformed", ca, []byte("not PEM"), time.Now().UTC()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validatePublishTrust(tc.ca, tc.crl, tc.at); err == nil {
+				t.Fatal("invalid trust accepted")
+			}
+		})
+	}
+}
+
+func TestFactoryClientCertificateRejectsUnsafeIssuance(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dev", "pki", "factory-client-ca")
+	if err := run([]string{"init", "--environment", "dev", "--config-root", root}); err != nil {
+		t.Fatal(err)
+	}
+	csr := filepath.Join(root, "bad.csr")
+	if err := os.WriteFile(csr, []byte("not a CSR"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cloud := "1b276960-4e2b-4d64-9422-c2dba64107e6"
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"missing command", nil},
+		{"unknown command", []string{"unknown", "--environment", "dev", "--config-root", root}},
+		{"invalid environment", []string{"sign", "--environment", "../prod", "--config-root", root}},
+		{"invalid cloud", []string{"sign", "--environment", "dev", "--config-root", root, "--csr", csr, "--cloud-id", "other", "--factory-id", "line-a", "--out", filepath.Join(root, "out.crt")}},
+		{"invalid factory", []string{"sign", "--environment", "dev", "--config-root", root, "--csr", csr, "--cloud-id", cloud, "--factory-id", "../other", "--out", filepath.Join(root, "out.crt")}},
+		{"CA overwrite", []string{"sign", "--environment", "dev", "--config-root", root, "--csr", csr, "--cloud-id", cloud, "--factory-id", "line-a", "--out", filepath.Join(dir, "ca.key")}},
+		{"invalid CSR", []string{"sign", "--environment", "dev", "--config-root", root, "--csr", csr, "--cloud-id", cloud, "--factory-id", "line-a", "--out", filepath.Join(root, "out.crt")}},
+		{"invalid serial", []string{"revoke", "--environment", "dev", "--config-root", root, "--serial", "invalid"}},
+		{"unknown serial", []string{"revoke", "--environment", "dev", "--config-root", root, "--serial", "abc123"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := run(tc.args); err == nil {
+				t.Fatal("unsafe request accepted")
+			}
+		})
+	}
+	if err := run([]string{"refresh-crl", "--environment", "dev", "--config-root", root}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "registry.json"), []byte("broken JSON"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"refresh-crl", "--environment", "dev", "--config-root", root}); err == nil {
+		t.Fatal("corrupt registry accepted")
 	}
 }
 

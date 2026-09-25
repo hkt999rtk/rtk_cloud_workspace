@@ -942,7 +942,7 @@ func validateFactoryEnrollmentDomain(domain, stack, root string) error {
 		}
 	}
 	base := stack + "." + root
-	for _, prefix := range []string{"", "device.", "certissuer.", "turnregistry.", "account-manager.", "admin.", "frontend.", "logger.", "turn."} {
+	for _, prefix := range []string{"", "device.", "certissuer.", "turnregistry.", "account-manager.", "admin.", "frontend.", "logger.", "turn.", "billing.", "payment-simulator."} {
 		if domain == prefix+base {
 			return errors.New("FACTORY_ENROLL_DOMAIN must be independent of existing service hostnames")
 		}

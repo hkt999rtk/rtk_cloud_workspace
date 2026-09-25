@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/x509"
@@ -117,6 +118,9 @@ func publishCA(environmentRoot, dir, stack string) error {
 	if len(ca) == 0 || len(crl) == 0 {
 		return errors.New("factory client CA or CRL is empty")
 	}
+	if err := validatePublishTrust(ca, crl, time.Now().UTC()); err != nil {
+		return err
+	}
 	manifest, err := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": stack + "-factory-client-ca", "namespace": namespace}, "type": "Opaque", "data": map[string]string{"ca.crt": base64.StdEncoding.EncodeToString(ca), "ca.crl": base64.StdEncoding.EncodeToString(crl)}})
 	if err != nil {
 		return err
@@ -125,6 +129,26 @@ func publishCA(environmentRoot, dir, stack string) error {
 	apply.Stdin = strings.NewReader(string(manifest))
 	if output, err := apply.CombinedOutput(); err != nil {
 		return fmt.Errorf("publish factory client trust: %w: %s", err, output)
+	}
+	return nil
+}
+
+func validatePublishTrust(caPEM, crlPEM []byte, now time.Time) error {
+	caBlock, _ := pem.Decode(bytes.TrimSpace(caPEM))
+	crlBlock, _ := pem.Decode(bytes.TrimSpace(crlPEM))
+	if caBlock == nil || caBlock.Type != "CERTIFICATE" || crlBlock == nil || crlBlock.Type != "X509 CRL" {
+		return errors.New("factory client CA and CRL must be valid PEM")
+	}
+	ca, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil || !ca.IsCA || now.Before(ca.NotBefore) || !now.Before(ca.NotAfter) {
+		return errors.New("factory client CA is invalid or expired")
+	}
+	crl, err := x509.ParseRevocationList(crlBlock.Bytes)
+	if err != nil || now.Before(crl.ThisUpdate) || !now.Before(crl.NextUpdate) {
+		return errors.New("factory client CRL is invalid or expired; refresh it before publication")
+	}
+	if err := crl.CheckSignatureFrom(ca); err != nil {
+		return fmt.Errorf("factory client CRL signature: %w", err)
 	}
 	return nil
 }

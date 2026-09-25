@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -114,12 +116,27 @@ func TestFactoryEnrollmentDNSOnlyWhenEnabled(t *testing.T) {
 
 func TestFactoryEnrollmentDomainMustBeIndependent(t *testing.T) {
 	const stack, root = "video-cloud-dev", "example.test"
-	for _, domain := range []string{"video-cloud-dev.example.test", "admin.video-cloud-dev.example.test", "device.video-cloud-dev.example.test"} {
+	for _, domain := range []string{"video-cloud-dev.example.test", "admin.video-cloud-dev.example.test", "device.video-cloud-dev.example.test", "billing.video-cloud-dev.example.test", "payment-simulator.video-cloud-dev.example.test"} {
 		if err := validateFactoryEnrollmentDomain(domain, stack, root); err == nil {
 			t.Fatalf("reserved hostname accepted: %s", domain)
 		}
 	}
 	if err := validateFactoryEnrollmentDomain("factory-enroll.video-cloud-dev.example.test", stack, root); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFactoryEnrollmentEnableFlagSurvivesLKECompatibilityWrite(t *testing.T) {
+	root := t.TempDir()
+	env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev", "CLOUD_DNS_ROOT_DOMAIN": "example.test", "FACTORY_ENROLL_DOMAIN": "factory-enroll.video-cloud-dev.example.test", "FACTORY_ENROLL_PUBLIC_ENABLED": "true"}
+	if err := writeLKECompatibilityArtifacts(provisionPaths{EnvRoot: root}, env); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "env", "stack.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "FACTORY_ENROLL_PUBLIC_ENABLED=true") {
+		t.Fatalf("public enablement lost: %s", raw)
 	}
 }
