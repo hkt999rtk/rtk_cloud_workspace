@@ -522,6 +522,11 @@ and the controller must revoke the bootstrap leaf, publish and acknowledge its
 CRL, and seal the session before optional services start. The session variable
 is removed after sealing; it is not a runtime credential.
 
+The customer-facing manufacturing boundary and dedicated factory hostname are
+shown in the [public factory enrollment sequence](factory-enrollment-public-gateway.md).
+Cloud Test Lab remains a development-only test flow and is not a mass-production
+enrollment path.
+
 <iframe src="service-deployment-flow.html" title="Service deployment first-trust flow" style="width:100%;height:760px;border:1px solid #c8ced8;background:#f5f5f5" loading="lazy"></iframe>
 
 ## 6. Acceptance Scenarios

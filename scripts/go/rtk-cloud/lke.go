@@ -644,6 +644,11 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err := lkeCopyExistingDeviceMTLSAppCASecret(env); err != nil {
 		return err
 	}
+	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		if err := lkeApplyFactoryMTLSCASecret(paths, env); err != nil {
+			return err
+		}
+	}
 	for _, manifest := range lkePublicHTTPSBridgeServiceManifests(env, routes) {
 		if err := kubectlApply(manifest); err != nil {
 			return err
@@ -746,7 +751,7 @@ func lkeInstallIngressNginx(env map[string]string) error {
 		"--set", "controller.service.enableHttp=false",
 		"--set", "controller.allowSnippetAnnotations=true",
 		"--set", "controller.config.annotations-risk-level=Critical",
-		"--set-json", lkeIngressNoIndexHelmValue(),
+		"--set-json", lkeIngressNoIndexHelmValue(env),
 		"--set", "controller.ingressClassResource.default=false",
 		"--set", "controller.replicaCount=" + lkeIngressReplicas(env),
 		"--set", "controller.resources.requests.cpu=" + firstNonEmpty(os.Getenv("LKE_INGRESS_REQUEST_CPU"), env["LKE_INGRESS_REQUEST_CPU"], "500m"),
@@ -793,6 +798,9 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 		{Host: lkePaymentSimulatorPublicDomain(env), Namespace: lkeNamespaceName(env, "billing"), Service: "payment-simulator", ServicePort: 80, TargetPort: 8081},
 		{Host: env["CLOUD_ADMIN_DOMAIN"], Namespace: lkeNamespaceName(env, "admin"), Service: "cloud-admin", ServicePort: 80, TargetPort: envIntDefault("LKE_CLOUD_ADMIN_PORT", 8080)},
 		{Host: lkeFrontendPublicDomain(env), Namespace: lkeNamespaceName(env, "frontend"), Service: "frontend", ServicePort: 80, TargetPort: envIntDefault("LKE_FRONTEND_PORT", 8080)},
+	}
+	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		routes = append(routes, lkePublicHTTPSRoute{Host: env["FACTORY_ENROLL_DOMAIN"], Path: "/v1/factory/enroll", Exact: true, Namespace: videoNS, Service: "factoryenroll", ServicePort: 80, TargetPort: 18443})
 	}
 	if lkeWebRTCServiceEdgeEnabled(env) {
 		for _, host := range []string{videoDomain, deviceDomain} {
@@ -1255,9 +1263,19 @@ func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA 
 
 func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
 	httpRoutes := []lkePublicHTTPSRoute{}
+	frontendRoutes := []lkePublicHTTPSRoute{}
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
+	factoryMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
+		if !lkeDisableSearchIndexing(env) && route.Service == "frontend" && route.Namespace == lkeNamespaceName(env, "frontend") {
+			frontendRoutes = append(frontendRoutes, route)
+			continue
+		}
+		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" && route.Host == env["FACTORY_ENROLL_DOMAIN"] {
+			factoryMTLSRoutes = append(factoryMTLSRoutes, route)
+			continue
+		}
 		if lkeIsDeviceMTLSRoute(env, route) {
 			deviceMTLSRoutes = append(deviceMTLSRoutes, route)
 			continue
@@ -1270,13 +1288,19 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	}
 	manifests := []string{}
 	if len(httpRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", lkePrivateIngressAnnotations(env, "")))
+	}
+	if len(frontendRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-frontend", frontendRoutes, "", ""))
 	}
 	if len(deviceMTLSRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkeDeviceMTLSIngressAnnotations(env)))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeDeviceMTLSIngressAnnotations(env))))
+	}
+	if len(factoryMTLSRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-factory-mtls", factoryMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeFactoryMTLSIngressAnnotations(env))))
 	}
 	if len(httpsRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", lkePrivateIngressAnnotations(env, "")))
 	}
 	return manifests
 }
@@ -1300,7 +1324,70 @@ func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
 `, lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env))
 }
 
+func lkeFactoryMTLSIngressAnnotations(env map[string]string) string {
+	return fmt.Sprintf(`    nginx.ingress.kubernetes.io/auth-tls-secret: %q
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "1"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: "/v1/factory/public-enroll"
+`, lkeIngressNamespace(env)+"/"+lkeFactoryMTLSCASecretName(env))
+}
+
+func lkeFactoryMTLSCASecretName(env map[string]string) string {
+	return lkeName(firstNonEmpty(env["CLOUD_STACK_NAME"], "video-cloud-staging")) + "-factory-client-ca"
+}
+
+func lkeApplyFactoryMTLSCASecret(paths provisionPaths, env map[string]string) error {
+	root := sensitiveEnvironmentPath(paths, "factory-client-ca")
+	ca, err := os.ReadFile(filepath.Join(root, "ca.crt"))
+	if err != nil {
+		return fmt.Errorf("read factory client CA certificate: %w", err)
+	}
+	crl, err := os.ReadFile(filepath.Join(root, "ca.crl"))
+	if err != nil {
+		return fmt.Errorf("read factory client certificate revocation list: %w", err)
+	}
+	if err := validateFactoryClientTrust(ca, crl, time.Now().UTC()); err != nil {
+		return err
+	}
+	manifest := fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+data:
+  ca.crt: %s
+  ca.crl: %s
+`, lkeFactoryMTLSCASecretName(env), lkeIngressNamespace(env), base64.StdEncoding.EncodeToString(ca), base64.StdEncoding.EncodeToString(crl))
+	return kubectlApply(manifest)
+}
+
+func validateFactoryClientTrust(caPEM, crlPEM []byte, now time.Time) error {
+	caBlock, _ := pem.Decode(bytes.TrimSpace(caPEM))
+	crlBlock, _ := pem.Decode(bytes.TrimSpace(crlPEM))
+	if caBlock == nil || caBlock.Type != "CERTIFICATE" || crlBlock == nil || crlBlock.Type != "X509 CRL" {
+		return errors.New("factory client CA and CRL must be valid PEM")
+	}
+	ca, err := x509.ParseCertificate(caBlock.Bytes)
+	if err != nil || !ca.IsCA || now.Before(ca.NotBefore) || !now.Before(ca.NotAfter) {
+		return errors.New("factory client CA is invalid or expired")
+	}
+	crl, err := x509.ParseRevocationList(crlBlock.Bytes)
+	if err != nil || now.Before(crl.ThisUpdate) || !now.Before(crl.NextUpdate) {
+		return errors.New("factory client CRL is invalid or expired; refresh it before deployment")
+	}
+	if err := crl.CheckSignatureFrom(ca); err != nil {
+		return fmt.Errorf("factory client CRL signature: %w", err)
+	}
+	return nil
+}
+
 func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []lkePublicHTTPSRoute, backendProtocol string, extraAnnotations string) string {
+	redirect := "false"
+	if name == "video-cloud-staging-factory-mtls" {
+		redirect = "true"
+	}
 	var rules strings.Builder
 	hostOrder := make([]string, 0, len(routes))
 	routesByHost := make(map[string][]lkePublicHTTPSRoute, len(routes))
@@ -1350,8 +1437,8 @@ metadata:
     rtk.realtek.com/provider: lke
     rtk.realtek.com/stack: %s
   annotations:
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: %q
+    nginx.ingress.kubernetes.io/force-ssl-redirect: %q
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
@@ -1364,7 +1451,7 @@ spec:
       hosts:
 %s
   rules:
-%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
+%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
 }
 
 func lkePublicHTTPSTLSHostsYAML(routes []lkePublicHTTPSRoute) string {
@@ -4219,6 +4306,7 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 
 func isSafeLKEOperatorStackOverride(key string) bool {
 	safeRuntimeKeys := map[string]bool{
+		"FACTORY_ENROLL_PUBLIC_ENABLED":          true,
 		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": true,
 		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":     true,
 		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":  true,
@@ -9928,6 +10016,9 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
             - name: PRIVACY_POLICY_URL
               value: %q
 `, lkeAccountManagerInternalURL(env), "http://video-cloud-api."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeSDKPortalBaseURL(env), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), "http://factoryenroll."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:80", lkeBillingInternalURL(env), lkeGrafanaInternalURL(env), lkeGrafanaDashboardPath(env), lkeEnvValue(env, "PRIVACY_POLICY_URL"))
+		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+			extraEnv += fmt.Sprintf("            - name: FACTORY_ENROLL_PUBLIC_BASE_URL\n              value: %q\n", "https://"+env["FACTORY_ENROLL_DOMAIN"])
+		}
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
@@ -9935,12 +10026,14 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	}
 	if workload.Key == "frontend" {
 		extraEnv += fmt.Sprintf(`            - name: DISABLE_SEARCH_INDEXING
-              value: "true"
+              value: %q
+            - name: PUBLIC_BASE_URL
+              value: %q
             - name: SERVICE_LOGIN_URL
               value: %q
             - name: GOOGLE_ANALYTICS_MEASUREMENT_ID
               value: %q
-`, firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"), lkeEnvValue(env, "GOOGLE_ANALYTICS_MEASUREMENT_ID"))
+`, strconv.FormatBool(lkeDisableSearchIndexing(env)), lkeEnvValue(env, "PUBLIC_BASE_URL"), firstNonEmpty(lkeEnvValue(env, "SERVICE_LOGIN_URL"), "https://"+env["CLOUD_ADMIN_DOMAIN"]+"/login"), lkeEnvValue(env, "GOOGLE_ANALYTICS_MEASUREMENT_ID"))
 	}
 	if workload.Key == "frontend" && lkeFrontendSDKDownloadsEnabled(env) {
 		envFrom = `          envFrom:

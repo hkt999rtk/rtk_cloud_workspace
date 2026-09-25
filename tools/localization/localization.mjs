@@ -4,6 +4,12 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
 
 const REQUIRED_LOCALES = ['en', 'zh-TW', 'zh-CN'];
+const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const canonicalJSON = value => Array.isArray(value)
+  ? value.map(canonicalJSON)
+  : value !== null && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(key => [key, canonicalJSON(value[key])]))
+    : value;
 
 export function sourceHash(entry) {
   const canonical = JSON.stringify({
@@ -15,13 +21,14 @@ export function sourceHash(entry) {
   return createHash('sha256').update(canonical).digest('hex');
 }
 
-export function fingerprint(entry, locale, policyVersion) {
-  return createHash('sha256').update(JSON.stringify({
+export function fingerprint(entry, locale, catalog) {
+  return digest({
     key: entry.key,
     sourceHash: sourceHash(entry),
     locale,
-    policyVersion,
-  })).digest('hex');
+    policyVersion: catalog.policyVersion,
+    glossaryHash: digest(canonicalJSON(catalog.glossary || {})),
+  });
 }
 
 export function placeholders(text) {
@@ -32,6 +39,7 @@ export function validateCatalog(catalog) {
   const errors = [];
   if (!catalog || catalog.schemaVersion !== 1) errors.push('catalog schemaVersion must be 1');
   if (catalog?.sourceLocale !== 'en') errors.push('sourceLocale must be en');
+  if (!Number.isInteger(catalog?.policyVersion) || catalog.policyVersion < 1) errors.push('policyVersion must be a positive integer');
   if (!Array.isArray(catalog?.strings)) errors.push('strings must be an array');
   const seen = new Set();
   for (const entry of catalog?.strings || []) {
@@ -55,6 +63,7 @@ export function validateTranslations(catalog, translation) {
     if (!entry) { errors.push(`${key}: no source string`); continue; }
     if (!['draft', 'approved'].includes(value.status)) errors.push(`${key}: invalid status`);
     if (value.sourceHash !== sourceHash(entry)) errors.push(`${key}: source checksum is stale`);
+    if (value.fingerprint !== fingerprint(entry, translation.locale, catalog)) errors.push(`${key}: translation fingerprint is stale`);
     if (JSON.stringify(placeholders(value.text)) !== JSON.stringify(placeholders(entry.source))) errors.push(`${key}: placeholders do not match source`);
   }
   return errors;
@@ -83,7 +92,7 @@ async function status(catalogPath, translationsDir, requireApproved = false) {
       const value = translation.entries?.[entry.key];
       if (!value) continue;
       summary[translation.locale].missing -= 1;
-      if (value.sourceHash !== sourceHash(entry)) summary[translation.locale].stale += 1;
+      if (value.sourceHash !== sourceHash(entry) || value.fingerprint !== fingerprint(entry, translation.locale, catalog)) summary[translation.locale].stale += 1;
       if (value.status === 'approved') summary[translation.locale].approved += 1;
       if (value.status === 'draft') summary[translation.locale].draft += 1;
     }
@@ -111,7 +120,7 @@ async function translate(catalogPath, translationsDir, locale) {
   try { translation = await readJSON(outputPath); } catch { translation = { schemaVersion: 1, locale, entries: {} }; }
   const needed = catalog.strings.filter(entry => {
     const current = translation.entries[entry.key];
-    return !current || current.sourceHash !== sourceHash(entry);
+    return !current || current.sourceHash !== sourceHash(entry) || current.fingerprint !== fingerprint(entry, locale, catalog);
   });
   if (!needed.length) { console.log(`No ${locale} strings need translation.`); return; }
   const response = await fetch('https://api.openai.com/v1/responses', {
@@ -149,7 +158,7 @@ async function translate(catalogPath, translationsDir, locale) {
     const text = byKey.get(entry.key);
     if (!text) throw new Error(`OpenAI response omitted ${entry.key}`);
     if (JSON.stringify(placeholders(text)) !== JSON.stringify(placeholders(entry.source))) throw new Error(`${entry.key}: translated placeholders do not match source`);
-    translation.entries[entry.key] = { sourceHash: sourceHash(entry), fingerprint: fingerprint(entry, locale, catalog.policyVersion || 1), text, status: 'draft' };
+    translation.entries[entry.key] = { sourceHash: sourceHash(entry), fingerprint: fingerprint(entry, locale, catalog), text, status: 'draft' };
   }
   await writeJSON(outputPath, translation);
   console.log(`Wrote ${needed.length} ${locale} draft translations to ${outputPath}`);

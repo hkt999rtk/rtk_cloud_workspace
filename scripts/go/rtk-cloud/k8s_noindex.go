@@ -1,9 +1,12 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
-// All managed environments are private previews until explicitly approved for
-// search indexing. Enforce at the TLS ingress, including non-HTML responses.
+// Managed environments remain private previews until indexing is explicitly
+// enabled. Enforce at the TLS ingress, including non-HTML responses.
 const lkeNoIndexHeader = `more_set_headers "X-Robots-Tag: noindex, nofollow, noarchive, nosnippet, noimageindex";`
 
 const lkeNoIndexServerSnippet = lkeNoIndexHeader + `
@@ -16,13 +19,37 @@ location ~* ^/(?:sitemap[^/]*\.xml(?:\.gz)?|sites\.xml)$ {
 }
 `
 
-func lkeIngressNoIndexHelmValue() string {
+func lkeIngressNoIndexHelmValue(env map[string]string) string {
 	// JSON preserves commas and escaped newlines through Helm's argument parser.
-	value, _ := json.Marshal(map[string]string{
+	config := map[string]string{
 		"allow-snippet-annotations": "true",
 		"annotations-risk-level":    "Critical",
-		"server-snippet":            lkeNoIndexServerSnippet,
-		"location-snippet":          lkeNoIndexHeader,
-	})
+		"server-snippet":            "",
+		"location-snippet":          "",
+	}
+	if lkeDisableSearchIndexing(env) {
+		config["server-snippet"] = lkeNoIndexServerSnippet
+		config["location-snippet"] = lkeNoIndexHeader
+	}
+	value, _ := json.Marshal(config)
 	return "controller.config=" + string(value)
+}
+
+func lkeDisableSearchIndexing(env map[string]string) bool {
+	return lkeEnvValue(env, "DISABLE_SEARCH_INDEXING") != "false"
+}
+
+func lkePrivateIngressAnnotations(env map[string]string, existing string) string {
+	if lkeDisableSearchIndexing(env) {
+		return existing
+	}
+	serverSnippet := "    nginx.ingress.kubernetes.io/server-snippet: |\n      " +
+		strings.ReplaceAll(strings.TrimSuffix(lkeNoIndexServerSnippet, "\n"), "\n", "\n      ") + "\n"
+	const locationSnippet = "    nginx.ingress.kubernetes.io/configuration-snippet: |\n"
+	if strings.Contains(existing, locationSnippet) {
+		existing = strings.Replace(existing, locationSnippet, locationSnippet+"      "+lkeNoIndexHeader+"\n", 1)
+	} else {
+		existing += locationSnippet + "      " + lkeNoIndexHeader + "\n"
+	}
+	return serverSnippet + existing
 }
