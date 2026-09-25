@@ -124,6 +124,50 @@ func TestFactoryEnrollmentDomainMustBeIndependent(t *testing.T) {
 	if err := validateFactoryEnrollmentDomain("factory-enroll.video-cloud-dev.example.test", stack, root); err != nil {
 		t.Fatal(err)
 	}
+	for _, domain := range []string{"factory.elsewhere.test", "Factory.example.test", "-factory.example.test", "factory_.example.test", strings.Repeat("a", 64) + ".example.test"} {
+		if err := validateFactoryEnrollmentDomain(domain, stack, root); err == nil {
+			t.Fatalf("invalid factory domain accepted: %s", domain)
+		}
+	}
+}
+
+func TestLKEFactoryTrustRejectsMissingAndCorruptFiles(t *testing.T) {
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}
+	if err := lkeApplyFactoryMTLSCASecret(paths, env); err == nil {
+		t.Fatal("missing CA accepted")
+	}
+	dir := sensitiveEnvironmentPath(paths, "factory-client-ca")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := lkeApplyFactoryMTLSCASecret(paths, env); err == nil {
+		t.Fatal("missing CRL accepted")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ca.crl"), []byte("broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := lkeApplyFactoryMTLSCASecret(paths, env); err == nil {
+		t.Fatal("corrupt trust accepted")
+	}
+}
+
+func TestFactoryDomainDeploymentConfigurationRejectsUnsafeExposure(t *testing.T) {
+	for _, tc := range []struct{ name, values, want string }{
+		{"invalid switch", "FACTORY_ENROLL_PUBLIC_ENABLED=perhaps\n", "FACTORY_ENROLL_PUBLIC_ENABLED"},
+		{"reserved host", "FACTORY_ENROLL_PUBLIC_ENABLED=true\nFACTORY_ENROLL_DOMAIN=admin.video-cloud-dev.example.test\n", "independent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			workspace := writeDeploymentFixture(t, "dev", "lke")
+			appendFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), tc.values)
+			if _, err := resolveDeploymentConfig(workspace, "dev", ""); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("unsafe factory configuration accepted: %v", err)
+			}
+		})
+	}
 }
 
 func TestFactoryEnrollmentEnableFlagSurvivesLKECompatibilityWrite(t *testing.T) {

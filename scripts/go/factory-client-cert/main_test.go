@@ -102,7 +102,7 @@ func TestFactoryClientCAPublishUsesSelectedIngressNamespace(t *testing.T) {
 	output := filepath.Join(root, "applied.json")
 	t.Setenv("FAKE_KUBECTL_OUTPUT", output)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	script := "#!/bin/sh\ncase \"$3\" in\n  get) test \"$4\" = namespace && test \"$5\" = rtk-dev-ingress ;;\n  apply) cat > \"$FAKE_KUBECTL_OUTPUT\" ;;\n  *) exit 1 ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$3\" in\n  get) test \"$FAKE_KUBECTL_MODE\" != get-fail && test \"$4\" = namespace && test \"$5\" = rtk-dev-ingress ;;\n  apply) test \"$FAKE_KUBECTL_MODE\" != apply-fail && cat > \"$FAKE_KUBECTL_OUTPUT\" ;;\n  *) exit 1 ;;\nesac\n"
 	if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +140,35 @@ func TestFactoryClientCAPublishUsesSelectedIngressNamespace(t *testing.T) {
 		}
 		if string(got) != string(want) {
 			t.Errorf("%s not published intact", name)
+		}
+	}
+	for _, mode := range []string{"get-fail", "apply-fail"} {
+		t.Setenv("FAKE_KUBECTL_MODE", mode)
+		if err := publishCA(filepath.Join(root, "dev"), dir, "rtk-dev"); err == nil {
+			t.Fatalf("%s accepted", mode)
+		}
+	}
+	t.Setenv("FAKE_KUBECTL_MODE", "")
+	for _, name := range []string{"ca.crt", "ca.crl"} {
+		path := filepath.Join(dir, name)
+		original, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := publishCA(filepath.Join(root, "dev"), dir, "rtk-dev"); err == nil {
+			t.Fatalf("missing %s accepted", name)
+		}
+		if err := os.WriteFile(path, []byte("broken"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := publishCA(filepath.Join(root, "dev"), dir, "rtk-dev"); err == nil {
+			t.Fatalf("broken %s accepted", name)
+		}
+		if err := os.WriteFile(path, original, 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
@@ -224,6 +253,54 @@ func TestFactoryClientCertificateRejectsUnsafeIssuance(t *testing.T) {
 	}
 	if err := run([]string{"refresh-crl", "--environment", "dev", "--config-root", root}); err == nil {
 		t.Fatal("corrupt registry accepted")
+	}
+}
+
+func TestFactoryClientCertificateRejectsCorruptTrustAndRegistry(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "dev", "pki", "factory-client-ca")
+	if err := initCA(dir, "dev"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ca.crt", "ca.key"} {
+		path := filepath.Join(dir, name)
+		original, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, content := range [][]byte{nil, []byte("broken")} {
+			if err := os.WriteFile(path, content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := loadCA(dir); err == nil {
+				t.Fatalf("invalid %s accepted", name)
+			}
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := loadCA(dir); err == nil {
+			t.Fatalf("missing %s accepted", name)
+		}
+		if err := os.WriteFile(path, original, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "registry.json"), []byte(`[{"serial":"not-hex","revoked_at":"2026-09-25T00:00:00Z"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := loadRegistry(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateCRL(dir, registry); err == nil {
+		t.Fatal("invalid revoked serial accepted")
+	}
+	if err := os.Remove(filepath.Join(dir, "registry.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadRegistry(dir); err == nil {
+		t.Fatal("missing registry accepted")
 	}
 }
 
