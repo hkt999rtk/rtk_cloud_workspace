@@ -1263,10 +1263,15 @@ func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA 
 
 func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
 	httpRoutes := []lkePublicHTTPSRoute{}
+	frontendRoutes := []lkePublicHTTPSRoute{}
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	factoryMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
+		if !lkeDisableSearchIndexing(env) && route.Service == "frontend" && route.Namespace == lkeNamespaceName(env, "frontend") {
+			frontendRoutes = append(frontendRoutes, route)
+			continue
+		}
 		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" && route.Host == env["FACTORY_ENROLL_DOMAIN"] {
 			factoryMTLSRoutes = append(factoryMTLSRoutes, route)
 			continue
@@ -1283,16 +1288,19 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	}
 	manifests := []string{}
 	if len(httpRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-public", httpRoutes, "", lkePrivateIngressAnnotations(env, "")))
+	}
+	if len(frontendRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-frontend", frontendRoutes, "", ""))
 	}
 	if len(deviceMTLSRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkeDeviceMTLSIngressAnnotations(env)))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-device-mtls", deviceMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeDeviceMTLSIngressAnnotations(env))))
 	}
 	if len(factoryMTLSRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-factory-mtls", factoryMTLSRoutes, "", lkeFactoryMTLSIngressAnnotations(env)))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-factory-mtls", factoryMTLSRoutes, "", lkePrivateIngressAnnotations(env, lkeFactoryMTLSIngressAnnotations(env))))
 	}
 	if len(httpsRoutes) > 0 {
-		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", ""))
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", lkePrivateIngressAnnotations(env, "")))
 	}
 	return manifests
 }

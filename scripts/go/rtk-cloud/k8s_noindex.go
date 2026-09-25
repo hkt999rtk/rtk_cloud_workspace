@@ -1,6 +1,9 @@
 package main
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Managed environments remain private previews until indexing is explicitly
 // enabled. Enforce at the TLS ingress, including non-HTML responses.
@@ -34,4 +37,19 @@ func lkeIngressNoIndexHelmValue(env map[string]string) string {
 
 func lkeDisableSearchIndexing(env map[string]string) bool {
 	return lkeEnvValue(env, "DISABLE_SEARCH_INDEXING") != "false"
+}
+
+func lkePrivateIngressAnnotations(env map[string]string, existing string) string {
+	if lkeDisableSearchIndexing(env) {
+		return existing
+	}
+	serverSnippet := "    nginx.ingress.kubernetes.io/server-snippet: |\n      " +
+		strings.ReplaceAll(strings.TrimSuffix(lkeNoIndexServerSnippet, "\n"), "\n", "\n      ") + "\n"
+	const locationSnippet = "    nginx.ingress.kubernetes.io/configuration-snippet: |\n"
+	if strings.Contains(existing, locationSnippet) {
+		existing = strings.Replace(existing, locationSnippet, locationSnippet+"      "+lkeNoIndexHeader+"\n", 1)
+	} else {
+		existing += locationSnippet + "      " + lkeNoIndexHeader + "\n"
+	}
+	return serverSnippet + existing
 }

@@ -29,6 +29,41 @@ func TestLKECrawlerPolicy(t *testing.T) {
 		t.Fatalf("production frontend route = %q", got)
 	}
 	assertLKECrawlerPolicy(t, env, false)
+	env["VIDEO_CLOUD_CERTISSUER_DOMAIN"] = "certissuer.video-cloud-prod.realtekconnect.com"
+	env["FACTORY_ENROLL_PUBLIC_ENABLED"] = "true"
+	env["FACTORY_ENROLL_DOMAIN"] = "factory.video-cloud-prod.realtekconnect.com"
+	manifests := lkePublicHTTPSIngressManifests(env, lkePublicHTTPSRoutes(env))
+	if len(manifests) != 5 {
+		t.Fatalf("production ingress count = %d, want public, frontend, device, factory, and certissuer", len(manifests))
+	}
+	for _, manifest := range manifests {
+		if strings.Contains(manifest, "name: video-cloud-staging-frontend\n") {
+			if !strings.Contains(manifest, "host: www.realtekconnect.com") || strings.Contains(manifest, "X-Robots-Tag") {
+				t.Fatal("frontend ingress must serve the public host without noindex")
+			}
+			continue
+		}
+		for _, want := range []string{
+			"nginx.ingress.kubernetes.io/server-snippet: |",
+			"nginx.ingress.kubernetes.io/configuration-snippet: |",
+			"X-Robots-Tag: noindex",
+			"Disallow: /",
+			"return 404;",
+		} {
+			if !strings.Contains(manifest, want) {
+				t.Fatalf("non-frontend ingress missing %q", want)
+			}
+		}
+		if strings.Contains(manifest, "host: www.realtekconnect.com") {
+			t.Fatal("frontend host must not share a protected ingress")
+		}
+		if strings.Count(manifest, "nginx.ingress.kubernetes.io/configuration-snippet: |") != 1 {
+			t.Fatal("non-frontend ingress has duplicate configuration snippets")
+		}
+		if strings.Contains(manifest, "name: video-cloud-staging-device-mtls\n") && !strings.Contains(manifest, "proxy_set_header X-Client-Cert $ssl_client_escaped_cert;") {
+			t.Fatal("device mTLS ingress lost client-certificate forwarding")
+		}
+	}
 }
 
 func assertLKECrawlerPolicy(t *testing.T, env map[string]string, blocked bool) {
