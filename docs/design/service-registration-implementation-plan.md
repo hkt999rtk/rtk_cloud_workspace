@@ -580,3 +580,44 @@ provisioning. Exact wire schemas belong in OpenAPI before implementation.
 Phase 4 must define and test a maximum authorization-staleness window across
 token TTL, projection age, and active sessions before release. Until then,
 do not claim that grant removal immediately ends existing sessions.
+
+## 8. Product OTA Service And Billing Extension (2026-09-25)
+
+Status: target design approved for implementation in this worktree; no
+commercial OTA price is active and no staging CDN or invoice evidence is
+recorded by this section. This extends the existing optional-service plan
+without treating the source-level registration code as a deployed service.
+
+The canonical cross-repository contract is
+[Product OTA Delivery And Billing](../../repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md).
+It defines the data-plane, four authoritative meters, Product and device
+authorization, operational reconciliation, exact units, and activation gate.
+The shared [firmware campaign](../../repos/rtk_cloud_contracts_doc/firmware_campaign.md),
+[service registration](../../repos/rtk_cloud_contracts_doc/service_registration.md),
+[usage](../../repos/rtk_cloud_contracts_doc/billing_usage.md), and
+[pricing/invoicing](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md)
+contracts own their general boundaries. Video Cloud's
+[OTA implementation design](../../repos/rtk_video_cloud/docs/ota-billing-design.md)
+maps the contract to local paths and state. Billing's
+[OTA billing design](../../repos/rtk_billing/docs/ota-device-task-billing.md)
+owns pricing representation and invoice qualification. Cloud Admin's
+[pricing research](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)
+is a non-binding commercial reference.
+
+| Step | Owner and change | Done evidence |
+| --- | --- | --- |
+| 1. Contract first | Update the five canonical OTA/service/usage/pricing documents and this cross-repo plan; mark current source separately from target behavior. | Documentation links and workspace `docs-check` / `contracts-check` pass. |
+| 2. Product and service gate | Account Manager approves and registers `ota` with `mqtt` dependency; OTA runs independently with its own workload identity, readiness and lease. Cloud Admin uses the selected Product's `ota` service option to show the dashboard or explicit disabled message; the backend validates the latest revisioned grant before OTA operations. | Suspended-first, lease loss, Product edit/migration, device grant and background dispatch tests. |
+| 3. Direct CDN delivery | Video Cloud emits path-scoped, at-most-ten-minute Akamai URLs for a private Linode/Akamai Object Storage origin; firmware downloads Range bytes directly and reports verified completion. | Staging CDN, private origin, Range, expiry, revocation and no-API-byte-proxy evidence. |
+| 4. Authoritative usage | Persist immutable first-assignment, first verified download, physical object write, and UTC-month byte-time receipts, each atomically paired with a shared Billing outbox fact; reconcile remote object inventory and CDN edge logs. | Database crash/replay, changed-payload rejection, object inventory, month-boundary and outbox-recovery tests. |
+| 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates; blocks close on missing expected Product or producer evidence. Finance approves a future effective version only after staging qualification. | Missing-seal denial, zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
+
+The proposed customer rates before tax are NT$96/1,000 assignments,
+NT$0.96/GiB accepted successful downloads, NT$0.96/GiB-month of stored OTA
+objects, and NT$144/million successful object creations. No additional
+OTA customer object-read or raw CDN egress charge is proposed. Akamai edge
+logs serve provider-cost reconciliation and anomaly investigation; they are
+not a substitute for the authenticated device completion receipt. Product
+disable and release revoke preserve objects and history until explicit
+physical deletion. Existing CDN URLs can remain usable for their bounded
+expiry, at most ten minutes, while new grants stop upon revocation.
