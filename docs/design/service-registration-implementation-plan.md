@@ -612,8 +612,15 @@ is a non-binding commercial reference.
 | 4. Authoritative usage | Persist immutable first-assignment, first verified download, physical object write, and UTC-month byte-time receipts, each atomically paired with a shared Billing outbox fact; reconcile remote object inventory and CDN edge logs. | Database crash/replay, changed-payload rejection, object inventory, month-boundary and outbox-recovery tests. |
 | 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates. Account Manager's Platform seal lists every Product with an OTA-enabled grant revision before month end; producer and fact Products must be a subset of that historical set. Finance approves a future effective version only after staging qualification. | Missing-seal denial, producer-only unauthorized Product, retired/zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
 
-During migration, core keeps its existing OTA handlers and historical `ota/`
-objects until the dedicated service passes cutover checks. The dedicated
+During migration, core keeps its existing OTA control-plane handlers and
+historical `ota/` objects until the dedicated service passes cutover checks.
+Before deploying the updated core with active OTA campaigns, operators must
+qualify CDN signing and private-origin delivery for those legacy objects;
+core does not serve firmware bytes through an internal GET endpoint. Without
+CDN configuration, it refuses a download grant. Historical core device
+reports retain their prior evidence and transition rules until cutover, while
+the registered billable service requires the verified SHA-256, size, and
+downloaded-before-installing sequence. The dedicated
 service writes new firmware only under `ota-billable-v1/`; its object inventory,
 write and storage receipts, and producer seal cover that namespace. Historical
 objects have no new upload-attempt evidence and must not be turned into
@@ -631,8 +638,15 @@ NT$0.96/GiB accepted successful downloads, NT$0.96/GiB-month of stored OTA
 objects, and NT$144/million successful object creations. No additional
 OTA customer object-read or raw CDN egress charge is proposed. Akamai edge
 logs serve provider-cost reconciliation and anomaly investigation; they are
-not a substitute for the authenticated device completion receipt. Product
-disable and release revoke preserve objects and history until explicit
+not a substitute for the authenticated device completion receipt.
+
+The producer seal requires a persisted, reviewed CDN operational export for
+the same organization and UTC month with no unresolved anomaly. A missing,
+failed or incomplete export leaves the period unsealed even when its customer
+meter counts are zero. The export digest and receipt count are bound to the
+producer seal; DataStream delivery and collector qualification remain part of
+protected-environment activation. Product disable and release revoke preserve
+objects and history until explicit
 physical deletion. Existing CDN URLs can remain usable for their bounded
 expiry, at most ten minutes, while new grants stop upon revocation. After
 Product OTA disable, an authenticated device may report an already assigned
