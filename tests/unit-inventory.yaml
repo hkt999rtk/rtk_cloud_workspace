@@ -1384,11 +1384,11 @@ cases:
       title: SDK bridge stays within normal same-origin console routes
       owner: rtk_cloud_admin
       status: active
-    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#TWD%20proposal%20uses%20the%20reviewed%20fixed%20planning%20conversion
+    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#research%20references%20stay%20separate%20from%20approved%20but%20inactive%20OTA%20prices
       module: cloud-admin-web
       language: javascript
       source: src/service-pricing.test.mjs
-      title: TWD proposal uses the reviewed fixed planning conversion
+      title: research references stay separate from approved but inactive OTA prices
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/source-state.test.mjs#sourceAvailable%20only%20treats%20available%20source%20status%20as%20available
