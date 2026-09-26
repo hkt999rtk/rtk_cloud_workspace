@@ -2,11 +2,88 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 )
+
+func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
+	root, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, err := os.ReadFile(filepath.Join(root, "cloud_deploy", "adapters", "lke", "defaults.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultValues, err := readStrictEnv(filepath.Join(root, "cloud_deploy", "adapters", "lke", "defaults.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := readStrictEnv(filepath.Join(root, "cloud_env", "dev", "overrides", "adapter.env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := []string{
+		"LKE_LOGGER_SERVICE_REGISTRATION_ENABLED",
+		"LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED",
+		"LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED",
+		"LKE_LOGGER_RETENTION_STORAGE_ENABLED",
+		"LKE_LOGGER_BILLING_FACTS_ENABLED",
+		"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED",
+	}
+	for _, flag := range flags {
+		if defaultValues[flag] != "false" {
+			t.Fatalf("LKE default %s = %q, want opt-in false", flag, defaultValues[flag])
+		}
+		if current[flag] != "false" && current[flag] != "true" {
+			t.Fatalf("dev override %s = %q, want an explicit boolean", flag, current[flag])
+		}
+		t.Setenv(flag, "") // A later deployment must not need ad hoc shell flags.
+	}
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_deploy", "adapters", "lke", "defaults.env"), string(defaults))
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "overrides", "adapter.env"),
+		"LKE_LOGGER_SERVICE_REGISTRATION_ENABLED=true\n"+
+			"LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED=true\n"+
+			"LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED=true\n"+
+			"LKE_LOGGER_RETENTION_STORAGE_ENABLED=true\n"+
+			"LKE_OTA_REGISTRAR_REGISTRATION_ENABLED=true\n")
+	for pass := 0; pass < 2; pass++ {
+		cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := materializeDeploymentRuntime(cfg); err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := envroot.Load(cfg.RuntimeRoot, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := loaded.Values
+		if !lkeLoggerServiceRegistrationEnabled(env) || !lkeLoggerHTTPCoreCutoverEnabled(env) ||
+			!lkeLoggerMQTTCoreCutoverEnabled(env) || !lkeLoggerRetentionStorageEnabled(env) ||
+			!lkeOTARegistrarRegistrationEnabled(env) {
+			t.Fatalf("plain config pass %d lost persisted Logger/OTA gates", pass+1)
+		}
+		workload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Namespace: lkeNamespaceName(env, "video-cloud"), Port: 8080, Image: "example.test/video-cloud:reviewed"}
+		manifest := lkeDeploymentManifest(env, workload, nil)
+		for _, setting := range []string{
+			"name: VIDEO_CLOUD_LOGGER_HTTP_SERVICE_CUTOVER_ENABLED\n              value: \"true\"",
+			"name: VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED\n              value: \"true\"",
+			"name: VIDEO_CLOUD_LOGGER_HTTP_UPSTREAM_URL",
+		} {
+			if !strings.Contains(manifest, setting) {
+				t.Fatalf("plain config pass %d lost core Logger setting %q", pass+1, setting)
+			}
+		}
+	}
+}
 
 func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_SERVICE_REGISTRATION_ENABLED": "true"}

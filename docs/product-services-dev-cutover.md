@@ -81,6 +81,18 @@ steps below become eligible only after this gate passes.
    retention remains `0s`, so this change does not retroactively expire
    unlabeled historical streams. See [Loki retention](https://grafana.com/docs/loki/latest/operations/storage/retention/).
 
+Record each enabled LKE registration and cutover flag in
+`cloud_env/dev/overrides/adapter.env` and commit the reviewed change at that
+stage. In particular, retain `LKE_LOGGER_RETENTION_STORAGE_ENABLED=true`,
+`LKE_LOGGER_SERVICE_REGISTRATION_ENABLED=true`, and both
+`LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED=true` and
+`LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED=true` after Logger cutover. Retain
+`LKE_OTA_REGISTRAR_REGISTRATION_ENABLED=true` after OTA activation. The
+Account Manager, MQTT, Shadow, WebRTC, and Video Storage registration flags
+must likewise stay in the dev adapter override once enabled. Before a later
+Video Cloud redeploy, resolve the tracked dev configuration and inspect the
+rendered core Deployment; both Logger cutover values must remain `true`.
+
 ## Strict authorization and Product writes
 
 1. Check whether the existing dev API has an OTA CDN base URL and whether any
