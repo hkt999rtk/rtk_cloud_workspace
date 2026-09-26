@@ -3995,11 +3995,20 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 			return err
 		}
 	}
-	manifests := []string{lkeLokiConfigManifest(env)}
-	if lkeLoggerRetentionStorageEnabled(env) {
-		manifests = append(manifests, lkeLokiPVCManifest(env))
+	if err := kubectlApply(lkeLokiConfigManifest(env)); err != nil {
+		return err
 	}
-	manifests = append(manifests,
+	if lkeLoggerRetentionStorageEnabled(env) {
+		if err := kubectlApply(lkeLokiPVCManifest(env)); err != nil {
+			return err
+		}
+		// The source Pod can change while the ConfigMap and PVC are applied.
+		// Recheck its identity immediately before replacing its emptyDir.
+		if err := lkeRequireLokiDataMigration(env); err != nil {
+			return err
+		}
+	}
+	manifests := []string{
 		lkeLokiDeploymentManifest(env),
 		lkeLokiServiceManifest(env),
 		lkeAllowCloudLoggerLokiNetworkPolicyManifest(env),
@@ -4009,7 +4018,7 @@ func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 		lkeLogCollectorConfigManifest(env),
 		lkeLogCollectorDaemonSetManifest(env),
 		lkeAllowLogCollectorLokiNetworkPolicyManifest(env),
-	)
+	}
 	for _, manifest := range manifests {
 		if err := kubectlApply(manifest); err != nil {
 			return err
@@ -7662,9 +7671,12 @@ spec:
 func lkeLokiDeploymentManifest(env map[string]string) string {
 	checksum := lkeConfigChecksum(lkeLokiConfigManifest(env))
 	dataVolume := `          emptyDir: {}`
+	strategy := ""
 	if lkeLoggerRetentionStorageEnabled(env) {
 		dataVolume = `          persistentVolumeClaim:
             claimName: video-cloud-loki-data`
+		// The single PVC-backed replica must not overlap the old emptyDir Pod.
+		strategy = "  strategy:\n    type: Recreate\n    rollingUpdate: null\n"
 	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -7678,7 +7690,7 @@ metadata:
     rtk.realtek.com/stack: %s
 spec:
   replicas: 1
-  selector:
+%s  selector:
     matchLabels:
       app.kubernetes.io/name: video-cloud-loki
   template:
@@ -7711,7 +7723,7 @@ spec:
             name: video-cloud-loki-config
         - name: data
 %s
-`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOKI_IMAGE"), env["LKE_LOKI_IMAGE"], "grafana/loki:3.5.1"), lkeContainerResourcesManifest(env, "loki"), dataVolume)
+`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], strategy, checksum, env["CLOUD_STACK_NAME"], firstNonEmpty(os.Getenv("LKE_LOKI_IMAGE"), env["LKE_LOKI_IMAGE"], "grafana/loki:3.5.1"), lkeContainerResourcesManifest(env, "loki"), dataVolume)
 }
 
 func lkeLokiServiceManifest(env map[string]string) string {

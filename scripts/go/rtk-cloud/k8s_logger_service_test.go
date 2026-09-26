@@ -104,6 +104,20 @@ func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 	if !strings.Contains(active, "name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED\n              value: \"true\"") || !strings.Contains(lkeLokiDeploymentManifest(env), "claimName: video-cloud-loki-data") || !strings.Contains(lkeLokiConfigManifest(env), "retention_stream:") {
 		t.Fatal("cutover must enable the sole Logger subscriber and tiered persistent storage")
 	}
+	var deployment struct {
+		Spec struct {
+			Strategy struct {
+				Type          string `yaml:"type"`
+				RollingUpdate any    `yaml:"rollingUpdate"`
+			} `yaml:"strategy"`
+		} `yaml:"spec"`
+	}
+	if err := yaml.Unmarshal([]byte(lkeLokiDeploymentManifest(env)), &deployment); err != nil {
+		t.Fatalf("parse Loki Deployment: %v", err)
+	}
+	if deployment.Spec.Strategy.Type != "Recreate" || deployment.Spec.Strategy.RollingUpdate != nil {
+		t.Fatal("PVC-backed Loki must stop the old emptyDir Pod before starting a replacement")
+	}
 	config := lkeLokiConfigManifest(env)
 	for _, tier := range []string{`selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`} {
 		if !strings.Contains(config, tier) {
@@ -250,6 +264,45 @@ func TestLKECloudLoggerApplyStopsBeforeStorageSwitchWithoutVerifiedCopy(t *testi
 		}
 	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
+	}
+}
+
+func TestLKECloudLoggerRechecksSourcePodBeforeStorageSwitch(t *testing.T) {
+	logPath := fakeKubectl(t)
+	originalKubectl := os.Getenv("RTK_CLOUD_KUBECTL")
+	wrapper := filepath.Join(t.TempDir(), "kubectl")
+	callCount := filepath.Join(t.TempDir(), "loki-pod-reads")
+	t.Setenv("FAKE_KUBECTL_ORIGINAL", originalKubectl)
+	t.Setenv("FAKE_LOKI_POD_CALLS_FILE", callCount)
+	const script = `#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=video-cloud-loki -o json"* ]]; then
+  count=0
+  if [[ -f "$FAKE_LOKI_POD_CALLS_FILE" ]]; then read -r count < "$FAKE_LOKI_POD_CALLS_FILE"; fi
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FAKE_LOKI_POD_CALLS_FILE"
+  if (( count > 1 )); then
+    printf '%s\n' '{"items":[{"metadata":{"uid":"replacement-pod"}}]}'
+    exit 0
+  fi
+fi
+exec "$FAKE_KUBECTL_ORIGINAL" "$@"
+`
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", wrapper)
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"data","emptyDir":{}}]}}}}`)
+	t.Setenv("FAKE_LOKI_PODS_JSON", `{"items":[{"metadata":{"uid":"source-pod"}}]}`)
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{"metadata":{"annotations":{"rtk.realtek.com/loki-source-pod-uid":"source-pod","rtk.realtek.com/loki-copy-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"status":{"phase":"Bound"}}`)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
+	if err := lkeApplyCloudLogger(env, provisionOptions{workloads: []string{"cloud-logger"}}); err == nil || !strings.Contains(err.Error(), "verified data-copy") {
+		t.Fatalf("Loki source Pod changed without blocking the storage switch: %v", err)
+	}
+	if body, err := os.ReadFile(logPath); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(body), "kind: Deployment\nmetadata:\n  name: video-cloud-loki") {
+		t.Fatal("Loki Deployment was replaced after the source Pod changed")
 	}
 }
 
