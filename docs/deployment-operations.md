@@ -273,6 +273,11 @@ test script grants permission to reset an existing environment.
 
 ### Registered-service listener (opt-in, not deployed)
 
+For the existing dev managed-PKI stack, complete the separate
+[Product service PKI prerequisite](product-services-dev-pki.md) before enabling
+this listener or any of the six Product registrars. It preserves the live CRL
+consumers and uses a new bootstrap session rather than the retired state PVC.
+
 `LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED` defaults to `false`. When
 reviewed and enabled, the LKE renderer adds a private `account-manager`
 Service port `8443`, the matching Account Manager mTLS listener settings, and

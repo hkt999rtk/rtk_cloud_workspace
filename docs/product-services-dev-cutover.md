@@ -9,22 +9,24 @@ Product or device.
 
 ## Current dev preflight (2026-09-26)
 
-The read-only `secrets verify` gate is **NO-GO** before image rollout. The
-running Account Manager sidecar has
-`PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST`; certissuer has
-`CERT_ISSUER_SERVICE_CLIENT_SERVER_CRL_MANIFEST` and
-`OPENBAO_SERVER_CRL_MANIFEST`. The checked-in deployment contract rejects
-these live settings until they are represented and verified in a reviewed
-configuration. Do not bypass this gate or replace the running PKI workloads
-with a renderer that would drop their CRL settings.
+The reviewed CRL-aware deployment verifier accepts the three live, mounted
+CRL manifests used by Account Manager and certissuer. The canonical
+`scripts/check-deployment-credentials.sh --environment dev --read-only`
+preflight passed all 10 checks with this verifier. This clears the earlier
+deployment-contract drift; it does not authorize an image rollout or feature
+activation. Keep the CRL mounts and recheck their current signed state before
+any deployment. Do not replace the running PKI workloads with a renderer that
+would drop their CRL settings.
 
-The private `account-manager-service-registration-tls` Secret and all six
-registrar identity Secrets are absent in dev. The existing Service bootstrap
-session did not approve the six registrar subjects. Its persisted state must
-not be reused with a different subject list. Create a separately reviewed
-Service issuer/bootstrap session and Secret installation procedure, then
-register exact workload approvals and rerun the read-only preflight. The
-steps below become eligible only after this gate passes.
+The full Product cutover remains **NO-GO**. The private
+`account-manager-service-registration-tls` Secret and all six registrar
+identity Secrets are absent in dev. The active Service issuer cannot sign the
+new subjects or the Product listener DNS, and its policy is immutable. An
+independently approved successor issuer and new bootstrap session are required;
+the existing bootstrap PVC must not be reused. Follow
+[the dev PKI prerequisite](product-services-dev-pki.md) to issue and install
+the seven identities, register exact workload approvals, and pass the final
+listener, registration, and denial probes before continuing below.
 
 ## Prepare the exact dev revision
 
@@ -75,8 +77,11 @@ steps below become eligible only after this gate passes.
    `rtk.realtek.com/loki-source-pod-uid` set to the copied Pod UID and
    `rtk.realtek.com/loki-copy-sha256` set to the recorded tree checksum.
    The deployment rejects a storage switch if either annotation is missing or
-   the source Pod has changed. Apply the PVC-backed Loki Deployment, wait for
-   readiness, then resume writers. Deploy the updated Cloud Logger before
+   the source Pod has changed. Remove the temporary copy helper after verifying
+   the PVC. Apply the PVC-backed Loki Deployment with its `Recreate` strategy
+   so the old emptyDir Pod stops before the new Pod starts. Wait for readiness
+   and verify that only one Loki Pod serves queries before resuming writers.
+   Deploy the updated Cloud Logger before
    enabling tiered Compactor retention. An explicitly versioned Product log
    carries one of the three low-cardinality `retention_tier` values (`7d`,
    `30d`, `90d`) and the fixed `retention_policy="product-grant-v1"`
