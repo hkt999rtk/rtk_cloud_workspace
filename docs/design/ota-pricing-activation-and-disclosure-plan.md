@@ -11,6 +11,15 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 - OTA 仍是可註冊、可被 Product 選用的獨立服務。只有 Product 啟用 OTA 才顯示其 dashboard；未啟用時明示「此產品尚未啟用 OTA 服務」。Product 選用服務、費率生效、實際產生用量，是三件不同的事。
 - 其他服務目前畫面中的金額屬**參考價／研究草案**。不得把研究價直接當作已生效價，也不得因計量器存在就宣稱正在收費。任何 Cloud／環境的正式費率只由 Billing 的有效 pricing version 決定。
 
+### 執行狀態（2026-09-26）
+
+| 階段 | 目前狀態 |
+| --- | --- |
+| D0 文件與費率研究 | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。 |
+| A2 登入後揭露的過渡版 | Cloud Admin 既有靜態價格頁已改為分開顯示 OTA 核准待生效價和 15 項外部參考價；它仍**不讀取**該 Cloud 的當期 Billing 價卡。 |
+| P1–P4、A1 正式計費與價格 API | 尚未實作；沒有新增或啟用 OTA pricing version，沒有因本文件改變任何帳單。 |
+| Q1、R1 環境資格與正式發佈 | 尚未執行；須通過稅務、適用客群、UTC 月份、CDN 成本／完整性及 staging 對帳關卡。 |
+
 ## 2. 現況證據與待補差距
 
 | 項目 | 現況證據 | 必須補齊 |
@@ -19,7 +28,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 | 版次與切月 | [pricing store](../../repos/rtk_billing/internal/billingstore/pricing.go) 拒絕未來生效日，發佈時立即將舊版標為 retired；invoice 依期間起點選版。 | 可在 UTC 月初排程生效、無重疊／缺口、前月不被改價、發佈與月結同步鎖定。 |
 | 月份與移轉 | OTA 的 storage fact／兩份 period seal 要求完整 UTC 月；[current usage API](../../repos/rtk_billing/internal/api/billing.go) 用 Cloud 時區切月，所有權移轉又可能把起點往後裁切。 | 明確區分「完整 UTC 月計量證明」與「現任 owner 可見／應付的期間」；跨月、月中移轉及關閉 Cloud 均不得錯收。 |
 | 生效前 OTA 事實 | immutable receipt/outbox 可先進 Billing；[invoice builder](../../repos/rtk_billing/internal/billing/invoice.go) 遇到缺費率的事實會中止整張發票。 | 生效前 OTA 事實保留稽核但一次性排除計費，其他缺價仍 fail closed；不得日後補收。已關帳後才送到的舊事實必須由 OTA 來源 ledger 保全，不能假設 Billing 可以接受遲到輸入。 |
-| 前端揭露 | [ServicePricing.jsx](../../repos/rtk_cloud_admin/web/src/ServicePricing.jsx) 直接讀 [靜態 15 筆草案](../../repos/rtk_cloud_admin/web/src/service-pricing.mjs)，含混用草案 MQTT/Shadow 的 NT$232 範例；Cloud Admin BFF 尚無價格查詢路由。 | tenant-safe 的 current/upcoming 價卡 API、全服務計價表、狀態／適用條款／稅／範例／收費排除規則。 |
+| 前端揭露 | [ServicePricing.jsx](../../repos/rtk_cloud_admin/web/src/ServicePricing.jsx) 直接讀 [靜態 15 筆參考價](../../repos/rtk_cloud_admin/web/src/service-pricing.mjs)；已分開 OTA 核准待生效價並移除混用草案 MQTT/Shadow 的 NT$232 範例，但 Cloud Admin BFF 尚無當期價卡查詢路由。 | tenant-safe 的 current/upcoming 價卡 API、Product 適用狀態、當期費率／稅／合約、正式 invoice 明細連結。 |
 | 正式環境 | [TWD 進度](../billing-twd-currency-progress.md) 證明先前 staging 的 MQTT 價卡與 invoice，**不證明 production 或 OTA 已收費**。 | 逐環境查核實際 active 版次、CDN 與兩份 seal、正式發佈與第一張發票對帳。 |
 
 本計畫沿用 [正式 Pricing and Invoicing contract](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md) 的 immutable version、整數金額、按 invoice line 彙總後取整及歷史發票不變性；OTA 的計量、CDN、Product gate 和完整性規則以 [OTA contract](../../repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md) 為準。
@@ -44,47 +53,49 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 頁首先選定 Brand Cloud／Product，列出「本帳戶合約類型」「正式計費幣別 TWD」「目前有效價卡版本及 UTC 生效區間」「稅務說明」「下一版與生效日」。價格列不得只靠 Product checkbox 推導：Product 啟用控制功能可用性；帳務還要看合約適用、有效價卡及實際用量。Evaluation 顯示免費條款；Private Cloud 的授權／維護費以合約報價，與下表 managed-cloud 用量費分開。
 
-主表固定欄位：**服務／收費項目、何時記一筆、單位與單價、計算公式與排除情況、此 Product 是否啟用、狀態與生效日**。可展開看實際量的來源、失敗與重試處理、稅及四捨五入；篩選和行動版不能隱藏「尚未生效」標籤。所有金額取 Billing API 的有效版次；下列研究草案金額只可用醒目「參考價，非帳單依據」標籤顯示。OTA 四價是「已核准，待正式生效」直到 API 真的顯示當期適用。
+主表固定欄位：**服務／收費項目、何時記一筆、最高參考價、已核准價或當期有效價、計算公式與排除情況、此 Product 是否啟用、狀態與生效日**。可展開看實際量的來源、失敗與重試處理、稅及四捨五入；篩選和行動版不能隱藏「尚未生效」標籤。正式金額只取 Billing API 的有效版次；下列研究快照只可用醒目「參考價，非帳單依據」標籤顯示。OTA 四項已核准單價保持不變，最高外部參考價另外列出。
 
-| 服務／項目 | 目前研究草案或核准單價（未稅） | 使用者要看到的計量與不計費規則 | 現階段揭露狀態 |
+| 服務／項目 | 最高參考價；OTA 另列核准價（未稅） | 使用者要看到的計量與不計費規則 | 現階段揭露狀態 |
 | --- | --- | --- | --- |
-| MQTT publish | 參考 NT$32／百萬則 | broker 接受的 publish 各計一次；不另收 MQTT payload 頻寬；連線與 keepalive 不另計。 | 依當期 Billing 版次判定；既有 staging 有正式 MQTT 版次。 |
-| MQTT delivery | 參考 NT$32／百萬次 | 每個 subscriber 的實際 delivery 各計一次；一則 publish 投遞五個訂閱者是 1 publish + 5 deliveries。 | 依當期 Billing 版次判定。 |
-| Device Shadow | 參考 NT$40／百萬個 1 KiB 操作單位 | 成功讀取／更新等按記錄或回應大小向上取 1 KiB 單位；若走 MQTT，其訊息依 MQTT 規則另計。 | 計量與費率尚待核定。 |
-| WebRTC TURN relay | 參考 NT$0.96／GiB | 雲端 relay 實際送到每位觀看者的 bytes；直接 P2P 媒體不產生 TURN relay 費；信令本身無獨立 channel 費，MQTT 訊息另依 MQTT 計。 | 計量與費率尚待核定。 |
-| Clip／snapshot storage | 參考 NT$0.96／GiB-month | 影片物件實體 bytes 乘儲存時間；OTA 韌體與 logs 不混入。 | 計量與費率尚待核定。 |
-| Clip object write | 參考 NT$144／百萬次 | 成功建立 clip／snapshot 物件才計；OTA 寫入另表，失敗寫入不計。 | 計量與費率尚待核定。 |
-| Clip object read | 參考 NT$12.8／百萬次 | 成功的影片 GET／HEAD 次數；OTA origin read、CDN request 不當作客戶影片讀取。 | 計量與費率尚待核定。 |
-| Clip video download | 參考 NT$0.96／GiB | 送往 app 的實際影片 bytes（含已送出的重試 bytes）；OTA 下載另表。 | 計量與費率尚待核定。 |
-| OTA first device assignment | **已核准 NT$96／1,000 次** | campaign 對該裝置第一次持久化指派計一次；通知／poll 重試不重計。 | 待正式生效。 |
-| OTA verified download | **已核准 NT$0.96／GiB** | 同一 deployment／精確 artifact 第一次經身分驗證的 `downloaded` 回報，以 artifact 大小計；URL 發放、失敗、Range 重試、原始 CDN egress 不計。 | 待正式生效。 |
-| OTA physical artifact storage | **已核准 NT$0.96／GiB-month** | 韌體物件實際 bytes×UTC 儲存時間，至物理刪除；revoke／disable 不等於刪除。 | 待正式生效。 |
-| OTA artifact write | **已核准 NT$144／百萬次** | 物件 key/version 的成功持久建立計一次；失敗 PUT 或同物件重試不計；GET 不另收客戶費。 | 待正式生效。 |
-| Device／app log ingest | 參考 NT$9.6／GiB | 已接受的未壓縮 log bytes（含 metadata）；走 MQTT 的傳輸訊息另依 MQTT 計。 | 有用量資料；計費整合尚待核定。 |
-| Log retention | 參考 NT$0.96／GiB-month | 現行草案以接收 bytes×設定保留天數／30 估算；上線前要明定與實際保存量的差異。 | 有用量資料；計費整合尚待核定。 |
-| Other data APIs | 參考 NT$32／百萬次 | 成功的其他資料 API 呼叫；排除 Shadow、OTA control、物件操作等已列項目；登入與控制台管理不另計。 | 路由分類與計量尚待核定。 |
+| MQTT publish | 參考 **NT$48／百萬則** | broker 接受的 publish 各計一次；不另收 MQTT payload 頻寬；連線與 keepalive 不另計。 | 依當期 Billing 版次判定；既有 staging 有正式 MQTT 版次，價格不因參考價更新而改變。 |
+| MQTT delivery | 參考 **NT$48／百萬次** | 每個 subscriber 的實際 delivery 各計一次；一則 publish 投遞五個訂閱者是 1 publish + 5 deliveries。 | 依當期 Billing 版次判定。 |
+| Device Shadow | **AWS 1 KB 操作參考 NT$60／百萬單位**；RTK 1 KiB 正式單價待核定 | RTK 擬按成功讀取／更新等的記錄或回應大小向上取 1 KiB 單位；若走 MQTT，其訊息依 MQTT 規則另計。AWS 的 1 KB 與 RTK 的 1 KiB 不能視為同一計量單位。 | 計量與費率尚待核定。 |
+| WebRTC TURN relay | 傳輸部分參考 **NT$4.80／GiB**；TURN 分鐘費另列不可換算 | 雲端 relay 實際送到每位觀看者的 bytes；直接 P2P 媒體不產生 TURN relay 費；信令本身無獨立 channel 費，MQTT 訊息另依 MQTT 計。 | 計量與費率尚待核定；NT$4.80 不是完整 TURN 成本。 |
+| Clip／snapshot storage | 參考 **NT$1.30／GiB-month** | 影片物件實體 bytes 乘儲存時間；OTA 韌體與 logs 不混入。 | 計量與費率尚待核定。 |
+| Clip object write | 參考 **NT$224／百萬次** | 成功建立 clip／snapshot 物件才計；OTA 寫入另表，失敗寫入不計。 | 計量與費率尚待核定。 |
+| Clip object read | 參考 **NT$17.92／百萬次** | 成功的影片 GET／HEAD 次數；OTA origin read、CDN request 不當作客戶影片讀取。 | 計量與費率尚待核定。 |
+| Clip video download | 參考 **NT$4.80／GiB** | 送往 app 的實際影片 bytes（含已送出的重試 bytes）；OTA 下載另表。 | 計量與費率尚待核定。 |
+| OTA first device assignment | **已核准 NT$96／1,000 次**；最高參考 **NT$144／1,000 次** | campaign 對該裝置第一次持久化指派計一次；通知／poll 重試不重計。 | 核准價待正式生效，最高參考價不替換核准價。 |
+| OTA verified download | **已核准 NT$0.96／GiB**；CDN 參考 **NT$3.84／GiB** | 同一 deployment／精確 artifact 第一次經身分驗證的 `downloaded` 回報，以 artifact 大小計；URL 發放、失敗、Range 重試、原始 CDN egress 不計。 | 核准價待正式生效；CDN 實際出口與驗證下載不是同一計量。 |
+| OTA physical artifact storage | **已核准 NT$0.96／GiB-month**；最高參考 **NT$1.30／GiB-month** | 韌體物件實際 bytes×UTC 儲存時間，至物理刪除；revoke／disable 不等於刪除。 | 核准價待正式生效。 |
+| OTA artifact write | **已核准 NT$144／百萬次**；最高參考 **NT$224／百萬次** | 物件 key/version 的成功持久建立計一次；失敗 PUT 或同物件重試不計；GET 不另收客戶費。 | 核准價待正式生效。 |
+| Device／app log ingest | 參考 **NT$28.80／GiB** | 已接受的未壓縮 log bytes（含 metadata）；走 MQTT 的傳輸訊息另依 MQTT 計。 | 有用量資料；計費整合尚待核定。 |
+| Log retention | 壓縮封存成本參考 **NT$1.31／GiB-month** | 現行草案以接收 bytes×設定保留天數／30 估算；上線前要明定與實際保存量的差異。 | 有用量資料；計費整合尚待核定；參考基礎不同。 |
+| Other data APIs | REST proxy 參考 **NT$136／百萬次** | 成功的其他資料 API 呼叫；排除 Shadow、OTA control、物件操作等已列項目；登入與控制台管理不另計。 | 路由分類與計量尚待核定。 |
 
-每列的顯示邏輯：**當期有效價 > 已核准待生效價 > 研究參考價 > 尚未定價**。此順序只決定標籤與展示；帳單一律只用當期有效價。即使參考價可見，也要寫明「本價格尚未生效，不會依此金額計入帳單」；無有效費率時不得顯示為 NT$0 或宣稱永久免費。對已選用但無價的服務顯示「服務可用；目前尚無適用用量費率，實際費用依合約與生效價卡」，並提供帳單／客服入口。
+每列分欄顯示**當期有效價、已核准待生效價、最高研究參考價**；沒有資料的欄位寫「未設定」，不以另一欄代填。帳單一律只用當期有效價。即使參考價可見，也要寫明「本價格尚未生效，不會依此金額計入帳單」；無有效費率時不得顯示為 NT$0 或宣稱永久免費。對已選用但無價的服務顯示「服務可用；目前尚無適用用量費率，實際費用依合約與生效價卡」，並提供帳單／客服入口。
 
 頁面底部用一個具體範例解釋：`當月同一 Product 同一項目數量 × 單價 = 未稅金額；按 invoice line 合計後以 NT$1 為單位取整；稅按生效價卡再計；多個 Product 分別列明`。千次／百萬次只是展示分母，**不是最低計費級距**。GiB = 1,073,741,824 bytes；GiB-month 按該 UTC 月實際時間積分。帳單期間用 UTC 正式標示，旁邊可加使用者本地時間換算。估算不等於發票，正式發票要附數量、版本與來源參照；付款與餘額狀態依既有 Billing 頁面。
 
 ## 5. 參考價來源、限制與文件歸屬
 
-2026-09-26 已重新查核下列官方頁面。第 4 節的 NT$ 金額是**RTK 現有規劃參考價**（其中 OTA 四價已核准未生效），不是按今日外匯或 AWS 帳單直接換算；研究稿採 US$1 = NT$32 的固定規劃假設。所有 provider 價格只作成本量級及計量方法比較，不能當作 RTK 的有效售價。
+最高參考價採 2026-09-26 已查核的 **AWS 現行 Price List（美東、愛爾蘭、東京、聖保羅四區）**、CloudFront global pay-as-you-go 表內**八個非中國交付區域**、Cloudflare R2／Akamai 同類標準儲存，以及舊 RTK 草案中**可按相同或近似計量維度比較**的最高值。中國 CloudFront 另有人民幣價目，未納入本次美元候選集。這是明確候選集的最大值，**不是全球所有供應商與區域的最高價**；計量基礎不同的值明列為成本代理。固定規劃換算為 US$1＝NT$32，不用即時匯率；台幣展示價向上取至 NT$0.01。AWS S3 [明定計費 GB 為 GiB](https://aws.amazon.com/s3/pricing/)，[CloudFront 亦以 GiB 計量](https://aws.amazon.com/pt/blogs/aws-brasil/ensaios-sobre-transferencia-de-dados-na-aws-parte-3/)；[CloudWatch 現行價目範例](https://aws.amazon.com/cloudwatch/pricing/)將 KB 除以 1,024² 得到 GB、TB 乘 1,024 得到 GB，但其**壓縮封存量**與 RTK 原始接收量不同。
 
-| 對應服務 | 官方參考基準 | 不可直接等同比較的原因 |
+| 對應服務 | 候選集中最高官方基準與來源 | 比較限制 |
 | --- | --- | --- |
-| MQTT、Shadow | [AWS IoT Core](https://aws.amazon.com/iot-core/pricing/) 範例：Ireland 首階 MQTT US$1／百萬個 5 KB 計量訊息，publish／delivery 分計；Canada Central Shadow US$1.25／百萬個 1 KB 操作。 | AWS 大訊息／大狀態會按 KB 向上計多個單位，RTK 參考草案的 MQTT 是原始訊息數。 |
-| OTA 指派 | [AWS Device Management Jobs](https://aws.amazon.com/iot-device-management/pricing/) 範例：前 250,000 remote actions US$0.003／次，其後 US$0.0015／次。 | AWS 按目標裝置動作與階梯；RTK 只按首次持久化 assignment，失敗通知／重試不重計。 |
-| WebRTC relay | [AWS Kinesis Video Streams](https://aws.amazon.com/kinesis/video-streams/pricing/) US East 範例：TURN US$0.12／千分鐘，外送資料另計；signaling channel／訊息另有費用。 | RTK 草案以交付 GiB 收費，分鐘不能直接換算 GiB。 |
-| Clip／韌體物件儲存與讀寫 | [Amazon S3](https://aws.amazon.com/s3/pricing/) Standard 區域／階梯價（例如 us-east-1 儲存約 US$0.023／GB-month、PUT 約 US$0.005／千次、GET 約 US$0.0004／千次）。 | AWS GB 與 RTK GiB 不同，S3 request 類別亦不等於本平台成功的業務物件操作。 |
-| Clip／OTA 下載 | [CloudFront pay-as-you-go](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/) 依交付地區與級距收費：頁面列台灣等亞洲地區在免費額後的前 9 TB 出口 US$0.120／GB，美加墨 US$0.085／GB，請求另計。 | AWS CDN 原始出口 bytes 包含重試，RTK OTA 只算裝置驗證後的 artifact 大小一次；實際採用的 CDN 供應商與合約亦可能不同。 |
-| Logs | [CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/) US East 範例：log ingestion 約 US$0.50／GB、archive 約 US$0.03／壓縮後 GB-month。 | RTK retention 草案用原始接收 bytes×設定天數，不是壓縮後實際保存量。 |
-| 其他資料 API | [API Gateway pricing](https://aws.amazon.com/api-gateway/pricing/) HTTP API 範例 US$1／百萬請求起、REST API 範例 US$3.50／百萬起，資料傳輸另計。 | AWS 算接收到的呼叫，RTK 草案只算成功的「其他資料 API」，且排除已有獨立項目。 |
+| MQTT、Shadow | [AWS IoT Core São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSIoT/current/sa-east-1/index.csv)：訊息 US$1.50／百萬、Shadow US$1.875／百萬個 AWS 1 KB 單位，折 NT$48／NT$60。 | AWS MQTT 按 5 KB 單位，RTK 按原始訊息數；[AWS Shadow 按 1 KB 向上計](https://aws.amazon.com/iot-core/pricing/)，不能直接當作 RTK 1 KiB 單位售價。 |
+| OTA 指派 | [AWS IoT Device Management São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/IoTDeviceManagement/current/sa-east-1/index.csv)：Jobs US$0.0045／remote action，折 NT$144／千次。 | AWS 動作與 RTK 第一次持久化 assignment 不完全相同；OTA **核准 NT$96／千次不變**。 |
+| TURN relay、影片直接外送 | [AWS Data Transfer São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSDataTransfer/current/sa-east-1/index.csv)：第一級對 Internet US$0.150／GB；[AWS 帳務文件以 1 TB＝1,024 GB 計資料傳輸](https://docs.aws.amazon.com/awsaccountbilling/latest/aboutv2/useconsolidatedbilling-effective.html)，折 NT$4.80／GiB。 | [AWS Kinesis Video Streams](https://aws.amazon.com/kinesis/video-streams/pricing/) 的 TURN US$0.12／千分鐘另加外送，分鐘缺位元率／觀看者數，不能加進每 GiB 參考價。 |
+| Clip／韌體物件儲存與讀寫 | [AWS S3 Standard São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonS3/current/sa-east-1/index.csv)：儲存 US$0.0405／GiB-month、PUT US$0.007／千次、GET US$0.0056／萬次，折 NT$1.30／GiB-month、NT$224／百萬次寫入、NT$17.92／百萬次讀取。 | S3 原始請求不必然等於 RTK 成功的業務物件操作；OTA 核准儲存／寫入價不變。 |
+| OTA CDN 下載 | [CloudFront 亞洲現行價目](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/)：免費額後第一級 US$0.120／GiB，折 NT$3.84／GiB。 | CDN 原始出口 bytes 包含 Range／重試；RTK 只算首次驗證的 artifact 大小，**核准 NT$0.96／GiB 不變**。 |
+| Logs | [CloudWatch São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudWatch/current/sa-east-1/index.csv)：Standard ingest US$0.90／GB、archive US$0.0408／壓縮後 GB-month，研究換算 NT$28.80／GiB、NT$1.31／GiB-month。 | RTK retention 草案用原始接收 bytes×設定天數，不是壓縮後實際保存量；後者僅為成本代理值。 |
+| 其他資料 API | [API Gateway REST São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonApiGateway/current/sa-east-1/index.csv)：US$4.25／百萬次，折 NT$136／百萬次。 | AWS REST 收到的請求與 RTK 成功的「其他資料 API」不同，須完成路由分類。 |
+
+Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套、免費額、尚未正式收取的未來項目及歷史舊價格不參與最高價排名；它們仍記在研究候選表並註明排除原因。最高參考價不會寫入 Billing 的有效價卡。
 
 **成本關卡：**核准的 OTA 下載售價 NT$0.96／GiB，與 AWS CloudFront 部分地區公開出口價相比可能不足以覆蓋 CDN 成本。這是風險訊號而非重新定價結論；Finance 在正式啟用前要按**實際 CDN 合約、交付地區、流量級距、免費額、快取命中、Range／重試流量、匯率及稅**計算每 GiB 成本與毛利，留下簽核記錄。使用者價格頁不展示供應商成本或暗示本服務轉售 AWS。
 
-既有 15 筆 RTK 台幣參考值與 Cloudflare／Akamai／AWS 比較記在 [service-pricing-research.md](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)；實作前需更新來源查核日、region／tier／GB-GiB 差異，並由商務核准非 OTA 正式價格。
+15 項舊價、官方候選值、選出的最高參考價與排除原因記在 [service-pricing-research.md](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)；商務仍須另外核准非 OTA 正式價格。
 
 | 文件 | 放置內容及維護者 |
 | --- | --- |
