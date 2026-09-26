@@ -328,6 +328,13 @@ cases:
       title: remembered membership wins and a stale preference falls back to the first ordered membership
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#Product%20apply%20paths%20and%20preview%20stay%20bound%20to%20Product%2C%20version%20and%20full%20device%20count
+      module: cloud-admin-web
+      language: javascript
+      source: src/cloud-products.test.mjs
+      title: Product apply paths and preview stay bound to Product, version and full device count
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/cloud-products.test.mjs#Product%20paths%20bind%20both%20identities%20and%20reject%20path%20injection
       module: cloud-admin-web
       language: javascript
@@ -1129,6 +1136,13 @@ cases:
       language: javascript
       source: src/product-service-catalog.test.mjs
       title: Logger retention is sent only when the registered option is selected
+      owner: rtk_cloud_admin
+      status: active
+    - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#changing%20only%20Logger%20retention%20creates%20a%20new%20grant%20revision%20while%20metadata%20edit%20leaves%20it%20pinned
+      module: cloud-admin-web
+      language: javascript
+      source: src/product-service-catalog.test.mjs
+      title: changing only Logger retention creates a new grant revision while metadata edit leaves it pinned
       owner: rtk_cloud_admin
       status: active
     - canonical_key: js://cloud-admin-web/src/product-service-catalog.test.mjs#legacy%20write%20gate%20keeps%20legacy%20options%20and%20omits%20catalog%20revision
