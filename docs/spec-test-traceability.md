@@ -790,6 +790,8 @@
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#acceptProductCollaboratorInvitation` | `POST /v1/developer/product-collaborator-invitations/accept` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PRODUCT-COLLAB-001` | `fa861058ecad` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
+| `SPEC-AM-OPENAPI#getInternalProductOTAGrant` | `GET /v1/internal/brand-clouds/{brandCloudId}/products/{productId}/ota-grant` | `FEAT-CONTRACT-SERVICE-REGISTRATION-001` | `REQ-CONTRACT-SVCREG-PRODUCT-001` | `70623473b33a` |
+| `SPEC-AM-OPENAPI#getInternalHistoricalProductOTAGrant` | `GET /v1/internal/brand-clouds/{brandCloudId}/products/{productId}/ota-grants/{revision}` | `FEAT-CONTRACT-SERVICE-REGISTRATION-001` | `REQ-CONTRACT-SVCREG-PRODUCT-001` | `4a8c0ddee31b` |
 | `SPEC-AM-OPENAPI#cancelFactoryEnrollment` | `POST /v1/internal/factory-enrollments/cancel` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `413ffb26e3e3` |
 | `SPEC-AM-OPENAPI#lookupFactoryEnrollment` | `POST /v1/internal/factory-enrollments/lookup` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `d3d75c78b3a2` |
 | `SPEC-AM-OPENAPI#reserveFactoryEnrollment` | `POST /v1/internal/factory-enrollments/reserve` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001`, `REQ-MULTICLOUD-SHARING-001` | `6bd9744084ef` |
