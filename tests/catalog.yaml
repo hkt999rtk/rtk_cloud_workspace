@@ -627,6 +627,18 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-AM-PRICING-VERSION-001, REQ-AM-INVOICE-ARITHMETIC-001]
     status: active
+  - id: INT-BILL-OTA-CUTOVER-001
+    title: Read-only OTA UTC cutover inventory exposes local-month bridge and ownership risks
+    layer: integration
+    owner: rtk_billing
+    source: repos/rtk_billing/internal/billingstore/ota_cutover_audit_integration_test.go
+    selector: ./internal/billingstore#TestAuditOTACutoverFindsTimezoneBridgeAndOwnerEvidence
+    method: PostgreSQL-backed test inventories Taipei gap and Los Angeles overlap risks, bridge facts and closed periods, missing profiles, and incomplete owner coverage without changing financial records.
+    runner: test-coverage
+    environments: [ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-PRICING-VERSION-001]
+    status: active
   - id: INT-AM-PAYMENT-001
     title: Payment API ledger trigger and reconciliation remain exactly once
     layer: integration
