@@ -15,7 +15,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 | 階段 | 目前狀態 |
 | --- | --- |
-| D0 文件與費率研究 | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。 |
+| D0 文件與費率研究（部分完成） | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。Billing 操作 runbook 與 Cloud Admin customer-copy 規格仍待新增。 |
 | A2 登入後揭露的過渡版 | Cloud Admin 既有靜態價格頁已改為分開顯示 OTA 核准待生效價和 15 項外部參考價；它仍**不讀取**該 Cloud 的當期 Billing 價卡。 |
 | P1–P4、A1 正式計費與價格 API | 尚未實作；沒有新增或啟用 OTA pricing version，沒有因本文件改變任何帳單。 |
 | Q1、R1 環境資格與正式發佈 | 尚未執行；須通過稅務、適用客群、UTC 月份、CDN 成本／完整性及 staging 對帳關卡。 |
