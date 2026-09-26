@@ -4410,7 +4410,7 @@ func TestLKELokiManifestSupportsCloudLoggerPersistence(t *testing.T) {
 				"name: video-cloud-loki-config",
 				"auth_enabled: false",
 				"schema: v13",
-				"retention_period: 24h",
+				"retention_period: 0s",
 			},
 		},
 		{
@@ -7100,6 +7100,14 @@ if [[ "$*" == *"get secret logger-service-platform-identity -o json"* ]]; then
   printf 'Logger service identity Secret is absent\n' >&2
   exit 1
 fi
+if [[ "$*" == *"get secret ota-service-platform-identity -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_SERVICE_IDENTITY_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_SERVICE_IDENTITY_SECRET_JSON"
+    exit 0
+  fi
+  printf 'OTA service identity Secret is absent\n' >&2
+  exit 1
+fi
 if [[ "$*" == *"get service account-manager -o json"* ]]; then
   if [[ -n "${FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON"
@@ -7143,6 +7151,38 @@ fi
 if [[ "$*" == *"get service video-cloud-logingester -o json"* ]]; then
   if [[ -n "${FAKE_LOGGER_SERVICE_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_LOGGER_SERVICE_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-loki -o json"* ]]; then
+  if [[ -n "${FAKE_LOKI_DEPLOYMENT_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOKI_DEPLOYMENT_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=video-cloud-loki -o json"* ]]; then
+  if [[ -n "${FAKE_LOKI_PODS_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOKI_PODS_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get pvc video-cloud-loki-data -o json"* ]]; then
+  if [[ -n "${FAKE_LOKI_PVC_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOKI_PVC_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get configmap video-cloud-loki-config -o json"* ]]; then
+  if [[ -n "${FAKE_LOKI_CONFIGMAP_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_LOKI_CONFIGMAP_JSON"
   else
     printf '{}\n'
   fi

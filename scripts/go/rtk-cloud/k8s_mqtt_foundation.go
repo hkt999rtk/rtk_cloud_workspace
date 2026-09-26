@@ -14,6 +14,10 @@ const (
 
 var mqttFoundationIdentitySecretKeys = []string{"client.crt", "client.key", "server-ca.crt"}
 
+func lkeMQTTEntitlementsRequired(env map[string]string) bool {
+	return lkeFeatureEnabled(env, "VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED")
+}
+
 func lkeMQTTFoundationRegistrationEnabled(env map[string]string) bool {
 	raw := firstNonEmpty(os.Getenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED"), env["LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED"], "false")
 	switch strings.ToLower(strings.TrimSpace(raw)) {
