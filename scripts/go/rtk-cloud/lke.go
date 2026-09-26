@@ -9997,6 +9997,9 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED
               value: %q
 `, strconv.FormatBool(lkeOTAEntitlementsRequired(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED
+              value: %q
+`, strconv.FormatBool(lkeMQTTEntitlementsRequired(env)))
 		if lkeLoggerHTTPCoreCutoverEnabled(env) {
 			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_LOGGER_HTTP_UPSTREAM_URL
               value: %q

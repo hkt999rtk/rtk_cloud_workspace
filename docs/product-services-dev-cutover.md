@@ -39,7 +39,8 @@ steps below become eligible only after this gate passes.
    platform upgrade as a shortcut for this dev change.
 3. Deploy compatible binaries and additive schema first. Keep
    `ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=false`,
-   `VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED=false`, and all new registration and
+   `VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED=false`,
+   `VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED=false`, and all new registration and
    route flags off. Keep the existing OTA API in `cmd/api`.
 
 ## Backfill and register
@@ -102,7 +103,8 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    revoke a URL already accepted by the old edge configuration. If the URL
    was never configured, record that evidence and verify new first-party
    download URLs against grant revocation instead.
-2. Enable `VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED=true` on every core replica
+2. Enable `VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED=true` and
+   `VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED=true` on every core replica
    and verify all are running the reviewed image and setting. Verify old
    devices without an `ota` grant cannot query, receive, or download a new
    update, including an old URL. Verify in-progress result reports still work.
