@@ -163,6 +163,81 @@ selector: '{retention_tier="90d"}'`
 	}
 }
 
+func TestLKELoggerRetentionRejectsUnreadyOrIncompleteLoki(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"config"},{"name":"data","persistentVolumeClaim":{"claimName":"video-cloud-loki-data"}}]}}},"status":{"readyReplicas":0}}`)
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "no ready replica") {
+		t.Fatalf("unready Loki was accepted: %v", err)
+	}
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"config"},{"name":"data","persistentVolumeClaim":{"claimName":"video-cloud-loki-data"}}]}}},"status":{"readyReplicas":1}}`)
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{"status":{"phase":"Bound"}}`)
+	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", `{"data":{"config.yaml":"retention_enabled: true\nretention_period: 0s\nselector: '{retention_tier=\"7d\"}'\nselector: '{retention_tier=\"30d\"}'"}}`)
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
+		t.Fatalf("Loki without the 90-day tier was accepted: %v", err)
+	}
+}
+
+func TestLKELokiStorageSwitchRejectsUnverifiableSources(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	const source = `{"spec":{"template":{"spec":{"volumes":[{"name":"config"},{"name":"data","emptyDir":{}}]}}}}`
+	const pods = `{"items":[{"metadata":{"uid":"source-pod-1"}}]}`
+	const copiedPVC = `{"metadata":{"annotations":{"rtk.realtek.com/loki-source-pod-uid":"source-pod-1","rtk.realtek.com/loki-copy-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"status":{"phase":"Bound"}}`
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", source)
+	t.Setenv("FAKE_LOKI_PODS_JSON", pods)
+	t.Setenv("FAKE_LOKI_PVC_JSON", copiedPVC)
+	cases := []struct {
+		name       string
+		deployment string
+		pods       string
+		pvc        string
+		want       string
+	}{
+		{name: "different PVC", deployment: `{"spec":{"template":{"spec":{"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"other-loki-data"}}]}}}}`, want: "different data PVC"},
+		{name: "unknown volume source", deployment: `{"spec":{"template":{"spec":{"volumes":[{"name":"data","configMap":{"name":"unexpected"}}]}}}}`, want: "unknown source"},
+		{name: "missing data volume", deployment: `{"spec":{"template":{"spec":{"volumes":[{"name":"config"}]}}}}`, want: "no data volume"},
+		{name: "multiple source Pods", pods: `{"items":[{"metadata":{"uid":"source-pod-1"}},{"metadata":{"uid":"source-pod-2"}}]}`, want: "exactly one identifiable"},
+		{name: "unbound migration PVC", pvc: `{"metadata":{"annotations":{"rtk.realtek.com/loki-source-pod-uid":"source-pod-1","rtk.realtek.com/loki-copy-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"status":{"phase":"Pending"}}`, want: "not bound"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.deployment != "" {
+				t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", tc.deployment)
+			}
+			if tc.pods != "" {
+				t.Setenv("FAKE_LOKI_PODS_JSON", tc.pods)
+			}
+			if tc.pvc != "" {
+				t.Setenv("FAKE_LOKI_PVC_JSON", tc.pvc)
+			}
+			if err := lkeRequireLokiDataMigration(env); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%s: expected %q, got %v", tc.name, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestLKECloudLoggerApplyStopsBeforeStorageSwitchWithoutVerifiedCopy(t *testing.T) {
+	logPath := fakeKubectl(t)
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                     "video-cloud-staging",
+		"LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true",
+	}
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"data","emptyDir":{}}]}}}}`)
+	t.Setenv("FAKE_LOKI_PODS_JSON", `{"items":[]}`)
+	if err := lkeApplyCloudLogger(env, provisionOptions{workloads: []string{"cloud-logger"}}); err == nil || !strings.Contains(err.Error(), "exactly one identifiable Loki source Pod") {
+		t.Fatalf("Logger storage switch proceeded without a verified source Pod: %v", err)
+	}
+	if log, err := os.ReadFile(logPath); err == nil {
+		if strings.Contains(string(log), " apply -f") {
+			t.Fatalf("Logger resources were changed before migration preflight: %s", log)
+		}
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 func TestLKELokiStorageSwitchRequiresVerifiedCurrentPodCopy(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
