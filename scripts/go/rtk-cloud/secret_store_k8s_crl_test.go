@@ -110,10 +110,61 @@ func TestLivePKICRLManifestRequiresReviewedMountAndPVCState(t *testing.T) {
 	}
 }
 
+func TestLivePKICRLManifestRejectsUntrustedMountAndIssuerSources(t *testing.T) {
+	deployment := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	checkMount := func(name string, current liveDeployment, container, path, want string) {
+		t.Helper()
+		if _, _, err := mountedPKICRLConfigMap(current, container, path); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: mount error = %v, want %q", name, err, want)
+		}
+	}
+	checkMount("noncanonical path", deployment, "pkimanagement", "/run/service-crls/../service-crls/crls.json", "absolute crls.json")
+	checkMount("wrong container", deployment, "other", "/run/service-crls/crls.json", "no matching")
+	missingMount := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	missingMount.Spec.Template.Spec.Containers[0].VolumeMounts[0].MountPath = "/run/other"
+	checkMount("wrong mount", missingMount, "pkimanagement", "/run/service-crls/crls.json", "no matching")
+	withoutConfigMap := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	withoutConfigMap.Spec.Template.Spec.Volumes[0].ConfigMap.Name = ""
+	checkMount("non-ConfigMap volume", withoutConfigMap, "pkimanagement", "/run/service-crls/crls.json", "not backed by a ConfigMap")
+
+	fromSecret := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
+	fromSecret.Spec.Template.Spec.Containers[0].Env[0].Value = ""
+	fromSecret.Spec.Template.Spec.Containers[0].Env[0].ValueFrom = map[string]any{"secretKeyRef": map[string]string{"name": "path"}}
+	if err := verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{fromSecret}}, "account-manager"); err == nil || !strings.Contains(err.Error(), "must be explicit") {
+		t.Fatalf("Secret-derived CRL manifest path error = %v", err)
+	}
+
+	valid, _, _ := testLiveCRLEvidence(t, "service", false)
+	if err := validateMountedPKICRLManifest("", "dev", "service", deployment, "pkimanagement"); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing manifest error = %v", err)
+	}
+	mutateManifest := func(change func(map[string]any)) string {
+		t.Helper()
+		var entries []map[string]any
+		if err := json.Unmarshal([]byte(valid), &entries); err != nil {
+			t.Fatal(err)
+		}
+		change(entries[0]["issuer"].(map[string]any))
+		raw, err := json.Marshal(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	invalidCertificate := mutateManifest(func(issuer map[string]any) { issuer["certificate_pem"] = "not a certificate" })
+	if err := validateMountedPKICRLManifest(invalidCertificate, "dev", "service", deployment, "pkimanagement"); err == nil || !strings.Contains(err.Error(), "certificate is invalid") {
+		t.Fatalf("invalid issuer certificate error = %v", err)
+	}
+	wrongFingerprint := mutateManifest(func(issuer map[string]any) { issuer["certificate_fingerprint_sha256"] = strings.Repeat("0", 64) })
+	if err := validateMountedPKICRLManifest(wrongFingerprint, "dev", "service", deployment, "pkimanagement"); err == nil || !strings.Contains(err.Error(), "fingerprint differs") {
+		t.Fatalf("wrong issuer fingerprint error = %v", err)
+	}
+}
+
 func TestLivePKICRLManifestChecksConfigMapBeforeAcceptance(t *testing.T) {
 	deployment := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
 	manifest, state, registry := testLiveCRLEvidence(t, "service", false)
-	writeSource := func(content, stateContent, registryContent string) {
+	writeSource := func(content, stateContent, registryContent string, podContents ...string) {
 		t.Helper()
 		encoded, err := json.Marshal(map[string]any{"data": map[string]string{"crls.json": content}})
 		if err != nil {
@@ -128,7 +179,11 @@ func TestLivePKICRLManifestChecksConfigMapBeforeAcceptance(t *testing.T) {
 		if err := os.WriteFile(fixture, encoded, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		for path, data := range map[string]string{stateFile: stateContent, registryFile: registryContent, podsFile: `{"items":[{"metadata":{"name":"postgresql-0"}}]}`} {
+		pods := `{"items":[{"metadata":{"name":"postgresql-0"}}]}`
+		if len(podContents) > 0 {
+			pods = podContents[0]
+		}
+		for path, data := range map[string]string{stateFile: stateContent, registryFile: registryContent, podsFile: pods} {
 			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -158,6 +213,33 @@ func TestLivePKICRLManifestChecksConfigMapBeforeAcceptance(t *testing.T) {
 	writeSource(manifest, state, strings.Replace(registry, `"ack":true`, `"ack":false`, 1))
 	if err := verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{deployment}}, "account-manager"); err == nil || !strings.Contains(err.Error(), "latest acknowledged") {
 		t.Fatalf("missing receipt error = %v", err)
+	}
+	mutateState := func(change func(map[string]any)) string {
+		t.Helper()
+		var current map[string]any
+		if err := json.Unmarshal([]byte(state), &current); err != nil {
+			t.Fatal(err)
+		}
+		change(current)
+		raw, err := json.Marshal(current)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	wrongIssuerState := mutateState(func(current map[string]any) { current["issuer_fingerprint"] = strings.Repeat("0", 64) })
+	writeSource(manifest, wrongIssuerState, registry)
+	if err := verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{deployment}}, "account-manager"); err == nil || !strings.Contains(err.Error(), "pinned issuer") {
+		t.Fatalf("wrong PVC issuer error = %v", err)
+	}
+	wrongNumberState := mutateState(func(current map[string]any) { current["crl"].(map[string]any)["crl_number"] = "2" })
+	writeSource(manifest, wrongNumberState, registry)
+	if err := verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{deployment}}, "account-manager"); err == nil || !strings.Contains(err.Error(), "metadata differs") {
+		t.Fatalf("wrong signed CRL number error = %v", err)
+	}
+	writeSource(manifest, state, registry, `{"items":[]}`)
+	if err := verifyMountedPKICRLManifests("kubeconfig", "video-cloud-dev-account-manager", "dev", liveDeploymentList{Items: []liveDeployment{deployment}}, "account-manager"); err == nil || !strings.Contains(err.Error(), "PostgreSQL Pod") {
+		t.Fatalf("missing PostgreSQL receipt source error = %v", err)
 	}
 	expiredManifest, expiredState, expiredRegistry := testLiveCRLEvidence(t, "service", true)
 	writeSource(expiredManifest, expiredState, expiredRegistry)

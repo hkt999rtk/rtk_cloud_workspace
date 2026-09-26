@@ -9,22 +9,24 @@ Product or device.
 
 ## Current dev preflight (2026-09-26)
 
-The read-only `secrets verify` gate is **NO-GO** before image rollout. The
-running Account Manager sidecar has
-`PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST`; certissuer has
-`CERT_ISSUER_SERVICE_CLIENT_SERVER_CRL_MANIFEST` and
-`OPENBAO_SERVER_CRL_MANIFEST`. The checked-in deployment contract rejects
-these live settings until they are represented and verified in a reviewed
-configuration. Do not bypass this gate or replace the running PKI workloads
-with a renderer that would drop their CRL settings.
+The reviewed CRL-aware deployment verifier accepts the three live, mounted
+CRL manifests used by Account Manager and certissuer. The canonical
+`scripts/check-deployment-credentials.sh --environment dev --read-only`
+preflight passed all 10 checks with this verifier. This clears the earlier
+deployment-contract drift; it does not authorize an image rollout or feature
+activation. Keep the CRL mounts and recheck their current signed state before
+any deployment. Do not replace the running PKI workloads with a renderer that
+would drop their CRL settings.
 
-The private `account-manager-service-registration-tls` Secret and all six
-registrar identity Secrets are absent in dev. The existing Service bootstrap
-session did not approve the six registrar subjects. Its persisted state must
-not be reused with a different subject list. Create a separately reviewed
-Service issuer/bootstrap session and Secret installation procedure, then
-register exact workload approvals and rerun the read-only preflight. The
-steps below become eligible only after this gate passes.
+The full Product cutover remains **NO-GO**. The private
+`account-manager-service-registration-tls` Secret and all six registrar
+identity Secrets are absent in dev. The active Service issuer cannot sign the
+new subjects or the Product listener DNS, and its policy is immutable. An
+independently approved successor issuer and new bootstrap session are required;
+the existing bootstrap PVC must not be reused. Follow
+[the dev PKI prerequisite](product-services-dev-pki.md) to issue and install
+the seven identities, register exact workload approvals, and pass the final
+listener, registration, and denial probes before continuing below.
 
 ## Prepare the exact dev revision
 

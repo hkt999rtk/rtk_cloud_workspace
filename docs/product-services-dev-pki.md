@@ -72,11 +72,37 @@ session succeed.
 ## Issue and install the seven reviewed identities
 
 1. Request, approve, provision and activate a successor **Service**
-   intermediate under the existing Root. The exact client policy is the
-   sorted union of the existing nine subjects and
-   `service:mqtt`, `service:shadow`, `service:webrtc`,
-   `service:video-storage`, `service:logger`, `service:ota`. The server policy
-   is the existing two DNS names plus the Account Manager listener DNS above.
+   intermediate under the existing Root. Set its exact client policy to these
+   16 sorted subjects. The deployment bootstrap identity must be included
+   because the new bootstrap session signs through this successor issuer:
+
+   ```text
+   service:account-manager
+   service:certissuer
+   service:deployment-bootstrap
+   service:emqx-pki
+   service:factory-enroll
+   service:logger
+   service:mqtt
+   service:openbao
+   service:ota
+   service:pki-controller
+   service:pkibroker
+   service:shadow
+   service:video-cloud-api
+   service:video-cloud-logingester
+   service:video-storage
+   service:webrtc
+   ```
+
+   Set its exact server DNS policy to these three sorted names:
+
+   ```text
+   account-manager.video-cloud-dev-account-manager.svc.cluster.local
+   certissuer.video-cloud-dev-video-cloud.svc
+   pki-controller.video-cloud-dev-video-cloud.svc
+   ```
+
    Install the successor's exact OpenBao service-client and server roles, and
    distribute its public bundle/CRL through the existing six Service trust
    consumers. Wait for their authenticated receipts. Keep the predecessor
