@@ -38,6 +38,44 @@ func verifyMountedPKICRLManifests(kubeconfig, namespace, environment string, dep
 			{"certissuer", "OPENBAO_SERVER_CRL_MANIFEST", "openbao_tls"},
 		},
 	}
+	// Dev already uses all three reviewed CRL consumers. A later Deployment
+	// replacement must not silently remove one and make secrets verify pass.
+	if environment == "dev" {
+		foundDeployment := false
+		for _, deployment := range deployments.Items {
+			if deployment.Metadata.Name != target {
+				continue
+			}
+			foundDeployment = true
+			for _, spec := range specs[target] {
+				foundContainer, settingCount := false, 0
+				for _, container := range deployment.Spec.Template.Spec.Containers {
+					if container.Name != spec.container {
+						continue
+					}
+					foundContainer = true
+					for _, setting := range container.Env {
+						if setting.Name != spec.setting {
+							continue
+						}
+						settingCount++
+						if setting.Value == "" && setting.ValueFrom == nil {
+							return fmt.Errorf("%s CRL manifest path is missing", spec.setting)
+						}
+					}
+				}
+				if !foundContainer {
+					return fmt.Errorf("%s CRL consumer container is missing", spec.setting)
+				}
+				if settingCount != 1 {
+					return fmt.Errorf("%s requires exactly one CRL manifest setting", spec.setting)
+				}
+			}
+		}
+		if !foundDeployment {
+			return fmt.Errorf("%s CRL consumer deployment is missing", target)
+		}
+	}
 	for _, deployment := range deployments.Items {
 		if deployment.Metadata.Name != target {
 			continue

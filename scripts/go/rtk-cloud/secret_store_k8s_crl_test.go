@@ -83,6 +83,53 @@ func testLiveCRLDeployment(t *testing.T, target, container, setting string, read
 	return deployment
 }
 
+func TestLivePKICRLManifestRequiresExistingDevConsumers(t *testing.T) {
+	accountSetting := "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST"
+	serviceSetting := "CERT_ISSUER_SERVICE_CLIENT_SERVER_CRL_MANIFEST"
+	openbaoSetting := "OPENBAO_SERVER_CRL_MANIFEST"
+	for _, tc := range []struct {
+		name, target, want string
+		change             func(*liveDeploymentList)
+	}{
+		{"missing account deployment", "account-manager", "account-manager CRL consumer deployment is missing", func(list *liveDeploymentList) { list.Items = nil }},
+		{"missing account sidecar", "account-manager", accountSetting + " CRL consumer container is missing", func(list *liveDeploymentList) { list.Items[0].Spec.Template.Spec.Containers = nil }},
+		{"missing account setting", "account-manager", accountSetting + " requires exactly one", func(list *liveDeploymentList) { list.Items[0].Spec.Template.Spec.Containers[0].Env = nil }},
+		{"empty account path", "account-manager", accountSetting + " CRL manifest path is missing", func(list *liveDeploymentList) { list.Items[0].Spec.Template.Spec.Containers[0].Env[0].Value = "" }},
+		{"missing certissuer deployment", "certissuer", "certissuer CRL consumer deployment is missing", func(list *liveDeploymentList) { list.Items = nil }},
+		{"missing certissuer container", "certissuer", serviceSetting + " CRL consumer container is missing", func(list *liveDeploymentList) { list.Items[0].Spec.Template.Spec.Containers = nil }},
+		{"missing service CRL setting", "certissuer", serviceSetting + " requires exactly one", func(list *liveDeploymentList) {
+			list.Items[0].Spec.Template.Spec.Containers[0].Env = list.Items[0].Spec.Template.Spec.Containers[0].Env[1:]
+		}},
+		{"missing OpenBao CRL setting", "certissuer", openbaoSetting + " requires exactly one", func(list *liveDeploymentList) {
+			list.Items[0].Spec.Template.Spec.Containers[0].Env = list.Items[0].Spec.Template.Spec.Containers[0].Env[:1]
+		}},
+		{"empty OpenBao CRL path", "certissuer", openbaoSetting + " CRL manifest path is missing", func(list *liveDeploymentList) { list.Items[0].Spec.Template.Spec.Containers[0].Env[1].Value = "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			container, setting := "pkimanagement", accountSetting
+			if tc.target == "certissuer" {
+				container, setting = "certissuer", serviceSetting
+			}
+			deployment := testLiveCRLDeployment(t, tc.target, container, setting, true)
+			if tc.target == "certissuer" {
+				second := deployment.Spec.Template.Spec.Containers[0].Env[0]
+				second.Name = openbaoSetting
+				deployment.Spec.Template.Spec.Containers[0].Env = append(deployment.Spec.Template.Spec.Containers[0].Env, second)
+			}
+			list := liveDeploymentList{Items: []liveDeployment{deployment}}
+			tc.change(&list)
+			if err := verifyMountedPKICRLManifests("kubeconfig", "namespace", "dev", list, tc.target); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("missing dev CRL consumer error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	for _, target := range []string{"account-manager", "certissuer"} {
+		if err := verifyMountedPKICRLManifests("kubeconfig", "namespace", "staging", liveDeploymentList{}, target); err != nil {
+			t.Fatalf("unadopted staging %s must remain optional: %v", target, err)
+		}
+	}
+}
+
 func TestLivePKICRLManifestRequiresReviewedMountAndPVCState(t *testing.T) {
 	deployment := testLiveCRLDeployment(t, "account-manager", "pkimanagement", "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST", true)
 	name, key, err := mountedPKICRLConfigMap(deployment, "pkimanagement", "/run/service-crls/crls.json")

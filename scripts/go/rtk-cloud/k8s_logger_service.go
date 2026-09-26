@@ -143,9 +143,29 @@ func lkeRequireReadyLokiRetentionStorage(env map[string]string) error {
 	if !persistent {
 		return fmt.Errorf("Loki retention Deployment still uses nonpersistent storage")
 	}
+	strategy, _ := spec["strategy"].(map[string]any)
+	if strategy["type"] != "Recreate" {
+		return fmt.Errorf("Loki retention Deployment must use Recreate rollout")
+	}
 	status, _ := deployment["status"].(map[string]any)
 	if ready, _ := status["readyReplicas"].(float64); ready < 1 {
 		return fmt.Errorf("Loki retention Deployment has no ready replica")
+	}
+	metadata, _ := deployment["metadata"].(map[string]any)
+	generation, _ := metadata["generation"].(float64)
+	desired, _ := spec["replicas"].(float64)
+	observed, _ := status["observedGeneration"].(float64)
+	updated, _ := status["updatedReplicas"].(float64)
+	available, _ := status["availableReplicas"].(float64)
+	ready, _ := status["readyReplicas"].(float64)
+	unavailable, _ := status["unavailableReplicas"].(float64)
+	if generation < 1 || desired != 1 || observed < generation || updated != desired || available != desired || ready != desired || unavailable != 0 {
+		return fmt.Errorf("Loki retention Deployment has not rolled out its current revision")
+	}
+	templateMetadata, _ := template["metadata"].(map[string]any)
+	annotations, _ := templateMetadata["annotations"].(map[string]any)
+	if annotations["rtk.realtek.com/config-checksum"] != lkeConfigChecksum(lkeLokiConfigManifest(env)) {
+		return fmt.Errorf("Loki retention Deployment config checksum differs from the current retention configuration")
 	}
 	pvc, err := kubectlResourceJSON(ns, "pvc", "video-cloud-loki-data")
 	if err != nil {

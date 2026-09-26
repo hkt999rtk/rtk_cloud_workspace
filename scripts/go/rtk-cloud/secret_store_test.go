@@ -1069,7 +1069,9 @@ func TestSyncMissingSecretBindingsPreservesExistingValues(t *testing.T) {
 }
 
 func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T) {
-	store := makeIsolatedTestSecretStore(t, "dev")
+	// Exercise the general certificate/workload checks in a stack that has not
+	// adopted the three mandatory dev CRL consumers yet.
+	store := makeIsolatedTestSecretStore(t, "staging")
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
 		t.Fatal(err)
 	}
@@ -1083,7 +1085,7 @@ func TestSecretStoreK8SRuntimeValidatesCertificatesAndPKIWorkloads(t *testing.T)
 		t.Fatal(err)
 	}
 	secrets, _ := json.Marshal(map[string]any{"items": []any{map[string]any{
-		"metadata": map[string]any{"namespace": "video-cloud-dev-video-cloud", "name": "pki-controller-tls"},
+		"metadata": map[string]any{"namespace": "video-cloud-staging-video-cloud", "name": "pki-controller-tls"},
 		"data":     map[string]string{"tls.crt": base64.StdEncoding.EncodeToString(certPEM), "tls.key": base64.StdEncoding.EncodeToString(keyPEM)},
 	}}})
 	deployments, _ := json.Marshal(map[string]any{"items": []any{map[string]any{

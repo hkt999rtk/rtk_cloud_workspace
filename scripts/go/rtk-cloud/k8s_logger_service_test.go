@@ -145,9 +145,28 @@ func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 	}
 }
 
+func testReadyLokiRetentionDeployment(env map[string]string, persistent bool) map[string]any {
+	data := map[string]any{"name": "data", "emptyDir": map[string]any{}}
+	if persistent {
+		data = map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "video-cloud-loki-data"}}
+	}
+	return map[string]any{
+		"metadata": map[string]any{"generation": 2},
+		"spec": map[string]any{
+			"replicas": 1,
+			"strategy": map[string]any{"type": "Recreate"},
+			"template": map[string]any{
+				"metadata": map[string]any{"annotations": map[string]any{"rtk.realtek.com/config-checksum": lkeConfigChecksum(lkeLokiConfigManifest(env))}},
+				"spec":     map[string]any{"volumes": []any{data}},
+			},
+		},
+		"status": map[string]any{"observedGeneration": 2, "updatedReplicas": 1, "availableReplicas": 1, "readyReplicas": 1, "unavailableReplicas": 0},
+	}
+}
+
 func TestLKELoggerCutoverRequiresLivePersistentTieredLoki(t *testing.T) {
 	fakeKubectl(t)
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
 	setJSON := func(key string, value any) {
 		t.Helper()
 		body, err := json.Marshal(value)
@@ -156,11 +175,11 @@ func TestLKELoggerCutoverRequiresLivePersistentTieredLoki(t *testing.T) {
 		}
 		t.Setenv(key, string(body))
 	}
-	setJSON("FAKE_LOKI_DEPLOYMENT_JSON", map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "data", "emptyDir": map[string]any{}}}}}}, "status": map[string]any{"readyReplicas": 1}})
+	setJSON("FAKE_LOKI_DEPLOYMENT_JSON", testReadyLokiRetentionDeployment(env, false))
 	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "nonpersistent") {
 		t.Fatalf("emptyDir Loki was accepted: %v", err)
 	}
-	setJSON("FAKE_LOKI_DEPLOYMENT_JSON", map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "video-cloud-loki-data"}}}}}}, "status": map[string]any{"readyReplicas": 1}})
+	setJSON("FAKE_LOKI_DEPLOYMENT_JSON", testReadyLokiRetentionDeployment(env, true))
 	setJSON("FAKE_LOKI_PVC_JSON", map[string]any{"status": map[string]any{"phase": "Pending"}})
 	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "not bound") {
 		t.Fatalf("unbound Loki PVC was accepted: %v", err)
@@ -179,12 +198,23 @@ selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`
 
 func TestLKELoggerRetentionRejectsUnreadyOrIncompleteLoki(t *testing.T) {
 	fakeKubectl(t)
-	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
-	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"config"},{"name":"data","persistentVolumeClaim":{"claimName":"video-cloud-loki-data"}}]}}},"status":{"readyReplicas":0}}`)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
+	setDeployment := func(deployment map[string]any) {
+		t.Helper()
+		body, err := json.Marshal(deployment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", string(body))
+	}
+	deployment := testReadyLokiRetentionDeployment(env, true)
+	deployment["status"].(map[string]any)["readyReplicas"] = 0
+	setDeployment(deployment)
 	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "no ready replica") {
 		t.Fatalf("unready Loki was accepted: %v", err)
 	}
-	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"config"},{"name":"data","persistentVolumeClaim":{"claimName":"video-cloud-loki-data"}}]}}},"status":{"readyReplicas":1}}`)
+	deployment["status"].(map[string]any)["readyReplicas"] = 1
+	setDeployment(deployment)
 	t.Setenv("FAKE_LOKI_PVC_JSON", `{"status":{"phase":"Bound"}}`)
 	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", `{"data":{"config.yaml":"retention_enabled: true\nretention_period: 0s\nselector: '{retention_tier=\"7d\"}'\nselector: '{retention_tier=\"30d\"}'"}}`)
 	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
@@ -204,6 +234,49 @@ func TestLKELoggerRetentionRejectsUnreadyOrIncompleteLoki(t *testing.T) {
 	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", string(body))
 	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
 		t.Fatalf("Loki must not apply Product retention to preexisting tier-only streams: %v", err)
+	}
+}
+
+func TestLKELoggerRetentionRejectsStaleDeploymentRevision(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{"status":{"phase":"Bound"}}`)
+	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", `{"data":{"config.yaml":"retention_enabled: true\nretention_period: 0s\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"7d\"}'\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"30d\"}'\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"90d\"}'"}}`)
+	setDeployment := func(deployment map[string]any) {
+		t.Helper()
+		body, err := json.Marshal(deployment)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", string(body))
+	}
+	tests := []struct {
+		name   string
+		change func(map[string]any)
+		want   string
+	}{
+		{"rolling update may overlap old Pod", func(d map[string]any) {
+			d["spec"].(map[string]any)["strategy"] = map[string]any{"type": "RollingUpdate"}
+		}, "Recreate"},
+		{"controller has not observed new template", func(d map[string]any) { d["status"].(map[string]any)["observedGeneration"] = 1 }, "current revision"},
+		{"old ready Pod while new Pod is pending", func(d map[string]any) { d["status"].(map[string]any)["updatedReplicas"] = 0 }, "current revision"},
+		{"stale template checksum", func(d map[string]any) {
+			d["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/config-checksum"] = "stale"
+		}, "config checksum"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment := testReadyLokiRetentionDeployment(env, true)
+			tc.change(deployment)
+			setDeployment(deployment)
+			if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("stale Loki accepted: %v", err)
+			}
+		})
+	}
+	setDeployment(testReadyLokiRetentionDeployment(env, true))
+	if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
+		t.Fatalf("current Loki revision rejected: %v", err)
 	}
 }
 
