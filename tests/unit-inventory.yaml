@@ -559,7 +559,9 @@ cases:
       source: src/firmware.test.mjs
       title: firmware dashboard exposes reversible start and stop controls
       owner: rtk_cloud_admin
-      status: active
+      status: retired
+      retired_at: "2026-09-26"
+      reason: Removed with the duplicate OTA dashboard helper; campaign actions retain behavior coverage.
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20dashboard%20orders%20campaigns%20by%20newest%20start%20time
       module: cloud-admin-web
       language: javascript
