@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
@@ -24,11 +27,82 @@ func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 	if !strings.Contains(active, "name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED\n              value: \"true\"") || !strings.Contains(lkeLokiDeploymentManifest(env), "claimName: video-cloud-loki-data") || !strings.Contains(lkeLokiConfigManifest(env), "retention_stream:") {
 		t.Fatal("cutover must enable the sole Logger subscriber and tiered persistent storage")
 	}
+	config := lkeLokiConfigManifest(env)
+	for _, tier := range []string{`selector: '{retention_tier="7d"}'`, `selector: '{retention_tier="30d"}'`, `selector: '{retention_tier="90d"}'`} {
+		if !strings.Contains(config, tier) {
+			t.Fatalf("Loki lacks %s", tier)
+		}
+	}
+	if !strings.Contains(config, "retention_period: 0s") {
+		t.Fatal("unlabeled historical logs must not receive a new global retention deadline")
+	}
+	var manifest struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(config), &manifest); err != nil {
+		t.Fatalf("parse Loki ConfigMap: %v", err)
+	}
+	var loki map[string]any
+	if err := yaml.Unmarshal([]byte(manifest.Data["config.yaml"]), &loki); err != nil {
+		t.Fatalf("parse Loki runtime config: %v", err)
+	}
 	if !strings.Contains(active, "name: VIDEO_CLOUD_MQTT_CLEAN_SESSION\n              value: \"false\"") {
 		t.Fatal("registered Logger requires a persistent broker session")
 	}
 	if !strings.Contains(active, "name: VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED\n              value: \"true\"") {
 		t.Fatal("Billing facts must honor the separate activation flag")
+	}
+}
+
+func TestLKELoggerCutoverRequiresLivePersistentTieredLoki(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	setJSON := func(key string, value any) {
+		t.Helper()
+		body, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(key, string(body))
+	}
+	setJSON("FAKE_LOKI_DEPLOYMENT_JSON", map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "data", "emptyDir": map[string]any{}}}}}}, "status": map[string]any{"readyReplicas": 1}})
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "nonpersistent") {
+		t.Fatalf("emptyDir Loki was accepted: %v", err)
+	}
+	setJSON("FAKE_LOKI_DEPLOYMENT_JSON", map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"volumes": []any{map[string]any{"name": "data", "persistentVolumeClaim": map[string]any{"claimName": "video-cloud-loki-data"}}}}}}, "status": map[string]any{"readyReplicas": 1}})
+	setJSON("FAKE_LOKI_PVC_JSON", map[string]any{"status": map[string]any{"phase": "Pending"}})
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "not bound") {
+		t.Fatalf("unbound Loki PVC was accepted: %v", err)
+	}
+	setJSON("FAKE_LOKI_PVC_JSON", map[string]any{"status": map[string]any{"phase": "Bound"}})
+	config := `retention_enabled: true
+retention_period: 0s
+selector: '{retention_tier="7d"}'
+selector: '{retention_tier="30d"}'
+selector: '{retention_tier="90d"}'`
+	setJSON("FAKE_LOKI_CONFIGMAP_JSON", map[string]any{"data": map[string]any{"config.yaml": config}})
+	if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLKELokiStorageSwitchRequiresVerifiedCurrentPodCopy(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"data","emptyDir":{}}]}}}}`)
+	t.Setenv("FAKE_LOKI_PODS_JSON", `{"items":[{"metadata":{"uid":"source-pod-1"}}]}`)
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{"metadata":{"annotations":{"rtk.realtek.com/loki-source-pod-uid":"old-pod","rtk.realtek.com/loki-copy-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"status":{"phase":"Bound"}}`)
+	if err := lkeRequireLokiDataMigration(env); err == nil || !strings.Contains(err.Error(), "verified data-copy") {
+		t.Fatalf("stale Loki copy was accepted: %v", err)
+	}
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{"metadata":{"annotations":{"rtk.realtek.com/loki-source-pod-uid":"source-pod-1","rtk.realtek.com/loki-copy-sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"status":{"phase":"Bound"}}`)
+	if err := lkeRequireLokiDataMigration(env); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", `{"spec":{"template":{"spec":{"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"video-cloud-loki-data"}}]}}}}`)
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{}`)
+	if err := lkeRequireLokiDataMigration(env); err != nil {
+		t.Fatal(err)
 	}
 }
 

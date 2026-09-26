@@ -87,6 +87,7 @@ var deploymentEnvironmentKeys = keySet(
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
 	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
+	"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED",
 )
 
 var deploymentEnvironmentServiceKeys = keySet(
@@ -96,6 +97,7 @@ var deploymentEnvironmentServiceKeys = keySet(
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
 	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
+	"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED",
 )
 
 func architectureKeySet() map[string]bool {
@@ -783,6 +785,11 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	}
 	if enabled := values["FACTORY_ENROLL_PUBLIC_ENABLED"]; enabled != "" && enabled != "true" && enabled != "false" {
 		return deploymentConfig{}, errors.New("FACTORY_ENROLL_PUBLIC_ENABLED must be true or false")
+	}
+	for _, key := range []string{"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED"} {
+		if value := values[key]; value != "" && value != "true" && value != "false" {
+			return deploymentConfig{}, fmt.Errorf("%s must be true or false", key)
+		}
 	}
 	if values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
 		if err := validateFactoryEnrollmentDomain(values["FACTORY_ENROLL_DOMAIN"], values["CLOUD_STACK_NAME"], values["CLOUD_DNS_ROOT_DOMAIN"]); err != nil {
