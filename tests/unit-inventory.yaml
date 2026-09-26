@@ -1400,6 +1400,13 @@ cases:
       title: SDK bridge stays within normal same-origin console routes
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#effective%20price%20book%20is%20owner%20scoped%20and%20never%20inferred%20from%20reference%20prices
+      module: cloud-admin-web
+      language: javascript
+      source: src/service-pricing.test.mjs
+      title: effective price book is owner scoped and never inferred from reference prices
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#owner-scoped%20catalog%20is%20complete%20and%20keeps%20approved%20OTA%20prices%20separate%20from%20research%20references
       module: cloud-admin-web
       language: javascript
