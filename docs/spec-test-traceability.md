@@ -790,6 +790,8 @@
 | `SPEC-AM-OPENAPI#getDeveloperChipset` | `GET /v1/developer/chipsets/{chipsetId}` | `FEAT-CA-RELEASE-001` | `REQ-UI-CA-CHIPSET-004` | `cb60fb9a93d7` |
 | `SPEC-AM-OPENAPI#acceptProductCollaboratorInvitation` | `POST /v1/developer/product-collaborator-invitations/accept` | `FEAT-AM-IDENTITY-001` | `REQ-AM-PRODUCT-COLLAB-001` | `fa861058ecad` |
 | `SPEC-AM-OPENAPI#getHealth` | `GET /v1/health` | `FEAT-CA-OBS-001` | `REQ-UI-CA-DASH-001` | `949917327ce3` |
+| `SPEC-AM-OPENAPI#getInternalProductOTAGrant` | `GET /v1/internal/brand-clouds/{brandCloudId}/products/{productId}/ota-grant` | `FEAT-CONTRACT-SERVICE-REGISTRATION-001` | `REQ-CONTRACT-SVCREG-PRODUCT-001` | `70623473b33a` |
+| `SPEC-AM-OPENAPI#getInternalHistoricalProductOTAGrant` | `GET /v1/internal/brand-clouds/{brandCloudId}/products/{productId}/ota-grants/{revision}` | `FEAT-CONTRACT-SERVICE-REGISTRATION-001` | `REQ-CONTRACT-SVCREG-PRODUCT-001` | `4a8c0ddee31b` |
 | `SPEC-AM-OPENAPI#cancelFactoryEnrollment` | `POST /v1/internal/factory-enrollments/cancel` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `413ffb26e3e3` |
 | `SPEC-AM-OPENAPI#lookupFactoryEnrollment` | `POST /v1/internal/factory-enrollments/lookup` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `d3d75c78b3a2` |
 | `SPEC-AM-OPENAPI#reserveFactoryEnrollment` | `POST /v1/internal/factory-enrollments/reserve` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001`, `REQ-MULTICLOUD-SHARING-001` | `6bd9744084ef` |
@@ -824,6 +826,14 @@
 | `SPEC-AM-OPENAPI#createOrganizationProductionRun` | `POST /v1/orgs/{orgId}/device-item-profiles/{profileId}/production-runs` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `9c13ce808a9a` |
 | `SPEC-AM-OPENAPI#listOrganizationProductionRuns` | `GET /v1/orgs/{orgId}/device-item-profiles/{profileId}/production-runs` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `7ce1221bbc24` |
 | `SPEC-AM-OPENAPI#stopOrganizationProductionRun` | `POST /v1/orgs/{orgId}/device-item-profiles/{profileId}/production-runs/{runId}/stop` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `1fc63331ba40` |
+| `SPEC-AM-OPENAPI#admitProductServiceApply` | `POST /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `b2b4106d6e68` |
+| `SPEC-AM-OPENAPI#getProductServiceApplyJob` | `GET /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs/{jobId}` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `c028f09be9c2` |
+| `SPEC-AM-OPENAPI#cancelProductServiceApply` | `POST /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs/{jobId}/cancel` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `c1aea83b7e90` |
+| `SPEC-AM-OPENAPI#completeProductServiceApply` | `POST /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs/{jobId}/complete` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `757de93413bd` |
+| `SPEC-AM-OPENAPI#listProductServiceApplyItems` | `GET /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs/{jobId}/items` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `a877414cb29b` |
+| `SPEC-AM-OPENAPI#getProductServiceApplyItem` | `GET /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs/{jobId}/items/{deviceId}` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `d13bf3cfa091` |
+| `SPEC-AM-OPENAPI#dispatchProductServiceApplyItem` | `POST /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-jobs/{jobId}/items/{deviceId}/dispatch` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `b4e20c50dd7b` |
+| `SPEC-AM-OPENAPI#previewProductServiceApply` | `GET /v1/orgs/{orgId}/device-item-profiles/{profileId}/service-apply-preview` | `FEAT-AM-REGISTERED-SERVICES-001` | `REQ-AM-REGISTERED-SERVICES-001` | `602b9a77939e` |
 | `SPEC-AM-OPENAPI#createDevice` | `POST /v1/orgs/{orgId}/devices` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001` | `136e70a02eac` |
 | `SPEC-AM-OPENAPI#listDevices` | `GET /v1/orgs/{orgId}/devices` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-PROV-ACCOUNT-001`, `REQ-CONTRACT-PROV-UNPROVISION-001` | `777f8216bd4f` |
 | `SPEC-AM-OPENAPI#resolveDeviceClaim` | `POST /v1/orgs/{orgId}/devices/claim/resolve` | `FEAT-PROV-ONBOARD-001` | `REQ-E2E-FACTORY-ENROLL-001`, `REQ-CONTRACT-PROV-CLAIM-BOUNDARY-001`, `REQ-CONTRACT-PROV-SIGNOFF-001`, `REQ-E2E-PROV-ACCOUNT-001`, `REQ-LIVE-STG-ONBOARD-001` | `8372e5494083` |
