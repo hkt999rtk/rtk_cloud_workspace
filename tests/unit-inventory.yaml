@@ -561,7 +561,7 @@ cases:
       owner: rtk_cloud_admin
       status: retired
       retired_at: "2026-09-26"
-      reason: Removed with the duplicate OTA dashboard helper; campaign actions retain behavior coverage.
+      reason: Dashboard controls now derive from campaign actions and are covered by the OTA browser workflow.
     - canonical_key: js://cloud-admin-web/src/firmware.test.mjs#firmware%20dashboard%20orders%20campaigns%20by%20newest%20start%20time
       module: cloud-admin-web
       language: javascript
