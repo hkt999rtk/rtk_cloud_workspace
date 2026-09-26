@@ -77,8 +77,11 @@ listener, registration, and denial probes before continuing below.
    `rtk.realtek.com/loki-source-pod-uid` set to the copied Pod UID and
    `rtk.realtek.com/loki-copy-sha256` set to the recorded tree checksum.
    The deployment rejects a storage switch if either annotation is missing or
-   the source Pod has changed. Apply the PVC-backed Loki Deployment, wait for
-   readiness, then resume writers. Deploy the updated Cloud Logger before
+   the source Pod has changed. Remove the temporary copy helper after verifying
+   the PVC. Apply the PVC-backed Loki Deployment with its `Recreate` strategy
+   so the old emptyDir Pod stops before the new Pod starts. Wait for readiness
+   and verify that only one Loki Pod serves queries before resuming writers.
+   Deploy the updated Cloud Logger before
    enabling tiered Compactor retention. An explicitly versioned Product log
    carries one of the three low-cardinality `retention_tier` values (`7d`,
    `30d`, `90d`) and the fixed `retention_policy="product-grant-v1"`
