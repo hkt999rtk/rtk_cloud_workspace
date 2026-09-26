@@ -16,7 +16,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 | 階段 | 目前狀態 |
 | --- | --- |
-| D0 文件與費率研究（部分完成） | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。Billing 操作 runbook 與 Cloud Admin customer-copy 規格仍待新增。 |
+| D0 文件與費率研究（完成） | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。Billing 操作 runbook 與 Cloud Admin customer-copy 規格已合併，均清楚標示尚未實作的發佈與正式價 API。 |
 | A2 登入後揭露的過渡版（部分完成） | Cloud Admin 僅於 Cloud owner 通過 `billing_account.read` 授權後，從不快取的 `/billing/pricing-references` 端點取得 15 項參考價與四項 OTA 核准待生效價；匿名前端資產不含數字，取價失敗不顯示價表。此端點是研究快照，仍**不讀取**該 Cloud 的當期 Billing 價卡；正式價、Product 適用狀態與 invoice 明細整合仍待 A1／A2 後續。 |
 | P4 生效前 OTA 事實保護（技術部分） | Billing 已在選定版次沒有 OTA 費率時保留 immutable 事實、排除其帳單與用量估算，並阻擋目前即時 API 啟用任何 OTA 價卡；混合 MQTT 月份與不追收已有本地測試。晚到事實跨關帳的來源 ledger／拒收原因仍須納入端到端驗收。此改動不會開始 OTA 收費。 |
 | P1–P3、A1 正式價卡／月份／價格 API | 尚未實作；沒有新增或啟用 OTA pricing version，也沒有當期／預告價卡的客戶 API。 |
@@ -104,8 +104,8 @@ Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套
 | --- | --- |
 | 本文件 `docs/design/ota-pricing-activation-and-disclosure-plan.md` | 跨 repo 決策、順序、缺口與驗收；workspace 維護。 |
 | `repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md` 與 `pricing_and_invoicing.md` | 規範性計量／價卡／不追收／月份契約；Billing 與 OTA owners 維護。 |
-| `repos/rtk_billing/docs/pricing-activation-runbook.md`（待新增） | 環境盤點、完整價卡 diff、tax/approver、UTC 排程、回復與首單對帳；Billing／Finance 維護。 |
-| `repos/rtk_cloud_admin/docs/service-pricing-disclosure.md`（待新增） | 使用者文案、15 項清單、狀態詞、範例、i18n／無障礙驗收；Cloud Admin 維護。 |
+| [Billing 操作 runbook](../../repos/rtk_billing/docs/pricing-activation-runbook.md) | 環境盤點、完整價卡 diff、tax/approver、UTC 排程、回復與首單對帳；Billing／Finance 維護。公開文件不重列價格數字。 |
+| [Cloud Admin 揭露規格](../../repos/rtk_cloud_admin/docs/service-pricing-disclosure.md) | 使用者文案、15 項清單、狀態詞、範例、i18n／無障礙驗收；Cloud Admin 維護。公開文件不重列價格數字。 |
 | `repos/rtk_cloud_admin/docs/service-pricing-research.md` | AWS 等官方 benchmark 的查核日期與非等價說明；**非正式費率來源**。 |
 | `docs/business-model.md` | 公開官網與登入後揭露界線、evaluation／managed cloud／private quote 適用關係；workspace 商務 owner 維護。 |
 
@@ -115,5 +115,6 @@ Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套
 2. 盤點正式環境當期完整 TWD 價卡與所有合約特例，再核准是否要把其他 11 項研究價提升為正式單價；這次只有 OTA 四價已獲核准。
 3. 定義時區月份轉 UTC 的一次性邊界、月中 owner 移轉／Cloud closure 的責任分配。未通過對帳時 OTA 該月不自動收費。
 4. 完成 CDN 與雙 seal 的 staging 資格、第一個可用的**未來**完整 UTC 月，以及客戶告知時點，才可發佈 production 價卡。
+5. 釐清「登入後才可看具體價格」是否也涵蓋公開 GitHub 原始碼與文件。目前 Cloud Admin、Billing 和 workspace 儲存庫公開，既有原始碼、研究文件及歷史提交含價格數字；這次保護的是應用程式匿名資產和 API，新增的兩份操作／文案文件不重列數字。若要求原始碼層級保密，必須另定私有價目來源、儲存庫可見性及既有公開歷史的處理方式，不能把 UI 授權視為完成該要求。
 
 在上述條件解決前，本文件及畫面的「參考價／已核准待生效」皆不構成實際收費。
