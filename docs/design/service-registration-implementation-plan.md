@@ -5,7 +5,7 @@ rollout remains open. Not deployed.
 
 Owner: rtk_cloud_workspace.
 
-Last reviewed: 2026-09-20.
+Last reviewed: 2026-09-26.
 
 Classification: supporting-note.
 
@@ -603,6 +603,9 @@ maps the contract to local paths and state. Billing's
 owns pricing representation and invoice qualification. Cloud Admin's
 [pricing research](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)
 is a non-binding commercial reference.
+The separate [OTA pricing activation and service disclosure plan](ota-pricing-activation-and-disclosure-plan.md)
+tracks the four approved unit prices, UTC-month cutover work, and login-only
+customer-facing explanation of every managed-cloud service charge.
 
 | Step | Owner and change | Done evidence |
 | --- | --- | --- |
@@ -610,7 +613,7 @@ is a non-binding commercial reference.
 | 2. Product and service gate | Account Manager approves and registers `ota` with `mqtt` dependency; OTA runs independently with its own workload identity, readiness and lease. Cloud Admin uses the selected Product's `ota` service option to show the dashboard or explicit disabled message; the backend validates the latest revisioned grant before new OTA operations. | Suspended-first, lease loss, Product edit/migration, device grant and background dispatch tests. |
 | 3. Direct CDN delivery | Video Cloud emits path-scoped, at-most-ten-minute Akamai URLs for a private Linode/Akamai Object Storage origin; firmware downloads Range bytes directly and reports verified completion. | Staging CDN, private origin, Range, expiry, revocation and no-API-byte-proxy evidence. |
 | 4. Authoritative usage | Persist immutable first-assignment, first verified download, physical object write, and UTC-month byte-time receipts, each atomically paired with a shared Billing outbox fact; reconcile remote object inventory and CDN edge logs. | Database crash/replay, changed-payload rejection, object inventory, month-boundary and outbox-recovery tests. |
-| 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four proposed rates. Account Manager's Platform seal lists every Product with an OTA-enabled grant revision before month end; producer and fact Products must be a subset of that historical set. Finance approves a future effective version only after staging qualification. | Missing-seal denial, producer-only unauthorized Product, retired/zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
+| 5. Close and commercial gate | Billing accepts exact Product-scoped facts, two independent period seals, and four approved pre-tax but inactive unit prices. Account Manager's Platform seal lists every Product with an OTA-enabled grant revision before month end; producer and fact Products must be a subset of that historical set. Finance approves tax, applicability and a future effective complete pricing version only after staging qualification. | Missing-seal denial, producer-only unauthorized Product, retired/zero-use Product, invoice arithmetic, tax, period cutoff and no-retrocharge evidence. |
 
 During migration, core keeps its existing OTA control-plane handlers and
 historical `ota/` objects until the dedicated service passes cutover checks.
@@ -633,7 +636,7 @@ grant writes and verifies each historical grant digest. An empty verified OTA
 seal can close a zero-usage month only when the active rate version contains
 OTA rates alone; other priced services retain their usage-completeness gate.
 
-The proposed customer rates before tax are NT$96/1,000 assignments,
+The approved but not yet effective customer unit prices before tax are NT$96/1,000 assignments,
 NT$0.96/GiB accepted successful downloads, NT$0.96/GiB-month of stored OTA
 objects, and NT$144/million successful object creations. No additional
 OTA customer object-read or raw CDN egress charge is proposed. Akamai edge
@@ -662,4 +665,5 @@ later than disable; the producer must seal that later month before Billing
 can charge it. A disable racing with the grant check/response is bounded by
 the issued URL's ten-minute expiry; the grant row records the checked Product
 revision and digest, not strict wall-clock precedence over disable. The
-proposed OTA rates remain inactive.
+approved OTA unit prices remain inactive until the complete Billing rate card
+passes the future UTC-month publication and commercial gates above.

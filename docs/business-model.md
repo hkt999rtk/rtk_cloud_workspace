@@ -4,7 +4,7 @@ Status: source-of-truth note.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-05-04.
+Last reviewed: 2026-09-26.
 
 ## Purpose
 
@@ -138,11 +138,33 @@ The website must NOT disclose:
 - Specific SLA percentages until tier structure is formalised
 - Internal cost basis (Realtek's own infra, salary, or margin assumptions)
 
+## Authenticated Service Price Disclosure
+
+The 2026-09-26 disclosure decision keeps specific service prices out of the
+public marketing site. Signed-in users may see a detailed service rate table in
+Cloud Admin under **Billing > Service Pricing**. That table must distinguish
+effective Billing rates, approved future rates, and research-only reference
+prices. A reference price is never an invoice rate. Each item explains its
+measurement, unit, exclusions, effective UTC interval, tax treatment, and
+whether the selected Product has enabled the service.
+Approved and reference amounts must be returned only after the existing Cloud
+Billing authorization check; unauthenticated static HTML, JavaScript, and
+localization assets must not contain the numeric price table.
+
+The evaluation tier remains free under its evaluation terms. A private
+commercial license and annual maintenance remain contract-quoted; a service
+rate shown in the console does not itself change that agreement. Before
+managed-cloud usage charging is enabled, the applicable account/tier and tax
+terms must be approved and reflected in Billing. The cross-repository plan is
+[OTA pricing activation and service disclosure](design/ota-pricing-activation-and-disclosure-plan.md).
+
 ## Decision History
 
 - **2026-05-04** — initial decisions captured in this document, derived from
   comparison with RainMaker's published model. See conversation thread in
   `clever-sammet-595d11` worktree.
+- **2026-09-26** — detailed service prices are disclosed to signed-in Cloud
+  Admin users only; effective and reference prices have separate labels.
 
 ## Repository Ownership
 
