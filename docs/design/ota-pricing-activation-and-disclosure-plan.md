@@ -1,6 +1,6 @@
 # OTA 費率生效與服務價格揭露：實作計畫
 
-Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, and rate precision/tax metadata built; no effective rate-card publication or environment rollout performed.
+Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, and late-fact rejection evidence built; no effective rate-card publication or environment rollout performed.
 
 Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-26.
 
@@ -18,7 +18,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 | --- | --- |
 | D0 文件與費率研究（完成） | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。Billing 操作 runbook 與 Cloud Admin customer-copy 規格已合併，均清楚標示尚未實作的發佈與正式價 API。 |
 | A2 登入後揭露的過渡版（部分完成） | Cloud Admin 僅於 Cloud owner 通過 `billing_account.read` 授權後，從不快取的 `/billing/pricing-references` 端點取得 15 項參考價與四項 OTA 核准待生效價；匿名前端資產不含數字，取價失敗不顯示價表。此端點是研究快照，仍**不讀取**該 Cloud 的當期 Billing 價卡；正式價、Product 適用狀態與 invoice 明細整合仍待 A1／A2 後續。 |
-| P4 生效前 OTA 事實保護（技術部分） | Billing 已在選定版次沒有 OTA 費率時保留 immutable 事實、排除其帳單與用量估算，並阻擋目前即時 API 啟用任何 OTA 價卡；混合 MQTT 月份與不追收已有本地測試。晚到事實跨關帳的來源 ledger／拒收原因仍須納入端到端驗收。此改動不會開始 OTA 收費。 |
+| P4 生效前 OTA 事實保護（技術部分） | Billing 已在選定版次沒有 OTA 費率時保留 immutable 事實、排除其帳單與用量估算，並阻擋目前即時 API 啟用任何 OTA 價卡；混合 MQTT 月份與不追收已有本地測試。Video Cloud 來源 outbox 對已關帳拒收保留 payload／digest、明確 `INVOICE_IMMUTABLE` 原因與重試紀錄；本機 OTA／資料庫測試已通過，跨服務 staging 對帳仍待驗收。此改動不會開始 OTA 收費。 |
 | P1 費率欄位與驗證（部分完成） | Billing 已新增可為 null 的 rate `quantity_scale`、`tax_category`，保存舊版「未知」狀態；rate 宣告精度時會拒絕不符的 fact。完整 OTA 價卡還須符合四項核准值／單位／精度／rounding，且每列有明確稅別。這些是必要條件，不能取代 Finance 稅務核准、適用範圍或完整價卡審批。 |
 | P1 後續、P2–P3、A1 正式價卡／月份／價格 API | 審核 manifest、適用範圍、UTC 發佈、月份歸屬與客戶當期／預告價 API 尚未實作；沒有新增或啟用 OTA pricing version。 |
 | Q1、R1 環境資格與正式發佈 | 尚未執行；須通過稅務、適用客群、UTC 月份、CDN 成本／完整性及 staging 對帳關卡。 |
@@ -31,7 +31,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 | 稅務與合約適用 | [價卡資料模型](../../repos/rtk_billing/internal/billing/types.go) 與 [遷移](../../repos/rtk_billing/migrations/063_pricing_rate_approval_metadata.sql) 已有 nullable `tax_category`、rate `quantity_scale`；舊版仍為 null，`tax_rate_basis_points=0` 仍可由預設產生，不能代表已核准免稅。[有效價卡選擇](../../repos/rtk_billing/internal/billingstore/pricing.go) 只看時間／幣別，沒有依帳戶、tier 或合約選 `plan_key`。 | Finance 核定稅別與稅率／免稅依據及舊版回填；商務決定全域同價或帳戶／合約例外，並使資料庫指派、用量預估、關帳與客戶 API 採同一選價規則。未補齊前不可聲稱完整價卡 preflight 已可用。 |
 | 版次與切月 | [pricing store](../../repos/rtk_billing/internal/billingstore/pricing.go) 拒絕未來生效日，發佈時立即將舊版標為 retired；invoice 依期間起點選版。 | 可在 UTC 月初排程生效、無重疊／缺口、前月不被改價、發佈與月結同步鎖定。 |
 | 月份與移轉 | OTA 的 storage fact／兩份 period seal 要求完整 UTC 月；[current usage API](../../repos/rtk_billing/internal/api/billing.go) 用 Cloud 時區切月，所有權移轉又可能把起點往後裁切。 | 明確區分「完整 UTC 月計量證明」與「現任 owner 可見／應付的期間」；跨月、月中移轉及關閉 Cloud 均不得錯收。 |
-| 生效前 OTA 事實 | immutable receipt/outbox 可先進 Billing；[invoice builder](../../repos/rtk_billing/internal/billing/invoice.go) 與用量估算在該月價卡沒有 OTA 費率時排除 OTA 計費、保留原始事實，且非 OTA 缺價或部分 OTA 價卡仍 fail closed；目前即時 activation API 不允許 OTA 價卡。 | 結合未來 UTC 月排程後驗證不追收；已關帳後才送到的舊事實必須由 OTA 來源 ledger 保全與記錄拒收原因，不能假設 Billing 可以接受遲到輸入。 |
+| 生效前 OTA 事實 | immutable receipt/outbox 可先進 Billing；[invoice builder](../../repos/rtk_billing/internal/billing/invoice.go) 與用量估算在該月價卡沒有 OTA 費率時排除 OTA 計費、保留原始事實，且非 OTA 缺價或部分 OTA 價卡仍 fail closed；目前即時 activation API 不允許 OTA 價卡。[OTA 來源 outbox](../../repos/rtk_video_cloud/internal/postgres/usage_outbox.go) 已在已關帳拒收時保存 `INVOICE_IMMUTABLE`、原始 payload／digest 與嘗試紀錄。 | 結合未來 UTC 月排程後驗證不追收；在 staging 演練晚到事實跨關帳、來源／Billing 高水位與人工調整流程，不能假設 Billing 可以接受遲到輸入。 |
 | 前端揭露 | [ServicePricing.jsx](../../repos/rtk_cloud_admin/web/src/ServicePricing.jsx) 只在授權後呼叫 Cloud Admin [研究價端點](../../repos/rtk_cloud_admin/internal/app/service_pricing.go)，數值存於 Go 內嵌 [研究價快照](../../repos/rtk_cloud_admin/internal/app/service-pricing-reference.json)，不進匿名 JavaScript／翻譯包。15 項最高候選參考價與四項 OTA 核准待生效價分欄顯示；仍無 Cloud 當期 Billing 價卡查詢路由。 | tenant-safe 的 current/upcoming **正式**價卡 API、Product 適用狀態、當期費率／稅／合約、正式 invoice 明細連結。研究價端點不能充當實際費率。 |
 | 正式環境 | [TWD 進度](../billing-twd-currency-progress.md) 證明先前 staging 的 MQTT 價卡與 invoice，**不證明 production 或 OTA 已收費**。 | 逐環境查核實際 active 版次、CDN 與兩份 seal、正式發佈與第一張發票對帳。 |
 
