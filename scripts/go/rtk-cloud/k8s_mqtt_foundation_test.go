@@ -19,6 +19,22 @@ func TestLKEMQTTFoundationRegistrationIsOptIn(t *testing.T) {
 	}
 }
 
+func TestLKEMQTTEntitlementCutoverIsExplicitInCoreDeployment(t *testing.T) {
+	t.Setenv("VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED", "")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":      "video-cloud-dev",
+		"LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed",
+	}
+	workload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Namespace: lkeNamespaceName(env, "video-cloud"), Port: 8080, Image: env["LKE_VIDEO_CLOUD_IMAGE"]}
+	if lkeMQTTEntitlementsRequired(env) || !strings.Contains(lkeDeploymentManifest(env, workload, nil), "name: VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED\n              value: \"false\"") {
+		t.Fatal("core MQTT entitlement gate must default off")
+	}
+	env["VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED"] = "true"
+	if !lkeMQTTEntitlementsRequired(env) || !strings.Contains(lkeDeploymentManifest(env, workload, nil), "name: VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED\n              value: \"true\"") {
+		t.Fatal("core deployment ignored strict MQTT entitlement setting")
+	}
+}
+
 func TestLKEMQTTFoundationRendersStablePrivateRegistrar(t *testing.T) {
 	t.Setenv("ACCOUNT_MANAGER_ENV", "")
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")

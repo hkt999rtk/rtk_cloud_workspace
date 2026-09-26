@@ -1943,8 +1943,9 @@ spec:
                   - video-cloud-mqttfoundation
                   - video-cloud-shadowworker
                   - video-cloud-webrtcservice
-              - video-cloud-videostorage
-              - video-cloud-logingester
+                  - video-cloud-videostorage
+                  - video-cloud-logingester
+                  - video-cloud-otaregistrar
       ports:
         - protocol: TCP
           port: 8443
@@ -2008,6 +2009,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: video-cloud-api
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: video-cloud-otaregistrar
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: mqtt
@@ -2416,14 +2420,6 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeLoggerServiceRegistrationEnabled(env) {
-		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-		if err := kubectlApply(lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env)); err != nil {
-			return err
-		}
-	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeMQTTFoundationRegistrationEnabled(env) {
 		if !lkeAccountManagerServiceRegistrationEnabled(env) {
 			return fmt.Errorf("MQTT foundation registration requires the Account Manager service registration listener")
@@ -2453,6 +2449,20 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
+		if !lkeOTAEntitlementsRequired(env) {
+			return fmt.Errorf("OTA registration requires strict OTA entitlements on the core API")
+		}
+		if !lkeMQTTFoundationRegistrationEnabled(env) {
+			return fmt.Errorf("OTA registration requires the MQTT foundation registrar")
+		}
+		if !lkeAccountManagerServiceRegistrationEnabled(env) {
+			return fmt.Errorf("OTA registration requires the Account Manager service registration listener")
+		}
+		if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeLoggerHTTPCoreCutoverEnabled(env) || lkeLoggerMQTTCoreCutoverEnabled(env)) && !lkeLoggerServiceRegistrationEnabled(env) {
 		return fmt.Errorf("Logger cutover requires the registered Logger service")
 	}
@@ -2461,6 +2471,9 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeLoggerHTTPCoreCutoverEnabled(env) || lkeLoggerMQTTCoreCutoverEnabled(env)) {
 		if err := lkeRequireReadyLoggerEndpoint(env); err != nil {
+			return err
+		}
+		if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
 			return err
 		}
 	}
@@ -2515,6 +2528,14 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && !lkeShadowWorkerRegistrationEnabled(env) {
 		if err := lkePreventShadowWorkerRollbackOverlap(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTARegistrarRegistrationEnabled(env)) {
+		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeAllowAccountManagerHandoffBillingNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -2681,6 +2702,20 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-videostorage", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
+		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeOTARegistrarDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeOTARegistrarServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-otaregistrar", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 			return err
 		}
 	}
@@ -2961,6 +2996,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/mqttfoundat
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/shadowworker ./cmd/shadowworker
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorage ./cmd/videostorage
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaregistrar ./cmd/otaregistrar
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile
@@ -2985,6 +3021,7 @@ COPY --from=builder /out/mqttfoundation /app/mqttfoundation
 COPY --from=builder /out/shadowworker /app/shadowworker
 COPY --from=builder /out/webrtcservice /app/webrtcservice
 COPY --from=builder /out/videostorage /app/videostorage
+COPY --from=builder /out/otaregistrar /app/otaregistrar
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
 COPY --from=builder /out/clipreconcile /app/clipreconcile
@@ -3952,6 +3989,11 @@ func lkeApplyFleetValkeyStatefulSet(env map[string]string) error {
 func lkeApplyCloudLogger(env map[string]string, opts provisionOptions) error {
 	if !lkeWorkloadSelected(env, opts, "cloud-logger") {
 		return nil
+	}
+	if lkeLoggerRetentionStorageEnabled(env) {
+		if err := lkeRequireLokiDataMigration(env); err != nil {
+			return err
+		}
 	}
 	manifests := []string{lkeLokiConfigManifest(env)}
 	if lkeLoggerRetentionStorageEnabled(env) {
@@ -7541,13 +7583,13 @@ func lkeLokiConfigManifest(env map[string]string) string {
 	retention := ""
 	if lkeLoggerRetentionStorageEnabled(env) {
 		retention = `      retention_stream:
-        - selector: '{retention_tier="7d"}'
+        - selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'
           priority: 10
           period: 168h
-        - selector: '{retention_tier="30d"}'
+        - selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'
           priority: 10
           period: 720h
-        - selector: '{retention_tier="90d"}'
+        - selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'
           priority: 10
           period: 2160h
     compactor:
@@ -7594,7 +7636,7 @@ data:
             period: 24h
     limits_config:
       allow_structured_metadata: false
-      retention_period: 24h
+      retention_period: 0s
 %s`, lkeNamespaceName(env, "observability"), env["CLOUD_STACK_NAME"], retention)
 }
 
@@ -8622,6 +8664,7 @@ stringData:
   ACCOUNT_MANAGER_USER_CACHE_ADDR: %q
   ACCOUNT_MANAGER_USER_CACHE_PREFIX: "account_manager:user"
   ACCOUNT_MANAGER_ENV: %q
+  ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES: %q
   ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: %q
   CHIPSET_PROVIDER_ALLOWED_HOSTS: %q
   DEVELOPER_PKI_TEST_TOOLS_ENABLED: %q
@@ -8666,7 +8709,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeRuntimeSecretValue("job-authorization-token"), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS"), strconv.FormatBool(strings.EqualFold(accountEnv, "staging"))), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"), lkeRuntimeSecretValue("social-oauth-state-secret"), firstNonEmpty(lkeEnvValue(env, "GOOGLE_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GOOGLE_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("google-oauth-client-secret"), firstNonEmpty(lkeEnvValue(env, "GITHUB_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GITHUB_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("github-oauth-client-secret"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeRuntimeSecretValue("job-authorization-token"), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"), "false"), firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS"), strconv.FormatBool(strings.EqualFold(accountEnv, "staging"))), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"), lkeRuntimeSecretValue("social-oauth-state-secret"), firstNonEmpty(lkeEnvValue(env, "GOOGLE_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GOOGLE_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("google-oauth-client-secret"), lkeEnvValue(env, "GITHUB_LOGIN_ENABLED"), lkeEnvValue(env, "GITHUB_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("github-oauth-client-secret"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -9598,6 +9641,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 			lkeFactoryProductionJWTAudience(env),
 			lkePlatformAdminEmail(env),
 			lkeRuntimeSecretValue("platform-admin"),
+			firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"), "false"),
 			lkeCertIssuerBaseURL(env),
 			lkeEnvValue(env, "AUTH_TOKEN_BASE_URL"),
 			lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"),
@@ -9950,6 +9994,12 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
             - name: VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED
               value: %q
 `, strconv.FormatBool(lkeLoggerHTTPCoreCutoverEnabled(env)), strconv.FormatBool(lkeLoggerMQTTCoreCutoverEnabled(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED
+              value: %q
+`, strconv.FormatBool(lkeOTAEntitlementsRequired(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED
+              value: %q
+`, strconv.FormatBool(lkeMQTTEntitlementsRequired(env)))
 		if lkeLoggerHTTPCoreCutoverEnabled(env) {
 			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_LOGGER_HTTP_UPSTREAM_URL
               value: %q
