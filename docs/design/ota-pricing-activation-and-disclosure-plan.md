@@ -1,6 +1,6 @@
 # OTA 費率生效與服務價格揭露：實作計畫
 
-Status: proposed implementation plan; documentation decision recorded, no rate-card publication or environment rollout performed.
+Status: implementation plan with approved-rate documentation and an authenticated research-price disclosure built; no effective rate-card publication or environment rollout performed.
 
 Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-26.
 
@@ -17,7 +17,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 | 階段 | 目前狀態 |
 | --- | --- |
 | D0 文件與費率研究（部分完成） | OTA 四項核准價及未生效界線已寫入契約；本文件與研究表列出最高候選參考價、來源、非等價情況及交付順序。Billing 操作 runbook 與 Cloud Admin customer-copy 規格仍待新增。 |
-| A2 登入後揭露的過渡版 | Cloud Admin 既有靜態價格頁已改為分開顯示 OTA 核准待生效價和 15 項外部參考價；它仍**不讀取**該 Cloud 的當期 Billing 價卡。 |
+| A2 登入後揭露的過渡版（部分完成） | Cloud Admin 僅於 Cloud owner 通過 `billing_account.read` 授權後，從不快取的 `/billing/pricing-references` 端點取得 15 項參考價與四項 OTA 核准待生效價；匿名前端資產不含數字，取價失敗不顯示價表。此端點是研究快照，仍**不讀取**該 Cloud 的當期 Billing 價卡；正式價、Product 適用狀態與 invoice 明細整合仍待 A1／A2 後續。 |
 | P1–P4、A1 正式計費與價格 API | 尚未實作；沒有新增或啟用 OTA pricing version，沒有因本文件改變任何帳單。 |
 | Q1、R1 環境資格與正式發佈 | 尚未執行；須通過稅務、適用客群、UTC 月份、CDN 成本／完整性及 staging 對帳關卡。 |
 
@@ -29,7 +29,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 | 版次與切月 | [pricing store](../../repos/rtk_billing/internal/billingstore/pricing.go) 拒絕未來生效日，發佈時立即將舊版標為 retired；invoice 依期間起點選版。 | 可在 UTC 月初排程生效、無重疊／缺口、前月不被改價、發佈與月結同步鎖定。 |
 | 月份與移轉 | OTA 的 storage fact／兩份 period seal 要求完整 UTC 月；[current usage API](../../repos/rtk_billing/internal/api/billing.go) 用 Cloud 時區切月，所有權移轉又可能把起點往後裁切。 | 明確區分「完整 UTC 月計量證明」與「現任 owner 可見／應付的期間」；跨月、月中移轉及關閉 Cloud 均不得錯收。 |
 | 生效前 OTA 事實 | immutable receipt/outbox 可先進 Billing；[invoice builder](../../repos/rtk_billing/internal/billing/invoice.go) 遇到缺費率的事實會中止整張發票。 | 生效前 OTA 事實保留稽核但一次性排除計費，其他缺價仍 fail closed；不得日後補收。已關帳後才送到的舊事實必須由 OTA 來源 ledger 保全，不能假設 Billing 可以接受遲到輸入。 |
-| 前端揭露 | [ServicePricing.jsx](../../repos/rtk_cloud_admin/web/src/ServicePricing.jsx) 直接讀 [靜態 15 筆參考價](../../repos/rtk_cloud_admin/web/src/service-pricing.mjs)；已分開 OTA 核准待生效價並移除混用草案 MQTT/Shadow 的 NT$232 範例，但 Cloud Admin BFF 尚無當期價卡查詢路由。 | tenant-safe 的 current/upcoming 價卡 API、Product 適用狀態、當期費率／稅／合約、正式 invoice 明細連結。 |
+| 前端揭露 | [ServicePricing.jsx](../../repos/rtk_cloud_admin/web/src/ServicePricing.jsx) 只在授權後呼叫 Cloud Admin [研究價端點](../../repos/rtk_cloud_admin/internal/app/service_pricing.go)，數值存於 Go 內嵌 [研究價快照](../../repos/rtk_cloud_admin/internal/app/service-pricing-reference.json)，不進匿名 JavaScript／翻譯包。15 項最高候選參考價與四項 OTA 核准待生效價分欄顯示；仍無 Cloud 當期 Billing 價卡查詢路由。 | tenant-safe 的 current/upcoming **正式**價卡 API、Product 適用狀態、當期費率／稅／合約、正式 invoice 明細連結。研究價端點不能充當實際費率。 |
 | 正式環境 | [TWD 進度](../billing-twd-currency-progress.md) 證明先前 staging 的 MQTT 價卡與 invoice，**不證明 production 或 OTA 已收費**。 | 逐環境查核實際 active 版次、CDN 與兩份 seal、正式發佈與第一張發票對帳。 |
 
 本計畫沿用 [正式 Pricing and Invoicing contract](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md) 的 immutable version、整數金額、按 invoice line 彙總後取整及歷史發票不變性；OTA 的計量、CDN、Product gate 和完整性規則以 [OTA contract](../../repos/rtk_cloud_contracts_doc/ota_delivery_and_billing.md) 為準。
