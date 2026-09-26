@@ -183,6 +183,7 @@ type liveDeployment struct {
 					VolumeMounts []struct {
 						Name      string `json:"name"`
 						MountPath string `json:"mountPath"`
+						ReadOnly  bool   `json:"readOnly"`
 					} `json:"volumeMounts"`
 				} `json:"containers"`
 				Volumes []struct {
@@ -309,6 +310,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
+			if err := verifyMountedPKICRLManifests(kubeconfig, namespace, store.Environment, deployments, "certissuer"); err != nil {
+				failures = append(failures, err.Error())
+			}
 			if err := verifyAutomaticDeviceTrustConsumers(store.Environment, kubeconfig, namespace, deployments, now); err != nil {
 				failures = append(failures, err.Error())
 			}
@@ -352,8 +356,13 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		var deployments liveDeploymentList
 		if json.Unmarshal(accountRaw, &deployments) != nil {
 			failures = append(failures, "live Account Manager deployment metadata is invalid")
-		} else if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
-			failures = append(failures, err.Error())
+		} else {
+			if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
+				failures = append(failures, err.Error())
+			}
+			if err := verifyMountedPKICRLManifests(kubeconfig, accountNamespace, store.Environment, deployments, "account-manager"); err != nil {
+				failures = append(failures, err.Error())
+			}
 		}
 	}
 	if serviceClientController && serviceClientRegistryConfigured {
@@ -630,7 +639,8 @@ func verifyAccountManagerPKIConfiguration(deployments liveDeploymentList) error 
 				}
 				accountClient := strings.HasPrefix(env.Name, "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_")
 				serviceOrigin := strings.HasPrefix(env.Name, "PKI_MANAGEMENT_ISSUER_") || strings.HasPrefix(env.Name, "PKI_MANAGEMENT_CONTROLLER_")
-				if (accountClient || serviceOrigin) && (strings.Contains(env.Name, "_CRL_MANIFEST") || strings.Contains(env.Name, "_SERVICE_ROOT_") || serviceOrigin && (strings.HasSuffix(env.Name, "_PKI_CONTROLLER_URL") || strings.HasSuffix(env.Name, "_MANAGEMENT_CA"))) && strings.TrimSpace(env.Value) != "" {
+				approvedCRL := env.Name == "PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST"
+				if !approvedCRL && (accountClient || serviceOrigin) && (strings.Contains(env.Name, "_CRL_MANIFEST") || strings.Contains(env.Name, "_SERVICE_ROOT_") || serviceOrigin && (strings.HasSuffix(env.Name, "_PKI_CONTROLLER_URL") || strings.HasSuffix(env.Name, "_MANAGEMENT_CA"))) && strings.TrimSpace(env.Value) != "" {
 					unsupported = append(unsupported, env.Name)
 				}
 			}
@@ -664,8 +674,6 @@ func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deploy
 		}
 	}
 	unsupported := []string{
-		"CERT_ISSUER_SERVICE_CLIENT_SERVER_CRL_MANIFEST",
-		"OPENBAO_SERVER_CRL_MANIFEST",
 		"CERT_ISSUER_SERVICE_CLIENT_SERVICE_ROOT_STATE",
 		"CERT_ISSUER_SERVICE_CLIENT_SERVICE_ROOTS",
 		"CERT_ISSUER_SERVICE_CLIENT_SERVICE_ROOT_ID",
