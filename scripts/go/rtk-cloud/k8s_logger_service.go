@@ -161,7 +161,7 @@ func lkeRequireReadyLokiRetentionStorage(env map[string]string) error {
 	}
 	data, _ := config["data"].(map[string]any)
 	body, _ := data["config.yaml"].(string)
-	for _, required := range []string{"retention_enabled: true", "retention_period: 0s", `selector: '{retention_tier="7d"}'`, `selector: '{retention_tier="30d"}'`, `selector: '{retention_tier="90d"}'`} {
+	for _, required := range []string{"retention_enabled: true", "retention_period: 0s", `selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`} {
 		if !strings.Contains(body, required) {
 			return fmt.Errorf("Loki retention ConfigMap lacks %q", required)
 		}

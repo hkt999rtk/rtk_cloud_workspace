@@ -7583,13 +7583,13 @@ func lkeLokiConfigManifest(env map[string]string) string {
 	retention := ""
 	if lkeLoggerRetentionStorageEnabled(env) {
 		retention = `      retention_stream:
-        - selector: '{retention_tier="7d"}'
+        - selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'
           priority: 10
           period: 168h
-        - selector: '{retention_tier="30d"}'
+        - selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'
           priority: 10
           period: 720h
-        - selector: '{retention_tier="90d"}'
+        - selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'
           priority: 10
           period: 2160h
     compactor:

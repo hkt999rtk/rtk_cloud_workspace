@@ -105,7 +105,7 @@ func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 		t.Fatal("cutover must enable the sole Logger subscriber and tiered persistent storage")
 	}
 	config := lkeLokiConfigManifest(env)
-	for _, tier := range []string{`selector: '{retention_tier="7d"}'`, `selector: '{retention_tier="30d"}'`, `selector: '{retention_tier="90d"}'`} {
+	for _, tier := range []string{`selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`} {
 		if !strings.Contains(config, tier) {
 			t.Fatalf("Loki lacks %s", tier)
 		}
@@ -154,9 +154,9 @@ func TestLKELoggerCutoverRequiresLivePersistentTieredLoki(t *testing.T) {
 	setJSON("FAKE_LOKI_PVC_JSON", map[string]any{"status": map[string]any{"phase": "Bound"}})
 	config := `retention_enabled: true
 retention_period: 0s
-selector: '{retention_tier="7d"}'
-selector: '{retention_tier="30d"}'
-selector: '{retention_tier="90d"}'`
+selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'
+selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'
+selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`
 	setJSON("FAKE_LOKI_CONFIGMAP_JSON", map[string]any{"data": map[string]any{"config.yaml": config}})
 	if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
 		t.Fatal(err)
@@ -175,6 +175,21 @@ func TestLKELoggerRetentionRejectsUnreadyOrIncompleteLoki(t *testing.T) {
 	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", `{"data":{"config.yaml":"retention_enabled: true\nretention_period: 0s\nselector: '{retention_tier=\"7d\"}'\nselector: '{retention_tier=\"30d\"}'"}}`)
 	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
 		t.Fatalf("Loki without the 90-day tier was accepted: %v", err)
+	}
+	legacyTierConfig := strings.Join([]string{
+		"retention_enabled: true",
+		"retention_period: 0s",
+		`selector: '{retention_tier="7d"}'`,
+		`selector: '{retention_tier="30d"}'`,
+		`selector: '{retention_tier="90d"}'`,
+	}, "\n")
+	body, err := json.Marshal(map[string]any{"data": map[string]string{"config.yaml": legacyTierConfig}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", string(body))
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
+		t.Fatalf("Loki must not apply Product retention to preexisting tier-only streams: %v", err)
 	}
 }
 

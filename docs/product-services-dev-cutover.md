@@ -76,11 +76,15 @@ steps below become eligible only after this gate passes.
    `rtk.realtek.com/loki-copy-sha256` set to the recorded tree checksum.
    The deployment rejects a storage switch if either annotation is missing or
    the source Pod has changed. Apply the PVC-backed Loki Deployment, wait for
-   readiness, then resume writers. Enable tiered Compactor retention before
-   sending Product logs to Logger. New device log streams use only the low
-   cardinality `retention_tier` labels `7d`, `30d`, or `90d`. Global Loki
-   retention remains `0s`, so this change does not retroactively expire
-   unlabeled historical streams. See [Loki retention](https://grafana.com/docs/loki/latest/operations/storage/retention/).
+   readiness, then resume writers. Deploy the updated Cloud Logger before
+   enabling tiered Compactor retention. An explicitly versioned Product log
+   carries one of the three low-cardinality `retention_tier` values (`7d`,
+   `30d`, `90d`) and the fixed `retention_policy="product-grant-v1"`
+   marker. Check a new granted log for both labels and an unversioned legacy
+   log for neither before enabling the Compactor. The Compactor selectors
+   require both labels. Previously stored streams may have a legacy `7d`
+   label, but do not have the new marker and therefore remain excluded.
+   Global Loki retention remains `0s`. See [Loki retention](https://grafana.com/docs/loki/latest/operations/storage/retention/).
 
 Record each enabled LKE registration and cutover flag in
 `cloud_env/dev/overrides/adapter.env` and commit the reviewed change at that
