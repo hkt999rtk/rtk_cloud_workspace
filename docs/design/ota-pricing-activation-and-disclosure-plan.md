@@ -26,7 +26,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 | 項目 | 現況證據 | 必須補齊 |
 | --- | --- | --- |
-| OTA 價格 | Billing 的 `ProposedOTARates()` 只回傳四筆規劃值，沒有自動建立／啟用價卡；見 [OTA pricing helper](../../repos/rtk_billing/internal/billing/ota.go)。 | 可審核的完整 TWD 價卡、精確四價校驗、稅務決策、發佈紀錄。 |
+| OTA 價格 | Billing 的 `ProposedOTARates()` 回傳四筆**已核准但未生效**的未稅值，沒有自動建立／啟用價卡；見 [OTA pricing helper](../../repos/rtk_billing/internal/billing/ota.go)。 | 可審核的完整 TWD 價卡、精確四價校驗、稅務決策、發佈紀錄。 |
 | 稅務與合約適用 | [價卡資料模型](../../repos/rtk_billing/internal/billing/types.go) 尚無明確 `tax_category` 與 rate 的 `quantity_scale`；`tax_rate_basis_points=0` 可由零值產生，不能代表已核准免稅。[有效價卡選擇](../../repos/rtk_billing/internal/billingstore/pricing.go) 只看時間／幣別，沒有依帳戶、tier 或合約選 `plan_key`。 | Finance 核定稅別與稅率／免稅依據及舊版回填；商務決定全域同價或帳戶／合約例外，並使資料庫指派、用量預估、關帳與客戶 API 採同一選價規則。未補齊前不可聲稱完整價卡 preflight 已可用。 |
 | 版次與切月 | [pricing store](../../repos/rtk_billing/internal/billingstore/pricing.go) 拒絕未來生效日，發佈時立即將舊版標為 retired；invoice 依期間起點選版。 | 可在 UTC 月初排程生效、無重疊／缺口、前月不被改價、發佈與月結同步鎖定。 |
 | 月份與移轉 | OTA 的 storage fact／兩份 period seal 要求完整 UTC 月；[current usage API](../../repos/rtk_billing/internal/api/billing.go) 用 Cloud 時區切月，所有權移轉又可能把起點往後裁切。 | 明確區分「完整 UTC 月計量證明」與「現任 owner 可見／應付的期間」；跨月、月中移轉及關閉 Cloud 均不得錯收。 |

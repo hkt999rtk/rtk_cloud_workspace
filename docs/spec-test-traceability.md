@@ -895,7 +895,7 @@
 | `SPEC-BILLING-OPENAPI#putBillingProfile` | `PUT /v1/orgs/{orgId}/billing/profile` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-PROFILE-001` | `5c7af01856b2` |
 | `SPEC-BILLING-OPENAPI#exportBillingStatement` | `GET /v1/orgs/{orgId}/billing/statements` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-DOCUMENT-001` | `5bf2370ef960` |
 | `SPEC-BILLING-OPENAPI#getBillingSummary` | `GET /v1/orgs/{orgId}/billing/summary` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `f18a8ed46eaf` |
-| `SPEC-BILLING-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `a64df91abd8c` |
+| `SPEC-BILLING-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `5e999c580d59` |
 | `SPEC-BILLING-OPENAPI#listPaymentIntents` | `GET /v1/orgs/{orgId}/payment-intents` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `369d2462c94f` |
 | `SPEC-BILLING-OPENAPI#getPaymentIntent` | `GET /v1/orgs/{orgId}/payment-intents/{intentId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `315738c76839` |
 | `SPEC-BILLING-OPENAPI#listPaymentMethods` | `GET /v1/orgs/{orgId}/payment-methods` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `073a7c8ed21e` |
