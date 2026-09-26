@@ -147,6 +147,9 @@ effective Billing rates, approved future rates, and research-only reference
 prices. A reference price is never an invoice rate. Each item explains its
 measurement, unit, exclusions, effective UTC interval, tax treatment, and
 whether the selected Product has enabled the service.
+Approved and reference amounts must be returned only after the existing Cloud
+Billing authorization check; unauthenticated static HTML, JavaScript, and
+localization assets must not contain the numeric price table.
 
 The evaluation tier remains free under its evaluation terms. A private
 commercial license and annual maintenance remain contract-quoted; a service
