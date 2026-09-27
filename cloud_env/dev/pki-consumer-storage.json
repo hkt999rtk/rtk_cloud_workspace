@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "environment": "dev",
+  "state": "migration-required",
+  "storage_class": "linode-block-storage-retain",
+  "claims": [
+    {
+      "name": "video-cloud-api-pki-controller-identity",
+      "request": "10Gi"
+    },
+    {
+      "name": "mqtt-pki-host-identity",
+      "request": "10Gi"
+    },
+    {
+      "name": "mqtt-pki-trust",
+      "request": "10Gi"
+    }
+  ],
+  "role_claims": {
+    "api_trust": "video-cloud-api-pki-controller-identity",
+    "api_identity": "video-cloud-api-pki-controller-identity",
+    "mqtt_data": "mqtt-pki-host-identity",
+    "mqtt_trust": "mqtt-pki-trust",
+    "mqtt_identity": "mqtt-pki-host-identity"
+  },
+  "migration_sources": [
+    {
+      "name": "video-cloud-api-pki-trust",
+      "destination_role": "api_trust"
+    },
+    {
+      "name": "mqtt-pki-data",
+      "destination_role": "mqtt_data"
+    }
+  ]
+}

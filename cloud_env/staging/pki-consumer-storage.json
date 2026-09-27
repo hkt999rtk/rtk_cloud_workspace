@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "environment": "staging",
+  "state": "plan-only",
+  "storage_class": "linode-block-storage-retain",
+  "claims": [
+    {
+      "name": "video-cloud-api-pki-state",
+      "request": "10Gi"
+    },
+    {
+      "name": "mqtt-pki-private",
+      "request": "10Gi"
+    },
+    {
+      "name": "mqtt-pki-trust",
+      "request": "10Gi"
+    }
+  ],
+  "role_claims": {
+    "api_trust": "video-cloud-api-pki-state",
+    "api_identity": "video-cloud-api-pki-state",
+    "mqtt_data": "mqtt-pki-private",
+    "mqtt_trust": "mqtt-pki-trust",
+    "mqtt_identity": "mqtt-pki-private"
+  }
+}

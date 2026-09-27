@@ -48,7 +48,11 @@ Billing [#39](https://github.com/hkt999rtk/rtk_billing/pull/39) 已在原定 Bil
 
 staging 目前仍為 **NO-GO**。Billing schema 為 061，現行映像比選定固定版新；固定版 062–068 的 Job 已以 canonical Billing 映像 `sha256:d3dd21e0…` 做 Kubernetes client-side dry-run，**沒有套用**。Video Cloud 的 staging 專屬 Device Root、API／MQTT PKI consumer 身分與信任資源均未建立。固定 Video Cloud commit 的官方 image-only release [run 36338096862](https://github.com/hkt999rtk/rtk_video_cloud/actions/runs/36338096862) 已發布 API、EMQX-PKI、OpenBao-PKI 映像；三者的 `linux/amd64` digest 拉取和 staging 唯讀憑證檢查通過。這只證明映像可用，不證明 PKI 或 OTA 計量可用。
 
-選定 consumer renderer 另需五個 `linode-block-storage-retain` PVC，共 45 GiB。2026-09-28 live provider 唯讀計畫記錄目前 54 個 active services、核定上限 20；原有部署的 `additional_required=0` 例外只容許不增加服務數的更新。新增五個 volume 至少會把 active services 推到 59，須先取得 Linode 額度調整或經核准釋出等量容量，並重新通過包含這五個 volume 的前置檢查，才可建立 consumer PVC。Device Root bootstrap 要等 staging 自有身分、trust、consumer 與容量均備妥後才執行。
+PKI consumer 儲存已另訂 [三卷部署環境計畫](pki-consumer-storage-plan.md)：dev 遷移至三卷並重用現有三卷，staging／prod 記錄三卷 `plan-only` 佈局（各 10 GiB，合計 30 GiB）。固定 Video Cloud renderer 已由 PR #722 合併至選定的 `codex/staging-pki-consumers` 分支（`916bc8b`），要求輸入 staging 三卷設定並驗證掛載隔離；workspace 尚待 PR 納入該 gitlink，且 staging 額度仍不足，因此不得先建立新卷。Device Root bootstrap 要等環境專屬身分、trust、consumer、卷配置與容量均備妥後才執行。
+
+2026-09-28 新一輪 Linode API 唯讀盤點為 **44** 個 active services：11 台 VM、33 個 volume、0 個 NodeBalancer；先前報告的 54 是清理前快照。33 個 volume 中，32 個對應目前 dev/staging 叢集 Bound PVC，且各有 Pod 或 Deployment/StatefulSet/Job 引用；其餘 1 個未掛載的 `openbao-recovery-20260818-1948` 是復原卷，處置前須核對備份／還原責任。Linode 支援單 #26820507 唯一確認的上限是 20，#27347355 僅關閉重複請求；CDN 單 #27523436 未確認提高 active-service 上限。原有部署的 `additional_required=0` 例外只容許不增加服務數的更新。若採三卷計畫，至少投影到 **47** 個；須先確認實際核定額度或經審查釋放資源，並重新通過包含最終卷數的前置檢查，才可建立 consumer PVC。
+
+Billing 對歷史 Product OTA grant 的跨服務查詢採 `LKE_BILLING_OTA_GRANT_HISTORY_ENABLED=true` 明確啟用：renderer 同時設定 `BILLING_OTA_GRANT_HISTORY_BASE_URL`、沿用 Account Manager 既有內部授權 token，並只允許 Billing namespace 中 `app.kubernetes.io/name=billing` 的 Pod 連至 Account Manager TCP 8080。未啟用時不渲染連線憑證或專用 NetworkPolicy；啟用前驗證 token 長度及與 Billing token 不同。這是固定版部署配線，仍須 development 的跨服務實測；它不代表 OTA fact 或價卡已生效。
 
 在 staging Billing 變更前，仍須確定現行較新映像與固定版的切換順序，以及是否依 staging 非強制備份規則不做完整本機資料庫匯出。含歷史帳單資料的完整本機匯出尚未獲明確核准，也沒有執行。這些決策與 staging 價卡底卡語義未定之前，不執行資料庫更新、價卡發佈或實際計費。
 
