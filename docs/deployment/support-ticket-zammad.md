@@ -104,6 +104,9 @@ scheduler and may lag writes briefly. Repeat the API probe in dev before
 enabling the feature. Verify that custom-field search returns the right tickets,
 `origin_by_id` attributes public and internal articles to the intended RTK
 actor, and attachment IDs resolve only under their owning ticket/article.
+Verify that a public `web` reply advances `last_contact_at`, whereas an
+internal `note` does not; after a customer marks a ticket seen, an internal
+note must not make that ticket unread or expose the note's update time.
 Run the Admin cross-Cloud and Viewer tests. Verify the support list and detail
 through Admin using existing sessions, with Zammad's own UI unreachable from
 public networks.
