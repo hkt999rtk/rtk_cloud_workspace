@@ -63,6 +63,8 @@ jobs:
           # Keep the workspace-wide Go test binaries from peaking together on shared runners.
           GOFLAGS: -p=1
         run: go run ./rtk-cloud -- test-matrix
+      - name: Test private Zammad bootstrap safety
+        run: python3 tests/bootstrap_zammad_test.py -v
 
   unit:
     name: Go unit coverage (${{ matrix.module }})
