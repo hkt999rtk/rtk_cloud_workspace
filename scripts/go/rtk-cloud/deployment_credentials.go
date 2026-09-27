@@ -38,6 +38,7 @@ type deploymentCredentialChecker struct {
 	client           *http.Client
 	out              io.Writer
 	linodeAPIRoot    string
+	monitorAPIRoot   string
 	ghcrTokenRoot    string
 	ghcrRegistryRoot string
 	goDaddyAPIRoot   string
@@ -77,6 +78,7 @@ func defaultDeploymentCredentialChecker() deploymentCredentialChecker {
 		client:           &http.Client{Timeout: 15 * time.Second},
 		out:              os.Stdout,
 		linodeAPIRoot:    firstNonEmpty(os.Getenv("RTK_CLOUD_LINODE_API_ROOT"), "https://api.linode.com/v4"),
+		monitorAPIRoot:   "https://monitor-api.linode.com/v2",
 		ghcrTokenRoot:    firstNonEmpty(os.Getenv("RTK_CLOUD_GHCR_TOKEN_ROOT"), "https://ghcr.io/token"),
 		ghcrRegistryRoot: firstNonEmpty(os.Getenv("RTK_CLOUD_GHCR_REGISTRY_ROOT"), "https://ghcr.io"),
 		goDaddyAPIRoot:   strings.TrimRight(os.Getenv("RTK_CLOUD_GODADDY_API_ROOT"), "/"),

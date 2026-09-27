@@ -22,8 +22,11 @@ type otaMetricsQualification struct {
 	Source                string `json:"source"`
 	Environment           string `json:"environment"`
 	Bucket                string `json:"bucket"`
+	BucketHostname        string `json:"bucket_hostname"`
 	Region                string `json:"region"`
 	Endpoint              string `json:"endpoint"`
+	WindowStart           string `json:"window_start"`
+	WindowEnd             string `json:"window_end"`
 	ExportedAt            string `json:"exported_at"`
 	RecordedBy            string `json:"recorded_by"`
 	ExportFile            string `json:"export_file"`
@@ -34,11 +37,10 @@ type otaMetricsQualification struct {
 	DownloadedBytes       int64  `json:"downloaded_bytes"`
 }
 
-// validateOTAMetricsQualification checks a current operator attestation and the
-// archived export digest before billable OTA direct delivery. It does not parse
-// provider metric series or authenticate Cloud Pulse provenance: the named
-// operator must compare the recorded counts to the export. endpoint is the
-// HTTPS URL from live bucket inventory; now permits deterministic tests.
+// validateOTAMetricsQualification checks the current operator attestation,
+// archived provider response, and exact bucket series before direct delivery.
+// It cannot authenticate provider provenance independently of the operator's
+// archived export. endpoint is the HTTPS URL from live bucket inventory.
 func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, endpoint string, now time.Time) error {
 	if runtimeRoot == "" || environment == "" || bucket == "" || region == "" || endpoint == "" || now.IsZero() {
 		return fmt.Errorf("OTA metrics qualification requires a complete target and current time")
@@ -72,6 +74,14 @@ func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, e
 	if strings.TrimSpace(receipt.RecordedBy) == "" || receipt.GETMetric != "obj_requests_get" || receipt.DownloadedBytesMetric != "obj_bytes_downloaded" || receipt.GETRequests <= 0 || receipt.DownloadedBytes <= 0 {
 		return fmt.Errorf("OTA metrics qualification requires an operator and positive GET/downloaded-byte metrics")
 	}
+	start, end, err := parseOTAMetricsWindow(receipt.WindowStart, receipt.WindowEnd, now)
+	if err != nil || end.After(observed) || now.Sub(end) > otaMetricsQualificationMaxAge {
+		return fmt.Errorf("OTA metrics qualification window is invalid, too old, or later than its export")
+	}
+	parsedEndpoint, _ := url.Parse(wantEndpoint)
+	if receipt.BucketHostname != bucket+"."+parsedEndpoint.Host {
+		return fmt.Errorf("OTA metrics qualification bucket hostname does not match the target")
+	}
 	archive, err := otaMetricsArchivePath(runtimeRoot, receipt.ExportFile)
 	if err != nil {
 		return err
@@ -83,12 +93,6 @@ func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, e
 	if len(archiveBody) == 0 || len(archiveBody) > 10<<20 {
 		return fmt.Errorf("OTA metrics qualification export must be nonempty and at most 10 MiB")
 	}
-	parsedEndpoint, _ := url.Parse(wantEndpoint)
-	for _, required := range []string{receipt.GETMetric, receipt.DownloadedBytesMetric, bucket, parsedEndpoint.Host} {
-		if !bytes.Contains(archiveBody, []byte(required)) {
-			return fmt.Errorf("OTA metrics qualification export lacks required metric or bucket/endpoint dimension")
-		}
-	}
 	if len(receipt.ExportSHA256) != 64 {
 		return fmt.Errorf("OTA metrics qualification export SHA-256 is invalid")
 	}
@@ -98,6 +102,13 @@ func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, e
 	sum := sha256.Sum256(archiveBody)
 	if !strings.EqualFold(receipt.ExportSHA256, hex.EncodeToString(sum[:])) {
 		return fmt.Errorf("OTA metrics qualification export SHA-256 does not match archived bytes")
+	}
+	gets, downloaded, err := parseOTAMetricsMatrix(archiveBody, receipt.BucketHostname, parsedEndpoint.Host, start, end)
+	if err != nil {
+		return fmt.Errorf("OTA metrics qualification archived bucket series is invalid: %w", err)
+	}
+	if gets != receipt.GETRequests || downloaded != receipt.DownloadedBytes {
+		return fmt.Errorf("OTA metrics qualification archived bucket counts disagree with the receipt")
 	}
 	return nil
 }
