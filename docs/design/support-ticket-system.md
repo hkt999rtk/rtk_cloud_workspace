@@ -39,7 +39,7 @@ match this policy.
 | Zammad | Ticket, state, support group/owner, article, attachment and searchable `rtk_cloud_id` | Ticket conversation and files |
 | RTK deployment | Private Zammad release, resources, credentials, backup and restore | Deployment intent and encrypted recovery set |
 
-A Zammad ticket has an immutable custom `rtk_cloud_id` equal to the Account
+A Zammad ticket has a BFF-immutable custom `rtk_cloud_id` equal to the Account
 Manager Brand Cloud UUID. It is the tenant discriminator even when one human
 belongs to several Clouds. One Zammad customer record maps to one RTK user ID;
 Zammad Organization is not used as the authorization boundary. The BFF always
@@ -47,6 +47,8 @@ injects the Cloud ID on creation, filters lists by it, and compares it again
 after loading any single ticket or attachment. Search results alone do not
 authorize reads. A removed member immediately loses BFF access; existing
 tickets remain retained for support and recovery.
+The `rtk_category` custom text field stores `incident`, `integration` or
+`usage`; both object fields must exist before the feature is enabled.
 
 ## Access and workflow
 

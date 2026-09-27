@@ -54,8 +54,9 @@ render, backup compatibility check and staging restore.
 
 ## Zammad bootstrap and verification
 
-Create the `RTK Support` group and an immutable text ticket object field
-`rtk_cloud_id`. Record the group's numeric ID as `ZAMMAD_SUPPORT_GROUP_ID`.
+Create the `RTK Support` group and text ticket object fields `rtk_cloud_id`
+and `rtk_category`. The BFF sets the Cloud ID at creation and never offers a
+route to change it. Record the group's numeric ID as `ZAMMAD_SUPPORT_GROUP_ID`.
 The default unassigned owner ID is `1`; set
 `ZAMMAD_UNASSIGNED_OWNER_ID` if this instance differs. Create approved Agent
 users separately with login `rtk-<Account Manager user ID>` and Agent role.
