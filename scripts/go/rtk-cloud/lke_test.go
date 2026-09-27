@@ -7112,9 +7112,12 @@ if [[ "$*" == *"get secret ota-service-platform-identity -o json"* ]]; then
   printf 'OTA service identity Secret is absent\n' >&2
   exit 1
 fi
-if [[ "$*" == *"get secret ota-cdn-runtime -o json"* ]]; then
+if [[ "$*" == *"get secret ota-cdn-runtime"*"-o json"* ]]; then
   if [[ -n "${FAKE_OTA_CDN_SECRET_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_OTA_CDN_SECRET_JSON"
+    exit 0
+  fi
+  if [[ "$*" == *"--ignore-not-found=true"* ]]; then
     exit 0
   fi
   printf 'OTA CDN runtime Secret is absent\n' >&2

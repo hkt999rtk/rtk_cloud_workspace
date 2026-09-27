@@ -6,7 +6,7 @@ This is the source of truth for bucket names and object paths. The dated [bucket
 
 Use `rtk-<purpose>-<environment|shared>-<Linode storage region>`, all lowercase with hyphens. The purpose is an access and lifecycle boundary: `video-media`, `ota-firmware`, `logger-backup`, `backup`, `device-pki-backup`, `reports`, `release`, `ci`, or `loadtest`. Use the actual Object Storage region ID such as `us-sea`, never an older logical alias. Keep the name within 63 characters using lowercase ASCII letters, digits, and hyphens. Check availability in the target region before creation. A rename requires a new bucket, migration, consumer cutover, and later key retirement.
 
-Use `shared` only for a release or CI consumer that intentionally serves several environments. Keep Dev, Staging, and Prod runtime data separate. Separate OTA firmware from clips because OTA has its own writer, CDN delivery, billing ledger, and key rotation. Put customer, brand, product, release, date, and backup ID in object keys, not bucket names. Do not create a bucket per release or customer.
+Use `shared` only for a release or CI consumer that intentionally serves several environments. Keep Dev, Staging, and Prod runtime data separate. Separate OTA firmware from clips because OTA has its own writer, CDN or signed Object Storage delivery, billing ledger, and key rotation. Put customer, brand, product, release, date, and backup ID in object keys, not bucket names. Do not create a bucket per release or customer.
 
 | Purpose | Example Dev bucket | Key beneath bucket prefix | Status |
 | --- | --- | --- | --- |
@@ -20,7 +20,14 @@ Use `shared` only for a release or CI consumer that intentionally serves several
 | CI evidence | `rtk-ci-shared-us-sea` | `ci/<repo>/<run>/...` | Reserved |
 | Staging load test | `rtk-loadtest-staging-us-sea` | `loadtests/<run>/...` | Reserved |
 
-The independent OTA service writes `ota-billable-v1/` inside its configured prefix. That namespace is part of billing and CDN behavior. Historical core `ota/` objects stay in legacy media storage with existing URLs until a separate compatibility migration is proved. The old `firmware/` namespace is historical; new registered OTA writes never use it. All new billable OTA firmware therefore uses one path.
+The resolved compute and Object Storage regions on 2026-09-27 give the OTA
+targets `rtk-ota-firmware-staging-sg-sin-2` and
+`rtk-ota-firmware-prod-us-sea`. These are target names, not evidence that
+either bucket exists or has been cut over. Confirm the provider-reported region
+before creation; preserve each environment's `legacy-shared` setting until its
+dedicated bucket, scoped credentials, migration and workload cutover pass.
+
+The independent OTA service writes `ota-billable-v1/` inside its configured prefix. That namespace is part of billing and delivery behavior. Historical core `ota/` objects stay in legacy media storage with existing URLs until a separate compatibility migration is proved. The old `firmware/` namespace is historical; new registered OTA writes never use it. All new billable OTA firmware therefore uses one path.
 
 ## Configuration and credentials
 
@@ -46,6 +53,6 @@ rtk-cloud deployment storage-cutover --environment dev --purpose ota --confirm v
 
 Routine deployment does not silently create buckets. `--purpose media` is the compatibility default. Media migration includes `clips/`, `brands/`, `snapshots/`, `clip-index/`, and historical `ota/` / `firmware/`. OTA migration includes only `ota-billable-v1/`. Keys already beneath the environment prefix are not prefixed twice. Per-object SHA-256 receipts are kept in ignored runtime state. Never rewrite a historical `ota/` key into `ota-billable-v1/`.
 
-OTA cutover requires independent OTA service registration, CDN configuration, validated OTA storage, and a ready deployment. If service registration is disabled, the bucket can be prepared but no cutover is recorded. `storage-retire` covers the existing media key lifecycle only: it requires cutover state plus `storage-consumers.json` confirming `generic_key_in_use: false` and revokes one explicit key ID. OTA key retirement requires separate consumer verification. No command deletes buckets.
+OTA cutover requires independent OTA service registration, validated private OTA storage, and a ready deployment. CDN delivery requires a valid HTTPS base URL and token key; when both are absent, new device grants use short-lived signed GET URLs for that bucket. A partially configured CDN is an error. Confirm that the dedicated bucket exposes GET and downloaded-byte metrics before enabling billable direct delivery. If service registration is disabled, the bucket can be prepared but no cutover is recorded. `storage-retire` covers the existing media key lifecycle only: it requires cutover state plus `storage-consumers.json` confirming `generic_key_in_use: false` and revokes one explicit key ID. OTA key retirement requires separate consumer verification. No command deletes buckets.
 
 Media validation writes `runtime/state/storage-preflight.json`; OTA validation writes `runtime/state/storage-preflight-ota.json`. Receipts contain bucket, region, API endpoint, numeric key ID, redacted access suffix, and time. Runtime state should be backed up using the encrypted environment-state procedure.

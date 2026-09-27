@@ -73,17 +73,39 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if lkeOTADedicatedStorage(env) && (strings.TrimSpace(lkeOTAStorageValue(env, "ENDPOINT")) == "" || lkeOTAStorageValue(env, "BUCKET") == env["VIDEO_CLOUD_BLOB_BUCKET"]) {
 		return fmt.Errorf("dedicated OTA service requires a validated separate bucket and endpoint")
 	}
-	cdnURL, err := url.Parse(strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]))
-	if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
-		return fmt.Errorf("OTA service requires an HTTPS private-origin CDN base URL")
-	}
-	if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
-		return err
+	if rawCDNURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]); rawCDNURL != "" {
+		cdnURL, err := url.Parse(rawCDNURL)
+		if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
+			return fmt.Errorf("OTA service requires an HTTPS private-origin CDN base URL")
+		}
+		if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
+			return err
+		}
+	} else {
+		body, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "ota-cdn-runtime", "--ignore-not-found=true", "-o", "json")
+		if err != nil {
+			return fmt.Errorf("inspect OTA CDN runtime Secret: %w", err)
+		}
+		if len(strings.TrimSpace(string(body))) > 0 {
+			var secret map[string]any
+			if err := json.Unmarshal(body, &secret); err != nil {
+				return fmt.Errorf("decode OTA CDN runtime Secret: %w", err)
+			}
+			if raw, err := kubernetesSecretBytes(secret, "VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX"); err == nil && len(strings.TrimSpace(string(raw))) > 0 {
+				return fmt.Errorf("OTA CDN token key is configured without a CDN base URL")
+			}
+		}
 	}
 	if err := lkeRequireOTAServiceRuntimeSecrets(env); err != nil {
 		return err
 	}
-	return lkeRequireOTARegistrarIdentitySecret(env)
+	if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
+		return err
+	}
+	if !lkeOTADedicatedStorage(env) {
+		return fmt.Errorf("independent OTA service requires a dedicated OTA bucket")
+	}
+	return nil
 }
 
 func lkeRequireOTAServiceRuntimeSecrets(env map[string]string) error {
@@ -143,6 +165,15 @@ func lkeOTAServiceDeploymentManifest(env map[string]string) string {
 	videoNS := lkeNamespaceName(env, "video-cloud")
 	platformNS := lkeNamespaceName(env, "platform")
 	accountNS := lkeNamespaceName(env, "account-manager")
+	cdnKeyEnv := ""
+	if strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) != "" {
+		cdnKeyEnv = `            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: ota-cdn-runtime
+                  key: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
+`
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -267,11 +298,7 @@ spec:
                   key: AWS_SECRET_ACCESS_KEY
             - name: VIDEO_CLOUD_OTA_CDN_BASE_URL
               value: %q
-            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
-              valueFrom:
-                secretKeyRef:
-                  name: ota-cdn-runtime
-                  key: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
+%s
             - name: VIDEO_CLOUD_OTA_CDN_TOKEN_NAME
               value: %q
             - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
@@ -314,7 +341,7 @@ spec:
 		lkeAccountManagerInternalURL(env), lkeOTAStorageValue(env, "ENDPOINT"), lkeOTAStorageValue(env, "REGION"),
 		lkeOTAStorageValue(env, "BUCKET"), lkeOTAStorageValue(env, "PREFIX"), firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"),
 		lkeOTAStorageSecretName(env), lkeOTAStorageSecretName(env),
-		env["VIDEO_CLOUD_OTA_CDN_BASE_URL"], firstNonEmpty(env["VIDEO_CLOUD_OTA_CDN_TOKEN_NAME"], "__token__"),
+		env["VIDEO_CLOUD_OTA_CDN_BASE_URL"], cdnKeyEnv, firstNonEmpty(env["VIDEO_CLOUD_OTA_CDN_TOKEN_NAME"], "__token__"),
 		lkeNamespaceName(env, "billing"), firstNonEmpty(env["VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL"], "5s"),
 		otaRegistrarInstanceID, accountNS, otaRegistrarIdentitySecretName)
 }
