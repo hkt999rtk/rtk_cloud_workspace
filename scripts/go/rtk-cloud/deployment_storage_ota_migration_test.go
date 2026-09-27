@@ -135,17 +135,23 @@ func TestOTACutoverReconcilesLiveSourceReceiptAndDestination(t *testing.T) {
 }
 
 func TestOTACutoverRequiresCurrentCoreSourceBucket(t *testing.T) {
-	deployment := []byte(`{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"live-media"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"}]}]}}}}`)
-	if err := validateLiveOTASourceBucket(deployment, "live-media", "us-sea"); err != nil {
+	deployment := []byte(`{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"live-media"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"},{"name":"VIDEO_CLOUD_BLOB_ENDPOINT","value":"https://us-sea-1.linodeobjects.com"},{"name":"VIDEO_CLOUD_BLOB_PREFIX","value":"environments/video-cloud-dev"}]}]}}}}`)
+	if err := validateLiveOTASourceBucket(deployment, "live-media", "us-sea", "us-sea-1.linodeobjects.com/", "environments/video-cloud-dev"); err != nil {
 		t.Fatalf("matching live source rejected: %v", err)
 	}
-	if err := validateLiveOTASourceBucket(deployment, "wrong-empty-bucket", "us-sea"); err == nil || !strings.Contains(err.Error(), "does not match") {
+	if err := validateLiveOTASourceBucket(deployment, "wrong-empty-bucket", "us-sea", "https://us-sea-1.linodeobjects.com", "environments/video-cloud-dev"); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("wrong empty source accepted: %v", err)
 	}
-	if err := validateLiveOTASourceBucket(deployment, "live-media", "sg-sin-2"); err == nil || !strings.Contains(err.Error(), "does not match") {
+	if err := validateLiveOTASourceBucket(deployment, "live-media", "sg-sin-2", "https://us-sea-1.linodeobjects.com", "environments/video-cloud-dev"); err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("wrong source region accepted: %v", err)
 	}
-	if err := validateLiveOTASourceBucket(nil, "live-media", "us-sea"); err == nil {
+	if err := validateLiveOTASourceBucket(deployment, "live-media", "us-sea", "https://other-account.example.test", "environments/video-cloud-dev"); err == nil || !strings.Contains(err.Error(), "endpoint") {
+		t.Fatalf("wrong source endpoint accepted: %v", err)
+	}
+	if err := validateLiveOTASourceBucket(deployment, "live-media", "us-sea", "https://us-sea-1.linodeobjects.com", "another-prefix"); err == nil || !strings.Contains(err.Error(), "prefix") {
+		t.Fatalf("unlisted source prefix accepted: %v", err)
+	}
+	if err := validateLiveOTASourceBucket(nil, "live-media", "us-sea", "https://us-sea-1.linodeobjects.com", "environments/video-cloud-dev"); err == nil {
 		t.Fatal("missing live core source accepted")
 	}
 }

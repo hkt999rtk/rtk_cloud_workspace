@@ -73,7 +73,7 @@ func otaProofTotals(objects map[string]storageObjectProof) (int, int64) {
 	return len(objects), bytes
 }
 
-func ensureLiveOTASourceBucket(namespace, sourceFile string) error {
+func ensureLiveOTASourceBucket(namespace, sourceFile, destinationPrefix string) error {
 	sourceValues, check := deploymentCredentialValues(sourceFile)
 	if !check.Passed {
 		return errors.New(check.Detail)
@@ -86,10 +86,22 @@ func ensureLiveOTASourceBucket(namespace, sourceFile string) error {
 	if err != nil {
 		return fmt.Errorf("inspect live core OTA source bucket: %w", err)
 	}
-	return validateLiveOTASourceBucket(body, source.bucket, source.region)
+	return validateLiveOTASourceBucket(body, source.bucket, source.region, source.endpoint, destinationPrefix)
 }
 
-func validateLiveOTASourceBucket(body []byte, sourceBucket, sourceRegion string) error {
+func normalizedOTASourceEndpoint(raw string) (string, error) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if strings.HasPrefix(raw, "file://") {
+		return raw, nil
+	}
+	return normalizeLinodeS3Endpoint(raw)
+}
+
+func validateLiveOTASourceBucket(body []byte, sourceBucket, sourceRegion, sourceEndpoint, destinationPrefix string) error {
+	wantEndpoint, err := normalizedOTASourceEndpoint(sourceEndpoint)
+	if err != nil {
+		return fmt.Errorf("invalid OTA source endpoint: %w", err)
+	}
 	var deployment struct {
 		Metadata struct {
 			Name string `json:"name"`
@@ -110,7 +122,7 @@ func validateLiveOTASourceBucket(body []byte, sourceBucket, sourceRegion string)
 	if err := json.Unmarshal(body, &deployment); err != nil || deployment.Metadata.Name != "video-cloud-api" {
 		return errors.New("OTA cutover cannot verify the live core API source bucket")
 	}
-	bucketFound, regionFound := false, false
+	bucketFound, regionFound, endpointFound, prefixFound := false, false, false, false
 	for _, container := range deployment.Spec.Template.Spec.Containers {
 		for _, variable := range container.Env {
 			switch variable.Name {
@@ -124,11 +136,23 @@ func validateLiveOTASourceBucket(body []byte, sourceBucket, sourceRegion string)
 				if variable.Value == "" || variable.Value != sourceRegion {
 					return fmt.Errorf("OTA source region %s does not match live core API region %s", sourceRegion, variable.Value)
 				}
+			case "VIDEO_CLOUD_BLOB_ENDPOINT":
+				endpointFound = true
+				liveEndpoint, err := normalizedOTASourceEndpoint(variable.Value)
+				if err != nil || liveEndpoint != wantEndpoint {
+					return fmt.Errorf("OTA source endpoint %s does not match live core API endpoint %s", wantEndpoint, variable.Value)
+				}
+			case "VIDEO_CLOUD_BLOB_PREFIX":
+				prefixFound = true
+				livePrefix := strings.Trim(variable.Value, "/")
+				if livePrefix != "" && livePrefix != strings.Trim(destinationPrefix, "/") {
+					return fmt.Errorf("OTA source prefix %s does not match the inventoried destination prefix %s", livePrefix, destinationPrefix)
+				}
 			}
 		}
 	}
-	if !bucketFound || !regionFound {
-		return errors.New("OTA cutover cannot verify the live core API bucket and region")
+	if !bucketFound || !regionFound || !endpointFound || !prefixFound {
+		return errors.New("OTA cutover cannot verify the live core API bucket, region, endpoint, and prefix")
 	}
 	return nil
 }

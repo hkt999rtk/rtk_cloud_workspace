@@ -321,7 +321,7 @@ func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, val
 			_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
 		}
 	}()
-	if err := ensureLiveOTASourceBucket(lkeNamespaceName(stack, "video-cloud"), sourceFile); err != nil {
+	if err := ensureLiveOTASourceBucket(lkeNamespaceName(stack, "video-cloud"), sourceFile, cfg.Storage.OTAFirmware.Prefix); err != nil {
 		return err
 	}
 	if err := c.validateOTAMigrationCutover(cfg, values, sourceFile); err != nil {
@@ -332,16 +332,30 @@ func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, val
 	if err := lkeRequireOTAServiceInputs(stack); err != nil {
 		return err
 	}
+	if err := kubectlApply(lkeAllowVideoCloudAPIOTAGatewayNetworkPolicyManifest(stack)); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkeOTAStorageSecretManifest(stack)); err != nil {
 		return err
 	}
 	if err := kubectlApply(lkeOTAServiceDeploymentManifest(stack)); err != nil {
 		return err
 	}
+	if err := kubectlApply(lkeOTAServiceServiceManifest(stack)); err != nil {
+		return err
+	}
 	if err := runKubectl("-n", lkeNamespaceName(stack, "video-cloud"), "rollout", "status", "deployment/"+otaServiceWorkloadName, "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 		return err
 	}
-	return writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover-ota.json"), map[string]any{"environment": cfg.Environment, "bucket": cfg.Storage.OTAFirmware.Bucket, "cutover_at": time.Now().UTC().Format(time.RFC3339), "rollback_credentials_retained": true})
+	if err := lkeRequireReadyOTAServiceEndpoint(stack); err != nil {
+		return err
+	}
+	return writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover-ota.json"), map[string]any{
+		"environment": cfg.Environment, "bucket": cfg.Storage.OTAFirmware.Bucket,
+		"region": cfg.Storage.OTAFirmware.Region, "prefix": cfg.Storage.OTAFirmware.Prefix,
+		"cutover_at": time.Now().UTC().Format(time.RFC3339), "rollback_credentials_retained": true,
+		"service_ready": true,
+	})
 }
 
 func (c deploymentCredentialChecker) validateClipStorageSmoke(store provisionObjectStore, prefix string) error {

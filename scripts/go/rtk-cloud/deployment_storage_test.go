@@ -737,7 +737,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	kubectlLog := fakeKubectl(t)
-	coreSourceDeployment := `{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"source-bucket"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"}]}]}}}}`
+	coreSourceDeployment := fmt.Sprintf(`{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"source-bucket"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"},{"name":"VIDEO_CLOUD_BLOB_ENDPOINT","value":%q},{"name":"VIDEO_CLOUD_BLOB_PREFIX","value":"environments/video-cloud-dev"}]}]}}}}`, "file://"+sourceRoot)
 	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", coreSourceDeployment)
 	bucketType = "E1"
 	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") || keyIssueCount != 1 {
@@ -803,6 +803,21 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatal("OTA cutover mutated Kubernetes before verifying its live source bucket")
 	}
 	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", coreSourceDeployment)
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "no ready registered endpoint") {
+		t.Fatalf("OTA cutover accepted a Service without ready endpoints: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); !os.IsNotExist(err) {
+		t.Fatalf("OTA cutover wrote receipt before Service readiness: %v", err)
+	}
+	cutoverCalls, err := os.ReadFile(kubectlLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cutoverCalls), "kind: NetworkPolicy") || !strings.Contains(string(cutoverCalls), "kind: Service") {
+		t.Fatal("OTA cutover omitted private network policy or Service")
+	}
+	t.Setenv("FAKE_OTA_ENDPOINTSLICES_JSON", `{"items":[{"ports":[{"port":18084}],"endpoints":[{"addresses":["10.0.0.5"],"conditions":{"ready":true}}]}]}`)
 	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err != nil {
 		t.Fatal(err)
 	}
