@@ -27,8 +27,8 @@ def load_plan(root, environment):
         raise ValueError("PKI storage plan has unexpected or missing fields")
     if data["schema_version"] != 1 or data["environment"] != environment:
         raise ValueError("PKI storage plan version/environment mismatch")
-    if data["state"] not in ("migration-required", "plan-only"):
-        raise ValueError("PKI storage plan state must be migration-required or plan-only")
+    if data["state"] not in ("migration-required", "active", "plan-only"):
+        raise ValueError("PKI storage plan state must be migration-required, active, or plan-only")
     if data["storage_class"] != "linode-block-storage-retain":
         raise ValueError("PKI storage class must retain data")
     claims = data["claims"]
@@ -144,8 +144,8 @@ def _audit_dev_cleanup(kubeconfig, plan):
     if refs:
         raise ValueError("legacy PKI PVCs are still referenced by " + ", ".join(sorted(set(refs))))
     for name in sorted(legacy):
-        print(f"CLEANUP_CANDIDATE {name}: new consumers Ready and no current Pod/workload reference")
-    print("Read-only audit passed; verify backup/rollback evidence and retained PV/volume IDs before deletion")
+        print(f"LEGACY_CLEAR {name}: new consumers Ready and no current Pod/workload reference")
+    print("Read-only layout and legacy-reference audit passed")
 
 
 def main():
@@ -187,12 +187,17 @@ def main():
             if spec.get("storageClassName") != plan["storage_class"] or spec.get("resources", {}).get("requests", {}).get("storage") != claim["request"] or found.get("status", {}).get("phase") != "Bound":
                 raise ValueError(f"existing PVC {claim['name']} differs from selected plan or is not Bound")
             print(f"REUSE {claim['name']}")
-        if args.environment == "dev":
+        if args.environment == "dev" and plan["state"] == "migration-required":
             for source in plan["migration_sources"]:
                 found = current.get(source["name"])
                 if found is None or found.get("status", {}).get("phase") != "Bound":
                     raise ValueError(f"legacy migration source {source['name']} is missing or not Bound")
                 print(f"MIGRATE {source['name']} -> {plan['role_claims'][source['destination_role']]}")
+        elif args.environment == "dev" and plan["state"] == "active":
+            present = [source["name"] for source in plan["migration_sources"] if source["name"] in current]
+            if present:
+                raise ValueError("retired dev migration PVCs still exist: " + ", ".join(present))
+            print("LEGACY_CLEAR retired migration PVCs are absent")
         print(f"{args.environment}: existing={len(plan['claims'])-missing} new={missing}; read-only; state={plan['state']}")
         try:
             _check_provider_capacity(args.workspace, args.environment, missing)

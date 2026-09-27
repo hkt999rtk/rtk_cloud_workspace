@@ -50,6 +50,8 @@ find /source -mindepth 1 -maxdepth 1 ! -name lost+found -exec cp -a '{}' /target
 diff -qr /target/identity /target/host-identity/identity
 diff -qr /target/seed /target/host-identity/seed
 diff -qr --exclude=lost+found /source /target/emqx-data
+chmod 0700 /target/host-identity/identity /target/host-identity/seed
+find /target/host-identity/identity -type f -exec chmod 0600 '{}' ';'
 test -s /target/host-identity/identity/state.json
 test -s /target/emqx-data/cluster.uuid
 """
@@ -101,6 +103,12 @@ def render_patch(role, deployment):
         patch += [{"op": "test", "path": path, "value": old},
                   {"op": "replace", "path": path, "value": new},
                   {"op": "add", "path": f"/spec/template/spec/containers/{ci}/volumeMounts/{mi}/subPath", "value": subpath}]
+    if role == "mqtt":
+        security = spec.get("securityContext", {})
+        if security.get("fsGroup") != 1000 or security.get("fsGroupChangePolicy") not in (None, "OnRootMismatch"):
+            raise ValueError("unexpected MQTT fsGroup policy")
+        if security.get("fsGroupChangePolicy") is None:
+            patch.append({"op": "add", "path": "/spec/template/spec/securityContext/fsGroupChangePolicy", "value": "OnRootMismatch"})
     patch.append({"op": "replace", "path": "/spec/replicas", "value": 1})
     return patch
 

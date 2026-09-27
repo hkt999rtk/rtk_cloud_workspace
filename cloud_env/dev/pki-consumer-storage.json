@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "environment": "dev",
-  "state": "migration-required",
+  "state": "active",
   "storage_class": "linode-block-storage-retain",
   "claims": [
     {
