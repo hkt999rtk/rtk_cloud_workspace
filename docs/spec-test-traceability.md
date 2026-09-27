@@ -909,11 +909,14 @@
 | `SPEC-BILLING-OPENAPI#getBillingUsage` | `GET /v1/orgs/{orgId}/billing/usage` | `FEAT-AM-INVOICE-001` | `REQ-AM-BILLING-SUMMARY-001` | `7f20864de8ad` |
 | `SPEC-BILLING-OPENAPI#listPaymentIntents` | `GET /v1/orgs/{orgId}/payment-intents` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `369d2462c94f` |
 | `SPEC-BILLING-OPENAPI#getPaymentIntent` | `GET /v1/orgs/{orgId}/payment-intents/{intentId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `315738c76839` |
+| `SPEC-BILLING-OPENAPI#downloadTopUpTransactionDetail` | `GET /v1/orgs/{orgId}/payment-intents/{intentId}/statement.pdf` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `26bcbe4f65ae` |
 | `SPEC-BILLING-OPENAPI#listPaymentMethods` | `GET /v1/orgs/{orgId}/payment-methods` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `073a7c8ed21e` |
 | `SPEC-BILLING-OPENAPI#setupPaymentMethod` | `POST /v1/orgs/{orgId}/payment-methods/setup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `75fae7da2910` |
 | `SPEC-BILLING-OPENAPI#revokePaymentMethod` | `DELETE /v1/orgs/{orgId}/payment-methods/{methodId}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-AUDIT-001` | `1cefcb89f468` |
 | `SPEC-BILLING-OPENAPI#createManualTopUp` | `POST /v1/orgs/{orgId}/topups` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-AUDIT-001` | `1ad12fa51694` |
-| `SPEC-BILLING-OPENAPI#createHostedTopUp` | `POST /v1/orgs/{orgId}/topups/checkout` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-PROVIDER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `6fe41af874a3` |
+| `SPEC-BILLING-OPENAPI#createHostedTopUp` | `POST /v1/orgs/{orgId}/topups/checkout` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-PROVIDER-001`, `REQ-AM-PAYMENT-AUTHZ-001` | `02b96744dd2d` |
+| `SPEC-BILLING-OPENAPI#completePayPalReturn` | `GET /v1/payment-returns/paypal` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `07336588635f` |
+| `SPEC-BILLING-OPENAPI#cancelPayPalReturn` | `GET /v1/payment-returns/paypal/cancel` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-INTENT-001`, `REQ-AM-PAYMENT-PROVIDER-001` | `9cb191351bdf` |
 | `SPEC-BILLING-OPENAPI#ingestPaymentWebhook` | `POST /v1/payment-webhooks/{provider}` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-WEBHOOK-001` | `5722b69bae96` |
 | `SPEC-LOGGER-OPENAPI#getHealth` | `GET /healthz` | `FEAT-CONTRACT-SERVICE-LOGGING-001` | `REQ-CONTRACT-LOGGING-DELIVERY-001` | `840e5071d6b0` |
 | `SPEC-LOGGER-OPENAPI#getPrometheusMetrics` | `GET /metrics/prometheus` | `FEAT-CONTRACT-SERVICE-LOGGING-001` | `REQ-CONTRACT-LOGGING-DELIVERY-001` | `ad6b4ba261b4` |
