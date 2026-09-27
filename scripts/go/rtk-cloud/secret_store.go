@@ -326,6 +326,9 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"job-authorization-token", "account-manager,cloud-admin", "manual"},
 		{"fleet-read-token", "video-cloud,cloud-admin", "manual"},
 		{"ota-bff-token", "video-cloud,cloud-admin", "manual"},
+		{"zammad-integration-token", "cloud-admin", "manual"},
+		{"zammad-postgres-password", "zammad", "manual"},
+		{"zammad-redis-password", "zammad", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
 		{"billing-cloud-creation", "account-manager,billing", "manual"},
 		{"billing-handoff", "account-manager,billing", "manual"},
@@ -345,6 +348,18 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		out = append(out, secretCatalogEntry{ID: item.id, Category: "runtime", Consumers: strings.Split(item.consumer, ","), Rotation: item.rotation, K8SBinding: catalogK8SBindings(item.id)})
 	}
 	return out
+}
+
+func supportSecretRequired(store secretStore, id string) bool {
+	if !strings.HasPrefix(id, "zammad-") {
+		return true
+	}
+	workspace, err := workspaceRoot()
+	if err != nil {
+		return true
+	}
+	values, err := readStrictEnv(filepath.Join(workspace, "cloud_env", store.Environment, "environment.env"))
+	return err != nil || values["SUPPORT_TICKETS_ENABLED"] == "true"
 }
 
 func catalogK8SBindings(id string) []secretK8SBinding {
@@ -383,6 +398,9 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 			{"-video-cloud", "video-cloud-runtime", "VIDEO_CLOUD_OTA_BFF_TOKEN"},
 			{"-admin", "cloud-admin-billing-client", "VIDEO_CLOUD_OTA_BFF_TOKEN"},
 		},
+		"zammad-integration-token": {{"-admin", "cloud-admin-billing-client", "ZAMMAD_API_TOKEN"}},
+		"zammad-postgres-password": {{"-support", "zammad-postgres-password", "postgres-password"}},
+		"zammad-redis-password":    {{"-support", "zammad-redis-password", "redis-password"}},
 		"billing-internal-token": {
 			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
 			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_BILLING_USAGE_TOKEN"},
@@ -966,6 +984,9 @@ func verifySecretStoreK8SBindings(store secretStore) error {
 	handoffWorkerChecked := false
 	handoffWorkerEnabled := false
 	for _, entry := range rtkSecretCatalog() {
+		if !supportSecretRequired(store, entry.ID) {
+			continue
+		}
 		if len(entry.K8SBinding) == 0 {
 			continue
 		}
@@ -1091,6 +1112,9 @@ func verifySecretStoreContents(store secretStore) error {
 	}
 	missing := []string{}
 	for _, entry := range rtkSecretCatalog() {
+		if !supportSecretRequired(store, entry.ID) {
+			continue
+		}
 		value, err := store.readRuntime(entry.ID)
 		if err != nil || value == "" {
 			missing = append(missing, entry.ID)

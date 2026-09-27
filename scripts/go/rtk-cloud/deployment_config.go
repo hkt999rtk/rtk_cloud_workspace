@@ -85,6 +85,7 @@ var deploymentEnvironmentKeys = keySet(
 	"PRIVACY_POLICY_URL", "GOOGLE_ANALYTICS_MEASUREMENT_ID",
 	"FRONTEND_DOMAIN", "PUBLIC_BASE_URL", "DISABLE_SEARCH_INDEXING",
 	"TEST_LAB_ENABLED",
+	"SUPPORT_TICKETS_ENABLED", "ZAMMAD_SUPPORT_GROUP_ID", "ZAMMAD_UNASSIGNED_OWNER_ID",
 	"FACTORY_ENROLL_PUBLIC_ENABLED", "FACTORY_ENROLL_DOMAIN",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
@@ -95,6 +96,7 @@ var deploymentEnvironmentKeys = keySet(
 
 var deploymentEnvironmentServiceKeys = keySet(
 	"TEST_LAB_ENABLED",
+	"SUPPORT_TICKETS_ENABLED", "ZAMMAD_SUPPORT_GROUP_ID", "ZAMMAD_UNASSIGNED_OWNER_ID",
 	"FACTORY_ENROLL_PUBLIC_ENABLED", "FACTORY_ENROLL_DOMAIN",
 	"CHIPSET_PROVIDER_ALLOWED_HOSTS",
 	"AUTH_TOKEN_BASE_URL", "SOCIAL_LOGIN_CALLBACK_URL", "GOOGLE_LOGIN_ENABLED", "GOOGLE_OAUTH_CLIENT_ID", "GITHUB_LOGIN_ENABLED", "GITHUB_OAUTH_CLIENT_ID", "SENDMAIL_HTTP_BASE_URL", "SENDMAIL_HTTP_TIMEOUT",
@@ -795,9 +797,21 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if enabled := values["FACTORY_ENROLL_PUBLIC_ENABLED"]; enabled != "" && enabled != "true" && enabled != "false" {
 		return deploymentConfig{}, errors.New("FACTORY_ENROLL_PUBLIC_ENABLED must be true or false")
 	}
-	for _, key := range []string{"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED", "VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED"} {
+	for _, key := range []string{"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED", "VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED", "SUPPORT_TICKETS_ENABLED"} {
 		if value := values[key]; value != "" && value != "true" && value != "false" {
 			return deploymentConfig{}, fmt.Errorf("%s must be true or false", key)
+		}
+	}
+	if values["SUPPORT_TICKETS_ENABLED"] == "true" {
+		groupID, err := strconv.ParseInt(values["ZAMMAD_SUPPORT_GROUP_ID"], 10, 64)
+		if err != nil || groupID <= 0 {
+			return deploymentConfig{}, errors.New("ZAMMAD_SUPPORT_GROUP_ID must be a positive integer when support tickets are enabled")
+		}
+		if owner := values["ZAMMAD_UNASSIGNED_OWNER_ID"]; owner != "" {
+			ownerID, err := strconv.ParseInt(owner, 10, 64)
+			if err != nil || ownerID <= 0 {
+				return deploymentConfig{}, errors.New("ZAMMAD_UNASSIGNED_OWNER_ID must be a positive integer")
+			}
 		}
 	}
 	if values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
