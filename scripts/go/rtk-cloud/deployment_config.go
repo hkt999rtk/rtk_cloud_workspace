@@ -334,14 +334,14 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	switch action {
 	case "plan":
 		fmt.Printf("environment: %s\narchitecture: %s\nadapter: %s\ndns_adapter: %s\nruntime_root: %s\n", cfg.Environment, cfg.Architecture, cfg.Adapter, cfg.DNSAdapter, cfg.RuntimeRoot)
+		if cfg.Adapter != "lke" {
+			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
+			return normalizeDeploymentRuntime(cfg)
+		}
 		if cfg.Environment == "dev" || cfg.Environment == "staging" || cfg.Environment == "prod" {
 			if err := runDeploymentPKIStoragePlan([]string{"--workspace", cfg.Workspace, "--environment", cfg.Environment}); err != nil {
 				return err
 			}
-		}
-		if cfg.Adapter != "lke" {
-			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
-			return normalizeDeploymentRuntime(cfg)
 		}
 		if err := ops.plan(cfg); err != nil {
 			return err
