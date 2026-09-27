@@ -167,6 +167,21 @@ func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T)
 	}
 }
 
+func TestResolveDeploymentConfigRejectsMismatchedEnvironmentRoot(t *testing.T) {
+	workspace := t.TempDir()
+	devRoot := filepath.Join(workspace, "cloud_env", "dev")
+	if _, err := resolveDeploymentConfig(workspace, "staging", devRoot); err == nil || !strings.Contains(err.Error(), "does not match --environment-root") {
+		t.Fatalf("mismatched environment root error = %v", err)
+	}
+}
+
+func TestOTAMetricsExportRejectsTrailingPositionalArguments(t *testing.T) {
+	err := runDeploymentWithOperations([]string{"storage-metrics-export", "--environment", "dev", "unexpected", "--window-end", "2026-09-28T07:00:00Z"}, deploymentOperations{})
+	if err == nil || !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("trailing positional argument error = %v", err)
+	}
+}
+
 func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	for _, action := range []string{"provision", "test"} {
 		t.Run(action, func(t *testing.T) {

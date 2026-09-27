@@ -208,7 +208,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 		return err
 	}
-	if action == "credentials-check" && fs.NArg() != 0 {
+	if (action == "credentials-check" || action == "storage-metrics-export") && fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use --flag=value for boolean values")
 	}
 	if action != "storage-metrics-export" && (hasFlag(args[1:], "--window-start") || hasFlag(args[1:], "--window-end") || hasFlag(args[1:], "--recorded-by")) {
@@ -738,6 +738,8 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		if environment == "" {
 			environment = filepath.Base(environmentRoot)
+		} else if environment != filepath.Base(environmentRoot) {
+			return deploymentConfig{}, fmt.Errorf("--environment %s does not match --environment-root %s", environment, environmentRoot)
 		}
 	} else {
 		if environment == "" {
