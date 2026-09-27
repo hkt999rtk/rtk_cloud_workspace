@@ -33,6 +33,9 @@ func syncMissingSecretBindings(out io.Writer, store secretStore, dryRun bool) er
 	bindings := map[string]*missingSecretBinding{}
 	seen := map[string]map[string]string{}
 	for _, entry := range rtkSecretCatalog() {
+		if !supportSecretRequired(store, entry.ID) {
+			continue
+		}
 		if len(entry.K8SBinding) == 0 {
 			continue
 		}

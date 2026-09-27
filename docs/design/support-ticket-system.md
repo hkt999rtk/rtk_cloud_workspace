@@ -57,11 +57,11 @@ tickets remain retained for support and recovery.
 | Support operator | Support group queue, including unassigned and teammates' tickets | No customer action | Yes | Claim self and update state |
 | Platform admin | Support group queue | No customer action | Yes | Assign or reassign any agent; update state |
 
-Account Manager projects cloud-scoped `ticket.read` and `ticket.write`, and
-platform-scoped `ticket.support.read`, `ticket.support.reply`,
+Cloud Admin derives customer-side `ticket.read` and `ticket.write` from the
+current Account Manager Brand Cloud membership: every role reads, while Viewer
+does not write. Account Manager projects platform-scoped `ticket.support.read`, `ticket.support.reply`,
 `ticket.support.note`, `ticket.support.assign` and
-`ticket.support.reassign`. Its Viewer ceiling must explicitly permit
-`ticket.read` and deny `ticket.write`. The BFF checks live membership and the
+`ticket.support.reassign`. The BFF checks live membership and the
 relevant permission on every request; the UI mirrors those decisions but is
 not the enforcement point. Product-scoped Viewer access does not narrow this
 Cloud-wide ticket surface; sensitive billing content is excluded by scope.
@@ -77,8 +77,10 @@ does not use email article type. Zammad's API distinguishes `internal` from
 email delivery, so API writes must suppress Zammad notifications as well as
 omit email channels.
 
-The BFF creates or reconciles Zammad user records for RTK actors before writes
-and records the RTK actor in the resulting article/audit entry. Validate
+The BFF may create Zammad Customer records for RTK users before customer
+writes. Approved Agent records are provisioned separately with the Agent role
+and `rtk-<Account Manager user ID>` login. The BFF never creates or promotes
+Agent accounts. It records the RTK actor in the resulting article/audit entry. Validate
 `origin_by_id` and custom-field search against the pinned Zammad release in a
 container integration test before relying on them. If either fails, adapt the
 server-side mapping and update the contract before implementing the UI; do not
@@ -103,7 +105,7 @@ returned rich text, bounds attachment size and type, and
 streams downloads only after scope checks. Browser caches are keyed by the
 explicit Cloud ID and discarded on Cloud switch.
 
-V1 notifications stay in Admin: list rows and navigation show unread public
+V1 notifications stay in Admin: list rows show unread public
 replies or new agent assignments, using per-user read markers in Admin's
 console-local store and polling while a support view is open. The BFF records a
 marker when the user opens a ticket. No email or separate notification service
@@ -117,19 +119,18 @@ dedicated `${CLOUD_STACK_NAME}-support` namespace on LKE. Expose the Zammad
 nginx Service only through a ClusterIP reachable by Cloud Admin; deny other
 application namespaces with NetworkPolicy. Provide dedicated PostgreSQL,
 Elasticsearch, Redis and Memcached chart dependencies and a persistent Zammad
-file store. Do not reuse RTK core PostgreSQL or its credentials. Capacity and
+PostgreSQL database attachment store. Do not reuse RTK core PostgreSQL or its credentials. Capacity and
 volume sizing must pass the deployment planner and account service-limit check.
 
-Add a default-off `SUPPORT_TICKETS_ENABLED` environment intent, architecture
-resource defaults, a pinned chart/image inventory, workload/health integration,
-and a derived internal `ZAMMAD_BASE_URL` for Admin. Add a Zammad integration
+Add a default-off `SUPPORT_TICKETS_ENABLED` environment intent, pinned chart
+values and a derived internal `ZAMMAD_BASE_URL` for Admin. Add a Zammad integration
 token and dependency credentials to the per-environment SecretStore catalog and
 runtime injection; keep values out of tracked files and logs. The Admin BFF
 fails closed when enabled but credentials or the private service are missing.
 Only the existing Admin hostname appears in user links.
 
-Extend the matched maintenance backup inventory with Zammad PostgreSQL and
-file storage before enabling production. Elasticsearch is rebuilt from
+Extend the matched maintenance backup inventory with Zammad PostgreSQL before
+enabling production. PostgreSQL also contains attachments. Elasticsearch is rebuilt from
 authoritative records after restore; cache data is not a ticket source of
 truth. Verify a representative ticket, article, attachment and Cloud boundary
 after a staging restore. Chart upgrades require a matching backup and restore
@@ -149,5 +150,7 @@ review because dependency major versions and data layouts can change.
 5. Roll out disabled by default; qualify dev, then staging including backup
    restore, then production through the existing protected-environment gate.
 
-The current workspace has no Zammad workload or support-ticket APIs. This
-document states a target design, not an implemented or deployed feature.
+The repository now contains a default-off Admin implementation, Agent
+permissions, pinned Helm values and a deployment runbook. Zammad remains
+undeployed; live API compatibility, capacity and restore qualification are
+release gates, not claims of completed validation.

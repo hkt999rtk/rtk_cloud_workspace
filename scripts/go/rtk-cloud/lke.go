@@ -1512,6 +1512,9 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	// Fleet overview and attention are first-class Cloud Admin features, so the
 	// BFF always needs the internal Video Cloud API even when Test Lab is off.
 	manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080))
+	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+		manifests = append(manifests, lkeSupportNetworkPolicyManifests(env)...)
+	}
 	if lkeTestLabEnabled(env) {
 		manifests = append(manifests, lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "mqtt", 8085))
 	}
@@ -1976,6 +1979,88 @@ func lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env map[string]string
 
 func lkeAllowCloudAdminBillingNetworkPolicyManifest(env map[string]string) string {
 	return lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "billing", "billing", 8080)
+}
+
+func lkeSupportNetworkPolicyManifests(env map[string]string) []string {
+	namespace := lkeNamespaceName(env, "support")
+	return []string{
+		lkeDefaultDenyIngressNetworkPolicyManifest(env, namespace),
+		fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-support-internal
+  namespace: %s
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}
+`, namespace),
+		fmt.Sprintf(`apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-cloud-admin-zammad-api
+  namespace: %s
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: zammad-nginx
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: %s
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloud-admin
+      ports:
+        - protocol: TCP
+          port: 8080
+`, namespace, lkeNamespaceName(env, "admin")),
+	}
+}
+
+func lkeSupportDependencySecretManifests(env map[string]string) ([]string, error) {
+	manifests := make([]string, 0, 2)
+	for _, credential := range []struct{ id, secret, key string }{
+		{"zammad-postgres-password", "zammad-postgres-password", "postgres-password"},
+		{"zammad-redis-password", "zammad-redis-password", "redis-password"},
+	} {
+		value := lkeRuntimeSecretValue(credential.id)
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("Zammad credential %s is unavailable", credential.id)
+		}
+		manifests = append(manifests, fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: %s
+  namespace: %s
+type: Opaque
+stringData:
+  %s: %q
+`, credential.secret, lkeNamespaceName(env, "support"), credential.key, value))
+	}
+	if strings.TrimSpace(lkeRuntimeSecretValue("zammad-integration-token")) == "" {
+		return nil, errors.New("Zammad integration token is unavailable")
+	}
+	return manifests, nil
+}
+
+func lkeApplySupportRuntime(env map[string]string) error {
+	manifests, err := lkeSupportDependencySecretManifests(env)
+	if err != nil {
+		return err
+	}
+	for _, manifest := range append(manifests, lkeSupportNetworkPolicyManifests(env)...) {
+		if err := kubectlApply(manifest); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env map[string]string, namespaceKey, workload string, port int) string {
@@ -3253,6 +3338,9 @@ func lkeNamespaces(env map[string]string) []lkeNamespace {
 		{Key: "logger", Name: firstNonEmpty(os.Getenv("LKE_NAMESPACE_CLOUD_LOGGER"), stack+"-logger")},
 		{Key: "ingress", Name: lkeIngressNamespace(env)},
 	}
+	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+		values = append(values, lkeNamespace{Key: "support", Name: stack + "-support"})
+	}
 	return values
 }
 
@@ -3338,6 +3426,11 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080),
 		} {
 			if err := kubectlApply(manifest); err != nil {
+				return err
+			}
+		}
+		if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+			if err := lkeApplySupportRuntime(env); err != nil {
 				return err
 			}
 		}
@@ -3804,6 +3897,11 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	// default-deny clusters do not require a separate DNS provisioning pass.
 	if err := kubectlApply(lkeAllowCloudAdminUpstreamNetworkPolicyManifest(env, "video-cloud", "video-cloud-api", 8080)); err != nil {
 		return err
+	}
+	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+		if err := lkeApplySupportRuntime(env); err != nil {
+			return err
+		}
 	}
 	if lkeAccountManagerHandoffWorkerEnabled(env) {
 		for _, manifest := range lkeAccountManagerHandoffNetworkPolicyManifests(env) {
@@ -8962,7 +9060,7 @@ func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
 }
 
 func lkeCloudAdminBillingSecretManifestWithFleetReadToken(env map[string]string, fleetReadToken string) string {
-	return fmt.Sprintf(`apiVersion: v1
+	manifest := fmt.Sprintf(`apiVersion: v1
 kind: Secret
 metadata:
   name: cloud-admin-billing-client
@@ -8979,6 +9077,10 @@ stringData:
   VIDEO_CLOUD_OTA_BFF_TOKEN: %q
   ACCOUNT_MANAGER_JOB_AUTHORIZATION_TOKEN: %q
 `, lkeNamespaceName(env, "admin"), env["CLOUD_STACK_NAME"], lkeBillingServiceToken(), fleetReadToken, lkeRuntimeSecretValue("ota-bff-token"), lkeRuntimeSecretValue("job-authorization-token"))
+	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+		manifest += fmt.Sprintf("  ZAMMAD_API_TOKEN: %q\n", lkeRuntimeSecretValue("zammad-integration-token"))
+	}
+	return manifest
 }
 
 func lkeFrontendSDKDownloadsEnabled(env map[string]string) bool {
@@ -10199,6 +10301,17 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
 			extraEnv += fmt.Sprintf("            - name: FACTORY_ENROLL_PUBLIC_BASE_URL\n              value: %q\n", "https://"+env["FACTORY_ENROLL_DOMAIN"])
 		}
+		if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+			extraEnv += fmt.Sprintf(`            - name: SUPPORT_TICKETS_ENABLED
+              value: "true"
+            - name: ZAMMAD_BASE_URL
+              value: %q
+            - name: ZAMMAD_SUPPORT_GROUP_ID
+              value: %q
+            - name: ZAMMAD_UNASSIGNED_OWNER_ID
+              value: %q
+`, "http://zammad-nginx."+lkeNamespaceName(env, "support")+".svc.cluster.local:8080", env["ZAMMAD_SUPPORT_GROUP_ID"], firstNonEmpty(env["ZAMMAD_UNASSIGNED_OWNER_ID"], "1"))
+		}
 		envFrom = `          envFrom:
             - secretRef:
                 name: cloud-admin-billing-client
@@ -10367,6 +10480,7 @@ func lkeCloudAdminRuntimeChecksum() string {
 		lkeRuntimeSecretValue("fleet-read-token"),
 		lkeRuntimeSecretValue("ota-bff-token"),
 		lkeRuntimeSecretValue("job-authorization-token"),
+		lkeRuntimeSecretValue("zammad-integration-token"),
 	)
 }
 

@@ -939,6 +939,9 @@ func TestSecretStoreK8SBindingsRetryAndReadEachSecretOnce(t *testing.T) {
 		if err := store.write(filepath.Join("runtime", entry.ID), []byte("canonical\n"), true); err != nil {
 			t.Fatal(err)
 		}
+		if !supportSecretRequired(store, entry.ID) {
+			continue
+		}
 		for _, binding := range entry.K8SBinding {
 			keys[binding.Key] = base64.StdEncoding.EncodeToString([]byte("canonical"))
 			secrets[binding.NamespaceSuffix+"/"+binding.Secret] = true

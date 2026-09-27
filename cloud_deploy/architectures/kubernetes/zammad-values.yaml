@@ -1,0 +1,33 @@
+# Zammad chart 17.0.2 (app 7.1.2-0013). Install only in the support namespace.
+# Passwords come from the RTK per-environment SecretStore, never this file.
+image:
+  tag: 7.1.2-0013
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8080
+ingress:
+  enabled: false
+zammadConfig:
+  storageVolume:
+    enabled: false # attachments live in Zammad PostgreSQL
+secrets:
+  postgresql:
+    useExisting: true
+    secretName: zammad-postgres-password
+    secretKey: postgres-password
+  redis:
+    useExisting: true
+    secretName: zammad-redis-password
+    secretKey: redis-password
+postgres:
+  auth:
+    username: zammad
+    database: zammad_production
+    existingSecret: zammad-postgres-password
+    secretKeys:
+      adminPasswordKey: postgres-password
+redis:
+  auth:
+    existingSecret: zammad-redis-password
+    existingSecretPasswordKey: redis-password
