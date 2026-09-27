@@ -3288,6 +3288,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		return err
 	}
 	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := lkeValidatePayPalRuntime(env); err != nil {
+			return err
+		}
 		if err := kubectlApply(lkeAllowPostgresClientsNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
@@ -3302,6 +3305,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			"NEWEBPAY_HASH_KEY":             "newebpay-hash-key",
 			"NEWEBPAY_HASH_IV":              "newebpay-hash-iv",
 			"PAYMENT_SIMULATOR_ADMIN_TOKEN": "payment-simulator-admin-token",
+			"PAYPAL_CLIENT_ID":              "paypal-client-id",
+			"PAYPAL_CLIENT_SECRET":          "paypal-client-secret",
+			"PAYPAL_WEBHOOK_ID":             "paypal-webhook-id",
 		}, false); err != nil {
 			return err
 		}
@@ -8938,9 +8944,17 @@ stringData:
   PAYMENT_SIMULATOR_NEWEBPAY_NOTIFY_URL: %q
   PAYMENT_SIMULATOR_ADMIN_TOKEN: %q
   PAYMENT_REFERENCE_ENCRYPTION_KEY: %q
+  PAYPAL_ENABLED: %q
+  PAYPAL_ENVIRONMENT: %q
+  PAYPAL_CLIENT_ID: %q
+  PAYPAL_CLIENT_SECRET: %q
+  PAYPAL_WEBHOOK_ID: %q
+  PAYPAL_RETURN_URL: %q
+  PAYPAL_CANCEL_URL: %q
+  PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkeNewebPayReturnURL(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -9057,6 +9071,47 @@ func lkeNewebPayEndpointBaseURL(env map[string]string) string {
 
 func lkeBillingPublicDomain(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("BILLING_DOMAIN"), env["BILLING_DOMAIN"], "billing."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
+func lkePayPalEnabled(env map[string]string) bool {
+	return strings.EqualFold(lkeEnvValue(env, "PAYPAL_ENABLED"), "true")
+}
+
+func lkePayPalSecret(env map[string]string, name string) string {
+	if !lkePayPalEnabled(env) {
+		return ""
+	}
+	return lkeRuntimeSecretValue(name)
+}
+
+func lkeValidatePayPalRuntime(env map[string]string) error {
+	if !lkePayPalEnabled(env) {
+		return nil
+	}
+	if !activeCanonicalSecretStore {
+		return errors.New("PayPal checkout requires the selected environment SecretStore")
+	}
+	mode := firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox")
+	if mode != "sandbox" && mode != "production" {
+		return errors.New("PAYPAL_ENVIRONMENT must be sandbox or production")
+	}
+	if strings.HasSuffix(env["CLOUD_STACK_NAME"], "-dev") && mode != "sandbox" {
+		return errors.New("development PayPal checkout must use sandbox")
+	}
+	for _, name := range []string{"paypal-client-id", "paypal-client-secret", "paypal-webhook-id"} {
+		if strings.TrimSpace(lkeRuntimeSecretValue(name)) == "" {
+			return fmt.Errorf("PAYPAL_ENABLED requires runtime/%s in the selected environment SecretStore", name)
+		}
+	}
+	return nil
+}
+
+func lkePayPalReturnURL(env map[string]string) string {
+	return "https://" + lkeBillingPublicDomain(env) + "/v1/payment-returns/paypal"
+}
+
+func lkePayPalCancelURL(env map[string]string) string {
+	return lkePayPalReturnURL(env) + "/cancel"
 }
 
 func lkePaymentSimulatorInternalURL(env map[string]string) string {

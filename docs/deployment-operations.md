@@ -87,6 +87,20 @@ may exist only in the environment SecretStore, K8s runtime mirror, or GitHub
 Actions Secrets. Never write them into tracked environment configuration, PRs,
 issues, chat messages, or test reports.
 
+PayPal hosted top-ups remain disabled until the selected environment has
+`operator/env/PAYPAL_ENABLED` set to `true` and the three mode `0600` files
+`runtime/paypal-client-id`, `runtime/paypal-client-secret`, and
+`runtime/paypal-webhook-id`. Set `operator/env/PAYPAL_ENVIRONMENT` to
+`sandbox` for development; the deployment rejects production PayPal for a
+`-dev` stack. The Billing runtime manifest reads these files from that
+environment's SecretStore and derives fixed HTTPS return and cancel URLs from
+the Billing domain, plus the after-return URL from the Cloud Admin domain.
+Before enabling checkout, verify that the PayPal webhook ID belongs to the
+same environment, points to
+`https://<billing-domain>/v1/payment-webhooks/paypal`, and subscribes to
+`PAYMENT.CAPTURE.COMPLETED`. A targeted Billing rollout must update the
+Billing server before its payment worker so the new migration is applied first.
+
 ### Tracked Environment and Ignored Runtime
 
 | Location | Content | May be committed? |

@@ -9,7 +9,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -246,7 +245,7 @@ func signCSR(dir, csrPath, cloudID, factoryID, outPath string) error {
 }
 
 func revoke(dir, serial string) error {
-	if _, err := hex.DecodeString(serial); err != nil || serial == "" {
+	if serial == "" || strings.Trim(serial, "0123456789abcdefABCDEF") != "" {
 		return errors.New("valid hexadecimal --serial is required")
 	}
 	registry, err := loadRegistry(dir)
