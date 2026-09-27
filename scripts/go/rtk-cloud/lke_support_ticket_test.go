@@ -10,6 +10,9 @@ func TestLKESupportTicketsStayPrivateAndOptIn(t *testing.T) {
 		t.Fatal("disabled dev must not require a support namespace Secret")
 	}
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-test"}
+	if lkeCloudAdminRuntimeChecksumWithSupport(env) != lkeCloudAdminRuntimeChecksum() {
+		t.Fatal("disabled support must not change the Admin runtime checksum")
+	}
 	if got := strings.Join(lkePublicHTTPSNetworkPolicyManifests(env, nil), "\n"); strings.Contains(got, "allow-cloud-admin-zammad-api") {
 		t.Fatal("disabled support must not add support network access")
 	}

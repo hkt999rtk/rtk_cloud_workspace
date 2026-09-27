@@ -10281,7 +10281,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
         rtk.realtek.com/fleet-read-token-checksum: %q
-`, lkeCloudAdminRuntimeChecksum(), lkeFleetReadTokenChecksum())
+`, lkeCloudAdminRuntimeChecksumWithSupport(env), lkeFleetReadTokenChecksum())
 		extraEnv = fmt.Sprintf(`            - name: ACCOUNT_MANAGER_BASE_URL
               value: %q
             - name: VIDEO_CLOUD_BASE_URL
@@ -10485,8 +10485,15 @@ func lkeCloudAdminRuntimeChecksum() string {
 		lkeRuntimeSecretValue("fleet-read-token"),
 		lkeRuntimeSecretValue("ota-bff-token"),
 		lkeRuntimeSecretValue("job-authorization-token"),
-		lkeRuntimeSecretValue("zammad-integration-token"),
 	)
+}
+
+func lkeCloudAdminRuntimeChecksumWithSupport(env map[string]string) string {
+	base := lkeCloudAdminRuntimeChecksum()
+	if !strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") {
+		return base
+	}
+	return lkeConfigChecksum(base, lkeRuntimeSecretValue("zammad-integration-token"))
 }
 
 func lkeFleetReadTokenChecksum() string {
