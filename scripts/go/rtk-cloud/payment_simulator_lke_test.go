@@ -377,3 +377,63 @@ func TestLKEBillingRuntimeHelpersResolveExplicitSecretsAndImages(t *testing.T) {
 		t.Fatalf("missing billing image = %q", got)
 	}
 }
+
+func TestLKEBillingPayPalRuntimeUsesSelectedEnvironmentSecrets(t *testing.T) {
+	previousStore, previousDir := activeCanonicalSecretStore, lkeRuntimeSecretStateDir
+	activeCanonicalSecretStore, lkeRuntimeSecretStateDir = true, t.TempDir()
+	t.Cleanup(func() {
+		activeCanonicalSecretStore, lkeRuntimeSecretStateDir = previousStore, previousDir
+	})
+	env := map[string]string{
+		"CLOUD_STACK_NAME":   "video-cloud-dev",
+		"VIDEO_CLOUD_DOMAIN": "video-cloud-dev.example.test",
+		"PAYPAL_ENABLED":     "true",
+		"PAYPAL_ENVIRONMENT": "sandbox",
+	}
+	if err := lkeValidatePayPalRuntime(env); err == nil || !strings.Contains(err.Error(), "paypal-client-id") {
+		t.Fatalf("missing PayPal credentials: %v", err)
+	}
+	for name, value := range map[string]string{
+		"paypal-client-id":     "sandbox-client",
+		"paypal-client-secret": "sandbox-secret",
+		"paypal-webhook-id":    "sandbox-webhook",
+	} {
+		if err := os.WriteFile(filepath.Join(lkeRuntimeSecretStateDir, name), []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lkeValidatePayPalRuntime(env); err != nil {
+		t.Fatal(err)
+	}
+	manifest := lkeBillingSecretManifest(env)
+	for _, want := range []string{
+		"PAYPAL_ENABLED: \"true\"",
+		"PAYPAL_ENVIRONMENT: \"sandbox\"",
+		"PAYPAL_CLIENT_ID: \"sandbox-client\"",
+		"PAYPAL_CLIENT_SECRET: \"sandbox-secret\"",
+		"PAYPAL_WEBHOOK_ID: \"sandbox-webhook\"",
+		"PAYPAL_RETURN_URL: \"https://billing.video-cloud-dev.example.test/v1/payment-returns/paypal\"",
+		"PAYPAL_CANCEL_URL: \"https://billing.video-cloud-dev.example.test/v1/payment-returns/paypal/cancel\"",
+		"PAYPAL_AFTER_RETURN_URL: \"https://admin.video-cloud-dev.example.test/console/billing/activity\"",
+	} {
+		if !strings.Contains(manifest, want) {
+			t.Fatalf("PayPal runtime manifest missing %s", want)
+		}
+	}
+	env["PAYPAL_ENVIRONMENT"] = "production"
+	if err := lkeValidatePayPalRuntime(env); err == nil || !strings.Contains(err.Error(), "sandbox") {
+		t.Fatalf("development production checkout was accepted: %v", err)
+	}
+	activeCanonicalSecretStore = false
+	if err := lkeValidatePayPalRuntime(env); err == nil || !strings.Contains(err.Error(), "SecretStore") {
+		t.Fatalf("PayPal checkout without environment SecretStore was accepted: %v", err)
+	}
+	activeCanonicalSecretStore = true
+	env["PAYPAL_ENABLED"] = "false"
+	if err := lkeValidatePayPalRuntime(env); err != nil {
+		t.Fatal(err)
+	}
+	if manifest := lkeBillingSecretManifest(env); !strings.Contains(manifest, "PAYPAL_CLIENT_SECRET: \"\"") {
+		t.Fatal("disabled PayPal checkout exposed a client secret")
+	}
+}
