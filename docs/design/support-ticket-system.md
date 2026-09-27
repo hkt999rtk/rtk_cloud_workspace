@@ -75,20 +75,27 @@ Use Zammad's existing states and priorities; the Admin UI presents plain
 labels. A public customer reply to a closed ticket reopens it. Internal notes
 are Zammad `note` articles with `internal=true` and are never included in
 customer projections. Public messages use Zammad `web` communication articles
-with `internal=false`, so Zammad advances `last_contact_at`; `note` articles do
-not advance it. The BFF does not use email article type. Customer unread and
+with `internal=false`. Agent `web` replies advance `last_contact_at`; `note`
+articles do not. The BFF does not use email article type. Customer unread and
 visible update time follow public contact, while the support queue tracks all
 ticket updates. Zammad's API distinguishes `internal` from email delivery, so
 API writes must suppress Zammad notifications as well as omit email channels.
+The dedicated instance uses `ticket_last_contact_behaviour` =
+`based_on_customer_reaction` so every Customer follow-up advances public
+contact, including consecutive replies before an Agent responds.
 
 The BFF may create Zammad Customer records for RTK users before customer
 writes. Approved Agent records are provisioned separately with the Agent role
 and `rtk-<Account Manager user ID>` login. Approved Agents and the integration
 account also need `full` permission on the `RTK Support` group. The BFF never
-creates or promotes Agent accounts. It records the RTK actor in the resulting
-article/audit entry. The pinned Zammad 7.1.2-0013 container accepted
-`rtk_cloud_uuid`, Cloud-filtered search and `origin_by_id`; it rejected the
-earlier `rtk_cloud_id` object name because custom names cannot end in `_id`.
+creates or promotes Agent accounts. Customer articles use `origin_by_id` for
+attribution. Agent articles omit it: Zammad 7.1.2-0013 changes their sender to
+Customer when `origin_by_id` is present, even when it points to an Agent. The BFF stores the
+verified Agent ID and name in article `preferences` and uses those values in
+the Admin projection. A pinned local Zammad model probe verified that this
+preserves Agent contact timestamps and keeps internal notes out of them. The
+same container accepted `rtk_cloud_uuid` and Cloud-filtered search; it rejected
+the earlier `rtk_cloud_id` object name because custom names cannot end in `_id`.
 Search indexing depends on the running scheduler and is eventually consistent.
 
 ## UI and HTTP flow
