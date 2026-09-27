@@ -40,6 +40,7 @@ objects, release images and external audit history.
 | Data | v1 treatment | Restore requirement |
 | --- | --- | --- |
 | Account Manager, Billing and Video Cloud PostgreSQL | Custom-format dumps for every application database; globals per server. | Same PostgreSQL major version and release; roles, permissions, schema, rows, ownership, billing and outbox consistency checks. |
+| Zammad PostgreSQL, when support tickets are enabled | A separate globals dump and custom-format dump of `zammad_production`; its PostgreSQL database also stores ticket attachments. | Restore with the matching Zammad and PostgreSQL releases; verify a ticket, public reply, internal note, attachment bytes and Brand Cloud boundary through Admin before reopening traffic. |
 | OpenBao file storage | Offline archive of the entire dedicated PVC, in the same backup set as PostgreSQL. | Original seal/unseal access, issuer IDs, private keys, policies, auth configuration, trust chains and revocation reconciliation. Never replace a lost issuer with a newly generated Root and call it recovery. |
 | Frontend SQLite | Offline PVC archive including `connectplus.db`, `analytics.db` and any remaining WAL sidecars. | `PRAGMA integrity_check` on both databases, lead/admin and analytics checks. |
 | Cloud Admin SQLite | Offline PVC archive and explicitly listed database files. | Integrity check and local Admin configuration/session behavior. Account Manager remains the identity authority. |
@@ -66,6 +67,19 @@ exclude the exact `video_cloud:shadow:outbox:publisher-lock` key with
 per-shadow version state, while omitting the expiring publisher lease. Review
 prefix overrides against the deployed service configuration. Any other
 unexpected expiring key fails capture rather than silently disappearing.
+
+For enabled support tickets, add the chart's support namespace and every
+Zammad Deployment/StatefulSet to the environment's reviewed inventory. Keep
+`zammad-postgres` online as `data` for logical capture; stop the Zammad app as
+`application` writers and Elasticsearch/Redis as `offline` workloads. The latter
+start before recovery checks so stale state can be cleared and search rebuilt
+while the Admin write fence is still held. Inventory
+`data-zammad-postgres-0` through the PostgreSQL component and explicitly
+exclude `data-zammad-elasticsearch-master-0` and `data-zammad-redis-0` as
+rebuildable data. The environment-owned recovery checks must invalidate stale
+search/cache state after a database restore and rebuild the search index while
+the write fence is held. See the exact chart names and component entries in
+[the Zammad deployment runbook](deployment/support-ticket-zammad.md#matched-backup-inventory).
 
 ## Supported Adapter and Limits
 
