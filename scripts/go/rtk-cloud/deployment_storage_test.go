@@ -625,7 +625,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("RTK_CLOUD_LINODE_API_ROOT", server.URL+"/v4")
-	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), AdapterResolved: map[string]string{"LKE_REGION": "us-sea"}, Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Purpose: "runtime-media", Bucket: "rtk-video-media-dev-us-sea", Region: "us-sea"}, OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Purpose: "ota-firmware", Policy: "colocated", Bucket: bucketName, Prefix: "environments/video-cloud-dev", Region: "us-sea"}, ReleaseArtifacts: deploymentStorageTarget{Purpose: "release-artifacts", Bucket: "rtk-release-shared-us-sea", Region: "us-sea"}}}
+	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Values: map[string]string{"VIDEO_CLOUD_OTA_CDN_BASE_URL": "https://firmware.example.test"}, AdapterResolved: map[string]string{"LKE_REGION": "us-sea"}, Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Purpose: "runtime-media", Bucket: "rtk-video-media-dev-us-sea", Region: "us-sea"}, OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Purpose: "ota-firmware", Policy: "colocated", Bucket: bucketName, Prefix: "environments/video-cloud-dev", Region: "us-sea"}, ReleaseArtifacts: deploymentStorageTarget{Purpose: "release-artifacts", Bucket: "rtk-release-shared-us-sea", Region: "us-sea"}}}
 	if err := runDeploymentStorageLifecyclePurpose("storage-plan", cfg, profile, "", 0, "ota"); err != nil {
 		t.Fatal(err)
 	}
@@ -680,8 +680,20 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err != nil || json.Unmarshal(body, &migration) != nil || migration.ObjectCount != 1 {
 		t.Fatalf("OTA migration receipt = %#v, error = %v", migration, err)
 	}
+	mu.Lock()
+	objects[destinationKey] = []byte("corrupt-firmware")
+	mu.Unlock()
+	if err := checker.migrateStoragePurpose(cfg, values, sourceFile, "ota"); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("receipt-listed OTA destination was not rechecked: %v", err)
+	}
+	mu.Lock()
+	objects[destinationKey] = []byte("billable-firmware")
+	mu.Unlock()
 	if err := os.WriteFile(path, []byte("different-firmware"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if err := checker.migrateStoragePurpose(cfg, values, sourceFile, "ota"); err == nil || !strings.Contains(err.Error(), "differs from migration receipt") {
+		t.Fatalf("receipt-listed OTA source was not rechecked: %v", err)
 	}
 	if err := os.Remove(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json")); err != nil {
 		t.Fatal(err)
@@ -694,6 +706,12 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	mu.Unlock()
 	if unchanged != "billable-firmware" {
 		t.Fatalf("conflicting OTA migration overwrote destination: %q", unchanged)
+	}
+	if err := os.WriteFile(path, []byte("billable-firmware"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checker.migrateStoragePurpose(cfg, values, sourceFile, "ota"); err != nil {
+		t.Fatalf("restore OTA migration receipt: %v", err)
 	}
 
 	workspace := writeDeploymentFixture(t, "dev", "lke")
@@ -718,16 +736,18 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err := os.WriteFile(store.KubeconfigPath(), []byte("apiVersion: v1\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	fakeKubectl(t)
+	kubectlLog := fakeKubectl(t)
+	coreSourceDeployment := `{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"source-bucket"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"}]}]}}}}`
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", coreSourceDeployment)
 	bucketType = "E1"
 	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") || keyIssueCount != 1 {
 		t.Fatalf("E1 OTA bootstrap rotated credentials or passed: error=%v, key issues=%d", err, keyIssueCount)
 	}
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") {
 		t.Fatalf("E1 OTA bucket was allowed for direct-download cutover: %v", err)
 	}
 	bucketType = "E3"
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "registration is disabled") {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "registration is disabled") {
 		t.Fatalf("disabled OTA service was cut over: %v", err)
 	}
 	cutoverCfg.Values["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] = "true"
@@ -739,7 +759,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	}))
 	t.Setenv("FAKE_OTA_WORKERS_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_BILLING_USAGE_TOKEN": "test"}))
 	setFakeLKEPlatformIdentitySecrets(t, cutoverCfg.Values)
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "metrics qualification receipt") {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "metrics qualification receipt") {
 		t.Fatalf("OTA direct cutover accepted missing metrics export evidence: %v", err)
 	}
 	archiveRelative := filepath.Join("artifacts", "ota-metrics", "dev-qualification.prom")
@@ -757,7 +777,33 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		ExportFile: archiveRelative, ExportSHA256: hex.EncodeToString(archiveHash[:]),
 		GETMetric: "obj_requests_get", GETRequests: 1, DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: 32,
 	})
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, "", 0, "ota"); err != nil {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "migration receipt") {
+		t.Fatalf("OTA cutover accepted missing migration inventory: %v", err)
+	}
+	migrationBody, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-migration-ota.json"), migrationBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(kubectlLog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", strings.Replace(coreSourceDeployment, "source-bucket", "wrong-empty-bucket", 1))
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "does not match live core API bucket") {
+		t.Fatalf("cutover accepted a different source bucket: %v", err)
+	}
+	after, err := os.ReadFile(kubectlLog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(after[len(before):]), "apply -f") {
+		t.Fatal("OTA cutover mutated Kubernetes before verifying its live source bucket")
+	}
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", coreSourceDeployment)
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); err != nil {

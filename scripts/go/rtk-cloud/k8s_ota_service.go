@@ -73,20 +73,38 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if lkeOTADedicatedStorage(env) && (strings.TrimSpace(lkeOTAStorageValue(env, "ENDPOINT")) == "" || lkeOTAStorageValue(env, "BUCKET") == env["VIDEO_CLOUD_BLOB_BUCKET"]) {
 		return fmt.Errorf("dedicated OTA service requires a validated separate bucket and endpoint")
 	}
+	if err := lkeRequireOTACDNConfiguration(env); err != nil {
+		return err
+	}
+	if strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" && lkeOTADedicatedStorage(env) {
+		if endpointType := env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"]; endpointType != "E2" && endpointType != "E3" {
+			return fmt.Errorf("OTA direct download requires a validated E2/E3 bucket endpoint; got %q", endpointType)
+		}
+	}
+	if err := lkeRequireOTAServiceRuntimeSecrets(env); err != nil {
+		return err
+	}
+	if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
+		return err
+	}
+	if !lkeOTADedicatedStorage(env) {
+		return fmt.Errorf("independent OTA service requires a dedicated OTA bucket")
+	}
+	return nil
+}
+
+// Both the core API and the independent OTA service use this configuration.
+// Check it before deploying either workload so a partial CDN setup fails closed.
+func lkeRequireOTACDNConfiguration(env map[string]string) error {
 	if rawCDNURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]); rawCDNURL != "" {
 		cdnURL, err := url.Parse(rawCDNURL)
 		if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
-			return fmt.Errorf("OTA service requires an HTTPS private-origin CDN base URL")
+			return fmt.Errorf("OTA requires an HTTPS private-origin CDN base URL")
 		}
 		if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
 			return err
 		}
 	} else {
-		if lkeOTADedicatedStorage(env) {
-			if endpointType := env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"]; endpointType != "E2" && endpointType != "E3" {
-				return fmt.Errorf("OTA direct download requires a validated E2/E3 bucket endpoint; got %q", endpointType)
-			}
-		}
 		body, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "ota-cdn-runtime", "--ignore-not-found=true", "-o", "json")
 		if err != nil {
 			return fmt.Errorf("inspect OTA CDN runtime Secret: %w", err)
@@ -100,15 +118,6 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 				return fmt.Errorf("OTA CDN token key is configured without a CDN base URL")
 			}
 		}
-	}
-	if err := lkeRequireOTAServiceRuntimeSecrets(env); err != nil {
-		return err
-	}
-	if err := lkeRequireOTARegistrarIdentitySecret(env); err != nil {
-		return err
-	}
-	if !lkeOTADedicatedStorage(env) {
-		return fmt.Errorf("independent OTA service requires a dedicated OTA bucket")
 	}
 	return nil
 }

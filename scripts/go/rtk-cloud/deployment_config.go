@@ -183,7 +183,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	sharedEnvFile := fs.String("shared-env-file", "", "retired; shared secret fallback is not supported")
 	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
-	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
+	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration and OTA cutover")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
 	storagePurpose := fs.String("purpose", "media", "storage purpose: media or ota")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
@@ -701,7 +701,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota --confirm STACK
   rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota --source-env-file PATH --confirm STACK
-  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota --confirm STACK
+  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota [--source-env-file PATH for ota] --confirm STACK
   rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK
 `)
 }
