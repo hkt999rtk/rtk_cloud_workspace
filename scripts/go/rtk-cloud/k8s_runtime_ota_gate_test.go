@@ -98,3 +98,17 @@ func TestOTACDNSecretCheckRunsAtWorkloadDeployment(t *testing.T) {
 		t.Fatalf("OTA workload deployment bypassed CDN pairing check: %v", err)
 	}
 }
+
+func TestOTACDNURLIsValidatedBeforeProvisionSteps(t *testing.T) {
+	t.Setenv("RTK_CLOUD_TEST_MODE", "1")
+	ctx := provisionContext{
+		Paths: provisionPaths{EnvRoot: t.TempDir()},
+		Env: map[string]string{
+			"CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_OTA_CDN_BASE_URL": "http://firmware.example.test",
+		},
+		Opts: provisionOptions{mode: provisionMode{deploy: true}},
+	}
+	if err := runKubernetesProvision(lkeCloudProvider{}, ctx); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("invalid OTA CDN URL reached provision steps: %v", err)
+	}
+}

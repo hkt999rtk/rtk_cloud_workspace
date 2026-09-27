@@ -14,6 +14,11 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 	if err := validateOTAProvisionCutoverReceipt(ctx); err != nil {
 		return err
 	}
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+		if err := lkeValidateOTACDNBaseURL(ctx.Env); err != nil {
+			return err
+		}
+	}
 	if rtkCloudTestMode() {
 		// Deterministic, disposable test fixtures do not use the user's canonical
 		// secret store.

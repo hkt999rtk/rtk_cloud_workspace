@@ -96,11 +96,10 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 // Both the core API and the independent OTA service use this configuration.
 // Check it before deploying either workload so a partial CDN setup fails closed.
 func lkeRequireOTACDNConfiguration(env map[string]string) error {
+	if err := lkeValidateOTACDNBaseURL(env); err != nil {
+		return err
+	}
 	if rawCDNURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]); rawCDNURL != "" {
-		cdnURL, err := url.Parse(rawCDNURL)
-		if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
-			return fmt.Errorf("OTA requires an HTTPS private-origin CDN base URL")
-		}
 		if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
 			return err
 		}
@@ -118,6 +117,18 @@ func lkeRequireOTACDNConfiguration(env map[string]string) error {
 				return fmt.Errorf("OTA CDN token key is configured without a CDN base URL")
 			}
 		}
+	}
+	return nil
+}
+
+func lkeValidateOTACDNBaseURL(env map[string]string) error {
+	rawCDNURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"])
+	if rawCDNURL == "" {
+		return nil
+	}
+	cdnURL, err := url.Parse(rawCDNURL)
+	if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
+		return fmt.Errorf("OTA requires an HTTPS private-origin CDN base URL")
 	}
 	return nil
 }
