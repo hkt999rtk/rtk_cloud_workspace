@@ -11,6 +11,11 @@ ingress:
 zammadConfig:
   storageVolume:
     enabled: false # attachments live in Zammad PostgreSQL
+# LKE Block Storage provisions at least 10Gi per PVC; request that explicitly.
+elasticsearch:
+  master:
+    persistence:
+      size: 10Gi
 secrets:
   postgresql:
     useExisting: true
@@ -21,6 +26,8 @@ secrets:
     secretName: zammad-redis-password
     secretKey: redis-password
 postgres:
+  persistence:
+    size: 10Gi
   auth:
     username: zammad
     database: zammad_production
@@ -28,6 +35,8 @@ postgres:
     secretKeys:
       adminPasswordKey: postgres-password
 redis:
+  persistence:
+    size: 10Gi
   auth:
     existingSecret: zammad-redis-password
     existingSecretPasswordKey: redis-password
