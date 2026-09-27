@@ -74,10 +74,12 @@ reassign it. The owner is the primary handler, not the visibility boundary.
 Use Zammad's existing states and priorities; the Admin UI presents plain
 labels. A public customer reply to a closed ticket reopens it. Internal notes
 are Zammad `note` articles with `internal=true` and are never included in
-customer projections. Other public articles use `internal=false`; the BFF
-does not use email article type. Zammad's API distinguishes `internal` from
-email delivery, so API writes must suppress Zammad notifications as well as
-omit email channels.
+customer projections. Public messages use Zammad `web` communication articles
+with `internal=false`, so Zammad advances `last_contact_at`; `note` articles do
+not advance it. The BFF does not use email article type. Customer unread and
+visible update time follow public contact, while the support queue tracks all
+ticket updates. Zammad's API distinguishes `internal` from email delivery, so
+API writes must suppress Zammad notifications as well as omit email channels.
 
 The BFF may create Zammad Customer records for RTK users before customer
 writes. Approved Agent records are provisioned separately with the Agent role
