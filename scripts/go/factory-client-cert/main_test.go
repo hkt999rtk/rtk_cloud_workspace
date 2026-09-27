@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,6 +74,16 @@ func TestFactoryClientCertificateLifecycle(t *testing.T) {
 	}
 	if len(crl.RevokedCertificateEntries) != 1 || crl.RevokedCertificateEntries[0].SerialNumber.Cmp(cert.SerialNumber) != 0 {
 		t.Fatalf("revocation missing: %#v", crl.RevokedCertificateEntries)
+	}
+}
+
+func TestRevokeAcceptsOddLengthHexSerial(t *testing.T) {
+	err := revoke(t.TempDir(), "abc")
+	if err == nil || strings.Contains(err.Error(), "valid hexadecimal") {
+		t.Fatalf("odd-length hexadecimal serial was rejected: %v", err)
+	}
+	if err := revoke(t.TempDir(), "abcg"); err == nil || !strings.Contains(err.Error(), "valid hexadecimal") {
+		t.Fatalf("non-hexadecimal serial was accepted: %v", err)
 	}
 }
 
