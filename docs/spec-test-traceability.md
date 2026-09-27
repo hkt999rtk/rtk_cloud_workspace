@@ -985,6 +985,7 @@
 | `SPEC-CA-OPENAPI#getApiBillingLedger` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/ledger` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `3175bc46dc4a` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentIntents` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/payment-intents` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `4a3519eb404f` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentIntent` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/payment-intents/{intentId}` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `6e37020ff854` |
+| `SPEC-CA-OPENAPI#downloadApiBillingTopUpTransactionDetail` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/payment-intents/{intentId}/statement.pdf` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `b3180ea0d97c` |
 | `SPEC-CA-OPENAPI#getApiBillingPaymentMethods` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/payment-methods` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `a68d3f2f61fe` |
 | `SPEC-CA-OPENAPI#postApiBillingPaymentMethodSetup` | `POST /api/developer/brand-clouds/{brandCloudID}/billing/payment-methods/setup` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `36a6d11ef331` |
 | `SPEC-CA-OPENAPI#deleteApiBillingPaymentMethod` | `DELETE /api/developer/brand-clouds/{brandCloudID}/billing/payment-methods/{methodId}` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `5e209db4e922` |
@@ -993,7 +994,7 @@
 | `SPEC-CA-OPENAPI#getApiBillingStatement` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/statements` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `228532e064aa` |
 | `SPEC-CA-OPENAPI#getApiBillingSummary` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/summary` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `268923159f3d` |
 | `SPEC-CA-OPENAPI#postApiBillingTopUp` | `POST /api/developer/brand-clouds/{brandCloudID}/billing/topups` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `72ffa6a3db00` |
-| `SPEC-CA-OPENAPI#postApiBillingHostedTopUp` | `POST /api/developer/brand-clouds/{brandCloudID}/billing/topups/checkout` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `734143c82652` |
+| `SPEC-CA-OPENAPI#postApiBillingHostedTopUp` | `POST /api/developer/brand-clouds/{brandCloudID}/billing/topups/checkout` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `a70ab4d358d8` |
 | `SPEC-CA-OPENAPI#getApiBillingUsage` | `GET /api/developer/brand-clouds/{brandCloudID}/billing/usage` | `FEAT-CA-BFF-001` | `REQ-CA-BILLING-001` | `789b9df7da4b` |
 | `SPEC-CA-OPENAPI#getApiDeveloperBrandCloudsByBrandCloudIDDeletionPreflight` | `GET /api/developer/brand-clouds/{brandCloudID}/deletion-preflight` | `FEAT-CA-AUTHZ-001` | `REQ-UI-CA-ROLE-001` | `64f8ba11d106` |
 | `SPEC-CA-OPENAPI#listScopedBrandCloudFleetDevices` | `GET /api/developer/brand-clouds/{brandCloudID}/fleet/devices` | `FEAT-CA-PROV-001` | `REQ-UI-CA-FLEETPAGE-002` | `2d489a21a9d6` |
