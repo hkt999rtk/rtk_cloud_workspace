@@ -94,7 +94,8 @@ PayPal hosted top-ups remain disabled until the selected environment has
 `sandbox` for development; the deployment rejects production PayPal for a
 `-dev` stack. The Billing runtime manifest reads these files from that
 environment's SecretStore and derives fixed HTTPS return and cancel URLs from
-the Billing domain, plus the after-return URL from the Cloud Admin domain.
+the Billing domain, plus the Cloud Admin origin for the after-return URL.
+Billing appends the owner-scoped Billing activity path after PayPal redirects back.
 Before enabling checkout, verify that the PayPal webhook ID belongs to the
 same environment, points to
 `https://<billing-domain>/v1/payment-webhooks/paypal`, and subscribes to
