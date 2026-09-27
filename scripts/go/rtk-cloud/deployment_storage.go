@@ -101,14 +101,38 @@ func runDeploymentStorageLifecyclePurpose(action string, cfg deploymentConfig, e
 		}
 		plan.RuntimeMedia.Endpoint = mediaEndpoint
 		if plan.OTAMode == "dedicated" {
-			otaEndpoint, otaErr := checker.resolveStorageEndpoint(token, plan.OTAFirmware.Region)
-			if otaErr != nil && !errors.Is(otaErr, errStorageEndpointUnassigned) {
-				return otaErr
-			}
-			plan.OTAFirmware.Endpoint = otaEndpoint
-			endpointStatus["ota_firmware"] = "assigned"
-			if errors.Is(otaErr, errStorageEndpointUnassigned) {
-				endpointStatus["ota_firmware"] = "unassigned; storage-bootstrap --purpose ota will create the bucket"
+			if strings.TrimSpace(cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+				bucket, bucketErr := checker.resolveStorageBucket(token, plan.OTAFirmware)
+				switch {
+				case bucketErr == nil:
+					plan.OTAFirmware.Endpoint, err = normalizeLinodeS3Endpoint(bucket.S3Endpoint)
+					if err != nil {
+						return err
+					}
+					endpointStatus["ota_firmware"] = "existing " + bucket.EndpointType + " bucket; eligible for direct-delivery metric export"
+					if metricErr := validateOTADirectMetricsEndpoint(bucket); metricErr != nil {
+						endpointStatus["ota_firmware"] = metricErr.Error()
+					}
+				case strings.Contains(bucketErr.Error(), "was not found"):
+					endpointType, metricErr := checker.resolveOTAMetricsEndpointType(token, plan.OTAFirmware.Region)
+					if metricErr != nil {
+						endpointStatus["ota_firmware"] = metricErr.Error()
+					} else {
+						endpointStatus["ota_firmware"] = "assigned " + endpointType + "; storage-bootstrap --purpose ota will create the bucket"
+					}
+				default:
+					return bucketErr
+				}
+			} else {
+				otaEndpoint, otaErr := checker.resolveStorageEndpoint(token, plan.OTAFirmware.Region)
+				if otaErr != nil && !errors.Is(otaErr, errStorageEndpointUnassigned) {
+					return otaErr
+				}
+				plan.OTAFirmware.Endpoint = otaEndpoint
+				endpointStatus["ota_firmware"] = "assigned for CDN origin"
+				if errors.Is(otaErr, errStorageEndpointUnassigned) {
+					endpointStatus["ota_firmware"] = "unassigned; storage-bootstrap --purpose ota will create the bucket"
+				}
 			}
 		}
 		plan.ReleaseArtifacts.Endpoint = artifactEndpoint
@@ -256,6 +280,20 @@ func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, val
 	if check := c.checkResolvedOTAStorage(cfg, values); !check.Passed {
 		return errors.New(check.Detail)
 	}
+	metricsEndpoint := ""
+	if strings.TrimSpace(cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+		bucket, err := c.resolveStorageBucket(values["LINODE_TOKEN"], cfg.Storage.OTAFirmware)
+		if err != nil {
+			return err
+		}
+		if err := validateOTADirectMetricsEndpoint(bucket); err != nil {
+			return err
+		}
+		metricsEndpoint, err = normalizeLinodeS3Endpoint(bucket.S3Endpoint)
+		if err != nil {
+			return err
+		}
+	}
 	if err := materializeDeploymentRuntime(cfg); err != nil {
 		return err
 	}
@@ -265,6 +303,11 @@ func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, val
 	}
 	if !lkeOTAServiceRegistrationEnabled(stack) {
 		return errors.New("OTA service registration is disabled; dedicated bucket is prepared but no workload can be cut over")
+	}
+	if metricsEndpoint != "" {
+		if err := validateOTAMetricsQualification(cfg.RuntimeRoot, cfg.Environment, cfg.Storage.OTAFirmware.Bucket, cfg.Storage.OTAFirmware.Region, metricsEndpoint, time.Now().UTC()); err != nil {
+			return err
+		}
 	}
 	secretStore, err := newSecretStore("", cfg.Environment)
 	if err != nil {
@@ -285,6 +328,9 @@ func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, val
 	}()
 	restore := installDeploymentChildCredentialEnvironment(values)
 	defer restore()
+	if err := lkeRequireOTAServiceInputs(stack); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkeOTAStorageSecretManifest(stack)); err != nil {
 		return err
 	}
@@ -378,20 +424,38 @@ func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfi
 }
 
 func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, values map[string]string, environmentFile string) error {
-	if c.checkResolvedOTAStorage(cfg, values).Passed {
-		return nil
-	}
-	target := cfg.Storage.OTAFirmware
 	token := strings.TrimSpace(values["LINODE_TOKEN"])
 	if token == "" {
 		return errors.New("LINODE_TOKEN is required")
 	}
+	directDelivery := strings.TrimSpace(cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == ""
+	if directDelivery {
+		if existing, err := c.resolveStorageBucket(token, cfg.Storage.OTAFirmware); err == nil {
+			if err := validateOTADirectMetricsEndpoint(existing); err != nil {
+				return err
+			}
+		} else if !strings.Contains(err.Error(), "was not found") {
+			return err
+		}
+	}
+	if c.checkResolvedOTAStorage(cfg, values).Passed {
+		return nil
+	}
+	target := cfg.Storage.OTAFirmware
 	if err := c.validateStorageRegionCapabilities(token, target.Region); err != nil {
 		return err
 	}
 	bucket, err := c.resolveStorageBucket(token, target)
 	if err != nil && strings.Contains(err.Error(), "was not found") {
-		payload, _ := json.Marshal(map[string]string{"label": target.Bucket, "region": target.Region})
+		creation := map[string]string{"label": target.Bucket, "region": target.Region}
+		if directDelivery {
+			endpointType, typeErr := c.resolveOTAMetricsEndpointType(token, target.Region)
+			if typeErr != nil {
+				return typeErr
+			}
+			creation["endpoint_type"] = endpointType
+		}
+		payload, _ := json.Marshal(creation)
 		body, createErr := c.linodeAuthorizedRequest(token, http.MethodPost, "/object-storage/buckets", payload)
 		if createErr != nil {
 			return fmt.Errorf("create OTA bucket: %w", createErr)
@@ -401,6 +465,11 @@ func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, v
 		}
 	} else if err != nil {
 		return err
+	}
+	if directDelivery {
+		if err := validateOTADirectMetricsEndpoint(bucket); err != nil {
+			return err
+		}
 	}
 	endpoint, err := normalizeLinodeS3Endpoint(bucket.S3Endpoint)
 	if err != nil {
@@ -444,6 +513,11 @@ func (c deploymentCredentialChecker) checkResolvedOTAStorage(cfg deploymentConfi
 	if err != nil {
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
 	}
+	if lkeOTAServiceRegistrationEnabled(cfg.Values) && strings.TrimSpace(cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+		if err := validateOTADirectMetricsEndpoint(bucket); err != nil {
+			return deploymentCredentialCheck{Name: name, Detail: err.Error()}
+		}
+	}
 	endpoint, err := normalizeLinodeS3Endpoint(bucket.S3Endpoint)
 	if err != nil {
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
@@ -463,7 +537,7 @@ func (c deploymentCredentialChecker) checkResolvedOTAStorage(cfg deploymentConfi
 	if err := c.validateStorageReadWriteCanary(store, target.Prefix); err != nil {
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
 	}
-	receipt := deploymentStorageReceipt{Environment: cfg.Environment, Purpose: target.Purpose, Bucket: target.Bucket, Region: target.Region, Endpoint: endpoint, KeyID: key.ID, AccessSuffix: redactAccessKey(access), ValidatedAt: time.Now().UTC().Format(time.RFC3339)}
+	receipt := deploymentStorageReceipt{Environment: cfg.Environment, Purpose: target.Purpose, Bucket: target.Bucket, Region: target.Region, Endpoint: endpoint, EndpointType: bucket.EndpointType, KeyID: key.ID, AccessSuffix: redactAccessKey(access), ValidatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json"), receipt); err != nil {
 		return deploymentCredentialCheck{Name: name, Detail: err.Error()}
 	}
@@ -674,10 +748,38 @@ func writeStorageState(path string, value any) error {
 }
 
 type linodeStorageBucket struct {
-	Label      string `json:"label"`
-	Region     string `json:"region"`
-	Cluster    string `json:"cluster"`
-	S3Endpoint string `json:"s3_endpoint"`
+	Label        string `json:"label"`
+	Region       string `json:"region"`
+	Cluster      string `json:"cluster"`
+	S3Endpoint   string `json:"s3_endpoint"`
+	EndpointType string `json:"endpoint_type"`
+}
+
+func validateOTADirectMetricsEndpoint(bucket linodeStorageBucket) error {
+	if bucket.EndpointType != "E2" && bucket.EndpointType != "E3" {
+		return fmt.Errorf("OTA direct download cutover requires an E2/E3 bucket with Cloud Pulse GET and downloaded-byte metrics; bucket %s uses endpoint type %q", bucket.Label, bucket.EndpointType)
+	}
+	return nil
+}
+
+func (c deploymentCredentialChecker) validateOTAProvisionBucket(token string, env map[string]string) error {
+	bucket, err := c.resolveStorageBucket(token, deploymentStorageTarget{
+		Purpose: "ota-firmware", Bucket: env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], Region: env["VIDEO_CLOUD_OTA_BLOB_REGION"],
+	})
+	if err != nil {
+		return err
+	}
+	if err := validateOTADirectMetricsEndpoint(bucket); err != nil {
+		return err
+	}
+	endpoint, err := normalizeLinodeS3Endpoint(bucket.S3Endpoint)
+	if err != nil {
+		return err
+	}
+	if env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] != bucket.EndpointType || strings.TrimRight(env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"], "/") != endpoint {
+		return fmt.Errorf("OTA bucket inventory no longer matches the validated runtime receipt for %s", bucket.Label)
+	}
+	return nil
 }
 
 type linodeStorageKey struct {
@@ -696,6 +798,7 @@ type deploymentStorageReceipt struct {
 	Bucket       string `json:"bucket"`
 	Region       string `json:"region"`
 	Endpoint     string `json:"endpoint"`
+	EndpointType string `json:"endpoint_type,omitempty"`
 	KeyID        int    `json:"key_id"`
 	AccessSuffix string `json:"access_key_suffix"`
 	ValidatedAt  string `json:"validated_at"`
@@ -964,6 +1067,31 @@ func (c deploymentCredentialChecker) resolveStorageEndpoint(token, region string
 		return "", fmt.Errorf("%w for region %s", errStorageEndpointUnassigned, region)
 	}
 	return "", fmt.Errorf("Linode API reported no Object Storage endpoint for region %s", region)
+}
+
+func (c deploymentCredentialChecker) resolveOTAMetricsEndpointType(token, region string) (string, error) {
+	body, err := c.linodeAuthorizedRequest(token, http.MethodGet, "/object-storage/endpoints?page_size=500", nil)
+	if err != nil {
+		return "", fmt.Errorf("OTA Object Storage endpoint discovery failed: %w", err)
+	}
+	var inventory struct {
+		Data []struct {
+			Region       string `json:"region"`
+			EndpointType string `json:"endpoint_type"`
+			S3Endpoint   string `json:"s3_endpoint"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &inventory); err != nil {
+		return "", errors.New("OTA Object Storage endpoint inventory returned invalid JSON")
+	}
+	for _, endpointType := range []string{"E3", "E2"} {
+		for _, item := range inventory.Data {
+			if item.Region == region && item.EndpointType == endpointType && item.S3Endpoint != "" {
+				return endpointType, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("region %s has no assigned E2/E3 Object Storage endpoint for billable OTA direct delivery", region)
 }
 
 func normalizeLinodeS3Endpoint(raw string) (string, error) {

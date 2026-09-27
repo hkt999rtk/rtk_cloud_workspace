@@ -5,7 +5,7 @@ Observed through the Linode bucket API on 2026-09-27 using the Dev operator acco
 | Observed bucket | Region | Likely purpose / status | Naming target |
 | --- | --- | --- | --- |
 | `rtk-video-media-dev-us-sea` | `us-sea` | Created and validated; one historical `ota/` object (3,968 bytes) migrated with SHA-256; workload cutover pending | Canonical Dev media |
-| `rtk-ota-firmware-dev-us-sea` | `us-sea` | Created and validated; private signed-GET probe passed on 2026-09-27; OTA service registration disabled, so cutover pending | Canonical Dev billable OTA |
+| `rtk-ota-firmware-dev-us-sea` | `us-sea` | Created as E1 and private signed-GET probe passed on 2026-09-27. Cloud Pulse GET/downloaded-byte metrics are unavailable for this endpoint type; billable direct-download cutover is blocked. OTA service registration is also disabled. | Canonical Dev billable OTA name; endpoint migration required |
 | `rtk-video-dev-us-west` | `us-sea` | Existing Dev Video Cloud media; region alias in name | `rtk-video-media-dev-us-sea` |
 | `rtk-clip-staging-us-sea` | `us-sea` | Legacy staging clip bucket; consumer needs verification | `rtk-video-media-staging-sg-sin-2` if part of current staging media |
 | `rtk-video-staging-sg` | `sg-sin-2` | Configured Staging runtime media | `rtk-video-media-staging-sg-sin-2` |
@@ -25,5 +25,22 @@ bytes; a full synthetic 8 MiB BIN downloaded in 7.314 seconds. This does not
 verify physical device behavior or Cloud Pulse metrics. Staging and Prod OTA
 bucket names remain proposed until each environment passes its own preflight,
 bootstrap, evidence export and cutover.
+
+The Dev OTA bucket is empty after probe cleanup. The account currently has
+only an assigned E1 endpoint in `us-sea`; the E3 endpoint is listed as limited
+availability and requires provider access before a replacement can be created.
+Do not delete or recreate the bucket under its existing name until the account, endpoint, empty
+object inventory, and replacement procedure are verified. Akamai currently
+supports Object Storage Cloud Pulse metrics on E2/E3 endpoints. See the
+[endpoint matrix](https://techdocs.akamai.com/cloud-computing/docs/endpoint-types)
+and [metric definitions](https://techdocs.akamai.com/cloud-computing/docs/object-storage-cloud-pulse-metrics).
+
+The 2026-09-27 read-only Staging preflight found that
+`rtk-ota-firmware-staging-sg-sin-2` does not exist in the selected account;
+its OTA key, runtime Secret and service are not present. The selected Prod
+account has no `rtk-ota-firmware-prod-us-sea` bucket, and its expected cluster
+and media bucket were not found there. Staging and Prod remain on their
+tracked `legacy-shared` policy until account ownership, credential source,
+bucket metrics and deployment preflight are independently verified.
 
 See [storage naming and lifecycle](storage-credential-lifecycle.md) for the canonical pattern, paths, key ownership, and migration order.

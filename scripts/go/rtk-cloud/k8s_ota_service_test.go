@@ -160,6 +160,7 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 	env["VIDEO_CLOUD_OTA_BLOB_BUCKET"] = "rtk-ota-firmware-staging-sg-sin-2"
 	env["VIDEO_CLOUD_OTA_BLOB_REGION"] = "sg-sin-2"
 	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = "https://sg-sin-2.linodeobjects.com"
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E3"
 	delete(videoRuntime, "AWS_ACCESS_KEY_ID")
 	delete(videoRuntime, "AWS_SECRET_ACCESS_KEY")
 	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, videoRuntime))
@@ -173,6 +174,11 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 	}
 	delete(env, "VIDEO_CLOUD_OTA_CDN_BASE_URL")
 	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", "")
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E1"
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "validated E2/E3") {
+		t.Fatalf("E1 OTA direct delivery was accepted: %v", err)
+	}
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E3"
 	if err := lkeRequireOTAServiceInputs(env); err != nil {
 		t.Fatalf("Object Storage delivery without CDN configuration was rejected: %v", err)
 	}

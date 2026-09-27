@@ -82,6 +82,11 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 			return err
 		}
 	} else {
+		if lkeOTADedicatedStorage(env) {
+			if endpointType := env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"]; endpointType != "E2" && endpointType != "E3" {
+				return fmt.Errorf("OTA direct download requires a validated E2/E3 bucket endpoint; got %q", endpointType)
+			}
+		}
 		body, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "ota-cdn-runtime", "--ignore-not-found=true", "-o", "json")
 		if err != nil {
 			return fmt.Errorf("inspect OTA CDN runtime Secret: %w", err)

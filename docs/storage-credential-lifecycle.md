@@ -51,8 +51,23 @@ rtk-cloud deployment storage-cutover --environment dev --purpose media --confirm
 rtk-cloud deployment storage-cutover --environment dev --purpose ota --confirm video-cloud-dev
 ```
 
-Routine deployment does not silently create buckets. `--purpose media` is the compatibility default. Media migration includes `clips/`, `brands/`, `snapshots/`, `clip-index/`, and historical `ota/` / `firmware/`. OTA migration includes only `ota-billable-v1/`. Keys already beneath the environment prefix are not prefixed twice. Per-object SHA-256 receipts are kept in ignored runtime state. Never rewrite a historical `ota/` key into `ota-billable-v1/`.
+Routine deployment does not silently create buckets. `--purpose media` is the compatibility default. With CDN unset, OTA bootstrap requests an assigned E3 endpoint (or E2 where available), verifies the bucket's reported type, and refuses an existing E0/E1 bucket before creating another key. Reusing the same bucket name does not change its endpoint type. Media migration includes `clips/`, `brands/`, `snapshots/`, `clip-index/`, and historical `ota/` / `firmware/`. OTA migration includes only `ota-billable-v1/`. Keys already beneath the environment prefix are not prefixed twice. Per-object SHA-256 receipts are kept in ignored runtime state. Never rewrite a historical `ota/` key into `ota-billable-v1/`.
 
-OTA cutover requires independent OTA service registration, validated private OTA storage, and a ready deployment. CDN delivery requires a valid HTTPS base URL and token key; when both are absent, new device grants use short-lived signed GET URLs for that bucket. A partially configured CDN is an error. Confirm that the dedicated bucket exposes GET and downloaded-byte metrics before enabling billable direct delivery. If service registration is disabled, the bucket can be prepared but no cutover is recorded. `storage-retire` covers the existing media key lifecycle only: it requires cutover state plus `storage-consumers.json` confirming `generic_key_in_use: false` and revokes one explicit key ID. OTA key retirement requires separate consumer verification. No command deletes buckets.
+OTA cutover requires independent OTA service registration, validated private OTA storage, and a ready deployment. Set the non-secret `VIDEO_CLOUD_OTA_CDN_BASE_URL` and optional `VIDEO_CLOUD_OTA_CDN_TOKEN_NAME` in the environment's tracked `environment.env`; keep the token key in the private `ota-cdn-runtime` Secret. CDN delivery requires a valid HTTPS base URL and token key; when both are absent, new device grants use short-lived signed GET URLs for that bucket. A partially configured CDN is an error. Direct-download cutover rejects an E0/E1 bucket or missing endpoint type. Before enabling billable direct delivery, perform a controlled signed GET, export bucket-scoped `obj_requests_get` and `obj_bytes_downloaded` for its UTC window, and archive the bucket, region, endpoint, window and export result with the cutover evidence. Endpoint type alone does not prove export. Akamai's [endpoint matrix](https://techdocs.akamai.com/cloud-computing/docs/endpoint-types) lists supported types and regional availability; [Object Storage metrics](https://techdocs.akamai.com/cloud-computing/docs/object-storage-cloud-pulse-metrics) are retained for 93 days, so month-close evidence must be exported and kept independently. If service registration is disabled, the bucket can be prepared but no cutover is recorded. `storage-retire` covers the existing media key lifecycle only: it requires cutover state plus `storage-consumers.json` confirming `generic_key_in_use: false` and revokes one explicit key ID. OTA key retirement requires separate consumer verification. No command deletes buckets.
+
+For direct delivery, archive the Cloud Pulse export below
+`runtime/artifacts/ota-metrics/` and record
+`runtime/state/ota-metrics-qualification.json` before cutover or a normal OTA
+deployment. The JSON fields are `source: "akamai_cloud_pulse"`, `environment`,
+`bucket`, `region`, `endpoint`, `exported_at` (RFC 3339 UTC), `recorded_by`,
+`export_file` (path relative to `runtime/`), `export_sha256`, `get_metric`
+set to `obj_requests_get`, positive `get_requests`, `downloaded_bytes_metric`
+set to `obj_bytes_downloaded`, and positive `downloaded_bytes`. The export must
+contain both metric identifiers and the exact bucket and endpoint host. The
+operator compares the recorded counts with the export after a controlled GET.
+The deployment validator checks target match, archive digest and freshness
+within 72 hours; the receipt is an operator attestation, not authentication of
+Cloud Pulse's source. Preserve the export for monthly review after the
+provider's retention window.
 
 Media validation writes `runtime/state/storage-preflight.json`; OTA validation writes `runtime/state/storage-preflight-ota.json`. Receipts contain bucket, region, API endpoint, numeric key ID, redacted access suffix, and time. Runtime state should be backed up using the encrypted environment-state procedure.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error {
@@ -41,6 +42,27 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 	lkeRuntimeSecretStateDir = store.RuntimeDir()
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
+	}
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(ctx.Env) {
+		if err := lkeRequireOTAServiceInputs(ctx.Env); err != nil {
+			return err
+		}
+	}
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(ctx.Env) && strings.TrimSpace(ctx.Env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+		operator, err := store.readOperator()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(operator["LINODE_TOKEN"]) == "" {
+			return errors.New("LINODE_TOKEN is required to verify the OTA direct-download bucket before deployment")
+		}
+		checker := defaultDeploymentCredentialChecker()
+		if err := checker.validateOTAProvisionBucket(operator["LINODE_TOKEN"], ctx.Env); err != nil {
+			return err
+		}
+		if err := validateOTAMetricsQualification(ctx.Paths.EnvRoot, ctx.Env["CLOUD_ENV_NAME"], ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"], ctx.Env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"], time.Now().UTC()); err != nil {
+			return err
+		}
 	}
 	if ctx.Opts.mode.reset {
 		return errors.New("Kubernetes provision reset is not implemented; use remove-k8s for current staging teardown")

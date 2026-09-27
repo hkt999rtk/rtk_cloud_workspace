@@ -92,6 +92,7 @@ var deploymentEnvironmentKeys = keySet(
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
 	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
 	"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED", "VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED",
+	"VIDEO_CLOUD_OTA_CDN_BASE_URL", "VIDEO_CLOUD_OTA_CDN_TOKEN_NAME",
 )
 
 var deploymentEnvironmentServiceKeys = keySet(
@@ -1217,6 +1218,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 		var receipt deploymentStorageReceipt
 		if body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
 			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = receipt.Endpoint
+			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = receipt.EndpointType
 		}
 	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
