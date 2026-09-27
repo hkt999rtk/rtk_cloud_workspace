@@ -41,6 +41,47 @@ delete only the PVCs and PVs created by that attempt, then verify and remove
 their corresponding detached Linode volumes. Removing the Helm release or PVCs
 alone may leave chargeable volumes behind.
 
+## Matched backup inventory
+
+Before enabling support tickets in staging or production, extend that
+environment's reviewed [matched backup configuration](../backup-restore.md).
+The pinned chart renders the following workloads in `${CLOUD_STACK_NAME}-support`:
+
+| Workload | Recovery role |
+| --- | --- |
+| `zammad-nginx`, `zammad-railsserver`, `zammad-scheduler`, `zammad-websocket`, `zammad-memcached` Deployments | `application` |
+| `zammad-elasticsearch-master`, `zammad-redis` StatefulSets | `offline` |
+| `zammad-postgres` StatefulSet | `data` |
+
+Add that namespace to `namespaces`, add each workload to `workloads`, and add
+these PostgreSQL components to `components` using the actual stack namespace:
+
+```json
+[
+  {"id":"zammad-postgres-globals","kind":"postgres","namespace":"<stack>-support","pod":"zammad-postgres-0","container":"postgres","pvc":"data-zammad-postgres-0","user":"zammad","database":"@globals"},
+  {"id":"zammad-postgres-db","kind":"postgres","namespace":"<stack>-support","pod":"zammad-postgres-0","container":"postgres","user":"zammad","database":"zammad_production"}
+]
+```
+
+Add `data-zammad-elasticsearch-master-0` and `data-zammad-redis-0` to
+`excluded_pvcs`, each with a reason stating that it holds rebuildable search
+or cache data. These entries describe the chart as rendered with the pinned
+repository values; verify names and the PostgreSQL major version against the
+installed release before a backup or restore. The chart renders
+`zammad-cronjob-reindex` suspended; keep it suspended during maintenance and
+resolve any active or pending Helm Jobs before recovery preflight.
+
+The environment's `preflight_checks` and `quiescence_checks` must prove that
+external Admin writes and Zammad scheduler work are fenced. On verify, the
+recovery engine starts `offline` Elasticsearch/Redis before `recovery_checks`
+and starts Zammad `application` workloads afterward. After restoring
+PostgreSQL, those recovery checks must invalidate stale Elasticsearch/Redis
+data, then rebuild search using the chart's `bundle exec rake
+zammad:searchindex:rebuild` task while the fence remains held. `health_checks`
+must verify a representative ticket, public reply, internal note, attachment
+bytes and cross-Cloud denial through Admin. Do not enable production until a
+staging restore with this complete inventory and these checks has passed.
+
 ## Preparation
 
 1. Keep `SUPPORT_TICKETS_ENABLED=false` in the target environment until all
