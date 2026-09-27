@@ -244,6 +244,18 @@ def verify_unassigned_owner(api, operator_password):
         raise RuntimeError("Zammad owner ID 1 is not the inactive unassigned user")
 
 
+def verify_admin_accounts(api, operator_password):
+    credential = {"email": "rtk-zammad-operator@internal.invalid", "password": operator_password}
+    _, roles = api.call("GET", "/api/v1/roles", **credential)
+    admin_id = next((role.get("id") for role in roles if role.get("name") == "Admin"), None)
+    if admin_id is None:
+        raise RuntimeError("Zammad Admin role is missing")
+    _, users = api.call("GET", "/api/v1/users", **credential)
+    active_admins = [user.get("login") for user in users if user.get("active") and admin_id in user.get("role_ids", [])]
+    if active_admins != ["rtk-zammad-operator"]:
+        raise RuntimeError("unexpected active Zammad Admin account; review it before enabling support")
+
+
 def ensure_token(api, path, agent_password):
     if path.exists():
         token = private_file(path)
@@ -299,6 +311,7 @@ def main():
     prepare_users(kubeconfig, namespace, operator_password, agent_password)
     process, api = start_port_forward(kubeconfig, namespace)
     try:
+        verify_admin_accounts(api, operator_password)
         group_id, migrated = ensure_group_and_fields(api, operator_password)
         if migrated:
             process.terminate()

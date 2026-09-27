@@ -101,6 +101,22 @@ class BootstrapZammadTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "not the inactive"):
             bootstrap.verify_unassigned_owner(OwnerAPI({"id": 1, "login": "agent", "active": True}), "password")
 
+    def test_unexpected_active_admin_blocks_bootstrap(self):
+        class AdminAPI:
+            def __init__(self, logins):
+                self.logins = logins
+
+            def call(self, _method, path, **_kwargs):
+                if path == "/api/v1/roles":
+                    return 200, [{"id": 1, "name": "Admin"}]
+                if path == "/api/v1/users":
+                    return 200, [{"login": login, "active": True, "role_ids": [1]} for login in self.logins]
+                raise AssertionError(path)
+
+        bootstrap.verify_admin_accounts(AdminAPI(["rtk-zammad-operator"]), "password")
+        with self.assertRaisesRegex(RuntimeError, "unexpected active"):
+            bootstrap.verify_admin_accounts(AdminAPI(["rtk-zammad-operator", "legacy-admin"]), "password")
+
 
 if __name__ == "__main__":
     unittest.main()
