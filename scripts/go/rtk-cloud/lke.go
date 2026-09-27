@@ -822,6 +822,9 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	if lkeOTAServiceEdgeEnabled(env) {
 		// The device-host ingress enforces client mTLS before OTA requests reach the service.
 		routes = append(routes, lkePublicHTTPSRoute{Host: deviceDomain, Path: "/v1/device/ota/", Namespace: videoNS, Service: otaServiceWorkloadName, ServicePort: 18084, TargetPort: 18084})
+		// More-specific ingress routing preserves API artifact URLs signed by
+		// core before cutover. Core validates their token and current grant.
+		routes = append(routes, lkePublicHTTPSRoute{Host: deviceDomain, Path: "/v1/device/ota/internal/artifact/", Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)})
 	}
 	return routes
 }
@@ -1277,11 +1280,17 @@ func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA 
 
 func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTTPSRoute) []string {
 	httpRoutes := []lkePublicHTTPSRoute{}
+	otaUploadRoutes := []lkePublicHTTPSRoute{}
 	frontendRoutes := []lkePublicHTTPSRoute{}
 	deviceMTLSRoutes := []lkePublicHTTPSRoute{}
 	factoryMTLSRoutes := []lkePublicHTTPSRoute{}
 	httpsRoutes := []lkePublicHTTPSRoute{}
 	for _, route := range routes {
+		if route.Host == env["VIDEO_CLOUD_DOMAIN"] && route.Path == "" && route.Service == "video-cloud-api" && route.Namespace == lkeNamespaceName(env, "video-cloud") {
+			uploadRoute := route
+			uploadRoute.Path = "/v1/device/ota/internal/upload/"
+			otaUploadRoutes = append(otaUploadRoutes, uploadRoute)
+		}
 		if !lkeDisableSearchIndexing(env) && route.Service == "frontend" && route.Namespace == lkeNamespaceName(env, "frontend") {
 			frontendRoutes = append(frontendRoutes, route)
 			continue
@@ -1315,6 +1324,9 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 	}
 	if len(httpsRoutes) > 0 {
 		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-certissuer", httpsRoutes, "HTTPS", lkePrivateIngressAnnotations(env, "")))
+	}
+	if len(otaUploadRoutes) > 0 {
+		manifests = append(manifests, lkePublicHTTPSIngressManifest(env, "video-cloud-staging-ota-upload", otaUploadRoutes, "", lkePrivateIngressAnnotations(env, "")))
 	}
 	return manifests
 }
@@ -1402,6 +1414,11 @@ func lkePublicHTTPSIngressManifest(env map[string]string, name string, routes []
 	if name == "video-cloud-staging-factory-mtls" {
 		redirect = "true"
 	}
+	bodySize := "20m"
+	if name == "video-cloud-staging-ota-upload" {
+		// Match productota's 512 MiB artifact cap on the one signed upload path.
+		bodySize = "512m"
+	}
 	var rules strings.Builder
 	hostOrder := make([]string, 0, len(routes))
 	routesByHost := make(map[string][]lkePublicHTTPSRoute, len(routes))
@@ -1456,7 +1473,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+    nginx.ingress.kubernetes.io/proxy-body-size: %q
 %s
 spec:
   ingressClassName: nginx
@@ -1465,7 +1482,7 @@ spec:
       hosts:
 %s
   rules:
-%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
+%s`, name, lkeIngressNamespace(env), name, env["CLOUD_STACK_NAME"], redirect, redirect, bodySize, annotations, lkePublicHTTPSTLSHostsYAML(routes), rules.String())
 }
 
 func lkePublicHTTPSTLSHostsYAML(routes []lkePublicHTTPSRoute) string {

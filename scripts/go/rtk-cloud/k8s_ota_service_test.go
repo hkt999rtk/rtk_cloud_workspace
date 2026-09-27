@@ -85,6 +85,61 @@ func TestLKEOTAServiceUsesDedicatedBucketAndSecret(t *testing.T) {
 	}
 }
 
+func TestLKEOTAUploadIngressAllowsBINBeyond20MiBOnlyOnUploadPath(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":        "video-cloud-staging.example.test",
+		"VIDEO_CLOUD_DEVICE_DOMAIN": "device.video-cloud-staging.example.test",
+	}
+	manifests := lkePublicHTTPSIngressManifests(env, lkePublicHTTPSBaseRoutes(env))
+	uploadFound := false
+	for _, manifest := range manifests {
+		var ingress struct {
+			Metadata struct {
+				Name        string            `yaml:"name"`
+				Annotations map[string]string `yaml:"annotations"`
+			} `yaml:"metadata"`
+			Spec struct {
+				Rules []struct {
+					Host string `yaml:"host"`
+					HTTP struct {
+						Paths []struct {
+							Path     string `yaml:"path"`
+							PathType string `yaml:"pathType"`
+							Backend  struct {
+								Service struct {
+									Name string `yaml:"name"`
+								} `yaml:"service"`
+							} `yaml:"backend"`
+						} `yaml:"paths"`
+					} `yaml:"http"`
+				} `yaml:"rules"`
+			} `yaml:"spec"`
+		}
+		if err := yaml.Unmarshal([]byte(manifest), &ingress); err != nil {
+			t.Fatalf("invalid ingress manifest: %v", err)
+		}
+		bodySize := ingress.Metadata.Annotations["nginx.ingress.kubernetes.io/proxy-body-size"]
+		if ingress.Metadata.Name != "video-cloud-staging-ota-upload" {
+			if bodySize != "20m" {
+				t.Fatalf("%s changed the ordinary API upload cap to %q", ingress.Metadata.Name, bodySize)
+			}
+			continue
+		}
+		uploadFound = true
+		if bodySize != "512m" || len(ingress.Spec.Rules) != 1 || ingress.Spec.Rules[0].Host != env["VIDEO_CLOUD_DOMAIN"] {
+			t.Fatalf("OTA upload ingress is not limited to the public API host: %#v", ingress)
+		}
+		paths := ingress.Spec.Rules[0].HTTP.Paths
+		if len(paths) != 1 || paths[0].Path != "/v1/device/ota/internal/upload/" || paths[0].PathType != "Prefix" || paths[0].Backend.Service.Name != "public-video-cloud-api-video-cloud" {
+			t.Fatalf("OTA upload ingress must route only the upload token path to core: %#v", paths)
+		}
+	}
+	if !uploadFound {
+		t.Fatal("OTA upload path has no ingress for BIN files larger than 20 MiB")
+	}
+}
+
 func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED": "true"}
 	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "MQTT foundation") {
@@ -273,13 +328,17 @@ func TestLKEOTADeviceEdgeRequiresRegisteredServiceAndKeepsMTLS(t *testing.T) {
 	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "true")
 	routes := lkePublicHTTPSBaseRoutes(env)
 	found := false
+	legacyFound := false
 	for _, route := range routes {
 		if route.Path == "/v1/device/ota/" {
 			found = route.Host == env["VIDEO_CLOUD_DEVICE_DOMAIN"] && route.Service == otaServiceWorkloadName && route.ServicePort == 18084 && !route.Exact
 		}
+		if route.Path == "/v1/device/ota/internal/artifact/" {
+			legacyFound = route.Host == env["VIDEO_CLOUD_DEVICE_DOMAIN"] && route.Service == "video-cloud-api" && route.ServicePort == 80 && !route.Exact
+		}
 	}
-	if !found {
-		t.Fatal("device OTA path does not target the dedicated service")
+	if !found || !legacyFound {
+		t.Fatal("device OTA routes must send new requests to OTA and historical artifact URLs to core")
 	}
 	manifests := lkePublicHTTPSIngressManifests(env, routes)
 	validIngressJSON := ""
@@ -290,7 +349,7 @@ func TestLKEOTADeviceEdgeRequiresRegisteredServiceAndKeepsMTLS(t *testing.T) {
 		if !strings.Contains(manifest, "name: video-cloud-staging-device-mtls\n") {
 			continue
 		}
-		if !strings.Contains(manifest, "nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"") || !strings.Contains(manifest, "path: /v1/device/ota/\n            pathType: Prefix") {
+		if !strings.Contains(manifest, "nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"") || !strings.Contains(manifest, "path: /v1/device/ota/\n            pathType: Prefix") || !strings.Contains(manifest, "path: /v1/device/ota/internal/artifact/\n            pathType: Prefix") {
 			t.Fatal("device OTA ingress lost mTLS or path routing")
 		}
 		var parsed map[string]any
@@ -309,6 +368,26 @@ func TestLKEOTADeviceEdgeRequiresRegisteredServiceAndKeepsMTLS(t *testing.T) {
 	}
 	if err := lkeRequireActiveOTADeviceEdgeRoute(env); err != nil {
 		t.Fatal(err)
+	}
+	var brokenLegacy map[string]any
+	if err := json.Unmarshal([]byte(validIngressJSON), &brokenLegacy); err != nil {
+		t.Fatal(err)
+	}
+	for _, rawRule := range brokenLegacy["spec"].(map[string]any)["rules"].([]any) {
+		for _, rawPath := range rawRule.(map[string]any)["http"].(map[string]any)["paths"].([]any) {
+			path := rawPath.(map[string]any)
+			if path["path"] == "/v1/device/ota/internal/artifact/" {
+				path["backend"].(map[string]any)["service"].(map[string]any)["name"] = "wrong-backend"
+			}
+		}
+	}
+	brokenJSON, err := json.Marshal(brokenLegacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", string(brokenJSON))
+	if err := lkeRequireActiveOTADeviceEdgeRoute(env); err == nil || !strings.Contains(err.Error(), "legacy artifact") {
+		t.Fatalf("cutover accepted a legacy artifact route to the wrong backend: %v", err)
 	}
 	wantBridge := lkePublicHTTPSBridgeServiceName(env, lkePublicHTTPSRoute{Namespace: lkeNamespaceName(env, "video-cloud"), Service: otaServiceWorkloadName})
 	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", strings.Replace(validIngressJSON, wantBridge, "public-video-cloud-api-video-cloud", 1))

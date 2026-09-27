@@ -480,12 +480,15 @@ func lkeRequireActiveOTADeviceEdgeRoute(env map[string]string) error {
 		return fmt.Errorf("OTA core cutover requires device mTLS ingress authentication")
 	}
 	host := firstNonEmpty(lkeEnvValue(env, "LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+env["VIDEO_CLOUD_DOMAIN"])
-	service := lkePublicHTTPSBridgeServiceName(env, lkePublicHTTPSRoute{Namespace: lkeNamespaceName(env, "video-cloud"), Service: otaServiceWorkloadName})
+	namespace := lkeNamespaceName(env, "video-cloud")
+	service := lkePublicHTTPSBridgeServiceName(env, lkePublicHTTPSRoute{Namespace: namespace, Service: otaServiceWorkloadName})
+	legacyService := lkePublicHTTPSBridgeServiceName(env, lkePublicHTTPSRoute{Namespace: namespace, Service: "video-cloud-api"})
 	spec, ok := ingress["spec"].(map[string]any)
 	if !ok {
 		return fmt.Errorf("OTA core cutover requires live device OTA ingress route")
 	}
 	rules, _ := spec["rules"].([]any)
+	var directReady, legacyReady bool
 	for _, rawRule := range rules {
 		rule, ok := rawRule.(map[string]any)
 		if !ok || rule["host"] != host {
@@ -495,18 +498,27 @@ func lkeRequireActiveOTADeviceEdgeRoute(env map[string]string) error {
 		paths, _ := httpRule["paths"].([]any)
 		for _, rawPath := range paths {
 			path, ok := rawPath.(map[string]any)
-			if !ok || path["path"] != "/v1/device/ota/" || path["pathType"] != "Prefix" {
+			if !ok || path["pathType"] != "Prefix" {
 				continue
 			}
 			backend, _ := path["backend"].(map[string]any)
 			backendService, _ := backend["service"].(map[string]any)
 			port, _ := backendService["port"].(map[string]any)
-			if backendService["name"] == service && port["number"] == float64(18084) {
-				return nil
+			switch path["path"] {
+			case "/v1/device/ota/":
+				directReady = backendService["name"] == service && port["number"] == float64(18084)
+			case "/v1/device/ota/internal/artifact/":
+				legacyReady = backendService["name"] == legacyService && port["number"] == float64(80)
 			}
 		}
 	}
-	return fmt.Errorf("OTA core cutover requires live device OTA ingress route")
+	if !directReady {
+		return fmt.Errorf("OTA core cutover requires live device OTA ingress route")
+	}
+	if !legacyReady {
+		return fmt.Errorf("OTA core cutover requires legacy artifact URLs to route to core API")
+	}
+	return nil
 }
 
 // Cutover requires a private Service with a Ready endpoint. The process only

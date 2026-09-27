@@ -66,8 +66,8 @@ func TestLKEDeviceHostPluginPathKeepsMTLSIngress(t *testing.T) {
 		{Host: env["VIDEO_CLOUD_DEVICE_DOMAIN"], Path: "/api/request_webrtc/answer", Exact: true, Namespace: namespace, Service: "video-cloud-webrtcservice", ServicePort: 18082},
 	}
 	manifests := lkePublicHTTPSIngressManifests(env, routes)
-	if len(manifests) != 2 {
-		t.Fatalf("want separate public and device-mTLS ingresses, got %d", len(manifests))
+	if len(manifests) != 3 {
+		t.Fatalf("want separate public, device-mTLS, and OTA upload ingresses, got %d", len(manifests))
 	}
 	if strings.Contains(manifests[0], env["VIDEO_CLOUD_DEVICE_DOMAIN"]) {
 		t.Fatal("device plugin route bypassed mTLS through public ingress")

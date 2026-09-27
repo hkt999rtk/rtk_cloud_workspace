@@ -32,7 +32,9 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 ### OTA 裝置路由切換順序
 
-獨立 OTA 服務先取得 `service:ota` 身分、private CDN 設定及 Product 授權，再啟用 `LKE_OTA_SERVICE_REGISTRATION_ENABLED`，確認 Pod Ready、lease 與私有 Service endpoint。之後單獨啟用 `LKE_OTA_SERVICE_EDGE_ENABLED`，使 `device.<VIDEO_CLOUD_DOMAIN>` 上的 `/v1/device/ota/` 經要求裝置憑證的 ingress 送到獨立服務；須實測憑證有效、無憑證拒絕、check／artifact-token／events 成功及 CDN URL 直下載。最後才啟用 `LKE_OTA_CORE_CUTOVER_ENABLED`；部署前檢查必須看見**實際已生效**的 mTLS ingress path 和 Ready OTA endpoint。一般 public API host 不能代替裝置 mTLS 入口。回復時先恢復核心 handler，再移除裝置 edge route；若核心 Deployment 暫時不存在但線上 ingress 仍有 OTA 路由，必須保留該路由，待核心 handler 恢復後才可移除。OTA 裝置模擬器的控制請求須用裝置 mTLS host 與各裝置憑證；CDN 下載用不帶裝置憑證的獨立 client。以上路徑程式碼完成、PR 與 live 驗收前仍屬待完成項。
+獨立 OTA 服務先取得 `service:ota` 身分、專用私有 Object Storage、Product 授權及交付設定，再啟用 `LKE_OTA_SERVICE_REGISTRATION_ENABLED`，確認 Pod Ready、lease 與私有 Service endpoint。CDN 網址及簽署金鑰都存在時簽 CDN URL；兩者都沒有時簽 Object Storage 預簽 GET URL；部分設定一律報錯。之後單獨啟用 `LKE_OTA_SERVICE_EDGE_ENABLED`，使 `device.<VIDEO_CLOUD_DOMAIN>` 上的 `/v1/device/ota/` 經要求裝置憑證的 ingress 送到獨立服務；更長的 `/v1/device/ota/internal/artifact/` 路徑保留在核心 API，讓切換前簽發的 API URL 在到期前仍可讀取舊媒體 bucket。須實測憑證有效、無憑證拒絕、check／artifact-token／events 成功，以及所選交付管道的直下載。最後才啟用 `LKE_OTA_CORE_CUTOVER_ENABLED`；部署前檢查必須看見**實際已生效**的兩條 mTLS ingress path 和 Ready OTA endpoint。一般 public API host 不能代替裝置 mTLS 入口。回復時先恢復核心 handler，再移除裝置 edge route；若核心 Deployment 暫時不存在但線上 ingress 仍有 OTA 路由，必須保留該路由，待核心 handler 恢復後才可移除。OTA 裝置模擬器的控制請求須用裝置 mTLS host 與各裝置憑證；直下載用不帶裝置憑證的獨立 client。程式碼合併不等於 live 驗收完成。
+
+使用者上傳 BIN 時，由專用 OTA 服務產生短效上傳 URL；API 主機只把 `PUT /v1/device/ota/internal/upload/` 轉送該服務驗證簽署 token。使用者不填下載 URL。
 
 ### development 部署與計費狀態（2026-09-27）
 
