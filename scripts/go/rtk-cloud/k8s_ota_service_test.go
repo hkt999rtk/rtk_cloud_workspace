@@ -1,0 +1,205 @@
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+func otaTestSecretJSON(t *testing.T, values map[string]string) string {
+	t.Helper()
+	data := make(map[string]string, len(values))
+	for key, value := range values {
+		data[key] = base64.StdEncoding.EncodeToString([]byte(value))
+	}
+	encoded, err := json.Marshal(map[string]any{"data": data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
+func TestLKEOTAServiceManifestIsPrivateAndOwnsBillingDelivery(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                           "video-cloud-dev",
+		"CLOUD_ENV_NAME":                             "dev",
+		"LKE_VIDEO_CLOUD_IMAGE":                      "example.test/video-cloud:reviewed",
+		"VIDEO_CLOUD_BLOB_ENDPOINT":                  "https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_REGION":                    "us-east-1",
+		"VIDEO_CLOUD_BLOB_BUCKET":                    "firmware",
+		"VIDEO_CLOUD_OTA_CDN_BASE_URL":               "https://firmware.example.test",
+		"VIDEO_CLOUD_OTA_CDN_TOKEN_NAME":             "__token__",
+		"VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON": `{}`,
+	}
+	deployment := lkeOTAServiceDeploymentManifest(env)
+	service := lkeOTAServiceServiceManifest(env)
+	for label, manifest := range map[string]string{"deployment": deployment, "service": service} {
+		var parsed map[string]any
+		if err := yaml.Unmarshal([]byte(manifest), &parsed); err != nil {
+			t.Fatalf("invalid %s manifest: %v", label, err)
+		}
+	}
+	for _, want := range []string{
+		"name: video-cloud-otaservice", "type: Recreate", "command: [\"/app/otaservice\"]",
+		"name: VIDEO_CLOUD_DB_ENSURE_SCHEMA\n              value: \"false\"",
+		"name: VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED\n              value: \"true\"",
+		"name: VIDEO_CLOUD_OTA_SERVICE_ENABLED\n              value: \"true\"",
+		"name: VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED\n              value: \"false\"",
+		"name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT",
+		"name: VIDEO_CLOUD_BILLING_USAGE_TOKEN", "name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX",
+		"secretName: ota-service-platform-identity", "name: VIDEO_CLOUD_OTA_SERVICE_INSTANCE_ID",
+		"value: \"ota-service-0\"",
+	} {
+		if !strings.Contains(deployment, want) {
+			t.Fatalf("OTA service deployment lacks %q", want)
+		}
+	}
+	if !strings.Contains(service, "type: ClusterIP") || strings.Contains(service, "LoadBalancer") {
+		t.Fatal("OTA service must remain private behind the core API")
+	}
+}
+
+func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED": "true"}
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "MQTT foundation") {
+		t.Fatalf("missing MQTT dependency was accepted: %v", err)
+	}
+	env["LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED"] = "true"
+	env["LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] = "true"
+	env["VIDEO_CLOUD_BLOB_BUCKET"] = "firmware"
+	env["VIDEO_CLOUD_BLOB_REGION"] = "us-east-1"
+	env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = "http://firmware.example.test"
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("non-TLS CDN was accepted: %v", err)
+	}
+	env["LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"] = "true"
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "same Platform lease") {
+		t.Fatalf("dual OTA registrars were accepted: %v", err)
+	}
+}
+
+func TestLKEOTACDNSecretRejectsShortToken(t *testing.T) {
+	if err := validateOTACDNTokenKey([]byte("abc")); err == nil {
+		t.Fatal("short OTA CDN key was accepted")
+	}
+	if err := validateOTACDNTokenKey([]byte(strings.Repeat("ab", 32))); err != nil {
+		t.Fatalf("valid OTA CDN key was rejected: %v", err)
+	}
+}
+
+func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
+	t.Setenv("LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED", "true")
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED": "true",
+		"VIDEO_CLOUD_BLOB_BUCKET": "firmware", "VIDEO_CLOUD_BLOB_REGION": "us-east-1",
+		"VIDEO_CLOUD_OTA_CDN_BASE_URL": "https://firmware.example.test",
+	}
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "CDN runtime Secret") {
+		t.Fatalf("missing CDN runtime Secret was accepted: %v", err)
+	}
+	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX": "bad"}))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "invalid token key") {
+		t.Fatalf("invalid CDN key was accepted: %v", err)
+	}
+	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX": strings.Repeat("ab", 32)}))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "runtime Secret") {
+		t.Fatalf("missing runtime inputs were accepted: %v", err)
+	}
+	videoRuntime := map[string]string{
+		"POSTGRES_PASSWORD": "test", "VIDEO_CLOUD_AUTH_SECRET": "test", "VIDEO_CLOUD_OTA_BFF_TOKEN": "test",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN": "test", "AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test",
+	}
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, videoRuntime))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "video-cloud-workers-runtime") {
+		t.Fatalf("missing Billing delivery token was accepted: %v", err)
+	}
+	t.Setenv("FAKE_OTA_WORKERS_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_BILLING_USAGE_TOKEN": "test"}))
+	delete(videoRuntime, "AWS_SECRET_ACCESS_KEY")
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, videoRuntime))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "AWS_SECRET_ACCESS_KEY") {
+		t.Fatalf("missing object-storage key was accepted: %v", err)
+	}
+	videoRuntime["AWS_SECRET_ACCESS_KEY"] = "test"
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, videoRuntime))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "identity Secret") {
+		t.Fatalf("missing OTA service identity was accepted: %v", err)
+	}
+	setFakeLKEPlatformIdentitySecrets(t, env)
+	if err := lkeRequireOTAServiceInputs(env); err != nil {
+		t.Fatalf("complete OTA service inputs were rejected: %v", err)
+	}
+}
+
+func TestLKEOTAServiceCutoverRequiresReadyPrivateEndpoint(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err == nil {
+		t.Fatal("missing OTA Service was accepted")
+	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err == nil || !strings.Contains(err.Error(), "no ready") {
+		t.Fatalf("OTA Service without a ready endpoint was accepted: %v", err)
+	}
+	t.Setenv("FAKE_OTA_ENDPOINTSLICES_JSON", `{"items":[{"ports":[{"port":18084}],"endpoints":[{"addresses":["10.0.0.5"],"conditions":{"ready":true}}]}]}`)
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"LoadBalancer","selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err == nil {
+		t.Fatal("public OTA Service was accepted")
+	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","externalIPs":["198.51.100.2"],"selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err == nil {
+		t.Fatal("externally addressed OTA Service was accepted")
+	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"video-cloud-api"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err == nil {
+		t.Fatal("OTA Service targeting core API was accepted")
+	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":8080,"targetPort":"http"}]}}`)
+	if err := lkeRequireReadyOTAServiceEndpoint(env); err == nil {
+		t.Fatal("OTA Service with the wrong port was accepted")
+	}
+}
+
+func TestLKEOTAServiceCutoverManifestAndPolicyAreOptIn(t *testing.T) {
+	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "false")
+	t.Setenv("LKE_OTA_SERVICE_REGISTRATION_ENABLED", "false")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_VIDEO_CLOUD_IMAGE": "example.test/video-cloud:reviewed"}
+	workload := lkeWorkload{Key: "video-cloud", Name: "video-cloud-api", Namespace: lkeNamespaceName(env, "video-cloud"), Port: 8080, Image: env["LKE_VIDEO_CLOUD_IMAGE"]}
+	baseline := lkeDeploymentManifest(env, workload, nil)
+	if !strings.Contains(baseline, "name: VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED\n              value: \"false\"") || strings.Contains(baseline, "VIDEO_CLOUD_OTA_UPSTREAM_URL") {
+		t.Fatal("OTA cutover was enabled in the default core Deployment")
+	}
+	for _, manifest := range lkePublicHTTPSNetworkPolicyManifests(env, nil) {
+		if strings.Contains(manifest, "name: allow-video-cloud-api-otaservice") {
+			t.Fatal("OTA private ingress was enabled without the service")
+		}
+	}
+	t.Setenv("LKE_OTA_SERVICE_REGISTRATION_ENABLED", "true")
+	found := false
+	for _, manifest := range lkePublicHTTPSNetworkPolicyManifests(env, nil) {
+		found = found || strings.Contains(manifest, "name: allow-video-cloud-api-otaservice")
+	}
+	if !found {
+		t.Fatal("registered OTA service lacks private core-only ingress")
+	}
+	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "true")
+	cutover := lkeDeploymentManifest(env, workload, nil)
+	if !strings.Contains(cutover, "name: VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED\n              value: \"true\"") || !strings.Contains(cutover, "http://video-cloud-otaservice.video-cloud-staging-video-cloud.svc.cluster.local:18084") {
+		t.Fatal("OTA cutover Deployment lacks the private service URL")
+	}
+	policy := lkeAllowVideoCloudAPIOTAGatewayNetworkPolicyManifest(env)
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(policy), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(policy, "app.kubernetes.io/name: video-cloud-otaservice") || !strings.Contains(policy, "app.kubernetes.io/name: video-cloud-api") || !strings.Contains(policy, "port: 18084") {
+		t.Fatal("OTA gateway NetworkPolicy does not restrict the upstream to core")
+	}
+}

@@ -97,7 +97,10 @@ stage. In particular, retain `LKE_LOGGER_RETENTION_STORAGE_ENABLED=true`,
 `LKE_LOGGER_SERVICE_REGISTRATION_ENABLED=true`, and both
 `LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED=true` and
 `LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED=true` after Logger cutover. Retain
-`LKE_OTA_REGISTRAR_REGISTRATION_ENABLED=true` after OTA activation. The
+`LKE_OTA_SERVICE_REGISTRATION_ENABLED=true` and
+`LKE_OTA_CORE_CUTOVER_ENABLED=true` after OTA activation. The legacy
+`LKE_OTA_REGISTRAR_REGISTRATION_ENABLED` must remain `false`: the registrar
+and independent OTA service share one Platform lease. The
 Account Manager, MQTT, Shadow, WebRTC, and Video Storage registration flags
 must likewise stay in the dev adapter override once enabled. Before a later
 Video Cloud redeploy, resolve the tracked dev configuration and inspect the
@@ -117,9 +120,21 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    and verify all are running the reviewed image and setting. Verify old
    devices without an `ota` grant cannot query, receive, or download a new
    update, including an old URL. Verify in-progress result reports still work.
-   Then enable `LKE_OTA_REGISTRAR_REGISTRATION_ENABLED` for the single
-   `otaregistrar` Pod, which probes the existing
-   `cmd/api` process at `/readyz/ota`, and activate the registered OTA service.
+   Install the reviewed private-origin CDN property, HTTPS
+   `VIDEO_CLOUD_OTA_CDN_BASE_URL`, and the matching 32-byte-or-longer hex
+   token key as `VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX` in the private
+   `ota-cdn-runtime` Secret. Confirm the edge actually validates this key,
+   preserves Range requests, and cannot expose the object-storage origin.
+   Migrate the OTA receipt, artifact, review, and outbox tables before starting
+   the service; leave `VIDEO_CLOUD_DB_ENSURE_SCHEMA=false` in its Deployment.
+   Then enable `LKE_OTA_SERVICE_REGISTRATION_ENABLED` and wait for the
+   independent `otaservice` Pod's `/readyz`, private EndpointSlice, and active
+   `service:ota` lease. Check that it can reach Account Manager for historical
+   grants and Billing for usage-fact receipts. Only after that, enable
+   `LKE_OTA_CORE_CUTOVER_ENABLED` to forward the core OTA routes to the private
+   service. Verify direct CDN downloads, signed completion reports, all four
+   usage facts, outbox delivery, and Billing receipts before accepting the
+   cutover.
    Enable the Logger HTTP and MQTT cutovers only after its registered readiness,
    pinned per-device grant check, and tiered storage all pass. Old devices
    without `device_logging` must be denied new uploads.
