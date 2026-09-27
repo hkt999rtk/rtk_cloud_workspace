@@ -2,7 +2,7 @@
 
 Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development; no effective OTA rate card has been published, so development does not charge OTA.
 
-Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-27.
+Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-28.
 
 ## 1. 已確定的決策與範圍
 
@@ -14,7 +14,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 - OTA 仍是可註冊、可被 Product 選用的獨立服務。只有 Product 啟用 OTA 才顯示其 dashboard；未啟用時明示「此產品尚未啟用 OTA 服務」。Product 選用服務、費率生效、實際產生用量，是三件不同的事。
 - 其他服務目前畫面中的金額屬**參考價／研究草案**。不得把研究價直接當作已生效價，也不得因計量器存在就宣稱正在收費。任何 Cloud／環境的正式費率只由 Billing 的有效 pricing version 決定。
 
-### 執行狀態（2026-09-27）
+### 執行狀態（2026-09-28）
 
 | 階段 | 目前狀態 |
 | --- | --- |
@@ -34,13 +34,23 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 固定 workspace 版本 `ac44a6d2ecf8ac4ed8f9531a00516263348312f4` 的 staging Billing 仍在 schema 061；目前有效 TWD 底卡含四筆 MQTT 及一筆 `qualification/staging_units`，沒有 OTA rate。五筆舊 rate 均缺 `quantity_scale` 與 `tax_category`；現有 staging 用量的五種 metric 都以精度 0 記錄，但仍須逐筆確認正式語義。舊版費率有早期重疊區間，四張已結算帳單保留各自版次；不得改寫歷史底卡或已出帳紀錄。可分享的彙總與快照雜湊記於 [staging Billing evidence](../billing-twd-staging-evidence-20260924.md)，完整底卡僅留受限操作證據，不在本文件刊登實際價格。
 
-Billing [#39](https://github.com/hkt999rtk/rtk_billing/pull/39) 已在原定 Billing commit `78572b91bb2f4806c5c8f02ab62610e80e2c4a25` 上補足舊底卡的受審核草案路徑並通過 CI：完整候選卡只能明示填補原本為 null 的精度與稅別，不能更動已知欄位、單價或其他非 OTA 費率；原子建卡時重驗唯讀審核的 rate-set digest。此 leaf 修正尚未納入固定 development 部署，也沒有建立或發佈 staging 價卡。`qualification/staging_units` 是否保留，以及五筆 rate 的精度 0／`standard` 稅別如何正式核准，仍是建卡前的明確決策。staging PKI 的 API／MQTT 消費端和 Device Root 信任也未就緒，維持 **NO-GO**。
+Billing [#39](https://github.com/hkt999rtk/rtk_billing/pull/39) 已在原定 Billing commit `78572b91bb2f4806c5c8f02ab62610e80e2c4a25` 上補足舊底卡的受審核草案路徑並通過 CI：完整候選卡只能明示填補原本為 null 的精度與稅別，不能更動已知欄位、單價或其他非 OTA 費率；原子建卡時重驗唯讀審核的 rate-set digest。此 leaf 修正已由 workspace [#558](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/558) 納入固定分支並部署 development；沒有建立或發佈 staging 價卡。`qualification/staging_units` 是否保留，以及五筆 rate 的精度 0／`standard` 稅別如何正式核准，仍是建卡前的明確決策。staging PKI 的 API／MQTT 消費端和 Device Root 信任也未就緒，維持 **NO-GO**。
 
 ### staging Product PKI 消費端缺口（2026-09-27 唯讀複核）
 
 固定版本的 staging Video Cloud namespace 有一般 API、一般 MQTT 及 PKI controller，但沒有 `video-cloud-api-pki`、`mqtt-pki` 工作負載，也沒有匹配的專用 Secret、ConfigMap 或 PVC。development 的現行實例證實 API 消費端另需伺服器 TLS 身分、唯一 Device Root 公開信任、Service/MQTT 信任與持久狀態；MQTT 消費端由 EMQX host 與 `pkibroker` 兩個容器構成，另需 broker runtime／management 身分、配置、Root 信任及各自的資料／狀態 PVC。development 的私鑰、憑證和環境信任不得轉用 staging。
 
 依 [PKI staging rollout](../../repos/rtk_video_cloud/docs/pki-staging-rollout.md) 先建立 staging 專屬的消費端身分與儲存、核對 CI 映像及 OpenBao role／policy，再以預留的 staging Root UUID 執行一次性 bootstrap；取得真正的 Root 公開憑證後，兩個消費端必須安裝同一 Root、驗證 registry／裝置生命週期並回報 receipt，最後才可啟用 Root 和進行 OTA 裝置驗收。僅寫入 controller pin 或複製 development Deployment 都不能通過此關卡。這些資源在目前 staging 仍不存在，因此沒有執行 Root bootstrap 或 staging 服務部署。
+
+### 固定版本的部署與 staging 門檻（2026-09-28）
+
+本次 development 部署的 workspace 固定快照為 `0066152b8b965a6ed3d54db3ff2d1de2989263af`（固定分支 `codex/ota-fixed-base-ac44a6d`），釘選 Billing `37f97e2afd12ae035147cdfb9aa6d5f10e395c24`、Cloud Admin `62e8a4b8eb816616512af2801430d40b726e5bb9`、Video Cloud `890952217ee02ed1dcd9ef5802868c55cdf35f97`。此分支延續原選定的 workspace `ac44a6d2`，沒有匯入之後的 `main`。Cloud Admin 與 Billing 固定版已部署 development；Billing 的 API、payment worker、settlement collector、payment simulator 均 1/1 Ready，持久化 operator 映像與 live imageID 同為 canonical CI digest `sha256:d3dd21e0…`。公開 Billing `/healthz` 回應 200；實際登入後價格／帳單操作仍未驗收，OTA 價卡也未生效。
+
+staging 目前仍為 **NO-GO**。Billing schema 為 061，現行映像比選定固定版新；固定版 062–068 的 Job 已以 canonical Billing 映像 `sha256:d3dd21e0…` 做 Kubernetes client-side dry-run，**沒有套用**。Video Cloud 的 staging 專屬 Device Root、API／MQTT PKI consumer 身分與信任資源均未建立。固定 Video Cloud commit 的官方 image-only release [run 36338096862](https://github.com/hkt999rtk/rtk_video_cloud/actions/runs/36338096862) 已發布 API、EMQX-PKI、OpenBao-PKI 映像；三者的 `linux/amd64` digest 拉取和 staging 唯讀憑證檢查通過。這只證明映像可用，不證明 PKI 或 OTA 計量可用。
+
+選定 consumer renderer 另需五個 `linode-block-storage-retain` PVC，共 45 GiB。2026-09-28 live provider 唯讀計畫記錄目前 54 個 active services、核定上限 20；原有部署的 `additional_required=0` 例外只容許不增加服務數的更新。新增五個 volume 至少會把 active services 推到 59，須先取得 Linode 額度調整或經核准釋出等量容量，並重新通過包含這五個 volume 的前置檢查，才可建立 consumer PVC。Device Root bootstrap 要等 staging 自有身分、trust、consumer 與容量均備妥後才執行。
+
+在 staging Billing 變更前，仍須確定現行較新映像與固定版的切換順序，以及是否依 staging 非強制備份規則不做完整本機資料庫匯出。含歷史帳單資料的完整本機匯出尚未獲明確核准，也沒有執行。這些決策與 staging 價卡底卡語義未定之前，不執行資料庫更新、價卡發佈或實際計費。
 
 ### OTA 裝置路由切換順序
 
