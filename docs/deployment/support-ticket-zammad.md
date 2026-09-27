@@ -116,6 +116,24 @@ staging restore with this complete inventory and these checks has passed.
    Protect the rendered output from accidental disclosure if chart values are
    ever expanded to contain credentials.
 
+5. After all chart workloads and PVCs are ready, run the repeatable bootstrap
+   from the selected release checkout. For staging, complete the protected
+   environment Go/No-Go first. The tool uses only that environment's kubeconfig
+   and SecretStore, checks that the three PVCs are Bound and no Ingress exists,
+   then creates or verifies the operator Admin, integration Agent, support group,
+   custom Ticket fields and scoped API token. It restarts the Zammad applications
+   only when new object fields require a migration. Existing credentials are
+   verified and retained on reruns.
+
+   ```sh
+   python3 scripts/bootstrap-zammad.py --environment staging
+   python3 scripts/bootstrap-zammad.py --environment staging --apply --confirm-stack video-cloud-staging
+   ```
+
+   The first command is read-only. Record the reported group ID in the target
+   environment configuration before enabling Cloud Admin. Provision approved
+   human Agents separately; this tool creates only the integration Agent.
+
 ## Zammad bootstrap and verification
 
 Create the `RTK Support` group and custom Ticket object fields
