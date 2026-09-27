@@ -272,11 +272,14 @@ func validateMediaCutoverInventory(body []byte, destinationBucket string) error 
 }
 
 func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, values map[string]string, sourceFile string) error {
+	if err := lkeValidateOTACDNBaseURL(cfg.Values); err != nil {
+		return err
+	}
 	if check := c.checkResolvedOTAStorage(cfg, values); !check.Passed {
 		return errors.New(check.Detail)
 	}
 	metricsEndpoint := ""
-	if strings.TrimSpace(cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+	if cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" {
 		bucket, err := c.resolveStorageBucket(values["LINODE_TOKEN"], cfg.Storage.OTAFirmware)
 		if err != nil {
 			return err

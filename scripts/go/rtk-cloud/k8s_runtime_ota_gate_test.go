@@ -97,6 +97,11 @@ func TestOTACDNSecretCheckRunsAtWorkloadDeployment(t *testing.T) {
 	if err := deployStep.Run(ctx); err == nil || !strings.Contains(err.Error(), "CDN runtime Secret") {
 		t.Fatalf("OTA workload deployment bypassed CDN pairing check: %v", err)
 	}
+	delete(ctx.Env, "VIDEO_CLOUD_OTA_CDN_BASE_URL")
+	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX": " \t"}))
+	if err := deployStep.Run(ctx); err == nil || !strings.Contains(err.Error(), "without a CDN base URL") {
+		t.Fatalf("OTA workload deployment accepted whitespace-only CDN key: %v", err)
+	}
 }
 
 func TestOTACDNURLIsValidatedBeforeProvisionSteps(t *testing.T) {
@@ -110,5 +115,9 @@ func TestOTACDNURLIsValidatedBeforeProvisionSteps(t *testing.T) {
 	}
 	if err := runKubernetesProvision(lkeCloudProvider{}, ctx); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("invalid OTA CDN URL reached provision steps: %v", err)
+	}
+	ctx.Env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = " \t"
+	if err := runKubernetesProvision(lkeCloudProvider{}, ctx); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("whitespace-only OTA CDN URL reached provision steps: %v", err)
 	}
 }

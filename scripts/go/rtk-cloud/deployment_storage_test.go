@@ -531,6 +531,13 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 	}
 }
 
+func TestCutoverOTAStorageRejectsWhitespaceCDNBeforeStorageChecks(t *testing.T) {
+	cfg := deploymentConfig{Values: map[string]string{"VIDEO_CLOUD_OTA_CDN_BASE_URL": " \t"}}
+	if err := (deploymentCredentialChecker{}).cutoverOTAStorage(cfg, nil, ""); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("OTA storage cutover accepted whitespace-only CDN URL: %v", err)
+	}
+}
+
 func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	clearDeploymentCredentialEnvironment(t)
 	home := t.TempDir()

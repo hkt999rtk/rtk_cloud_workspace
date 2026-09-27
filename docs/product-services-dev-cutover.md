@@ -133,21 +133,47 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    Then enable `LKE_OTA_SERVICE_REGISTRATION_ENABLED` and wait for the
    independent `otaservice` Pod's `/readyz`, private EndpointSlice, and active
    `service:ota` lease. Check that it can reach Account Manager for historical
-   grants and Billing for usage-fact receipts. Next enable
-   `LKE_OTA_SERVICE_EDGE_ENABLED` and verify the live device-host mTLS ingress
-   routes `/v1/device/ota/` to `video-cloud-otaservice`: a device certificate
-   succeeds, no certificate is rejected, and `check`, `artifact-token`, and
-   `events` reach the independent service. The OTA device simulator must use
-   the device mTLS URL with each device's certificate; its CDN artifact client
-   must not send that certificate to the download endpoint. Only after the observed ingress route and
-   private endpoint pass may `LKE_OTA_CORE_CUTOVER_ENABLED` disable the core
-   device handler and forward operator/app routes. Verify direct downloads from
+   grants and Billing for usage-fact receipts. Confirm the live device-host
+   mTLS ingress still routes to core, then enable `LKE_OTA_CORE_CUTOVER_ENABLED`
+   first. Core forwards operator/app routes and signed BIN uploads to the
+   independent service while preserving historical artifact GETs from its
+   media bucket. New device check, event, and artifact-token requests return
+   `503` during this short transition. Confirm the core Deployment rollout and
+   operator release/upload path, then enable `LKE_OTA_SERVICE_EDGE_ENABLED`.
+   The edge preflight requires the observed core cutover and Ready OTA service.
+   Verify the live device-host mTLS ingress routes `/v1/device/ota/` to
+   `video-cloud-otaservice` and the longer historical artifact path to core:
+   a device certificate succeeds, no certificate is rejected, and `check`,
+   `artifact-token`, and `events` reach the independent service. The OTA
+   device simulator must use the device mTLS URL with each device's certificate;
+   its direct-download client must not send that certificate to the download
+   endpoint. Verify direct downloads from
    the selected CDN or Object Storage endpoint,
    signed completion reports, all four usage facts, outbox delivery, and
-   Billing receipts before accepting the cutover. For rollback, restore the
-   core handler and wait for its rollout before removing the device edge route.
-   If the core Deployment is absent while the live ingress still has the OTA
-   route, keep the route until the core handler is restored.
+   Billing receipts before accepting the cutover. Keep the 503 interval short
+   and confirm device retries and the persisted report journal. For rollback,
+   remove the device edge while the observed core is still cut over; new device
+   requests return `503` and historical GETs remain on core. Then restore the
+   core handler and wait for its rollout. The core restoration preflight first
+   confirms that the live core still has cutover enabled and its rollout is
+   complete. Supply `LKE_OTA_ROLLBACK_PROBE_CERT_FILE` and
+   `LKE_OTA_ROLLBACK_PROBE_KEY_FILE` as paths to an existing, valid test-device
+   client certificate and mode-0600 private key from this environment; use
+   `LKE_OTA_ROLLBACK_PROBE_SERVER_CA_FILE` only when the device hostname's
+   server certificate needs a private CA. Keep this material out of command
+   output and the repository. The preflight port-forwards each Ready
+   ingress-nginx controller Pod's TLS port, uses the real device hostname for
+   SNI and HTTP Host, and requires the core-only `503` /
+   `OTA_DIRECT_ROUTE_REQUIRED` response to a side-effect-free GET with the
+   client certificate. The same route must return HTTP `400` without a client
+   certificate, as specified by [ingress-nginx client-certificate
+   authentication](https://kubernetes.github.io/ingress-nginx/examples/auth/client-certs/).
+   It checks that the controller Pod UID set did not change during probing. Missing
+   credentials, an unready controller, a stale edge route, or an inconclusive
+   probe blocks restoration; fix the route and retry while core remains cut
+   over. An initial deployment whose live core has not cut over needs no
+   rollback probe. If the core Deployment is absent while the live ingress
+   still has the OTA route, keep that route.
    Enable the Logger HTTP and MQTT cutovers only after its registered readiness,
    pinned per-device grant check, and tiered storage all pass. Old devices
    without `device_logging` must be denied new uploads.

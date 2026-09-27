@@ -32,9 +32,9 @@ func TestLKECrawlerPolicy(t *testing.T) {
 	env["VIDEO_CLOUD_CERTISSUER_DOMAIN"] = "certissuer.video-cloud-prod.realtekconnect.com"
 	env["FACTORY_ENROLL_PUBLIC_ENABLED"] = "true"
 	env["FACTORY_ENROLL_DOMAIN"] = "factory.video-cloud-prod.realtekconnect.com"
-	manifests := lkePublicHTTPSIngressManifests(env, lkePublicHTTPSRoutes(env))
-	if len(manifests) != 5 {
-		t.Fatalf("production ingress count = %d, want public, frontend, device, factory, and certissuer", len(manifests))
+	manifests := lkePublicHTTPSIngressManifests(env, lkePublicHTTPSBaseRoutes(env))
+	if len(manifests) != 6 {
+		t.Fatalf("production ingress count = %d, want public, frontend, device, factory, certissuer, and OTA upload", len(manifests))
 	}
 	for _, manifest := range manifests {
 		if strings.Contains(manifest, "name: video-cloud-staging-frontend\n") {
