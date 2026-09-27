@@ -591,10 +591,16 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 		return err
 	}
 	if lkeOTAServiceEdgeEnabled(env) {
+		if !lkeOTACoreCutoverEnabled(env) {
+			return fmt.Errorf("OTA device edge requires core OTA cutover to remain enabled")
+		}
 		if !lkeOTAServiceRegistrationEnabled(env) {
 			return fmt.Errorf("OTA edge route requires the registered OTA service workload")
 		}
 		if err := lkeRequireReadyOTAServiceEndpoint(env); err != nil {
+			return err
+		}
+		if err := lkeRequireObservedOTACoreCutover(env); err != nil {
 			return err
 		}
 	} else if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
@@ -2535,6 +2541,14 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && !lkeOTACoreCutoverEnabled(env) {
+		if lkeOTAServiceEdgeEnabled(env) {
+			return fmt.Errorf("restore core OTA handlers only after disabling the device edge route")
+		}
+		if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "account-manager") && lkeAccountManagerServiceRegistrationEnabled(env) {
 		if err := lkeRequireServiceRegistrationSecret(env); err != nil {
 			return err
@@ -2589,16 +2603,17 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTACoreCutoverEnabled(env) {
-		if !lkeOTAServiceEdgeEnabled(env) {
-			return fmt.Errorf("OTA core cutover requires the device mTLS edge route")
-		}
 		if !lkeOTAServiceRegistrationEnabled(env) {
 			return fmt.Errorf("OTA core cutover requires the independent registered OTA service")
 		}
 		if err := lkeRequireReadyOTAServiceEndpoint(env); err != nil {
 			return err
 		}
-		if err := lkeRequireActiveOTADeviceEdgeRoute(env); err != nil {
+		if lkeOTAServiceEdgeEnabled(env) {
+			if err := lkeRequireActiveOTADeviceEdgeRoute(env); err != nil {
+				return err
+			}
+		} else if err := lkeRequireActiveOTACoreDeviceRoute(env); err != nil {
 			return err
 		}
 	}
