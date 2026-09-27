@@ -43,6 +43,10 @@ func TestCoreOTACDNConfigurationRejectsPartialSettings(t *testing.T) {
 	if err := lkeRequireOTACDNConfiguration(env); err != nil {
 		t.Fatalf("empty CDN configuration should select Object Storage: %v", err)
 	}
+	env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = " \t"
+	if err := lkeRequireOTACDNConfiguration(env); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("whitespace-only CDN URL was treated as absent: %v", err)
+	}
 	env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = "https://firmware.example.test"
 	if err := lkeRequireOTACDNConfiguration(env); err == nil || !strings.Contains(err.Error(), "CDN runtime Secret") {
 		t.Fatalf("CDN URL without a key was accepted: %v", err)
@@ -54,6 +58,16 @@ func TestCoreOTACDNConfigurationRejectsPartialSettings(t *testing.T) {
 	delete(env, "VIDEO_CLOUD_OTA_CDN_BASE_URL")
 	if err := lkeRequireOTACDNConfiguration(env); err == nil || !strings.Contains(err.Error(), "without a CDN base URL") {
 		t.Fatalf("CDN key without a URL was accepted: %v", err)
+	}
+	for _, key := range []map[string]string{
+		{"VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX": " \t"},
+		{"VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX": ""},
+		{},
+	} {
+		t.Setenv("FAKE_OTA_CDN_SECRET_JSON", otaTestSecretJSON(t, key))
+		if err := lkeRequireOTACDNConfiguration(env); err == nil || !strings.Contains(err.Error(), "without a CDN base URL") {
+			t.Fatalf("incomplete CDN Secret without URL was accepted: %v", err)
+		}
 	}
 	env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = "http://firmware.example.test"
 	if err := lkeRequireOTACDNConfiguration(env); err == nil || !strings.Contains(err.Error(), "HTTPS") {

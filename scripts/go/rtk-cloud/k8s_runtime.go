@@ -51,7 +51,7 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}
-	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(ctx.Env) && strings.TrimSpace(ctx.Env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(ctx.Env) && ctx.Env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" {
 		operator, err := store.readOperator()
 		if err != nil {
 			return err

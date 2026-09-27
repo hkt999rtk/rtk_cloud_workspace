@@ -10272,7 +10272,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED
               value: %q
 `, strconv.FormatBool(lkeOTACoreCutoverEnabled(env)))
-		if cdnBaseURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]); cdnBaseURL != "" {
+		if cdnBaseURL := env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]; cdnBaseURL != "" {
 			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_CDN_BASE_URL
               value: %q
             - name: VIDEO_CLOUD_OTA_CDN_TOKEN_NAME

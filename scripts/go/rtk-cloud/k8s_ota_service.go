@@ -76,7 +76,7 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if err := lkeRequireOTACDNConfiguration(env); err != nil {
 		return err
 	}
-	if strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" && lkeOTADedicatedStorage(env) {
+	if env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" && lkeOTADedicatedStorage(env) {
 		if endpointType := env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"]; endpointType != "E2" && endpointType != "E3" {
 			return fmt.Errorf("OTA direct download requires a validated E2/E3 bucket endpoint; got %q", endpointType)
 		}
@@ -99,7 +99,7 @@ func lkeRequireOTACDNConfiguration(env map[string]string) error {
 	if err := lkeValidateOTACDNBaseURL(env); err != nil {
 		return err
 	}
-	if rawCDNURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]); rawCDNURL != "" {
+	if env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] != "" {
 		if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
 			return err
 		}
@@ -113,20 +113,18 @@ func lkeRequireOTACDNConfiguration(env map[string]string) error {
 			if err := json.Unmarshal(body, &secret); err != nil {
 				return fmt.Errorf("decode OTA CDN runtime Secret: %w", err)
 			}
-			if raw, err := kubernetesSecretBytes(secret, "VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX"); err == nil && len(strings.TrimSpace(string(raw))) > 0 {
-				return fmt.Errorf("OTA CDN token key is configured without a CDN base URL")
-			}
+			return fmt.Errorf("OTA CDN runtime Secret exists without a CDN base URL")
 		}
 	}
 	return nil
 }
 
 func lkeValidateOTACDNBaseURL(env map[string]string) error {
-	rawCDNURL := strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"])
+	rawCDNURL := env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]
 	if rawCDNURL == "" {
 		return nil
 	}
-	cdnURL, err := url.Parse(rawCDNURL)
+	cdnURL, err := url.Parse(strings.TrimSpace(rawCDNURL))
 	if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
 		return fmt.Errorf("OTA requires an HTTPS private-origin CDN base URL")
 	}
@@ -191,7 +189,7 @@ func lkeOTAServiceDeploymentManifest(env map[string]string) string {
 	platformNS := lkeNamespaceName(env, "platform")
 	accountNS := lkeNamespaceName(env, "account-manager")
 	cdnKeyEnv := ""
-	if strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) != "" {
+	if env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] != "" {
 		cdnKeyEnv = `            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
               valueFrom:
                 secretKeyRef:
