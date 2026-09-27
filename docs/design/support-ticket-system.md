@@ -1,6 +1,6 @@
 # Brand Cloud Support Tickets: Design and Delivery Plan
 
-Status: draft target; no ticket runtime is deployed.
+Status: implemented and enabled in dev on 2026-09-28; staging and production remain pending.
 
 Owner: rtk_cloud_workspace.
 

@@ -62,8 +62,11 @@ func TestLKESupportDependencySecretsFailClosed(t *testing.T) {
 }
 
 func TestLKESupportTicketsStayPrivateAndOptIn(t *testing.T) {
-	if supportSecretRequired(secretStore{Environment: "dev"}, "zammad-postgres-password") {
-		t.Fatal("disabled dev must not require a support namespace Secret")
+	if !supportSecretRequired(secretStore{Environment: "dev"}, "zammad-postgres-password") {
+		t.Fatal("enabled dev must require its Zammad SecretStore files")
+	}
+	if supportSecretRequired(secretStore{Environment: "staging"}, "zammad-postgres-password") {
+		t.Fatal("disabled staging must not require Zammad secrets yet")
 	}
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-test"}
 	if lkeCloudAdminRuntimeChecksumWithSupport(env) != lkeCloudAdminRuntimeChecksum() {
