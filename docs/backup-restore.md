@@ -133,7 +133,9 @@ these classifications automatically.
    HTTPS, public-access denial, retention and optionally immutability. Do not
    reuse a public release-artifact bucket/prefix. Bucket privacy, independent
    failure domain and retention are operator qualification checks; the client
-   does not infer them from an endpoint name.
+   does not infer them from an endpoint name. Follow the `backup` purpose in
+   [Object Storage naming](storage-credential-lifecycle.md); a proposed name
+   does not mean the bucket or backup workflow has been provisioned.
 6. Prepare a dedicated absolute local backup directory with mode `0700` on an
    encrypted disk; files are `0600`. No symlink ancestors. Do not use the Git
    workspace, a shared temporary directory or the SecretStore itself as the

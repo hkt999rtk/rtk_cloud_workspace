@@ -128,6 +128,43 @@ func TestResolveDeploymentStoragePlanRejectsInvalidProfiles(t *testing.T) {
 	}
 }
 
+func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T) {
+	workspace := t.TempDir()
+	root := filepath.Join(workspace, "cloud_env", "dev")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	base := "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=rtk-video-media-dev-us-sea\nRUNTIME_MEDIA_STORAGE_PREFIX=environments/video-cloud-dev\n"
+	identity := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "DEPLOYMENT_LOCATION": "us-west"}
+	adapter := map[string]string{"LKE_REGION": "us-sea"}
+	for _, tc := range []struct{ name, extra, want string }{
+		{"invalid mode", "RUNTIME_OTA_STORAGE_MODE=unknown\n", "legacy-shared or dedicated"},
+		{"missing policy", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "requires colocated policy"},
+		{"shared bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-video-media-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must differ"},
+		{"invalid cutover flag", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=yes\n", "must be true or false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+tc.extra), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := resolveDeploymentStoragePlan(workspace, root, identity, adapter)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+"RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true\nRUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := resolveDeploymentStoragePlan(workspace, root, identity, adapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.RuntimeMediaCutoverRequired || plan.OTAFirmware.Bucket != "rtk-ota-firmware-dev-us-sea" || plan.OTAFirmware.Region != "us-sea" {
+		t.Fatalf("incorrect dedicated OTA plan: %#v", plan)
+	}
+}
+
 func TestDeploymentCredentialFailureStopsBeforeRuntimeMutation(t *testing.T) {
 	for _, action := range []string{"provision", "test"} {
 		t.Run(action, func(t *testing.T) {

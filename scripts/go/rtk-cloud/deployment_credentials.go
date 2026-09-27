@@ -180,6 +180,9 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 		if mediaEnabled {
 			checks = append(checks, c.checkObjectStorageWithOptions(cfg, values, options))
 		}
+		if cfg.Storage.OTAMode == "dedicated" && lkeOTAServiceRegistrationEnabled(cfg.Values) {
+			checks = append(checks, c.checkResolvedOTAStorage(cfg, values))
+		}
 		if cfg.Storage.ReleaseArtifacts.Bucket != "" {
 			checks = append(checks, c.checkResolvedArtifactStorage(cfg, values))
 		}
@@ -317,6 +320,7 @@ func deploymentCredentialKeys() []string {
 		"GODADDY_KEY", "GODADDY_SECRET",
 		"LINODE_OBJ_ACCESS_KEY_ID", "LINODE_OBJ_SECRET_ACCESS_KEY", "LINODE_OBJ_ENDPOINT", "LINODE_OBJ_BUCKET", "LINODE_OBJ_REGION",
 		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY",
+		"LINODE_OTA_OBJ_ACCESS_KEY_ID", "LINODE_OTA_OBJ_SECRET_ACCESS_KEY",
 		"LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID", "LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
 	}
@@ -629,6 +633,8 @@ func (c deploymentCredentialChecker) createLimitedObjectStorageKey(cfg deploymen
 	purpose := "runtime-media"
 	if store.bucket == cfg.Storage.ReleaseArtifacts.Bucket {
 		purpose = "release-artifacts"
+	} else if store.bucket == cfg.Storage.OTAFirmware.Bucket && cfg.Storage.OTAMode == "dedicated" {
+		purpose = "ota-firmware"
 	}
 	payload, err := json.Marshal(map[string]any{
 		"label": fmt.Sprintf("rtk-cloud-%s-%s-%d", labelEnvironment, purpose, time.Now().UTC().Unix()),

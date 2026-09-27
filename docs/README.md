@@ -25,6 +25,8 @@ in the owning service repository; shared wire and payload contracts belong in
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Source | Contracts submodule path, URL, and commit alignment policy. |
 | [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
+| [storage-credential-lifecycle.md](storage-credential-lifecycle.md) | Source | Bucket naming, OTA/media paths, scoped keys, and migration lifecycle. |
+| [object-storage-inventory.md](object-storage-inventory.md) | Dated inventory | Observed Linode buckets and proposed naming targets. |
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |

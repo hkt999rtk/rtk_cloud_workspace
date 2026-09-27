@@ -2847,6 +2847,14 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
+		if lkeOTADedicatedStorage(env) {
+			if lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_ACCESS_KEY_ID") == "" || lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY") == "" {
+				return fmt.Errorf("dedicated OTA storage credentials are required")
+			}
+			if err := kubectlApply(lkeOTAStorageSecretManifest(env)); err != nil {
+				return err
+			}
+		}
 		if err := kubectlApply(lkeOTAServiceDeploymentManifest(env)); err != nil {
 			return err
 		}

@@ -135,7 +135,7 @@ for Ed25519 or P-256 subject keys. These settings do not control public ACME
 certificates, JWT/EdDSA token signing, OTA signing, SSH keys, or PKCS#11 signer
 selection.
 
-Each environment must also track `storage.env`, which declares the runtime media policy, bucket, and environment-owned prefix. See [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for examples and the lifecycle.
+Each environment must also track `storage.env`, which declares the runtime media policy, bucket, and environment-owned prefix. It also declares whether OTA uses that legacy bucket or a dedicated OTA bucket. See [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for the naming rule, object paths, credentials, and lifecycle, and [`docs/object-storage-inventory.md`](../docs/object-storage-inventory.md) for observed buckets.
 
 Use `overrides/dns.env` for optional DNS-provider escape hatches. A normal environment does not set a hosted-zone ID, API endpoint, AWS access key, or GoDaddy key. GoDaddy credentials are read only from `~/.config/rtk_cloud/<environment>/operator/env/`; Route53 credentials must be stored in the same environment store. See [`docs/secret-store.md`](../docs/secret-store.md) and [`docs/dns-adapter-architecture.md`](../docs/dns-adapter-architecture.md) for details.
 
