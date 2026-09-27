@@ -36,7 +36,7 @@ deployment analysis).
 | Time limit | None (indefinite, but subject to fair-use review) |
 | Signup | Self-service with email verification (owned by `rtk_cloud_admin` UI + `rtk_account_manager` API; not by the marketing site) |
 | Cost | Free |
-| Support | Community-tier: documentation + GitHub Issues only |
+| Support | Current: documentation + GitHub Issues; target: in-console technical tickets with no response-time commitment |
 | Data retention | Subject to evaluation policy; not for production data |
 
 The 200-device ceiling is a positioning differentiator versus RainMaker's 100.
@@ -90,13 +90,15 @@ is not.
 
 - Public documentation portal (`/docs` on the website)
 - GitHub Issues on the SDK repo (post-GTM; pre-GTM via direct contact)
-- No email or ticket-based response-time commitment
+- Target: Brand Cloud members can open technical/service tickets in Cloud Admin
+- No email or ticket response-time commitment
 - No phone support
 
 This mirrors RainMaker's evaluation support level.
 
 ### Commercial tier — contract-defined support
 
+- Target: Brand Cloud members use the same in-console technical ticket area
 - SLA tier negotiated per commercial agreement (no published default)
 - Response-time, uptime, and escalation paths live in the customer contract
 - Realtek-side technical support contacts assigned during onboarding
