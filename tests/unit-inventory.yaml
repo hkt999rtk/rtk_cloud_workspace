@@ -809,6 +809,13 @@ cases:
       title: invoice usage respects the stored quantity scale and missing data
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#issued%20invoice%20unit%20prices%20retain%20sub-dollar%20OTA%20precision
+      module: cloud-admin-web
+      language: javascript
+      source: src/invoice-document.test.mjs
+      title: issued invoice unit prices retain sub-dollar OTA precision
+      owner: rtk_cloud_admin
+      status: active
     - canonical_key: js://cloud-admin-web/src/invoice-document.test.mjs#sample%20invoice%20is%20before%20tax%20without%20an%20issued%20identity%20or%20payment%20document
       module: cloud-admin-web
       language: javascript
