@@ -62,6 +62,74 @@ func otaRollbackWriteTestIdentity(t *testing.T, identity tls.Certificate) (strin
 	return certFile, keyFile
 }
 
+func TestLKEOTARollbackProbeIdentityFailsClosed(t *testing.T) {
+	server, _, identity, _ := otaRollbackTestTLS(t, func(http.ResponseWriter, *http.Request) {})
+	certFile, keyFile := otaRollbackWriteTestIdentity(t, identity)
+	env := map[string]string{
+		"LKE_OTA_ROLLBACK_PROBE_CERT_FILE": certFile,
+		"LKE_OTA_ROLLBACK_PROBE_KEY_FILE":  keyFile,
+	}
+	if err := os.Chmod(keyFile, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lkeOTARollbackProbeIdentity(env); err == nil || !strings.Contains(err.Error(), "mode 0600") {
+		t.Fatalf("insecure private key was accepted: %v", err)
+	}
+	if err := os.Chmod(keyFile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	validCert, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certFile, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := lkeOTARollbackProbeIdentity(env); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("invalid device certificate was accepted: %v", err)
+	}
+	if err := os.WriteFile(certFile, validCert, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env["LKE_OTA_ROLLBACK_PROBE_SERVER_CA_FILE"] = filepath.Join(t.TempDir(), "missing-ca.pem")
+	if _, _, err := lkeOTARollbackProbeIdentity(env); err == nil || !strings.Contains(err.Error(), "read OTA rollback probe server CA") {
+		t.Fatalf("missing server trust root was accepted: %v", err)
+	}
+	caFile := filepath.Join(t.TempDir(), "server-ca.pem")
+	if err := os.WriteFile(caFile, []byte("not a CA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env["LKE_OTA_ROLLBACK_PROBE_SERVER_CA_FILE"] = caFile
+	if _, _, err := lkeOTARollbackProbeIdentity(env); err == nil || !strings.Contains(err.Error(), "server CA is invalid") {
+		t.Fatalf("invalid server trust root was accepted: %v", err)
+	}
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, roots, err := lkeOTARollbackProbeIdentity(env); err != nil || roots == nil || len(roots.Subjects()) == 0 {
+		t.Fatalf("valid private server trust root was rejected: %v", err)
+	}
+}
+
+func TestLKEOTARollbackControllerInventoryFailsClosed(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	for _, tc := range []struct {
+		name, podJSON, want string
+	}{
+		{"malformed", `[`, "decode OTA ingress controller Pods"},
+		{"empty", `{"items":[]}`, "requires Ready ingress controller Pods"},
+		{"missing UID", `{"items":[{"metadata":{"name":"ingress-nginx-controller-a"},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}]}`, "not Ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAKE_OTA_INGRESS_PODS_JSON", tc.podJSON)
+			if _, err := lkeReadyOTAIngressControllerPods(env); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("invalid ingress Pod inventory was accepted: %v", err)
+			}
+		})
+	}
+}
+
 func TestLKEOTARollbackProbeRequiresMTLSCoreSentinel(t *testing.T) {
 	var expectedHost string
 	server, host, identity, roots := otaRollbackTestTLS(t, func(w http.ResponseWriter, r *http.Request) {
