@@ -3321,6 +3321,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "wait", "--for=condition=complete", "job/billing-database-ensure", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m")); err != nil {
 			return err
 		}
+		if err := lkeApplyBillingMigrationJob(env); err != nil {
+			return err
+		}
 	}
 	if lkeWorkloadSelected(env, opts, "cloud-admin") {
 		if lkeWorkloadSelected(env, opts, "billing") {
@@ -3941,6 +3944,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "wait", "--for=condition=complete", "job/billing-database-ensure", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+		if err := lkeApplyBillingMigrationJob(env); err != nil {
 			return err
 		}
 	}
@@ -8903,6 +8909,10 @@ func lkeBillingDatabaseURL(env map[string]string) string {
 	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
 }
 
+func lkeBillingMigrationJobEnabled(env map[string]string) bool {
+	return strings.EqualFold(lkeEnvValue(env, "LKE_BILLING_MIGRATION_JOB_ENABLED"), "true")
+}
+
 func lkeBillingSecretManifest(env map[string]string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Secret
@@ -8917,6 +8927,7 @@ metadata:
 type: Opaque
 stringData:
   DATABASE_URL: %q
+  BILLING_DB_MIGRATE_ON_STARTUP: %q
   POSTGRES_PASSWORD: %q
   BILLING_SERVICE_TOKEN: %q
   BILLING_INTERNAL_TOKEN: %q
@@ -8954,7 +8965,7 @@ stringData:
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env))
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -9059,6 +9070,53 @@ spec:
               valueFrom:
                 secretKeyRef: { name: billing-runtime, key: POSTGRES_PASSWORD }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"))
+}
+
+func lkeBillingMigrationJobManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-database-migrate
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing-database-migrate
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/provider: lke
+    rtk.realtek.com/stack: %s
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: billing-database-migrate
+        app.kubernetes.io/part-of: rtk-cloud
+        rtk.realtek.com/stack: %s
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: %s
+      containers:
+        - name: migrate
+          image: %s
+          command: ["/rtk-billing-migrate"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: billing-runtime, key: DATABASE_URL }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeBillingImage(env))
+}
+
+func lkeApplyBillingMigrationJob(env map[string]string) error {
+	if !lkeBillingMigrationJobEnabled(env) {
+		return nil
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-migrate", "--ignore-not-found"); err != nil {
+		return err
+	}
+	if err := kubectlApply(lkeBillingMigrationJobManifest(env)); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "billing"), "wait", "--for=condition=complete", "job/billing-database-migrate", "--timeout", firstNonEmpty(os.Getenv("LKE_MIGRATION_JOB_TIMEOUT"), "5m"))
 }
 
 func lkePaymentSimulatorPublicDomain(env map[string]string) string {
