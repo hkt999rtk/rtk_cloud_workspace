@@ -80,6 +80,9 @@ func TestLKEOTAServiceUsesDedicatedBucketAndSecret(t *testing.T) {
 	if !strings.Contains(manifest, `value: "rtk-ota-firmware-dev-us-sea"`) || !strings.Contains(manifest, "name: ota-object-storage") || strings.Contains(manifest, `value: "rtk-video-media-dev-us-sea"`) {
 		t.Fatal("OTA deployment did not isolate its bucket and credentials")
 	}
+	if strings.Contains(manifest, "name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX") || strings.Contains(manifest, "name: ota-cdn-runtime") {
+		t.Fatal("OTA deployment without a CDN URL must not require a CDN key Secret")
+	}
 }
 
 func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
@@ -150,13 +153,14 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 		t.Fatalf("missing OTA service identity was accepted: %v", err)
 	}
 	setFakeLKEPlatformIdentitySecrets(t, env)
-	if err := lkeRequireOTAServiceInputs(env); err != nil {
-		t.Fatalf("complete OTA service inputs were rejected: %v", err)
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "dedicated OTA bucket") {
+		t.Fatalf("shared media bucket was accepted for billable OTA service: %v", err)
 	}
 	env["VIDEO_CLOUD_OTA_STORAGE_MODE"] = "dedicated"
 	env["VIDEO_CLOUD_OTA_BLOB_BUCKET"] = "rtk-ota-firmware-staging-sg-sin-2"
 	env["VIDEO_CLOUD_OTA_BLOB_REGION"] = "sg-sin-2"
 	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = "https://sg-sin-2.linodeobjects.com"
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E3"
 	delete(videoRuntime, "AWS_ACCESS_KEY_ID")
 	delete(videoRuntime, "AWS_SECRET_ACCESS_KEY")
 	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, videoRuntime))
@@ -167,6 +171,20 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 	t.Setenv("LINODE_OTA_OBJ_SECRET_ACCESS_KEY", "dedicated-secret")
 	if err := lkeRequireOTAServiceInputs(env); err != nil {
 		t.Fatalf("dedicated OTA preflight required a Secret before it could be created: %v", err)
+	}
+	delete(env, "VIDEO_CLOUD_OTA_CDN_BASE_URL")
+	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", "")
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E1"
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "validated E2/E3") {
+		t.Fatalf("E1 OTA direct delivery was accepted: %v", err)
+	}
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E3"
+	if err := lkeRequireOTAServiceInputs(env); err != nil {
+		t.Fatalf("Object Storage delivery without CDN configuration was rejected: %v", err)
+	}
+	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX": strings.Repeat("ab", 32)}))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "without a CDN base URL") {
+		t.Fatalf("CDN key without URL was accepted: %v", err)
 	}
 }
 

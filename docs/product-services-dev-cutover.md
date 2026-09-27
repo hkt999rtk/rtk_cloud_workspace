@@ -121,11 +121,13 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    and verify all are running the reviewed image and setting. Verify old
    devices without an `ota` grant cannot query, receive, or download a new
    update, including an old URL. Verify in-progress result reports still work.
-   Install the reviewed private-origin CDN property, HTTPS
+   For CDN delivery, install the reviewed private-origin property, HTTPS
    `VIDEO_CLOUD_OTA_CDN_BASE_URL`, and the matching 32-byte-or-longer hex
-   token key as `VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX` in the private
-   `ota-cdn-runtime` Secret. Confirm the edge actually validates this key,
-   preserves Range requests, and cannot expose the object-storage origin.
+   `VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX` in the private `ota-cdn-runtime`
+   Secret. Confirm that the edge validates this key and preserves Range
+   requests. If both CDN settings are absent, verify that the dedicated OTA
+   bucket is private and its HTTPS presigned GET supports Range and expiry.
+   A partial CDN setting fails startup; do not use it to trigger fallback.
    Migrate the OTA receipt, artifact, review, and outbox tables before starting
    the service; leave `VIDEO_CLOUD_DB_ENSURE_SCHEMA=false` in its Deployment.
    Then enable `LKE_OTA_SERVICE_REGISTRATION_ENABLED` and wait for the
@@ -137,9 +139,10 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    succeeds, no certificate is rejected, and `check`, `artifact-token`, and
    `events` reach the independent service. The OTA device simulator must use
    the device mTLS URL with each device's certificate; its CDN artifact client
-   must not send that certificate. Only after the observed ingress route and
+   must not send that certificate to the download endpoint. Only after the observed ingress route and
    private endpoint pass may `LKE_OTA_CORE_CUTOVER_ENABLED` disable the core
-   device handler and forward operator/app routes. Verify direct CDN downloads,
+   device handler and forward operator/app routes. Verify direct downloads from
+   the selected CDN or Object Storage endpoint,
    signed completion reports, all four usage facts, outbox delivery, and
    Billing receipts before accepting the cutover. For rollback, restore the
    core handler and wait for its rollout before removing the device edge route.

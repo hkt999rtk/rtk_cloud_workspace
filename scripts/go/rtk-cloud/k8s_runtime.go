@@ -7,9 +7,18 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error {
+	if err := validateOTAProvisionCutoverReceipt(ctx); err != nil {
+		return err
+	}
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+		if err := lkeValidateOTACDNBaseURL(ctx.Env); err != nil {
+			return err
+		}
+	}
 	if rtkCloudTestMode() {
 		// Deterministic, disposable test fixtures do not use the user's canonical
 		// secret store.
@@ -42,6 +51,22 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}
+	if ctx.Opts.mode.deploy && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(ctx.Env) && strings.TrimSpace(ctx.Env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]) == "" {
+		operator, err := store.readOperator()
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(operator["LINODE_TOKEN"]) == "" {
+			return errors.New("LINODE_TOKEN is required to verify the OTA direct-download bucket before deployment")
+		}
+		checker := defaultDeploymentCredentialChecker()
+		if err := checker.validateOTAProvisionBucket(operator["LINODE_TOKEN"], ctx.Env); err != nil {
+			return err
+		}
+		if err := validateOTAMetricsQualification(ctx.Paths.EnvRoot, ctx.Env["CLOUD_ENV_NAME"], ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"], ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"], ctx.Env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"], time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	if ctx.Opts.mode.reset {
 		return errors.New("Kubernetes provision reset is not implemented; use remove-k8s for current staging teardown")
 	}
@@ -51,6 +76,41 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 		}
 	}
 	return runProvisionSteps(ctx, kubernetesProvisionSteps(provider))
+}
+
+func validateOTAProvisionCutoverReceipt(ctx provisionContext) error {
+	if !ctx.Opts.mode.deploy || !lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") || !lkeOTAServiceRegistrationEnabled(ctx.Env) {
+		return nil
+	}
+	if !lkeOTADedicatedStorage(ctx.Env) {
+		return errors.New("independent OTA service requires dedicated storage before deployment")
+	}
+	path := filepath.Join(ctx.Paths.EnvRoot, "state", "storage-cutover-ota.json")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("independent OTA service requires a completed storage-cutover-ota receipt before deployment: %w", err)
+	}
+	var receipt struct {
+		Environment                 string `json:"environment"`
+		Bucket                      string `json:"bucket"`
+		Region                      string `json:"region"`
+		Prefix                      string `json:"prefix"`
+		CutoverAt                   string `json:"cutover_at"`
+		RollbackCredentialsRetained bool   `json:"rollback_credentials_retained"`
+		ServiceReady                bool   `json:"service_ready"`
+	}
+	if err := json.Unmarshal(body, &receipt); err != nil {
+		return fmt.Errorf("decode OTA storage cutover receipt: %w", err)
+	}
+	if receipt.Environment != ctx.Env["CLOUD_ENV_NAME"] || receipt.Bucket != ctx.Env["VIDEO_CLOUD_OTA_BLOB_BUCKET"] ||
+		receipt.Region != ctx.Env["VIDEO_CLOUD_OTA_BLOB_REGION"] || receipt.Prefix != ctx.Env["VIDEO_CLOUD_OTA_BLOB_PREFIX"] ||
+		!receipt.RollbackCredentialsRetained || !receipt.ServiceReady {
+		return errors.New("OTA storage cutover receipt does not match the selected environment and ready service")
+	}
+	if _, err := time.Parse(time.RFC3339, receipt.CutoverAt); err != nil {
+		return errors.New("OTA storage cutover receipt has no valid completion time")
+	}
+	return nil
 }
 
 type provisionStep struct {
@@ -174,6 +234,11 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			Phase:   "runtime",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.deploy },
 			Run: func(ctx provisionContext) error {
+				if lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud") {
+					if err := lkeRequireOTACDNConfiguration(ctx.Env); err != nil {
+						return err
+					}
+				}
 				if err := lkeDeployWorkloads(ctx.Paths, ctx.Env, ctx.Opts); err != nil {
 					return err
 				}

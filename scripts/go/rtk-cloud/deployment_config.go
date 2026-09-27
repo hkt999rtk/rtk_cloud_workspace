@@ -92,6 +92,7 @@ var deploymentEnvironmentKeys = keySet(
 	"EMAIL_OUTBOX_POLL_INTERVAL", "EMAIL_OUTBOX_BATCH_SIZE", "EMAIL_OUTBOX_MAX_ATTEMPTS",
 	"EMAIL_OUTBOX_RETRY_BASE", "EMAIL_OUTBOX_RETRY_MAX",
 	"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED", "VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED",
+	"VIDEO_CLOUD_OTA_CDN_BASE_URL", "VIDEO_CLOUD_OTA_CDN_TOKEN_NAME",
 )
 
 var deploymentEnvironmentServiceKeys = keySet(
@@ -182,7 +183,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	sharedEnvFile := fs.String("shared-env-file", "", "retired; shared secret fallback is not supported")
 	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
-	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
+	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration and OTA cutover")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
 	storagePurpose := fs.String("purpose", "media", "storage purpose: media or ota")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
@@ -700,7 +701,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota --confirm STACK
   rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota --source-env-file PATH --confirm STACK
-  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota --confirm STACK
+  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota [--source-env-file PATH for ota] --confirm STACK
   rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK
 `)
 }
@@ -1217,6 +1218,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 		var receipt deploymentStorageReceipt
 		if body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
 			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = receipt.Endpoint
+			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = receipt.EndpointType
 		}
 	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
