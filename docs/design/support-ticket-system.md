@@ -92,8 +92,10 @@ creates or promotes Agent accounts. Customer articles use `origin_by_id` for
 attribution. Agent articles omit it: Zammad 7.1.2-0013 changes their sender to
 Customer when `origin_by_id` is present, even when it points to an Agent. The BFF stores the
 verified Agent ID and name in article `preferences` and uses those values in
-the Admin projection. A pinned local Zammad model probe verified that this
-preserves Agent contact timestamps and keeps internal notes out of them. The
+the Admin projection. A pinned local Zammad HTTP API probe verified that an
+Agent-only integration token scoped to `ticket.agent` can create Customers,
+tickets and articles. Agent public replies advance contact timestamps while
+internal notes do not. The
 same container accepted `rtk_cloud_uuid` and Cloud-filtered search; it rejected
 the earlier `rtk_cloud_id` object name because custom names cannot end in `_id`.
 Search indexing depends on the running scheduler and is eventually consistent.

@@ -97,18 +97,25 @@ customer `web` replies in succession and checking that each advances
 The BFF never creates or promotes Agents; an unprovisioned operator receives a
 service-unavailable response. Customer user records may be created by the BFF.
 After bootstrap, create a dedicated integration Agent with `full` access to
-`RTK Support`; a role and token without group access receive HTTP 403 when
-creating tickets. Issue its API token with permissions for ticket, article,
-attachment and customer-user operations, place it in SecretStore as
-`zammad-integration-token`, and restrict it to server-side use. Revoke a
-support operator's Zammad Agent role when their Account Manager support
+`RTK Support`. Issue that Agent an API token scoped to `ticket.agent`; the
+pinned HTTP API probe confirmed this scope supports Customer creation/search,
+ticket search/create/update, public/internal articles and attachment download.
+The Agent role, group access and token scope are all required: omitting either
+the role or group access returned HTTP 403 in the probe. The integration user
+does not need the Admin role. Place the issued token in SecretStore as
+`zammad-integration-token` and restrict it to server-side use. If the Zammad
+PostgreSQL data was reset, issue a fresh token from the new instance and
+replace any old SecretStore value; a nonempty file cannot authenticate against
+the replacement database. Revoke a support operator's Zammad Agent role when
+their Account Manager support
 assignment ends; this also prevents future assignment to that identity.
 
-The local `7.1.2-0013` container probe passed token authentication, Customer
-creation and `login:` search, two-Cloud custom-field search, Customer
-`origin_by_id`, public/internal notes, attachment download,
-assignment and state update. Search indexing depends on the running Zammad
-scheduler and may lag writes briefly. Repeat the API probe in dev before
+The local pinned `7.1.2-0013` HTTP API probe passed Agent-only token
+authentication, Customer creation and `login:` search, two-Cloud custom-field
+search, Customer `origin_by_id`, Agent `web` sender and actor preferences,
+public/internal contact timestamps, consecutive Customer replies, attachment
+download, assignment and state update. Search indexing depends on the running
+Zammad scheduler and may lag writes briefly. Repeat the API probe in dev before
 enabling the feature. Verify that custom-field search returns the right tickets,
 Customer `origin_by_id` identifies the RTK customer, Agent article `preferences`
 retain the verified RTK Agent ID and name, and attachment IDs resolve only under
