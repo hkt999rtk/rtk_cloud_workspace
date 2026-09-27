@@ -84,9 +84,9 @@ writes. Approved Agent records are provisioned separately with the Agent role
 and `rtk-<Account Manager user ID>` login. The BFF never creates or promotes
 Agent accounts. It records the RTK actor in the resulting article/audit entry. Validate
 `origin_by_id` and custom-field search against the pinned Zammad release in a
-container integration test before relying on them. If either fails, adapt the
-server-side mapping and update the contract before implementing the UI; do not
-weaken tenant checks or show service-account identity as the customer author.
+container integration test before enabling the feature. If either fails, adapt the
+server-side mapping and update the contract before activation; do not weaken
+tenant checks or show service-account identity as the customer author.
 
 ## UI and HTTP flow
 
@@ -144,8 +144,9 @@ review because dependency major versions and data layouts can change.
    incomplete checkouts and validate gitlinks before modifying source.
 2. Complete this design, the canonical contract, Admin UI spec and policy
    update in docs-first commits. Run `docs-check` and `contracts-check`.
-3. Prove pinned Zammad API mapping in an isolated container; then implement
-   Account Manager permissions, Admin BFF and UI, and deployment support.
+3. Implement Account Manager permissions, Admin BFF and UI, and deployment
+   support with the feature disabled; prove pinned Zammad API mapping in an
+   isolated container before enabling it.
 4. Test cross-Cloud denial, Viewer writes, member revocation, internal-note
    redaction, article authorship, attachments, assignment, notifications,
    Zammad outage and restore. Run focused tests and the workspace pre-PR gate.
