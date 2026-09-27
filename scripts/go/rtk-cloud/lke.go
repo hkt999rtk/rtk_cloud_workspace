@@ -2541,6 +2541,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 		return lkeApplyCloudLogger(env, opts)
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTACoreCutoverEnabled(env) {
+		// The initial check runs while core still serves legacy reports.
+		// Waiting until edge cutover would strand requests on 503 for 48h.
+		if err := lkeRequireLegacyOTADrain(env); err != nil {
+			return err
+		}
+	}
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
