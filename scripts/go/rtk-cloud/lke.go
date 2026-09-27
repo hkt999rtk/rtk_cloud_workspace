@@ -2548,6 +2548,9 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
 			return err
 		}
+		if err := lkeRequireOTARollbackDataPlane(env); err != nil {
+			return err
+		}
 	}
 	if lkeWorkloadSelected(env, opts, "account-manager") && lkeAccountManagerServiceRegistrationEnabled(env) {
 		if err := lkeRequireServiceRegistrationSecret(env); err != nil {

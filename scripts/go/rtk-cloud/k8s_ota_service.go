@@ -430,12 +430,29 @@ func lkePreventOTAEdgeRollbackOverlap(env map[string]string) error {
 }
 
 func lkeRequireObservedOTACoreCutover(env map[string]string) error {
+	exists, cutover, err := lkeObservedOTACoreCutover(env)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("core API is absent during OTA edge change")
+	}
+	if !cutover {
+		return fmt.Errorf("OTA device edge requires the observed core cutover")
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-api", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return fmt.Errorf("core API has not completed OTA cutover: %w", err)
+	}
+	return nil
+}
+
+func lkeObservedOTACoreCutover(env map[string]string) (bool, bool, error) {
 	body, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "deployment", "video-cloud-api", "--ignore-not-found=true", "-o", "json")
 	if err != nil {
-		return fmt.Errorf("inspect core OTA cutover: %w", err)
+		return false, false, fmt.Errorf("inspect core OTA cutover: %w", err)
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
-		return fmt.Errorf("core API is absent during OTA edge change")
+		return false, false, nil
 	}
 	var deployment struct {
 		Metadata struct {
@@ -456,10 +473,10 @@ func lkeRequireObservedOTACoreCutover(env map[string]string) error {
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal(body, &deployment); err != nil {
-		return fmt.Errorf("decode core OTA cutover state: %w", err)
+		return false, false, fmt.Errorf("decode core OTA cutover state: %w", err)
 	}
 	if deployment.Metadata.Name != "video-cloud-api" {
-		return fmt.Errorf("inspect core OTA cutover: unexpected Deployment")
+		return false, false, fmt.Errorf("inspect core OTA cutover: unexpected Deployment")
 	}
 	cutover := false
 	for _, container := range deployment.Spec.Template.Spec.Containers {
@@ -472,13 +489,7 @@ func lkeRequireObservedOTACoreCutover(env map[string]string) error {
 			}
 		}
 	}
-	if !cutover {
-		return fmt.Errorf("OTA device edge requires the observed core cutover")
-	}
-	if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-api", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-		return fmt.Errorf("core API has not completed OTA cutover: %w", err)
-	}
-	return nil
+	return true, cutover, nil
 }
 
 // Before core starts proxying operator OTA, historical artifact GETs must

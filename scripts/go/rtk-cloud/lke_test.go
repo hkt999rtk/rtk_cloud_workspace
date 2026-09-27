@@ -7273,6 +7273,14 @@ if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o json"*
   fi
   exit 0
 fi
+if [[ "$*" == *"get pods -l app.kubernetes.io/component=controller,app.kubernetes.io/instance=ingress-nginx -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_INGRESS_PODS_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_INGRESS_PODS_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
 if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
   if [[ -n "${FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON"
