@@ -43,8 +43,11 @@ type deploymentStorageTarget struct {
 }
 
 type deploymentStoragePlan struct {
-	RuntimeMedia     deploymentStorageTarget `json:"runtime_media"`
-	ReleaseArtifacts deploymentStorageTarget `json:"release_artifacts"`
+	RuntimeMedia                deploymentStorageTarget `json:"runtime_media"`
+	RuntimeMediaCutoverRequired bool                    `json:"runtime_media_cutover_required,omitempty"`
+	OTAFirmware                 deploymentStorageTarget `json:"ota_firmware,omitempty"`
+	OTAMode                     string                  `json:"ota_mode"`
+	ReleaseArtifacts            deploymentStorageTarget `json:"release_artifacts"`
 }
 
 type deploymentOperations struct {
@@ -179,6 +182,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
 	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
+	storagePurpose := fs.String("purpose", "media", "storage purpose: media or ota")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	var qualification deploymentCredentialCheckOptions
 	var selectedChecks string
@@ -262,7 +266,12 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		return fmt.Errorf("--confirm %s is required", stack)
 	}
 	if storageAction {
-		return runDeploymentStorageLifecycle(action, cfg, *envFile, *sourceEnvFile, *keyID)
+		return runDeploymentStorageLifecyclePurpose(action, cfg, *envFile, *sourceEnvFile, *keyID, *storagePurpose)
+	}
+	if keySet("create", "upgrade", "provision", "test")[action] {
+		if err := validateDeploymentStorageActivation(cfg); err != nil {
+			return err
+		}
 	}
 	if cfg.Adapter != "lke" && action != "plan" && action != "credentials-check" {
 		return fmt.Errorf("deployment adapter %s is not implemented", cfg.Adapter)
@@ -687,9 +696,9 @@ func printDeploymentUsage() {
   rtk-cloud deployment remove --environment NAME --confirm STACK
   rtk-cloud deployment test --environment NAME --confirm STACK
   rtk-cloud deployment storage-plan --environment NAME
-  rtk-cloud deployment storage-bootstrap --environment NAME --confirm STACK
-  rtk-cloud deployment storage-migrate --environment NAME --source-env-file PATH --confirm STACK
-  rtk-cloud deployment storage-cutover --environment NAME --confirm STACK
+  rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota --confirm STACK
+  rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota --source-env-file PATH --confirm STACK
+  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota --confirm STACK
   rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK
 `)
 }
@@ -1013,16 +1022,19 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 		return deploymentStoragePlan{}, err
 	}
 	if len(runtime) == 0 {
-		suffix := strings.ReplaceAll(identity["DEPLOYMENT_LOCATION"], "asia-southeast", "sg")
-		runtime = map[string]string{"RUNTIME_MEDIA_STORAGE_POLICY": "colocated", "RUNTIME_MEDIA_STORAGE_BUCKET": "rtk-video-" + filepath.Base(environmentRoot) + "-" + suffix, "RUNTIME_MEDIA_STORAGE_PREFIX": "environments/" + identity["CLOUD_STACK_NAME"]}
+		region := strings.TrimSpace(adapterResolved["LKE_REGION"])
+		runtime = map[string]string{"RUNTIME_MEDIA_STORAGE_POLICY": "colocated", "RUNTIME_MEDIA_STORAGE_BUCKET": "rtk-video-media-" + filepath.Base(environmentRoot) + "-" + region, "RUNTIME_MEDIA_STORAGE_PREFIX": "environments/" + identity["CLOUD_STACK_NAME"]}
 	}
 	for key := range runtime {
-		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX")[key] {
+		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED", "RUNTIME_OTA_STORAGE_MODE", "RUNTIME_OTA_STORAGE_POLICY", "RUNTIME_OTA_STORAGE_BUCKET", "RUNTIME_OTA_STORAGE_PREFIX")[key] {
 			return deploymentStoragePlan{}, fmt.Errorf("unknown runtime storage key %s", key)
 		}
 	}
 	if runtime["RUNTIME_MEDIA_STORAGE_POLICY"] != "colocated" {
 		return deploymentStoragePlan{}, errors.New("RUNTIME_MEDIA_STORAGE_POLICY must be colocated")
+	}
+	if value := runtime["RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED"]; value != "" && value != "true" && value != "false" {
+		return deploymentStoragePlan{}, errors.New("RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED must be true or false")
 	}
 	for _, key := range []string{"RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX"} {
 		if strings.TrimSpace(runtime[key]) == "" {
@@ -1054,9 +1066,27 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 	if computeRegion == "" && len(adapterResolved) > 0 {
 		return deploymentStoragePlan{}, errors.New("resolved compute region is required for colocated runtime storage")
 	}
+	otaMode := firstNonEmpty(runtime["RUNTIME_OTA_STORAGE_MODE"], "legacy-shared")
+	if otaMode != "legacy-shared" && otaMode != "dedicated" {
+		return deploymentStoragePlan{}, errors.New("RUNTIME_OTA_STORAGE_MODE must be legacy-shared or dedicated")
+	}
+	ota := deploymentStorageTarget{Purpose: "ota-firmware", Policy: "colocated", LogicalLocation: identity["DEPLOYMENT_LOCATION"], Bucket: runtime["RUNTIME_MEDIA_STORAGE_BUCKET"], Prefix: strings.Trim(runtime["RUNTIME_MEDIA_STORAGE_PREFIX"], "/"), Region: computeRegion}
+	if otaMode == "dedicated" {
+		if runtime["RUNTIME_OTA_STORAGE_POLICY"] != "colocated" || strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_BUCKET"]) == "" || strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_PREFIX"]) == "" {
+			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires colocated policy, bucket and prefix")
+		}
+		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] == runtime["RUNTIME_MEDIA_STORAGE_BUCKET"] {
+			return deploymentStoragePlan{}, errors.New("dedicated OTA bucket must differ from runtime media bucket")
+		}
+		ota.Bucket = runtime["RUNTIME_OTA_STORAGE_BUCKET"]
+		ota.Prefix = strings.Trim(runtime["RUNTIME_OTA_STORAGE_PREFIX"], "/")
+	}
 	return deploymentStoragePlan{
-		RuntimeMedia:     deploymentStorageTarget{Purpose: "runtime-media", Policy: "colocated", LogicalLocation: identity["DEPLOYMENT_LOCATION"], Bucket: runtime["RUNTIME_MEDIA_STORAGE_BUCKET"], Prefix: strings.Trim(runtime["RUNTIME_MEDIA_STORAGE_PREFIX"], "/"), Region: computeRegion},
-		ReleaseArtifacts: deploymentStorageTarget{Purpose: "release-artifacts", Policy: "shared-cross-region", LogicalLocation: shared["RELEASE_ARTIFACT_STORAGE_LOCATION"], Bucket: shared["RELEASE_ARTIFACT_STORAGE_BUCKET"], Prefix: strings.Trim(shared["RELEASE_ARTIFACT_STORAGE_PREFIX"], "/"), Region: shared["RELEASE_ARTIFACT_STORAGE_REGION"]},
+		RuntimeMedia:                deploymentStorageTarget{Purpose: "runtime-media", Policy: "colocated", LogicalLocation: identity["DEPLOYMENT_LOCATION"], Bucket: runtime["RUNTIME_MEDIA_STORAGE_BUCKET"], Prefix: strings.Trim(runtime["RUNTIME_MEDIA_STORAGE_PREFIX"], "/"), Region: computeRegion},
+		RuntimeMediaCutoverRequired: runtime["RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED"] == "true",
+		OTAFirmware:                 ota,
+		OTAMode:                     otaMode,
+		ReleaseArtifacts:            deploymentStorageTarget{Purpose: "release-artifacts", Policy: "shared-cross-region", LogicalLocation: shared["RELEASE_ARTIFACT_STORAGE_LOCATION"], Bucket: shared["RELEASE_ARTIFACT_STORAGE_BUCKET"], Prefix: strings.Trim(shared["RELEASE_ARTIFACT_STORAGE_PREFIX"], "/"), Region: shared["RELEASE_ARTIFACT_STORAGE_REGION"]},
 	}, nil
 }
 
@@ -1162,8 +1192,18 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	stack["VIDEO_CLOUD_BLOB_BUCKET"] = cfg.Storage.RuntimeMedia.Bucket
 	stack["VIDEO_CLOUD_BLOB_REGION"] = cfg.Storage.RuntimeMedia.Region
 	stack["VIDEO_CLOUD_BLOB_PREFIX"] = cfg.Storage.RuntimeMedia.Prefix
+	stack["VIDEO_CLOUD_OTA_STORAGE_MODE"] = cfg.Storage.OTAMode
+	stack["VIDEO_CLOUD_OTA_BLOB_BUCKET"] = cfg.Storage.OTAFirmware.Bucket
+	stack["VIDEO_CLOUD_OTA_BLOB_REGION"] = cfg.Storage.OTAFirmware.Region
+	stack["VIDEO_CLOUD_OTA_BLOB_PREFIX"] = cfg.Storage.OTAFirmware.Prefix
 	if receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
 		stack["VIDEO_CLOUD_BLOB_ENDPOINT"] = receipt.Endpoint
+	}
+	if cfg.Storage.OTAMode == "dedicated" {
+		var receipt deploymentStorageReceipt
+		if body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err == nil && json.Unmarshal(body, &receipt) == nil && receipt.Bucket == cfg.Storage.OTAFirmware.Bucket && receipt.Region == cfg.Storage.OTAFirmware.Region {
+			stack["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = receipt.Endpoint
+		}
 	}
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
 		return err

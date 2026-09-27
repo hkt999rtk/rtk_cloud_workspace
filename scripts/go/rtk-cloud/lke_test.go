@@ -7005,6 +7005,10 @@ if [[ "$*" == *"get nodes -o name"* ]]; then
   printf 'node/lke-test-1\n'
   exit 0
 fi
+if [[ "$*" == *"get deployments -o json"* ]]; then
+  printf '{"items":[]}\n'
+  exit 0
+fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
 	if [[ -n "${FAKE_OPENBAO_STATUS_JSON:-}" ]]; then
 		printf '%s\n' "$FAKE_OPENBAO_STATUS_JSON"

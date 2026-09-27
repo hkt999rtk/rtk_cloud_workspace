@@ -244,6 +244,11 @@ Current status:
 | Artifacts and cleanup | K8s-owned | Logger inventory and redacted runtime evidence should come from K8s resources. |
 | Cloud Admin dashboard | Implemented in `rtk_cloud_admin` submodule pointer | Cloud Admin owns the v1 UI; Grafana remains optional. |
 
+Future System Logger backups use the separate `logger-backup` Object Storage
+purpose and the key prefix in [Object Storage naming](storage-credential-lifecycle.md).
+No backup writer, retention policy, restore test, or bucket is implemented yet;
+the current Loki-backed store remains the active log storage.
+
 ## Repository Responsibilities
 
 | Repository | Responsibility |

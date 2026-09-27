@@ -11,6 +11,37 @@ import (
 
 const otaServiceWorkloadName = "video-cloud-otaservice"
 
+func lkeOTADedicatedStorage(env map[string]string) bool {
+	return env["VIDEO_CLOUD_OTA_STORAGE_MODE"] == "dedicated"
+}
+
+func lkeOTAStorageValue(env map[string]string, suffix string) string {
+	if lkeOTADedicatedStorage(env) {
+		return env["VIDEO_CLOUD_OTA_BLOB_"+suffix]
+	}
+	return env["VIDEO_CLOUD_BLOB_"+suffix]
+}
+
+func lkeOTAStorageSecretName(env map[string]string) string {
+	if lkeOTADedicatedStorage(env) {
+		return "ota-object-storage"
+	}
+	return "video-cloud-runtime"
+}
+
+func lkeOTAStorageSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: ota-object-storage
+  namespace: %s
+type: Opaque
+stringData:
+  AWS_ACCESS_KEY_ID: %q
+  AWS_SECRET_ACCESS_KEY: %q
+`, lkeNamespaceName(env, "video-cloud"), lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_ACCESS_KEY_ID"), lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY"))
+}
+
 func lkeOTAServiceRegistrationEnabled(env map[string]string) bool {
 	return lkeFeatureEnabled(env, "LKE_OTA_SERVICE_REGISTRATION_ENABLED")
 }
@@ -36,8 +67,11 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if !lkeAccountManagerServiceRegistrationEnabled(env) {
 		return fmt.Errorf("OTA service registration requires the Account Manager service registration listener")
 	}
-	if strings.TrimSpace(env["VIDEO_CLOUD_BLOB_BUCKET"]) == "" || strings.TrimSpace(env["VIDEO_CLOUD_BLOB_REGION"]) == "" {
+	if strings.TrimSpace(lkeOTAStorageValue(env, "BUCKET")) == "" || strings.TrimSpace(lkeOTAStorageValue(env, "REGION")) == "" {
 		return fmt.Errorf("OTA service requires private object storage")
+	}
+	if lkeOTADedicatedStorage(env) && (strings.TrimSpace(lkeOTAStorageValue(env, "ENDPOINT")) == "" || lkeOTAStorageValue(env, "BUCKET") == env["VIDEO_CLOUD_BLOB_BUCKET"]) {
+		return fmt.Errorf("dedicated OTA service requires a validated separate bucket and endpoint")
 	}
 	cdnURL, err := url.Parse(strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]))
 	if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
@@ -57,10 +91,13 @@ func lkeRequireOTAServiceRuntimeSecrets(env map[string]string) error {
 	for secretName, keys := range map[string][]string{
 		"video-cloud-runtime": {
 			"POSTGRES_PASSWORD", "VIDEO_CLOUD_AUTH_SECRET", "VIDEO_CLOUD_OTA_BFF_TOKEN",
-			"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
+			"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN",
 		},
 		"video-cloud-workers-runtime": {"VIDEO_CLOUD_BILLING_USAGE_TOKEN"},
 	} {
+		if secretName == "video-cloud-runtime" && !lkeOTADedicatedStorage(env) {
+			keys = append(keys, "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+		}
 		secret, err := kubectlResourceJSON(namespace, "secret", secretName)
 		if err != nil {
 			return fmt.Errorf("OTA service runtime Secret %s is unavailable: %w", secretName, err)
@@ -70,6 +107,11 @@ func lkeRequireOTAServiceRuntimeSecrets(env map[string]string) error {
 			if err != nil || len(strings.TrimSpace(string(value))) == 0 {
 				return fmt.Errorf("OTA service runtime Secret %s lacks %s", secretName, key)
 			}
+		}
+	}
+	if lkeOTADedicatedStorage(env) {
+		if lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_ACCESS_KEY_ID") == "" || lkeObjectStorageCredential(env, "LINODE_OTA_OBJ_SECRET_ACCESS_KEY") == "" {
+			return fmt.Errorf("dedicated OTA service requires scoped OTA storage credentials before Secret creation")
 		}
 	}
 	return nil
@@ -216,12 +258,12 @@ spec:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: video-cloud-runtime
+                  name: %s
                   key: AWS_ACCESS_KEY_ID
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: video-cloud-runtime
+                  name: %s
                   key: AWS_SECRET_ACCESS_KEY
             - name: VIDEO_CLOUD_OTA_CDN_BASE_URL
               value: %q
@@ -269,8 +311,9 @@ spec:
 		lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env),
 		firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_ENV"), env["CLOUD_ENV_NAME"], env["ACCOUNT_MANAGER_ENV"], "staging"),
 		lkeVideoCloudAPIBaseURL(env), platformNS, env["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"],
-		lkeAccountManagerInternalURL(env), env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"],
-		env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"),
+		lkeAccountManagerInternalURL(env), lkeOTAStorageValue(env, "ENDPOINT"), lkeOTAStorageValue(env, "REGION"),
+		lkeOTAStorageValue(env, "BUCKET"), lkeOTAStorageValue(env, "PREFIX"), firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"),
+		lkeOTAStorageSecretName(env), lkeOTAStorageSecretName(env),
 		env["VIDEO_CLOUD_OTA_CDN_BASE_URL"], firstNonEmpty(env["VIDEO_CLOUD_OTA_CDN_TOKEN_NAME"], "__token__"),
 		lkeNamespaceName(env, "billing"), firstNonEmpty(env["VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL"], "5s"),
 		otaRegistrarInstanceID, accountNS, otaRegistrarIdentitySecretName)

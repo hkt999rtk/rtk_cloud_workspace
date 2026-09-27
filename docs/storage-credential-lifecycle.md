@@ -1,48 +1,51 @@
-# Multi-environment Object Storage and credentials
+# Linode Object Storage naming and lifecycle
 
-Runtime media and release artifacts have different owners and lifecycle rules:
+This is the source of truth for bucket names and object paths. The dated [bucket inventory](object-storage-inventory.md) separates observed buckets from proposed names. Runtime intent lives in `cloud_env/<environment>/storage.env`; shared release intent lives in `cloud_deploy/storage/release-artifacts.env`. The CLI discovers endpoints from Linode's API.
 
-| Purpose | Owner | Policy | Staging target |
-|---|---|---|---|
-| Runtime media | One environment | `colocated` with compute | `rtk-video-staging-sg` in `sg-sin-2` |
-| Release artifacts | Shared release system | `shared-cross-region` | `rtk-cloud-client-artifacts` in `us-sea` |
+## Bucket names
 
-Runtime intent is tracked in `cloud_env/<environment>/storage.env`. Shared release intent is tracked in `cloud_deploy/storage/release-artifacts.env`. Endpoints are never constructed from these values: the CLI obtains `s3_endpoint` from Linode's API.
+Use `rtk-<purpose>-<environment|shared>-<Linode storage region>`, all lowercase with hyphens. The purpose is an access and lifecycle boundary: `video-media`, `ota-firmware`, `logger-backup`, `backup`, `device-pki-backup`, `reports`, `release`, `ci`, or `loadtest`. Use the actual Object Storage region ID such as `us-sea`, never an older logical alias. Keep the name within 63 characters using lowercase ASCII letters, digits, and hyphens. Check availability in the target region before creation. A rename requires a new bucket, migration, consumer cutover, and later key retirement.
 
-## Credential profiles
+Use `shared` only for a release or CI consumer that intentionally serves several environments. Keep Dev, Staging, and Prod runtime data separate. Separate OTA firmware from clips because OTA has its own writer, CDN delivery, billing ledger, and key rotation. Put customer, brand, product, release, date, and backup ID in object keys, not bucket names. Do not create a bucket per release or customer.
 
-All credentials live as individual `0600` files below `~/.config/rtk_cloud/<environment>/operator/env/`. Each environment is self-contained and has no shared credential fallback.
+| Purpose | Example Dev bucket | Key beneath bucket prefix | Status |
+| --- | --- | --- | --- |
+| Clip and media metadata | `rtk-video-media-dev-us-sea` | `environments/video-cloud-dev/clips/...`, `brands/...`, `snapshots/...`, `clip-index/...` | Dev target |
+| Registered billable OTA | `rtk-ota-firmware-dev-us-sea` | `environments/video-cloud-dev/ota-billable-v1/<brand>/<product>/<release>/firmware.bin` | Dev target |
+| System Logger backup | `rtk-logger-backup-dev-us-sea` | `logger-backups/video-cloud-dev/<YYYY>/<MM>/<DD>/<backup-id>/...` | Reserved; job not implemented |
+| Core backup | `rtk-backup-dev-us-sea` | `backups/video-cloud-dev/<backup-id>/...` | Reserved |
+| Device PKI backup | `rtk-device-pki-backup-dev-us-iad` | PKI owner defined key | Proposed target |
+| Reports | `rtk-reports-dev-us-sea` | `reports/<producer>/...` | Reserved; local MinIO `reports` is unrelated |
+| Release artifacts | `rtk-release-shared-us-sea` | Existing release manifest keys | Proposed target |
+| CI evidence | `rtk-ci-shared-us-sea` | `ci/<repo>/<run>/...` | Reserved |
+| Staging load test | `rtk-loadtest-staging-us-sea` | `loadtests/<run>/...` | Reserved |
 
-Each environment stores its own `LINODE_TOKEN`, `GHCR_PULL_USERNAME`,
-`GHCR_PULL_TOKEN`, DNS credentials, and release-artifact credentials
-`LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID` / `LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY`,
-alongside scoped media credentials `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` /
-`LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`. Release infrastructure may be shared;
-credential discovery is always environment-local with no shared profile fallback.
-[SecretStore](secret-store.md) owns the paths and migration procedure.
+The independent OTA service writes `ota-billable-v1/` inside its configured prefix. That namespace is part of billing and CDN behavior. Historical core `ota/` objects stay in legacy media storage with existing URLs until a separate compatibility migration is proved. The old `firmware/` namespace is historical; new registered OTA writes never use it. All new billable OTA firmware therefore uses one path.
 
-Missing environment credentials fail closed. Scoped media credentials are mapped to `LINODE_OBJ_*` only while deployment child operations run; storage policy, bucket-region checks, endpoint inventory, and the read/write canary remain mandatory.
+## Configuration and credentials
 
-## Lifecycle
+Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated`, `colocated` policy, and a bucket distinct from media. `legacy-shared` preserves Staging and Prod behavior until each is independently migrated.
+
+When a configured media target has been prepared but the live workloads still use the old bucket, set `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true`. Dev uses this gate. Normal create, upgrade, provision, and test commands then require a matching `storage-cutover.json` receipt before changing workloads. Bootstrap and migration remain available. Keep the gate until the live cutover and rollback check are complete; a tracked bucket name alone does not authorize a deployment switch.
+
+Credentials are individual `0600` files below `~/.config/rtk_cloud/<environment>/operator/env/`. Media uses `LINODE_MEDIA_OBJ_ACCESS_KEY_ID` / `LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY`; OTA uses `LINODE_OTA_OBJ_ACCESS_KEY_ID` / `LINODE_OTA_OBJ_SECRET_ACCESS_KEY`. Each key is limited to its bucket. The OTA pod receives the OTA key through the `ota-object-storage` Kubernetes Secret; API and clip workers keep the media key. Shared release uses `LINODE_ARTIFACT_OBJ_*`. Never commit secrets.
+
+## Operator lifecycle
+
+Fetch the latest workspace and submodule refs, inspect live buckets, then run `storage-plan`. Bootstrap each purpose explicitly, validate a signed list and write/read/delete canary, migrate eligible objects with checksums, cut over the owning workload, and keep old credentials until verified unused.
 
 ```bash
-rtk-cloud deployment storage-plan --environment staging
-rtk-cloud deployment storage-bootstrap --environment staging --confirm video-cloud-staging
-rtk-cloud deployment storage-migrate --environment staging --source-env-file /secure/source.env --confirm video-cloud-staging
-rtk-cloud deployment storage-cutover --environment staging --confirm video-cloud-staging
-rtk-cloud deployment storage-retire --environment staging --key-id 12345 --confirm video-cloud-staging
+rtk-cloud deployment storage-plan --environment dev
+rtk-cloud deployment storage-bootstrap --environment dev --purpose media --confirm video-cloud-dev
+rtk-cloud deployment storage-bootstrap --environment dev --purpose ota --confirm video-cloud-dev
+rtk-cloud deployment storage-migrate --environment dev --purpose media --source-env-file /secure/media-source.env --confirm video-cloud-dev
+rtk-cloud deployment storage-migrate --environment dev --purpose ota --source-env-file /secure/ota-source.env --confirm video-cloud-dev
+rtk-cloud deployment storage-cutover --environment dev --purpose media --confirm video-cloud-dev
+rtk-cloud deployment storage-cutover --environment dev --purpose ota --confirm video-cloud-dev
 ```
 
-- `storage-plan` resolves compute/storage intent and discovers regional S3 endpoints through Linode.
-- `storage-bootstrap` creates a missing destination bucket, issues a bucket-limited `read_write` key, validates it, and atomically updates the environment-local SecretStore.
-- `storage-migrate` copies only `clips/`, `brands/`, and `firmware/` beneath the environment prefix. It records per-object SHA-256 and resumable byte/object totals in `runtime/state/storage-migration.json`.
-- `storage-cutover` revalidates the destination, runs a clip-path upload/read/delete smoke test, updates the runtime Secret, rolls the API and clip verifier, waits for readiness, and retains rollback credentials.
-- `storage-retire` requires cutover state plus `runtime/state/storage-consumers.json` containing `"generic_key_in_use": false`. It revokes only `--key-id`; it never deletes a bucket.
+Routine deployment does not silently create buckets. `--purpose media` is the compatibility default. Media migration includes `clips/`, `brands/`, `snapshots/`, `clip-index/`, and historical `ota/` / `firmware/`. OTA migration includes only `ota-billable-v1/`. Keys already beneath the environment prefix are not prefixed twice. Per-object SHA-256 receipts are kept in ignored runtime state. Never rewrite a historical `ota/` key into `ota-billable-v1/`.
 
-The compatibility flags `--create-missing-object-storage-bucket` and `--grant-object-storage-bucket-access` route to storage bootstrap for resolved environments.
+OTA cutover requires independent OTA service registration, CDN configuration, validated OTA storage, and a ready deployment. If service registration is disabled, the bucket can be prepared but no cutover is recorded. `storage-retire` covers the existing media key lifecycle only: it requires cutover state plus `storage-consumers.json` confirming `generic_key_in_use: false` and revokes one explicit key ID. OTA key retirement requires separate consumer verification. No command deletes buckets.
 
-## Validation receipt
-
-`credentials-check` and `provision` verify region capabilities, exact bucket region, API-reported endpoint, limited-key scope, signed list, and a reserved-prefix write/read/delete canary. Success writes `runtime/state/storage-preflight.json` containing only environment, purpose, bucket, region, endpoint, numeric key ID, redacted access-key suffix, and timestamp.
-
-Secrets must never be committed. Runtime state is ignored and should be backed up using the existing encrypted environment-state process.
+Media validation writes `runtime/state/storage-preflight.json`; OTA validation writes `runtime/state/storage-preflight-ota.json`. Receipts contain bucket, region, API endpoint, numeric key ID, redacted access suffix, and time. Runtime state should be backed up using the encrypted environment-state procedure.
