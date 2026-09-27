@@ -143,6 +143,8 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    signed completion reports, all four usage facts, outbox delivery, and
    Billing receipts before accepting the cutover. For rollback, restore the
    core handler and wait for its rollout before removing the device edge route.
+   If the core Deployment is absent while the live ingress still has the OTA
+   route, keep the route until the core handler is restored.
    Enable the Logger HTTP and MQTT cutovers only after its registered readiness,
    pinned per-device grant check, and tiered storage all pass. Old devices
    without `device_logging` must be denied new uploads.

@@ -355,6 +355,15 @@ func TestLKEOTADeviceEdgeRollbackRejectsUnknownCoreState(t *testing.T) {
 		})
 	}
 	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", "")
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{"spec":{"rules":[{"http":{"paths":[{"path":"/v1/device/ota/"}]}}]}}`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err == nil || !strings.Contains(err.Error(), "core API is absent") {
+		t.Fatalf("removed a live OTA edge route while core Deployment was absent: %v", err)
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err == nil || !strings.Contains(err.Error(), "decode device OTA ingress") {
+		t.Fatalf("accepted an unreadable live ingress during rollback: %v", err)
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{"spec":{"rules":[]}}`)
 	if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
 		t.Fatalf("absent core Deployment should not block rollback: %v", err)
 	}

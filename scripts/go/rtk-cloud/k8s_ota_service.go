@@ -309,6 +309,29 @@ func lkePreventOTAEdgeRollbackOverlap(env map[string]string) error {
 		return fmt.Errorf("inspect core OTA cutover before edge rollback: %w", err)
 	}
 	if len(strings.TrimSpace(string(body))) == 0 {
+		ingressBody, err := kubectlCombinedOutput(nil, "-n", lkeIngressNamespace(env), "get", "ingress", "video-cloud-staging-device-mtls", "--ignore-not-found=true", "-o", "json")
+		if err != nil {
+			return fmt.Errorf("inspect device OTA ingress before edge rollback: %w", err)
+		}
+		if len(strings.TrimSpace(string(ingressBody))) > 0 {
+			var ingress map[string]any
+			if err := json.Unmarshal(ingressBody, &ingress); err != nil {
+				return fmt.Errorf("decode device OTA ingress before edge rollback: %w", err)
+			}
+			spec, _ := ingress["spec"].(map[string]any)
+			rules, _ := spec["rules"].([]any)
+			for _, rawRule := range rules {
+				rule, _ := rawRule.(map[string]any)
+				httpRule, _ := rule["http"].(map[string]any)
+				paths, _ := httpRule["paths"].([]any)
+				for _, rawPath := range paths {
+					path, _ := rawPath.(map[string]any)
+					if path["path"] == "/v1/device/ota/" {
+						return fmt.Errorf("core API is absent while live device ingress still routes OTA to the edge service")
+					}
+				}
+			}
+		}
 		return nil
 	}
 	var deployment struct {

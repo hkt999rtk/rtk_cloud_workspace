@@ -7252,7 +7252,7 @@ if [[ "$*" == *"get ingress video-cloud-staging-public -o json"* ]]; then
   fi
   exit 0
 fi
-if [[ "$*" == *"get ingress video-cloud-staging-device-mtls -o json"* ]]; then
+if [[ "$*" == *"get ingress video-cloud-staging-device-mtls -o json"* || "$*" == *"get ingress video-cloud-staging-device-mtls --ignore-not-found=true -o json"* ]]; then
   if [[ -n "${FAKE_WEBRTC_DEVICE_INGRESS_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_WEBRTC_DEVICE_INGRESS_JSON"
   else
