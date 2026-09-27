@@ -32,7 +32,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 ### staging 底卡的唯讀盤點（2026-09-27）
 
-固定 workspace 版本 `ac44a6d2ecf8ac4ed8f9531a00516263348312f4` 的 staging Billing 仍在 schema 061；目前有效 TWD 底卡含四筆 MQTT 及一筆 `qualification/staging_units`，沒有 OTA rate。五筆舊 rate 均缺 `quantity_scale` 與 `tax_category`；現有 staging 用量的五種 metric 都以精度 0 記錄，但仍須逐筆確認正式語義。舊版費率有早期重疊區間，四張已結算帳單保留各自版次；不得改寫歷史底卡或已出帳紀錄。受限的完整盤點與快照雜湊存於 `/private/tmp/ota-staging-billing-price-audit-20260927.md`，本文件不刊登實際底卡價格。
+固定 workspace 版本 `ac44a6d2ecf8ac4ed8f9531a00516263348312f4` 的 staging Billing 仍在 schema 061；目前有效 TWD 底卡含四筆 MQTT 及一筆 `qualification/staging_units`，沒有 OTA rate。五筆舊 rate 均缺 `quantity_scale` 與 `tax_category`；現有 staging 用量的五種 metric 都以精度 0 記錄，但仍須逐筆確認正式語義。舊版費率有早期重疊區間，四張已結算帳單保留各自版次；不得改寫歷史底卡或已出帳紀錄。可分享的彙總與快照雜湊記於 [staging Billing evidence](../billing-twd-staging-evidence-20260924.md)，完整底卡僅留受限操作證據，不在本文件刊登實際價格。
 
 Billing [#39](https://github.com/hkt999rtk/rtk_billing/pull/39) 已在原定 Billing commit `78572b91bb2f4806c5c8f02ab62610e80e2c4a25` 上補足舊底卡的受審核草案路徑並通過 CI：完整候選卡只能明示填補原本為 null 的精度與稅別，不能更動已知欄位、單價或其他非 OTA 費率；原子建卡時重驗唯讀審核的 rate-set digest。此 leaf 修正尚未納入固定 development 部署，也沒有建立或發佈 staging 價卡。`qualification/staging_units` 是否保留，以及五筆 rate 的精度 0／`standard` 稅別如何正式核准，仍是建卡前的明確決策。staging PKI 的 API／MQTT 消費端和 Device Root 信任也未就緒，維持 **NO-GO**。
 
