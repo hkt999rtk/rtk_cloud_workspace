@@ -6140,7 +6140,7 @@ func TestStartK8SE2EPortForwardsStartsAllBeforeWaiting(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_PORT", videoPort)
 	t.Setenv("CLOUD_STAGING_E2E_FACTORY_ENROLL_PORT", factoryPort)
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", mqttPort)
-	t.Setenv("LKE_CLOUD_LOGGER_PORT", loggerPort)
+	t.Setenv("CLOUD_STAGING_E2E_LOGGER_PORT", loggerPort)
 
 	_, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
 	if err != nil {
@@ -6178,7 +6178,7 @@ func TestStartK8SE2EPortForwardsCanTargetPKIMQTTService(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_DEVICE_TOKEN_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_APP_TOKEN_PORT", freeTCPPort(t))
-	t.Setenv("LKE_CLOUD_LOGGER_PORT", freeTCPPort(t))
+	t.Setenv("CLOUD_STAGING_E2E_LOGGER_PORT", freeTCPPort(t))
 	t.Setenv("CLOUD_STAGING_E2E_MQTT_SERVICE", "mqtt-pki")
 
 	_, cleanup, err := startK8SE2EPortForwards(workspace, envRoot)
@@ -7108,6 +7108,22 @@ if [[ "$*" == *"get secret ota-service-platform-identity -o json"* ]]; then
   printf 'OTA service identity Secret is absent\n' >&2
   exit 1
 fi
+if [[ "$*" == *"get secret ota-cdn-runtime -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_CDN_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_CDN_SECRET_JSON"
+    exit 0
+  fi
+  printf 'OTA CDN runtime Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get secret video-cloud-workers-runtime -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_WORKERS_RUNTIME_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_WORKERS_RUNTIME_SECRET_JSON"
+    exit 0
+  fi
+  printf 'video cloud workers Secret is absent\n' >&2
+  exit 1
+fi
 if [[ "$*" == *"get service account-manager -o json"* ]]; then
   if [[ -n "${FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON"
@@ -7143,6 +7159,22 @@ fi
 if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-videostorage -o json"* ]]; then
   if [[ -n "${FAKE_VIDEO_STORAGE_ENDPOINTSLICES_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_VIDEO_STORAGE_ENDPOINTSLICES_JSON"
+  else
+    printf '{"items":[]}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get service video-cloud-otaservice -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_SERVICE_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_SERVICE_JSON"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-otaservice -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_ENDPOINTSLICES_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_ENDPOINTSLICES_JSON"
   else
     printf '{"items":[]}\n'
   fi
@@ -7235,6 +7267,10 @@ if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o json"*
   exit 0
 fi
 if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON"
+    exit 0
+  fi
   printf '{"data":{"VIDEO_CLOUD_AUTH_SECRET":"dGVzdC12aWRlby1hdXRo","VIDEO_CLOUD_LOGGER_TOKEN":"dGVzdC1sb2dnZXItdG9rZW4="}}\n'
   exit 0
 fi

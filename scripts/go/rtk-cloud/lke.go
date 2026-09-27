@@ -1513,6 +1513,9 @@ func lkePublicHTTPSNetworkPolicyManifests(env map[string]string, routes []lkePub
 	if lkeVideoStorageCoreCutoverEnabled(env) {
 		manifests = append(manifests, lkeAllowVideoCloudAPIStorageGatewayNetworkPolicyManifest(env))
 	}
+	if lkeOTAServiceRegistrationEnabled(env) || lkeOTACoreCutoverEnabled(env) {
+		manifests = append(manifests, lkeAllowVideoCloudAPIOTAGatewayNetworkPolicyManifest(env))
+	}
 	manifests = append(manifests, lkeAllowVideoCloudMQTTClientsNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXMQTTUsageNetworkPolicyManifest(env))
 	manifests = append(manifests, lkeAllowEMQXClusterNetworkPolicyManifest(env))
@@ -1597,7 +1600,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [video-cloud-mqttusage, video-cloud-logingester]
+                values: [video-cloud-mqttusage, video-cloud-logingester, video-cloud-otaservice]
       ports:
         - { protocol: TCP, port: 8080 }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"), lkeNamespaceName(env, "video-cloud"))
@@ -1946,6 +1949,7 @@ spec:
                   - video-cloud-videostorage
                   - video-cloud-logingester
                   - video-cloud-otaregistrar
+                  - video-cloud-otaservice
       ports:
         - protocol: TCP
           port: 8443
@@ -2463,6 +2467,19 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
+		if err := lkeRequireOTAServiceInputs(env); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTACoreCutoverEnabled(env) {
+		if !lkeOTAServiceRegistrationEnabled(env) {
+			return fmt.Errorf("OTA core cutover requires the independent registered OTA service")
+		}
+		if err := lkeRequireReadyOTAServiceEndpoint(env); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeLoggerHTTPCoreCutoverEnabled(env) || lkeLoggerMQTTCoreCutoverEnabled(env)) && !lkeLoggerServiceRegistrationEnabled(env) {
 		return fmt.Errorf("Logger cutover requires the registered Logger service")
 	}
@@ -2531,7 +2548,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
-	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTARegistrarRegistrationEnabled(env)) {
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeMQTTFoundationRegistrationEnabled(env) || lkeShadowWorkerRegistrationEnabled(env) || lkeWebRTCServiceRegistrationEnabled(env) || lkeVideoStorageServiceRegistrationEnabled(env) || lkeLoggerServiceRegistrationEnabled(env) || lkeOTARegistrarRegistrationEnabled(env) || lkeOTAServiceRegistrationEnabled(env)) {
 		if err := kubectlApply(lkeAllowServiceRegistrationNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
@@ -2618,6 +2635,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeVideoStorageCoreCutoverEnabled(env) {
 		if err := kubectlApply(lkeAllowVideoCloudAPIStorageGatewayNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && (lkeOTAServiceRegistrationEnabled(env) || lkeOTACoreCutoverEnabled(env)) {
+		if err := kubectlApply(lkeAllowVideoCloudAPIOTAGatewayNetworkPolicyManifest(env)); err != nil {
 			return err
 		}
 	}
@@ -2716,6 +2738,17 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-otaregistrar", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
+		if err := kubectlApply(lkeOTAServiceDeploymentManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeOTAServiceServiceManifest(env)); err != nil {
+			return err
+		}
+		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/"+otaServiceWorkloadName, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
 			return err
 		}
 	}
@@ -2997,6 +3030,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/shadowworke
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorage ./cmd/videostorage
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaregistrar ./cmd/otaregistrar
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaservice ./cmd/otaservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile
@@ -3022,6 +3056,7 @@ COPY --from=builder /out/shadowworker /app/shadowworker
 COPY --from=builder /out/webrtcservice /app/webrtcservice
 COPY --from=builder /out/videostorage /app/videostorage
 COPY --from=builder /out/otaregistrar /app/otaregistrar
+COPY --from=builder /out/otaservice /app/otaservice
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
 COPY --from=builder /out/clipreconcile /app/clipreconcile
@@ -10009,6 +10044,14 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED
               value: %q
 `, strconv.FormatBool(lkeOTAEntitlementsRequired(env)))
+		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED
+              value: %q
+`, strconv.FormatBool(lkeOTACoreCutoverEnabled(env)))
+		if lkeOTACoreCutoverEnabled(env) {
+			extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_UPSTREAM_URL
+              value: %q
+`, "http://"+otaServiceWorkloadName+"."+lkeNamespaceName(env, "video-cloud")+".svc.cluster.local:18084")
+		}
 		extraEnv += fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED
               value: %q
 `, strconv.FormatBool(lkeMQTTEntitlementsRequired(env)))
