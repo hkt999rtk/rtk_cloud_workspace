@@ -26,6 +26,21 @@ The RTK provider quota planner counts these three volumes once
 `SUPPORT_TICKETS_ENABLED=true`; include them manually in the bootstrap
 projection while the feature is still disabled.
 
+Before running Helm, count the account's existing Linode instances, Block
+Storage volumes and NodeBalancers, then reserve three more active services for
+each environment that will run Zammad. Confirm the account's **active services**
+ceiling with Linode Support and update `LKE_ACTIVE_SERVICE_LIMIT` in the
+environment configuration after an increase is approved. The separate Block
+Storage volume quota does not establish that a new volume can be created: the
+dev bootstrap on 2026-09-28 was rejected by the active-services limit on its
+third PVC even though the volume-specific quota had room. Keep the feature
+disabled until all three PVCs bind and the chart becomes ready.
+
+The storage class uses `Retain`. If bootstrap fails and the release is removed,
+delete only the PVCs and PVs created by that attempt, then verify and remove
+their corresponding detached Linode volumes. Removing the Helm release or PVCs
+alone may leave chargeable volumes behind.
+
 ## Preparation
 
 1. Keep `SUPPORT_TICKETS_ENABLED=false` in the target environment until all
