@@ -86,6 +86,14 @@ The default unassigned owner ID is `1`; set
 `ZAMMAD_UNASSIGNED_OWNER_ID` if this instance differs. Create approved Agent
 users separately with login `rtk-<Account Manager user ID>`, Agent role and
 `full` access to the `RTK Support` group.
+Set Zammad's `ticket_last_contact_behaviour` to
+`based_on_customer_reaction` for this dedicated instance. The default
+`check_if_agent_already_replied` keeps the start of a consecutive customer
+thread as `last_contact_at`, so later customer replies would not update the
+Cloud list or other members' unread markers. Verify the setting by posting two
+customer `web` replies in succession and checking that each advances
+`last_contact_at`. In the private Zammad Rails console, use
+`Setting.set('ticket_last_contact_behaviour', 'based_on_customer_reaction')`.
 The BFF never creates or promotes Agents; an unprovisioned operator receives a
 service-unavailable response. Customer user records may be created by the BFF.
 After bootstrap, create a dedicated integration Agent with `full` access to
@@ -97,16 +105,19 @@ support operator's Zammad Agent role when their Account Manager support
 assignment ends; this also prevents future assignment to that identity.
 
 The local `7.1.2-0013` container probe passed token authentication, Customer
-creation and `login:` search, two-Cloud custom-field search, `origin_by_id`
-for Customer and Agent articles, public/internal notes, attachment download,
+creation and `login:` search, two-Cloud custom-field search, Customer
+`origin_by_id`, public/internal notes, attachment download,
 assignment and state update. Search indexing depends on the running Zammad
 scheduler and may lag writes briefly. Repeat the API probe in dev before
 enabling the feature. Verify that custom-field search returns the right tickets,
-`origin_by_id` attributes public and internal articles to the intended RTK
-actor, and attachment IDs resolve only under their owning ticket/article.
-Verify that a public `web` reply advances `last_contact_at`, whereas an
-internal `note` does not; after a customer marks a ticket seen, an internal
-note must not make that ticket unread or expose the note's update time.
+Customer `origin_by_id` identifies the RTK customer, Agent article `preferences`
+retain the verified RTK Agent ID and name, and attachment IDs resolve only under
+their owning ticket/article. Do not set `origin_by_id` on Agent articles: the
+pinned local model probe showed Zammad changes their sender to Customer if it
+is present. Verify that Agent and Customer public `web` replies advance
+`last_contact_at`, whereas an internal `note` does not. After a customer marks
+a ticket seen, an internal note must not make that ticket unread or expose its
+update time.
 Run the Admin cross-Cloud and Viewer tests. Verify the support list and detail
 through Admin using existing sessions, with Zammad's own UI unreachable from
 public networks.
