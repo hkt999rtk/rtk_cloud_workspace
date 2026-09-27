@@ -146,7 +146,7 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    a device certificate succeeds, no certificate is rejected, and `check`,
    `artifact-token`, and `events` reach the independent service. The OTA
    device simulator must use the device mTLS URL with each device's certificate;
-   its CDN artifact client must not send that certificate to the download
+   its direct-download client must not send that certificate to the download
    endpoint. Verify direct downloads from
    the selected CDN or Object Storage endpoint,
    signed completion reports, all four usage facts, outbox delivery, and
