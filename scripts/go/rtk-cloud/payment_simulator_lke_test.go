@@ -414,7 +414,7 @@ func TestLKEBillingPayPalRuntimeUsesSelectedEnvironmentSecrets(t *testing.T) {
 		"PAYPAL_WEBHOOK_ID: \"sandbox-webhook\"",
 		"PAYPAL_RETURN_URL: \"https://billing.video-cloud-dev.example.test/v1/payment-returns/paypal\"",
 		"PAYPAL_CANCEL_URL: \"https://billing.video-cloud-dev.example.test/v1/payment-returns/paypal/cancel\"",
-		"PAYPAL_AFTER_RETURN_URL: \"https://admin.video-cloud-dev.example.test/console/billing/activity\"",
+		"PAYPAL_AFTER_RETURN_URL: \"https://admin.video-cloud-dev.example.test\"",
 	} {
 		if !strings.Contains(manifest, want) {
 			t.Fatalf("PayPal runtime manifest missing %s", want)
