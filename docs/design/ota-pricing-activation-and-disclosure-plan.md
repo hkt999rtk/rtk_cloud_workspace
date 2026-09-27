@@ -30,6 +30,10 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 | P1 後續、P3 後續、A1 正式價卡／月份／價格 API | Billing 已合併受控的 OTA UTC 月初發佈路徑：以完整底卡、四項核准價、rate-set digest、兩名審核者及帳單總額 5% 稅規則驗證草案，在同一交易保存發佈稽核與版次切換；一般 activation 仍拒絕 OTA。完整審核資料的原子化建卡工具已合併 Billing main 並部署 development；目標環境的完整月份遷移尚未實作。Billing 客戶當期／預告價 API 及 Cloud Admin 代理已部署 development；該環境尚無任何當期／預告 TWD 版次，也沒有啟用 OTA pricing version。 |
 | Q1、R1 環境資格與正式發佈 | 2026-09-26 staging 唯讀前置檢查為 **NO-GO**：PKI registry 沒有 Device-domain issuer，live `pki-controller` 也沒有環境專屬 Device Root ID／指紋綁定，因此未建立 Product 裝置或執行 OTA staging E2E。staging Video Cloud 尚無 OTA receipts／artifact／CDN review／producer seal 表，Billing 尚無 OTA period seal 表；兩邊 OTA outbox／usage fact 皆無紀錄，現有部署不能驗證新程式的計量路徑。Linode／儲存讀取與 Account Manager→certissuer mTLS 檢查通過，但不取代 Product PKI 與 OTA schema／跨服務對帳驗收。仍須通過 5% 帳單總額計稅、帳戶／Product 適用證據、UTC 月份、CDN 成本／完整性及 staging 對帳關卡；正式電子發票流程暫不在本次範圍，且尚未正式發佈。 |
 
+### OTA 裝置路由切換順序
+
+獨立 OTA 服務先取得 `service:ota` 身分、private CDN 設定及 Product 授權，再啟用 `LKE_OTA_SERVICE_REGISTRATION_ENABLED`，確認 Pod Ready、lease 與私有 Service endpoint。之後單獨啟用 `LKE_OTA_SERVICE_EDGE_ENABLED`，使 `device.<VIDEO_CLOUD_DOMAIN>` 上的 `/v1/device/ota/` 經要求裝置憑證的 ingress 送到獨立服務；須實測憑證有效、無憑證拒絕、check／artifact-token／events 成功及 CDN URL 直下載。最後才啟用 `LKE_OTA_CORE_CUTOVER_ENABLED`；部署前檢查必須看見**實際已生效**的 mTLS ingress path 和 Ready OTA endpoint。一般 public API host 不能代替裝置 mTLS 入口。回復時先恢復核心 handler，再移除裝置 edge route。OTA 裝置模擬器的控制請求須用裝置 mTLS host 與各裝置憑證；CDN 下載用不帶裝置憑證的獨立 client。以上路徑程式碼完成、PR 與 live 驗收前仍屬待完成項。
+
 ### development 部署與計費狀態（2026-09-27）
 
 - 已合併 contracts #177、Account Manager #352、Billing #35／#36、Cloud Admin #427／#428 及 workspace #534／#535／#536／#537。development 初次以最新 main immutable digest 更新 25 個 Deployment，隨後將 Cloud Admin 更新至 `a163fdc63ec4`（`sha256:6eb0a7ce…`），將 Billing API、payment worker、settlement collector 與 payment simulator 更新至 `440d18c419b5`（`sha256:2171f712…`）。各目標 Pod 均 ready，執行中 image ID 與目標 digest 相符；Video Cloud、Billing、Cloud Admin、Frontend 健康端點及 Account Manager `/v1/health` 回應 200。

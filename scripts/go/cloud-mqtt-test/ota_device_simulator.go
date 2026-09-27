@@ -417,7 +417,10 @@ func runOTADeviceSimulator(assignments []assignment, certs []certRecord, brandna
 			defer wg.Done()
 			deviceCtx, deviceCancel := context.WithTimeout(ctx, config.Timeout)
 			defer deviceCancel()
-			results <- runner.runDevice(deviceCtx, session)
+			deviceRunner := runner
+			deviceRunner.httpClient = newOTADeviceHTTPClient(config.Timeout, session.DeviceTokenManager.cert)
+			defer deviceRunner.httpClient.CloseIdleConnections()
+			results <- deviceRunner.runDevice(deviceCtx, session)
 		}()
 	}
 	wg.Wait()
@@ -445,6 +448,15 @@ func newOTAHTTPClient(timeout time.Duration) *http.Client {
 		timeout = 30 * time.Minute
 	}
 	return &http.Client{Transport: transport, Timeout: timeout}
+}
+
+// OTA control requests use the device mTLS host and the certificate belonging
+// to this session. The CDN artifact client remains separate and certificate-free.
+func newOTADeviceHTTPClient(timeout time.Duration, cert tls.Certificate) *http.Client {
+	client := newOTAHTTPClient(timeout)
+	transport := client.Transport.(*http.Transport)
+	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}
+	return client
 }
 
 func newOTADeviceResult(deviceID, deviceType string, config otaRuntimeConfig, fault, expectedTerminal string) otaDeviceResult {

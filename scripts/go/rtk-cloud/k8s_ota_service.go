@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -12,6 +13,10 @@ const otaServiceWorkloadName = "video-cloud-otaservice"
 
 func lkeOTAServiceRegistrationEnabled(env map[string]string) bool {
 	return lkeFeatureEnabled(env, "LKE_OTA_SERVICE_REGISTRATION_ENABLED")
+}
+
+func lkeOTAServiceEdgeEnabled(env map[string]string) bool {
+	return lkeFeatureEnabled(env, "LKE_OTA_SERVICE_EDGE_ENABLED")
 }
 
 func lkeOTACoreCutoverEnabled(env map[string]string) bool {
@@ -291,6 +296,99 @@ spec:
       port: 18084
       targetPort: http
 `, otaServiceWorkloadName, lkeNamespaceName(env, "video-cloud"), otaServiceWorkloadName, env["CLOUD_STACK_NAME"], otaServiceWorkloadName)
+}
+
+// Remove the device edge route only after the observed core Deployment has
+// restored its own OTA handler. A desired flag alone cannot prove that rollout.
+func lkePreventOTAEdgeRollbackOverlap(env map[string]string) error {
+	if lkeOTACoreCutoverEnabled(env) {
+		return fmt.Errorf("OTA device edge route cannot be removed while core cutover remains enabled")
+	}
+	body, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "deployment", "video-cloud-api", "--ignore-not-found=true", "-o", "json")
+	if err != nil {
+		return fmt.Errorf("inspect core OTA cutover before edge rollback: %w", err)
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return nil
+	}
+	var deployment struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name string `json:"name"`
+						Env  []struct {
+							Name  string `json:"name"`
+							Value string `json:"value"`
+						} `json:"env"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(body, &deployment); err != nil {
+		return fmt.Errorf("decode core OTA cutover state: %w", err)
+	}
+	if deployment.Metadata.Name != "video-cloud-api" {
+		return fmt.Errorf("inspect core OTA cutover: unexpected Deployment")
+	}
+	for _, container := range deployment.Spec.Template.Spec.Containers {
+		if container.Name != "app" {
+			continue
+		}
+		for _, variable := range container.Env {
+			if variable.Name == "VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED" && strings.EqualFold(variable.Value, "true") {
+				return fmt.Errorf("core API still has OTA handlers disabled; restore core handlers before removing device edge route")
+			}
+		}
+	}
+	if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-api", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+		return fmt.Errorf("core API has not completed OTA handler restoration: %w", err)
+	}
+	return nil
+}
+
+// The core may drop its device OTA handlers only after the live device-host
+// ingress sends that path to the independent service and still requires mTLS.
+func lkeRequireActiveOTADeviceEdgeRoute(env map[string]string) error {
+	ingress, err := kubectlResourceJSON(lkeIngressNamespace(env), "ingress", "video-cloud-staging-device-mtls")
+	if err != nil {
+		return fmt.Errorf("OTA core cutover requires device mTLS ingress: %w", err)
+	}
+	if !lkeIngressRequiresDeviceMTLS(ingress) {
+		return fmt.Errorf("OTA core cutover requires device mTLS ingress authentication")
+	}
+	host := firstNonEmpty(lkeEnvValue(env, "LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+env["VIDEO_CLOUD_DOMAIN"])
+	service := lkePublicHTTPSBridgeServiceName(env, lkePublicHTTPSRoute{Namespace: lkeNamespaceName(env, "video-cloud"), Service: otaServiceWorkloadName})
+	spec, ok := ingress["spec"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("OTA core cutover requires live device OTA ingress route")
+	}
+	rules, _ := spec["rules"].([]any)
+	for _, rawRule := range rules {
+		rule, ok := rawRule.(map[string]any)
+		if !ok || rule["host"] != host {
+			continue
+		}
+		httpRule, _ := rule["http"].(map[string]any)
+		paths, _ := httpRule["paths"].([]any)
+		for _, rawPath := range paths {
+			path, ok := rawPath.(map[string]any)
+			if !ok || path["path"] != "/v1/device/ota/" || path["pathType"] != "Prefix" {
+				continue
+			}
+			backend, _ := path["backend"].(map[string]any)
+			backendService, _ := backend["service"].(map[string]any)
+			port, _ := backendService["port"].(map[string]any)
+			if backendService["name"] == service && port["number"] == float64(18084) {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("OTA core cutover requires live device OTA ingress route")
 }
 
 // Cutover requires a private Service with a Ready endpoint. The process only

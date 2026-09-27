@@ -590,6 +590,16 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 	if err := lkeValidatePublicEdge(env); err != nil {
 		return err
 	}
+	if lkeOTAServiceEdgeEnabled(env) {
+		if !lkeOTAServiceRegistrationEnabled(env) {
+			return fmt.Errorf("OTA edge route requires the registered OTA service workload")
+		}
+		if err := lkeRequireReadyOTAServiceEndpoint(env); err != nil {
+			return err
+		}
+	} else if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
+		return err
+	}
 	if lkeWebRTCServiceEdgeEnabled(env) {
 		if !lkeWebRTCServiceRegistrationEnabled(env) {
 			return fmt.Errorf("WebRTC edge cutover requires the registered WebRTC service workload")
@@ -808,6 +818,10 @@ func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 				routes = append(routes, lkePublicHTTPSRoute{Host: host, Path: path, Exact: true, Namespace: videoNS, Service: "video-cloud-webrtcservice", ServicePort: 18082, TargetPort: 18082})
 			}
 		}
+	}
+	if lkeOTAServiceEdgeEnabled(env) {
+		// The device-host ingress enforces client mTLS before OTA requests reach the service.
+		routes = append(routes, lkePublicHTTPSRoute{Host: deviceDomain, Path: "/v1/device/ota/", Namespace: videoNS, Service: otaServiceWorkloadName, ServicePort: 18084, TargetPort: 18084})
 	}
 	return routes
 }
@@ -2473,10 +2487,16 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTACoreCutoverEnabled(env) {
+		if !lkeOTAServiceEdgeEnabled(env) {
+			return fmt.Errorf("OTA core cutover requires the device mTLS edge route")
+		}
 		if !lkeOTAServiceRegistrationEnabled(env) {
 			return fmt.Errorf("OTA core cutover requires the independent registered OTA service")
 		}
 		if err := lkeRequireReadyOTAServiceEndpoint(env); err != nil {
+			return err
+		}
+		if err := lkeRequireActiveOTADeviceEdgeRoute(env); err != nil {
 			return err
 		}
 	}

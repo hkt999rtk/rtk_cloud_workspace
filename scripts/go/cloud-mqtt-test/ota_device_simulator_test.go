@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -19,6 +21,44 @@ import (
 	"testing"
 	"time"
 )
+
+func TestOTADeviceControlClientPresentsOnlyItsDeviceCertificate(t *testing.T) {
+	certPEM, keyPEM, _ := testAppMaterial(t, "device-ota-1")
+	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/device/ota/check" || req.TLS == nil || len(req.TLS.PeerCertificates) != 1 || req.TLS.PeerCertificates[0].Subject.CommonName != "device-ota-1" {
+			t.Errorf("OTA request did not reach the mTLS device path with its certificate")
+			http.Error(w, "missing device identity", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert}
+	server.StartTLS()
+	defer server.Close()
+	client := newOTADeviceHTTPClient(time.Second, cert)
+	defer client.CloseIdleConnections()
+	roots := x509.NewCertPool()
+	roots.AddCert(server.Certificate())
+	client.Transport.(*http.Transport).TLSClientConfig.RootCAs = roots
+	resp, err := client.Get(server.URL + "/v1/device/ota/check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("device OTA status = %d", resp.StatusCode)
+	}
+	artifactClient := newOTAHTTPClient(time.Second)
+	defer artifactClient.CloseIdleConnections()
+	artifactClient.Transport.(*http.Transport).TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
+	if _, err := artifactClient.Get(server.URL + "/v1/device/ota/check"); err == nil {
+		t.Fatal("certificate-free artifact client passed device mTLS")
+	}
+}
 
 func TestRegisterOTAFlags(t *testing.T) {
 	opts := defaultOTAOptions()

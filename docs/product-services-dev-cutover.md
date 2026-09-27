@@ -97,7 +97,8 @@ stage. In particular, retain `LKE_LOGGER_RETENTION_STORAGE_ENABLED=true`,
 `LKE_LOGGER_SERVICE_REGISTRATION_ENABLED=true`, and both
 `LKE_LOGGER_HTTP_CORE_CUTOVER_ENABLED=true` and
 `LKE_LOGGER_MQTT_CORE_CUTOVER_ENABLED=true` after Logger cutover. Retain
-`LKE_OTA_SERVICE_REGISTRATION_ENABLED=true` and
+`LKE_OTA_SERVICE_REGISTRATION_ENABLED=true`,
+`LKE_OTA_SERVICE_EDGE_ENABLED=true`, and
 `LKE_OTA_CORE_CUTOVER_ENABLED=true` after OTA activation. The legacy
 `LKE_OTA_REGISTRAR_REGISTRATION_ENABLED` must remain `false`: the registrar
 and independent OTA service share one Platform lease. The
@@ -130,11 +131,18 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    Then enable `LKE_OTA_SERVICE_REGISTRATION_ENABLED` and wait for the
    independent `otaservice` Pod's `/readyz`, private EndpointSlice, and active
    `service:ota` lease. Check that it can reach Account Manager for historical
-   grants and Billing for usage-fact receipts. Only after that, enable
-   `LKE_OTA_CORE_CUTOVER_ENABLED` to forward the core OTA routes to the private
-   service. Verify direct CDN downloads, signed completion reports, all four
-   usage facts, outbox delivery, and Billing receipts before accepting the
-   cutover.
+   grants and Billing for usage-fact receipts. Next enable
+   `LKE_OTA_SERVICE_EDGE_ENABLED` and verify the live device-host mTLS ingress
+   routes `/v1/device/ota/` to `video-cloud-otaservice`: a device certificate
+   succeeds, no certificate is rejected, and `check`, `artifact-token`, and
+   `events` reach the independent service. The OTA device simulator must use
+   the device mTLS URL with each device's certificate; its CDN artifact client
+   must not send that certificate. Only after the observed ingress route and
+   private endpoint pass may `LKE_OTA_CORE_CUTOVER_ENABLED` disable the core
+   device handler and forward operator/app routes. Verify direct CDN downloads,
+   signed completion reports, all four usage facts, outbox delivery, and
+   Billing receipts before accepting the cutover. For rollback, restore the
+   core handler and wait for its rollout before removing the device edge route.
    Enable the Logger HTTP and MQTT cutovers only after its registered readiness,
    pinned per-device grant check, and tiered storage all pass. Old devices
    without `device_logging` must be denied new uploads.
