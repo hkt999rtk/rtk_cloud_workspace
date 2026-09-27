@@ -31,7 +31,7 @@ The independent OTA service writes `ota-billable-v1/` inside its configured pref
 
 ## Configuration and credentials
 
-Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated`, `colocated` policy, and a bucket distinct from media. `legacy-shared` preserves Staging and Prod behavior until each is independently migrated.
+Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated`, `colocated` policy, and the exact bucket name `rtk-ota-firmware-<environment>-<resolved storage region>`, distinct from media. Configuration validation rejects a mismatched environment or region suffix before bootstrap or cutover. `legacy-shared` preserves Staging and Prod behavior until each is independently migrated.
 
 When a configured media target has been prepared but the live workloads still use the old bucket, set `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true`. Dev uses this gate. Normal create, upgrade, provision, and test commands then require a matching `storage-cutover.json` receipt before changing workloads. Bootstrap and migration remain available. Keep the gate until the live cutover and rollback check are complete; a tracked bucket name alone does not authorize a deployment switch.
 

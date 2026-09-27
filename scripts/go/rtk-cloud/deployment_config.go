@@ -1106,6 +1106,13 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] == runtime["RUNTIME_MEDIA_STORAGE_BUCKET"] {
 			return deploymentStoragePlan{}, errors.New("dedicated OTA bucket must differ from runtime media bucket")
 		}
+		if computeRegion == "" {
+			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires a resolved compute and storage region")
+		}
+		expectedBucket := "rtk-ota-firmware-" + filepath.Base(environmentRoot) + "-" + computeRegion
+		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] != expectedBucket {
+			return deploymentStoragePlan{}, fmt.Errorf("dedicated OTA bucket must be %s for the selected environment and storage region", expectedBucket)
+		}
 		ota.Bucket = runtime["RUNTIME_OTA_STORAGE_BUCKET"]
 		ota.Prefix = strings.Trim(runtime["RUNTIME_OTA_STORAGE_PREFIX"], "/")
 	}
