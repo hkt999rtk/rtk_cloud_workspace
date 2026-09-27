@@ -78,7 +78,7 @@ The actual staging file path is:
 cloud_env/staging/runtime/adapters/lke/account.env
 ```
 
-`LKE_ACTIVE_SERVICE_LIMIT` is the active-service limit allowed for the Linode account. It is neither another API secret nor architecture/default configuration. The Linode API does not currently expose an endpoint that can query this limit with `LINODE_TOKEN`, so the operator must set it manually from Linode's account confirmation. Before creating any billable resource, deployment compares `current active services + planned resources` with this limit. Stop if the value is unknown; do not guess.
+`LKE_ACTIVE_SERVICE_LIMIT` is the operator's active-service safety cap for the Linode account. It is neither another API secret nor architecture/default configuration. The Linode API does not currently expose an endpoint that can query the exact account ceiling with `LINODE_TOKEN`. Set the cap from Linode's account confirmation, or use a lower conservative cap supported by a directly observed successful concurrent service count and record that evidence in the ignored operator file. Never set it above a confirmed or observed allowance. Before creating any billable resource, deployment compares `current active services + planned resources` with this cap. Stop if no verified cap is available; do not guess.
 
 Cloud Admin batch-job recovery additionally requires a dedicated Account Manager
 job-authorization service credential in the environment SecretStore. It must not

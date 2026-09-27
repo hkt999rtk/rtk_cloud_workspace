@@ -1,6 +1,6 @@
 # Private Zammad service for RTK Cloud Admin
 
-Status: implementation prepared; pinned local API probe passed; no environment is enabled or deployed.
+Status: dev deployed and enabled on 2026-09-28; staging and production remain disabled.
 
 ## Release and topology
 
@@ -28,13 +28,16 @@ projection while the feature is still disabled.
 
 Before running Helm, count the account's existing Linode instances, Block
 Storage volumes and NodeBalancers, then reserve three more active services for
-each environment that will run Zammad. Confirm the account's **active services**
-ceiling with Linode Support and update `LKE_ACTIVE_SERVICE_LIMIT` in the
-environment configuration after an increase is approved. The separate Block
-Storage volume quota does not establish that a new volume can be created: the
-dev bootstrap on 2026-09-28 was rejected by the active-services limit on its
-third PVC even though the volume-specific quota had room. Keep the feature
-disabled until all three PVCs bind and the chart becomes ready.
+each environment that will run Zammad. The separate Block Storage volume quota
+does not establish that a new volume can be created: the first dev bootstrap on
+2026-09-28 was rejected by the active-services limit on its third PVC. After
+explicit cleanup of 13 retired volumes, dev had 41 active services; all three
+new PVCs bound at a projected 44. Dev uses 56 as a conservative operator cap:
+56 concurrent services were directly observed to succeed before the failed
+57th creation. The exact Linode account ceiling is still not published by its
+API. Record a provider-confirmed ceiling for staging and production before
+those protected rollouts. Keep each feature disabled until all three PVCs bind
+and the chart becomes ready.
 
 The storage class uses `Retain`. If bootstrap fails and the release is removed,
 delete only the PVCs and PVs created by that attempt, then verify and remove
@@ -147,9 +150,13 @@ does not need the Admin role. Place the issued token in SecretStore as
 `zammad-integration-token` and restrict it to server-side use. If the Zammad
 PostgreSQL data was reset, issue a fresh token from the new instance and
 replace any old SecretStore value; a nonempty file cannot authenticate against
-the replacement database. Revoke a support operator's Zammad Agent role when
-their Account Manager support
-assignment ends; this also prevents future assignment to that identity.
+the replacement database. Zammad requires at least one active Admin user.
+Keep a separate operator-only `rtk-zammad-operator` Admin account with a random
+password in that environment's `runtime/zammad-operator-admin-password`
+SecretStore file (mode `0600`); it has no public UI or Ingress. Do not give the
+integration Agent the Admin role. Revoke a support operator's Zammad Agent role
+when their Account Manager support assignment ends; this also prevents future
+assignment to that identity.
 
 The local pinned `7.1.2-0013` HTTP API probe passed Agent-only token
 authentication, Customer creation and `login:` search, two-Cloud custom-field
@@ -170,8 +177,10 @@ Run the Admin cross-Cloud and Viewer tests. Verify the support list and detail
 through Admin using existing sessions, with Zammad's own UI unreachable from
 public networks.
 
-Take a PostgreSQL backup containing a ticket, public reply, internal note and
-attachment. Restore it in staging and verify those records, the Cloud scope and
-the attachment bytes through Admin. Only then set the environment feature
-intent to `true` and deploy Admin through the protected environment flow.
-No production rollout is implied by this document.
+Before enabling staging, take a dev PostgreSQL backup containing a ticket,
+public reply, internal note and attachment. Restore it in staging and verify
+those records, the Cloud scope and the attachment bytes through Admin. Then
+set staging's feature intent to `true` and deploy Admin through the protected
+environment flow. Production needs the same restore evidence and its own
+protected rollout. The dev feature can be enabled after the local API and
+Admin integration checks above pass.

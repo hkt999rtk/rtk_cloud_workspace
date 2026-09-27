@@ -327,6 +327,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"fleet-read-token", "video-cloud,cloud-admin", "manual"},
 		{"ota-bff-token", "video-cloud,cloud-admin", "manual"},
 		{"zammad-integration-token", "cloud-admin", "manual"},
+		{"zammad-operator-admin-password", "zammad", "manual"},
 		{"zammad-postgres-password", "zammad", "manual"},
 		{"zammad-redis-password", "zammad", "manual"},
 		{"billing-debit-token", "billing", "manual"}, {"payment-simulator-shared", "billing", "manual"},
