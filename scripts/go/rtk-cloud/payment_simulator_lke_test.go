@@ -92,6 +92,57 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	if lkeRuntimeSecretCache["postgres"] != "existing-postgres" {
 		t.Fatal("targeted dependency apply rotated the PostgreSQL credential")
 	}
+	if strings.Contains(log, "billing-database-migrate") {
+		t.Fatal("Billing migration Job must remain opt-in for images without the one-shot command")
+	}
+}
+
+func TestLKEApplyTargetedBillingMigrationBeforeWorkload(t *testing.T) {
+	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	oldCache := lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-billing-migration-test-seed")
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":  "video-cloud-staging",
+		"LKE_BILLING_IMAGE": "registry.example.test/billing:with-migrate-command",
+	}
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"billing"}}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		`BILLING_DB_MIGRATE_ON_STARTUP: "false"`,
+		"name: billing-database-migrate",
+		"registry.example.test/billing:with-migrate-command",
+		`command: ["/rtk-billing-migrate"]`,
+		"job/billing-database-migrate",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("targeted Billing migration missing %q:\n%s", want, log)
+		}
+	}
+	if strings.Index(log, "job/billing-database-ensure") > strings.Index(log, "name: billing-database-migrate") {
+		t.Fatalf("Billing database ensure must finish before schema migration:\n%s", log)
+	}
+}
+
+func TestLKEBillingMigrationJobStopsOnKubectlFailure(t *testing.T) {
+	fakeKubectlForTargetedBillingDeploy(t)
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":  "video-cloud-staging",
+		"LKE_BILLING_IMAGE": "registry.example.test/billing:with-migrate-command",
+	}
+	for _, failure := range []string{"delete", "apply"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Setenv("FAKE_KUBECTL_FAIL_MIGRATION_"+strings.ToUpper(failure), "true")
+			if err := lkeApplyBillingMigrationJob(env); err == nil {
+				t.Fatalf("Billing migration %s failure did not stop rollout", failure)
+			}
+		})
+	}
 }
 
 func fakeKubectlForTargetedBillingDeploy(t *testing.T) string {
@@ -104,6 +155,15 @@ func fakeKubectlForTargetedBillingDeploy(t *testing.T) string {
 	}
 	script := `#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${FAKE_KUBECTL_FAIL_MIGRATION_DELETE:-}" == "true" && "$*" == *"delete job billing-database-migrate"* ]]; then
+  exit 8
+fi
+if [[ "${FAKE_KUBECTL_FAIL_MIGRATION_APPLY:-}" == "true" && "$*" == *"apply -f -"* ]]; then
+  content="$(cat)"
+  if [[ "$content" == *"name: billing-database-migrate"* ]]; then
+    exit 9
+  fi
+fi
 if [[ "$*" == *"get secret postgresql-runtime"* ]]; then
   printf '{"data":{"POSTGRES_PASSWORD":"ZXhpc3RpbmctcG9zdGdyZXM="}}\n'
   exit 0

@@ -224,6 +224,15 @@ different results. Do not report a complete staging release from ready Pods,
    the selected revision requires one. Do not assume a successful API rollout
    updated every auxiliary workload. This guardrail change does not rewrite that
    broader migration/worker orchestration.
+   For Billing images that contain `/rtk-billing-migrate`, explicitly set
+   `LKE_BILLING_MIGRATION_JOB_ENABLED=true` in the selected environment's
+   operator settings. The targeted and full dependency flows then wait for
+   `billing-database-ensure` and `billing-database-migrate` before updating
+   Billing workloads. The same setting renders
+   `BILLING_DB_MIGRATE_ON_STARTUP=false` into `billing-runtime`, so the API does
+   not issue DDL after the Job. Check the selected CI image includes the command,
+   save the prior image and schema version, and retain failed Job logs for review.
+   Leave the setting off for older images that do not contain this command.
    Before a protected Video Cloud PKI schema migration, run
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate

@@ -86,3 +86,35 @@ sign-off, but does not invalidate the independently observed TWD Billing
 summary and MQTT invoice. A later Test Lab acceptance run needs a fresh account
 and separate Product PKI qualification. Browser-only layout, external OAuth,
 WebGL/video playback and production behavior were not claimed by this run.
+
+## OTA full-card follow-up — 2026-09-27 (read-only)
+
+The fixed workspace release `ac44a6d2ecf8ac4ed8f9531a00516263348312f4`
+was used for a single repeatable-read inventory of the same staging Billing
+database. Schema remains 061. Five TWD versions contain nine rate rows; the
+currently effective version has four MQTT metrics and the qualification
+`staging_units` metric, with no OTA rate. All five current rates predate the
+nullable precision/tax-category columns and therefore have unresolved
+`quantity_scale` and `tax_category`. The existing facts for those five metric
+identities use integer precision (`quantity_scale=0`), three facts per metric.
+This staging sample is evidence for review, not approval of production meter
+precision or tax treatment.
+
+Four settled invoices retain pricing-version references. Historical retired
+rate intervals overlap during early September; preserve all issued invoices
+and investigate interval selection before any historical replay. There are
+zero OTA facts in this database. No database write or rate activation was made.
+The internal full-card snapshot is restricted to the operator's local 0600
+evidence file; its SHA-256 is
+`918067adacd1d2031724db9360624737c8d8f203630b4fceb42cf00a6363c20a`.
+
+[Billing PR #39](https://github.com/hkt999rtk/rtk_billing/pull/39) adds an
+explicit reviewed-candidate path for legacy null precision and tax category.
+It passed CI and merged after this fixed release was selected; it is not part
+of the deployed version. The candidate must preserve every known non-OTA
+field and monetary term, complete missing metadata explicitly, include the
+four approved OTA meters and match the read-only review digest before a draft
+can be written. No OTA draft or price card was created. The qualification rate
+retention and the five metadata values still require a decision before
+constructing the candidate; Product PKI and CDN acceptance remain separate
+staging gates.
