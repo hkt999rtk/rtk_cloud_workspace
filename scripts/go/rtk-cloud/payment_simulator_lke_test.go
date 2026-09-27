@@ -128,6 +128,23 @@ func TestLKEApplyTargetedBillingMigrationBeforeWorkload(t *testing.T) {
 	}
 }
 
+func TestLKEBillingMigrationJobStopsOnKubectlFailure(t *testing.T) {
+	fakeKubectlForTargetedBillingDeploy(t)
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":  "video-cloud-staging",
+		"LKE_BILLING_IMAGE": "registry.example.test/billing:with-migrate-command",
+	}
+	for _, failure := range []string{"delete", "apply"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Setenv("FAKE_KUBECTL_FAIL_MIGRATION_"+strings.ToUpper(failure), "true")
+			if err := lkeApplyBillingMigrationJob(env); err == nil {
+				t.Fatalf("Billing migration %s failure did not stop rollout", failure)
+			}
+		})
+	}
+}
+
 func fakeKubectlForTargetedBillingDeploy(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -138,6 +155,15 @@ func fakeKubectlForTargetedBillingDeploy(t *testing.T) string {
 	}
 	script := `#!/usr/bin/env bash
 set -euo pipefail
+if [[ "${FAKE_KUBECTL_FAIL_MIGRATION_DELETE:-}" == "true" && "$*" == *"delete job billing-database-migrate"* ]]; then
+  exit 8
+fi
+if [[ "${FAKE_KUBECTL_FAIL_MIGRATION_APPLY:-}" == "true" && "$*" == *"apply -f -"* ]]; then
+  content="$(cat)"
+  if [[ "$content" == *"name: billing-database-migrate"* ]]; then
+    exit 9
+  fi
+fi
 if [[ "$*" == *"get secret postgresql-runtime"* ]]; then
   printf '{"data":{"POSTGRES_PASSWORD":"ZXhpc3RpbmctcG9zdGdyZXM="}}\n'
   exit 0
