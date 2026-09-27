@@ -4,7 +4,7 @@ Status: draft target; no ticket runtime is deployed.
 
 Owner: rtk_cloud_workspace.
 
-Last reviewed: 2026-09-27.
+Last reviewed: 2026-09-28.
 
 Classification: supporting-note.
 
@@ -36,10 +36,10 @@ match this policy.
 | --- | --- | --- |
 | Account Manager | Human identity, live Brand Cloud membership, Viewer ceiling and support-team capabilities | Users, roles and memberships |
 | Cloud Admin BFF | Explicit-cloud authorization, Zammad adapter, customer-safe projection, notification read markers and audit | Console-local read markers and audit only |
-| Zammad | Ticket, state, support group/owner, article, attachment and searchable `rtk_cloud_id` | Ticket conversation and files |
+| Zammad | Ticket, state, support group/owner, article, attachment and searchable `rtk_cloud_uuid` | Ticket conversation and files |
 | RTK deployment | Private Zammad release, resources, credentials, backup and restore | Deployment intent and encrypted recovery set |
 
-A Zammad ticket has a BFF-immutable custom `rtk_cloud_id` equal to the Account
+A Zammad ticket has a BFF-immutable custom `rtk_cloud_uuid` equal to the Account
 Manager Brand Cloud UUID. It is the tenant discriminator even when one human
 belongs to several Clouds. One Zammad customer record maps to one RTK user ID;
 Zammad Organization is not used as the authorization boundary. The BFF always
@@ -81,12 +81,13 @@ omit email channels.
 
 The BFF may create Zammad Customer records for RTK users before customer
 writes. Approved Agent records are provisioned separately with the Agent role
-and `rtk-<Account Manager user ID>` login. The BFF never creates or promotes
-Agent accounts. It records the RTK actor in the resulting article/audit entry. Validate
-`origin_by_id` and custom-field search against the pinned Zammad release in a
-container integration test before enabling the feature. If either fails, adapt the
-server-side mapping and update the contract before activation; do not weaken
-tenant checks or show service-account identity as the customer author.
+and `rtk-<Account Manager user ID>` login. Approved Agents and the integration
+account also need `full` permission on the `RTK Support` group. The BFF never
+creates or promotes Agent accounts. It records the RTK actor in the resulting
+article/audit entry. The pinned Zammad 7.1.2-0013 container accepted
+`rtk_cloud_uuid`, Cloud-filtered search and `origin_by_id`; it rejected the
+earlier `rtk_cloud_id` object name because custom names cannot end in `_id`.
+Search indexing depends on the running scheduler and is eventually consistent.
 
 ## UI and HTTP flow
 
@@ -153,7 +154,8 @@ review because dependency major versions and data layouts can change.
 5. Roll out disabled by default; qualify dev, then staging including backup
    restore, then production through the existing protected-environment gate.
 
-The repository now contains a default-off Admin implementation, Agent
-permissions, pinned Helm values and a deployment runbook. Zammad remains
-undeployed; live API compatibility, capacity and restore qualification are
-release gates, not claims of completed validation.
+The repository contains a default-off Admin implementation, Agent permissions,
+pinned Helm values and a deployment runbook. Local pinned-version API
+compatibility has been exercised with two Cloud UUIDs, articles, attachment and
+assignment. Zammad remains undeployed; environment capacity and staging restore
+qualification are still release gates.

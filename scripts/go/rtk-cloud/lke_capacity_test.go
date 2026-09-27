@@ -60,6 +60,43 @@ esac
 	}
 }
 
+func TestLKESupportVolumesCountInQuotaAndReconcileByNamespace(t *testing.T) {
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "SUPPORT_TICKETS_ENABLED": "true"}
+	for _, opts := range []provisionOptions{{}, {workloads: []string{"cloud-admin"}}} {
+		plan := lkeProviderServices(env, 1, opts)
+		if plan.SupportVolumes != 3 {
+			t.Fatalf("support volumes = %d, want 3", plan.SupportVolumes)
+		}
+		withoutSupport := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "SUPPORT_TICKETS_ENABLED": "false"}
+		baseline := lkeProviderServices(withoutSupport, 1, opts)
+		if plan.RequiredServices-baseline.RequiredServices != 3 {
+			t.Fatalf("support service growth = %d, want 3", plan.RequiredServices-baseline.RequiredServices)
+		}
+	}
+	if got := lkeProviderServices(env, 1, provisionOptions{workloads: []string{"frontend"}}).SupportVolumes; got != 0 {
+		t.Fatalf("unrelated targeted support volumes = %d, want 0", got)
+	}
+
+	dir := t.TempDir()
+	kubeconfig := filepath.Join(dir, "kubeconfig.yaml")
+	writeTestFile(t, kubeconfig, "test kubeconfig\n")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/bin/sh
+case "$*" in
+  *"-n video-cloud-dev-support get pvc data-zammad-postgres-0 "*) printf 'Bound' ;;
+  *"-n video-cloud-dev-support get pvc data-zammad-redis-0 "*) printf 'Bound' ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECONFIG", kubeconfig)
+	if got := lkeMissingPlannedVolumeServices(provisionPaths{EnvRoot: dir}, env, lkeProviderServicePlan{SupportVolumes: 3}); got != 1 {
+		t.Fatalf("missing support volumes = %d, want 1 for the absent Elasticsearch PVC", got)
+	}
+}
+
 func TestLKECapacityPlanAcceptsExplicitOneKValidationProfile(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME":                        "video-cloud-staging",

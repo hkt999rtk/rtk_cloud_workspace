@@ -1,6 +1,6 @@
 # Private Zammad service for RTK Cloud Admin
 
-Status: implementation prepared; no environment is enabled or deployed.
+Status: implementation prepared; pinned local API probe passed; no environment is enabled or deployed.
 
 ## Release and topology
 
@@ -18,8 +18,13 @@ dependencies. Attachments use Zammad's default PostgreSQL database storage;
 the PostgreSQL PVC and its backup therefore contain both conversation and
 attachment data. The Elasticsearch index and caches are rebuildable. Inspect
 the chart's current resource requests, PVC sizes and image availability against
-the target LKE service limits before enabling. Chart upgrades require a new
+the target LKE service limits before enabling. The values request three 10Gi
+PVCs for PostgreSQL, Elasticsearch and Redis; budget at least 30Gi of Block
+Storage plus backup capacity per environment. Chart upgrades require a new
 render, backup compatibility check and staging restore.
+The RTK provider quota planner counts these three volumes once
+`SUPPORT_TICKETS_ENABLED=true`; include them manually in the bootstrap
+projection while the feature is still disabled.
 
 ## Preparation
 
@@ -54,22 +59,34 @@ render, backup compatibility check and staging restore.
 
 ## Zammad bootstrap and verification
 
-Create the `RTK Support` group and text ticket object fields `rtk_cloud_id`
-and `rtk_category`. The BFF sets the Cloud ID at creation and never offers a
-route to change it. Record the group's numeric ID as `ZAMMAD_SUPPORT_GROUP_ID`.
+Create the `RTK Support` group and custom Ticket object fields
+`rtk_cloud_uuid` and `rtk_category` as `input` fields with `type: text` and
+`maxlength: 255`. Zammad rejects custom attribute names ending in `_id`;
+the Cloud field must be `rtk_cloud_uuid`. Execute object migrations through
+`POST /api/v1/object_manager_attributes_execute_migrations` and restart Zammad
+before creating tickets. The BFF sets the Cloud UUID at creation and never
+offers a route to change it. Record the group's numeric ID as
+`ZAMMAD_SUPPORT_GROUP_ID`.
 The default unassigned owner ID is `1`; set
 `ZAMMAD_UNASSIGNED_OWNER_ID` if this instance differs. Create approved Agent
-users separately with login `rtk-<Account Manager user ID>` and Agent role.
+users separately with login `rtk-<Account Manager user ID>`, Agent role and
+`full` access to the `RTK Support` group.
 The BFF never creates or promotes Agents; an unprovisioned operator receives a
 service-unavailable response. Customer user records may be created by the BFF.
-After bootstrap, create an integration API token with permissions for ticket,
-article, attachment and customer-user operations, place it in SecretStore as
+After bootstrap, create a dedicated integration Agent with `full` access to
+`RTK Support`; a role and token without group access receive HTTP 403 when
+creating tickets. Issue its API token with permissions for ticket, article,
+attachment and customer-user operations, place it in SecretStore as
 `zammad-integration-token`, and restrict it to server-side use. Revoke a
 support operator's Zammad Agent role when their Account Manager support
 assignment ends; this also prevents future assignment to that identity.
 
-Before enabling the feature, exercise the pinned Zammad API in dev with two
-Cloud UUIDs. Verify that custom-field search returns the right tickets,
+The local `7.1.2-0013` container probe passed token authentication, Customer
+creation and `login:` search, two-Cloud custom-field search, `origin_by_id`
+for Customer and Agent articles, public/internal notes, attachment download,
+assignment and state update. Search indexing depends on the running Zammad
+scheduler and may lag writes briefly. Repeat the API probe in dev before
+enabling the feature. Verify that custom-field search returns the right tickets,
 `origin_by_id` attributes public and internal articles to the intended RTK
 actor, and attachment IDs resolve only under their owning ticket/article.
 Run the Admin cross-Cloud and Viewer tests. Verify the support list and detail
