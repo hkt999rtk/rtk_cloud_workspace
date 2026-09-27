@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -199,16 +200,55 @@ func TestStorageCanaryCleansUpAfterReadMismatch(t *testing.T) {
 }
 
 func TestStorageMigrationFiltersApplicationNamespaces(t *testing.T) {
-	for _, source := range []string{"clips/a.mp4", "brands/logo.png", "firmware/device.bin"} {
+	for _, source := range []string{"clips/a.mp4", "brands/logo.png", "snapshots/a.jpg", "clip-index/a.json", "ota/legacy/firmware.bin", "firmware/device.bin"} {
 		got, ok := storageMigrationDestinationKey("environments/video-cloud-staging", source)
 		if !ok || got != "environments/video-cloud-staging/"+source {
 			t.Fatalf("source %q => %q, %v", source, got, ok)
 		}
 	}
+	if got, ok := storageMigrationDestinationKey("environments/video-cloud-staging", "environments/video-cloud-staging/clips/a.mp4"); !ok || got != "environments/video-cloud-staging/clips/a.mp4" {
+		t.Fatalf("already-prefixed key mapped to %q, %v", got, ok)
+	}
+	if got, ok := storageMigrationDestinationKeyForPurpose("environments/video-cloud-dev", "ota-billable-v1/brand/product/release/firmware.bin", []string{"ota-billable-v1/"}); !ok || got != "environments/video-cloud-dev/ota-billable-v1/brand/product/release/firmware.bin" {
+		t.Fatalf("billable OTA key mapped to %q, %v", got, ok)
+	}
+	if got, ok := storageMigrationDestinationKeyForPurpose("environments/video-cloud-dev", "ota/legacy/firmware.bin", []string{"ota-billable-v1/"}); ok {
+		t.Fatalf("historical OTA key entered billable bucket: %q", got)
+	}
 	for _, source := range []string{"releases/client.tar.gz", "artifacts/build.zip", "clip/not-plural"} {
 		if got, ok := storageMigrationDestinationKey("environments/video-cloud-staging", source); ok {
 			t.Fatalf("excluded source %q mapped to %q", source, got)
 		}
+	}
+}
+
+func TestMediaCutoverRejectsOtherActiveOldBucketConsumers(t *testing.T) {
+	body := []byte(`{"items":[{"metadata":{"name":"video-cloud-cleaner"},"spec":{"replicas":1,"template":{"spec":{"containers":[{"env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"old-bucket"}]}]}}}}]}`)
+	if err := validateMediaCutoverInventory(body, "new-bucket"); err == nil || !strings.Contains(err.Error(), "video-cloud-cleaner") {
+		t.Fatalf("active old-bucket consumer was accepted: %v", err)
+	}
+	zeroReplica := []byte(`{"items":[{"metadata":{"name":"video-cloud-cleaner"},"spec":{"replicas":0,"template":{"spec":{"containers":[{"env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"old-bucket"}]}]}}}}]}`)
+	if err := validateMediaCutoverInventory(zeroReplica, "new-bucket"); err == nil {
+		t.Fatal("scaled-down old-bucket consumer was accepted and could later scale up")
+	}
+}
+
+func TestDeploymentStorageActivationRequiresMatchingCutover(t *testing.T) {
+	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Bucket: "rtk-video-media-dev-us-sea"}, RuntimeMediaCutoverRequired: true}}
+	if err := validateDeploymentStorageActivation(cfg); err == nil {
+		t.Fatal("deployment activated before media cutover")
+	}
+	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": "wrong-bucket", "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDeploymentStorageActivation(cfg); err == nil {
+		t.Fatal("deployment accepted mismatched cutover")
+	}
+	if err := writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), map[string]any{"environment": "dev", "bucket": "rtk-video-media-dev-us-sea", "cutover_at": "2026-09-27T00:00:00Z", "rollback_credentials_retained": true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDeploymentStorageActivation(cfg); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -452,6 +492,198 @@ func TestDeploymentStorageLifecycleHappyPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDedicatedOTAStorageLifecycle(t *testing.T) {
+	clearDeploymentCredentialEnvironment(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	profile := filepath.Join(home, ".config", "rtk_cloud", "dev", "operator", "env")
+	if err := os.MkdirAll(profile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profile, "LINODE_TOKEN"), []byte("token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	const bucketName = "rtk-ota-firmware-dev-us-sea"
+	var mu sync.Mutex
+	created, keyIssued := false, false
+	objects := map[string][]byte{}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v4/regions/us-sea":
+			_, _ = w.Write([]byte(`{"id":"us-sea","status":"ok","capabilities":["Kubernetes","Object Storage"]}`))
+			return
+		case r.URL.Path == "/v4/object-storage/endpoints":
+			_, _ = fmt.Fprintf(w, `{"data":[{"region":"us-sea","s3_endpoint":%q}]}`, server.URL)
+			return
+		case r.URL.Path == "/v4/object-storage/buckets" && r.Method == http.MethodGet:
+			if created {
+				_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":"us-sea","s3_endpoint":%q}]}`, bucketName, server.URL)
+			} else {
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			}
+			return
+		case r.URL.Path == "/v4/object-storage/buckets" && r.Method == http.MethodPost:
+			created = true
+			_, _ = fmt.Fprintf(w, `{"label":%q,"region":"us-sea","s3_endpoint":%q}`, bucketName, server.URL)
+			return
+		case r.URL.Path == "/v4/object-storage/keys" && r.Method == http.MethodGet:
+			if keyIssued {
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":303,"access_key":"ota-access","bucket_access":[{"bucket_name":%q,"region":"us-sea","permissions":"read_write"}]}]}`, bucketName)
+			} else {
+				_, _ = w.Write([]byte(`{"data":[]}`))
+			}
+			return
+		case r.URL.Path == "/v4/object-storage/keys" && r.Method == http.MethodPost:
+			keyIssued = true
+			_, _ = w.Write([]byte(`{"access_key":"ota-access","secret_key":"ota-secret"}`))
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/"+bucketName) {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Query().Get("list-type") == "2" {
+			mu.Lock()
+			defer mu.Unlock()
+			_, _ = w.Write([]byte(`<ListBucketResult><IsTruncated>false</IsTruncated>`))
+			for key := range objects {
+				if strings.HasPrefix(key, r.URL.Query().Get("prefix")) {
+					_, _ = fmt.Fprintf(w, `<Contents><Key>%s</Key></Contents>`, key)
+				}
+			}
+			_, _ = w.Write([]byte(`</ListBucketResult>`))
+			return
+		}
+		key := strings.TrimPrefix(r.URL.Path, "/"+bucketName+"/")
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			objects[key] = body
+		case http.MethodGet:
+			body, ok := objects[key]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			_, _ = w.Write(body)
+		case http.MethodDelete:
+			delete(objects, key)
+		default:
+			http.Error(w, "method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("RTK_CLOUD_LINODE_API_ROOT", server.URL+"/v4")
+	cfg := deploymentConfig{Environment: "dev", RuntimeRoot: t.TempDir(), AdapterResolved: map[string]string{"LKE_REGION": "us-sea"}, Storage: deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Purpose: "runtime-media", Bucket: "rtk-video-media-dev-us-sea", Region: "us-sea"}, OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Purpose: "ota-firmware", Policy: "colocated", Bucket: bucketName, Prefix: "environments/video-cloud-dev", Region: "us-sea"}, ReleaseArtifacts: deploymentStorageTarget{Purpose: "release-artifacts", Bucket: "rtk-release-shared-us-sea", Region: "us-sea"}}}
+	if err := runDeploymentStorageLifecyclePurpose("storage-plan", cfg, profile, "", 0, "ota"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, profile, "", 0, "ota"); err != nil {
+		t.Fatal(err)
+	}
+	if !created || !keyIssued {
+		t.Fatal("OTA bucket or limited key was not created")
+	}
+	values, check := deploymentCredentialProfileValues("dev", profile, "")
+	if !check.Passed || values["LINODE_OTA_OBJ_ACCESS_KEY_ID"] != "ota-access" {
+		t.Fatalf("OTA credential profile not updated: %s", check.Detail)
+	}
+	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
+	if check := checker.checkResolvedOTAStorage(cfg, values); !check.Passed {
+		t.Fatal(check.Detail)
+	}
+	readOnlyChecker := checker
+	readOnlyChecker.readOnly = true
+	if check := readOnlyChecker.checkResolvedOTAStorage(cfg, values); !check.Passed {
+		t.Fatalf("OTA read-only storage qualification failed: %s", check.Detail)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.RuntimeRoot, "state", "storage-preflight-ota.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRoot := t.TempDir()
+	key := "ota-billable-v1/brand/product/release/firmware.bin"
+	path := filepath.Join(sourceRoot, "source-bucket", filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("billable-firmware"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceFile := filepath.Join(t.TempDir(), "source.env")
+	if err := os.WriteFile(sourceFile, []byte("LINODE_OBJ_BUCKET=source-bucket\nLINODE_OBJ_ENDPOINT=file://"+sourceRoot+"\nLINODE_OBJ_REGION=us-sea\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := runDeploymentStorageLifecyclePurpose("storage-migrate", cfg, profile, sourceFile, 0, "ota"); err != nil {
+		t.Fatal(err)
+	}
+	destinationKey := "environments/video-cloud-dev/" + key
+	mu.Lock()
+	copied := string(objects[destinationKey])
+	mu.Unlock()
+	if copied != "billable-firmware" {
+		t.Fatalf("billable OTA object copied as %q", copied)
+	}
+	var migration deploymentStorageMigrationState
+	body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"))
+	if err != nil || json.Unmarshal(body, &migration) != nil || migration.ObjectCount != 1 {
+		t.Fatalf("OTA migration receipt = %#v, error = %v", migration, err)
+	}
+	if err := os.WriteFile(path, []byte("different-firmware"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := checker.migrateStoragePurpose(cfg, values, sourceFile, "ota"); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("existing OTA firmware conflict was not rejected: %v", err)
+	}
+	mu.Lock()
+	unchanged := string(objects[destinationKey])
+	mu.Unlock()
+	if unchanged != "billable-firmware" {
+		t.Fatalf("conflicting OTA migration overwrote destination: %q", unchanged)
+	}
+
+	workspace := writeDeploymentFixture(t, "dev", "lke")
+	cutoverCfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoverCfg.Storage = cfg.Storage
+	if err := os.MkdirAll(filepath.Join(cutoverCfg.RuntimeRoot, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStorageState(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-preflight-ota.json"), deploymentStorageReceipt{Environment: "dev", Purpose: "ota-firmware", Bucket: bucketName, Region: "us-sea", Endpoint: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	store, err := newSecretStore("", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(store.KubeconfigPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.KubeconfigPath(), []byte("apiVersion: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fakeKubectl(t)
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "registration is disabled") {
+		t.Fatalf("disabled OTA service was cut over: %v", err)
+	}
+	cutoverCfg.Values["LKE_OTA_SERVICE_REGISTRATION_ENABLED"] = "true"
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, "", 0, "ota"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(cutoverCfg.RuntimeRoot, "state", "storage-cutover-ota.json")); err != nil {
 		t.Fatal(err)
 	}
 }

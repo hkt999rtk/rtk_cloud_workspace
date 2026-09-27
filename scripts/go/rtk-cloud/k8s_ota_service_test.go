@@ -62,6 +62,26 @@ func TestLKEOTAServiceManifestIsPrivateAndOwnsBillingDelivery(t *testing.T) {
 	}
 }
 
+func TestLKEOTAServiceUsesDedicatedBucketAndSecret(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-dev", "CLOUD_ENV_NAME": "dev",
+		"VIDEO_CLOUD_OTA_STORAGE_MODE":  "dedicated",
+		"VIDEO_CLOUD_BLOB_BUCKET":       "rtk-video-media-dev-us-sea",
+		"VIDEO_CLOUD_OTA_BLOB_BUCKET":   "rtk-ota-firmware-dev-us-sea",
+		"VIDEO_CLOUD_OTA_BLOB_REGION":   "us-sea",
+		"VIDEO_CLOUD_OTA_BLOB_ENDPOINT": "https://us-sea-1.linodeobjects.com",
+		"VIDEO_CLOUD_OTA_BLOB_PREFIX":   "environments/video-cloud-dev",
+	}
+	manifest := lkeOTAServiceDeploymentManifest(env)
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(manifest), &parsed); err != nil {
+		t.Fatalf("invalid dedicated OTA deployment: %v", err)
+	}
+	if !strings.Contains(manifest, `value: "rtk-ota-firmware-dev-us-sea"`) || !strings.Contains(manifest, "name: ota-object-storage") || strings.Contains(manifest, `value: "rtk-video-media-dev-us-sea"`) {
+		t.Fatal("OTA deployment did not isolate its bucket and credentials")
+	}
+}
+
 func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED": "true"}
 	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "MQTT foundation") {
@@ -132,6 +152,21 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 	setFakeLKEPlatformIdentitySecrets(t, env)
 	if err := lkeRequireOTAServiceInputs(env); err != nil {
 		t.Fatalf("complete OTA service inputs were rejected: %v", err)
+	}
+	env["VIDEO_CLOUD_OTA_STORAGE_MODE"] = "dedicated"
+	env["VIDEO_CLOUD_OTA_BLOB_BUCKET"] = "rtk-ota-firmware-staging-sg-sin-2"
+	env["VIDEO_CLOUD_OTA_BLOB_REGION"] = "sg-sin-2"
+	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = "https://sg-sin-2.linodeobjects.com"
+	delete(videoRuntime, "AWS_ACCESS_KEY_ID")
+	delete(videoRuntime, "AWS_SECRET_ACCESS_KEY")
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, videoRuntime))
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "scoped OTA storage credentials") {
+		t.Fatalf("missing dedicated OTA key was accepted: %v", err)
+	}
+	t.Setenv("LINODE_OTA_OBJ_ACCESS_KEY_ID", "dedicated-access")
+	t.Setenv("LINODE_OTA_OBJ_SECRET_ACCESS_KEY", "dedicated-secret")
+	if err := lkeRequireOTAServiceInputs(env); err != nil {
+		t.Fatalf("dedicated OTA preflight required a Secret before it could be created: %v", err)
 	}
 }
 

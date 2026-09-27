@@ -38,6 +38,10 @@ CI/release/deploy Object Storage access.
 | GitHub Releases | Optional human-facing release mirror or legacy fallback, not the default deploy source. |
 | Service runtime object/blob stores | Product data such as media, firmware, snapshots, or backups; out of scope for this policy. |
 
+The shared release bucket naming target and the independent runtime media/OTA
+bucket rules are recorded in [Object Storage naming](storage-credential-lifecycle.md).
+The current live names are in the dated [bucket inventory](object-storage-inventory.md).
+
 ## Required Artifact Pattern
 
 Formal release artifacts must be version-addressed. Deploy and handoff flows must
