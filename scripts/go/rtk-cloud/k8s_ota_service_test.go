@@ -203,3 +203,190 @@ func TestLKEOTAServiceCutoverManifestAndPolicyAreOptIn(t *testing.T) {
 		t.Fatal("OTA gateway NetworkPolicy does not restrict the upstream to core")
 	}
 }
+
+func TestLKEOTADeviceEdgeRequiresRegisteredServiceAndKeepsMTLS(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "false")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":        "video.example.test",
+		"VIDEO_CLOUD_DEVICE_DOMAIN": "device.video.example.test",
+	}
+	for _, route := range lkePublicHTTPSBaseRoutes(env) {
+		if route.Path == "/v1/device/ota/" {
+			t.Fatal("device OTA edge route is enabled by default")
+		}
+	}
+	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "true")
+	routes := lkePublicHTTPSBaseRoutes(env)
+	found := false
+	for _, route := range routes {
+		if route.Path == "/v1/device/ota/" {
+			found = route.Host == env["VIDEO_CLOUD_DEVICE_DOMAIN"] && route.Service == otaServiceWorkloadName && route.ServicePort == 18084 && !route.Exact
+		}
+	}
+	if !found {
+		t.Fatal("device OTA path does not target the dedicated service")
+	}
+	manifests := lkePublicHTTPSIngressManifests(env, routes)
+	validIngressJSON := ""
+	for _, manifest := range manifests {
+		if strings.Contains(manifest, "name: video-cloud-staging-public\n") && strings.Contains(manifest, "path: /v1/device/ota/") {
+			t.Fatal("device OTA route bypasses device-host mTLS")
+		}
+		if !strings.Contains(manifest, "name: video-cloud-staging-device-mtls\n") {
+			continue
+		}
+		if !strings.Contains(manifest, "nginx.ingress.kubernetes.io/auth-tls-verify-client: \"on\"") || !strings.Contains(manifest, "path: /v1/device/ota/\n            pathType: Prefix") {
+			t.Fatal("device OTA ingress lost mTLS or path routing")
+		}
+		var parsed map[string]any
+		if err := yaml.Unmarshal([]byte(manifest), &parsed); err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(parsed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		validIngressJSON = string(encoded)
+		t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", validIngressJSON)
+	}
+	if validIngressJSON == "" {
+		t.Fatal("device OTA ingress was not rendered")
+	}
+	if err := lkeRequireActiveOTADeviceEdgeRoute(env); err != nil {
+		t.Fatal(err)
+	}
+	wantBridge := lkePublicHTTPSBridgeServiceName(env, lkePublicHTTPSRoute{Namespace: lkeNamespaceName(env, "video-cloud"), Service: otaServiceWorkloadName})
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", strings.Replace(validIngressJSON, wantBridge, "public-video-cloud-api-video-cloud", 1))
+	if err := lkeRequireActiveOTADeviceEdgeRoute(env); err == nil {
+		t.Fatal("cutover accepted a device OTA route to the wrong backend")
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", strings.Replace(validIngressJSON, `"nginx.ingress.kubernetes.io/auth-tls-verify-client":"on"`, `"nginx.ingress.kubernetes.io/auth-tls-verify-client":"off"`, 1))
+	if err := lkeRequireActiveOTADeviceEdgeRoute(env); err == nil {
+		t.Fatal("cutover accepted a device OTA route without mTLS")
+	}
+	policyFound := false
+	for _, policy := range lkePublicHTTPSNetworkPolicyManifests(env, routes) {
+		if strings.Contains(policy, "name: allow-public-ingress\n") && strings.Contains(policy, "namespace: video-cloud-staging-video-cloud") {
+			policyFound = strings.Contains(policy, "port: 18084")
+		}
+	}
+	if !policyFound {
+		t.Fatal("OTA service lacks ingress-to-service NetworkPolicy port")
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{"spec":{"rules":[]}}`)
+	if err := lkeRequireActiveOTADeviceEdgeRoute(env); err == nil {
+		t.Fatal("cutover accepted a missing live device OTA ingress route")
+	}
+}
+
+func TestLKEOTADeviceEdgeRollbackWaitsForCoreHandlerRestoration(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "true")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err == nil || !strings.Contains(err.Error(), "cannot be removed") {
+		t.Fatalf("desired core cutover was ignored: %v", err)
+	}
+	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "false")
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", `{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED","value":"true"}]}]}}}}`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err == nil || !strings.Contains(err.Error(), "restore core handlers") {
+		t.Fatalf("observed core cutover was ignored: %v", err)
+	}
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", `{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED","value":"false"}]}]}}}}`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLKEOTADeviceEdgeRejectsIncompleteLiveRoutes(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"VIDEO_CLOUD_DOMAIN":        "video.example.test",
+		"VIDEO_CLOUD_DEVICE_DOMAIN": "device.video.example.test",
+	}
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"missing spec", `{}`},
+		{"wrong host", `{"spec":{"rules":[{"host":"other.example.test","http":{"paths":[{"path":"/v1/device/ota/","pathType":"Prefix"}]}}]}}`},
+		{"missing HTTP routes", `{"spec":{"rules":[{"host":"device.video.example.test"}]}}`},
+		{"wrong path", `{"spec":{"rules":[{"host":"device.video.example.test","http":{"paths":[{"path":"/v1/device/shadow/","pathType":"Prefix"}]}}]}}`},
+		{"wrong port", `{"spec":{"rules":[{"host":"device.video.example.test","http":{"paths":[{"path":"/v1/device/ota/","pathType":"Prefix","backend":{"service":{"name":"public-video-cloud-otaservice-video-cloud","port":{"number":18085}}}}]}}]}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var ingress map[string]any
+			if err := json.Unmarshal([]byte(tc.body), &ingress); err != nil {
+				t.Fatal(err)
+			}
+			ingress["metadata"] = map[string]any{"annotations": map[string]any{"nginx.ingress.kubernetes.io/auth-tls-verify-client": "on"}}
+			body, err := json.Marshal(ingress)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", string(body))
+			if err := lkeRequireActiveOTADeviceEdgeRoute(env); err == nil {
+				t.Fatal("accepted an incomplete live OTA device route")
+			}
+		})
+	}
+}
+
+func TestLKEOTADeviceEdgeRollbackRejectsUnknownCoreState(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "false")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"malformed deployment", `{`, "decode core OTA cutover"},
+		{"wrong deployment", `{"metadata":{"name":"other-api"}}`, "unexpected Deployment"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", tc.body)
+			err := lkePreventOTAEdgeRollbackOverlap(env)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("rollback accepted unknown core state: %v", err)
+			}
+		})
+	}
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", "")
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{"spec":{"rules":[{"http":{"paths":[{"path":"/v1/device/ota/"}]}}]}}`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err == nil || !strings.Contains(err.Error(), "core API is absent") {
+		t.Fatalf("removed a live OTA edge route while core Deployment was absent: %v", err)
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err == nil || !strings.Contains(err.Error(), "decode device OTA ingress") {
+		t.Fatalf("accepted an unreadable live ingress during rollback: %v", err)
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{"spec":{"rules":[]}}`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
+		t.Fatalf("absent core Deployment should not block rollback: %v", err)
+	}
+	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", `{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"sidecar"},{"name":"app","env":[{"name":"VIDEO_CLOUD_OTA_SERVICE_CUTOVER_ENABLED","value":"false"}]}]}}}}`)
+	if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
+		t.Fatalf("restored core handler with a sidecar was rejected: %v", err)
+	}
+}
+
+func TestLKEOTADeviceEdgeApplyRequiresRegistrationAndReadyEndpoint(t *testing.T) {
+	fakeKubectl(t)
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_DOMAIN": "video.example.test"}
+	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "true")
+	if err := lkeApplyPublicHTTPS(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "registered OTA service") {
+		t.Fatalf("OTA edge accepted an unregistered service: %v", err)
+	}
+	t.Setenv("LKE_OTA_SERVICE_REGISTRATION_ENABLED", "true")
+	if err := lkeApplyPublicHTTPS(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "OTA Service is not private") {
+		t.Fatalf("OTA edge accepted an absent service endpoint: %v", err)
+	}
+	t.Setenv("LKE_OTA_SERVICE_EDGE_ENABLED", "false")
+	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "true")
+	if err := lkeApplyPublicHTTPS(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "cannot be removed") {
+		t.Fatalf("OTA edge rollback accepted active core cutover: %v", err)
+	}
+}
