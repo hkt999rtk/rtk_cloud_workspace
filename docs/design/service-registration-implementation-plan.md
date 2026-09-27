@@ -412,7 +412,7 @@ carry and enforce them.
 | 1. Contract schemas and core registration | Contracts: OpenAPI routes, manifest/response schemas, error contracts, fixtures, requirement/test mapping. Account Manager: durable registry, manifest revisions, instance leases, scoped catalog and publication operations. PKI/deployment: deployment bootstrap session, generated short-lived bootstrap leaf, initial identity issuance, installation acknowledgement, CRL revocation, and sealed session | Positive registration; wrong trust domain/environment, name takeover, conflicting manifest, stale publication, invalid dependency, replay, expired/revoked workload certificate, expired/sealed bootstrap session, unallowlisted subject, and incomplete-installation refusal tests |
 | 2. Service adapters and optional startup | Video Cloud: registration/renewal/drain adapters for MQTT, Shadow, WebRTC, storage; manifests use existing option codes. Deployment: core-first startup, service-specific readiness, endpoint references, and independent optional dependencies | Start platform+MQTT with no optional services, TURN, or media storage; register several replicas; expire one/all; recover; rotate a certificate without changing service ownership |
 | 3. Product and production context | Account Manager: authoritative transactional catalog validation, Product service revisions, pinned production runs/JWT digest. Cloud Admin: catalog-driven create/edit UI and explicit unavailable states | MQTT-only creation; selectable registered plugin; unknown/unregistered selection rejected; catalog race handled; existing Product metadata edits survive plugin outage; old devices gain no services |
-| 4. Factory, tokens, and enforcement | Account Manager and Video Cloud: trusted entitlement snapshot/projection delivery; factory echo equality; extensible option parsing; revisioned issuance/recovery/refresh; route/topic/session checks. SDKs: preserve known/unknown claims without granting unknown features | Body tampering, run revision mismatch, cross-tenant substitution, revoked entitlement on refresh, dependent-option removal, and expired/stale projections fail safely; MQTT-only device denied each plugin |
+| 4. Factory, tokens, and enforcement | Account Manager and Video Cloud: trusted entitlement snapshot/projection delivery; factory echo equality; extensible option parsing; revisioned mTLS issuance/recovery and claim-preserving refresh; route/topic/session checks. SDKs: preserve known/unknown claims without granting unknown features | Body tampering, run revision mismatch, cross-tenant substitution, changed entitlement on fresh mTLS request, prior claims preserved on refresh, dependent-option removal, and expired/stale projections fail safely; MQTT-only device denied each plugin |
 | 5. Migration and activation | Workspace/deployment plus all consumers: dry-run Product/device reconciliation, legacy grant revisions, compatible consumer rollout, staged feature activation, backup/restore and rollback evidence | Existing grants compare equal before/after migration; HTTP-only legacy Shadow is preserved; new Product baseline enforced; new third-party/test option travels registration-to-token without central enum edits |
 
 Phases 3 and 4 may ship behind disabled write gates. Enable catalog-backed
@@ -452,9 +452,11 @@ only at cutover. Dynamic catalog display must not imply that a new grant is usab
   the WebRTC service; it is not the Product capability registry.
 - Audit HTTP handlers, MQTT reserved-topic ACLs, WebSocket paths, WebRTC session
   creation/continuation, storage upload authorization, recovery, and refresh for
-  consistent grant enforcement. Avoid a registry query in per-message paths.
-- Bound authorization freshness and invalidate active sessions on explicit
-  revocation. Existing dependency-failure policy remains applicable.
+  their distinct grant behavior. Avoid a registry query in per-message paths.
+- Document that stateless refresh can preserve a reduced grant indefinitely and
+  active sessions have no universal invalidation deadline. An emergency deny
+  and session invalidation guarantee needs a separate design. Existing
+  dependency-failure policy remains applicable.
 
 ### Cloud Admin, SDKs, And Deployment
 
@@ -546,10 +548,14 @@ enrollment path.
   request bodies cannot expand the Product/run/device grant.
 - A newly registered option changes neither existing Products nor existing
   device tokens. An explicit Product revision affects future runs only until
-  an authorized device entitlement migration is performed.
+  an authorized device entitlement migration is performed. After migration,
+  a device obtains the changed grant through mTLS `/request_token`; token
+  refresh retains the prior signed options.
 - A heartbeat outage disables new selection/routing eligibility but preserves
-  current grants. Explicit entitlement revocation prevents refresh and ends
-  affected long-lived sessions within the documented enforcement bound.
+  current grants. Entitlement reduction changes newly issued mTLS tokens after
+  delivery but does not invalidate or prevent refresh of old signed tokens.
+  Immediate revocation and long-lived session invalidation need a separate
+  mechanism and are not claimed by Product editing.
 - New Products require MQTT; pre-existing HTTP-only Shadow grants continue to
   behave as recorded. MQTT alone cannot enter reserved Shadow topics.
 - Registration/control-plane outage has no hidden allow-all fallback and no
@@ -577,9 +583,10 @@ service identity, and 503 when the authoritative registry is unavailable.
 Service namespace ownership is bound to the workload identity during PKI
 provisioning. Exact wire schemas belong in OpenAPI before implementation.
 
-Phase 4 must define and test a maximum authorization-staleness window across
-token TTL, projection age, and active sessions before release. Until then,
-do not claim that grant removal immediately ends existing sessions.
+Phase 4 must disclose that stateless refresh has no maximum authorization-
+staleness window across token renewal and active sessions. Do not claim that
+Product edits or entitlement reduction immediately end existing sessions;
+an emergency revocation bound requires a separate deny and invalidation design.
 
 ## 8. Product OTA Service And Billing Extension (2026-09-25)
 
