@@ -603,6 +603,9 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 		if err := lkeRequireObservedOTACoreCutover(env); err != nil {
 			return err
 		}
+		if err := lkeRequireLegacyOTADrain(env); err != nil {
+			return err
+		}
 	} else if err := lkePreventOTAEdgeRollbackOverlap(env); err != nil {
 		return err
 	}
