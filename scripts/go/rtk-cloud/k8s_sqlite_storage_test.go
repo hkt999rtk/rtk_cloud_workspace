@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,50 @@ func TestLKESQLitePVCManifestsAreOptInAndSingleWriter(t *testing.T) {
 			}
 		}
 		delete(env, envKey)
+	}
+}
+
+func TestLKERequireCloudAdminImagePVCRejectsIncompleteMigration(t *testing.T) {
+	const live = `{"spec":{"replicas":1,"strategy":{"type":"Recreate"},"template":{"spec":{"volumes":[{"name":"sqlite-data","persistentVolumeClaim":{"claimName":"cloud-admin-sqlite-data"}}],"containers":[{"name":"app","volumeMounts":[{"name":"sqlite-data","mountPath":"/app/data"}]}]}}}}`
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED": "true"}
+	decode := func(t *testing.T) map[string]any {
+		t.Helper()
+		var deployment map[string]any
+		if err := json.Unmarshal([]byte(live), &deployment); err != nil {
+			t.Fatal(err)
+		}
+		return deployment
+	}
+	if err := lkeRequireCloudAdminImagePVC(env, decode(t)); err != nil {
+		t.Fatalf("migrated Admin rejected: %v", err)
+	}
+	tests := []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"multiple writers", func(d map[string]any) { d["spec"].(map[string]any)["replicas"] = float64(2) }},
+		{"rolling update", func(d map[string]any) {
+			d["spec"].(map[string]any)["strategy"].(map[string]any)["type"] = "RollingUpdate"
+		}},
+		{"wrong claim", func(d map[string]any) {
+			d["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["volumes"].([]any)[0].(map[string]any)["persistentVolumeClaim"].(map[string]any)["claimName"] = "other"
+		}},
+		{"missing mount", func(d map[string]any) {
+			d["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["volumeMounts"] = []any{}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			deployment := decode(t)
+			tc.change(deployment)
+			if err := lkeRequireCloudAdminImagePVC(env, deployment); err == nil {
+				t.Fatal("incomplete SQLite migration accepted")
+			}
+		})
+	}
+	env["LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED"] = "false"
+	if err := lkeRequireCloudAdminImagePVC(env, decode(t)); err == nil {
+		t.Fatal("disabled durable storage intent accepted")
 	}
 }
 
@@ -104,8 +149,11 @@ esac
 		t.Fatalf("unbound PVC accepted: %v", err)
 	}
 	t.Setenv("FAKE_SQLITE_DEPLOYMENT", `{"spec":{"template":{"spec":{"volumes":[{"name":"sqlite-data","persistentVolumeClaim":{"claimName":"cloud-admin-sqlite-data"}}]}}}}`)
-	if err := lkePreventSQLitePVCDisable(workload); err == nil || !strings.Contains(err.Error(), "already uses a SQLite data PVC") {
+	if err := lkePreventSQLitePVCDisable(map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"}, workload); err == nil || !strings.Contains(err.Error(), "already uses a SQLite data PVC") {
 		t.Fatalf("removal of a live SQLite PVC accepted: %v", err)
+	}
+	if err := lkePreventSQLitePVCDisable(map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, workload); err == nil || !strings.Contains(err.Error(), "before protected rollout") {
+		t.Fatalf("protected rollout without durable SQLite accepted: %v", err)
 	}
 	t.Setenv("FAKE_SQLITE_DEPLOYMENT", "")
 	if err := lkeRequireSQLitePVCMigration(workload); err != nil {

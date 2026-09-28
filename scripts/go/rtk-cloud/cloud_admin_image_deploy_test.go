@@ -16,6 +16,7 @@ CLOUD_PROVIDER=lke
 CLOUD_REGION=us-sea
 CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
 LKE_CLOUD_ADMIN_IMAGE=ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-0123456789ab
+LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true
 `)
 	logPath := fakeKubectlForCloudAdminImageDeploy(t)
 	kubeconfig := filepath.Join(workspace, "kubeconfig")
@@ -48,6 +49,35 @@ LKE_CLOUD_ADMIN_IMAGE=ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-01234567
 	}
 }
 
+func TestRunCloudAdminImageDeployRejectsProtectedContainerLayerSQLite(t *testing.T) {
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "")
+	workspace := t.TempDir()
+	envRoot := filepath.Join(workspace, "runtime")
+	writeTestFile(t, filepath.Join(envRoot, "env", "stack.env"), `CLOUD_ENV_NAME=staging
+CLOUD_PROVIDER=lke
+CLOUD_REGION=us-sea
+CLOUD_DNS_ROOT_DOMAIN=realtekconnect.com
+LKE_CLOUD_ADMIN_IMAGE=ghcr.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-0123456789ab
+LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true
+`)
+	logPath := fakeKubectlForCloudAdminImageDeploy(t)
+	t.Setenv("FAKE_ADMIN_DEPLOYMENT_JSON", `{"spec":{"replicas":1,"strategy":{"type":"RollingUpdate"},"template":{"spec":{"containers":[{"name":"app","image":"old"}]}}}}`)
+	kubeconfig := filepath.Join(workspace, "kubeconfig")
+	writeTestFile(t, kubeconfig, "test")
+	err := runCloudAdminImageDeploy([]string{
+		"--workspace", workspace,
+		"--env-root", envRoot,
+		"--kubeconfig", kubeconfig,
+		"--confirm", "video-cloud-staging",
+	})
+	if err == nil || !strings.Contains(err.Error(), "Recreate strategy") {
+		t.Fatalf("container-layer Admin image rollout accepted: %v", err)
+	}
+	if log := readTestFile(t, logPath); strings.Contains(log, "replace -f -") {
+		t.Fatalf("Cloud Admin was replaced before durable SQLite check: %s", log)
+	}
+}
+
 func fakeKubectlForCloudAdminImageDeploy(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -73,7 +103,11 @@ if [[ "$*" == *"get deployment/cloud-admin -o name"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"get deployment cloud-admin -o json"* ]]; then
-  printf '{"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"app","image":"old"}]}}}}\n'
+  if [[ -n "${FAKE_ADMIN_DEPLOYMENT_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_ADMIN_DEPLOYMENT_JSON"
+  else
+    printf '{"spec":{"replicas":1,"strategy":{"type":"Recreate"},"template":{"spec":{"volumes":[{"name":"sqlite-data","persistentVolumeClaim":{"claimName":"cloud-admin-sqlite-data"}}],"containers":[{"name":"app","image":"old","volumeMounts":[{"name":"sqlite-data","mountPath":"/app/data"}]}]}}}}\n'
+  fi
   exit 0
 fi
 if [[ "$*" == *"replace -f -"* ]]; then

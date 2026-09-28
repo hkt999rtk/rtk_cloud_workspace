@@ -72,6 +72,9 @@ func runCloudAdminImageDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := lkeRequireCloudAdminImagePVC(env, deployment); err != nil {
+		return err
+	}
 	if err := updateDeploymentContainerImage(deployment, "app", image); err != nil {
 		return err
 	}

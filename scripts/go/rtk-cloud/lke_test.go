@@ -7010,7 +7010,7 @@ if [[ "$*" == *"get deployments -o json"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"get deployment cloud-admin -o json"* || "$*" == *"get deployment frontend -o json"* ]]; then
-  printf '{"spec":{"template":{"spec":{"volumes":[]}}}}\n'
+  # A freshly provisioned fixture has no prior SQLite owner to migrate.
   exit 0
 fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then

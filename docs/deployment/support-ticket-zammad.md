@@ -94,6 +94,11 @@ each Deployment to `Recreate`, requires exactly one replica and uses the
 observed process groups (Admin 999, frontend 101) as `fsGroup`. Validate that
 the copied files are readable and writable by those groups. Once a Deployment
 uses its SQLite PVC, reconciliation refuses to turn that setting off.
+Protected staging and production reconciliation also refuses to replace an
+existing Admin or frontend Pod while its SQLite PVC setting is still off.
+The scoped `cloud-admin-image-deploy` command requires an already migrated
+Admin Deployment with one replica, `Recreate`, and the expected PVC mount;
+it cannot perform the storage migration itself.
 
 For an existing Deployment, the cutover refuses to replace its Pod until its
 Bound PVC carries `rtk.realtek.com/sqlite-source-pod-uid` equal to the sole
