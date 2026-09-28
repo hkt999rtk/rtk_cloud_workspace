@@ -56,6 +56,8 @@ PKI consumer 儲存已另訂 [三卷部署環境計畫](pki-consumer-storage-pla
 
 Billing 對歷史 Product OTA grant 的跨服務查詢採 `LKE_BILLING_OTA_GRANT_HISTORY_ENABLED=true` 明確啟用：renderer 同時設定 `BILLING_OTA_GRANT_HISTORY_BASE_URL`、沿用 Account Manager 既有內部授權 token，並只允許 Billing namespace 中 `app.kubernetes.io/name=billing` 的 Pod 連至 Account Manager TCP 8080。未啟用時不渲染連線憑證或專用 NetworkPolicy；啟用前驗證 token 長度及與 Billing token 不同。固定版 workspace PR #570 已合併到選定分支；development 已套用該入口 NetworkPolicy、Billing runtime 的 endpoint／token，並對原映像做有範圍的 rollout。Billing Deployment generation 22 已被觀測，1/1 Pod Ready；新欄位與 Account Manager live token 相符，其餘 Secret 欄位未變。另以 Billing namespace 中相同網路政策標籤、readiness 永遠失敗的短暫探測 Pod 驗證：Account Manager `/v1/health` 回 200；同一個不存在的歷史 OTA grant，無 token 回 401，使用 Billing runtime 中的 token 回 404。探測 Pod 已刪除，Billing 仍 1/1 Ready。這證明私有路徑與內部授權可用，尚未證明 Billing 用真實 grant 查核 OTA fact，亦不代表 OTA 價卡已生效。
 
+2026-09-28 development Billing 對**假設**的 `2026-11-01T00:00:00Z` 執行唯讀切月盤點：7 個 TWD 帳戶中，4 個為本地月份邊界先於 UTC 的 `gap_risk` 且目前 owner 證據覆蓋切點，3 個缺 Billing profile；橋接區間與目標首月的 usage fact、已關帳期及 invoice 均為 0。這是當時的一致快照，不是正式生效月份或未來用量保證。Billing 固定版 [#40](https://github.com/hkt999rtk/rtk_billing/pull/40) 補上同 Brand Cloud／幣別帳期的交疊拒絕：新帳期即使遇到 `incomplete` 舊期也不能重疊開單；完全相同的舊期仍可重試，已開立的歷史發票即使資料庫存在早期重疊列也可原樣讀取。這項防重複保護**不會補齊 gap 或決定橋接區間由誰付費**；橋接、缺 profile、owner 移轉與正式生效月仍須逐環境審核。
+
 在 staging Billing 變更前，仍須確定現行較新映像與固定版的切換順序，以及是否依 staging 非強制備份規則不做完整本機資料庫匯出。含歷史帳單資料的完整本機匯出尚未獲明確核准，也沒有執行。這些決策與 staging 價卡底卡語義未定之前，不執行資料庫更新、價卡發佈或實際計費。
 
 ### OTA 裝置路由切換順序
