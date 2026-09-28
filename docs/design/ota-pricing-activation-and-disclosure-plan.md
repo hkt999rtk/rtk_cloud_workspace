@@ -94,6 +94,18 @@ OTA producer 的批次清單須以 Account Manager 的 Brand Cloud 歷史作為�
 
 Account Manager PR #356 與 Video Cloud PR #724 已合併到選定固定版：Account Manager 的 migration 094 以資料庫鎖等待進行中的 Cloud 建立交易，對完整 UTC 月原子保存一次固定清單；Platform 與 OTA producer 都讀同一份清單，往後重試不會因補寫或跨月交易得到不同 Cloud 集合。新建組織的預設時間改用資料庫插入時間，避免長交易將月界線後才插入的 Cloud 回填到上月。Video Cloud 批次連線使用既有 `pkitrust` 私有 CA 與受管理 Service 身分路徑；受保護環境須提供 Job 自己的 `service:ota` 身分狀態與更新信任，不能共用 API 程序的身分狀態。這些程式通過本地整合測試與 PR CI，但排程仍預設關閉；CDN 記錄完整性、專用身分部署、staging 對帳與告警仍須完成。
 
+### CDN DataStream 收集與月底審核規格
+
+各環境使用專用、私有的 S3 相容 DataStream 目的地與讀取身分；CDN property 只記錄 OTA 韌體路徑，DataStream 採 **JSON、100% sampling、gzip**，30 或 60 秒交付一次。必要欄位為 stream/version、request ID、request time、host、method、path、status、response `bytes`、Akamai `totalBytes`、Range 與 cache status；缺欄、格式改變或來源 stream/host 不符即停止該批並告警。Akamai [欄位定義](https://techdocs.akamai.com/datastream2/reference/data-set-parameters-api)區分 response body `bytes` 與其計費流量 `totalBytes`；[JSON 範例](https://techdocs.akamai.com/datastream2/v2/reference/log-format)顯示時間和數值通常以字串送出，不能假設原生 JSON number。S3 目的地[預設交付 gzip](https://techdocs.akamai.com/datastream2/v2/docs/stream-s3-compatible)，收集程序須逐檔串流解壓、限制大小與列長，不保存 token query、Cookie 或 client IP。
+
+收集程序對每個目的地物件記錄 key／ETag／原始 SHA-256／大小及處理時間；解析後在同一交易保存逐筆 edge request 的 stream/version、request ID、UTC 時間、OTA Cloud/Product/Release 路徑、狀態、Range、response bytes、total bytes、cache 狀態及來源檔案／行號／列摘要。重讀相同物件須冪等；同一 key 的內容變動、跨檔重複且內容衝突、無法歸屬的 OTA 路徑和欄位溢位都產生待調查異常，不得以部分成功批次標記 complete。成功與失敗、200 與 206、連線中斷狀態 `0`、Range 重試均保留；成本分析使用 `totalBytes`，不把任何 edge request 轉成客戶 `successful_download_gib`。客戶 meter 仍只由已驗證裝置 `downloaded` receipt 產生。Akamai 文件對 `reqTimeSec` 的單位描述與十位數秒數範例不一致；收集器依欄位名稱與範例解讀為 Unix 秒，遇十三位數值停止並要求現場確認，絕不默默歸到另一個月份。
+
+月底按完整 UTC 月及 Cloud 彙總 edge 請求、response bytes、`totalBytes`、200/206／非成功狀態、Range 與 cache 結果，對照 OTA 下載 receipt、授權 URL 和物件生命週期；跨月完成與重試須人工解釋，不能要求一個下載恰好對應一筆 CDN 請求。S3 列舉與最後一筆時間**不能單獨證明交付完整**：需另保留 DataStream stream/property 啟用、100% sampling、目的地交付健康／告警、最後交付 watermark 及獨立 edge traffic 對照。Akamai [故障說明](https://techdocs.akamai.com/datastream2/docs/troubleshooting)指出目的地連續上傳錯誤可能丟資料；零筆檔案或零筆 edge row 不能自動核准零用量。只有收集資料與外部完整性證據均通過、未解異常為零，授權 reviewer 才可建立 immutable CDN period review。缺口一律讓 producer seal 和 Billing close 保持 incomplete。
+
+固定版的新 `cmd/otacdncollect` 已實作 S3 gzip 讀取、路徑/欄位驗證、原始檔案與逐筆請求原子入庫、重跑去重和來源衝突阻擋；`cmd/otacdnreview` 與寫入 review 的資料層會核對同月 Cloud 的實際 edge request 數與 response bytes，封存前再檢查一次。這些是**程式碼與文件狀態**，不是營運資料已到齊的證明。各環境尚須建立實際 DataStream property、bucket 及唯讀憑證，部署收集排程、驗證 PostgreSQL 整合和外部完整性證據，才能進入商業收費資格審查。
+
+Video Cloud [#725](https://github.com/hkt999rtk/rtk_video_cloud/pull/725) 已合併到選定固定分支，提交 `4ab5b382a21bda2c34650648a6edaae25e180b16`；單元、隔離 PostgreSQL 整合、完整 PR coverage 與三項遠端 CI 均通過。工作區映像產生器加入 collector／review／object 操作命令，dev、staging、prod 均明列 `LKE_OTA_CDN_COLLECTOR_ENABLED=false`；啟用時要求專用唯讀 DataStream Secret、精確 stream/host/path、S3 目的地與 Video Cloud 映像，部署五分鐘一次的 CronJob，不新增 PVC。Akamai [檔名範例](https://techdocs.akamai.com/datastream2/docs/dynamic-time-variables)不保證 `.gz` 副檔名，收集器以 gzip 內容驗證。以上排程與設定目前仍預設關閉，尚未取得實際 edge 日誌或 CDN 完整性證據。
+
 ### 2026-09-28 固定版 development 部署證據
 
 Workspace [#595](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/595) 已合併至指定固定分支 `codex/ota-fixed-base-ac44a6d`，merge commit `9644288f43fc5fbdb8caebb4bd0e7721de5035db`。本次 [Go coverage run](https://github.com/hkt999rtk/rtk_cloud_workspace/actions/runs/36410265089) 在 8 分 35 秒內通過所有選定模組、PostgreSQL／EMQX 整合、catalog 與 aggregate/redaction gate。先前一次整合 fixture 的 10 秒 PKI 逾時在單獨重跑後通過；同一次 failed-only 重跑暴露 aggregate 只下載本輪 artifact 的缺陷，#595 已修正為跨 attempt 取回並選同模組最新結果，針對性本機測試與新的完整 CI 均通過。

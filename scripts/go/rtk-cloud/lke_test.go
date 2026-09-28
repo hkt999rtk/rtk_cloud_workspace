@@ -5385,6 +5385,9 @@ func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T)
 		"go build -trimpath -o /out/webrtcservice ./cmd/webrtcservice",
 		"go build -trimpath -o /out/videostorage ./cmd/videostorage",
 		"go build -trimpath -o /out/otaseal ./cmd/otaseal",
+		"go build -trimpath -o /out/otacdncollect ./cmd/otacdncollect",
+		"go build -trimpath -o /out/otacdnreview ./cmd/otacdnreview",
+		"go build -trimpath -o /out/otaobject ./cmd/otaobject",
 		"go build -trimpath -o /out/clipverifier ./cmd/clipverifier",
 		"go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight",
 		"go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile",
@@ -5401,6 +5404,9 @@ func TestVideoCloudDockerfileIncludesRuntimeAndClipStorageBinaries(t *testing.T)
 		"COPY --from=builder /out/webrtcservice /app/webrtcservice",
 		"COPY --from=builder /out/videostorage /app/videostorage",
 		"COPY --from=builder /out/otaseal /app/otaseal",
+		"COPY --from=builder /out/otacdncollect /app/otacdncollect",
+		"COPY --from=builder /out/otacdnreview /app/otacdnreview",
+		"COPY --from=builder /out/otaobject /app/otaobject",
 		"COPY --from=builder /out/clipverifier /app/clipverifier",
 		"COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight",
 		"COPY --from=builder /out/clipreconcile /app/clipreconcile",
@@ -7116,6 +7122,14 @@ if [[ "$*" == *"get secret ota-cdn-runtime -o json"* ]]; then
     exit 0
   fi
   printf 'OTA CDN runtime Secret is absent\n' >&2
+  exit 1
+fi
+if [[ "$*" == *"get secret ota-cdn-datastream-reader -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_DATASTREAM_READER_SECRET_JSON:-}" ]]; then
+    printf '%s\n' "$FAKE_OTA_DATASTREAM_READER_SECRET_JSON"
+    exit 0
+  fi
+  printf 'OTA DataStream reader Secret is absent\n' >&2
   exit 1
 fi
 if [[ "$*" == *"get secret video-cloud-workers-runtime -o json"* ]]; then

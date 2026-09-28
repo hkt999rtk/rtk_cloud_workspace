@@ -268,7 +268,28 @@ different results. Do not report a complete staging release from ready Pods,
    Enable the device edge only after the authenticated device route is verified;
    enable core cutover only after the independent endpoint is Ready. Reverse
    those switches in the opposite order for rollback while preserving existing
-   receipts and outbox evidence. The independent producer close schedule uses
+   receipts and outbox evidence.
+
+   The OTA CDN log collector is separately controlled by
+   `LKE_OTA_CDN_COLLECTOR_ENABLED=false` in adapter defaults and every dev,
+   staging, and production override. Before enabling it, configure the exact
+   DataStream ID, OTA CDN host and URL path root, dedicated log bucket and log
+   filename prefix, S3 region and HTTPS endpoint through the
+   `VIDEO_CLOUD_OTA_CDN_*` adapter values. The prefix must exclude Akamai's
+   connection-verification file. Provision a separate, read/list-only
+   `ota-cdn-datastream-reader` Secret in the Video Cloud namespace with
+   `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; do not reuse firmware-origin
+   write credentials. Apply the OTA billing schema including
+   `ota_cdn_stream_objects` and `ota_cdn_edge_requests` before activation.
+   The preflight verifies the configuration and credentials and the selected
+   Video Cloud image before deploying the five-minute UTC CronJob. The job
+   writes immutable source evidence into Video Cloud PostgreSQL; it creates
+   no PVC and cannot approve a month. Verify one gzip delivery, parsed rows,
+   an exact rerun, provider completeness proof and alerting before enabling
+   producer sealing. Disabling the flag removes only future scheduling and
+   preserves completed Jobs and source rows.
+
+   The independent producer close schedule uses
    `LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED=false` in every environment until
    the CDN delivery collector and per-Cloud positive reviews are qualified.
    To enable it, select Video Cloud, Account Manager and Billing in one reviewed
