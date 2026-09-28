@@ -41,10 +41,14 @@ func lkeRequireOTACDNCollectorDeployment(env map[string]string, opts provisionOp
 		return fmt.Errorf("OTA CDN collector requires a selected Video Cloud image")
 	}
 	ns := lkeNamespaceName(env, "video-cloud")
-	for secretName, keys := range map[string][]string{
-		"video-cloud-runtime":       {"POSTGRES_PASSWORD"},
-		"ota-cdn-datastream-reader": {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"},
+	for _, required := range []struct {
+		name string
+		keys []string
+	}{
+		{name: "video-cloud-runtime", keys: []string{"POSTGRES_PASSWORD"}},
+		{name: "ota-cdn-datastream-reader", keys: []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}},
 	} {
+		secretName, keys := required.name, required.keys
 		secret, err := kubectlResourceJSON(ns, "secret", secretName)
 		if err != nil {
 			return fmt.Errorf("OTA CDN collector Secret %s unavailable: %w", secretName, err)
