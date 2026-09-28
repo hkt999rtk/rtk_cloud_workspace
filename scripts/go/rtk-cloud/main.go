@@ -90,6 +90,7 @@ var commands = map[string]commandSpec{
 	"run-staging-e2e":                  {run: runStagingE2E},
 	"secrets":                          {run: runSecrets},
 	"secrets-check":                    {run: runSecretsCheck},
+	"sqlite-migration-pack":            {run: runSQLiteMigrationPack},
 	"environment-acceptance":           {run: runEnvironmentAcceptance},
 	"staging-acceptance":               {run: runStagingAcceptance},
 	"staging-e2e-billing-verify":       {run: runStagingE2EBillingVerify},
