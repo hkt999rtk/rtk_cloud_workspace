@@ -2,7 +2,6 @@ package home100k
 
 import (
 	"bytes"
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -12,7 +11,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"math/big"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -183,13 +181,9 @@ func TestExecuteRunnerDaemonRejectsMissingAndUnknownAssignments(t *testing.T) {
 }
 
 func TestCoordinateRemoteRunnerStartCompletesReadyStartAndStatusBarriers(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:18080")
-	if err != nil {
-		t.Skipf("runner control port is in use: %v", err)
-	}
 	started := false
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ready":
 			_ = json.NewEncoder(w).Encode(VMStartTelemetry{Label: "lg01", RunID: "run-001", Status: "READY_WAIT"})
@@ -208,13 +202,13 @@ func TestCoordinateRemoteRunnerStartCompletesReadyStartAndStatusBarriers(t *test
 		default:
 			http.NotFound(w, r)
 		}
-	})}
-	go func() { _ = server.Serve(listener) }()
-	t.Cleanup(func() { _ = server.Shutdown(context.Background()) })
+	}))
+	t.Cleanup(server.Close)
+	client := &http.Client{Timeout: 5 * time.Second, Transport: runnerControlTestTransport{host: strings.TrimPrefix(server.URL, "http://")}}
 
-	result, err := coordinateRemoteRunnerStart(
+	result, err := coordinateRemoteRunnerStartWithClient(
 		[]LinodeVM{{Label: "lg01", PublicIPv4: "127.0.0.1"}},
-		Plan{}, "run-001", workflowFlagValues{coordinatorDelayMS: 1},
+		Plan{}, "run-001", workflowFlagValues{coordinatorDelayMS: 1}, client,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +216,15 @@ func TestCoordinateRemoteRunnerStartCompletesReadyStartAndStatusBarriers(t *test
 	if result.ReadyBarrier != "1/1" || result.StartDelayMS != 1 || len(result.VMs) != 1 {
 		t.Fatalf("coordination = %#v", result)
 	}
+}
+
+type runnerControlTestTransport struct{ host string }
+
+func (transport runnerControlTestTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	redirected := request.Clone(request.Context())
+	redirected.URL.Host = transport.host
+	redirected.Host = transport.host
+	return http.DefaultTransport.RoundTrip(redirected)
 }
 
 func httptestResponse(t *testing.T, method, path, body string, handler http.HandlerFunc) *httptest.ResponseRecorder {
