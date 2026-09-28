@@ -108,34 +108,91 @@ in this document as an attestation after a Pod change.
    Record the printed SHA-256 of each **encrypted** archive. Independently
    record representative schema versions and row counts without customer
    values. Upload to the reviewed private backup store, read the archives back
-   and prove that the escrowed identity decrypts them. Do not continue on a
-   partial archive or unverified upload. After read-back and decrypt verification,
-   securely remove the local plaintext copies; if packing was interrupted,
-   inspect and remove only its leftover `.sqlite-verify-*` directory inside the
-   private source directory. The pack command does not access Kubernetes, fence
-   writers, transfer files or upload archives.
+   and prove that the escrowed identity decrypts them. Compare each decrypted
+   `manifest.json` workload, source Pod UID, file names, sizes and SHA-256
+   values with the private copy and ensure the archive contains those files.
+   The seed command checks the encrypted archive hash, but it cannot establish
+   its contents or independent recoverability by itself. Do not continue on a
+   partial archive or unverified upload. Keep the private plaintext copies
+   available through PVC seeding and cutover verification; securely remove them
+   afterward. If packing was interrupted, inspect and remove only its leftover
+   `.sqlite-verify-*` directory inside the private source directory. The pack
+   command does not access Kubernetes, fence writers, transfer files or upload
+   archives.
 3. Create `cloud-admin-sqlite-data` and `frontend-sqlite-data` as separate
-   `ReadWriteOnce` PVCs using `linode-block-storage-retain`. Bind each PVC to a
-   short-lived migration Pod using a reviewed image and the target filesystem
-   group (Admin 999, frontend 101). Copy the verified file sets into the
-   respective volume roots, preserve file ownership and modes, and compare the
-   bytes with the independently retained archive. Check SQLite integrity and
-   representative counts from the populated PVC before releasing the helper.
-   The copy mechanism and helper image require their own review; annotations
-   alone are not proof of copied data.
+   `ReadWriteOnce` PVCs using `linode-block-storage-retain`, only after the live
+   provider plan proves capacity. Select an immutable, qualified image for each
+   helper, with working `sh`, `tar`, and `sha256sum`, and review its registry pull
+   Secret from that namespace. Render and inspect each helper manifest before
+   applying it; the renderer does not contact Kubernetes:
+
+   ```sh
+   scripts/render-sqlite-migration-helper.sh \
+     --stack video-cloud-staging --workload cloud-admin \
+     --image "$REVIEWED_ADMIN_IMAGE_AT_DIGEST" \
+     --image-pull-secret "$ADMIN_IMAGE_PULL_SECRET" \
+     > "$PRIVATE_ADMIN_HELPER_MANIFEST"
+   scripts/render-sqlite-migration-helper.sh \
+     --stack video-cloud-staging --workload frontend \
+     --image "$REVIEWED_FRONTEND_IMAGE_AT_DIGEST" \
+     --image-pull-secret "$FRONTEND_IMAGE_PULL_SECRET" \
+     > "$PRIVATE_FRONTEND_HELPER_MANIFEST"
+   kubectl --kubeconfig "$STAGING_KUBECONFIG" apply -f "$PRIVATE_ADMIN_HELPER_MANIFEST"
+   kubectl --kubeconfig "$STAGING_KUBECONFIG" apply -f "$PRIVATE_FRONTEND_HELPER_MANIFEST"
+   ```
+
+   Omit `--image-pull-secret` only when the reviewed image can be pulled in
+   that namespace without one. The helpers use the target process owners and
+   groups (Admin 10001:999, frontend 100:101), mount only their own PVC at
+   `/migration`, and have a label that cannot be selected by the application
+   Services. Check that both PVCs are Bound and helpers Ready. After the
+   independent archive upload/read-back/decrypt test and source integrity check
+   have passed, seed each empty PVC while the writer fence remains active:
+
+   ```sh
+   scripts/seed-sqlite-migration-pvc.sh \
+     --stack video-cloud-staging --confirm-stack video-cloud-staging \
+     --kubeconfig "$STAGING_KUBECONFIG" --workload cloud-admin \
+     --source-pod-uid "$ADMIN_SOURCE_UID" --source-dir "$PRIVATE_ADMIN_COPY" \
+     --archive "$PRIVATE_ARCHIVE_DIR/admin.age" \
+     --archive-sha256 "$ADMIN_ARCHIVE_SHA256" \
+     --helper-pod sqlite-migration-cloud-admin \
+     --helper-image "$REVIEWED_ADMIN_IMAGE_AT_DIGEST"
+   scripts/seed-sqlite-migration-pvc.sh \
+     --stack video-cloud-staging --confirm-stack video-cloud-staging \
+     --kubeconfig "$STAGING_KUBECONFIG" --workload frontend \
+     --source-pod-uid "$FRONTEND_SOURCE_UID" --source-dir "$PRIVATE_FRONTEND_COPY" \
+     --archive "$PRIVATE_ARCHIVE_DIR/frontend.age" \
+     --archive-sha256 "$FRONTEND_ARCHIVE_SHA256" \
+     --helper-pod sqlite-migration-frontend \
+     --helper-image "$REVIEWED_FRONTEND_IMAGE_AT_DIGEST"
+   ```
+
+   The seed command refuses a nonempty or already attested PVC, checks the
+   helper identity and digest-pinned image, verifies source and private-copy
+   hashes before and after transfer, and checks every target file hash and
+   read/write access. Matching bytes carry the prior `PRAGMA integrity_check`
+   result onto the PVC; retain representative schema/count evidence from the
+   private copy. If any check fails after transfer starts, leave the PVC and
+   fence in place for investigation. The command does not add annotations,
+   switch Deployments or remove helpers. The operator must review its result
+   and the independent archive before attesting the PVCs.
 4. Recheck the still-running source Pod UID and write fence. Annotate each Bound
    PVC with `rtk.realtek.com/sqlite-source-pod-uid` set to that UID and
    `rtk.realtek.com/sqlite-copy-sha256` set to the verified archive's 64-character
    SHA-256. Set `LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true` and
    `LKE_FRONTEND_SQLITE_PVC_ENABLED=true` in the canonical staging configuration.
-   The renderer then uses one replica, `Recreate`, and mounts `/app/data` or
-   `/data`. Run the protected plan again and deploy the selected CI images.
+   Delete both migration helper Pods and verify they have terminated so the
+   `ReadWriteOnce` claims can attach to the application Pods. The renderer then
+   uses one replica, `Recreate`, and mounts `/app/data` or `/data`. Run the
+   protected plan again and deploy the selected CI images.
 5. Before reopening traffic, verify both new Pods mount the intended PVCs,
    database integrity, Admin sessions/audit/support read markers, frontend lead
    and analytics records, and representative authenticated flows. Record the
    running image digests and both source-to-PVC checksums. Add both PVCs to the
    matched core backup inventory and complete a staging restore drill before
-   enabling support tickets.
+   enabling support tickets. After successful cutover and independent restore
+   verification, securely remove the local plaintext copies.
 
 If the cutover fails, keep traffic fenced. Restore from the independent archive
 into the retained PVC or a newly verified claim, then redeploy and verify. The
