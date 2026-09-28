@@ -141,6 +141,8 @@ func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T)
 		{"invalid mode", "RUNTIME_OTA_STORAGE_MODE=unknown\n", "legacy-shared or dedicated"},
 		{"missing policy", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "requires colocated policy"},
 		{"shared bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-video-media-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must differ"},
+		{"wrong environment bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-prod-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-sea"},
+		{"wrong storage region bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-sea"},
 		{"invalid cutover flag", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=yes\n", "must be true or false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,6 +164,21 @@ func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T)
 	}
 	if !plan.RuntimeMediaCutoverRequired || plan.OTAFirmware.Bucket != "rtk-ota-firmware-dev-us-sea" || plan.OTAFirmware.Region != "us-sea" {
 		t.Fatalf("incorrect dedicated OTA plan: %#v", plan)
+	}
+}
+
+func TestResolveDeploymentConfigRejectsMismatchedEnvironmentRoot(t *testing.T) {
+	workspace := t.TempDir()
+	devRoot := filepath.Join(workspace, "cloud_env", "dev")
+	if _, err := resolveDeploymentConfig(workspace, "staging", devRoot); err == nil || !strings.Contains(err.Error(), "does not match --environment-root") {
+		t.Fatalf("mismatched environment root error = %v", err)
+	}
+}
+
+func TestOTAMetricsExportRejectsTrailingPositionalArguments(t *testing.T) {
+	err := runDeploymentWithOperations([]string{"storage-metrics-export", "--environment", "dev", "unexpected", "--window-end", "2026-09-28T07:00:00Z"}, deploymentOperations{})
+	if err == nil || !strings.Contains(err.Error(), "unexpected positional arguments") {
+		t.Fatalf("trailing positional argument error = %v", err)
 	}
 }
 

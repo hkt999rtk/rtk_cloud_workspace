@@ -186,6 +186,9 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration and OTA cutover")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
 	storagePurpose := fs.String("purpose", "media", "storage purpose: media or ota")
+	metricsStart := fs.String("window-start", "", "UTC start of the OTA Cloud Pulse qualification window")
+	metricsEnd := fs.String("window-end", "", "UTC end of the OTA Cloud Pulse qualification window")
+	metricsRecorder := fs.String("recorded-by", "", "operator identity for the OTA metrics qualification")
 	operation := fs.String("operation", "", "preflight operation: plan, provision, acceptance, or ephemeral-test")
 	var qualification deploymentCredentialCheckOptions
 	var selectedChecks string
@@ -205,8 +208,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 		return err
 	}
-	if action == "credentials-check" && fs.NArg() != 0 {
+	if (action == "credentials-check" || action == "storage-metrics-export") && fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use --flag=value for boolean values")
+	}
+	if action != "storage-metrics-export" && (hasFlag(args[1:], "--window-start") || hasFlag(args[1:], "--window-end") || hasFlag(args[1:], "--recorded-by")) {
+		return errors.New("OTA metrics window and operator flags require deployment storage-metrics-export")
 	}
 	qualificationFlags := keySet("read-only", "checks", "image", "manifest", "tls-cert", "tls-key", "tls-ca", "tls-name", "tls-purpose", "min-valid-days")
 	customQualification := false
@@ -236,7 +242,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
-	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire")[action] {
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire", "storage-metrics-export")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -269,6 +275,12 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		return fmt.Errorf("--confirm %s is required", stack)
 	}
 	if storageAction {
+		if action == "storage-metrics-export" {
+			if *storagePurpose != "ota" {
+				return errors.New("storage-metrics-export requires --purpose ota")
+			}
+			return runDeploymentOTAMetricsExport(cfg, *envFile, *metricsStart, *metricsEnd, *metricsRecorder)
+		}
 		return runDeploymentStorageLifecyclePurpose(action, cfg, *envFile, *sourceEnvFile, *keyID, *storagePurpose)
 	}
 	if keySet("create", "upgrade", "provision", "test")[action] {
@@ -701,6 +713,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment storage-plan --environment NAME
   rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota --confirm STACK
   rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota --source-env-file PATH --confirm STACK
+  rtk-cloud deployment storage-metrics-export --environment NAME --purpose ota --window-start YYYY-MM-DDTHH:MM:SSZ --window-end YYYY-MM-DDTHH:MM:SSZ --recorded-by OPERATOR --confirm STACK
   rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota [--source-env-file PATH for ota] --confirm STACK
   rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK
 `)
@@ -725,6 +738,8 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		if environment == "" {
 			environment = filepath.Base(environmentRoot)
+		} else if environment != filepath.Base(environmentRoot) {
+			return deploymentConfig{}, fmt.Errorf("--environment %s does not match --environment-root %s", environment, environmentRoot)
 		}
 	} else {
 		if environment == "" {
@@ -1092,6 +1107,13 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 		}
 		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] == runtime["RUNTIME_MEDIA_STORAGE_BUCKET"] {
 			return deploymentStoragePlan{}, errors.New("dedicated OTA bucket must differ from runtime media bucket")
+		}
+		if computeRegion == "" {
+			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires a resolved compute and storage region")
+		}
+		expectedBucket := "rtk-ota-firmware-" + filepath.Base(environmentRoot) + "-" + computeRegion
+		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] != expectedBucket {
+			return deploymentStoragePlan{}, fmt.Errorf("dedicated OTA bucket must be %s for the selected environment and storage region", expectedBucket)
 		}
 		ota.Bucket = runtime["RUNTIME_OTA_STORAGE_BUCKET"]
 		ota.Prefix = strings.Trim(runtime["RUNTIME_OTA_STORAGE_PREFIX"], "/")
