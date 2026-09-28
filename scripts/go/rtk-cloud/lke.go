@@ -2696,6 +2696,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTAServiceRegistrationEnabled(env) {
+		if err := kubectlApply(lkeAllowOTABillingNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+	}
 	for _, workload := range selectedWorkloads {
 		if workload.Key == "cloud-logger" {
 			continue
@@ -2812,6 +2817,18 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 		if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/"+otaServiceWorkloadName, "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m")); err != nil {
+			return err
+		}
+	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		if lkeOTAProducerSealScheduleEnabled(env) {
+			if err := kubectlApply(lkeOTAProducerSealRuntimeSecretManifest(env)); err != nil {
+				return err
+			}
+			if err := kubectlApply(lkeOTAProducerSealCronJobManifest(env)); err != nil {
+				return err
+			}
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "delete", "cronjob/ota-producer-period-seal", "--ignore-not-found=true", "--cascade=orphan"); err != nil {
 			return err
 		}
 	}
@@ -3094,6 +3111,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/webrtcservi
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorage ./cmd/videostorage
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaregistrar ./cmd/otaregistrar
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaservice ./cmd/otaservice
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaseal ./cmd/otaseal
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile
@@ -3120,6 +3138,7 @@ COPY --from=builder /out/webrtcservice /app/webrtcservice
 COPY --from=builder /out/videostorage /app/videostorage
 COPY --from=builder /out/otaregistrar /app/otaregistrar
 COPY --from=builder /out/otaservice /app/otaservice
+COPY --from=builder /out/otaseal /app/otaseal
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
 COPY --from=builder /out/clipreconcile /app/clipreconcile
@@ -3327,6 +3346,11 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string, opts provisionOptions) error {
 	if (lkeWorkloadSelected(env, opts, "billing") || lkeWorkloadSelected(env, opts, "account-manager")) && lkeOTAPlatformSealScheduleEnabled(env) {
 		if err := lkeRequireOTAPlatformSealSchedule(env); err != nil {
+			return err
+		}
+	}
+	if lkeOTAProducerSealScheduleEnabled(env) {
+		if err := lkeRequireOTAProducerSealSchedule(env); err != nil {
 			return err
 		}
 	}
@@ -9049,7 +9073,7 @@ stringData:
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env))
+%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
