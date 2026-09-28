@@ -116,6 +116,8 @@ Development 以固定 Account Manager `c4295b5c` 與 Video Cloud `12bc763c` 來�
 
 Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/rtk_video_cloud/actions/runs/36431651968) 成功；development `video-cloud-api` 已更新至 `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:d879f8c0d173476e05cd7f206d5e34969eaebe5f62dd6eee340d2a361911153e`，映像 revision 標籤為上述 `4ab5b382`，Pod 1/1 Ready，公開 `/healthz` 回應 200，dev operator 映像設定與 live digest 一致。映像已驗證包含 `otacdncollect`、`otacdnreview` 與 `otaobject`。development PostgreSQL 已在單一交易建立 `ota_cdn_stream_objects`、`ota_cdn_edge_requests`、月份索引及兩個不可變觸發器；兩表目前各為 0 筆。`LKE_OTA_CDN_COLLECTOR_ENABLED=false`，沒有 collector CronJob，不能將程式／空表視為已取得 CDN 營運用量或開始 OTA 收費。外部 DataStream property、日誌目的地、專用唯讀憑證、完整性證據與 staging 對帳仍待完成。
 
+同日固定版 staging PKI 唯讀複核：上述 CI run 的 API、EMQX PKI、OpenBao PKI 三個 `linux/amd64` digest 均通過 staging 專用 GHCR 憑證拉取；三個預定的 10 GiB PVC 都已 Bound，OpenBao 以 staging CA 驗證的 HTTPS 健康查詢回應 200。現行 namespace 只有一般 `video-cloud-api` 與 `pki-controller`，缺少 `video-cloud-api-pki`／`mqtt-pki`、各自的 staging 身分與信任物件，且未設 OpenBao 網路政策要求的 `rtk.cloud/pki-client-access=enabled` namespace 標籤；Product PKI 檢查仍因 Device Root ID／指紋 pin 不完整而 **NO-GO**。即時 Linode 基礎拓樸容量顯示 44 個 active services、此次新增需求 0；操作記錄的上限仍為 20，此結果只適用於不新增資源的既有拓樸，而且該一般部署計畫仍選到舊 Video Cloud API 映像，不能視為固定版上線批准。已在受限操作區保存完整且去敏的 preflight 報告與 staging API 基準；未建立 Root、未套用消費端、未啟用 OTA 計費。
+
 ## 2. 現況證據與待補差距
 
 | 項目 | 現況證據 | 必須補齊 |
