@@ -44,6 +44,44 @@ delete only the PVCs and PVs created by that attempt, then verify and remove
 their corresponding detached Linode volumes. Removing the Helm release or PVCs
 alone may leave chargeable volumes behind.
 
+## Cloud Admin state prerequisite
+
+Cloud Admin's local SQLite is persistent application state: it holds sessions,
+audit records and per-user support-ticket read markers. The LKE Deployment
+renderer currently leaves `/app/data/rtk-cloud-admin.db` on the container's
+writable layer. Inspection of the live staging Deployment on 2026-09-28 found
+no `DATABASE_PATH`, volume or volume mount; a database file already exists in
+the running container. Replacing that Pod would discard those records. The
+frontend image similarly declares `/data` for its SQLite databases, while the
+live staging frontend Deployment has no PVC. Consequently the core recovery
+inventory's SQLite PVC assumptions are not yet satisfied.
+
+Before a staging ticket rollout or any Admin image replacement, implement and
+rehearse a data-preserving storage migration for **both** SQLite owners. The
+Cloud Admin target is a dedicated `ReadWriteOnce` PVC mounted at `/app/data`,
+with `DATABASE_PATH=/app/data/rtk-cloud-admin.db`, one replica and a
+`Recreate` strategy. Include this PVC in the provider active-services budget;
+the frontend needs its own PVC at `/data`. These two PVCs are in addition to
+Zammad's three: from the observed 44 active services on 2026-09-28, the full
+staging storage addition projects at least 49, before other infrastructure
+changes. Do not mount an empty claim over an existing database or scale the
+source Pod down before a verified copy exists.
+
+For each environment, first inventory the source Pod UID, its database files
+and WAL/SHM sidecars, schema version and record counts without logging session
+or customer values. Hold external writes and background writers during the
+copy. Copy the complete, quiescent database set into a private migration
+location and the new PVC; retain an independently recoverable encrypted copy.
+Verify checksums, SQLite integrity and representative records, then switch the
+single-replica Deployment to the PVC. Confirm sessions, audit history and
+ticket read markers after rollout, and rehearse rollback using the retained
+copy. If source Pod identity changes or any check fails, stop the migration and
+investigate rather than initialize a blank database. Add both SQLite PVCs to
+the matched backup configuration and exercise a staging restore before
+enabling tickets. This migration procedure needs a reviewed implementation
+and a protected-environment Go/No-Go; it is not performed by the Zammad
+bootstrap script.
+
 ## Matched backup inventory
 
 Before enabling support tickets in staging or production, extend that

@@ -55,6 +55,15 @@ objects, release images and external audit history.
 | Operator/cloud credentials, kubeconfig, age identities, unseal/recovery shares, root tokens, offline Root/HSM | **Separate escrow**, not automatically included in the core archive. | Obtain through the approved recovery process. An OpenBao backup cannot unseal itself. |
 | Test Device/user credentials | Separate controlled controller handoff, not production core data. | See [staging runtime bootstrap](staging-runtime-bootstrap.md); never recreate production identity by regenerating test fixtures. |
 
+The SQLite rows above describe the required recovery profile, not the current
+staging Deployment. On 2026-09-28, live staging Cloud Admin and frontend had
+no PVC mounts. Admin's database is in `/app/data` on the container writable
+layer; the frontend image uses `/data` for its databases. Do not claim a
+qualified core backup or perform an image rollout that replaces these Pods
+until the existing files and sidecars are migrated to dedicated PVCs, verified,
+and added to the reviewed backup inventory. See the [ticket deployment
+prerequisite](deployment/support-ticket-zammad.md#cloud-admin-state-prerequisite).
+
 Redis is not uniformly disposable: the
 [Device Shadow persistence contract](../repos/rtk_video_cloud/docs/device-shadow-spec.md)
 requires durable documents/indexes/outbox. Current LKE Redis manifests use
