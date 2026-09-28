@@ -2564,7 +2564,7 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			continue
 		}
 		if !lkeSQLitePVCEnabled(env, workload.Key) {
-			if err := lkePreventSQLitePVCDisable(workload); err != nil {
+			if err := lkePreventSQLitePVCDisable(env, workload); err != nil {
 				return err
 			}
 			continue

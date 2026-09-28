@@ -45,13 +45,30 @@ spec:
 		firstNonEmpty(lkeEnvValue(env, "LKE_"+strings.ToUpper(strings.ReplaceAll(workload.Key, "-", "_"))+"_SQLITE_STORAGE"), "5Gi"))
 }
 
-func lkePreventSQLitePVCDisable(workload lkeWorkload) error {
+func lkeProtectedSQLiteEnvironment(env map[string]string) bool {
+	name := strings.ToLower(strings.TrimSpace(env["CLOUD_ENV_NAME"]))
+	if name == "" {
+		stack := strings.ToLower(strings.TrimSpace(env["CLOUD_STACK_NAME"]))
+		switch {
+		case strings.HasSuffix(stack, "-staging"):
+			name = "staging"
+		case strings.HasSuffix(stack, "-prod"), strings.HasSuffix(stack, "-production"):
+			name = "prod"
+		}
+	}
+	return name == "staging" || name == "prod" || name == "production"
+}
+
+func lkePreventSQLitePVCDisable(env map[string]string, workload lkeWorkload) error {
 	deployment, err := lkeSQLiteDeploymentJSON(workload)
 	if err != nil {
 		return fmt.Errorf("inspect %s Deployment before SQLite PVC configuration change: %w", workload.Name, err)
 	}
 	if deployment == nil {
 		return nil
+	}
+	if lkeProtectedSQLiteEnvironment(env) {
+		return fmt.Errorf("%s in %s has an existing container-layer SQLite database; enable and verify its SQLite PVC migration before protected rollout", workload.Name, env["CLOUD_STACK_NAME"])
 	}
 	spec, _ := deployment["spec"].(map[string]any)
 	template, _ := spec["template"].(map[string]any)
@@ -62,6 +79,54 @@ func lkePreventSQLitePVCDisable(workload lkeWorkload) error {
 		if volume["name"] == "sqlite-data" {
 			return fmt.Errorf("%s already uses a SQLite data PVC; keep its LKE_*_SQLITE_PVC_ENABLED setting true", workload.Name)
 		}
+	}
+	return nil
+}
+
+func lkeRequireCloudAdminImagePVC(env map[string]string, deployment map[string]any) error {
+	if !lkeProtectedSQLiteEnvironment(env) {
+		return nil
+	}
+	if !lkeSQLitePVCEnabled(env, "cloud-admin") {
+		return fmt.Errorf("protected Cloud Admin image rollout requires LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true")
+	}
+	spec, _ := deployment["spec"].(map[string]any)
+	if spec["replicas"] != float64(1) {
+		return fmt.Errorf("protected Cloud Admin image rollout requires one SQLite writer")
+	}
+	strategy, _ := spec["strategy"].(map[string]any)
+	if strategy["type"] != "Recreate" {
+		return fmt.Errorf("protected Cloud Admin image rollout requires Recreate strategy")
+	}
+	template, _ := spec["template"].(map[string]any)
+	podSpec, _ := template["spec"].(map[string]any)
+	volumes, _ := podSpec["volumes"].([]any)
+	claimFound := false
+	for _, raw := range volumes {
+		volume, _ := raw.(map[string]any)
+		if volume["name"] != "sqlite-data" {
+			continue
+		}
+		claim, _ := volume["persistentVolumeClaim"].(map[string]any)
+		claimFound = claim["claimName"] == lkeSQLitePVCName("cloud-admin")
+	}
+	containers, _ := podSpec["containers"].([]any)
+	mountFound := false
+	for _, raw := range containers {
+		container, _ := raw.(map[string]any)
+		if container["name"] != "app" {
+			continue
+		}
+		mounts, _ := container["volumeMounts"].([]any)
+		for _, item := range mounts {
+			mount, _ := item.(map[string]any)
+			if mount["name"] == "sqlite-data" && mount["mountPath"] == "/app/data" {
+				mountFound = true
+			}
+		}
+	}
+	if !claimFound || !mountFound {
+		return fmt.Errorf("protected Cloud Admin image rollout requires the migrated cloud-admin-sqlite-data PVC mounted at /app/data")
 	}
 	return nil
 }
