@@ -34,6 +34,15 @@ func captureFixture(t *testing.T) (string, string, string) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+	for _, name := range []string{"analytics.db", "connectplus.db"} {
+		data, err := os.ReadFile(filepath.Join(source, "rtk-cloud-admin.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(source, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	bin := filepath.Join(base, "bin")
 	if err := os.Mkdir(bin, 0700); err != nil {
 		t.Fatal(err)
@@ -66,18 +75,31 @@ done
 script="$3"
 shift 5
 case "$script" in
-  *'find '* ) printf '/app/data/rtk-cloud-admin.db\n' ;;
+  *'find '* )
+    if [[ -n "${FAKE_CAPTURE_LIST:-}" ]]; then printf '%s\n' "$FAKE_CAPTURE_LIST"
+    elif [[ "${FAKE_CAPTURE_NO_FILES:-}" == true ]]; then :
+    elif [[ "${FAKE_CAPTURE_FRONTEND:-}" == true ]]; then printf '/data/analytics.db\n/data/connectplus.db\n'
+    else printf '/app/data/rtk-cloud-admin.db\n'; fi ;;
   *'sha256sum '* )
     count=0
     [[ ! -f "$FAKE_HASH_COUNT" ]] || count="$(cat "$FAKE_HASH_COUNT")"
     count="$((count+1))"
     printf '%s' "$count" > "$FAKE_HASH_COUNT"
-    if [[ "${FAKE_CAPTURE_HASH_CHANGE:-}" == true && "$count" -gt 1 ]]; then
+    if [[ "${FAKE_CAPTURE_BAD_HASH:-}" == true ]]; then
+      printf 'not-a-sha256  rtk-cloud-admin.db\n'
+    elif [[ "${FAKE_CAPTURE_HASH_CHANGE:-}" == true && "$count" -gt 1 ]]; then
       printf '%064d  rtk-cloud-admin.db\n' 0
     else
       (cd "$FAKE_SOURCE" && sha256sum "$@")
     fi ;;
-  *'tar -cf '* ) COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@" ;;
+  *'tar -cf '* )
+    if [[ "${FAKE_CAPTURE_TAR_CORRUPT:-}" == true ]]; then printf 'changed' >> "$FAKE_SOURCE/rtk-cloud-admin.db"; fi
+    if [[ "${FAKE_CAPTURE_TAR_EXTRA:-}" == true ]]; then
+      printf 'extra' > "$FAKE_SOURCE/extra.db"
+      COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@" extra.db
+    else
+      COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@"
+    fi ;;
   *) exit 2 ;;
 esac
 `
@@ -117,11 +139,35 @@ func TestSQLiteMigrationCaptureChecksSourceAndCopy(t *testing.T) {
 	}
 }
 
+func TestSQLiteMigrationCaptureFrontendCopiesBothDatabases(t *testing.T) {
+	source, output, kubeconfig := captureFixture(t)
+	t.Setenv("FAKE_CAPTURE_FRONTEND", "true")
+	args := captureArgs(output, kubeconfig)
+	args[5] = "frontend"
+	if err := runSQLiteMigrationCapture(args); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"analytics.db", "connectplus.db"} {
+		want, err := sqliteMigrationHash(filepath.Join(source, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := sqliteMigrationHash(filepath.Join(output, name))
+		if err != nil || got != want {
+			t.Fatalf("%s hash = %s, error = %v; want %s", name, got, err, want)
+		}
+	}
+}
+
 func TestSQLiteMigrationCaptureRejectsChangedSource(t *testing.T) {
 	for _, tc := range []struct{ name, env string }{
 		{"pod UID", "FAKE_CAPTURE_UID_CHANGE"},
 		{"source hash", "FAKE_CAPTURE_HASH_CHANGE"},
 		{"existing mount", "FAKE_CAPTURE_MOUNT"},
+		{"empty source", "FAKE_CAPTURE_NO_FILES"},
+		{"invalid hash", "FAKE_CAPTURE_BAD_HASH"},
+		{"changed tar bytes", "FAKE_CAPTURE_TAR_CORRUPT"},
+		{"extra tar file", "FAKE_CAPTURE_TAR_EXTRA"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, output, kubeconfig := captureFixture(t)
@@ -134,6 +180,27 @@ func TestSQLiteMigrationCaptureRejectsChangedSource(t *testing.T) {
 				t.Fatalf("failed capture left plaintext: %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+func TestSQLiteMigrationCaptureRejectsUnexpectedSourceName(t *testing.T) {
+	_, output, kubeconfig := captureFixture(t)
+	t.Setenv("FAKE_CAPTURE_LIST", "/app/data/../rtk-cloud-admin.db")
+	if err := runSQLiteMigrationCapture(captureArgs(output, kubeconfig)); err == nil || !strings.Contains(err.Error(), "filename") {
+		t.Fatalf("expected source filename rejection, got %v", err)
+	}
+}
+
+func TestSQLiteMigrationCaptureRejectsInvalidArguments(t *testing.T) {
+	_, output, kubeconfig := captureFixture(t)
+	for _, args := range [][]string{
+		{"--stack", "bad/stack", "--kubeconfig", kubeconfig, "--workload", "cloud-admin", "--source-pod-uid", captureTestUID, "--output-dir", output},
+		{"--stack", "video-cloud-staging", "--kubeconfig", kubeconfig, "--workload", "unknown", "--source-pod-uid", captureTestUID, "--output-dir", output},
+		{"--stack", "video-cloud-staging", "--kubeconfig", filepath.Join(output, "missing"), "--workload", "cloud-admin", "--source-pod-uid", captureTestUID, "--output-dir", output},
+	} {
+		if err := runSQLiteMigrationCapture(args); err == nil {
+			t.Fatalf("unsafe arguments accepted: %v", args)
+		}
 	}
 }
 
