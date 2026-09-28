@@ -28,6 +28,27 @@ the existing bootstrap PVC must not be reused. Follow
 the seven identities, register exact workload approvals, and pass the final
 listener, registration, and denial probes before continuing below.
 
+## Verified dev runtime delta (2026-09-29)
+
+The canonical read-only development credential check passed 10/10. The live
+Account Manager Deployment is Ready, but its Service lacks the private
+`service-registry` port. The protected Product catalog returned `options=[]`
+and `product_writes_enabled=false` for each of the platform test account's
+three Clouds. The selected dev operator setting is also `false`; none of the
+seven listener/registrar identity Secrets exists, and the independent OTA
+Deployment is absent. No OTA-enabled Product is available to that test account.
+
+The packaged read-only service-grant backfill report returned `ready=true`,
+`products=39`, `needs_backfill=39`, `already_versioned=0`, `issue_count=0`,
+and `applied=0`, with a snapshot SHA-256. This is an eligibility snapshot,
+not a completed backfill. No matched dev backup profile was found in tracked
+environment configuration, and no backup CronJob was found in the cluster.
+Do not infer that no backup exists elsewhere; locate or prepare the reviewed
+matched backup and freeze Product/production-run writes before applying the
+exact digest-bound snapshot. The current running image packages the report and
+apply command. No write, Secret installation, registration, or cutover was
+performed during this audit.
+
 ## Prepare the exact dev revision
 
 1. Build the Account Manager, Video Cloud, and Cloud Admin images from the

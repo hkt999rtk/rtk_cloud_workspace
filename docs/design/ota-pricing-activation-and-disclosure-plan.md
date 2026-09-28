@@ -2,7 +2,7 @@
 
 Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development; no effective OTA rate card has been published, so development does not charge OTA.
 
-Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-28.
+Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-29.
 
 ## 1. 已確定的決策與範圍
 
@@ -13,6 +13,12 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 - 核准價與參考價的數字也必須受 Cloud Billing 權限保護：匿名可下載的 HTML、JavaScript 或翻譯資源不可夾帶完整價表；畫面取得授權後才呼叫受保護的資料端點，失敗時不顯示數值。
 - OTA 仍是可註冊、可被 Product 選用的獨立服務。只有 Product 啟用 OTA 才顯示其 dashboard；未啟用時明示「此產品尚未啟用 OTA 服務」。Product 選用服務、費率生效、實際產生用量，是三件不同的事。
 - 其他服務目前畫面中的金額屬**參考價／研究草案**。不得把研究價直接當作已生效價，也不得因計量器存在就宣稱正在收費。任何 Cloud／環境的正式費率只由 Billing 的有效 pricing version 決定。
+
+### Development 真實驗收與服務目錄門檻（2026-09-29）
+
+以既有 development 平台測試帳戶完成受保護 API 與實際瀏覽器唯讀驗收：未登入取價為 401；登入後三個可讀 Cloud 的參考價、正式價與 Product API 均為 200。參考價各有 15 項，其中 OTA 四筆核准價與本文件一致；Billing 回傳無當期／預告價卡、`ota_eligibility=not_priced`。瀏覽器價格頁顯示四筆「已核准待生效」，選到未啟用 OTA 的 Product 時顯示停用提示；OTA 頁不載入儀表板。這只證明**未啟用 Product 的呈現**，尚無已選 OTA Product、真實用量或已開立 OTA 帳單的驗收。
+
+同一帳戶可讀的 32 個 Product 均未選 OTA。三個 Cloud 的 `/service-options` 都回傳空 `options` 與 `product_writes_enabled=false`；dev operator 的 `ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES` 也是 `false`，Account Manager Service 沒有私有 `service-registry` port，Video Cloud 沒有獨立 `video-cloud-otaservice` Deployment。Account Manager 封裝的唯讀 grant 回填報告對全環境 39 個既有 Product 回報 `ready=true`、`needs_backfill=39`、`already_versioned=0`、`issue_count=0`。七個 service-registration 身分 Secret 均不存在。故「可註冊 OTA」在程式與部署渲染器已具備，**development 的實際服務目錄與 Product 寫入尚未切換**。依 [dev Product cutover](../product-services-dev-cutover.md) 先完成受控 Service 中繼憑證與七個身分、對應備份及寫入凍結、digest 綁定的 grant 回填，再依序啟用 registry／MQTT／選用服務；不能用前端測試替代註冊 lease、grant、CDN 與 Billing 驗收。未執行回填或啟用開關。
 
 ### 執行狀態（2026-09-28）
 
