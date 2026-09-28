@@ -47,10 +47,10 @@ alone may leave chargeable volumes behind.
 ## Cloud Admin state prerequisite
 
 Cloud Admin's local SQLite is persistent application state: it holds sessions,
-audit records and per-user support-ticket read markers. The LKE Deployment
-renderer currently leaves `/app/data/rtk-cloud-admin.db` on the container's
-writable layer. Inspection of the live staging Deployment on 2026-09-28 found
-no `DATABASE_PATH`, volume or volume mount; a database file already exists in
+audit records and per-user support-ticket read markers. The current staging
+LKE Deployment leaves `/app/data/rtk-cloud-admin.db` on the container's writable
+layer. Inspection of the live staging Deployment on 2026-09-28 found no
+`DATABASE_PATH` override, volume or volume mount; a database file exists in
 the running container. Replacing that Pod would discard those records. The
 frontend image similarly declares `/data` for its SQLite databases, while the
 live staging frontend Deployment has no PVC. Consequently the core recovery
@@ -78,9 +78,11 @@ ticket read markers after rollout, and rehearse rollback using the retained
 copy. If source Pod identity changes or any check fails, stop the migration and
 investigate rather than initialize a blank database. Add both SQLite PVCs to
 the matched backup configuration and exercise a staging restore before
-enabling tickets. This migration procedure needs a reviewed implementation
-and a protected-environment Go/No-Go; it is not performed by the Zammad
-bootstrap script.
+enabling tickets. The [staging cutover procedure](staging-sqlite-migration.md)
+records the observed source inventory, verification gates and rollback
+requirements. Its copy mechanism still needs a reviewed implementation and a
+protected-environment Go/No-Go; it is not performed by the Zammad bootstrap
+script.
 
 The LKE renderer now supports an explicit storage cutover with
 `LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true` and
