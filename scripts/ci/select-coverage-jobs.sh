@@ -80,6 +80,9 @@ else
         add_unique workspace-tooling "${go_modules[@]}"
         policy=true
         ;;
+      scripts/bootstrap-zammad.py)
+        policy=true
+        ;;
       e2e_test/*)
         add_unique workspace-e2e "${go_modules[@]}"
         ;;

@@ -165,8 +165,8 @@ review because dependency major versions and data layouts can change.
 5. Roll out disabled by default; qualify dev, then staging including backup
    restore, then production through the existing protected-environment gate.
 
-The repository contains a default-off Admin implementation, Agent permissions,
-pinned Helm values and a deployment runbook. Local pinned-version API
-compatibility has been exercised with two Cloud UUIDs, articles, attachment and
-assignment. Zammad remains undeployed; environment capacity and staging restore
-qualification are still release gates.
+The repository contains the Admin implementation, Agent permissions, pinned
+Helm values and a deployment runbook. The private Zammad release and Cloud
+Admin integration are enabled in dev, where customer and support-agent flows
+have been exercised. Staging and production remain disabled pending their
+capacity, backup/restore and protected rollout gates.

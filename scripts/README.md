@@ -829,3 +829,21 @@ go run ./scripts/go/rtk-cloud -- ci-runners archive-artifacts \
 ```
 
 Use `--prefix PREFIX` to choose an Object Storage prefix. Requires `gh`, `go`, `LINODE_OBJ_BUCKET`, `LINODE_OBJ_ENDPOINT`, `LINODE_OBJ_ACCESS_KEY_ID`, and `LINODE_OBJ_SECRET_ACCESS_KEY`.
+
+### `python3 scripts/bootstrap-zammad.py`
+
+Initialize the private Zammad release after its Helm workloads and three PVCs
+are ready. The default command is read-only; `--apply` requires an exact stack
+confirmation and writes the operator password and integration token to the
+selected environment's canonical SecretStore without printing them. Complete
+the protected environment Go/No-Go before applying in staging or production.
+
+```sh
+python3 scripts/bootstrap-zammad.py --environment staging
+python3 scripts/bootstrap-zammad.py --environment staging --apply --confirm-stack video-cloud-staging
+```
+
+The tool creates or verifies the `RTK Support` group and required Ticket fields,
+then reports the group ID for the environment configuration. It does not
+provision human support Agents. See
+[`support-ticket-zammad.md`](../docs/deployment/support-ticket-zammad.md).
