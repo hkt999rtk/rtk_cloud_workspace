@@ -122,7 +122,9 @@ chmod 600 cloud_env/staging/runtime/adapters/lke/account.env
 ```
 
 Replace the example value with the actual limit confirmed by the Linode account
-owner.
+owner. Use the literal `unlimited` only when the account owner confirms there
+is no active-service cap. The live inventory and projected resource count are
+still queried and reported.
 
 ## Read-Only Preflight
 

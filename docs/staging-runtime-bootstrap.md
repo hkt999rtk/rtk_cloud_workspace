@@ -123,10 +123,13 @@ Use the Linode-confirmed account limit, for example:
 LKE_ACTIVE_SERVICE_LIMIT=20
 ```
 
-This is a safety number, not another secret. The Linode API cannot currently query
-the account limit through `LINODE_TOKEN`. If unknown, do not guess; ask the
-Linode/account owner. Before creating paid resources, deployment compares current
-active services plus planned resources against this limit.
+If the account owner confirms that no active-service cap applies, use
+`LKE_ACTIVE_SERVICE_LIMIT=unlimited` instead. This is operator state, not a
+secret. The Linode API cannot currently query the account limit through
+`LINODE_TOKEN`. If unknown, do not guess; ask the account owner. For a numeric
+limit, deployment compares current active services plus planned resources
+against it. For `unlimited`, deployment still requires the live inventory and
+reports the projected count.
 
 If the original workspace has completed staging setup, copy its operator state:
 

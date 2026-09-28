@@ -1120,6 +1120,19 @@ func TestLKEAccountStateRequiredOnlyForMutation(t *testing.T) {
 	}
 }
 
+func TestValidateActiveServiceLimit(t *testing.T) {
+	for _, value := range []string{"20", "unlimited"} {
+		if err := validateActiveServiceLimit(value); err != nil {
+			t.Fatalf("confirmed active-service limit %q rejected: %v", value, err)
+		}
+	}
+	for _, value := range []string{"", "0", "-1", "unknown", "Unlimited"} {
+		if err := validateActiveServiceLimit(value); err == nil {
+			t.Fatalf("unconfirmed active-service limit %q accepted", value)
+		}
+	}
+}
+
 func TestNormalizeEnvironmentArgs(t *testing.T) {
 	args, err := normalizeEnvironmentArgs([]string{"mqtt-test", "--workspace", "/tmp/ws", "--environment", "dev", "--brandname", "RTK"})
 	if err != nil {
