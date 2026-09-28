@@ -82,6 +82,12 @@ Billing 對歷史 Product OTA grant 的跨服務查詢採 `LKE_BILLING_OTA_GRANT
 - 2026-09-27 staging 唯讀複核仍為 **NO-GO**：`--require-product-pki` 在 controller 缺環境專屬 Device Root ID／SHA-256 綁定時失敗，registry 中 active staging Device Root 數為 0；Video Cloud 的 `ota_task_receipts`、`ota_download_receipts`、`ota_artifact_objects`、`ota_cdn_period_reviews`、`ota_producer_period_seals` 及 Billing 的 `ota_period_seals`、`ota_pricing_drafts`、`ota_pricing_publications` 均不存在。須先依受保護環境 Go/No-Go 程序完成 Device Root 與對應升級，再做 OTA 跨服務對帳；development 健康檢查不能取代 staging 簽核。P1 目標環境建卡審核、P3 月份切換與 ownership 處理、A2 實際 Product／invoice 的登入驗收、R1 正式生效月與正式發佈仍未完成。Product 當前適用狀態與 invoice 到價格頁連結均已部署 development。
 - 2026-09-28 staging 的三個 PKI consumer PVC 已依核定三卷設計建立並綁定，每卷 10 GiB，Linode active services 從 42 增至 45；卷 ID、`Retain` 回收策略及 PVC-only 檢查見 [PKI 儲存設計](pki-consumer-storage-plan.md)。這證明本次三卷配置成功，不代表 Device Root、consumer mounts、OTA 來源計量或 Billing seal 已通過。operator 仍記錄舊的額度 20，正式新上限待 Linode 確認；後續成長不得以觀察到的 45 當作核准上限。Account Manager 的批次 Platform seal 工具正在固定版次 PR 驗證，排程、告警及 OTA producer seal 自動提交仍是正式收費前的缺口。
 
+### UTC 月結封存排程
+
+固定版部署腳本為 Account Manager 增加預設關閉的 `LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED`。三個 environment 都明確設為 `false`；啟用時使用各環境 SecretStore 的獨立 `ota-platform-seal-token`，在 Account Manager 命名空間建立僅含資料庫連線、Billing HTTPS URL 與此 token 的 `ota-platform-seal-runtime` Secret，並把同一 token 接入 Billing 的 Platform seal endpoint。CronJob 在每月 3 日 03:00 UTC 對前一個完整 UTC 月逐 Cloud 提交 deterministic seal，允許 24 小時執行及遲啟；整批失敗會讓 Job 失敗，Kubernetes 重試後仍保留失敗 Job。錯過排程或失敗時須明確指定月份重試與調查。停用排程只移除 CronJob，歷史 Job 不隨之刪除；Billing token 保留到該月份結案且沒有歷史 Job 須提交時，再另行撤銷。封存命令本身包含已停用 Cloud，以保留關閉前任務／物件的可計費來源證明。
+
+啟用順序必須先完成固定版 Account Manager CI 映像與 Billing 069 migration、在兩端安全放入專用 token、驗證 Account Manager Pod 可經 HTTPS 到達 Billing seal endpoint，再於目標 environment 選擇 Billing 與 Account Manager 工作負載更新並檢查首個 Job 的雙方回執。此排程只涵蓋 **Platform grant seal**；OTA producer 的 CDN／物件／下載來源封存及自動提交、失敗告警、完整 UTC 月 ownership 處理仍是獨立上線關卡。不得把 CronJob 存在或成功提交一半 seal 解讀為 OTA 價卡可發佈。
+
 ## 2. 現況證據與待補差距
 
 | 項目 | 現況證據 | 必須補齊 |
