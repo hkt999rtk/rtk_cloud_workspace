@@ -799,6 +799,7 @@
 | `SPEC-AM-OPENAPI#completeFactoryEnrollment` | `POST /v1/internal/factory-enrollments/{reservationId}/result` | `FEAT-CONTRACT-MULTICLOUD-001` | `REQ-MULTICLOUD-HANDOFF-001` | `4ffc58f9cea7` |
 | `SPEC-AM-OPENAPI#exchangeJobAuthorization` | `POST /v1/internal/job-authorizations/{authorizationId}/exchange` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-DELEGATION-001` | `4affc363d88a` |
 | `SPEC-AM-OPENAPI#revokeJobAuthorization` | `POST /v1/internal/job-authorizations/{authorizationId}/revoke` | `FEAT-CONTRACT-BATCH-001` | `REQ-CONTRACT-BATCH-DELEGATION-001` | `d6c772902e06` |
+| `SPEC-AM-OPENAPI#listInternalOTAPeriodBrandClouds` | `GET /v1/internal/ota-period-brand-clouds` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `66411a71f8bf` |
 | `SPEC-AM-OPENAPI#deleteCurrentUser` | `DELETE /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0bba6c394d35` |
 | `SPEC-AM-OPENAPI#getCurrentUser` | `GET /v1/me` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `0ce87dc89fa3` |
 | `SPEC-AM-OPENAPI#listCurrentUserIdentities` | `GET /v1/me/identities` | `FEAT-AM-SIGNUP-001` | `REQ-E2E-CA-SIGNUP-EMAIL-001` | `506f1a49a50d` |
