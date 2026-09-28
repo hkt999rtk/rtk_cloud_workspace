@@ -258,7 +258,10 @@ func (s *runnerDaemonState) writeTelemetryLocked() error {
 }
 
 func coordinateRemoteRunnerStart(vms []LinodeVM, plan Plan, runID string, values workflowFlagValues) (StartCoordination, error) {
-	client := &http.Client{Timeout: 5 * time.Second}
+	return coordinateRemoteRunnerStartWithClient(vms, plan, runID, values, &http.Client{Timeout: 5 * time.Second})
+}
+
+func coordinateRemoteRunnerStartWithClient(vms []LinodeVM, plan Plan, runID string, values workflowFlagValues, client *http.Client) (StartCoordination, error) {
 	deadline := time.Now().Add(5 * time.Minute)
 	ready := map[string]VMStartTelemetry{}
 	for time.Now().Before(deadline) {

@@ -16,28 +16,36 @@ interface is RTK Cloud Admin.
 The chart owns dedicated PostgreSQL, Elasticsearch, Redis and Memcached
 dependencies. Attachments use Zammad's default PostgreSQL database storage;
 the PostgreSQL PVC and its backup therefore contain both conversation and
-attachment data. The Elasticsearch index and caches are rebuildable. Inspect
-the chart's current resource requests, PVC sizes and image availability against
-the target LKE service limits before enabling. The values request three 10Gi
-PVCs for PostgreSQL, Elasticsearch and Redis; budget at least 30Gi of Block
+attachment data. Redis runs as an ephemeral Deployment because Zammad keeps no
+permanent data there. Elasticsearch keeps a PVC: an empty index after a pod
+restart requires a rebuild before ticket search is complete. Inspect the
+chart's current resource requests, PVC sizes and image availability against
+the target LKE service limits before enabling. The values request two 10Gi
+PVCs for PostgreSQL and Elasticsearch; budget at least 20Gi of Block
 Storage plus backup capacity per environment. Chart upgrades require a new
 render, backup compatibility check and staging restore.
-The RTK provider quota planner counts these three volumes once
+The RTK provider quota planner counts these two volumes once
 `SUPPORT_TICKETS_ENABLED=true`; include them manually in the bootstrap
 projection while the feature is still disabled.
 
 Before running Helm, count the account's existing Linode instances, Block
-Storage volumes and NodeBalancers, then reserve three more active services for
+Storage volumes and NodeBalancers, then reserve two more active services for
 each environment that will run Zammad. The separate Block Storage volume quota
 does not establish that a new volume can be created: the first dev bootstrap on
 2026-09-28 was rejected by the active-services limit on its third PVC. After
 explicit cleanup of 13 retired volumes, dev had 41 active services; all three
-new PVCs bound at a projected 44. Dev uses 56 as a conservative operator cap:
+new PVCs bound at a projected 44 under the earlier three-PVC values. Dev uses 56 as a conservative operator cap:
 56 concurrent services were directly observed to succeed before the failed
 57th creation. The exact Linode account ceiling is still not published by its
 API. Record a provider-confirmed ceiling for staging and production before
-those protected rollouts. Keep each feature disabled until all three PVCs bind
+those protected rollouts. Keep each feature disabled until both PVCs bind
 and the chart becomes ready.
+
+The dev release originally used a persistent Redis StatefulSet. Changing to
+the ephemeral Deployment leaves its old PVC/PV and retained Linode volume
+behind. Verify a Redis restart, ticket access and search, and confirm no pod
+mounts the old claim before deleting that exact retired PVC/PV/volume. Keep
+PostgreSQL and Elasticsearch volumes throughout the migration.
 
 The storage class uses `Retain`. If bootstrap fails and the release is removed,
 delete only the PVCs and PVs created by that attempt, then verify and remove
@@ -62,7 +70,7 @@ Cloud Admin target is a dedicated `ReadWriteOnce` PVC mounted at `/app/data`,
 with `DATABASE_PATH=/app/data/rtk-cloud-admin.db`, one replica and a
 `Recreate` strategy. Include this PVC in the provider active-services budget;
 the frontend needs its own PVC at `/data`. These two PVCs are in addition to
-Zammad's three: from the observed 44 active services on 2026-09-28, the full
+Zammad's two: from the observed 45 active services on 2026-09-28, the full
 staging storage addition projects at least 49, before other infrastructure
 changes. Do not mount an empty claim over an existing database or scale the
 source Pod down before a verified copy exists.
@@ -121,7 +129,7 @@ The pinned chart renders the following workloads in `${CLOUD_STACK_NAME}-support
 | Workload | Recovery role |
 | --- | --- |
 | `zammad-nginx`, `zammad-railsserver`, `zammad-scheduler`, `zammad-websocket`, `zammad-memcached` Deployments | `application` |
-| `zammad-elasticsearch-master`, `zammad-redis` StatefulSets | `offline` |
+| `zammad-elasticsearch-master` StatefulSet and `zammad-redis` Deployment | `offline` |
 | `zammad-postgres` StatefulSet | `data` |
 
 Add that namespace to `namespaces`, add each workload to `workloads`, and add
@@ -134,9 +142,9 @@ these PostgreSQL components to `components` using the actual stack namespace:
 ]
 ```
 
-Add `data-zammad-elasticsearch-master-0` and `data-zammad-redis-0` to
-`excluded_pvcs`, each with a reason stating that it holds rebuildable search
-or cache data. These entries describe the chart as rendered with the pinned
+Add `data-zammad-elasticsearch-master-0` to `excluded_pvcs` with a reason
+stating that it holds a rebuildable search index. Redis has no PVC. These
+entries describe the chart as rendered with the pinned
 repository values; verify names and the PostgreSQL major version against the
 installed release before a backup or restore. The chart renders
 `zammad-cronjob-reindex` suspended; keep it suspended during maintenance and
@@ -187,7 +195,7 @@ staging restore with this complete inventory and these checks has passed.
 5. After all chart workloads and PVCs are ready, run the repeatable bootstrap
    from the selected release checkout. For staging, complete the protected
    environment Go/No-Go first. The tool uses only that environment's kubeconfig
-   and SecretStore, checks that the three PVCs are Bound and no Ingress exists,
+   and SecretStore, checks that the two PVCs are Bound and no Ingress exists,
    then creates or verifies the operator Admin, integration Agent, support group,
    custom Ticket fields and scoped API token. It restarts the Zammad applications
    only when new object fields require a migration. Existing credentials are

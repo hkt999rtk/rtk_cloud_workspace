@@ -832,7 +832,7 @@ Use `--prefix PREFIX` to choose an Object Storage prefix. Requires `gh`, `go`, `
 
 ### `python3 scripts/bootstrap-zammad.py`
 
-Initialize the private Zammad release after its Helm workloads and three PVCs
+Initialize the private Zammad release after its Helm workloads and two PVCs
 are ready. The default command is read-only; `--apply` requires an exact stack
 confirmation and writes the operator password and integration token to the
 selected environment's canonical SecretStore without printing them. Complete

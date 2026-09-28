@@ -41,7 +41,7 @@ in this document as an attestation after a Pod change.
    the mTLS check, and the selected release's live LKE provider preflight and
    plan. The plan must use the actual operator configuration, report
    `additional_required`, and prove room for two retained SQLite PVCs plus
-   three Zammad PVCs. Do not invent an active-services limit.
+   two Zammad PVCs. Do not invent an active-services limit.
 2. Confirm a reviewed independent private backup bucket, age X25519 recipient
    and independently retrievable private identity. Keep all plaintext capture
    files in a private `0700` directory on an encrypted disk, outside Git and
