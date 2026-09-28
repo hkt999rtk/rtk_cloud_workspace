@@ -2821,6 +2821,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		if lkeOTACDNCollectorEnabled(env) {
+			if err := kubectlApply(lkeOTACDNCollectorCronJobManifest(env)); err != nil {
+				return err
+			}
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "delete", "cronjob/ota-cdn-collector", "--ignore-not-found=true", "--cascade=orphan"); err != nil {
+			return err
+		}
 		if lkeOTAProducerSealScheduleEnabled(env) {
 			if err := kubectlApply(lkeOTAProducerSealRuntimeSecretManifest(env)); err != nil {
 				return err
@@ -3112,6 +3119,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/videostorag
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaregistrar ./cmd/otaregistrar
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaservice ./cmd/otaservice
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaseal ./cmd/otaseal
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otacdncollect ./cmd/otacdncollect
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otacdnreview ./cmd/otacdnreview
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/otaobject ./cmd/otaobject
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipverifier ./cmd/clipverifier
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipuploadpreflight ./cmd/clipuploadpreflight
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/clipreconcile ./cmd/clipreconcile
@@ -3139,6 +3149,9 @@ COPY --from=builder /out/videostorage /app/videostorage
 COPY --from=builder /out/otaregistrar /app/otaregistrar
 COPY --from=builder /out/otaservice /app/otaservice
 COPY --from=builder /out/otaseal /app/otaseal
+COPY --from=builder /out/otacdncollect /app/otacdncollect
+COPY --from=builder /out/otacdnreview /app/otacdnreview
+COPY --from=builder /out/otaobject /app/otaobject
 COPY --from=builder /out/clipverifier /app/clipverifier
 COPY --from=builder /out/clipuploadpreflight /app/clipuploadpreflight
 COPY --from=builder /out/clipreconcile /app/clipreconcile
@@ -3347,6 +3360,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
 		return err
 	}
+	if err := lkeRequireOTACDNCollectorDeployment(env, opts); err != nil {
+		return err
+	}
 	if (lkeWorkloadSelected(env, opts, "billing") || lkeWorkloadSelected(env, opts, "account-manager")) && lkeOTAPlatformSealScheduleEnabled(env) {
 		if err := lkeRequireOTAPlatformSealSchedule(env); err != nil {
 			return err
@@ -3441,6 +3457,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			return err
 		}
 		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
+			return err
+		}
+		if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err != nil {
 			return err
 		}
 	}
@@ -3860,6 +3879,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
 		return err
 	}
+	if err := lkeRequireOTACDNCollectorDeployment(env, opts); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
 		return err
 	}
@@ -3923,6 +3945,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
+			return err
+		}
+		if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err != nil {
 			return err
 		}
 		if err := kubectlDeleteSecret(lkeNamespaceName(env, "video-cloud"), "certissuer-runtime"); err != nil {
