@@ -328,6 +328,61 @@ func TestRunTestCoverageAggregateCombinesGoAndJavaScriptModules(t *testing.T) {
 	if subsetReport.Status != "PASS" || len(subsetReport.Cases) != 1 || subsetReport.Cases[0].Name != "workspace-tooling" {
 		t.Fatalf("subset aggregate report = %#v", subsetReport)
 	}
+
+	// A failed-only CI rerun contains earlier successful artifacts and a newer
+	// artifact for the retried module. The newer result must take precedence.
+	retrySource := filepath.Join(input, "workspace-tooling-retry")
+	if err := os.MkdirAll(retrySource, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	originalSource := filepath.Join(input, "workspace-tooling")
+	originalRaw, err := os.ReadFile(filepath.Join(originalSource, "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retryReport coverageReport
+	if err := json.Unmarshal(originalRaw, &retryReport); err != nil {
+		t.Fatal(err)
+	}
+	for _, evidence := range retryReport.Cases[0].Evidence {
+		body, err := os.ReadFile(filepath.Join(originalSource, filepath.FromSlash(evidence.Path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		destination := filepath.Join(retrySource, filepath.FromSlash(evidence.Path))
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, body, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	retryReport.RunID = "source-workspace-tooling-retry"
+	retryReport.CompletedAt = "2026-09-28T12:00:00Z"
+	retryReport.Status = "FAIL"
+	retryReport.Cases[0].Status = "FAIL"
+	retryReport.Cases[0].Assessment = "newer retry failed"
+	if err := writeJSON(filepath.Join(retrySource, "results.json"), retryReport); err != nil {
+		t.Fatal(err)
+	}
+	retryRunID := "unit-coverage-aggregate-retry"
+	defer os.RemoveAll(filepath.Join(workspace, ".artifacts", "test-runs", retryRunID))
+	if err := runTestCoverageAggregate([]string{
+		"--input-dir", input, "--run-id", retryRunID, "--modules-json", `["workspace-tooling"]`,
+	}); err == nil {
+		t.Fatal("newer failed retry was ignored")
+	}
+	retryRaw, err := os.ReadFile(filepath.Join(workspace, ".artifacts", "test-runs", retryRunID, "coverage", "results.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var aggregateRetry coverageReport
+	if err := json.Unmarshal(retryRaw, &aggregateRetry); err != nil {
+		t.Fatal(err)
+	}
+	if aggregateRetry.Status != "FAIL" || len(aggregateRetry.Cases) != 1 || aggregateRetry.Cases[0].Assessment != "newer retry failed" {
+		t.Fatalf("retry aggregate report = %#v", aggregateRetry)
+	}
 }
 
 func TestCoverageGovernanceHandlesPolicyAndInputBranches(t *testing.T) {

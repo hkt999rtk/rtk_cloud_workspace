@@ -268,8 +268,30 @@ different results. Do not report a complete staging release from ready Pods,
    Enable the device edge only after the authenticated device route is verified;
    enable core cutover only after the independent endpoint is Ready. Reverse
    those switches in the opposite order for rollback while preserving existing
-   receipts and outbox evidence. In staging, Product PKI Go/No-Go and the selected
-   CI image provenance remain mandatory before any mutation.
+   receipts and outbox evidence. The independent producer close schedule uses
+   `LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED=false` in every environment until
+   the CDN delivery collector and per-Cloud positive reviews are qualified.
+   To enable it, select Video Cloud, Account Manager and Billing in one reviewed
+   rollout; confirm the Account Manager completed-month inventory API is deployed,
+   the Video Cloud image contains `/app/otaseal`, and provision a separate
+   environment-local `ota-producer-seal-token` of at least 32 characters. The
+   deployer installs that token in a dedicated Video Cloud Secret and the Billing
+   runtime. Full and targeted deployments validate the token before applying
+   runtime dependencies; targeted activation refuses a partial selection.
+   Billing's Pod template checksum includes the token so first activation and
+   rotation restart its consumer. The deployer permits only `video-cloud-otaservice` and
+   `ota-producer-period-seal` to reach Billing on port 8080. The CronJob starts
+   at 04:00 UTC on days 3-7, each time replaying the previous UTC month. It
+   enumerates every historical Brand Cloud through Account Manager, including
+   disabled and zero-use Clouds; any missing CDN review, source fact, object,
+   inventory or Billing acknowledgement makes the batch fail. Inspect the Job,
+   hashed Cloud failures, Billing's two seals and the oldest unclosed month;
+   alert on failed or missing Jobs. For an older month, launch the packaged
+   `/app/otaseal --all-brand-clouds --month YYYY-MM` with the same protected
+   runtime inputs after the CDN review. Disabling the flag or rolling back the
+   CronJob does not delete historical Jobs, source receipts or Billing seals.
+   In staging, Product PKI Go/No-Go and the selected CI image provenance remain
+   mandatory before any mutation.
    Before a protected Video Cloud PKI schema migration, run
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate

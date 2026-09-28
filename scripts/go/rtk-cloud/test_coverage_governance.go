@@ -688,9 +688,16 @@ func runTestCoverageAggregate(args []string) error {
 		if err := json.Unmarshal(raw, &report); err != nil {
 			return fmt.Errorf("parse %s: %w", path, err)
 		}
+		if report.Profile == "aggregate" {
+			return nil
+		}
 		for _, item := range report.Cases {
 			current, exists := selected[item.Name]
-			if !exists || (item.Kind == "go" && report.Profile == "pr" && current.report.Profile != "pr") {
+			preferPR := item.Kind == "go" && report.Profile == "pr" && current.report.Profile != "pr"
+			sameProfileNewer := exists && report.Profile == current.report.Profile &&
+				(report.CompletedAt > current.report.CompletedAt ||
+					(report.CompletedAt == current.report.CompletedAt && filepath.Dir(path) > current.sourceDir))
+			if !exists || preferPR || sameProfileNewer {
 				selected[item.Name] = selectedCase{result: item, report: report, sourceDir: filepath.Dir(path)}
 			}
 		}
