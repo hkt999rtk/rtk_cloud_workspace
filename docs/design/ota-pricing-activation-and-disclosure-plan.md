@@ -112,6 +112,10 @@ Workspace [#595](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/595) 已�
 
 Development 以固定 Account Manager `c4295b5c` 與 Video Cloud `12bc763c` 來源建置；Account Manager [映像發布](https://github.com/hkt999rtk/rtk_account_manager/actions/runs/36411180798) 成功，migration 094 專用 Job `account-manager-migrate-ota-094-20260928` 完成，API 使用 `sha256:12a720effe3effd7bf8bde2846c983436b3e19884e98fa865b30261fdacaf779`。Video Cloud [映像發布](https://github.com/hkt999rtk/rtk_video_cloud/actions/runs/36411201713) 的 API smoke 與 API 映像推送成功，API 使用 `sha256:f0bf634e376e83d08c2baec4f39335a1be68385e31ef4f7898b8eeebdf6f7667`；整體 workflow 因**另外的** `video-cloud-emqx-pki` GHCR package 推送回 403 而失敗，該映像與相關工作負載未更新。兩個 API Deployment 均為 1/1 Ready，公開 `/v1/health`、`/healthz` 均回 200，且 dev operator 的兩個映像參照已持久化並與 live digest 一致。這些結果證明固定程式版次已部署到 API，**不證明**獨立 OTA service、CDN collector、producer CronJob、Billing outbox 投遞或真實 OTA 用量已啟用；上述開關仍關閉，沒有發佈 OTA 正式價卡。
 
+2026-09-28 後續 CDN 收集器整合由 workspace [#598](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/598) 合併至同一固定分支，merge commit `1288696bb55dbb4754ef27cc20991ab385f8d029`，釘選 Video Cloud `4ab5b382a21bda2c34650648a6edaae25e180b16`。本地完整 PR 門檻通過，workspace-tooling 差異覆蓋率為 48/55（87.27%）；遠端覆蓋率、PostgreSQL／EMQX、catalog、契約與敏感資料掃描均通過。審查發現的首次部署 Secret 檢查順序已修正：先檢查外部 DataStream 讀取憑證，待部署程序建立 `video-cloud-runtime` 後再核對資料庫密碼。
+
+Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/rtk_video_cloud/actions/runs/36431651968) 成功；development `video-cloud-api` 已更新至 `ghcr.io/hkt999rtk/rtk_video_cloud/video-cloud-api@sha256:d879f8c0d173476e05cd7f206d5e34969eaebe5f62dd6eee340d2a361911153e`，映像 revision 標籤為上述 `4ab5b382`，Pod 1/1 Ready，公開 `/healthz` 回應 200，dev operator 映像設定與 live digest 一致。映像已驗證包含 `otacdncollect`、`otacdnreview` 與 `otaobject`。development PostgreSQL 已在單一交易建立 `ota_cdn_stream_objects`、`ota_cdn_edge_requests`、月份索引及兩個不可變觸發器；兩表目前各為 0 筆。`LKE_OTA_CDN_COLLECTOR_ENABLED=false`，沒有 collector CronJob，不能將程式／空表視為已取得 CDN 營運用量或開始 OTA 收費。外部 DataStream property、日誌目的地、專用唯讀憑證、完整性證據與 staging 對帳仍待完成。
+
 ## 2. 現況證據與待補差距
 
 | 項目 | 現況證據 | 必須補齊 |
