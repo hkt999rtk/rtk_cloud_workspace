@@ -763,6 +763,24 @@ func TestResolveDeploymentConfigSupportsMultipleEnvironments(t *testing.T) {
 	}
 }
 
+func TestTrackedOTAPlatformSealAdapterOverridesResolve(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, environment := range []string{"dev", "staging", "prod"} {
+		t.Run(environment, func(t *testing.T) {
+			cfg, err := resolveDeploymentConfig(workspace, environment, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.AdapterValues["LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED"]; got != "false" {
+				t.Fatalf("LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED = %q, want false", got)
+			}
+		})
+	}
+}
+
 func TestResolveDeploymentConfigRejectsLegacyRoot(t *testing.T) {
 	for _, providerRoot := range []string{"lke", "linode"} {
 		_, err := resolveDeploymentConfig(t.TempDir(), "", filepath.Join(t.TempDir(), "cloud_env", "staging", providerRoot))
