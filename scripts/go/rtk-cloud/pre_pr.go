@@ -273,12 +273,14 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	}
 	fail := func(err error) (func(), error) { cleanup(); return nil, err }
 	if _, err := prePRRunFixtureCommand("", nil, "docker", "run", "--detach", "--name", postgresName,
+		"--rm", "--tmpfs", "/var/lib/postgresql/data:rw,size=2g",
 		"--label", "rtk.local-ci=video-cloud-pre-pr", "--env", "POSTGRES_DB=video_cloud_test",
 		"--env", "POSTGRES_USER=video_cloud", "--env", "POSTGRES_PASSWORD=local_integration_only",
 		"--publish", "127.0.0.1::5432", "postgres:16"); err != nil {
 		return fail(fmt.Errorf("start local PostgreSQL fixture: %w", err))
 	}
 	if _, err := prePRRunFixtureCommand("", nil, "docker", "run", "--detach", "--name", emqxName,
+		"--rm",
 		"--label", "rtk.local-ci=video-cloud-pre-pr", "--env", "EMQX_NAME=video_cloud_emqx",
 		"--env", "EMQX_HOST=127.0.0.1", "--env", "EMQX_LISTENERS__TCP__DEFAULT__ENABLE_AUTHN=false",
 		"--env", "EMQX_MQTT__MAX_INFLIGHT=10", "--publish", "127.0.0.1::1883", "emqx/emqx:latest"); err != nil {
