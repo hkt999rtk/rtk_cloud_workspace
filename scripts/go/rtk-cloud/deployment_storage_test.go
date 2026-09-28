@@ -770,7 +770,7 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 		t.Fatalf("OTA direct cutover accepted missing metrics export evidence: %v", err)
 	}
 	archiveRelative := filepath.Join("artifacts", "ota-metrics", "dev-qualification.json")
-	metricsNow := time.Now().UTC().Truncate(time.Second)
+	metricsNow := time.Now().UTC().Truncate(time.Minute)
 	endpointHost := strings.TrimPrefix(server.URL, "http://")
 	archive := otaMetricsMatrixFixture(t, bucketName+"."+endpointHost, endpointHost, metricsNow.Add(-5*time.Minute), 1, 32)
 	if err := os.MkdirAll(filepath.Dir(filepath.Join(cutoverCfg.RuntimeRoot, archiveRelative)), 0o700); err != nil {
