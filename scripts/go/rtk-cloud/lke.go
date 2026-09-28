@@ -3344,13 +3344,11 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 }
 
 func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string, opts provisionOptions) error {
+	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
+		return err
+	}
 	if (lkeWorkloadSelected(env, opts, "billing") || lkeWorkloadSelected(env, opts, "account-manager")) && lkeOTAPlatformSealScheduleEnabled(env) {
 		if err := lkeRequireOTAPlatformSealSchedule(env); err != nil {
-			return err
-		}
-	}
-	if lkeOTAProducerSealScheduleEnabled(env) {
-		if err := lkeRequireOTAProducerSealSchedule(env); err != nil {
 			return err
 		}
 	}
@@ -3859,6 +3857,9 @@ func lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw []byte, required
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
+		return err
+	}
 	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
 		return err
 	}
@@ -10012,7 +10013,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	if workload.Key == "billing" {
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
-`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env)))
+`, lkeConfigChecksum(lkeBillingDatabaseURL(env), lkeBillingServiceToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkePaymentSimulatorInternalURL(env), lkePaymentReferenceEncryptionKey(env), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeOTAProducerSealToken()))
 		envFrom = `          envFrom:
             - secretRef:
                 name: billing-runtime

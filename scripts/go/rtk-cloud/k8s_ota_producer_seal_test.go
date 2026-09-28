@@ -104,7 +104,37 @@ func TestLKEOTAProducerSealScheduleRejectsIncompleteDeploymentInputs(t *testing.
 	if err := lkeRequireOTAProducerSealSchedule(env); err == nil || !strings.Contains(err.Error(), "strict Product OTA entitlements") {
 		t.Fatalf("schedule without OTA service prerequisites accepted: %v", err)
 	}
-	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "strict Product OTA entitlements") {
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"account-manager", "billing", "video-cloud"}}); err == nil || !strings.Contains(err.Error(), "strict Product OTA entitlements") {
 		t.Fatalf("targeted deploy mutated Kubernetes before producer prerequisite validation: %v", err)
+	}
+}
+
+func TestLKEOTAProducerSealScheduleRejectsPartialAndUnsafeFullDeploy(t *testing.T) {
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"ota-producer-seal-token": "short"}
+	t.Cleanup(func() { activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache })
+	t.Setenv("LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED", "true")
+	env := map[string]string{"LKE_OTA_SERVICE_REGISTRATION_ENABLED": "true"}
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "coordinated") {
+		t.Fatalf("partial producer deployment accepted: %v", err)
+	}
+	if err := lkeApplyRuntimeDependencies(provisionPaths{}, env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "distinct canonical token") {
+		t.Fatalf("full deployment mutated Kubernetes before producer token validation: %v", err)
+	}
+}
+
+func TestLKEOTAProducerTokenRotationChangesBillingPodTemplate(t *testing.T) {
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"ota-producer-seal-token": strings.Repeat("p", 40)}
+	t.Cleanup(func() { activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache })
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+	workload := lkeWorkload{Key: "billing", Name: "billing", Image: "example.test/billing:reviewed"}
+	before := lkeDeploymentManifest(env, workload, nil)
+	lkeRuntimeSecretCache["ota-producer-seal-token"] = strings.Repeat("q", 40)
+	after := lkeDeploymentManifest(env, workload, nil)
+	if before == after || !strings.Contains(after, "rtk.realtek.com/runtime-checksum") || strings.Contains(after, strings.Repeat("q", 40)) {
+		t.Fatal("Billing Pod template did not rotate safely with the producer token")
 	}
 }

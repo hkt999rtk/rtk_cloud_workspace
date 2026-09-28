@@ -36,6 +36,20 @@ func lkeRequireOTAProducerSealSchedule(env map[string]string) error {
 	return lkeRequireOTAServiceInputs(env)
 }
 
+func lkeRequireOTAProducerSealDeployment(env map[string]string, opts provisionOptions) error {
+	if !lkeOTAProducerSealScheduleEnabled(env) {
+		return nil
+	}
+	if len(opts.workloads) > 0 {
+		for _, key := range []string{"account-manager", "billing", "video-cloud"} {
+			if !lkeWorkloadSelected(env, opts, key) {
+				return fmt.Errorf("OTA producer seal schedule requires coordinated account-manager, billing, and video-cloud deployment")
+			}
+		}
+	}
+	return lkeRequireOTAProducerSealSchedule(env)
+}
+
 func lkeBillingOTAProducerSealSecretFields(_ map[string]string) string {
 	if token := lkeOTAProducerSealToken(); token != "" {
 		// An orphaned historical Job may still need the endpoint after the

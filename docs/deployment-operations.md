@@ -276,7 +276,10 @@ different results. Do not report a complete staging release from ready Pods,
    the Video Cloud image contains `/app/otaseal`, and provision a separate
    environment-local `ota-producer-seal-token` of at least 32 characters. The
    deployer installs that token in a dedicated Video Cloud Secret and the Billing
-   runtime, and permits only `video-cloud-otaservice` and
+   runtime. Full and targeted deployments validate the token before applying
+   runtime dependencies; targeted activation refuses a partial selection.
+   Billing's Pod template checksum includes the token so first activation and
+   rotation restart its consumer. The deployer permits only `video-cloud-otaservice` and
    `ota-producer-period-seal` to reach Billing on port 8080. The CronJob starts
    at 04:00 UTC on days 3-7, each time replaying the previous UTC month. It
    enumerates every historical Brand Cloud through Account Manager, including
