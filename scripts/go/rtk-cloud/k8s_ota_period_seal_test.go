@@ -25,6 +25,9 @@ func TestLKEOTAPlatformSealScheduleUsesDedicatedCredentialAndUTCMonth(t *testing
 	if lkeOTAPlatformSealScheduleEnabled(env) || !strings.Contains(lkeBillingSecretManifest(env), "BILLING_OTA_PLATFORM_SEAL_TOKEN") {
 		t.Fatal("disabling future runs removed the credential needed by historical Jobs")
 	}
+	if err := lkeRequireOTAPlatformSealSchedule(env); err != nil {
+		t.Fatalf("disabled schedule should not require a new rollout: %v", err)
+	}
 	t.Setenv("LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED", "true")
 	if err := lkeRequireOTAPlatformSealSchedule(env); err != nil {
 		t.Fatal(err)
@@ -78,6 +81,28 @@ func TestLKEOTAPlatformSealScheduleRejectsWeakOrReusedToken(t *testing.T) {
 	delete(env, "BILLING_DOMAIN")
 	if err := lkeRequireOTAPlatformSealSchedule(env); err == nil {
 		t.Fatal("missing Billing HTTPS domain was accepted")
+	}
+	env["BILLING_DOMAIN"] = "billing.staging.example.test"
+	delete(env, "LKE_ACCOUNT_MANAGER_IMAGE")
+	if err := lkeRequireOTAPlatformSealSchedule(env); err == nil {
+		t.Fatal("missing Account Manager image was accepted")
+	}
+}
+
+func TestLKEOTAPlatformSealScheduleRejectsTargetedDeploymentBeforeMutation(t *testing.T) {
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"ota-platform-seal-token": "short"}
+	t.Cleanup(func() { activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache })
+	t.Setenv("LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED", "true")
+	env := map[string]string{
+		"CLOUD_STACK_NAME":          "video-cloud-staging",
+		"BILLING_DOMAIN":            "billing.staging.example.test",
+		"LKE_ACCOUNT_MANAGER_IMAGE": "example.test/account-manager:reviewed",
+	}
+	err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"account-manager"}})
+	if err == nil || !strings.Contains(err.Error(), "distinct canonical token") {
+		t.Fatalf("targeted deploy must fail before any Kubernetes mutation for a weak token: %v", err)
 	}
 }
 
