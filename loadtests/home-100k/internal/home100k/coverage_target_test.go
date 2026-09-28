@@ -216,6 +216,10 @@ func TestCoordinateRemoteRunnerStartCompletesReadyStartAndStatusBarriers(t *test
 	if result.ReadyBarrier != "1/1" || result.StartDelayMS != 1 || len(result.VMs) != 1 {
 		t.Fatalf("coordination = %#v", result)
 	}
+	empty, err := coordinateRemoteRunnerStart(nil, Plan{}, "run-001", workflowFlagValues{})
+	if err != nil || empty.ReadyBarrier != "0/0" {
+		t.Fatalf("empty coordination = %#v, %v", empty, err)
+	}
 }
 
 type runnerControlTestTransport struct{ host string }
