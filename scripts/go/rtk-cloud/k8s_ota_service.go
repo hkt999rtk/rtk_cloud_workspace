@@ -77,8 +77,8 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 		return err
 	}
 	if env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" && lkeOTADedicatedStorage(env) {
-		if endpointType := env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"]; endpointType != "E2" && endpointType != "E3" {
-			return fmt.Errorf("OTA direct download requires a validated E2/E3 bucket endpoint; got %q", endpointType)
+		if endpointType := env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"]; endpointType != "E3" {
+			return fmt.Errorf("OTA direct download requires a validated E3 bucket endpoint; got %q", endpointType)
 		}
 	}
 	if err := lkeRequireOTAServiceRuntimeSecrets(env); err != nil {

@@ -92,13 +92,47 @@ func TestOTAProvisionBucketChecksLiveInventoryBeforeDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	bucketType = "E1"
-	if err := checker.validateOTAProvisionBucket("token", env); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") {
+	if err := checker.validateOTAProvisionBucket("token", env); err == nil || !strings.Contains(err.Error(), "requires an E3 bucket") {
 		t.Fatalf("live E1 bucket was accepted despite an E3 receipt: %v", err)
+	}
+	bucketType = "E2"
+	if err := checker.validateOTAProvisionBucket("token", env); err == nil || !strings.Contains(err.Error(), "requires an E3 bucket") {
+		t.Fatalf("live E2 bucket was accepted despite an E3-only policy: %v", err)
 	}
 	bucketType = "E3"
 	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT"] = "https://stale.example.test"
 	if err := checker.validateOTAProvisionBucket("token", env); err == nil || !strings.Contains(err.Error(), "no longer matches") {
 		t.Fatalf("stale OTA endpoint receipt was accepted: %v", err)
+	}
+}
+
+func TestOTABootstrapDoesNotIssueDuplicateKeyWhenExistingE3KeyCannotAccessBucket(t *testing.T) {
+	const bucketName = "rtk-ota-firmware-dev-us-lax"
+	issued := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v4/object-storage/buckets" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":"us-lax","endpoint_type":"E3","s3_endpoint":%q}]}`, bucketName, server.URL)
+		case r.URL.Path == "/v4/object-storage/keys" && r.Method == http.MethodGet:
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":42,"access_key":"existing-ota-key","bucket_access":[{"bucket_name":%q,"region":"us-lax","permissions":"read_write"}]}]}`, bucketName)
+		case r.URL.Path == "/v4/object-storage/keys" && r.Method == http.MethodPost:
+			issued++
+			w.WriteHeader(http.StatusCreated)
+		case r.URL.Path == "/"+bucketName && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
+	cfg := deploymentConfig{Environment: "dev", Storage: deploymentStoragePlan{OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Bucket: bucketName, Region: "us-lax", Prefix: "environments/video-cloud-dev"}}}
+	values := map[string]string{"LINODE_TOKEN": "test-token", "LINODE_OTA_OBJ_ACCESS_KEY_ID": "existing-ota-key", "LINODE_OTA_OBJ_SECRET_ACCESS_KEY": "test-secret"}
+	err := checker.bootstrapOTAStorage(cfg, values, filepath.Join(t.TempDir(), "env"))
+	if err == nil || !strings.Contains(err.Error(), "already belongs to the E3 bucket") || issued != 0 {
+		t.Fatalf("failed E3 validation issued another key: error=%v, key_posts=%d", err, issued)
 	}
 }
 
@@ -111,6 +145,30 @@ func TestResolveStorageEndpointSkipsUnavailableEndpointTypes(t *testing.T) {
 	endpoint, err := checker.resolveStorageEndpoint("token", "sg-sin-2")
 	if err != nil || endpoint != "https://sg-sin-1.linodeobjects.com" {
 		t.Fatalf("endpoint = %q, err = %v", endpoint, err)
+	}
+}
+
+func TestResolveOTAMetricsEndpointTypeRequiresAssignedE3(t *testing.T) {
+	assignedE3 := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v4/object-storage/endpoints" {
+			http.NotFound(w, r)
+			return
+		}
+		if assignedE3 {
+			_, _ = w.Write([]byte(`{"data":[{"region":"us-lax","endpoint_type":"E2","s3_endpoint":"us-lax-1.linodeobjects.com"},{"region":"us-lax","endpoint_type":"E3","s3_endpoint":"us-lax-2.linodeobjects.com"}]}`))
+		} else {
+			_, _ = w.Write([]byte(`{"data":[{"region":"us-lax","endpoint_type":"E2","s3_endpoint":"us-lax-1.linodeobjects.com"},{"region":"us-lax","endpoint_type":"E3","s3_endpoint":null}]}`))
+		}
+	}))
+	defer server.Close()
+	checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4"}
+	if _, err := checker.resolveOTAMetricsEndpointType("token", "us-lax"); err == nil || !strings.Contains(err.Error(), "no assigned E3") {
+		t.Fatalf("E2-only OTA endpoint was accepted: %v", err)
+	}
+	assignedE3 = true
+	if got, err := checker.resolveOTAMetricsEndpointType("token", "us-lax"); err != nil || got != "E3" {
+		t.Fatalf("assigned E3 OTA endpoint = %q, %v", got, err)
 	}
 }
 
@@ -747,10 +805,10 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	coreSourceDeployment := fmt.Sprintf(`{"metadata":{"name":"video-cloud-api"},"spec":{"template":{"spec":{"containers":[{"name":"app","env":[{"name":"VIDEO_CLOUD_BLOB_BUCKET","value":"source-bucket"},{"name":"VIDEO_CLOUD_BLOB_REGION","value":"us-sea"},{"name":"VIDEO_CLOUD_BLOB_ENDPOINT","value":%q},{"name":"VIDEO_CLOUD_BLOB_PREFIX","value":"environments/video-cloud-dev"}]}]}}}}`, "file://"+sourceRoot)
 	t.Setenv("FAKE_WEBRTC_CORE_DEPLOYMENT_JSON", coreSourceDeployment)
 	bucketType = "E1"
-	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") || keyIssueCount != 1 {
+	if err := runDeploymentStorageLifecyclePurpose("storage-bootstrap", cfg, profile, "", 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E3 bucket") || keyIssueCount != 1 {
 		t.Fatalf("E1 OTA bootstrap rotated credentials or passed: error=%v, key issues=%d", err, keyIssueCount)
 	}
-	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E2/E3 bucket") {
+	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "requires an E3 bucket") {
 		t.Fatalf("E1 OTA bucket was allowed for direct-download cutover: %v", err)
 	}
 	bucketType = "E3"
