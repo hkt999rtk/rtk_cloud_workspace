@@ -20,8 +20,9 @@ Use `shared` only for a release or CI consumer that intentionally serves several
 | CI evidence | `rtk-ci-shared-us-sea` | `ci/<repo>/<run>/...` | Reserved |
 | Staging load test | `rtk-loadtest-staging-us-sea` | `loadtests/<run>/...` | Reserved |
 
-The proposed Staging OTA E3 target is
-`rtk-ota-firmware-staging-sg-sin-2`. Select the Prod region only after
+The Staging OTA E3 bucket `rtk-ota-firmware-staging-sg-sin-2` was created
+and privately validated on 2026-09-28; its workload cutover is pending.
+Select the Prod region only after
 confirming its account ownership and an assigned E3 endpoint; its earlier
 `rtk-ota-firmware-prod-us-sea` proposal is not an approved E3 target.
 Neither protected environment has been cut over. Preserve each environment's
