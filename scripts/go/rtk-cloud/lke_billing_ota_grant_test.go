@@ -68,6 +68,15 @@ func TestLKEBillingOTAGrantHistoryBoundary(t *testing.T) {
 		policy.Spec.Ingress[0].Ports[0].Protocol != "TCP" || policy.Spec.Ingress[0].Ports[0].Port != 8080 {
 		t.Fatalf("grant-history ingress is not restricted to Billing Pod on Account Manager TCP 8080")
 	}
+	found := false
+	for _, manifest := range lkePublicHTTPSNetworkPolicyManifests(env, nil) {
+		if strings.Contains(manifest, "name: allow-billing-account-manager") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("enabled grant-history ingress was omitted from the applied policy set")
+	}
 }
 
 func TestLKEBillingOTAGrantHistoryRejectsWeakToken(t *testing.T) {
@@ -75,5 +84,18 @@ func TestLKEBillingOTAGrantHistoryRejectsWeakToken(t *testing.T) {
 	t.Setenv("LKE_INTERNAL_AUTH", "short")
 	if err := lkeValidateBillingOTAGrantHistoryRuntime(map[string]string{}); err == nil {
 		t.Fatal("short Account Manager token was accepted")
+	}
+}
+
+func TestLKEBillingOTAGrantHistoryRejectsBillingTokenReuse(t *testing.T) {
+	t.Setenv("LKE_BILLING_OTA_GRANT_HISTORY_ENABLED", "true")
+	token := strings.Repeat("b", 40)
+	t.Setenv("LKE_INTERNAL_AUTH", token)
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"billing-service-token": token}
+	t.Cleanup(func() { activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache })
+	if err := lkeValidateBillingOTAGrantHistoryRuntime(map[string]string{}); err == nil {
+		t.Fatal("Account Manager internal token was allowed to equal the Billing service token")
 	}
 }
