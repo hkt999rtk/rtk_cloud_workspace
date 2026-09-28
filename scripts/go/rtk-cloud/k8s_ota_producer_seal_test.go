@@ -87,3 +87,24 @@ func TestLKEOTAProducerSealScheduleRejectsMissingServiceAndWeakToken(t *testing.
 		t.Fatalf("reused Billing token accepted: %v", err)
 	}
 }
+
+func TestLKEOTAProducerSealScheduleRejectsIncompleteDeploymentInputs(t *testing.T) {
+	oldCanonical, oldCache := activeCanonicalSecretStore, lkeRuntimeSecretCache
+	activeCanonicalSecretStore = false
+	lkeRuntimeSecretCache = map[string]string{"ota-producer-seal-token": strings.Repeat("p", 40)}
+	t.Cleanup(func() { activeCanonicalSecretStore, lkeRuntimeSecretCache = oldCanonical, oldCache })
+	t.Setenv("LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED", "true")
+	t.Setenv("LKE_OTA_SERVICE_REGISTRATION_ENABLED", "true")
+
+	env := map[string]string{}
+	if err := lkeRequireOTAProducerSealSchedule(env); err == nil || !strings.Contains(err.Error(), "selected Video Cloud image") {
+		t.Fatalf("schedule without a selected image accepted: %v", err)
+	}
+	env["LKE_VIDEO_CLOUD_IMAGE"] = "example.test/video-cloud:reviewed"
+	if err := lkeRequireOTAProducerSealSchedule(env); err == nil || !strings.Contains(err.Error(), "strict Product OTA entitlements") {
+		t.Fatalf("schedule without OTA service prerequisites accepted: %v", err)
+	}
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}}); err == nil || !strings.Contains(err.Error(), "strict Product OTA entitlements") {
+		t.Fatalf("targeted deploy mutated Kubernetes before producer prerequisite validation: %v", err)
+	}
+}
