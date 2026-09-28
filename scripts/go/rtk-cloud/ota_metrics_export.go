@@ -155,9 +155,14 @@ func parseOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string, star
 				return 0, 0, errors.New("Cloud Pulse metric point is outside the UTC window or duplicated")
 			}
 			seenTimes[epoch] = true
+			// Cloud Pulse can include an empty placeholder for an inactive minute.
+			// It is missing data, not a measured zero or a fractional count.
+			if number == "" {
+				continue
+			}
 			value, ok := new(big.Rat).SetString(number)
 			if !ok || !value.IsInt() || value.Sign() < 0 || !value.Num().IsInt64() {
-				return 0, 0, errors.New("Cloud Pulse metric point must be a nonnegative whole count")
+				return 0, 0, fmt.Errorf("Cloud Pulse %s point at %s must be a nonnegative whole count; got %q", name, stamp.Format(time.RFC3339), number)
 			}
 			part := value.Num().Int64()
 			if part > math.MaxInt64-total {

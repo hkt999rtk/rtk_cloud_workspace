@@ -1,11 +1,12 @@
 # Linode Object Storage bucket inventory
 
-Observed through the Linode bucket API on 2026-09-27 using the Dev operator account, then updated after the Dev bootstrap on the same date. This is a dated snapshot, not proof of current consumers or contents. Target names outside the new Dev rows are design intent and are not claimed to exist. Verify ownership and key scope before migration or deletion.
+Observed through the Linode bucket API on 2026-09-27 and 2026-09-28 using the Dev operator account. This is a dated snapshot, not proof of current consumers or contents. Target names outside the Dev rows are design intent and are not claimed to exist. Verify ownership and key scope before migration or deletion.
 
 | Observed bucket | Region | Likely purpose / status | Naming target |
 | --- | --- | --- | --- |
 | `rtk-video-media-dev-us-sea` | `us-sea` | Created and validated; one historical `ota/` object (3,968 bytes) migrated with SHA-256; workload cutover pending | Canonical Dev media |
-| `rtk-ota-firmware-dev-us-sea` | `us-sea` | Created as E1 and private signed-GET probe passed on 2026-09-27. Cloud Pulse GET/downloaded-byte metrics are unavailable for this endpoint type; billable direct-download cutover is blocked. OTA service registration is also disabled. | Canonical Dev billable OTA name; endpoint migration required |
+| `rtk-ota-firmware-dev-us-sea` | `us-sea` | Earlier E1 OTA bucket; private signed-GET probe passed on 2026-09-27. Retained without cutover or deletion. | Historical Dev OTA candidate; not the E3 target |
+| `rtk-ota-firmware-dev-us-lax` | `us-lax` | Created and validated as private E3 on 2026-09-28; signed-GET and Cloud Pulse qualification passed. OTA service cutover pending. | Dev billable OTA target |
 | `rtk-video-dev-us-west` | `us-sea` | Existing Dev Video Cloud media; region alias in name | `rtk-video-media-dev-us-sea` |
 | `rtk-clip-staging-us-sea` | `us-sea` | Legacy staging clip bucket; consumer needs verification | `rtk-video-media-staging-sg-sin-2` if part of current staging media |
 | `rtk-video-staging-sg` | `sg-sin-2` | Configured Staging runtime media | `rtk-video-media-staging-sg-sin-2` |
@@ -18,29 +19,31 @@ No System Logger backup bucket was observed; `rtk-logger-backup-dev-us-sea` rema
 
 The old Dev media bucket's existing read/write key was verified and retained as two `0600` rollback entries in the Dev SecretStore (`LINODE_MEDIA_ROLLBACK_OBJ_*`). The temporary read-only migration key was revoked after the one-object copy. No live workload has been switched to either new bucket.
 
-The Dev OTA bucket probe used a temporary object outside `ota-billable-v1/` and
-confirmed unsigned GET rejection, exact `206 Range`, signed URL expiry, fresh
-URL resume with matching SHA-256, and object deletion. Its HTTPS URL was 423
-bytes; a full synthetic 8 MiB BIN downloaded in 7.314 seconds. This does not
-verify physical device behavior or Cloud Pulse metrics. Staging and Prod OTA
-bucket names remain proposed until each environment passes its own preflight,
-bootstrap, evidence export and cutover.
+The Dev E3 OTA bucket probe used a temporary object outside `ota-billable-v1/`
+and confirmed unsigned GET rejection, exact `206 Range`, signed URL expiry,
+fresh URL resume with matching SHA-256, and object deletion. Its HTTPS URL was
+423 bytes; a full synthetic 8 MiB BIN downloaded in about 9.7 seconds. The
+earlier E1 probe completed the same checks in 7.314 seconds. Neither probe
+verifies physical device behavior.
 
-The Dev OTA bucket is empty after probe cleanup. The account currently has
-only an assigned E1 endpoint in `us-sea`; the E3 endpoint is listed as limited
-availability and requires provider access before a replacement can be created.
-Do not delete or recreate the bucket under its existing name until the account, endpoint, empty
-object inventory, and replacement procedure are verified. Akamai currently
-supports Object Storage Cloud Pulse metrics on E2/E3 endpoints. See the
+The assigned `us-lax` E3 endpoint and new Dev OTA bucket were verified live.
+The 2026-09-28 UTC 05:20–05:24 Cloud Pulse qualification for this exact bucket
+exported 6 GET requests and 16,778,980 downloaded bytes. These are bucket-level
+measurements, not per-device proof. The temporary probe object was deleted.
+The older `us-sea` E1 bucket remains untouched. Do not delete either bucket
+until its object inventory and consumer references are verified. Akamai
+supports Object Storage Cloud Pulse metrics on E2/E3 endpoints; this OTA
+deployment requires E3. See the
 [endpoint matrix](https://techdocs.akamai.com/cloud-computing/docs/endpoint-types)
 and [metric definitions](https://techdocs.akamai.com/cloud-computing/docs/object-storage-cloud-pulse-metrics).
 
-The 2026-09-27 read-only Staging preflight found that
-`rtk-ota-firmware-staging-sg-sin-2` does not exist in the selected account;
-its OTA key, runtime Secret and service are not present. The selected Prod
-account has no `rtk-ota-firmware-prod-us-sea` bucket, and its expected cluster
-and media bucket were not found there. Staging and Prod remain on their
-tracked `legacy-shared` policy until account ownership, credential source,
-bucket metrics and deployment preflight are independently verified.
+Staging and Prod remain on their tracked `legacy-shared` policy. The
+2026-09-28 Staging read-only preflight is NO-GO because the environment-local
+`LKE_ACTIVE_SERVICE_LIMIT` is unset; the proposed E3 OTA bucket
+`rtk-ota-firmware-staging-sg-sin-2` has not been created. The Prod preflight
+is NO-GO because runtime and GHCR credentials and that service limit are
+missing. Its account, cluster and media-bucket ownership also need
+confirmation before choosing an E3 OTA region and bucket name. No protected
+environment bucket, key, Secret or service was changed.
 
 See [storage naming and lifecycle](storage-credential-lifecycle.md) for the canonical pattern, paths, key ownership, and migration order.
