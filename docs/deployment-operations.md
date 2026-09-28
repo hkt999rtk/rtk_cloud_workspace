@@ -233,6 +233,27 @@ different results. Do not report a complete staging release from ready Pods,
    not issue DDL after the Job. Check the selected CI image includes the command,
    save the prior image and schema version, and retain failed Job logs for review.
    Leave the setting off for older images that do not contain this command.
+   The OTA Platform period-seal schedule is separately gated by
+   `LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED`, explicitly `false` in dev,
+   staging and production. Before enabling it, provision a dedicated
+   mode-0600 `runtime/ota-platform-seal-token` file in the selected
+   environment's canonical SecretStore and verify that the token is distinct
+   from Billing service/internal tokens. The opt-in gate fails if it is absent.
+   Select a CI-published Account Manager image containing
+   `/app/rtk-account-manager-ota-period-seal`, apply Billing migration 069,
+   and update Billing and Account Manager runtime Secrets together. Verify the
+   Account Manager Pod can reach the exact Billing period-seal endpoint over
+   validated HTTPS. The opt-in CronJob submits the previous full UTC month on
+   day 3 at 03:00 UTC; failed Jobs remain visible and whole-batch retries are
+   idempotent. The Job has a 24-hour deadline so a larger Cloud inventory can
+   finish; a missed schedule or failed Job requires an explicit month-specific
+   retry and investigation. Check the first Job's exit, hashed Cloud references, Billing
+   acknowledgment and source seal rows. The producer seal and alerting remain
+   separate required gates before OTA pricing activation; a successful
+   Platform Job alone does not qualify a billable month. Disabling the flag
+   removes the CronJob but preserves its historical Jobs. The Billing endpoint
+   token remains while those Jobs may run; revoke it only after the month is
+   closed and no historical Job needs to submit.
    Before a protected Video Cloud PKI schema migration, run
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate

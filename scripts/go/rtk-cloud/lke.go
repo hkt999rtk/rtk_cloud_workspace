@@ -2709,6 +2709,16 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "account-manager") {
+		if lkeOTAPlatformSealScheduleEnabled(env) {
+			if err := kubectlApply(lkeOTAPlatformSealRuntimeSecretManifest(env)); err != nil {
+				return err
+			}
+			if err := kubectlApply(lkeOTAPlatformSealCronJobManifest(env)); err != nil {
+				return err
+			}
+		} else if err := runKubectl("-n", lkeNamespaceName(env, "account-manager"), "delete", "cronjob/ota-platform-period-seal", "--ignore-not-found=true", "--cascade=orphan"); err != nil {
+			return err
+		}
 		if err := kubectlApply(lkeAccountManagerOutboxWorkerManifest(env)); err != nil {
 			return err
 		}
@@ -3315,6 +3325,11 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 }
 
 func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string, opts provisionOptions) error {
+	if (lkeWorkloadSelected(env, opts, "billing") || lkeWorkloadSelected(env, opts, "account-manager")) && lkeOTAPlatformSealScheduleEnabled(env) {
+		if err := lkeRequireOTAPlatformSealSchedule(env); err != nil {
+			return err
+		}
+	}
 	if _, err := lkeImportExistingRuntimeSecret(env, "platform", "postgresql-runtime", map[string]string{
 		"POSTGRES_PASSWORD": "postgres",
 	}, true); err != nil {
@@ -9034,7 +9049,7 @@ stringData:
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env))
+%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
