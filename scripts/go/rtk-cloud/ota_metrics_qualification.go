@@ -38,7 +38,7 @@ type otaMetricsQualification struct {
 }
 
 // validateOTAMetricsQualification checks the current operator attestation,
-// archived provider response, and exact bucket series before direct delivery.
+// archived OTA-only provider series, and exact bucket totals before direct delivery.
 // It cannot authenticate provider provenance independently of the operator's
 // archived export. endpoint is the HTTPS URL from live bucket inventory.
 func validateOTAMetricsQualification(runtimeRoot, environment, bucket, region, endpoint string, now time.Time) error {
