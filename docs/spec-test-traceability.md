@@ -890,6 +890,8 @@
 | `SPEC-BILLING-OPENAPI#closeBillingPeriod` | `POST /v1/internal/billing/periods/close` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001`, `REQ-AM-INVOICE-ARITHMETIC-001` | `d300dc806fa6` |
 | `SPEC-BILLING-OPENAPI#createBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `922f2e6596a4` |
 | `SPEC-BILLING-OPENAPI#activateBillingPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/activate` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `f01502b010e7` |
+| `SPEC-BILLING-OPENAPI#cancelReviewedOTAPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/cancel-reviewed-ota` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `a566e57ad103` |
+| `SPEC-BILLING-OPENAPI#publishReviewedOTAPricingVersion` | `POST /v1/internal/billing/pricing-versions/{pricingVersionId}/publish-reviewed-ota` | `FEAT-AM-INVOICE-001` | `REQ-AM-PRICING-VERSION-001` | `d02287552a0d` |
 | `SPEC-BILLING-OPENAPI#putBillingUsageFact` | `POST /v1/internal/billing/usage-facts` | `FEAT-AM-INVOICE-001` | `REQ-AM-INVOICE-LIFECYCLE-001`, `REQ-AM-INVOICE-ARITHMETIC-001`, `REQ-BILL-USAGE-DELIVERY-001` | `8e0ffe70b000` |
 | `SPEC-BILLING-OPENAPI#completeSimulatedPaymentMethodSetup` | `POST /v1/internal/payment-simulator/setup-callback` | `FEAT-AM-PAYMENT-001` | `REQ-AM-PAYMENT-METHOD-001`, `REQ-AM-PAYMENT-SIMULATOR-001` | `4f51d0a7f7f5` |
 | `SPEC-BILLING-OPENAPI#disableAutoTopUpPolicy` | `DELETE /v1/orgs/{orgId}/auto-topup` | `FEAT-AM-PAYMENT-001` | `REQ-AM-AUTO-TOPUP-001`, `REQ-AM-PAYMENT-AUDIT-001` | `8fc3dbfbcab8` |
