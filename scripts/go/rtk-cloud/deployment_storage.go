@@ -453,10 +453,22 @@ func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, v
 	} else if !strings.Contains(err.Error(), "was not found") {
 		return err
 	}
-	if c.checkResolvedOTAStorage(cfg, values).Passed {
+	validation := c.checkResolvedOTAStorage(cfg, values)
+	if validation.Passed {
 		return nil
 	}
 	target := cfg.Storage.OTAFirmware
+	if access := strings.TrimSpace(values["LINODE_OTA_OBJ_ACCESS_KEY_ID"]); access != "" {
+		_, keyErr := c.resolveAuthorizedStorageKey(token, access, target)
+		switch {
+		case keyErr == nil:
+			return fmt.Errorf("configured OTA key already belongs to the E3 bucket; repair storage access before retrying bootstrap: %s", validation.Detail)
+		case errors.Is(keyErr, errStorageKeyWrongTarget), errors.Is(keyErr, errStorageKeyMissing):
+			// The configured key belongs to the old bucket or was retired.
+		default:
+			return fmt.Errorf("verify configured OTA key before issuing another: %w", keyErr)
+		}
+	}
 	if err := c.validateStorageRegionCapabilities(token, target.Region); err != nil {
 		return err
 	}
@@ -769,8 +781,8 @@ type linodeStorageBucket struct {
 }
 
 func validateOTADirectMetricsEndpoint(bucket linodeStorageBucket) error {
-	if bucket.EndpointType != "E2" && bucket.EndpointType != "E3" {
-		return fmt.Errorf("OTA direct download cutover requires an E2/E3 bucket with Cloud Pulse GET and downloaded-byte metrics; bucket %s uses endpoint type %q", bucket.Label, bucket.EndpointType)
+	if bucket.EndpointType != "E3" {
+		return fmt.Errorf("OTA direct download cutover requires an E3 bucket with Cloud Pulse GET and downloaded-byte metrics; bucket %s uses endpoint type %q", bucket.Label, bucket.EndpointType)
 	}
 	return nil
 }
@@ -988,10 +1000,15 @@ func (c deploymentCredentialChecker) resolveAuthorizedStorageKey(token, access s
 				return key, nil
 			}
 		}
-		return linodeStorageKey{}, fmt.Errorf("configured access key is not limited read_write for bucket %s in region %s", target.Bucket, target.Region)
+		return linodeStorageKey{}, fmt.Errorf("%w for bucket %s in region %s", errStorageKeyWrongTarget, target.Bucket, target.Region)
 	}
-	return linodeStorageKey{}, errors.New("configured access-key ID was not found in Linode inventory")
+	return linodeStorageKey{}, errStorageKeyMissing
 }
+
+var (
+	errStorageKeyWrongTarget = errors.New("configured access key is not limited read_write")
+	errStorageKeyMissing     = errors.New("configured access-key ID was not found in Linode inventory")
+)
 
 func (c deploymentCredentialChecker) validateStorageReadWriteCanary(store provisionObjectStore, prefix string) error {
 	query := url.Values{"list-type": {"2"}, "max-keys": {"1"}, "prefix": {strings.Trim(prefix, "/") + "/"}}
@@ -1097,14 +1114,12 @@ func (c deploymentCredentialChecker) resolveOTAMetricsEndpointType(token, region
 	if err := json.Unmarshal(body, &inventory); err != nil {
 		return "", errors.New("OTA Object Storage endpoint inventory returned invalid JSON")
 	}
-	for _, endpointType := range []string{"E3", "E2"} {
-		for _, item := range inventory.Data {
-			if item.Region == region && item.EndpointType == endpointType && item.S3Endpoint != "" {
-				return endpointType, nil
-			}
+	for _, item := range inventory.Data {
+		if item.Region == region && item.EndpointType == "E3" && item.S3Endpoint != "" {
+			return "E3", nil
 		}
 	}
-	return "", fmt.Errorf("region %s has no assigned E2/E3 Object Storage endpoint for billable OTA direct delivery", region)
+	return "", fmt.Errorf("region %s has no assigned E3 Object Storage endpoint for billable OTA direct delivery", region)
 }
 
 func normalizeLinodeS3Endpoint(raw string) (string, error) {

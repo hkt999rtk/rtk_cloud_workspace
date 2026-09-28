@@ -191,6 +191,29 @@ func TestOTAMetricsMatrixRejectsWrongOrIncompleteEvidence(t *testing.T) {
 	}
 }
 
+func TestOTAMetricsMatrixSkipsSparseEmptyMinute(t *testing.T) {
+	start := time.Date(2026, 9, 28, 6, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	bucketHostname := otaMetricsTestBucket + ".sg-sin-1.linodeobjects.com"
+	endpointHost := "sg-sin-1.linodeobjects.com"
+	var body map[string]any
+	if err := json.Unmarshal(otaMetricsMatrixFixture(t, bucketHostname, endpointHost, start.Add(30*time.Minute), 2, 4096), &body); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		series := otaMetricTestSeries(body, i)
+		series["values"] = append([]any{[]any{start.Unix(), ""}}, series["values"].([]any)...)
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gets, bytes, err := parseOTAMetricsMatrix(raw, bucketHostname, endpointHost, start, end)
+	if err != nil || gets != 2 || bytes != 4096 {
+		t.Fatalf("sparse OTA bucket metrics = GET %d, bytes %d, error %v", gets, bytes, err)
+	}
+}
+
 func otaMetricTestSeries(value map[string]any, index int) map[string]any {
 	return value["data"].(map[string]any)["result"].([]any)[index].(map[string]any)
 }
@@ -219,7 +242,8 @@ func TestExportOTAMetricsRejectsUnqualifiedProviderEvidence(t *testing.T) {
 	}{
 		{name: "stale window", oldWindow: true, want: "within 72 hours"},
 		{name: "missing Linode token", noToken: true, want: "LINODE_TOKEN"},
-		{name: "unmonitored endpoint", bucketType: "E1", want: "E2/E3"},
+		{name: "unmonitored endpoint", bucketType: "E1", want: "E3"},
+		{name: "non-E3 monitored endpoint", bucketType: "E2", want: "E3"},
 		{name: "wrong bucket hostname", hostname: "wrong.example.test", want: "hostname"},
 		{name: "service token request failed", tokenStatus: http.StatusForbidden, want: "service token request failed"},
 		{name: "invalid service token", tokenBody: `{"token":""}`, want: "service token response is invalid"},

@@ -230,7 +230,7 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 	delete(env, "VIDEO_CLOUD_OTA_CDN_BASE_URL")
 	t.Setenv("FAKE_OTA_CDN_SECRET_JSON", "")
 	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E1"
-	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "validated E2/E3") {
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "validated E3") {
 		t.Fatalf("E1 OTA direct delivery was accepted: %v", err)
 	}
 	env["VIDEO_CLOUD_OTA_BLOB_ENDPOINT_TYPE"] = "E3"
