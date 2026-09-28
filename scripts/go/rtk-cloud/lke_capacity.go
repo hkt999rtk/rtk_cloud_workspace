@@ -47,6 +47,8 @@ type lkeProviderServicePlan struct {
 	PostgresVolumes       int
 	FleetVolumes          int
 	SupportVolumes        int
+	AdminSQLiteVolumes    int
+	FrontendSQLiteVolumes int
 	EdgeVMs               int
 	CoturnVMs             int
 	RequiredServices      int
@@ -75,7 +77,7 @@ func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
 		if plan.ProviderServices.Limit > 0 {
 			limit = strconv.Itoa(plan.ProviderServices.Limit)
 		}
-		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d fleet_volumes=%d support_volumes=%d edge_vms=%d coturn_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.SupportVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
+		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d fleet_volumes=%d support_volumes=%d admin_sqlite_volumes=%d frontend_sqlite_volumes=%d edge_vms=%d coturn_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.SupportVolumes, plan.ProviderServices.AdminSQLiteVolumes, plan.ProviderServices.FrontendSQLiteVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 	}
 }
 
@@ -93,7 +95,7 @@ func lkeCheckCapacityWithPaths(paths provisionPaths, env map[string]string, opts
 	}
 	if plan.NodeCount >= plan.RequiredNodes {
 		if plan.ProviderServices.Limit > 0 && plan.ProviderServices.RequiredServices > plan.ProviderServices.Limit {
-			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d fleet_volumes=%d support_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.SupportVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
+			return fmt.Errorf("LKE provider capacity check failed: required active services=%d exceeds LKE_LINODE_ACTIVE_SERVICE_LIMIT=%d (nodes=%d postgres_volumes=%d fleet_volumes=%d support_volumes=%d admin_sqlite_volumes=%d frontend_sqlite_volumes=%d edge_vms=%d coturn_vms=%d); reduce LKE_NODE_COUNT, use LKE_POSTGRES_STORAGE_MODE=emptydir for ephemeral validation, reduce LKE_EDGE_HAPROXY_COUNT, reduce LKE_COTURN_VM_COUNT, or request a Linode quota increase", plan.ProviderServices.RequiredServices, plan.ProviderServices.Limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.SupportVolumes, plan.ProviderServices.AdminSQLiteVolumes, plan.ProviderServices.FrontendSQLiteVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 		}
 		if err := lkeCheckLiveProviderActiveServices(paths, env, plan.ProviderServices); err != nil {
 			return err
@@ -307,6 +309,8 @@ func lkeMissingPlannedVolumeServices(paths provisionPaths, env map[string]string
 		{namespace: "support", name: "data-zammad-postgres-0", count: min(plan.SupportVolumes, 1)},
 		{namespace: "support", name: "data-zammad-elasticsearch-master-0", count: min(plan.SupportVolumes, 1)},
 		{namespace: "support", name: "data-zammad-redis-0", count: min(plan.SupportVolumes, 1)},
+		{namespace: "admin", name: "cloud-admin-sqlite-data", count: plan.AdminSQLiteVolumes},
+		{namespace: "frontend", name: "frontend-sqlite-data", count: plan.FrontendSQLiteVolumes},
 	} {
 		if pvc.count <= 0 || lkePersistentVolumeClaimBound(paths, env, pvc.namespace, pvc.name) {
 			continue
@@ -446,7 +450,15 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") && (fullDeploy || lkeWorkloadSelected(env, opts, "cloud-admin")) {
 		supportVolumes = 3
 	}
-	required := workerNodes + postgresVolumes + fleetVolumes + supportVolumes + edgeVMs + coturnVMs
+	adminSQLiteVolumes := 0
+	frontendSQLiteVolumes := 0
+	if lkeSQLitePVCEnabled(env, "cloud-admin") && (fullDeploy || lkeWorkloadSelected(env, opts, "cloud-admin")) {
+		adminSQLiteVolumes = 1
+	}
+	if lkeSQLitePVCEnabled(env, "frontend") && (fullDeploy || lkeWorkloadSelected(env, opts, "frontend")) {
+		frontendSQLiteVolumes = 1
+	}
+	required := workerNodes + postgresVolumes + fleetVolumes + supportVolumes + adminSQLiteVolumes + frontendSQLiteVolumes + edgeVMs + coturnVMs
 	return lkeProviderServicePlan{
 		NodeServices:          workerNodes,
 		BrokerNodes:           brokerNodes,
@@ -456,6 +468,8 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 		PostgresVolumes:       postgresVolumes,
 		FleetVolumes:          fleetVolumes,
 		SupportVolumes:        supportVolumes,
+		AdminSQLiteVolumes:    adminSQLiteVolumes,
+		FrontendSQLiteVolumes: frontendSQLiteVolumes,
 		EdgeVMs:               edgeVMs,
 		CoturnVMs:             coturnVMs,
 		RequiredServices:      required,

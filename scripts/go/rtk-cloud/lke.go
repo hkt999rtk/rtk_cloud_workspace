@@ -2551,6 +2551,34 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 	if err := ensureLKEDeployImages(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "frontend") && lkeFrontendSDKDownloadsEnabled(env) {
+		if _, err := lkeFrontendSDKDownloadsSecretManifest(env); err != nil {
+			return err
+		}
+	}
+	// Check SQLite storage before reconciling any other workload resources.
+	// A verified PVC may be created here, but an unverified copy cannot replace
+	// the running Deployment or let unrelated reconciliation proceed.
+	for _, workload := range lkeSelectedWorkloads(env, opts) {
+		if workload.Key != "cloud-admin" && workload.Key != "frontend" {
+			continue
+		}
+		if !lkeSQLitePVCEnabled(env, workload.Key) {
+			if err := lkePreventSQLitePVCDisable(workload); err != nil {
+				return err
+			}
+			continue
+		}
+		if lkeWorkloadReplicas(env, workload) != "1" {
+			return fmt.Errorf("%s SQLite PVC requires exactly one replica", workload.Name)
+		}
+		if err := kubectlApply(lkeSQLitePVCManifest(env, workload)); err != nil {
+			return err
+		}
+		if err := lkeRequireSQLitePVCMigration(workload); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && !lkeOTACoreCutoverEnabled(env) {
 		if lkeOTAServiceEdgeEnabled(env) {
 			return fmt.Errorf("restore core OTA handlers only after disabling the device edge route")
@@ -9900,6 +9928,9 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 	podSecurityContext := ""
 	replicas := lkeWorkloadReplicas(env, workload)
 	strategy := lkeDeploymentStrategyManifest(workload, temporaryVideoSurge)
+	if lkeSQLitePVCEnabled(env, workload.Key) {
+		strategy = "  strategy:\n    type: Recreate\n    rollingUpdate: null\n"
+	}
 	volumeMounts := ""
 	volumes := ""
 	extraPorts := ""
@@ -10386,6 +10417,30 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
             - secretRef:
                 name: cloud-admin-billing-client
 `
+	}
+	if lkeSQLitePVCEnabled(env, workload.Key) {
+		mountPath, group := "/app/data", "999"
+		if workload.Key == "frontend" {
+			mountPath, group = "/data", "101"
+		}
+		podSecurityContext = fmt.Sprintf(`      securityContext:
+        fsGroup: %s
+        fsGroupChangePolicy: OnRootMismatch
+`, group)
+		volumeMounts = fmt.Sprintf(`          volumeMounts:
+            - name: sqlite-data
+              mountPath: %s
+`, mountPath)
+		volumes = fmt.Sprintf(`      volumes:
+        - name: sqlite-data
+          persistentVolumeClaim:
+            claimName: %s
+`, lkeSQLitePVCName(workload.Key))
+		if workload.Key == "cloud-admin" {
+			extraEnv += `            - name: DATABASE_PATH
+              value: "/app/data/rtk-cloud-admin.db"
+`
+		}
 	}
 	if workload.Key == "frontend" {
 		extraEnv += fmt.Sprintf(`            - name: DISABLE_SEARCH_INDEXING
