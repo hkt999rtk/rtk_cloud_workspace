@@ -761,6 +761,7 @@ func writeStorageState(path string, value any) error {
 
 type linodeStorageBucket struct {
 	Label        string `json:"label"`
+	Hostname     string `json:"hostname"`
 	Region       string `json:"region"`
 	Cluster      string `json:"cluster"`
 	S3Endpoint   string `json:"s3_endpoint"`

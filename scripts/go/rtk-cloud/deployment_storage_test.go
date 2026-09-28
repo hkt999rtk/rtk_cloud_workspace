@@ -769,18 +769,21 @@ func TestDedicatedOTAStorageLifecycle(t *testing.T) {
 	if err := runDeploymentStorageLifecyclePurpose("storage-cutover", cutoverCfg, profile, sourceFile, 0, "ota"); err == nil || !strings.Contains(err.Error(), "metrics qualification receipt") {
 		t.Fatalf("OTA direct cutover accepted missing metrics export evidence: %v", err)
 	}
-	archiveRelative := filepath.Join("artifacts", "ota-metrics", "dev-qualification.prom")
-	archive := fmt.Sprintf("obj_requests_get{bucket=%q,endpoint=%q} 1\nobj_bytes_downloaded{bucket=%q,endpoint=%q} 32\n", bucketName, strings.TrimPrefix(server.URL, "http://"), bucketName, strings.TrimPrefix(server.URL, "http://"))
+	archiveRelative := filepath.Join("artifacts", "ota-metrics", "dev-qualification.json")
+	metricsNow := time.Now().UTC().Truncate(time.Minute)
+	endpointHost := strings.TrimPrefix(server.URL, "http://")
+	archive := otaMetricsMatrixFixture(t, bucketName+"."+endpointHost, endpointHost, metricsNow.Add(-5*time.Minute), 1, 32)
 	if err := os.MkdirAll(filepath.Dir(filepath.Join(cutoverCfg.RuntimeRoot, archiveRelative)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, archiveRelative), []byte(archive), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cutoverCfg.RuntimeRoot, archiveRelative), archive, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	archiveHash := sha256.Sum256([]byte(archive))
+	archiveHash := sha256.Sum256(archive)
 	writeOTAMetricsReceipt(t, cutoverCfg.RuntimeRoot, otaMetricsQualification{
-		Source: "akamai_cloud_pulse", Environment: "dev", Bucket: bucketName, Region: "us-sea", Endpoint: server.URL,
-		ExportedAt: time.Now().UTC().Add(-time.Minute).Format(time.RFC3339), RecordedBy: "test-operator",
+		Source: "akamai_cloud_pulse", Environment: "dev", Bucket: bucketName, BucketHostname: bucketName + "." + endpointHost, Region: "us-sea", Endpoint: server.URL,
+		WindowStart: metricsNow.Add(-10 * time.Minute).Format(time.RFC3339), WindowEnd: metricsNow.Add(-2 * time.Minute).Format(time.RFC3339),
+		ExportedAt: metricsNow.Add(-time.Minute).Format(time.RFC3339), RecordedBy: "test-operator",
 		ExportFile: archiveRelative, ExportSHA256: hex.EncodeToString(archiveHash[:]),
 		GETMetric: "obj_requests_get", GETRequests: 1, DownloadedBytesMetric: "obj_bytes_downloaded", DownloadedBytes: 32,
 	})

@@ -31,7 +31,7 @@ The independent OTA service writes `ota-billable-v1/` inside its configured pref
 
 ## Configuration and credentials
 
-Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated`, `colocated` policy, and a bucket distinct from media. `legacy-shared` preserves Staging and Prod behavior until each is independently migrated.
+Set `RUNTIME_MEDIA_STORAGE_*` and `RUNTIME_OTA_STORAGE_*` in the environment's `storage.env`. Dedicated OTA requires `RUNTIME_OTA_STORAGE_MODE=dedicated`, `colocated` policy, and the exact bucket name `rtk-ota-firmware-<environment>-<resolved storage region>`, distinct from media. Configuration validation rejects a mismatched environment or region suffix before bootstrap or cutover. `legacy-shared` preserves Staging and Prod behavior until each is independently migrated.
 
 When a configured media target has been prepared but the live workloads still use the old bucket, set `RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true`. Dev uses this gate. Normal create, upgrade, provision, and test commands then require a matching `storage-cutover.json` receipt before changing workloads. Bootstrap and migration remain available. Keep the gate until the live cutover and rollback check are complete; a tracked bucket name alone does not authorize a deployment switch.
 
@@ -67,19 +67,46 @@ Cut over core first while the device mTLS ingress still routes to it. Core then 
 
 The live drain query only covers releases whose stored object key begins `ota/`, then verifies each complete legacy key. It does not count `ota-billable-v1/` releases. The dedicated OTA service uses the same database but accepts only its own namespace; it cannot finish a legacy `ota/` deployment or its delayed device reports. Preserve the old media bucket and core artifact GET path for already issued URLs until their expiry.
 
-For direct delivery, archive the Cloud Pulse export below
-`runtime/artifacts/ota-metrics/` and record
-`runtime/state/ota-metrics-qualification.json` before cutover or a normal OTA
-deployment. The JSON fields are `source: "akamai_cloud_pulse"`, `environment`,
-`bucket`, `region`, `endpoint`, `exported_at` (RFC 3339 UTC), `recorded_by`,
-`export_file` (path relative to `runtime/`), `export_sha256`, `get_metric`
-set to `obj_requests_get`, positive `get_requests`, `downloaded_bytes_metric`
-set to `obj_bytes_downloaded`, and positive `downloaded_bytes`. The export must
-contain both metric identifiers and the exact bucket and endpoint host. The
-operator compares the recorded counts with the export after a controlled GET.
-The deployment validator checks target match, archive digest and freshness
-within 72 hours; the receipt is an operator attestation, not authentication of
-Cloud Pulse's source. Preserve the export for monthly review after the
-provider's retention window.
+For direct delivery, first perform a controlled private signed GET on the
+actual E2/E3 OTA bucket. After Cloud Pulse has reported that request, export a
+recent UTC interval with the operator command below. Its window is
+minute-aligned and half-open `[start,end)`; the API query ends one second before
+`end` so adjacent intervals cannot count the same minute twice. This command
+is a **cutover qualification**, with a maximum 24-hour window. It is not a
+complete monthly evidence export.
+
+```bash
+rtk-cloud deployment storage-metrics-export --environment staging --purpose ota \
+  --window-start 2026-09-28T06:00:00Z --window-end 2026-09-28T07:00:00Z \
+  --recorded-by '<operator-id>' --confirm video-cloud-staging
+```
+
+The command reads the environment's `LINODE_TOKEN` from its operator
+SecretStore, obtains a six-hour Cloud Pulse service token restricted to the
+exact bucket hostname, and queries `obj_requests_get` and
+`obj_bytes_downloaded` with one-minute granularity. It requires a complete
+`success` matrix, exact bucket and endpoint labels, in-window timestamps,
+whole nonnegative values and positive totals. It archives the provider's raw
+JSON under `runtime/artifacts/ota-metrics/` with a SHA-256 digest and atomically
+writes `runtime/state/ota-metrics-qualification.json`. It never stores the
+service token. The receipt includes the UTC window, bucket hostname, endpoint,
+metric totals, export time and operator identity. Subsequent deployment checks
+reparse the archived series, compare both totals and require the export and
+window to be within 72 hours. The operator must compare the controlled GET's
+time and transferred bytes with this result; an empty interval or unrelated
+traffic is not proof of qualification. The local archive and receipt are
+operator-held evidence, not independent authentication of provider origin.
+The first E3 run must verify the provider's actual matrix labels and response
+shape against this parser; local mock tests do not establish provider output.
+
+Cloud Pulse Object Storage metrics are bucket aggregates. They do not identify
+individual devices, replace verified `downloaded` reports, or equal the
+provider's monthly invoice. The provider retains these metrics for 93 days;
+retain monthly exports and independent completeness proof before that window
+expires. Inactive intervals can have no points, and collection delays or gaps
+need separate investigation before closing a charged month.
+The export follows Akamai's [service token](https://techdocs.akamai.com/linode-api/reference/post-get-token),
+[metrics query](https://techdocs.akamai.com/linode-api/reference/post-read-metric),
+and [Object Storage metric definitions](https://techdocs.akamai.com/cloud-computing/docs/object-storage-cloud-pulse-metrics).
 
 Media validation writes `runtime/state/storage-preflight.json`; OTA validation writes `runtime/state/storage-preflight-ota.json`. Receipts contain bucket, region, API endpoint, numeric key ID, redacted access suffix, and time. Runtime state should be backed up using the encrypted environment-state procedure.
