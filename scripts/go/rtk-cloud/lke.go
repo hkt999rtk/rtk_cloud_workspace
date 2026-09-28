@@ -3459,6 +3459,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
 			return err
 		}
+		if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err != nil {
+			return err
+		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
 		return lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore, opts)
@@ -3942,6 +3945,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := kubectlApply(lkeVideoCloudRuntimeSecretManifestWithFleetReadTokens(env, lkeStagedFleetReadToken(opts), lkeStagedFleetReadPreviousToken(opts))); err != nil {
+			return err
+		}
+		if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err != nil {
 			return err
 		}
 		if err := kubectlDeleteSecret(lkeNamespaceName(env, "video-cloud"), "certissuer-runtime"); err != nil {

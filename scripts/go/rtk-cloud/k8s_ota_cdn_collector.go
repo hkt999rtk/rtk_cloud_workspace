@@ -41,23 +41,28 @@ func lkeRequireOTACDNCollectorDeployment(env map[string]string, opts provisionOp
 		return fmt.Errorf("OTA CDN collector requires a selected Video Cloud image")
 	}
 	ns := lkeNamespaceName(env, "video-cloud")
-	for _, required := range []struct {
-		name string
-		keys []string
-	}{
-		{name: "video-cloud-runtime", keys: []string{"POSTGRES_PASSWORD"}},
-		{name: "ota-cdn-datastream-reader", keys: []string{"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"}},
-	} {
-		secretName, keys := required.name, required.keys
-		secret, err := kubectlResourceJSON(ns, "secret", secretName)
-		if err != nil {
-			return fmt.Errorf("OTA CDN collector Secret %s unavailable: %w", secretName, err)
-		}
-		for _, key := range keys {
-			value, err := kubernetesSecretBytes(secret, key)
-			if err != nil || strings.TrimSpace(string(value)) == "" {
-				return fmt.Errorf("OTA CDN collector Secret %s lacks %s", secretName, key)
-			}
+	if err := lkeRequireOTACDNCollectorSecret(ns, "ota-cdn-datastream-reader", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func lkeRequireOTACDNCollectorRuntimeSecret(env map[string]string) error {
+	if !lkeOTACDNCollectorEnabled(env) {
+		return nil
+	}
+	return lkeRequireOTACDNCollectorSecret(lkeNamespaceName(env, "video-cloud"), "video-cloud-runtime", "POSTGRES_PASSWORD")
+}
+
+func lkeRequireOTACDNCollectorSecret(namespace, name string, keys ...string) error {
+	secret, err := kubectlResourceJSON(namespace, "secret", name)
+	if err != nil {
+		return fmt.Errorf("OTA CDN collector Secret %s unavailable: %w", name, err)
+	}
+	for _, key := range keys {
+		value, err := kubernetesSecretBytes(secret, key)
+		if err != nil || strings.TrimSpace(string(value)) == "" {
+			return fmt.Errorf("OTA CDN collector Secret %s lacks %s", name, key)
 		}
 	}
 	return nil

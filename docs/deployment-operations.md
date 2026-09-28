@@ -281,8 +281,10 @@ different results. Do not report a complete staging release from ready Pods,
    `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`; do not reuse firmware-origin
    write credentials. Apply the OTA billing schema including
    `ota_cdn_stream_objects` and `ota_cdn_edge_requests` before activation.
-   The preflight verifies the configuration and credentials and the selected
-   Video Cloud image before deploying the five-minute UTC CronJob. The job
+   The preflight verifies the configuration, DataStream reader credentials,
+   and selected Video Cloud image. After the deployment-managed
+   `video-cloud-runtime` Secret is applied, it verifies the PostgreSQL password
+   before deploying the five-minute UTC CronJob. The job
    writes immutable source evidence into Video Cloud PostgreSQL; it creates
    no PVC and cannot approve a month. Verify one gzip delivery, parsed rows,
    an exact rerun, provider completeness proof and alerting before enabling

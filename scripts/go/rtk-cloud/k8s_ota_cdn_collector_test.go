@@ -59,10 +59,6 @@ func TestLKEOTACDNCollectorRejectsMissingScopeBeforeDeployment(t *testing.T) {
 		t.Fatalf("collector accepted insecure S3 endpoint: %v", err)
 	}
 	env["VIDEO_CLOUD_OTA_CDN_LOG_ENDPOINT"] = "https://objects.example.test"
-	if err := lkeRequireOTACDNCollectorDeployment(env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "video-cloud-runtime") {
-		t.Fatalf("collector accepted missing database Secret: %v", err)
-	}
-	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"POSTGRES_PASSWORD": "local-test"}))
 	if err := lkeRequireOTACDNCollectorDeployment(env, provisionOptions{}); err == nil || !strings.Contains(err.Error(), "ota-cdn-datastream-reader") {
 		t.Fatalf("collector accepted missing dedicated S3 reader: %v", err)
 	}
@@ -73,6 +69,13 @@ func TestLKEOTACDNCollectorRejectsMissingScopeBeforeDeployment(t *testing.T) {
 	t.Setenv("FAKE_OTA_DATASTREAM_READER_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"AWS_ACCESS_KEY_ID": "local-test", "AWS_SECRET_ACCESS_KEY": "local-test"}))
 	if err := lkeRequireOTACDNCollectorDeployment(env, provisionOptions{}); err != nil {
 		t.Fatalf("qualified collector configuration was rejected: %v", err)
+	}
+	if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err == nil || !strings.Contains(err.Error(), "video-cloud-runtime") {
+		t.Fatalf("collector accepted missing database Secret after deployment: %v", err)
+	}
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"POSTGRES_PASSWORD": "local-test"}))
+	if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err != nil {
+		t.Fatalf("collector rejected deployed database Secret: %v", err)
 	}
 }
 
