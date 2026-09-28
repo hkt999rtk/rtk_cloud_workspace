@@ -80,9 +80,9 @@ investigate rather than initialize a blank database. Add both SQLite PVCs to
 the matched backup configuration and exercise a staging restore before
 enabling tickets. The [staging cutover procedure](staging-sqlite-migration.md)
 records the observed source inventory, verification gates and rollback
-requirements. Its copy mechanism still needs a reviewed implementation and a
-protected-environment Go/No-Go; it is not performed by the Zammad bootstrap
-script.
+requirements. The capture and PVC seed tools are documented there; a
+protected-environment Go/No-Go and live migration verification are still
+required. The Zammad bootstrap script does not perform the cutover.
 
 The LKE renderer now supports an explicit storage cutover with
 `LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true` and
