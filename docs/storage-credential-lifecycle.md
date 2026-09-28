@@ -82,12 +82,16 @@ rtk-cloud deployment storage-metrics-export --environment staging --purpose ota 
 ```
 
 The command reads the environment's `LINODE_TOKEN` from its operator
-SecretStore, obtains a six-hour Cloud Pulse service token restricted to the
-exact bucket hostname, and queries `obj_requests_get` and
+SecretStore and obtains a six-hour account-wide Cloud Pulse Object Storage
+service token. The provider currently rejects bucket-scoped token requests
+and does not accept an `entity_id` query filter. The token is used only in
+memory to query the selected region for `obj_requests_get` and
 `obj_bytes_downloaded` with one-minute granularity. It requires a complete
 `success` matrix, exact bucket and endpoint labels, in-window timestamps,
-whole nonnegative values and positive totals. It archives the provider's raw
-JSON under `runtime/artifacts/ota-metrics/` with a SHA-256 digest and atomically
+whole nonnegative values and positive totals. Before writing any file, the
+command selects only the exact OTA bucket and endpoint series and discards the
+rest of the account-wide response. It archives that filtered JSON under
+`runtime/artifacts/ota-metrics/` with a SHA-256 digest and atomically
 writes `runtime/state/ota-metrics-qualification.json`. It never stores the
 service token. The receipt includes the UTC window, bucket hostname, endpoint,
 metric totals, export time and operator identity. Subsequent deployment checks

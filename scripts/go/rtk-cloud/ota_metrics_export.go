@@ -34,6 +34,60 @@ func parseOTAMetricsWindow(startText, endText string, now time.Time) (time.Time,
 	return start, end, nil
 }
 
+// selectOTAMetricsMatrix discards other buckets' series before any provider
+// response is archived. Object Storage Cloud Pulse currently issues only an
+// account-wide service token and does not accept an entity_id query filter.
+func selectOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string) ([]byte, error) {
+	var response struct {
+		Status    string `json:"status"`
+		IsPartial *bool  `json:"isPartial"`
+		Data      struct {
+			ResultType string `json:"resultType"`
+			Result     []struct {
+				Metric map[string]json.RawMessage `json:"metric"`
+				Values [][]json.RawMessage        `json:"values"`
+			} `json:"result"`
+		} `json:"data"`
+		Stats struct {
+			SeriesFetched string `json:"seriesFetched"`
+		} `json:"stats"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&response); err != nil {
+		return nil, fmt.Errorf("decode Cloud Pulse response: %w", err)
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, errors.New("Cloud Pulse response has trailing data")
+	}
+	if response.Status != "success" || response.IsPartial == nil || *response.IsPartial ||
+		response.Data.ResultType != "matrix" || strings.TrimSpace(response.Stats.SeriesFetched) == "" {
+		return nil, errors.New("Cloud Pulse returned incomplete or unexpected metric series")
+	}
+	selected := response.Data.Result[:0:0]
+	for _, series := range response.Data.Result {
+		var entityID, endpoint string
+		if json.Unmarshal(series.Metric["entity_id"], &entityID) == nil &&
+			json.Unmarshal(series.Metric["endpoint"], &endpoint) == nil &&
+			entityID == bucketHostname && endpoint == endpointHost {
+			selected = append(selected, series)
+		}
+	}
+	// Rebuild a narrow snapshot; never persist account-wide stats or unrelated
+	// bucket series. The exact two selected metrics are validated by the caller.
+	return json.Marshal(struct {
+		Status    string `json:"status"`
+		IsPartial bool   `json:"isPartial"`
+		Data      any    `json:"data"`
+		Stats     any    `json:"stats"`
+	}{"success", false, struct {
+		ResultType string `json:"resultType"`
+		Result     any    `json:"result"`
+	}{"matrix", selected}, struct {
+		SeriesFetched string `json:"seriesFetched"`
+	}{fmt.Sprint(len(selected))}})
+}
+
 // parseOTAMetricsMatrix accepts only the two requested sum series for the
 // dedicated bucket and endpoint. Cloud Pulse returns minute values as strings.
 func parseOTAMetricsMatrix(raw []byte, bucketHostname, endpointHost string, start, end time.Time) (int64, int64, error) {
@@ -157,10 +211,9 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if bucket.Hostname != bucketHostname {
 		return errors.New("OTA bucket inventory hostname does not match its selected endpoint")
 	}
-	tokenRequest, _ := json.Marshal(struct {
-		EntityIDs []string `json:"entity_ids"`
-	}{[]string{bucketHostname}})
-	tokenBody, err := c.linodeAuthorizedRequest(linodeToken, http.MethodPost, "/monitor/services/objectstorage/token", tokenRequest)
+	// The provider rejects entity_ids for Object Storage. The service token is
+	// account-wide and remains in memory only for this regional query.
+	tokenBody, err := c.linodeAuthorizedRequest(linodeToken, http.MethodPost, "/monitor/services/objectstorage/token", []byte("{}"))
 	if err != nil {
 		return fmt.Errorf("Cloud Pulse service token request failed: %w", err)
 	}
@@ -215,7 +268,12 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if err != nil {
 		return fmt.Errorf("Cloud Pulse bucket metrics request failed: %w", err)
 	}
-	gets, downloaded, err := parseOTAMetricsMatrix(response, bucketHostname, parsedEndpoint.Host, start, end)
+	selected, err := selectOTAMetricsMatrix(response, bucketHostname, parsedEndpoint.Host)
+	if err != nil {
+		return err
+	}
+	response = nil // Drop the account-wide response before writing an archive.
+	gets, downloaded, err := parseOTAMetricsMatrix(selected, bucketHostname, parsedEndpoint.Host, start, end)
 	if err != nil {
 		return err
 	}
@@ -231,7 +289,7 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 	if err != nil {
 		return err
 	}
-	_, writeErr := archive.Write(response)
+	_, writeErr := archive.Write(selected)
 	if writeErr == nil {
 		writeErr = archive.Sync()
 	}
@@ -240,7 +298,7 @@ func (c deploymentCredentialChecker) exportOTAMetrics(cfg deploymentConfig, lino
 		_ = os.Remove(archivePath)
 		return errors.New("Cloud Pulse archive could not be written completely")
 	}
-	sum := sha256.Sum256(response)
+	sum := sha256.Sum256(selected)
 	receipt := otaMetricsQualification{
 		Source: "akamai_cloud_pulse", Environment: cfg.Environment, Bucket: bucket.Label,
 		BucketHostname: bucketHostname, Region: cfg.Storage.OTAFirmware.Region, Endpoint: endpoint,

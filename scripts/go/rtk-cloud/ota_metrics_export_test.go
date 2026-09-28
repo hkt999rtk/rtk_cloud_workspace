@@ -36,11 +36,9 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 			if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer linode-pat" {
 				t.Errorf("service token request = %s %q", r.Method, r.Header.Get("Authorization"))
 			}
-			var body struct {
-				EntityIDs []string `json:"entity_ids"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !reflect.DeepEqual(body.EntityIDs, []string{bucketHostname}) {
-				t.Errorf("service token is not scoped to exactly one OTA bucket: %v, %v", body.EntityIDs, err)
+			var body map[string]json.RawMessage
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body) != 0 {
+				t.Errorf("Object Storage token request must use the provider's empty body: %v, %v", body, err)
 			}
 			_, _ = io.WriteString(w, `{"token":"monitor-ephemeral"}`)
 		case "/v2/monitor/services/objectstorage/metrics":
@@ -73,7 +71,7 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 				query.Metrics[0].AggregateFunction != "sum" || query.Metrics[1].AggregateFunction != "sum" {
 				t.Errorf("metrics query is not the exact bucket GET/bytes UTC query: %+v", query)
 			}
-			_, _ = w.Write(otaMetricsMatrixFixture(t, bucketHostname, endpointHost, start.Add(30*time.Minute), 2, 4096))
+			_, _ = w.Write(otaMetricsRegionalFixture(t, bucketHostname, endpointHost, start.Add(30*time.Minute)))
 		default:
 			t.Errorf("unexpected API request: %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -105,12 +103,36 @@ func TestExportOTAMetricsArchivesExactBucketResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(archive)
-	if receipt.ExportSHA256 != hex.EncodeToString(sum[:]) || !bytes.Equal(archive, otaMetricsMatrixFixture(t, receipt.BucketHostname, strings.TrimPrefix(server.URL, "http://"), start.Add(30*time.Minute), 2, 4096)) {
-		t.Fatal("archived provider JSON or SHA-256 changed")
+	if receipt.ExportSHA256 != hex.EncodeToString(sum[:]) || bytes.Contains(archive, []byte("unrelated-bucket")) || bytes.Contains(archive, []byte("account-wide-marker")) {
+		t.Fatal("archive digest mismatch or unrelated account data persisted")
+	}
+	gets, downloaded, err := parseOTAMetricsMatrix(archive, receipt.BucketHostname, strings.TrimPrefix(server.URL, "http://"), start, end)
+	if err != nil || gets != 2 || downloaded != 4096 {
+		t.Fatalf("archived OTA-only matrix is invalid: GET=%d bytes=%d error=%v", gets, downloaded, err)
 	}
 	if err := validateOTAMetricsQualification(root, cfg.Environment, otaMetricsTestBucket, otaMetricsTestRegion, server.URL, now); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func otaMetricsRegionalFixture(t *testing.T, bucketHostname, endpointHost string, at time.Time) []byte {
+	t.Helper()
+	var body map[string]any
+	if err := json.Unmarshal(otaMetricsMatrixFixture(t, bucketHostname, endpointHost, at, 2, 4096), &body); err != nil {
+		t.Fatal(err)
+	}
+	result := body["data"].(map[string]any)["result"].([]any)
+	other := map[string]any{"metric": map[string]any{
+		"entity_id": "unrelated-bucket." + endpointHost,
+		"endpoint":  endpointHost, "metric_name": "sum_obj_requests_get",
+	}, "values": []any{[]any{at.Unix(), "100"}}}
+	body["data"].(map[string]any)["result"] = append(result, other)
+	body["stats"] = map[string]any{"seriesFetched": "3", "otherAccountData": "account-wide-marker"}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestOTAMetricsMatrixRejectsWrongOrIncompleteEvidence(t *testing.T) {
@@ -203,6 +225,7 @@ func TestExportOTAMetricsRejectsUnqualifiedProviderEvidence(t *testing.T) {
 		{name: "invalid service token", tokenBody: `{"token":""}`, want: "service token response is invalid"},
 		{name: "metrics request failed", metricsStatus: http.StatusServiceUnavailable, want: "bucket metrics request failed"},
 		{name: "partial provider response", metricsBody: `{"status":"success","isPartial":true}`, want: "incomplete"},
+		{name: "unrelated bucket only", metricsBody: "other", want: "incomplete"},
 		{name: "no controlled GET", metricsBody: "zero", want: "positive bucket GET"},
 		{name: "archive directory unavailable", blockedArchive: true, want: "not a directory"},
 		{name: "receipt directory unavailable", blockedState: true, want: "not a directory"},
@@ -238,7 +261,9 @@ func TestExportOTAMetricsRejectsUnqualifiedProviderEvidence(t *testing.T) {
 						w.WriteHeader(tc.metricsStatus)
 						return
 					}
-					if tc.metricsBody == "zero" {
+					if tc.metricsBody == "other" {
+						_, _ = w.Write(otaMetricsMatrixFixture(t, "unrelated-bucket."+endpointHost, endpointHost, now.Add(-90*time.Minute), 1, 4096))
+					} else if tc.metricsBody == "zero" {
 						_, _ = w.Write(otaMetricsMatrixFixture(t, bucketHostname, endpointHost, now.Add(-90*time.Minute), 0, 4096))
 					} else if tc.metricsBody != "" {
 						_, _ = io.WriteString(w, tc.metricsBody)
@@ -279,6 +304,11 @@ func TestExportOTAMetricsRejectsUnqualifiedProviderEvidence(t *testing.T) {
 			}
 			if _, err := os.Stat(filepath.Join(root, "state", "ota-metrics-qualification.json")); !os.IsNotExist(err) && !tc.blockedState {
 				t.Fatalf("failed export wrote qualification receipt: %v", err)
+			}
+			if tc.metricsBody == "other" {
+				if _, err := os.Stat(filepath.Join(root, "artifacts", "ota-metrics")); !os.IsNotExist(err) {
+					t.Fatalf("unrelated bucket evidence created an archive: %v", err)
+				}
 			}
 		})
 	}
