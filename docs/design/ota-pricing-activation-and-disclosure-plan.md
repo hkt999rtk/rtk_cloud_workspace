@@ -94,6 +94,12 @@ OTA producer 的批次清單須以 Account Manager 的 Brand Cloud 歷史作為�
 
 Account Manager PR #356 與 Video Cloud PR #724 已合併到選定固定版：Account Manager 的 migration 094 以資料庫鎖等待進行中的 Cloud 建立交易，對完整 UTC 月原子保存一次固定清單；Platform 與 OTA producer 都讀同一份清單，往後重試不會因補寫或跨月交易得到不同 Cloud 集合。新建組織的預設時間改用資料庫插入時間，避免長交易將月界線後才插入的 Cloud 回填到上月。Video Cloud 批次連線使用既有 `pkitrust` 私有 CA 與受管理 Service 身分路徑；受保護環境須提供 Job 自己的 `service:ota` 身分狀態與更新信任，不能共用 API 程序的身分狀態。這些程式通過本地整合測試與 PR CI，但排程仍預設關閉；CDN 記錄完整性、專用身分部署、staging 對帳與告警仍須完成。
 
+### 2026-09-28 固定版 development 部署證據
+
+Workspace [#595](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/595) 已合併至指定固定分支 `codex/ota-fixed-base-ac44a6d`，merge commit `9644288f43fc5fbdb8caebb4bd0e7721de5035db`。本次 [Go coverage run](https://github.com/hkt999rtk/rtk_cloud_workspace/actions/runs/36410265089) 在 8 分 35 秒內通過所有選定模組、PostgreSQL／EMQX 整合、catalog 與 aggregate/redaction gate。先前一次整合 fixture 的 10 秒 PKI 逾時在單獨重跑後通過；同一次 failed-only 重跑暴露 aggregate 只下載本輪 artifact 的缺陷，#595 已修正為跨 attempt 取回並選同模組最新結果，針對性本機測試與新的完整 CI 均通過。
+
+Development 以固定 Account Manager `c4295b5c` 與 Video Cloud `12bc763c` 來源建置；Account Manager [映像發布](https://github.com/hkt999rtk/rtk_account_manager/actions/runs/36411180798) 成功，migration 094 專用 Job `account-manager-migrate-ota-094-20260928` 完成，API 使用 `sha256:12a720effe3effd7bf8bde2846c983436b3e19884e98fa865b30261fdacaf779`。Video Cloud [映像發布](https://github.com/hkt999rtk/rtk_video_cloud/actions/runs/36411201713) 的 API smoke 與 API 映像推送成功，API 使用 `sha256:f0bf634e376e83d08c2baec4f39335a1be68385e31ef4f7898b8eeebdf6f7667`；整體 workflow 因**另外的** `video-cloud-emqx-pki` GHCR package 推送回 403 而失敗，該映像與相關工作負載未更新。兩個 API Deployment 均為 1/1 Ready，公開 `/v1/health`、`/healthz` 均回 200，且 dev operator 的兩個映像參照已持久化並與 live digest 一致。這些結果證明固定程式版次已部署到 API，**不證明**獨立 OTA service、CDN collector、producer CronJob、Billing outbox 投遞或真實 OTA 用量已啟用；上述開關仍關閉，沒有發佈 OTA 正式價卡。
+
 ## 2. 現況證據與待補差距
 
 | 項目 | 現況證據 | 必須補齊 |
