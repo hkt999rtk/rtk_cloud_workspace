@@ -254,6 +254,22 @@ different results. Do not report a complete staging release from ready Pods,
    removes the CronJob but preserves its historical Jobs. The Billing endpoint
    token remains while those Jobs may run; revoke it only after the month is
    closed and no historical Job needs to submit.
+   The independent OTA runtime has three separate LKE adapter flags:
+   `LKE_OTA_SERVICE_REGISTRATION_ENABLED`, `LKE_OTA_SERVICE_EDGE_ENABLED`, and
+   `LKE_OTA_CORE_CUTOVER_ENABLED`. The adapter defaults and dev, staging, and
+   production overrides all set them to `false`. For an authorized rollout,
+   first verify strict Product OTA entitlements, MQTT foundation registration,
+   Account Manager service registration, private object storage, an HTTPS CDN
+   base URL backed by a private origin, `ota-cdn-runtime`, required runtime
+   Billing/Account Manager tokens, and the dedicated `service:ota` Platform
+   identity. Keep the old `otaregistrar` disabled to avoid duplicate ownership.
+   Enable registration and verify the independent Pod, private Service,
+   registration lease, receipt creation, outbox delivery, and Billing receipt.
+   Enable the device edge only after the authenticated device route is verified;
+   enable core cutover only after the independent endpoint is Ready. Reverse
+   those switches in the opposite order for rollback while preserving existing
+   receipts and outbox evidence. In staging, Product PKI Go/No-Go and the selected
+   CI image provenance remain mandatory before any mutation.
    Before a protected Video Cloud PKI schema migration, run
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate
