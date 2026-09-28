@@ -774,8 +774,15 @@ func TestTrackedOTAPlatformSealAdapterOverridesResolve(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := cfg.AdapterValues["LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED"]; got != "false" {
-				t.Fatalf("LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED = %q, want false", got)
+			for _, key := range []string{
+				"LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED",
+				"LKE_OTA_SERVICE_REGISTRATION_ENABLED",
+				"LKE_OTA_SERVICE_EDGE_ENABLED",
+				"LKE_OTA_CORE_CUTOVER_ENABLED",
+			} {
+				if got := cfg.AdapterValues[key]; got != "false" {
+					t.Fatalf("%s = %q, want false", key, got)
+				}
 			}
 		})
 	}
