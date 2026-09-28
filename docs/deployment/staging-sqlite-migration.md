@@ -66,12 +66,31 @@ in this document as an attestation after a Pod change.
    file inventories. If a UID changes, stop and restart the assessment from the
    new source.
 2. While writes remain fenced, capture each complete SQLite file set, including
-   any WAL/SHM/journal files that appear. The source-to-local copy mechanism
-   must be reviewed for the live containers; neither image has `sqlite3`, and
-   copying an actively written database file is unsafe. Store each workload's
-   copy in its own private `0700` directory. Recheck the source UID and file
-   hashes before and after capture. Run `sqlite-migration-pack` separately for
-   Admin and frontend; it checks every database with `PRAGMA integrity_check`,
+   any WAL/SHM/journal files that appear. Neither image has `sqlite3`, and
+   copying an actively written database file is unsafe. Create separate empty
+   private `0700` directories on an encrypted disk outside Git and shared
+   temporary directories. Use the source UIDs from the **current** maintenance
+   inventory, and the selected staging kubeconfig:
+
+   ```sh
+   go run ./scripts/go/rtk-cloud -- sqlite-migration-capture \
+     --stack video-cloud-staging --kubeconfig "$STAGING_KUBECONFIG" \
+     --workload cloud-admin --source-pod-uid "$ADMIN_SOURCE_UID" \
+     --output-dir "$PRIVATE_ADMIN_COPY"
+   go run ./scripts/go/rtk-cloud -- sqlite-migration-capture \
+     --stack video-cloud-staging --kubeconfig "$STAGING_KUBECONFIG" \
+     --workload frontend --source-pod-uid "$FRONTEND_SOURCE_UID" \
+     --output-dir "$PRIVATE_FRONTEND_COPY"
+   ```
+
+   The command checks the single source replica, rejects an existing data
+   mount, copies only regular SQLite files through a tar stream, compares every
+   copied SHA-256 with the source, then rechecks the Pod UID and all hashes. It
+   rejects a changed file set and removes partial copies on failure. This
+   checks copy consistency; the independently verified write fence remains
+   mandatory. Keep the emitted source hashes in the Go/No-Go record. Run
+   `sqlite-migration-pack` separately for Admin and frontend; it checks every
+   database with `PRAGMA integrity_check`,
    rejects unexpected files and symlinks, and creates a `0600` age archive with
    a file-hash manifest:
 
