@@ -49,13 +49,18 @@ The source media bucket's unprefixed and environment-prefixed
 inventory; the OTA migration receipt records zero objects and bytes. Staging
 workloads still use the historical `legacy-shared` OTA configuration.
 
-Staging Cloud Pulse qualification for the 2026-09-28 UTC 07:32–07:34 probe
-window has not yet shown positive GET and downloaded-byte metrics. The live
-Staging database also lacks `ota_artifact_grants` and
-`ota_download_receipts`, so the current read-only legacy drain gate fails
-closed. OTA service registration remains disabled. Do not cut over the
-Staging workload until the metrics, schema, legacy drain, and deployment
-readiness gates pass. The confirmed account setting is
+Staging Cloud Pulse reported GET requests for the 2026-09-28 UTC 07:32–07:34
+probe but zero downloaded bytes in those minutes. A wider window showed only
+231 downloaded bytes, far below the observed 8 MiB full GET; that automatic
+qualification receipt was quarantined. A second verified 2 MiB signed GET at
+07:45 UTC again showed a GET but zero downloaded bytes in the samples
+available at 07:55 UTC. Treat the byte metric as unresolved and do not use
+the 231-byte receipt for cutover. The live Staging database lacks `ota_artifact_grants`
+and `ota_download_receipts`, so the current read-only legacy drain gate fails
+closed; the older `ota/` releases, campaigns, and deployments each count zero.
+OTA service registration remains disabled. Do not cut over the Staging
+workload until the metrics, schema, legacy drain, and deployment readiness
+gates pass. The confirmed account setting is
 `LKE_ACTIVE_SERVICE_LIMIT=unlimited`; the live inventory at preflight was
 45 counted services, with no additional services needed for bucket creation.
 
