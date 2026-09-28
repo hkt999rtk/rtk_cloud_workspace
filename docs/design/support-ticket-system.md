@@ -169,4 +169,8 @@ The repository contains the Admin implementation, Agent permissions, pinned
 Helm values and a deployment runbook. The private Zammad release and Cloud
 Admin integration are enabled in dev, where customer and support-agent flows
 have been exercised. Staging and production remain disabled pending their
-capacity, backup/restore and protected rollout gates.
+capacity, backup/restore and protected rollout gates. The 2026-09-28 staging
+readiness inspection also found that Cloud Admin and frontend SQLite files are
+still on ephemeral container storage. Their existing data must be migrated to
+PVCs and included in a tested matched recovery set before the staging Admin
+image is replaced; see the [deployment runbook](../deployment/support-ticket-zammad.md#cloud-admin-state-prerequisite).
