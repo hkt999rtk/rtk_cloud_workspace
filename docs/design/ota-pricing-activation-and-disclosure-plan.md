@@ -118,6 +118,8 @@ Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/
 
 同日固定版 staging PKI 唯讀複核：上述 CI run 的 API、EMQX PKI、OpenBao PKI 三個 `linux/amd64` digest 均通過 staging 專用 GHCR 憑證拉取；三個預定的 10 GiB PVC 都已 Bound，OpenBao 以 staging CA 驗證的 HTTPS 健康查詢回應 200。現行 namespace 只有一般 `video-cloud-api` 與 `pki-controller`，缺少 `video-cloud-api-pki`／`mqtt-pki`、各自的 staging 身分與信任物件，且未設 OpenBao 網路政策要求的 `rtk.cloud/pki-client-access=enabled` namespace 標籤；OpenBao 的 `pki-controller-staging` Kubernetes role 雖綁定正確 service account／namespace／audience，`token_policies` 仍為空，尚無經審核的 PKI 操作權限。Product PKI 檢查也因 Device Root ID／指紋 pin 不完整而 **NO-GO**。即時 Linode 基礎拓樸容量顯示 44 個 active services、此次新增需求 0；操作記錄的上限仍為 20，此結果只適用於不新增資源的既有拓樸，而且該一般部署計畫仍選到舊 Video Cloud API 映像，不能視為固定版上線批准。已在受限操作區保存完整且去敏的 preflight 報告與 staging API 基準；未建立 Root、未套用消費端、未啟用 OTA 計費。
 
+上述是**執行前**快照；同日後續依受保護的階段式 Go/No-Go，固定 CI API 映像的一次性 staging PKI/runtime migration 與權限 Job 均完成，唯讀資料庫查核確認 OTA task、download、artifact、CDN review／edge、producer seal 表和三個 NOLOGIN PKI 群組權限已存在。staging 專屬 Device Root 經一次性 Job 建立於 registry `ready` 狀態；公開憑證自我驗證並與 registry 指紋一致，且存入單張憑證的 immutable ConfigMap。OpenBao 的一次性 bootstrap 與 controller 角色已分別綁定最小 Device-domain 政策、精確 ServiceAccount／namespace／audience，實際短效 workload 登入核對通過；Video Cloud namespace 所需網路標籤已設定。`pki-controller` 已更新至上述固定 CI API digest、裝入同一 Root ID／SHA-256 pin 與新消費端 ID，Deployment 1/1 Ready，Account Manager→certissuer mTLS 複核通過。Root **尚未 active**：`video-cloud-api-pki`／`mqtt-pki` 和 staging 專屬 Service／MQTT 根、TLS／管理／資料庫身分仍未安裝，兩份真實消費端 ACK 缺失；`--require-product-pki` 仍因 Root 未啟用而失敗。這些 staging schema 與 PKI 基礎變更不會啟動獨立 OTA 程序、CDN 收集、Billing 價卡或客戶計費。
+
 ## 2. 現況證據與待補差距
 
 | 項目 | 現況證據 | 必須補齊 |
