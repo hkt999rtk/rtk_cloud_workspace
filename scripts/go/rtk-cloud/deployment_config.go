@@ -652,7 +652,7 @@ func validateLKEEnvironmentStateBeforeMutation(cfg deploymentConfig) error {
 	if err != nil {
 		return err
 	}
-	if _, err := positiveIntValue("LKE_ACTIVE_SERVICE_LIMIT", account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {
+	if err := validateActiveServiceLimit(account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {
 		return err
 	}
 	compatInput := appendMap(cfg.Values, cfg.AdapterResolved)
@@ -1220,6 +1220,16 @@ func positiveIntValue(key, raw string) (int, error) {
 	return n, nil
 }
 
+func validateActiveServiceLimit(raw string) error {
+	if raw == "unlimited" {
+		return nil
+	}
+	if _, err := positiveIntValue("LKE_ACTIVE_SERVICE_LIMIT", raw); err != nil {
+		return errors.New("LKE_ACTIVE_SERVICE_LIMIT must be a positive integer or unlimited")
+	}
+	return nil
+}
+
 func nonNegativeIntValue(key, raw string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || n < 0 {
@@ -1275,7 +1285,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 		providerPreflight["PROVIDER_REGION"] = region
 	}
 	if limit := account["LKE_ACTIVE_SERVICE_LIMIT"]; limit != "" {
-		if _, err := positiveIntValue("LKE_ACTIVE_SERVICE_LIMIT", limit); err != nil {
+		if err := validateActiveServiceLimit(limit); err != nil {
 			return err
 		}
 		adapterRuntime["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] = limit

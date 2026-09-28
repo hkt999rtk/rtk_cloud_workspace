@@ -57,8 +57,8 @@ fi
 if [[ "${GITHUB_ACTIONS:-}" == "true" && "$runner_arch" != "${RUNTIME_COVERAGE_RUNNER_ARCH:-X64}" ]]; then
   fail "runner architecture must be ${RUNTIME_COVERAGE_RUNNER_ARCH:-X64}"
 fi
-if ! [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
-  fail "LKE_ACTIVE_SERVICE_LIMIT repository variable must be a positive integer"
+if [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" != "unlimited" ]] && ! [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; then
+  fail "LKE_ACTIVE_SERVICE_LIMIT repository variable must be a positive integer or unlimited"
 fi
 for name in \
   RUNTIME_COVERAGE_PLANNED_PVCS \
@@ -98,7 +98,7 @@ elif ! kubectl --kubeconfig "$KUBECONFIG" get --raw=/readyz >/dev/null 2>&1; the
 fi
 
 if [[ -n "${LINODE_TOKEN:-}" ]] &&
-  [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]] &&
+  { [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" == "unlimited" ]] || [[ "${LKE_ACTIVE_SERVICE_LIMIT:-}" =~ ^[1-9][0-9]*$ ]]; } &&
   [[ "${RUNTIME_COVERAGE_PLANNED_PVCS:-}" =~ ^[0-9]+$ ]] &&
   [[ "${RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS:-}" =~ ^[0-9]+$ ]] &&
   [[ "${RUNTIME_COVERAGE_PLANNED_GENERATORS:-}" =~ ^[0-9]+$ ]]; then
@@ -128,10 +128,16 @@ if [[ -n "${LINODE_TOKEN:-}" ]] &&
       RUNTIME_COVERAGE_PLANNED_GENERATORS
     ))"
     projected_total="$((current_total + planned_total))"
-    headroom="$((LKE_ACTIVE_SERVICE_LIMIT - current_total))"
+    configured_limit_json="$LKE_ACTIVE_SERVICE_LIMIT"
+    if [[ "$LKE_ACTIVE_SERVICE_LIMIT" == "unlimited" ]]; then
+      configured_limit_json='"unlimited"'
+      headroom_json='"unlimited"'
+    else
+      headroom_json="$((LKE_ACTIVE_SERVICE_LIMIT - current_total))"
+    fi
     capacity_json="$(
       jq -n \
-        --argjson configured_limit "$LKE_ACTIVE_SERVICE_LIMIT" \
+        --argjson configured_limit "$configured_limit_json" \
         --argjson current_instances "$current_instances" \
         --argjson current_volumes "$current_volumes" \
         --argjson current_nodebalancers "$current_nodebalancers" \
@@ -140,7 +146,7 @@ if [[ -n "${LINODE_TOKEN:-}" ]] &&
         --argjson planned_load_balancers "$RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS" \
         --argjson planned_generators "$RUNTIME_COVERAGE_PLANNED_GENERATORS" \
         --argjson planned_total "$planned_total" \
-        --argjson headroom "$headroom" \
+        --argjson headroom "$headroom_json" \
         --argjson projected_total "$projected_total" \
         '{
           configured_limit: $configured_limit,
@@ -158,10 +164,10 @@ if [[ -n "${LINODE_TOKEN:-}" ]] &&
           },
           available_headroom: $headroom,
           projected_total: $projected_total,
-          sufficient: ($projected_total <= $configured_limit)
+          sufficient: ($configured_limit == "unlimited" or $projected_total <= $configured_limit)
         }'
     )"
-    if ((projected_total > LKE_ACTIVE_SERVICE_LIMIT)); then
+    if [[ "$LKE_ACTIVE_SERVICE_LIMIT" != "unlimited" ]] && ((projected_total > LKE_ACTIVE_SERVICE_LIMIT)); then
       fail "Linode active-service headroom is insufficient: current=$current_total planned=$planned_total projected=$projected_total limit=$LKE_ACTIVE_SERVICE_LIMIT"
     fi
   fi

@@ -160,7 +160,7 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	account, err := readLKEAccountState(cfg.RuntimeRoot, true)
 	if err != nil {
 		reporter.fail("active-service-limit", err)
-	} else if _, err := positiveIntValue("LKE_ACTIVE_SERVICE_LIMIT", account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {
+	} else if err := validateActiveServiceLimit(account["LKE_ACTIVE_SERVICE_LIMIT"]); err != nil {
 		reporter.fail("active-service-limit", err)
 	} else {
 		reporter.pass("active-service-limit", "confirmed operator state is available")

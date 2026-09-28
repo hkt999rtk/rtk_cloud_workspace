@@ -53,6 +53,7 @@ type lkeProviderServicePlan struct {
 	CoturnVMs             int
 	RequiredServices      int
 	Limit                 int
+	Unlimited             bool
 }
 
 func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
@@ -76,6 +77,8 @@ func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
 		limit := "unset"
 		if plan.ProviderServices.Limit > 0 {
 			limit = strconv.Itoa(plan.ProviderServices.Limit)
+		} else if plan.ProviderServices.Unlimited {
+			limit = "unlimited"
 		}
 		fmt.Fprintf(os.Stdout, "  - provider_active_services: required=%d limit=%s nodes=%d postgres_volumes=%d fleet_volumes=%d support_volumes=%d admin_sqlite_volumes=%d frontend_sqlite_volumes=%d edge_vms=%d coturn_vms=%d\n", plan.ProviderServices.RequiredServices, limit, plan.ProviderServices.NodeServices, plan.ProviderServices.PostgresVolumes, plan.ProviderServices.FleetVolumes, plan.ProviderServices.SupportVolumes, plan.ProviderServices.AdminSQLiteVolumes, plan.ProviderServices.FrontendSQLiteVolumes, plan.ProviderServices.EdgeVMs, plan.ProviderServices.CoturnVMs)
 	}
@@ -119,11 +122,14 @@ func lkeCheckCapacityWithPaths(paths provisionPaths, env map[string]string, opts
 }
 
 func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]string, plan lkeProviderServicePlan) error {
-	if plan.Limit <= 0 || strings.TrimSpace(paths.EnvRoot) == "" {
+	if (plan.Limit <= 0 && !plan.Unlimited) || strings.TrimSpace(paths.EnvRoot) == "" {
 		return nil
 	}
 	token := resolveLinodeToken(paths.EnvRoot)
 	if token == "" {
+		if plan.Unlimited {
+			return errors.New("Linode token is required to audit unlimited active-service capacity")
+		}
 		return nil
 	}
 	out, err := linodeRequestRaw(token, "GET", "/linode/instances?page_size=500", "")
@@ -157,7 +163,14 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 	additional := plan.RequiredServices
 	reducible := 0
 	projected := current + additional
-	if cluster, err := discoverLKECluster(token, paths, env, false); err == nil && cluster.ID > 0 {
+	cluster, clusterErr := discoverLKECluster(token, paths, env, false)
+	if plan.Unlimited && clusterErr != nil {
+		return fmt.Errorf("discover LKE cluster for unlimited active-service audit: %w", clusterErr)
+	}
+	if plan.Unlimited && cluster.ID <= 0 {
+		return errors.New("unlimited active-service audit requires a resolved LKE cluster")
+	}
+	if clusterErr == nil && cluster.ID > 0 {
 		laterAdditional := lkeMissingPlannedVolumeServices(paths, env, plan)
 		missingDatabaseNodes, poolErr := lkeMissingPlannedDatabaseNodeServices(token, cluster, env, plan)
 		if poolErr != nil {
@@ -185,6 +198,10 @@ func lkeCheckLiveProviderActiveServices(paths provisionPaths, env map[string]str
 		beforeShrinkPeak := current + beforeShrinkAdditional
 		afterReconcile := current - reducible + additional
 		projected = maxInt(beforeShrinkPeak, afterReconcile)
+	}
+	if plan.Unlimited {
+		fmt.Fprintf(os.Stderr, "[lke] provider active services observed: current=%d instances=%d volumes=%d nodebalancers=%d reducible_lke_nodes=%d additional_required=%d projected=%d limit=unlimited\n", current, currentInstances, volumeCount, nodeBalancerCount, reducible, additional, projected)
+		return nil
 	}
 	if projected > plan.Limit {
 		if additional == 0 && projected <= current {
@@ -441,6 +458,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 		coturnVMs = lkeCoturnVMCount(env)
 	}
 	limit := envIntFrom(env, "LKE_LINODE_ACTIVE_SERVICE_LIMIT", 0)
+	unlimited := env["LKE_LINODE_ACTIVE_SERVICE_LIMIT"] == "unlimited"
 	fleetVolumes := 0
 	if fullDeploy || lkeWorkloadSelected(env, opts, "video-cloud") {
 		fleetVolumes = 1
@@ -473,6 +491,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 		CoturnVMs:             coturnVMs,
 		RequiredServices:      required,
 		Limit:                 limit,
+		Unlimited:             unlimited,
 	}
 }
 
