@@ -7009,6 +7009,10 @@ if [[ "$*" == *"get deployments -o json"* ]]; then
   printf '{"items":[]}\n'
   exit 0
 fi
+if [[ "$*" == *"get deployment cloud-admin -o json"* || "$*" == *"get deployment frontend -o json"* ]]; then
+  printf '{"spec":{"template":{"spec":{"volumes":[]}}}}\n'
+  exit 0
+fi
 if [[ "$*" == *"exec openbao-0 -- env "* && "$*" == *" bao status -format=json"* ]]; then
 	if [[ -n "${FAKE_OPENBAO_STATUS_JSON:-}" ]]; then
 		printf '%s\n' "$FAKE_OPENBAO_STATUS_JSON"

@@ -82,6 +82,29 @@ enabling tickets. This migration procedure needs a reviewed implementation
 and a protected-environment Go/No-Go; it is not performed by the Zammad
 bootstrap script.
 
+The LKE renderer now supports an explicit storage cutover with
+`LKE_CLOUD_ADMIN_SQLITE_PVC_ENABLED=true` and
+`LKE_FRONTEND_SQLITE_PVC_ENABLED=true`; both default to `false`. It creates
+`cloud-admin-sqlite-data` and `frontend-sqlite-data` in their respective
+namespaces, using the `linode-block-storage-retain` class and 5Gi requests by
+default. The storage requests can be set
+with `LKE_CLOUD_ADMIN_SQLITE_STORAGE` and `LKE_FRONTEND_SQLITE_STORAGE`.
+The provider capacity planner counts each enabled PVC. The renderer switches
+each Deployment to `Recreate`, requires exactly one replica and uses the
+observed process groups (Admin 999, frontend 101) as `fsGroup`. Validate that
+the copied files are readable and writable by those groups. Once a Deployment
+uses its SQLite PVC, reconciliation refuses to turn that setting off.
+
+For an existing Deployment, the cutover refuses to replace its Pod until its
+Bound PVC carries `rtk.realtek.com/sqlite-source-pod-uid` equal to the sole
+current source Pod UID and `rtk.realtek.com/sqlite-copy-sha256` equal to the
+recorded 64-character hexadecimal SHA-256 of the verified migration archive.
+These annotations are an operator attestation after quiescent copy, integrity
+verification and independent rollback archive; merely adding them is not a
+data migration. Repeat source Pod and copy verification immediately before
+the protected deployment command. A fresh environment with no prior
+Deployment may start with an empty PVC.
+
 ## Matched backup inventory
 
 Before enabling support tickets in staging or production, extend that
