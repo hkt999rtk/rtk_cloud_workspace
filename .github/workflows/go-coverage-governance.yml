@@ -223,6 +223,7 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=2g
           --health-cmd "pg_isready"
           --health-interval 5s
           --health-timeout 5s
@@ -298,6 +299,7 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=2g
           --health-cmd "pg_isready"
           --health-interval 5s
           --health-timeout 5s
@@ -348,6 +350,7 @@ jobs:
         ports:
           - 5432/tcp
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=2g
           --health-cmd "pg_isready"
           --health-interval 5s
           --health-timeout 5s
