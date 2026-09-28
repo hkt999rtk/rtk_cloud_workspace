@@ -158,6 +158,9 @@ func defaultDeploymentOperations() deploymentOperations {
 }
 
 func runDeploymentWithOperations(args []string, ops deploymentOperations) error {
+	if len(args) > 0 && args[0] == "pki-storage-plan" {
+		return runDeploymentPKIStoragePlan(args[1:])
+	}
 	if len(args) > 0 && args[0] == "console-check" {
 		// Read-only feature checks must not materialize or normalize a live runtime.
 		return runDeploymentConsoleCheck(args[1:])
@@ -334,6 +337,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		if cfg.Adapter != "lke" {
 			fmt.Printf("infrastructure: adapter not implemented; mutation will fail fast\n")
 			return normalizeDeploymentRuntime(cfg)
+		}
+		if cfg.Environment == "dev" || cfg.Environment == "staging" || cfg.Environment == "prod" {
+			if err := runDeploymentPKIStoragePlan([]string{"--workspace", cfg.Workspace, "--environment", cfg.Environment}); err != nil {
+				return err
+			}
 		}
 		if err := ops.plan(cfg); err != nil {
 			return err
@@ -679,6 +687,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
+  rtk-cloud deployment pki-storage-plan --environment dev|staging|prod [--live|--render|--cleanup-audit]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK
   rtk-cloud deployment upgrade --environment NAME --confirm STACK

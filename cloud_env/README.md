@@ -41,6 +41,10 @@ DNS_ADAPTER=godaddy
 | `DEPLOYMENT_ADAPTER` | Yes | Selects the provider adapter. Only `lke` currently supports mutation; `eks` and `gke` validate and then fail fast. |
 | `DNS_ADAPTER` | Yes | Selects the DNS provider independently; both `godaddy` and `route53` support mutation. |
 
+## PKI consumer storage plan
+
+Each built-in environment has a tracked `pki-consumer-storage.json` under its own `cloud_env/<environment>/` directory. It records one three-claim layout for every environment: dev is active on three existing PVCs after its 2026-09-28 migration and legacy-volume cleanup, while staging and production are plan-only. Validate it with `go run ./scripts/go/rtk-cloud -- deployment pki-storage-plan --environment NAME`; use `--live` for a read-only PVC and provider-quota comparison with an existing cluster. The `--render` output is review-only. The historical dev migration used the plan-bound `scripts/pki-consumer-dev-migration.py` Job/patch renderer and the read-only `deployment pki-storage-plan --environment dev --cleanup-audit` gate; the renderer now refuses to repeat the migration from an active plan. The complete deployment and capacity gates are in [`docs/design/pki-consumer-storage-plan.md`](../docs/design/pki-consumer-storage-plan.md). Do not create PVCs from `plan-only` files until the Video Cloud consumer renderer and live provider preflight consume this plan and pass the protected-environment checks.
+
 ## Optional Overrides
 
 The LKE frontend deployment sets `SERVICE_LOGIN_URL` to
