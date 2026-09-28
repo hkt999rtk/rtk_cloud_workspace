@@ -84,8 +84,9 @@ Zammad Deployment/StatefulSet to the environment's reviewed inventory. Keep
 start before recovery checks so stale state can be cleared and search rebuilt
 while the Admin write fence is still held. Inventory
 `data-zammad-postgres-0` through the PostgreSQL component and explicitly
-exclude `data-zammad-elasticsearch-master-0` and `data-zammad-redis-0` as
-rebuildable data. The environment-owned recovery checks must invalidate stale
+exclude `data-zammad-elasticsearch-master-0` as a rebuildable index. Redis
+uses ephemeral storage and has no PVC to inventory. The environment-owned
+recovery checks must invalidate stale
 search/cache state after a database restore and rebuild the search index while
 the write fence is held. See the exact chart names and component entries in
 [the Zammad deployment runbook](deployment/support-ticket-zammad.md#matched-backup-inventory).

@@ -24,7 +24,6 @@ APP_DEPLOYMENTS = (
 PVC_NAMES = (
     "data-zammad-postgres-0",
     "data-zammad-elasticsearch-master-0",
-    "data-zammad-redis-0",
 )
 
 
@@ -297,7 +296,7 @@ def main():
         raise RuntimeError("selected environment kubeconfig is missing")
     ready_inventory(kubeconfig, namespace)
     if not args.apply:
-        print(f"PLAN: {stack} private Zammad workloads and three PVCs are ready; no changes made")
+        print(f"PLAN: {stack} private Zammad workloads and two PVCs are ready; no changes made")
         return
     runtime = args.config_root / args.environment / "runtime"
     operator_path = runtime / "zammad-operator-admin-password"

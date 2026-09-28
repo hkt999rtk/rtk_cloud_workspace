@@ -135,6 +135,9 @@ application namespaces with NetworkPolicy. Provide dedicated PostgreSQL,
 Elasticsearch, Redis and Memcached chart dependencies and a persistent Zammad
 PostgreSQL database attachment store. Do not reuse RTK core PostgreSQL or its credentials. Capacity and
 volume sizing must pass the deployment planner and account service-limit check.
+Redis uses ephemeral storage because Zammad keeps no permanent data there.
+Elasticsearch remains persistent so a pod restart does not empty ticket search;
+its index can still be rebuilt from PostgreSQL after a restore.
 
 Add a default-off `SUPPORT_TICKETS_ENABLED` environment intent, pinned chart
 values and a derived internal `ZAMMAD_BASE_URL` for Admin. Add a Zammad integration

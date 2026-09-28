@@ -36,7 +36,8 @@ postgres:
       adminPasswordKey: postgres-password
 redis:
   persistence:
-    size: 10Gi
+    enabled: false # Zammad does not keep permanent data in Redis
+  useDeployment: true
   auth:
     existingSecret: zammad-redis-password
     existingSecretPasswordKey: redis-password

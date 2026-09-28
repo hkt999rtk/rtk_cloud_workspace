@@ -308,7 +308,6 @@ func lkeMissingPlannedVolumeServices(paths provisionPaths, env map[string]string
 		{namespace: "platform", name: "data-fleet-valkey-0", count: plan.FleetVolumes},
 		{namespace: "support", name: "data-zammad-postgres-0", count: min(plan.SupportVolumes, 1)},
 		{namespace: "support", name: "data-zammad-elasticsearch-master-0", count: min(plan.SupportVolumes, 1)},
-		{namespace: "support", name: "data-zammad-redis-0", count: min(plan.SupportVolumes, 1)},
 		{namespace: "admin", name: "cloud-admin-sqlite-data", count: plan.AdminSQLiteVolumes},
 		{namespace: "frontend", name: "frontend-sqlite-data", count: plan.FrontendSQLiteVolumes},
 	} {
@@ -448,7 +447,7 @@ func lkeProviderServices(env map[string]string, nodeCount int, opts provisionOpt
 	}
 	supportVolumes := 0
 	if strings.EqualFold(env["SUPPORT_TICKETS_ENABLED"], "true") && (fullDeploy || lkeWorkloadSelected(env, opts, "cloud-admin")) {
-		supportVolumes = 3
+		supportVolumes = 2
 	}
 	adminSQLiteVolumes := 0
 	frontendSQLiteVolumes := 0
