@@ -187,3 +187,99 @@ func TestOTAMetricsWindowRejectsFutureOrNonUTC(t *testing.T) {
 		}
 	}
 }
+
+func TestExportOTAMetricsRejectsUnqualifiedProviderEvidence(t *testing.T) {
+	now := time.Date(2026, 9, 28, 8, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name, bucketType, hostname, tokenBody, metricsBody, want string
+		tokenStatus, metricsStatus                               int
+		oldWindow, noToken, blockedArchive, blockedState         bool
+	}{
+		{name: "stale window", oldWindow: true, want: "within 72 hours"},
+		{name: "missing Linode token", noToken: true, want: "LINODE_TOKEN"},
+		{name: "unmonitored endpoint", bucketType: "E1", want: "E2/E3"},
+		{name: "wrong bucket hostname", hostname: "wrong.example.test", want: "hostname"},
+		{name: "service token request failed", tokenStatus: http.StatusForbidden, want: "service token request failed"},
+		{name: "invalid service token", tokenBody: `{"token":""}`, want: "service token response is invalid"},
+		{name: "metrics request failed", metricsStatus: http.StatusServiceUnavailable, want: "bucket metrics request failed"},
+		{name: "partial provider response", metricsBody: `{"status":"success","isPartial":true}`, want: "incomplete"},
+		{name: "no controlled GET", metricsBody: "zero", want: "positive bucket GET"},
+		{name: "archive directory unavailable", blockedArchive: true, want: "not a directory"},
+		{name: "receipt directory unavailable", blockedState: true, want: "not a directory"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var server *httptest.Server
+			server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				endpointHost := strings.TrimPrefix(server.URL, "http://")
+				bucketHostname := otaMetricsTestBucket + "." + endpointHost
+				switch r.URL.Path {
+				case "/v4/object-storage/buckets":
+					bucketType := tc.bucketType
+					if bucketType == "" {
+						bucketType = "E3"
+					}
+					hostname := tc.hostname
+					if hostname == "" {
+						hostname = bucketHostname
+					}
+					_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":%q,"hostname":%q,"s3_endpoint":%q,"endpoint_type":%q}]}`, otaMetricsTestBucket, otaMetricsTestRegion, hostname, server.URL, bucketType)
+				case "/v4/monitor/services/objectstorage/token":
+					if tc.tokenStatus != 0 {
+						w.WriteHeader(tc.tokenStatus)
+						return
+					}
+					body := tc.tokenBody
+					if body == "" {
+						body = `{"token":"monitor-test"}`
+					}
+					_, _ = io.WriteString(w, body)
+				case "/v2/monitor/services/objectstorage/metrics":
+					if tc.metricsStatus != 0 {
+						w.WriteHeader(tc.metricsStatus)
+						return
+					}
+					if tc.metricsBody == "zero" {
+						_, _ = w.Write(otaMetricsMatrixFixture(t, bucketHostname, endpointHost, now.Add(-90*time.Minute), 0, 4096))
+					} else if tc.metricsBody != "" {
+						_, _ = io.WriteString(w, tc.metricsBody)
+					} else {
+						_, _ = w.Write(otaMetricsMatrixFixture(t, bucketHostname, endpointHost, now.Add(-90*time.Minute), 1, 4096))
+					}
+				default:
+					t.Errorf("unexpected provider request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			root := t.TempDir()
+			if tc.blockedArchive {
+				if err := os.WriteFile(filepath.Join(root, "artifacts"), []byte("blocked"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.blockedState {
+				if err := os.WriteFile(filepath.Join(root, "state"), []byte("blocked"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := deploymentConfig{Environment: otaMetricsTestEnvironment, RuntimeRoot: root,
+				Storage: deploymentStoragePlan{OTAMode: "dedicated", OTAFirmware: deploymentStorageTarget{Bucket: otaMetricsTestBucket, Region: otaMetricsTestRegion}}}
+			checker := deploymentCredentialChecker{client: server.Client(), linodeAPIRoot: server.URL + "/v4", monitorAPIRoot: server.URL + "/v2"}
+			start, end := now.Add(-2*time.Hour), now.Add(-time.Hour)
+			if tc.oldWindow {
+				start, end = now.Add(-100*time.Hour), now.Add(-99*time.Hour)
+			}
+			token := "linode-pat"
+			if tc.noToken {
+				token = ""
+			}
+			err := checker.exportOTAMetrics(cfg, token, start.Format(time.RFC3339), end.Format(time.RFC3339), "operator", now)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("export error = %v, want %q", err, tc.want)
+			}
+			if _, err := os.Stat(filepath.Join(root, "state", "ota-metrics-qualification.json")); !os.IsNotExist(err) && !tc.blockedState {
+				t.Fatalf("failed export wrote qualification receipt: %v", err)
+			}
+		})
+	}
+}
