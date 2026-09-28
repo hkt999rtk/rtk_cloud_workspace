@@ -128,7 +128,7 @@ func TestResolveDeploymentStoragePlanRejectsInvalidProfiles(t *testing.T) {
 	}
 }
 
-func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T) {
+func TestResolveDedicatedOTAStorageRequiresSeparateCanonicalBucket(t *testing.T) {
 	workspace := t.TempDir()
 	root := filepath.Join(workspace, "cloud_env", "dev")
 	if err := os.MkdirAll(root, 0o700); err != nil {
@@ -139,10 +139,14 @@ func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T)
 	adapter := map[string]string{"LKE_REGION": "us-sea"}
 	for _, tc := range []struct{ name, extra, want string }{
 		{"invalid mode", "RUNTIME_OTA_STORAGE_MODE=unknown\n", "legacy-shared or dedicated"},
-		{"missing policy", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "requires colocated policy"},
+		{"missing policy", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "policy must be colocated or cross-region"},
 		{"shared bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-video-media-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must differ"},
 		{"wrong environment bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-prod-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-sea"},
 		{"wrong storage region bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-sea"},
+		{"colocated with explicit region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_REGION=us-lax\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must not set RUNTIME_OTA_STORAGE_REGION"},
+		{"cross-region without region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "different from the compute region"},
+		{"cross-region in compute region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-sea\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "different from the compute region"},
+		{"cross-region wrong bucket suffix", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-ord\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-ord"},
 		{"invalid cutover flag", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=yes\n", "must be true or false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -164,6 +168,16 @@ func TestResolveDedicatedOTAStorageRequiresSeparateColocatedBucket(t *testing.T)
 	}
 	if !plan.RuntimeMediaCutoverRequired || plan.OTAFirmware.Bucket != "rtk-ota-firmware-dev-us-sea" || plan.OTAFirmware.Region != "us-sea" {
 		t.Fatalf("incorrect dedicated OTA plan: %#v", plan)
+	}
+	if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+"RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-lax\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err = resolveDeploymentStoragePlan(workspace, root, identity, adapter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.RuntimeMedia.Region != "us-sea" || plan.OTAFirmware.Policy != "cross-region" || plan.OTAFirmware.Bucket != "rtk-ota-firmware-dev-us-lax" || plan.OTAFirmware.Region != "us-lax" {
+		t.Fatalf("incorrect cross-region OTA plan: %#v", plan)
 	}
 }
 

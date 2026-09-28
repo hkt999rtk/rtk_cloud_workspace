@@ -1056,7 +1056,7 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 		runtime = map[string]string{"RUNTIME_MEDIA_STORAGE_POLICY": "colocated", "RUNTIME_MEDIA_STORAGE_BUCKET": "rtk-video-media-" + filepath.Base(environmentRoot) + "-" + region, "RUNTIME_MEDIA_STORAGE_PREFIX": "environments/" + identity["CLOUD_STACK_NAME"]}
 	}
 	for key := range runtime {
-		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED", "RUNTIME_OTA_STORAGE_MODE", "RUNTIME_OTA_STORAGE_POLICY", "RUNTIME_OTA_STORAGE_BUCKET", "RUNTIME_OTA_STORAGE_PREFIX")[key] {
+		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED", "RUNTIME_OTA_STORAGE_MODE", "RUNTIME_OTA_STORAGE_POLICY", "RUNTIME_OTA_STORAGE_BUCKET", "RUNTIME_OTA_STORAGE_REGION", "RUNTIME_OTA_STORAGE_PREFIX")[key] {
 			return deploymentStoragePlan{}, fmt.Errorf("unknown runtime storage key %s", key)
 		}
 	}
@@ -1102,16 +1102,30 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 	}
 	ota := deploymentStorageTarget{Purpose: "ota-firmware", Policy: "colocated", LogicalLocation: identity["DEPLOYMENT_LOCATION"], Bucket: runtime["RUNTIME_MEDIA_STORAGE_BUCKET"], Prefix: strings.Trim(runtime["RUNTIME_MEDIA_STORAGE_PREFIX"], "/"), Region: computeRegion}
 	if otaMode == "dedicated" {
-		if runtime["RUNTIME_OTA_STORAGE_POLICY"] != "colocated" || strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_BUCKET"]) == "" || strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_PREFIX"]) == "" {
-			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires colocated policy, bucket and prefix")
+		if strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_BUCKET"]) == "" || strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_PREFIX"]) == "" {
+			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires a bucket and prefix")
 		}
 		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] == runtime["RUNTIME_MEDIA_STORAGE_BUCKET"] {
 			return deploymentStoragePlan{}, errors.New("dedicated OTA bucket must differ from runtime media bucket")
 		}
 		if computeRegion == "" {
-			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires a resolved compute and storage region")
+			return deploymentStoragePlan{}, errors.New("dedicated OTA storage requires a resolved compute region")
 		}
-		expectedBucket := "rtk-ota-firmware-" + filepath.Base(environmentRoot) + "-" + computeRegion
+		ota.Policy = runtime["RUNTIME_OTA_STORAGE_POLICY"]
+		switch ota.Policy {
+		case "colocated":
+			if strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_REGION"]) != "" {
+				return deploymentStoragePlan{}, errors.New("colocated OTA storage must not set RUNTIME_OTA_STORAGE_REGION")
+			}
+		case "cross-region":
+			ota.Region = strings.TrimSpace(runtime["RUNTIME_OTA_STORAGE_REGION"])
+			if ota.Region == "" || ota.Region == computeRegion {
+				return deploymentStoragePlan{}, errors.New("cross-region OTA storage requires an explicit region different from the compute region")
+			}
+		default:
+			return deploymentStoragePlan{}, errors.New("dedicated OTA storage policy must be colocated or cross-region")
+		}
+		expectedBucket := "rtk-ota-firmware-" + filepath.Base(environmentRoot) + "-" + ota.Region
 		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] != expectedBucket {
 			return deploymentStoragePlan{}, fmt.Errorf("dedicated OTA bucket must be %s for the selected environment and storage region", expectedBucket)
 		}
