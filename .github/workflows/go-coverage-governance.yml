@@ -456,7 +456,8 @@ jobs:
           cache: false
       - uses: actions/download-artifact@v7
         with:
-          pattern: go-coverage-*-${{ github.run_id }}-${{ github.run_attempt }}
+          # Failed-only reruns keep successful module artifacts from prior attempts.
+          pattern: go-coverage-*-${{ github.run_id }}-*
           path: .artifacts/coverage-input
       - name: Aggregate Go and JavaScript coverage
         working-directory: scripts/go
