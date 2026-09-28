@@ -1,6 +1,6 @@
 # Linode Object Storage bucket inventory
 
-Observed through the Linode bucket API on 2026-09-27 and 2026-09-28 using the Dev operator account. This is a dated snapshot, not proof of current consumers or contents. Target names outside the Dev rows are design intent and are not claimed to exist. Verify ownership and key scope before migration or deletion.
+Observed through the Linode bucket API on 2026-09-27 and 2026-09-28 using the Dev and Staging operator accounts. This is a dated snapshot, not proof of current consumers or contents. Verify ownership and key scope before migration or deletion.
 
 | Observed bucket | Region | Likely purpose / status | Naming target |
 | --- | --- | --- | --- |
@@ -10,6 +10,7 @@ Observed through the Linode bucket API on 2026-09-27 and 2026-09-28 using the De
 | `rtk-video-dev-us-west` | `us-sea` | Existing Dev Video Cloud media; region alias in name | `rtk-video-media-dev-us-sea` |
 | `rtk-clip-staging-us-sea` | `us-sea` | Legacy staging clip bucket; consumer needs verification | `rtk-video-media-staging-sg-sin-2` if part of current staging media |
 | `rtk-video-staging-sg` | `sg-sin-2` | Configured Staging runtime media | `rtk-video-media-staging-sg-sin-2` |
+| `rtk-ota-firmware-staging-sg-sin-2` | `sg-sin-2` | Created and validated as private E3 on 2026-09-28; migration receipt reports zero source and destination billable objects. OTA service cutover pending. | Staging billable OTA target |
 | `rtk-cloud-client-artifacts` | `us-sea` | Configured shared release artifacts | `rtk-release-shared-us-sea` |
 | `rtk-cloud-dev-device-pki-backup-us-iad` | `us-iad` | Dev device PKI backup | `rtk-device-pki-backup-dev-us-iad` |
 | `rtk-cloud-staging-device-pki-backup-sg-sin-2` | `sg-sin-2` | Staging device PKI backup | `rtk-device-pki-backup-staging-sg-sin-2` |
@@ -37,13 +38,31 @@ deployment requires E3. See the
 [endpoint matrix](https://techdocs.akamai.com/cloud-computing/docs/endpoint-types)
 and [metric definitions](https://techdocs.akamai.com/cloud-computing/docs/object-storage-cloud-pulse-metrics).
 
-Staging and Prod remain on their tracked `legacy-shared` policy. The
-2026-09-28 Staging read-only preflight is NO-GO because the environment-local
-`LKE_ACTIVE_SERVICE_LIMIT` is unset; the proposed E3 OTA bucket
-`rtk-ota-firmware-staging-sg-sin-2` has not been created. The Prod preflight
-is NO-GO because runtime and GHCR credentials and that service limit are
-missing. Its account, cluster and media-bucket ownership also need
-confirmation before choosing an E3 OTA region and bucket name. No protected
-environment bucket, key, Secret or service was changed.
+The Staging dedicated OTA E3 bucket was created on 2026-09-28 in `sg-sin-2`
+with one scoped key. A temporary 8 MiB probe outside `ota-billable-v1/`
+confirmed unsigned GET rejection, exact `206 Range`, signed URL expiry,
+renewed URL resume with matching SHA-256, and complete download in about
+3.1 seconds. The renewed HTTPS URL was 448 bytes. The probe object was
+deleted. This provider-client test does not verify physical device behavior.
+The source media bucket's unprefixed and environment-prefixed
+`ota-billable-v1/` and historical `ota/` paths were empty at the migration
+inventory; the OTA migration receipt records zero objects and bytes. Staging
+workloads still use the historical `legacy-shared` OTA configuration.
+
+Staging Cloud Pulse qualification for the 2026-09-28 UTC 07:32–07:34 probe
+window has not yet shown positive GET and downloaded-byte metrics. The live
+Staging database also lacks `ota_artifact_grants` and
+`ota_download_receipts`, so the current read-only legacy drain gate fails
+closed. OTA service registration remains disabled. Do not cut over the
+Staging workload until the metrics, schema, legacy drain, and deployment
+readiness gates pass. The confirmed account setting is
+`LKE_ACTIVE_SERVICE_LIMIT=unlimited`; the live inventory at preflight was
+45 counted services, with no additional services needed for bucket creation.
+
+Production remains outside this migration scope. Its earlier preflight was
+NO-GO because runtime and GHCR credentials and the service limit were
+missing. Its account, cluster, and media-bucket ownership need confirmation
+before choosing an E3 OTA region and bucket name. No Production bucket, key,
+Secret, or service was changed.
 
 See [storage naming and lifecycle](storage-credential-lifecycle.md) for the canonical pattern, paths, key ownership, and migration order.
