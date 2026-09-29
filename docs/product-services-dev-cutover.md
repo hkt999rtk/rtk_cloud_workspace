@@ -170,10 +170,10 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    routes `/v1/device/ota/` to `video-cloud-otaservice`: a device certificate
    succeeds, no certificate is rejected, and `check`, `artifact-token`, and
    `events` reach the independent service. The OTA device simulator must use
-   the device mTLS URL with each device's certificate; its CDN artifact client
+   the device mTLS URL with each device's certificate; its object-download client
    must not send that certificate. Only after the observed ingress route and
    private endpoint pass may `LKE_OTA_CORE_CUTOVER_ENABLED` disable the core
-   device handler and forward operator/app routes. Verify direct CDN downloads,
+   device handler and forward operator/app routes. Verify direct object downloads,
    signed completion reports, all four usage facts, outbox delivery, and
    Billing receipts before accepting the cutover. For rollback, restore the
    core handler and wait for its rollout before removing the device edge route.
