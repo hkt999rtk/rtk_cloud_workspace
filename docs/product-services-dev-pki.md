@@ -83,14 +83,40 @@ comma-separated `CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECTS` set while the
 legacy singular input remains unset. It still requires the reviewed session,
 `service:deployment-bootstrap` caller, and pinned Service Root CA, and rejects
 missing CA or an empty subject set. Focused Go tests and the governed service
-coverage gate passed before merge. Build and deploy an image from that exact
-commit, then verify listener readiness, the canonical credential check, and
-Account Manager mTLS before creating the short-lived bootstrap session.
+coverage gate passed before merge. CI published the API image from that exact
+commit as digest
+`ddf918ae2513579f83efe8a4fa7ccad0b27c84e2cf4f3c3b44e40f9e4710ff78`;
+the digest was independently checked against GHCR. The same release workflow
+later failed on the unrelated EMQX package push with GHCR 403, so it has no
+successful overall release result. A guarded dev patch updated only certissuer
+and its four temporary bootstrap settings. The Deployment reached 1/1 Ready,
+and Account Manager mTLS reached request validation. The old workspace
+credential verifier rejected this separate-Job, plural-subject mode because it
+required the listener itself to hold the bootstrap key. The corrected verifier
+checks the exact session UUID, caller, unique subjects and pinned Service Root
+while keeping legacy self-bootstrap checks; its focused regressions and the
+actual dev `secrets verify --environment dev` passed. The new bootstrap session
+has not been created yet.
 
 The private registration listener, six new registrar identities, bootstrap
 session, service registrations and Product grant below are still pending. The
 local `pki/services/issuer.json` bootstrap enrollment record is not yet complete.
 Do not infer OTA Product enablement or billing from the active CA alone.
+
+The registration listener needs a server certificate for the exact private
+DNS. The bootstrap Job has a short-lived `service:deployment-bootstrap` client
+certificate, which the ordinary gateway caller regex deliberately excludes.
+Video Cloud PR #734 adds a separate, temporary route for this one server
+certificate: verified direct mTLS, `purpose=server`, one exact
+`CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SERVER_DNS_NAME` already on the gateway
+DNS allowlist, and a matching active deployment session whose stored
+bootstrap-certificate fingerprint matches the mTLS leaf are all required.
+Configure the DNS setting only with that session and remove
+it after sealing. An expired or sealed session denies further issuance even
+while the bootstrap leaf remains valid. The issued server certificate and its
+registry record follow normal validity and revocation. The one-shot server
+Job uses the same protected state PVC and bootstrap NetworkPolicy label. Keep
+the ordinary gateway caller regex unchanged.
 
 ## Read-only baseline (2026-09-26)
 
@@ -218,16 +244,29 @@ session succeed.
    --environment dev --service-bootstrap-state-claim
    pki-service-bootstrap-product-dev-<reviewed-id>` plus the required issuer,
    subject, OpenBao CA and image arguments. Review the generated PVC name and
-   Job mount before applying. Do not point at `pki-service-bootstrap-state`.
-   The bootstrap identity is short lived; retry only the same session and PVC.
+   Job mount before applying. Require the generated Job and its later
+   registration-server Job to carry `rtk.realtek.com/pki-bootstrap=true`; the
+   existing certissuer NetworkPolicy admits that exact label on port 9443.
+   The canonical `secrets verify` preflight must pass before reserving a new
+   session. While the session is active its signing-state check intentionally
+   reports the active caller; rerun the full verifier after sealing. Do not
+   point at `pki-service-bootstrap-state`. The bootstrap identity is short
+   lived; retry only the same session and PVC.
 3. Issue one registry recorded client certificate for each of the six exact
    subjects. The dedicated listener server certificate must cover the exact
-   private DNS above. Keep each private key in its own protected state and
+   private DNS above. Its bootstrap request uses the session-bound certissuer
+   route and exact DNS setting described above; the session's six client
+   subject acknowledgements remain unchanged. Keep each private key in its
+   own protected state and
    verify the registry receipt, issuer chain, purpose, validity, and current
    issuer CRL before Secret installation. The Account Manager namespace needs
    `account-manager-service-registration-tls` with `tls.crt`, `tls.key`,
-   `client-ca.crt`, `client.crl`. The Video Cloud namespace needs the following
-   six separate Secrets, each with `client.crt`, `client.key`, `server-ca.crt`:
+   `client-ca.crt`, `client.crl`. The listener uses app Pod port `9444`, reached
+   through the private Account Manager Service port `8443`; its existing PKI
+   sidecar already owns Pod port `8443`. The ingress NetworkPolicy must admit
+   the six reviewed registrar Pod identities on `9444`. The Video Cloud
+   namespace needs the following six separate Secrets, each with `client.crt`,
+   `client.key`, `server-ca.crt`:
 
    | Certificate CN | Secret | Service / instance | Option |
    | --- | --- | --- | --- |

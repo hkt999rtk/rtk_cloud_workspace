@@ -403,10 +403,13 @@ consumers and uses a new bootstrap session rather than the retired state PVC.
 
 `LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED` defaults to `false`. When
 reviewed and enabled, the LKE renderer adds a private `account-manager`
-Service port `8443`, the matching Account Manager mTLS listener settings, and
-an ingress NetworkPolicy limited to the MQTT foundation, Shadow worker,
-WebRTC service, and video-storage service Pod identities in the Video Cloud
-namespace. It does not add a public ingress route or enable Product writes.
+Service port `8443` mapped to the Account Manager app's Pod port `9444`,
+the matching mTLS listener settings, and an ingress NetworkPolicy on Pod port
+`9444` limited to the six registered MQTT, Shadow, WebRTC, video-storage,
+Logger, and OTA Pod identities in the Video Cloud namespace. The existing
+`pkimanagement` sidecar already binds Pod port `8443`; do not assign that port
+to the app listener. This does not add a public ingress route or enable Product
+writes.
 
 Before enabling the flag, provision the environment-local Kubernetes Secret
 `account-manager-service-registration-tls` in the Account Manager namespace
@@ -425,6 +428,13 @@ certificates. Qualify the server DNS name
 `account-manager.<stack>-account-manager.svc.cluster.local`, client-CA chain,
 server key match, CRL issuer/currentness, file access, and every affected
 rendered workload with the protected-environment credential/TLS preflight.
+For initial issuance, set
+`CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SERVER_DNS_NAME` to that exact name only
+during the operator's active deployment session. Certissuer requires the
+bootstrap caller's direct mTLS identity and leaf fingerprint, `purpose=server`,
+one matching DNS SAN and the durable session record. Remove the setting after
+sealing; keep
+the ordinary gateway caller regex unchanged.
 The registration URL for clients is the private Service origin on port 8443.
 Rotate the mounted CRL atomically; the listener rereads it on every request.
 Rotating the server certificate/key also requires an Account Manager rollout,

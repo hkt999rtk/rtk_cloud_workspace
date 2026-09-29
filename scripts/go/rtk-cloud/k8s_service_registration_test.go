@@ -82,8 +82,8 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 		}
 	}
 	for _, want := range []string{
-		"name: service-registry\n              containerPort: 8443",
-		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT\n              value: \"8443\"",
+		"name: service-registry\n              containerPort: 9444",
+		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT\n              value: \"9444\"",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CA",
@@ -107,7 +107,7 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 		"video-cloud-shadowworker",
 		"video-cloud-webrtcservice",
 		"video-cloud-videostorage",
-		"port: 8443",
+		"port: 9444",
 	} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("registration policy lacks %q", want)
