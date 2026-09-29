@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "targets": [
+    {
+      "id": "account-manager-local",
+      "source": "file",
+      "cert_file": "pki/certissuer/client.crt",
+      "key_file": "pki/certissuer/client.key",
+      "subject": "service:account-manager",
+      "purpose": "client",
+      "root_file": "pki/certissuer/service-ca.crt"
+    },
+    {
+      "id": "account-manager-current",
+      "source": "secret",
+      "namespace_suffix": "account-manager",
+      "secret": "account-manager-certissuer-client",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/certissuer/client.crt",
+      "subject": "service:account-manager",
+      "purpose": "client",
+      "root_file": "pki/certissuer/service-ca.crt"
+    },
+    {
+      "id": "factory-enroll-local",
+      "source": "file",
+      "cert_file": "pki/certissuer/factory.crt",
+      "key_file": "pki/certissuer/factory.key",
+      "subject": "factoryenroll",
+      "purpose": "client",
+      "root_file": "pki/certissuer/service-ca.crt"
+    },
+    {
+      "id": "factory-enroll-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "factoryenroll-certissuer-client",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/certissuer/factory.crt",
+      "subject": "factoryenroll",
+      "purpose": "client",
+      "root_file": "pki/certissuer/service-ca.crt"
+    },
+    {
+      "id": "certissuer-server-local",
+      "source": "file",
+      "cert_file": "pki/certissuer/server.crt",
+      "key_file": "pki/certissuer/server.key",
+      "subject": "certissuer",
+      "purpose": "server",
+      "root_file": "pki/certissuer/service-ca.crt",
+      "dns": "certissuer"
+    },
+    {
+      "id": "certissuer-server-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "certissuer-runtime",
+      "cert_key": "tls.crt",
+      "key_key": "tls.key",
+      "compare_to": "pki/certissuer/server.crt",
+      "subject": "certissuer",
+      "purpose": "server",
+      "root_file": "pki/certissuer/service-ca.crt",
+      "dns": "certissuer"
+    },
+    {
+      "id": "mqtt-server-local",
+      "source": "file",
+      "cert_file": "pki/mqtt/server.crt",
+      "key_file": "pki/mqtt/server.key",
+      "subject": "mqtt",
+      "purpose": "server",
+      "root_file": "pki/mqtt/ca.crt",
+      "dns": "mqtt"
+    },
+    {
+      "id": "mqtt-server-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "mqtt-runtime",
+      "cert_key": "tls.crt",
+      "key_key": "tls.key",
+      "compare_to": "pki/mqtt/server.crt",
+      "subject": "mqtt",
+      "purpose": "server",
+      "root_file": "pki/mqtt/ca.crt",
+      "dns": "mqtt"
+    },
+    {
+      "id": "openbao-server-local",
+      "source": "file",
+      "cert_file": "openbao/tls.crt",
+      "key_file": "openbao/tls.key",
+      "subject": "openbao",
+      "purpose": "server",
+      "root_file": "openbao/tls-ca.crt",
+      "dns": "openbao"
+    },
+    {
+      "id": "openbao-server-current",
+      "source": "secret",
+      "namespace_suffix": "secrets",
+      "secret": "openbao-tls",
+      "cert_key": "tls.crt",
+      "key_key": "tls.key",
+      "compare_to": "openbao/tls.crt",
+      "subject": "openbao",
+      "purpose": "server",
+      "root_file": "openbao/tls-ca.crt",
+      "dns": "openbao"
+    },
+    {
+      "id": "mqtt-initial",
+      "source": "deployment",
+      "record_file": "pki/services/mqtt/identity.json",
+      "subject": "service:mqtt",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "mqtt-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "mqtt-foundation-platform-identity",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/services/mqtt/identity.json",
+      "subject": "service:mqtt",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "shadow-initial",
+      "source": "deployment",
+      "record_file": "pki/services/shadow/identity.json",
+      "subject": "service:shadow",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_SHADOW_WORKER_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "shadow-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "shadow-worker-platform-identity",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/services/shadow/identity.json",
+      "subject": "service:shadow",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_SHADOW_WORKER_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "webrtc-initial",
+      "source": "deployment",
+      "record_file": "pki/services/webrtc/identity.json",
+      "subject": "service:webrtc",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "webrtc-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "webrtc-service-platform-identity",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/services/webrtc/identity.json",
+      "subject": "service:webrtc",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_WEBRTC_SERVICE_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "video-storage-initial",
+      "source": "deployment",
+      "record_file": "pki/services/video-storage/identity.json",
+      "subject": "service:video-storage",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "video-storage-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "video-storage-service-platform-identity",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/services/video-storage/identity.json",
+      "subject": "service:video-storage",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_VIDEO_STORAGE_SERVICE_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "logger-initial",
+      "source": "deployment",
+      "record_file": "pki/services/logger/identity.json",
+      "subject": "service:logger",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_LOGGER_SERVICE_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "logger-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "logger-service-platform-identity",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/services/logger/identity.json",
+      "subject": "service:logger",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by": "LKE_LOGGER_SERVICE_REGISTRATION_ENABLED"
+    },
+    {
+      "id": "ota-initial",
+      "source": "deployment",
+      "record_file": "pki/services/ota/identity.json",
+      "subject": "service:ota",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by_any": [
+        "LKE_OTA_SERVICE_REGISTRATION_ENABLED",
+        "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"
+      ]
+    },
+    {
+      "id": "ota-current",
+      "source": "secret",
+      "namespace_suffix": "video-cloud",
+      "secret": "ota-service-platform-identity",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/services/ota/identity.json",
+      "subject": "service:ota",
+      "purpose": "client",
+      "service_root": true,
+      "enabled_by_any": [
+        "LKE_OTA_SERVICE_REGISTRATION_ENABLED",
+        "LKE_OTA_REGISTRAR_REGISTRATION_ENABLED"
+      ]
+    }
+  ]
+}

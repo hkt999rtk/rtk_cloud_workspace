@@ -10,17 +10,29 @@ import (
 	"time"
 )
 
-// lkeRequirePlatformServiceIdentitySecret is a read-only, pre-mutation check.
-// The listener Secret supplies the independent client trust anchor and CRL;
-// a plugin cannot validate itself by supplying its own CA in server-ca.crt.
+// Canonical deployments validate listener trust before enrollment. Legacy callers
+// first require an existing identity; neither path admits an unvalidated identity.
 func lkeRequirePlatformServiceIdentitySecret(env map[string]string, name, label, subject string) error {
-	identity, err := kubectlResourceJSON(lkeNamespaceName(env, "video-cloud"), "secret", name)
-	if err != nil {
-		return fmt.Errorf("%s is unavailable: %w", label, err)
+	var identity map[string]any
+	var err error
+	if activeSecretEnvironmentRoot == "" {
+		identity, err = kubectlResourceJSON(lkeNamespaceName(env, "video-cloud"), "secret", name)
+		if err != nil {
+			return fmt.Errorf("%s is unavailable: %w", label, err)
+		}
 	}
 	listener, err := kubectlResourceJSON(lkeNamespaceName(env, "account-manager"), "secret", serviceRegistrationTLSSecretName)
 	if err != nil {
 		return fmt.Errorf("service registration TLS Secret is unavailable: %w", err)
+	}
+	if err := validateRegistrationServerMaterial(listener, lkeRegistrationServerDNS(env)); err != nil {
+		return err
+	}
+	if activeSecretEnvironmentRoot != "" {
+		identity, err = lkeEnsureDeploymentServiceIdentity(env, name, subject, listener)
+		if err != nil {
+			return fmt.Errorf("%s is unavailable: %w", label, err)
+		}
 	}
 	return validatePlatformServiceIdentityMaterial(identity, listener, subject, lkeRegistrationServerDNS(env), time.Now())
 }

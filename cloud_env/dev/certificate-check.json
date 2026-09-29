@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "targets": [
+    {
+      "id": "account-manager-local",
+      "source": "file",
+      "cert_file": "pki/certissuer/client.crt",
+      "key_file": "pki/certissuer/client.key",
+      "subject": "account-manager",
+      "purpose": "client",
+      "root_file": "pki/certissuer/service-ca.crt"
+    },
+    {
+      "id": "account-manager-current",
+      "source": "secret",
+      "namespace_suffix": "account-manager",
+      "secret": "account-manager-certissuer-client",
+      "cert_key": "client.crt",
+      "key_key": "client.key",
+      "compare_to": "pki/certissuer/client.crt",
+      "subject": "account-manager",
+      "purpose": "client",
+      "root_file": "pki/certissuer/service-ca.crt"
+    }
+  ]
+}
