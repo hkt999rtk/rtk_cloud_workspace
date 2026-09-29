@@ -20,14 +20,26 @@ would drop their CRL settings.
 
 The full Product cutover remains **NO-GO**. The private
 `account-manager-service-registration-tls` Secret and all six registrar
-identity Secrets are absent in dev. The active Service issuer cannot sign the
-new subjects or the Product listener DNS, and its policy is immutable. An
-a successor issuer approved through the actual Service intermediate workflow
-and a new bootstrap session are required;
-the existing bootstrap PVC must not be reused. Follow
-[the dev PKI prerequisite](product-services-dev-pki.md) to issue and install
-the seven identities, register exact workload approvals, and pass the final
-listener, registration, and denial probes before continuing below.
+identity Secrets are absent in dev. At this 2026-09-26 baseline, the active
+Service issuer could not sign the new subjects or Product listener DNS because
+its policy was immutable. The successor milestone below removes that CA-policy
+blocker. A new bootstrap session is still required, and the existing bootstrap
+PVC must not be reused. Follow [the dev PKI prerequisite](product-services-dev-pki.md)
+to issue and install the seven identities, register exact workload approvals,
+and pass the final listener, registration and denial probes before continuing.
+
+## Service PKI milestone (2026-09-29)
+
+The configured dev operator completed the original successor request without a
+second human approval. Service intermediate v10
+`cf348f82-f4cc-434e-a59d-c37eee8222cf` is active under the existing Root;
+v9 is retiring. `certissuer` and `pki-controller` each acknowledged the new
+reviewed bundle. The canonical dev SecretStore/live-cluster check and a separate
+inventory of all 12 predecessor Service client issuances passed. The new issuer
+has no issued workload leaves yet. The private registration listener, new
+bootstrap session, six registrar identities, workload approvals and Product
+writes remain off. See [the dev PKI prerequisite](product-services-dev-pki.md)
+for the operation digest, certificate fingerprint and recovery evidence.
 
 ## Verified dev runtime delta (2026-09-29)
 
