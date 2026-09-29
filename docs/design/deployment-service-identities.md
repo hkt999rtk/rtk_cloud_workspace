@@ -1,8 +1,9 @@
 # Deployment service identities
 
-Status: accepted design (operator decisions of 2026-09-29). Implementation is
-under verification; the evidence table distinguishes code paths from live rollout.
-No live environment is changed by this document.
+Status: accepted design (operator decisions of 2026-09-29). The operator-authority
+path is deployed and verified in dev; staging and production remain separate
+cutovers. The identity enrollment steps below remain gated by each environment's
+issuer, bootstrap session and workload evidence.
 
 Owner: rtk_cloud_workspace. Authority: `platform_pki.md` owns CA hierarchy and
 runtime issuance; this document owns deployment credential persistence and reuse.
@@ -25,13 +26,17 @@ enrolling a Service leaf. Deployment checks their exact match and rejects a
 partial cutover or an identity copied from another environment. Changing the
 operator or signer is an explicit handover, not a routine deployment update.
 
-This is the accepted target, not the currently deployed controller behavior.
-The current controller still requires an independent `pki_admin` approval for a
-Service intermediate and a PKI role for provision/import/activation. Until those
-checks and the operator identity path are changed and verified, a `requested`
-operation must stay pending; no database edit, fabricated approval, or borrowed
-account may substitute for the target implementation. The transition and
-negative tests are specified in [PKI operator authority tests](pki-operator-authority-test-plan.md).
+Dev completed the operator-authority cutover on 2026-09-29. The configured
+Platform Admin explicitly authorized the preserved OTA Service intermediate
+operation, then provisioned, imported and activated it through the authenticated
+Account Manager proxy. The same operator ID and signer reference are pinned in the
+dev SecretStore and live controller; Account Manager enforces that user on mutating
+PKI calls. The append-only database authorization and audit rows, and the
+searchable secret-free Loki event, were verified independently. This confirms the
+operator path in dev, not enrollment of the later OTA workload identities. A
+`requested` operation in another environment stays pending until that environment
+is configured and reviewed; no database edit, fabricated approval or borrowed
+account may substitute for this path. See [PKI operator authority tests](pki-operator-authority-test-plan.md).
 
 ## Decisions and boundaries
 
@@ -192,6 +197,16 @@ is needed for operator-side credential storage.
 - Deployment reconciliation: `deployment_service_identity.go`,
   `deployment_identity_store.go`, `deployment_identity_cluster.go`. Presence of
   a catalogue entry does not prove live enrollment.
+
+Dev live evidence on 2026-09-29: the Service successor
+`cf348f82-f4cc-434e-a59d-c37eee8222cf` became active under the existing
+Service Root after `certissuer` and `pki-controller` acknowledged bundle version
+`5802c2123ea7c8b53b10875b0fcaec7f11686772114b5e863fc703d7bd6f3f0d`.
+The predecessor remains `retiring`; its 12 existing Service client issuances were
+not moved or replaced. A separate read-only predecessor inventory passed with no
+unresolved records. The post-cutover `secrets verify --environment dev` passed.
+The six Product registrar leaves, private registration listener and Product grants
+are separate acceptance work in [the dev Product runbook](../product-services-dev-pki.md).
 
 Acceptance must cover fresh enrollment, unchanged second deployment (same key and
 certificate with zero signing calls), configuration drift rejection without file

@@ -1312,6 +1312,25 @@ func TestSecretStoreK8SRuntimeRejectsIncompleteServiceClientInventory(t *testing
 	}
 }
 
+func TestLiveServiceClientRegistryAllowsNewIssuerBeforeFirstLeaf(t *testing.T) {
+	var deployments liveDeploymentList
+	if err := json.Unmarshal([]byte(`{"items":[{"metadata":{"name":"pki-controller"},"spec":{"template":{"spec":{"containers":[{"env":[{"name":"RTK_DEPLOYMENT_SERVICE_ISSUER_ID","value":"new-issuer"},{"name":"PKI_SERVICE_CLIENT_ROOT_SHA256","value":"0123456789abcdef"},{"name":"PKI_REQUIRED_CONSUMERS_SERVICE","value":"certissuer,pki-controller"}]}]}}}}]}`), &deployments); err != nil {
+		t.Fatal(err)
+	}
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := "#!/bin/sh\ncase \"$*\" in\n" +
+		"  *'get pods -l app.kubernetes.io/name=pki-controller -o json'*) printf '%s' '{\"items\":[{\"metadata\":{\"name\":\"pki-controller-1\"}}]}' ;;\n" +
+		"  *'recovery-inventory-service-client'*) printf '%s' '{\"status\":\"service-client-registry-inventory-checked\",\"issuances\":0,\"pending_issuances\":0,\"invalid_records\":0,\"unpublished_revocations\":0,\"missing_acknowledgments\":0}' ;;\n" +
+		"  *) exit 1 ;;\nesac\n"
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	if err := verifyLiveServiceClientRegistry("kubeconfig", "video-cloud-dev-video-cloud", deployments); err != nil {
+		t.Fatalf("new active issuer with no leaves: %v", err)
+	}
+}
+
 func TestSecretStoreK8SRuntimeAllowsUnadoptedServiceClientRegistry(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "staging")
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
