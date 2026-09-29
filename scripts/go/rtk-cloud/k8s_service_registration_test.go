@@ -16,7 +16,7 @@ func TestLKEAccountManagerServiceRegistrationIsOptIn(t *testing.T) {
 		"deployment": lkeDeploymentManifest(env, workload, nil),
 		"service":    lkeServiceManifest(env, workload),
 	} {
-		if strings.Contains(manifest, "service-registry") || strings.Contains(manifest, "account-manager-service-registration-tls") {
+		if strings.Contains(manifest, "service-reg") || strings.Contains(manifest, "account-manager-service-registration-tls") {
 			t.Fatalf("%s enabled service registration without opt-in", name)
 		}
 		var parsed map[string]any
