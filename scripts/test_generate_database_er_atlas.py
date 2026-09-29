@@ -57,6 +57,18 @@ class AtlasGenerationTest(unittest.TestCase):
             self.assertIn('../../' + source, self.page)
         self.assertIn('Logical reference, not a database FK.', self.page)
 
+    def test_logical_mapping_labels_match_their_endpoints(self):
+        expected = {
+            'account-billing-organization': ('org → commercial account', 'organizations.id', 'commercial_accounts.organization_id'),
+            'account-video-organization': ('org → video device', 'organizations.id', 'devices.org_id'),
+            'account-video-device': ('account device → video device', 'devices.id', 'devices.account_device_id'),
+        }
+        for key, (label, source, target) in expected.items():
+            detail = self.page.split(f'id="logical-{key}" tabindex="-1">', 1)[1].split('</li>', 1)[0]
+            self.assertIn(label, detail)
+            self.assertIn(source, detail)
+            self.assertIn(target, detail)
+
     def test_bounded_groups_cover_every_declared_fk(self):
         atlas.validate_narratives(self.databases)
         for db, tables in self.databases.items():

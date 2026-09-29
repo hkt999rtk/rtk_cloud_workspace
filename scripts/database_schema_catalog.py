@@ -210,6 +210,13 @@ def inspect_sqlite(path, service, store):
                 indexes.append({'name': iname, 'unique': bool(unique), 'partial': bool(partial),
                                 'columns': keys if all(keys) else [],
                                 'definition': idef[0] if idef else None, 'origin': origin})
+            # SQLite reports notnull=0 for the INTEGER PRIMARY KEY rowid alias.
+            # A separate PK index distinguishes non-alias forms such as INT or
+            # the SQLite-specific INTEGER PRIMARY KEY DESC exception.
+            if len(pk) == 1 and not any(index['origin'] == 'pk' for index in indexes):
+                primary = next(column for column in columns if column['name'] == pk[0])
+                if primary['type'].upper() == 'INTEGER':
+                    primary['not_null'] = True
             triggers = [{'name': n, 'definition': d} for n, d in conn.execute(
                 "SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name=? ORDER BY name", (name,))]
             tables.append({'schema': 'main', 'name': name, 'comment': '', 'columns': columns,

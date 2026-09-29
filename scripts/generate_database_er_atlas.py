@@ -510,12 +510,16 @@ def overall(databases):
         boxes.append(f'<a class="overview-service" href="#{slug(db)}" aria-label="Open {ESC(db)} service"><g><rect x="{x}" y="{y}" width="460" height="{180 if db == "Account Manager" else 110}" rx="4"/><text x="{x+20}" y="{y+42}" class="overview-title">{ESC(db)}</text><text x="{x+20}" y="{y+76}" class="overview-count">{tables} entities · {fks} declared FK</text></g></a>')
     # Route distinct evidence-backed mappings through the open gutter, never
     # through a service box. No cardinality glyph is used on logical edges.
-    routes = ((270, 135, 610, 730, 'org → commercial account'),
-              (300, 350, 700, 750, 'org → video device'),
-              (330, 390, 650, 730, 'account device → video device'))
+    routes = {
+        'account-billing-organization': (270, 135, 610, 730, 'org → commercial account'),
+        'account-video-organization': (300, 350, 700, 750, 'org → video device'),
+        'account-video-device': (330, 390, 650, 730, 'account device → video device'),
+    }
+    assert {link[0] for link in LOGICAL_LINKS} == routes.keys()
     edges, details = [], []
-    for number, (link, (start_y, end_y, lane, badge_x, label)) in enumerate(zip(LOGICAL_LINKS, routes), 1):
+    for number, link in enumerate(LOGICAL_LINKS, 1):
         key, left_db, left_table, left_col, right_db, right_table, right_col, source, reason = link
+        start_y, end_y, lane, badge_x, label = routes[key]
         ident = f'logical-{key}'
         path = f'M500 {start_y} H{lane} V{end_y} H780'
         edges.append(f'<a class="logical-line" href="#{ident}" aria-label="Open logical mapping {ESC(label)}"><path d="{path}"/><path d="{path}" class="logical-hit"/><circle cx="{badge_x}" cy="{end_y}" r="15"/><text x="{badge_x}" y="{end_y+5}" text-anchor="middle">{number}</text><title>{ESC(label)} — logical reference, not a database FK</title></a>')

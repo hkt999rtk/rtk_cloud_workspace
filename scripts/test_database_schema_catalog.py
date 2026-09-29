@@ -35,6 +35,8 @@ class CatalogTest(unittest.TestCase):
             self.assertEqual(before, path.read_bytes())
             self.assertEqual([], catalog.validate(catalog.snapshot([store]), strict=True))
             child = next(table for table in store['tables'] if table['name'] == 'children')
+            self.assertTrue(next(column for column in child['columns'] if column['name'] == 'id')['not_null'])
+            self.assertFalse(next(column for column in child['columns'] if column['name'] == 'parent_id')['not_null'])
             self.assertEqual('parents', child['fks'][0]['parent'])
             self.assertEqual('CASCADE', child['fks'][0]['on_delete'])
             self.assertIn('children_parent_idx', {index['name'] for index in child['indexes']})
