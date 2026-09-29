@@ -7,6 +7,32 @@ No live environment is changed by this document.
 Owner: rtk_cloud_workspace. Authority: `platform_pki.md` owns CA hierarchy and
 runtime issuance; this document owns deployment credential persistence and reuse.
 
+## Operator authority and implementation boundary
+
+The selected environment's operator is the one human authority for initial PKI
+creation and subsequent Service issuer or identity updates. The operator reads
+the same environment configuration and SecretStore on every deployment, reviews
+the exact issuer request digest and subject/DNS policy, invokes the configured
+signer, and records the result. A separate `pki_admin` account or second human
+signature is not part of this design. A dedicated PKI WebUI may remain for
+inspection and operations, but its location does not change who has authority.
+
+Record `PKI_OPERATOR_USER_ID` and `PKI_OPERATOR_SIGNER_REF` as separate files in
+the selected environment's `operator/env/` SecretStore directory. Set the same
+user ID on Account Manager and both values on the PKI controller. Pin both in
+`pki/services/issuer.json` as `operator_user_id` and `signer_reference` before
+enrolling a Service leaf. Deployment checks their exact match and rejects a
+partial cutover or an identity copied from another environment. Changing the
+operator or signer is an explicit handover, not a routine deployment update.
+
+This is the accepted target, not the currently deployed controller behavior.
+The current controller still requires an independent `pki_admin` approval for a
+Service intermediate and a PKI role for provision/import/activation. Until those
+checks and the operator identity path are changed and verified, a `requested`
+operation must stay pending; no database edit, fabricated approval, or borrowed
+account may substitute for the target implementation. The transition and
+negative tests are specified in [PKI operator authority tests](pki-operator-authority-test-plan.md).
+
 ## Decisions and boundaries
 
 - The environment-local SecretStore is the authoritative deployment input:
@@ -83,8 +109,9 @@ installed; moving them to canonical subjects is an explicit migration.
    A missing service leaf never authorizes creation of a replacement Root.
 3. Configure the Service intermediate's exact service-subject/DNS policies and
    Certissuer's restricted OpenBao access. The CA registry and provider must agree
-   before leaves can be signed. Bootstrap authority is an audited deployment
-   action; never invent human approvers to satisfy a different CA workflow.
+   before leaves can be signed. The same operator may request, review and sign
+   the initial or successor issuer; bind the approved request digest and signer
+   reference to the environment audit. Never invent a second approver.
 4. Establish a short-lived deployment enrollment identity and a recorded session
    scoped to the selected environment, issuer and required service subjects.
    The environment signing configuration pins the actual HTTPS issuer endpoint,
@@ -171,6 +198,9 @@ certificate with zero signing calls), configuration drift rejection without file
 changes, partial-file preservation, restart after uncertain issuance, wrong
 subject/root/environment rejection, and runtime identity preservation. Test keys
 and issuers are disposable local fixtures; shared environments are not fixtures.
+The operator-authority test plan additionally covers same-operator initial and
+successor Service issuers, immutable policy review, pending-operation migration,
+and denial of an unconfigured or wrong-environment operator.
 
 ## Operator configuration and commands
 
@@ -193,6 +223,8 @@ Values are examples/placeholders, not live credentials:
 {
   "environment": "dev",
   "stack": "video-cloud-dev",
+  "operator_user_id": "<selected environment operator user ID>",
+  "signer_reference": "<stable environment signer reference>",
   "endpoint": "https://certissuer.dev.example.invalid",
   "server_name": "certissuer.dev.example.invalid",
   "server_ca_file": "pki/services/issuer-server-ca.crt",
