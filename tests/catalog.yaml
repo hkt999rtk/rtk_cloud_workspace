@@ -1733,6 +1733,18 @@ cases:
     evidence: [json, junit]
     verifies: [REQ-VC-WEBRTC-SURFACE-001, REQ-VC-WEBRTC-AUTHZ-001, REQ-VC-WEBRTC-ICE-001, REQ-VC-WEBRTC-CREATE-001, REQ-VC-WEBRTC-ANSWER-001, REQ-VC-WEBRTC-DEVICE-ANSWER-001, REQ-VC-WEBRTC-CLOSE-001, REQ-VC-WEBRTC-ERRORS-001]
     status: active
+  - id: INT-XSRV-LIFECYCLE-001
+    title: Account Manager and Video Cloud activation survives retries and lost replies
+    layer: integration
+    owner: rtk_video_cloud
+    source: repos/rtk_video_cloud/internal/httpapi/account_manager_activation_cross_repo_integration_test.go
+    selector: ./internal/httpapi#TestIntegrationCrossRepositoryActivationReplay
+    method: A cross-repository PostgreSQL integration test runs the Account Manager outbox/inbox and Video Cloud HTTP router with separate databases. It retries after an upstream outage and mismatched receipt, drops the response after remote activation commits, then proves replay preserves one remote activation epoch and one Account Manager success projection.
+    runner: test-services
+    environments: [local, ci]
+    evidence: [json, junit]
+    verifies: [REQ-AM-LIFECYCLE-MESSAGE-INTEGRITY-001, REQ-AM-LIFECYCLE-OPERATION-001, REQ-AM-DEVICE-OWNERSHIP-001, REQ-CONTRACT-PROV-IDENTITY-MAP-001]
+    status: active
   - id: INT-SDK-STREAMING-CONTRACT-001
     title: JavaScript SDK preserves WebRTC session SDP and ICE payloads
     layer: integration

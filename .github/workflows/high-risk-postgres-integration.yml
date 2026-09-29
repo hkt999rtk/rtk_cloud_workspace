@@ -1,0 +1,47 @@
+name: High-Risk PostgreSQL Integration
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/high-risk-postgres-integration.yml'
+      - 'scripts/test-high-risk-postgres.sh'
+      - 'scripts/ci/init-submodules.sh'
+      - 'tests/catalog.yaml'
+      - 'docs/testing.md'
+      - 'docs/spec-test-traceability.md'
+      - 'repos/rtk_account_manager'
+      - 'repos/rtk_billing'
+      - 'repos/rtk_video_cloud'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: high-risk-postgres-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  integration:
+    name: High-risk PostgreSQL integration suites
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - name: Check out workspace
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache: false
+
+      - name: Run high-risk PostgreSQL integration tests
+        run: GIN_MODE=release ./scripts/test-high-risk-postgres.sh
