@@ -23,6 +23,9 @@ func lkeCheckDeploymentIdentityContinuity(paths provisionPaths, env map[string]s
 		if err := lkeRequireBaselineIdentityDeployment(env, "video-cloud", "video-cloud-api"); err != nil {
 			return err
 		}
+		if err := lkeRequireBaselineIdentityDeployment(env, "video-cloud", "video-cloud-logingester"); err != nil {
+			return err
+		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && len(opts.workloads) == 0 {
 		if err := lkeRequireBaselineIdentityDeployment(env, "video-cloud", "certissuer"); err != nil {

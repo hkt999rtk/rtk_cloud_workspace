@@ -345,6 +345,30 @@ esac
 	}
 }
 
+func TestDeploymentIdentityContinuityProtectsManagedLogIngester(t *testing.T) {
+	old := activeSecretEnvironmentRoot
+	activeSecretEnvironmentRoot = filepath.Join(t.TempDir(), "dev")
+	t.Cleanup(func() { activeSecretEnvironmentRoot = old })
+	cmd := filepath.Join(t.TempDir(), "kubectl")
+	script := `#!/bin/sh
+case "$*" in
+ *"get deployment video-cloud-api"*) exit 0 ;;
+ *"get deployment video-cloud-logingester"*) printf '%s' '{"spec":{"template":{"spec":{"containers":[{"env":[{"name":"VIDEO_CLOUD_LOG_INGESTER_MQTT_IDENTITY_STATE","value":"/var/lib/video-cloud/mqtt-pki/identity.json"}]}]}}}}' ;;
+ *) exit 42 ;;
+esac
+`
+	if err := os.WriteFile(cmd, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", cmd)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "identity-test"}
+	err := lkeCheckDeploymentIdentityContinuity(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
+	if err == nil || !strings.Contains(err.Error(), "video-cloud-logingester has a managed identity owner") {
+		t.Fatalf("managed log ingester replacement error = %v", err)
+	}
+}
+
 func TestDeploymentIdentitySeedInstallationReusesAndRejectsDrift(t *testing.T) {
 	f := newDeploymentSignerFixture(t)
 	record, err := ensureDeploymentServiceIdentity(f.store, f.cfg.Stack, "service:ota", nil, nil, "")

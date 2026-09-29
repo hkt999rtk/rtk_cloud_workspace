@@ -1,8 +1,14 @@
 # OTA 費率生效與服務價格揭露：實作計畫
 
-Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29, but Product registrar identities and writes remain off. No effective OTA rate card has been published, so development does not charge OTA.
+Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. OTA remains suspended, Product writes remain off, and no effective OTA rate card has been published, so development does not charge OTA.
 
-Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-29.
+Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-30.
+
+### Development registration checkpoint（2026-09-30）
+
+Account Manager 的私有 mTLS listener、六張各自核准的 Service 身分、六個有效註冊 lease 已完成；有效 MQTT 憑證冒用 OTA service tuple 時被 403 拒絕。原 bootstrap session 到期後，只對原簽署期限內已成功且未撤銷的六筆發行回執，核對實際運作中的 service 再補 ACK 並 seal；到期後沒有新簽憑證。臨時 bootstrap 設定、私鑰與 1 GiB PVC 已清理，唯讀憑證檢查通過。詳細證據與復原規則見 [dev PKI runbook](../product-services-dev-pki.md)。
+
+這個進度只完成註冊前置條件：目前僅 MQTT 在 service catalog 為 active，OTA、Shadow、WebRTC、Storage、Logger 仍 suspended。獨立 OTA runtime、裝置路由、核心切流、實際 receipt／outbox／Billing 投遞均尚未驗收；Storage、WebRTC、Shadow 也有各自的路由切換條件。因此維持 Product writes 與正式 OTA 價卡關閉，不能以六個 lease 取代收費上線驗收。PKI 授權紀錄的控制資料存在 PostgreSQL，操作事件供 Loki 搜尋；兩者的目的與故障處理見 [operator authority design](pki-operator-authority-test-plan.md)。
 
 ## 1. 已確定的決策與範圍
 
