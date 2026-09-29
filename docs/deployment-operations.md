@@ -102,6 +102,16 @@ same environment, points to
 `PAYMENT.CAPTURE.COMPLETED`. A targeted Billing rollout must update the
 Billing server before its payment worker so the new migration is applied first.
 
+### Deployment identity persistence
+
+The [deployment service identity design](design/deployment-service-identities.md)
+defines the environment-owned initial credentials, signer/bootstrap sequence and
+update rules. Plaintext local SecretStore custody is an accepted operator policy.
+A normal configuration or image update reuses the recorded identity. Only a truly
+missing initial credential is eligible for enrollment; partial, expired or
+mismatched material requires reconciliation/explicit renewal. Never replace a
+Root or seed an already-managed runtime identity as a side effect of deployment.
+
 ### Tracked Environment and Ignored Runtime
 
 | Location | Content | May be committed? |
@@ -666,3 +676,11 @@ and every skipped/blocked check. Reports may contain only sanitized evidence.
 - Deployment succeeds but tests fail: run acceptance first according to
   [`testing-operations.md`](testing-operations.md), then identify data, MQTT, API,
   database, or generator bottlenecks.
+
+### Inspect deployment and current certificates
+
+Use the Go `deployment certificate-check --environment <name>` operation and
+[certificate operations runbook](certificate-operations.md). It inspects expected
+sources without changing credentials. Shared inventory applies to dev, staging
+and prod; persist managed-topology overrides in the selected environment's
+`certificate-check.json`. Scheduling is a separate operator decision.

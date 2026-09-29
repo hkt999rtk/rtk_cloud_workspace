@@ -28,6 +28,21 @@ are runtime copies written from the local store. GitHub Actions Secrets remain
 an independent CI store; CI writes them to a temporary
 `RTK_CLOUD_CONFIG_ROOT` for the duration of one job.
 
+## Deployment identities
+
+Plaintext local storage remains the accepted policy. Initial server/service
+credentials follow [Deployment service identities](design/deployment-service-identities.md).
+The environment store is authoritative for deployment-owned initial identities;
+normal configuration updates reuse them. Registered initial service records live
+at `pki/services/<service>/identity.json`, with public signing references in
+`pki/services/issuer.json`. A pending signing record contains its private key/CSR
+and must be retained for an identical retry. These files belong in the same
+protected backup scope as other selected `pki/` material.
+
+Runtime-managed successors remain owned by their existing persistent state. An
+initial deployment seed never overwrites a current or pending runtime identity.
+Device/App and CA signing keys remain at their existing OpenBao boundary.
+
 ## Commands
 
 ```bash

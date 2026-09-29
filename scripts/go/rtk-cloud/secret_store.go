@@ -147,6 +147,19 @@ func (s secretStore) safePath(relative string) (string, error) {
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("secret path escapes environment root: %q", relative)
 	}
+	// Reject symlinked ancestors inside the selected store, not only the leaf.
+	for cursor := filepath.Dir(path); ; cursor = filepath.Dir(cursor) {
+		if info, err := os.Lstat(cursor); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("secret ancestor %s must be a real directory", cursor)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		if cursor == s.ConfigRoot || cursor == filepath.Dir(cursor) {
+			break
+		}
+	}
 	return path, nil
 }
 

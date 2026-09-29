@@ -8,6 +8,7 @@ import (
 )
 
 func TestLKECrawlerPolicy(t *testing.T) {
+	fakeKubectl(t) // Ingress rendering must not query an operator's real cluster.
 	for _, stack := range []string{"video-cloud-dev", "video-cloud-staging"} {
 		env := k8sWorkloadTestEnv()
 		env["CLOUD_STACK_NAME"] = stack

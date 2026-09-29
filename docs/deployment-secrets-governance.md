@@ -4,7 +4,7 @@ Status: active workspace source document for deployment secret handling.
 
 Owner: rtk_cloud_workspace.
 
-Last reviewed: 2026-08-31.
+Last reviewed: 2026-09-29.
 
 This document defines how RTK Cloud deployment secrets, keys, certificates,
 runtime environment files, bootstrap tokens, and operator state are organized.
@@ -45,11 +45,18 @@ reference-only migration input, not the current deployment or recovery source.
 Only `secrets migrate` may read legacy secret paths; normal deployment and
 backup commands do not fall back to them.
 
+Plaintext storage remains the accepted operator policy. Deployment-owned initial
+service credentials follow [Deployment service identities](design/deployment-service-identities.md).
+Changing deployment configuration must not regenerate an existing identity. A
+runtime-managed successor and its initial deployment record have different
+lifecycle owners; redeployment never reseeds an existing runtime identity store.
+
 ## Current Ownership and OpenBao Target
 
 | Material | Current writable authority | Consumer/recovery copy |
 | --- | --- | --- |
 | Provider/operator credentials and kubeconfig | Environment-local SecretStore | Job-local CI material or operator access only. |
+| Deployment-owned initial service identities | Environment-local plaintext SecretStore; reuse on updates, enroll only absent identities through the environment issuer | Intended workload Secret or one-time seed; preserve runtime-managed successors. |
 | Catalogued runtime values injected by deployment | Environment-local SecretStore through the current CLI | Kubernetes Secrets are verified synchronized copies. |
 | Issuer keys, PKI state, policy and revocation in OpenBao | OpenBao for deployments using that issuer | Matched offline backup and independent seal escrow; local PKI files do not replace issuer state. |
 | Runtime KV after a reviewed secret-manager cutover | OpenBao or approved customer manager | One-way synchronized workload material; record recovery/rotation authority in the cutover manifest. |

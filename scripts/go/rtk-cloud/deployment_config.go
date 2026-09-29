@@ -158,6 +158,12 @@ func defaultDeploymentOperations() deploymentOperations {
 }
 
 func runDeploymentWithOperations(args []string, ops deploymentOperations) error {
+	if len(args) > 0 && args[0] == "certificate-check" {
+		return runDeploymentCertificateCheck(args[1:])
+	}
+	if len(args) > 0 && args[0] == "service-identity" {
+		return runDeploymentServiceIdentity(args[1:])
+	}
 	if len(args) > 0 && args[0] == "pki-storage-plan" {
 		return runDeploymentPKIStoragePlan(args[1:])
 	}
@@ -687,6 +693,8 @@ func printDeploymentUsage() {
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
+  rtk-cloud deployment certificate-check --environment NAME [--format table|json] [--local-only]
+  rtk-cloud deployment service-identity --environment NAME --subject service:NAME --confirm STACK [--install-seed]
   rtk-cloud deployment pki-storage-plan --environment dev|staging|prod [--live|--render|--cleanup-audit]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK
