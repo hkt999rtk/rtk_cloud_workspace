@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import generate_database_er_atlas as atlas
-from database_er_narratives_en import ENTITY_NOTES, GROUPS
 
 
 class AtlasHTML(HTMLParser):
@@ -32,7 +31,7 @@ class AtlasHTML(HTMLParser):
 class AtlasGenerationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.databases = {db: atlas.parse_database(paths) for db, paths in atlas.SOURCES.items()}
+        cls.databases, _ = atlas.load_snapshot(atlas.SNAPSHOT)
         cls.page = atlas.OUT.read_text()
         cls.html = AtlasHTML()
         cls.html.feed(cls.page)
@@ -58,6 +57,18 @@ class AtlasGenerationTest(unittest.TestCase):
             self.assertIn('../../' + source, self.page)
         self.assertIn('Logical reference, not a database FK.', self.page)
 
+    def test_logical_mapping_labels_match_their_endpoints(self):
+        expected = {
+            'account-billing-organization': ('org → commercial account', 'organizations.id', 'commercial_accounts.organization_id'),
+            'account-video-organization': ('org → video device', 'organizations.id', 'devices.org_id'),
+            'account-video-device': ('account device → video device', 'devices.id', 'devices.account_device_id'),
+        }
+        for key, (label, source, target) in expected.items():
+            detail = self.page.split(f'id="logical-{key}" tabindex="-1">', 1)[1].split('</li>', 1)[0]
+            self.assertIn(label, detail)
+            self.assertIn(source, detail)
+            self.assertIn(target, detail)
+
     def test_bounded_groups_cover_every_declared_fk(self):
         atlas.validate_narratives(self.databases)
         for db, tables in self.databases.items():
@@ -65,17 +76,17 @@ class AtlasGenerationTest(unittest.TestCase):
             group_targets = re.findall(r'href="#(relation-[^"]+)"', groups)
             expected = [atlas.relation_id(db, fk) for table in tables.values() for fk in table['fks'].values()]
             self.assertEqual(Counter(expected), Counter(group_targets), db)
-            members = [name for _, _, _, names in GROUPS[db] for name in names.split()]
+            members = [name for _, _, _, names in atlas.GROUPS[db] for name in names.split()]
             self.assertEqual(set(tables), set(members), db)
             self.assertEqual(len(members), len(set(members)), db)
-            self.assertEqual(set(tables), set(ENTITY_NOTES[db]), db)
-            for number, (title, purpose, scenario, _) in enumerate(GROUPS[db], 1):
+            self.assertEqual(set(tables), set(atlas.ENTITY_NOTES[db]), db)
+            for number, (title, purpose, scenario, _) in enumerate(atlas.GROUPS[db], 1):
                 group_id = f'group-{atlas.slug(db)}-{number}'
                 self.assertIn(group_id, self.html.ids)
                 self.assertIn(title, self.page)
                 self.assertIn(purpose, self.page)
                 self.assertIn(scenario, self.page)
-            for name, (purpose, scenario) in ENTITY_NOTES[db].items():
+            for name, (purpose, scenario) in atlas.ENTITY_NOTES[db].items():
                 self.assertIn(escape(purpose), self.page, name)
                 self.assertIn(escape(scenario), self.page, name)
 
@@ -99,15 +110,14 @@ class AtlasGenerationTest(unittest.TestCase):
         # Never rewrite published documentation as a test side effect.
         with tempfile.TemporaryDirectory() as directory:
             out, index = Path(directory) / 'atlas.html', Path(directory) / 'index.md'
-            by_paths = {tuple(paths): self.databases[name] for name, paths in atlas.SOURCES.items()}
-            with patch.object(atlas, 'OUT', out), patch.object(atlas, 'INDEX', index), patch.object(atlas, 'parse_database', side_effect=lambda paths: by_paths[tuple(paths)]):
+            with patch.object(atlas, 'OUT', out), patch.object(atlas, 'INDEX', index):
                 atlas.main()
                 first = out.read_bytes(), index.read_bytes()
                 atlas.main()
                 self.assertEqual(first, (out.read_bytes(), index.read_bytes()))
 
     def test_readable_content_is_english(self):
-        for path in (atlas.OUT, atlas.INDEX, atlas.ROOT / 'scripts/database_er_narratives_en.py'):
+        for path in (atlas.OUT, atlas.INDEX, atlas.SNAPSHOT):
             self.assertNotRegex(path.read_text(), r'[\u3400-\u9fff]', path.as_posix())
 
 
