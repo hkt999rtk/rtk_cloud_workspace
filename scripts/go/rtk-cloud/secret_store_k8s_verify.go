@@ -1083,7 +1083,9 @@ func verifyLiveServiceClientRegistry(kubeconfig, namespace string, deployments l
 	if report.Status == "service-client-registry-inventory-incomplete" {
 		return errors.New("pki-controller Service client registry inventory did not complete; check controller database grants and query errors")
 	}
-	if commandErr != nil || report.Status != "service-client-registry-inventory-checked" || report.Issuances == 0 || report.PendingIssuances != 0 || report.InvalidRecords != 0 || report.UnpublishedRevocations != 0 || report.MissingAcknowledgments != 0 {
+	// A newly activated issuer can have zero leaves while its predecessor is retiring.
+	// The inventory still checks existing records for the pinned issuer and rejects unresolved work.
+	if commandErr != nil || report.Status != "service-client-registry-inventory-checked" || report.PendingIssuances != 0 || report.InvalidRecords != 0 || report.UnpublishedRevocations != 0 || report.MissingAcknowledgments != 0 {
 		return fmt.Errorf("pki-controller Service client registry is incomplete: issuances=%d pending=%d invalid=%d unpublished_revocations=%d missing_acknowledgments=%d", report.Issuances, report.PendingIssuances, report.InvalidRecords, report.UnpublishedRevocations, report.MissingAcknowledgments)
 	}
 	return nil

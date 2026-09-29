@@ -1,8 +1,8 @@
 # Environment PKI operator authority: design and test plan
 
-Status: accepted target (2026-09-29); controller, proxy, console and deployment
-verification changes are implemented in this worktree. Live cutover and evidence
-remain pending.
+Status: accepted design and dev implementation (2026-09-29). Controller, proxy,
+console and deployment checks are merged. The dev Service successor cutover and
+DB/Loki evidence passed; staging and production require their own qualification.
 Scope: environment CA and Service identity creation, update, rotation, revocation
 and recovery. Billing price publication and Account Manager administrator-account
 recovery are separate workflows and are not changed by this certificate plan.
@@ -16,7 +16,7 @@ Owner: rtk_cloud_workspace. Normative policy: [Platform PKI](../../repos/rtk_clo
 | --- | --- | --- |
 | `repos/rtk_cloud_contracts_doc/platform_pki.md` | CA and deployment authority | Target policy and database/Loki evidence split updated. |
 | `docs/design/deployment-service-identities.md` | SecretStore, initial and later Service identities | Target operator flow and migration gate updated. |
-| `docs/product-services-dev-pki.md` and `docs/design/ota-pricing-activation-and-disclosure-plan.md` | OTA successor Service issuer | Pending dev operation preserved; target and live blocker distinguished. |
+| `docs/product-services-dev-pki.md` and `docs/design/ota-pricing-activation-and-disclosure-plan.md` | OTA successor Service issuer | Dev operation activated; remaining Product identities, grants and billing gates distinguished. |
 | `repos/rtk_video_cloud/docs/production-pki-controller.md` and `deploy/pki/README.md` | Controller roles, API and Service policy | Operator route and retained historical flow documented. |
 | `repos/rtk_account_manager/docs/pki-controller-integration.md` and `private_cloud_deployment_runbook.md` | Role creation, bootstrap and proxy | Configured operator proxy check and recovery exception documented. |
 | `repos/rtk_cloud_admin/README.md` | Legacy PKI import approval | Operator review and authorization flow documented. |
@@ -49,14 +49,21 @@ The authorization record has two purposes with different failure behavior:
 Loki is a searchable operational log, not an immutable authorization ledger or
 the controller's transaction boundary. The database keeps only the minimal
 binding required to decide whether the action may execute; it does not replace
-the wider operational log stream. Keep private keys, tokens and signer secrets
-out of both records.
+the wider operational log stream. `pki_operator_authorizations` is keyed by
+operation ID; the controller can insert and select it but cannot update or delete
+it, and a database trigger rejects mutation even if a privileged client tries.
+`pki_audit` has the same update/delete trigger. The authorization handler emits
+`pki_operator_authorized` only after the database transaction commits, with
+`environment`, `operator_id`, `operation_id`, and `request_sha256` for Loki
+correlation. A missing Loki event is an observability fault to reconcile from
+the database and operation state; it must never be treated as permission to
+proceed. Keep private keys, tokens and signer secrets out of both records.
 
-The deployed controller retains independent-role approvals until each
-environment is cut over with matching operator and signer configuration. This
-document does **not** authorize direct database updates, fake approvals,
-self-granted workaround accounts or activation of a pending operation. Existing
-operation IDs and audit history remain intact during migration.
+The dev controller now uses its configured operator and signer reference. Other
+environments retain their own pre-cutover behavior until the same configuration,
+migrations and evidence are completed there. This document does **not** authorize
+direct database updates, fake approvals or self-granted workaround accounts.
+Existing operation IDs and audit history remain intact during migration.
 
 ## Acceptance matrix
 
@@ -84,13 +91,45 @@ pre-cutover path. Operator-mode tests cover the new path; do not weaken digest,
 scope, certificate, CRL or consumer checks merely to make same-operator
 authorization pass.
 
-## Live qualification after implementation
+## Dev qualification evidence (2026-09-29)
 
-In dev, first reconcile the existing pending OTA Service intermediate operation
-against its persisted digest and the current environment Root; then execute it
-with the configured operator identity. Verify the seven intended workload
-identities, service registration and Product grant before enabling OTA. Staging
-and production use their own environment configuration and repeat the same
-read-only preflight plus controlled operation; a dev receipt cannot qualify
-another environment. Keep Product writes and billing gates off until that
+The preserved dev OTA Service operation
+`b4d42f12-6f21-45c6-b8d2-3df4930a88bd` retained request digest
+`d010a3b9a5193a0e001c6ed95b3f70a42e1d1b82c544fc639a50a6b1100edd99`.
+The configured operator authorized it through Account Manager. PostgreSQL has
+one `pki_operator_authorizations` row and the ordered `pki_audit` transitions
+`operation_authorized`, `provisioning_started`, `csr_recorded`,
+`certificate_imported` and `issuer_activated`. Loki ingested the secret-free
+`pki_operator_authorized` controller event for the same operation and digest.
+
+The first provision attempt entered `provisioning` before OpenBao rejected its
+missing exact-mount ACL. The operator confirmed the mount and key inventory were
+absent, installed only the reviewed issuer-specific controller/server/client ACLs,
+created one internal OpenBao P-256 key at the original mount and reconciled the
+original operation. The reconciled CSR had the same public key. The protected dev
+Service Root signed that CSR after request, CSR and parent fingerprints matched.
+The signed certificate fingerprint is
+`7b1d6cf35e8c0477385bec3f61348b8ed4077d7da0e918ff9f2e28cdda0921f5`.
+This recovery preserved the operation ID and audit history; it did not reset an
+operation or create another issuer.
+
+Both required Service trust consumers, `certissuer` and `pki-controller`, loaded
+the additive immutable bundle manifest and acknowledged exact version
+`5802c2123ea7c8b53b10875b0fcaec7f11686772114b5e863fc703d7bd6f3f0d`.
+The successor `cf348f82-f4cc-434e-a59d-c37eee8222cf` is active; the predecessor
+`c160c01f-a742-4c06-bcb7-d90be90e820b` is retiring with 12 existing Service
+client issuances. The canonical dev SecretStore/live-cluster check passed after
+allowing a newly active issuer to have zero leaves while still rejecting pending,
+invalid, unpublished-revocation and missing-acknowledgment records for the
+pinned issuer. A separate read-only retirement inventory of the predecessor's 12 issuances
+passed on 2026-09-29 with zero pending, invalid, unpublished-revocation or
+missing-acknowledgment records. Repeat it before removing predecessor trust.
+
+## Remaining environment qualification
+
+In dev, verify the seven intended workload identities, private registration
+listener, six service registrations and Product grant before enabling OTA Product
+writes or billing. Staging and production use their own environment configuration
+and repeat the read-only preflight plus controlled operation; a dev receipt cannot
+qualify another environment. Keep Product writes and billing gates off until that
 environment's end-to-end evidence passes.

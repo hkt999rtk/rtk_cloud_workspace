@@ -6,6 +6,92 @@ It does not activate Product writes or strict device grants. Keep the existing
 Service Root, retired issuer evidence, CRL ConfigMaps, identity PVCs, and live
 PKI workloads intact throughout the change.
 
+## Live dev checkpoint (2026-09-29)
+
+The frozen operator-authority service versions are deployed in dev: PKI controller
+`dda6fc79cce0ce4b50c7babab0649fe489445188b0431a79d1f1d7e63b86b77c`,
+Account Manager `821a10325fc0a5fa62e0bcc89291a69c3df29e234d0e636bf0e9b6dd5f7e462a`
+and Cloud Admin `7fe6d64b7307f0df3f3a8b24662f6df3b956532add5cd43361e906a2311b5c96`
+(all SHA-256 image digests). The dev SecretStore pins the active Platform Admin
+operator ID and signer reference; Account Manager and the controller use the same
+ID for mutating PKI operations. This is a dev cutover only.
+
+The preserved OTA Service operation
+`b4d42f12-6f21-45c6-b8d2-3df4930a88bd`, request digest
+`d010a3b9a5193a0e001c6ed95b3f70a42e1d1b82c544fc639a50a6b1100edd99`,
+is `active`. Its successor issuer is
+`cf348f82-f4cc-434e-a59d-c37eee8222cf` (version 10), under the existing
+Service Root. The public certificate fingerprint is
+`7b1d6cf35e8c0477385bec3f61348b8ed4077d7da0e918ff9f2e28cdda0921f5`.
+The prior version 9 issuer is `retiring` and retains its 12 issued Service client
+certificates. Its separate read-only inventory passed on 2026-09-29 with zero
+pending, invalid, unpublished-revocation or missing-acknowledgment records.
+Repeat that inventory before removing predecessor trust. The immutable ConfigMap `pki-service-bundles-v10-cf348f82`
+preserves all five previous authority references and adds version
+`5802c2123ea7c8b53b10875b0fcaec7f11686772114b5e863fc703d7bd6f3f0d`.
+`certissuer` and `pki-controller` each validated the installed bundle and
+acknowledged that exact version. The controller's inventory pin now names version
+10. All four relevant Deployments are ready, and the canonical
+`secrets verify --environment dev` passed with the frozen workspace verifier fix.
+
+The first provision attempt failed after recording `provisioning`: the new exact
+OpenBao mount was absent and the controller role lacked its issuer-specific ACL.
+Do not repeat `provision` or reset the operation at that point. The operator
+confirmed both mount and key inventory absent, installed the rendered exact-mount
+controller, server and Service-client policies, and appended them to the existing
+Kubernetes auth roles without changing other constraints. One internal P-256 key
+was then generated at the original mount, and `reconcile` registered its CSR under
+the original operation. The reconciled CSR's public key matched the first CSR.
+The protected dev Service Root signed it with reviewed request, CSR and parent
+fingerprints; import and authenticated consumer acknowledgments completed before
+activation. PostgreSQL authorization/audit records and the matching secret-free
+Loki event were verified. For any future new issuer, install and verify its exact
+OpenBao ACLs **before** provisioning. If a provision result is uncertain, inspect
+provider state and reconcile the original operation; never generate another key
+without confirming the exact mount/key inventory and recording the recovery.
+
+Before the new bootstrap session, the dev `pki-service-bootstrap-dev` Kubernetes
+auth role still carried only the retiring v9 signer policy. On 2026-09-29 the
+operator checked the exact v10 `sign/service-client` ACL, ran the canonical dev
+read-only credential preflight (10/10 PASS), and changed only that role's policy
+to `pki-service-client-dev-v10-cf348f82-f4cc-434e-a59d-c37eee8222cf`. Its
+ServiceAccount, namespace, `openbao` audience, and other role fields matched the
+pre-change values on read-back. This policy update did not create a bootstrap
+session, sign a leaf, or enable Product writes. The operator also verified the
+**live** certissuer HTTPS listener at
+`certissuer.video-cloud-dev-video-cloud.svc`: its leaf SHA-256 is
+`ba3bec99d77bc82e95a619b107a5d28de0e3f96aebc27acb824e7a3604106e77`,
+and its presented chain validates to the pinned Service Root. The public local
+`pki/services/service-root.crt`, `issuer-server-ca.crt`, and
+`registration-server-ca.crt` files now contain that verified Root. The legacy
+`certissuer-runtime` Secret's Service CA is not the live listener's issuer;
+check the served certificate and chain rather than copying that old CA.
+The live certissuer gateway DNS allowlist lacked the successor policy's exact
+`account-manager.video-cloud-dev-account-manager.svc.cluster.local` name. A
+resource-version and old-value guarded one-field patch appended that name while
+preserving its existing names and image; certissuer rolled out 1/1 Ready. The
+canonical live `secrets verify --environment dev` and Account Manager→certissuer
+mTLS probe then passed. The exact list is saved in this environment's
+`operator/env/CERT_ISSUER_GATEWAY_DNS_NAMES` key. Before any later certissuer
+update, reconcile the live list with that environment key; the legacy whole
+Deployment renderer is still unsuitable for this PKI-managed workload.
+
+The certissuer code on the frozen Video Cloud base now includes the six-subject
+bootstrap trust fix from PR #732 (merge commit
+`fc13fdbb1e80ece35b9203931210b549b1bcbe9e`). The listener takes the exact
+comma-separated `CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECTS` set while the
+legacy singular input remains unset. It still requires the reviewed session,
+`service:deployment-bootstrap` caller, and pinned Service Root CA, and rejects
+missing CA or an empty subject set. Focused Go tests and the governed service
+coverage gate passed before merge. Build and deploy an image from that exact
+commit, then verify listener readiness, the canonical credential check, and
+Account Manager mTLS before creating the short-lived bootstrap session.
+
+The private registration listener, six new registrar identities, bootstrap
+session, service registrations and Product grant below are still pending. The
+local `pki/services/issuer.json` bootstrap enrollment record is not yet complete.
+Do not infer OTA Product enablement or billing from the active CA alone.
+
 ## Read-only baseline (2026-09-26)
 
 The active Service intermediate is
@@ -23,9 +109,9 @@ the nine existing client subjects and two server names to avoid renewal gaps.
 The accepted target is one environment operator for both initial creation and
 subsequent Service updates: the operator reviews the exact request digest,
 uses the configured environment signer, and records the outcome. No second
-human or separate `pki_admin` approval is required by the design. The live
-controller still enforces its older independent-role rule; this runbook cannot
-be used to bypass that check. See the [operator authority test plan](design/pki-operator-authority-test-plan.md).
+human or separate `pki_admin` approval is required by the design. This
+2026-09-26 baseline preceded the verified dev operator cutover above. See the
+[operator authority test plan](design/pki-operator-authority-test-plan.md).
 
 The running Account Manager sidecar uses
 `PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST` from ConfigMap
@@ -77,11 +163,11 @@ session succeed.
 
 ## Issue and install the seven reviewed identities
 
-1. After the operator-authority implementation has passed its tests and been
-   deployed, use the configured dev operator to review, authorize, provision
-   and activate a successor **Service** intermediate under the existing Root.
-   Do not fabricate an approval or directly advance a registry status. Set
-   its exact client policy to these
+1. Completed on 2026-09-29 for dev: the configured operator reviewed,
+   authorized, provisioned, imported and activated the successor **Service**
+   intermediate under the existing Root. For another environment, use its own
+   configured operator and exact reviewed request; never fabricate an approval
+   or directly advance registry status. Set its exact client policy to these
    16 sorted subjects. The deployment bootstrap identity must be included
    because the new bootstrap session signs through this successor issuer:
 
@@ -112,16 +198,21 @@ session succeed.
    pki-controller.video-cloud-dev-video-cloud.svc
    ```
 
-   Install the successor's exact OpenBao service-client and server roles, and
-   distribute its public bundle/CRL through the existing six Service trust
-   consumers. Wait for their authenticated receipts. Keep the predecessor
-   retiring until its issued certificates and CRL obligations drain.
-   For the already requested OTA successor, revalidate operation
-   `b4d42f12-6f21-45c6-b8d2-3df4930a88bd` and digest
-   `d010a3b9a5193a0e001c6ed95b3f70a42e1d1b82c544fc639a50a6b1100edd99`
-   after the implementation change. Preserve that operation's history; a new
-   request is necessary only if its approved content must change.
-2. Reserve a new deployment bootstrap session with the successor issuer,
+   Dev has installed the successor's exact OpenBao service-client and server
+   roles. Its public bundle was added to the controller and certissuer listeners;
+   both required bundle consumers acknowledged it before activation. The six
+   Service CRL consumers and future new-leaf issuance still need their own
+   current CRL and receipt checks. Keep the predecessor retiring until its 12
+   issued certificates and CRL obligations drain.
+   The existing dev OTA successor operation and digest are recorded in the live
+   checkpoint above. Its history is preserved; do not rerun provisioning or
+   activation. A new request is necessary only if approved policy content must
+   change.
+2. Immediately before starting a new session, read the live OpenBao
+   `pki-service-bootstrap-dev` role and require its exact v10
+   `sign/service-client` policy, bound ServiceAccount/namespace, and `openbao`
+   audience. Do not use a wildcard or the retiring v9 signing policy for a new
+   session. Reserve a deployment bootstrap session with the successor issuer,
    reviewed Root pin, a new deployment ID and session UUID. Render its Job
    using `render-staging-controller.py --phase service-bootstrap
    --environment dev --service-bootstrap-state-claim
