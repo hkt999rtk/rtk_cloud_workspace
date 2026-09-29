@@ -37,11 +37,11 @@ jobs:
         with:
           go-version: '1.26.3'
           cache: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
       - name: Install catalog reader
-        run: python3 -m pip install -r scripts/requirements-database-schema.txt
+        run: |
+          python3 -m venv "$RUNNER_TEMP/database-schema-venv"
+          "$RUNNER_TEMP/database-schema-venv/bin/python" -m pip install -r scripts/requirements-database-schema.txt
+          echo "$RUNNER_TEMP/database-schema-venv/bin" >> "$GITHUB_PATH"
       - name: Validate schema and ER tools
         run: |
           python3 -m unittest discover -s scripts -p 'test_database_schema_catalog.py'
