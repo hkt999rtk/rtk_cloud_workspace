@@ -180,6 +180,16 @@ func TestCertificateCheckLocalInventoryReportsAndNoMutation(t *testing.T) {
 	if rows := r.check(target); rows[0].Status != "OK" {
 		t.Fatal(rows)
 	}
+	savedPin := issuer.RootSHA256
+	issuer.RootSHA256 = ""
+	raw, _ = json.Marshal(issuer)
+	_ = r.store.write("pki/services/issuer.json", raw, true)
+	if rows := r.check(target); rows[0].Status != "UNKNOWN" {
+		t.Fatal("missing Service root pin accepted")
+	}
+	issuer.RootSHA256 = savedPin
+	raw, _ = json.Marshal(issuer)
+	_ = r.store.write("pki/services/issuer.json", raw, true)
 	r.localOnly = true
 	report := r.run([]certificateCheckTarget{target, {ID: "disabled", Disabled: true}}, nil)
 	if certificateCheckExit(report) != 0 {

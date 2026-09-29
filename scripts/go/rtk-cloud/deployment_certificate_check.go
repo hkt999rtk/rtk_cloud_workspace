@@ -195,6 +195,9 @@ func (r *certificateCheckRunner) root(target certificateCheckTarget) (string, st
 			return "", "", errors.New("issuer is not bound to the selected environment")
 		}
 		path, pin = issuer.RootCAFile, issuer.RootSHA256
+		if len(pin) != 64 || strings.Trim(pin, "0123456789abcdef") != "" {
+			return "", "", errors.New("Service root fingerprint is missing or invalid")
+		}
 	}
 	raw, err := readCertificateCheckFile(r.store, path, false)
 	return string(raw), pin, err
