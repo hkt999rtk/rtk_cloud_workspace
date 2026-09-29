@@ -293,6 +293,8 @@ session succeed.
    each target with its own identity and verify that the process loaded it and
    registered its lease. Only then record that target's bootstrap
    acknowledgement; possession of a Kubernetes Secret alone is insufficient.
+   The OTA registrar probes the Video Cloud API through its internal Service
+   port `80` at `/readyz/ota`; the API Pod's port `8080` is not a Service port.
    Run `serviceidentity-bootstrap ack` and `seal` from a short-lived operator
    Job with the environment's PKI migration database credential. The runtime
    `pkimanagement` sidecar uses a read-only verifier role and cannot update

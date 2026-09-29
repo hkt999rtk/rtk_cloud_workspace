@@ -94,7 +94,7 @@ spec:
             - name: VIDEO_CLOUD_OTA_REGISTRAR_HEALTH_ADDR
               value: ":18085"
             - name: VIDEO_CLOUD_OTA_UPSTREAM_URL
-              value: "http://video-cloud-api.%s.svc.cluster.local:8080"
+              value: "http://video-cloud-api.%s.svc.cluster.local:80"
             - name: VIDEO_CLOUD_OTA_SERVICE_INSTANCE_ID
               value: %q
             - name: VIDEO_CLOUD_OTA_SERVICE_ENDPOINT_REF
