@@ -1,8 +1,10 @@
 # Environment PKI operator authority: design and test plan
 
-Status: accepted design and dev implementation (2026-09-29). Controller, proxy,
-console and deployment checks are merged. The dev Service successor cutover and
-DB/Loki evidence passed; staging and production require their own qualification.
+Status: accepted design and dev implementation (2026-09-30). Controller, proxy,
+console and deployment checks are merged. The dev Service successor cutover,
+PostgreSQL/Loki authorization evidence and six-identity registration passed;
+staging and production require their own qualification. Product activation and
+OTA billing qualification remain separate gates.
 Scope: environment CA and Service identity creation, update, rotation, revocation
 and recovery. Billing price publication and Account Manager administrator-account
 recovery are separate workflows and are not changed by this certificate plan.
@@ -80,6 +82,7 @@ Existing operation IDs and audit history remain intact during migration.
 | Provider ambiguity | Controller/provider integration | Unknown provision/import response remains reconcilable under the original operation and request digest; retries do not create another key, issuer or certificate. |
 | Trust activation | Registry/consumer integration | Registry and OpenBao policy agree, signed current CRLs are installed, and every required consumer acknowledges the exact bundle before activation. Missing or stale acknowledgment blocks activation. |
 | Service bootstrap admission | Renderer, verifier and live dev checks | A separate one-shot Job owns the short-lived bootstrap key and one session UUID. Certissuer accepts only the exact configured caller and unique Service subjects through the same mounted Service Root CA path as host renewal; it does not receive the Job key. The Job has the reviewed ingress label, and missing CA, duplicate subject, singular/plural conflict, wrong session or mismatched Root path is denied. Seal the session and remove temporary listener trust after consumers acknowledge their own issued identities. |
+| Expired bootstrap session with live identities | Certissuer PostgreSQL integration and dev operator Job | Expiry refuses new signing. The same caller may acknowledge only a successful, unrevoked receipt for the exact subject/issuer that was issued inside the original signing window; all six actual workloads must be verified before sealing. The expiry timestamp and issuance history remain unchanged. |
 | Stable deployment identity | Deployment-script local test | A second deployment reads the saved identity from the same environment SecretStore and makes zero signing calls. Missing initial identity is issued once and saved atomically; partial, mismatched or runtime-renewed state is not overwritten. |
 | Public evidence and secrecy | Script/console test | Audit and operator output include operation ID, policy digest, public fingerprints, expiry and outcome; no private key, passphrase, bearer token or SecretStore value appears in logs or artifacts. |
 | Cross-environment isolation | Deployment-script and controller test | A dev operator configuration cannot sign, import, activate or install a staging/prod identity, even when subject names match. |
@@ -126,11 +129,22 @@ pinned issuer. A separate read-only retirement inventory of the predecessor's 12
 passed on 2026-09-29 with zero pending, invalid, unpublished-revocation or
 missing-acknowledgment records. Repeat it before removing predecessor trust.
 
-## Remaining environment qualification
+## Registration evidence and remaining qualification (2026-09-30)
 
-In dev, verify the seven intended workload identities, private registration
-listener, six service registrations and Product grant before enabling OTA Product
-writes or billing. Staging and production use their own environment configuration
-and repeat the read-only preflight plus controlled operation; a dev receipt cannot
-qualify another environment. Keep Product writes and billing gates off until that
-environment's end-to-end evidence passes.
+The dev private registration listener and six dedicated client identities are
+installed. All six workload leases are ready and unexpired, and an MQTT
+certificate attempting to claim the OTA service was denied with HTTP 403. The
+original bootstrap session expired before runtime verification; the operator
+verified six unrevoked issuance receipts from the original signing window,
+acknowledged the six running identities with the recovered certissuer logic and
+sealed that same session. The read-only credential check passed 10/10 after
+temporary bootstrap material and its one-shot PVC were removed. See the
+[dev PKI runbook](../product-services-dev-pki.md) for the exact checkpoint.
+
+The dev catalog still has five suspended optional services, and Product writes
+remain disabled. Each service needs its own route, authorization and usage
+checks before activation. OTA additionally needs its independent runtime,
+device edge, receipt/outbox/Billing delivery and a formally effective rate
+card before paid use. Staging and production use their own environment
+configuration and repeat the controlled operation; a dev receipt cannot
+qualify another environment.

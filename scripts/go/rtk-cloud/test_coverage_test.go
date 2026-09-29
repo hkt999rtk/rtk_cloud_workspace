@@ -441,8 +441,8 @@ func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
 	runDir := filepath.Join(workspace, ".artifacts", "test-runs", runID)
 	defer os.RemoveAll(runDir)
 
-	if err := runTestCoverage([]string{"--run-id", runID, "--module", "home-load-runner"}); err != nil {
-		logPath := filepath.Join(runDir, "coverage", "logs", "home-load-runner.log")
+	if err := runTestCoverage([]string{"--run-id", runID, "--module", "godaddy-dns-toolkit"}); err != nil {
+		logPath := filepath.Join(runDir, "coverage", "logs", "godaddy-dns-toolkit.log")
 		logTail, readErr := os.ReadFile(logPath)
 		if readErr != nil {
 			t.Fatalf("%v (coverage log unavailable: %v)", err, readErr)
@@ -451,7 +451,7 @@ func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
 		if len(logTail) > maxLogBytes {
 			logTail = logTail[len(logTail)-maxLogBytes:]
 		}
-		t.Fatalf("%v\nhome-load-runner coverage log tail:\n%s", err, logTail)
+		t.Fatalf("%v\ngodaddy-dns-toolkit coverage log tail:\n%s", err, logTail)
 	}
 	raw, err := os.ReadFile(filepath.Join(runDir, "coverage", "results.json"))
 	if err != nil {
@@ -464,7 +464,7 @@ func TestRunTestCoverageWritesPassingReportForSelectedModule(t *testing.T) {
 	if report.Status != "PASS" || report.RedactionStatus != "PASS" || len(report.Cases) != 1 {
 		t.Fatalf("coverage report = %#v", report)
 	}
-	if report.Cases[0].Name != "home-load-runner" || report.Cases[0].Status != "PASS" {
+	if report.Cases[0].Name != "godaddy-dns-toolkit" || report.Cases[0].Status != "PASS" {
 		t.Fatalf("selected coverage case = %#v", report.Cases[0])
 	}
 	markdown, err := os.ReadFile(filepath.Join(runDir, "coverage", "test_report.md"))

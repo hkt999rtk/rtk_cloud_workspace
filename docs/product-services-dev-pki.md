@@ -2,9 +2,52 @@
 
 This procedure is limited to `video-cloud-dev`. It prepares the private
 Account Manager registration listener and six separate registrar identities.
-It does not activate Product writes or strict device grants. Keep the existing
-Service Root, retired issuer evidence, CRL ConfigMaps, identity PVCs, and live
+Registration is not Product activation, billable usage, or a price-card release.
+Keep the existing Service Root, retired issuer evidence, CRL ConfigMaps,
+identity PVCs, and live
 PKI workloads intact throughout the change.
+
+## Verified registration checkpoint (2026-09-30)
+
+The private Account Manager listener is ready on Service port `8443` to Pod
+port `9444`. The six approved, separate client identities are installed and
+`mqtt`, `shadow`, `webrtc`, `video-storage`, `logger`, and `ota` each have a ready,
+unexpired lease under the reviewed instance ID below. A valid `service:mqtt`
+certificate attempting the OTA registration tuple received HTTP 403
+`service_registration_denied`: TLS validity alone cannot authorize another
+service. The canonical dev read-only credential check passed 10/10, and
+`secrets verify --environment dev` passed after cleanup.
+
+Deployment session `d3cfa4fe-d6bb-4ff2-93a4-ec7bc41f32f5` reached its
+30-minute deadline before all runtime targets were verified. Its original
+issuance receipts remained successful, unrevoked, and inside the original
+signing window. The fixed-version certissuer recovery permits each exact
+subject's **late acknowledgement only** against that original receipt; expiry
+still denies new certificate signing. An operator Job using the PKI migration
+database credential recorded all six genuine runtime acknowledgements and
+sealed the session. PostgreSQL read-back confirmed `sealed`, six
+acknowledgements, and the original expiry retained. Temporary bootstrap
+listener settings, the expired local bootstrap key/certificate, and the
+one-shot Job and 1 GiB PVC were removed; durable issuance and audit evidence
+remain. The sealed session must not be reused.
+
+The operator's PKI authorization is minimal append-only control state in PKI
+PostgreSQL; ordered state transitions are in `pki_audit`. The controller also
+emits a secret-free event for Loki search. A Loki delivery gap is investigated
+against PostgreSQL and cannot grant signing authority. This division and its
+failure behavior are defined in the
+[operator-authority design and test plan](design/pki-operator-authority-test-plan.md)
+and the [normative Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md).
+
+The live service catalog still has only `mqtt` active; the other five services
+are suspended. `ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=false`, and
+the current Video Cloud API has strict OTA Product entitlement checks enabled.
+The `video-cloud-otaregistrar` proves the legacy core OTA readiness and owns
+the OTA lease, but the independent `video-cloud-otaservice`, device edge, core
+cutover, and billable OTA receipt path have not been qualified. Core clip direct
+upload also remains disabled. Follow each service's route and authorization
+gates in [deployment operations](deployment-operations.md) before activation;
+do not activate all suspended services merely because their leases are ready.
 
 ## Live dev checkpoint (2026-09-29)
 
@@ -95,13 +138,10 @@ credential verifier rejected this separate-Job, plural-subject mode because it
 required the listener itself to hold the bootstrap key. The corrected verifier
 checks the exact session UUID, caller, unique subjects and pinned Service Root
 while keeping legacy self-bootstrap checks; its focused regressions and the
-actual dev `secrets verify --environment dev` passed. The new bootstrap session
-has not been created yet.
-
-The private registration listener, six new registrar identities, bootstrap
-session, service registrations and Product grant below are still pending. The
-local `pki/services/issuer.json` bootstrap enrollment record is not yet complete.
-Do not infer OTA Product enablement or billing from the active CA alone.
+actual dev `secrets verify --environment dev` passed. This was the preparation
+state before the session and registrations recorded in the 2026-09-30 checkpoint
+above. Do not infer OTA Product enablement or billing from the active CA or
+registered lease.
 
 The registration listener needs a server certificate for the exact private
 DNS. The bootstrap Job has a short-lived `service:deployment-bootstrap` client
@@ -300,9 +340,13 @@ session succeed.
    `pkimanagement` sidecar uses a read-only verifier role and cannot update
    the session table. Seal only after all six acknowledgements, then remove
    bootstrap-only inputs from ordinary workloads. If the 30-minute session
-   expires before runtime verification, leave it unacknowledged, expire the
-   session with the same operator credential, and plan a reviewed recovery;
-   do not record a false installation.
+   expires before runtime verification, first inspect the original issuance
+   receipts and the live workload identity/lease. Expiry still prohibits any
+   new signing. A late acknowledgement is permitted only for the same
+   successful, unrevoked subject receipt issued within the original signing
+   window; then seal after all real runtime acknowledgements. If those
+   conditions fail, keep the session expired and plan a new reviewed ceremony.
+   Never record a false installation or extend the signing window.
 
 ## Go / No-Go before Product rollout
 
@@ -310,8 +354,13 @@ Run the canonical read-only credential check from the reviewed workspace.
 Require PASS for live PKI configuration, signed current Service and OpenBao
 CRLs, Service registry inventory, all seven Secret cross-checks, Account
 Manager private listener mTLS, six workload approvals and lease registration,
-and a denial probe for an unapproved certificate. A ready Pod or structurally
-valid ConfigMap alone is insufficient. On any failure, leave Product writes
-and registrar flags disabled, keep audit/issuer/Secret history, and restore
-the previously recorded workload images/settings without disabling strict
-grant enforcement.
+and a denial probe for an unauthorized service tuple. A ready Pod or
+structurally valid ConfigMap alone is insufficient. Registration qualification
+is followed by each service's separate route/cutover, entitlement, receipt and
+Billing acceptance gates before Product activation or pricing. On any failure,
+leave Product writes and unqualified service options disabled, keep
+audit/issuer/Secret history, and restore the previously recorded workload
+images/settings without disabling strict grant enforcement. The baseline LKE
+renderer must refuse to replace a managed `video-cloud-logingester` Deployment
+while it owns MQTT PKI identity state; use a reviewed managed patch for that
+workload.
