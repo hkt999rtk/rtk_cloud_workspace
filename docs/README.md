@@ -21,6 +21,8 @@ in the owning service repository; shared wire and payload contracts belong in
 | Document | Classification | Purpose |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
+| [Database ER model](design/database-er-diagrams.md) | Generated design reference | Tables, columns, declared foreign keys, and evidenced logical references across services. |
+| [Database schema to ER process](design/database-er-process.md) | Source | How schema metadata becomes the ER atlas, checked snapshots, and environment diff reports. |
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Source | Contracts submodule path, URL, and commit alignment policy. |

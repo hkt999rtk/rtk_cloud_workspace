@@ -1,0 +1,51 @@
+name: Database schema documentation
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/database-schema-documentation.yml'
+      - 'scripts/database_schema_catalog.py'
+      - 'scripts/generate_database_er_atlas.py'
+      - 'scripts/requirements-database-schema.txt'
+      - 'scripts/go/rtk-cloud/database_schema.go'
+      - 'scripts/go/rtk-cloud/main.go'
+      - 'docs/design/database-*'
+      - 'repos/rtk_account_manager'
+      - 'repos/rtk_billing'
+      - 'repos/rtk_video_cloud'
+      - 'repos/rtk_cloud_admin'
+      - 'repos/rtk_cloud_frontend'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  schema-docs:
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: false
+      - name: Initialize workspace submodules
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install catalog reader
+        run: python3 -m pip install -r scripts/requirements-database-schema.txt
+      - name: Validate schema and ER tools
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_database_schema_catalog.py'
+          python3 -m unittest discover -s scripts -p 'test_generate_database_er_atlas.py'
+          python3 -m unittest discover -s scripts -p 'test_database_schema_changes.py'
+      - name: Compare initialized schemas with published ER files
+        run: go run ./scripts/go/rtk-cloud -- schema generate --check

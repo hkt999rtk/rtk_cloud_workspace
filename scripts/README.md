@@ -1,5 +1,10 @@
 # Scripts Directory
 
+Database schema and ER documentation commands are described in
+[`docs/design/database-er-process.md`](../docs/design/database-er-process.md).
+Run `go run ./scripts/go/rtk-cloud -- schema generate --check` to verify that
+the generated atlas matches initialized service schemas and metadata.
+
 This directory contains workspace-level operational scripts for documentation checks, deployment-evidence collection, Linode staging provisioning and deployment, Brand Cloud creation, and GitHub Actions self-hosted runner management.
 
 Unless stated otherwise, run commands from the workspace root.

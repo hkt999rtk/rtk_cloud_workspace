@@ -85,6 +85,7 @@ var commands = map[string]commandSpec{
 	"provision":                        {run: runProvision},
 	"provision-k8s":                    {run: runProvisionK8s},
 	"refresh-user-tokens":              {run: runRefreshUserTokens},
+	"schema":                           {run: runSchema},
 	"refresh-runtime-client-ca":        {run: runRefreshRuntimeClientCA},
 	"remove-k8s":                       {run: runRemoveK8s},
 	"run-staging-e2e":                  {run: runStagingE2E},

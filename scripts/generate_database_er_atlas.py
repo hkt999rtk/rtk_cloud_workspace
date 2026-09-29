@@ -7,17 +7,20 @@ ALTERs and compound keys. This is documentation extraction, not a SQL executor.
 from __future__ import annotations
 
 import html
+import json
 import re
 import subprocess
 import textwrap
 from collections import defaultdict
 from pathlib import Path
 
-from database_er_narratives_en import ENTITY_NOTES, GROUPS
+ENTITY_NOTES = {}
+GROUPS = {}
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'docs/design/database-er-atlas.html'
 INDEX = ROOT / 'docs/design/database-er-diagrams.md'
+SNAPSHOT = ROOT / 'docs/design/database-schema.json'
 SOURCES = {
     'Account Manager': ['repos/rtk_account_manager/internal/database/database.go', 'repos/rtk_account_manager/migrations'],
     'Billing': ['repos/rtk_billing/internal/database/database.go', 'repos/rtk_billing/migrations'],
@@ -267,22 +270,90 @@ def relation_id(db, fk):
     return f'relation-{slug(db)}-{slug(fk["child"])}-{slug(fk["constraint"])}'
 
 
-# These are documented, persisted identifiers, not SQL foreign keys. Keep the
-# evidence beside each edge so an apparent naming match cannot become a claim.
-LOGICAL_LINKS = (
-    ('account-billing-organization', 'Account Manager', 'organizations', 'id',
-     'Billing', 'commercial_accounts', 'organization_id',
-     'repos/rtk_billing/migrations/039_payment_commercial_settlement.sql',
-     'Billing explicitly stores the Account Manager organization UUID as an external identifier.'),
-    ('account-video-organization', 'Account Manager', 'organizations', 'id',
-     'Video Cloud', 'devices', 'org_id',
-     'repos/rtk_cloud_contracts_doc/cross_service_channel.md',
-     'The cross-service device contract carries org_id alongside the Video Cloud device identity.'),
-    ('account-video-device', 'Account Manager', 'devices', 'id',
-     'Video Cloud', 'devices', 'account_device_id',
-     'repos/rtk_cloud_contracts_doc/product_readiness.md',
-     'The account device UUID is persisted separately from the Video Cloud device ID.'),
-)
+def load_snapshot(path):
+    """Adapt an initialized catalog to the existing diagram model."""
+    from database_schema_catalog import validate
+
+    snapshot = json.loads(Path(path).read_text())
+    problems = validate(snapshot, strict=True)
+    if problems:
+        raise ValueError('\n'.join(problems))
+    databases = {service: {} for service in SOURCES}
+    notes = {service: {} for service in SOURCES}
+    groups = {service: {} for service in SOURCES}
+    logical = []
+    for store in snapshot['stores']:
+        service = store['service']
+        if service not in databases:
+            raise ValueError(f'Unexpected schema owner: {service}')
+        meta = {(row['kind'], row['schema'], row['name']): row['details']
+                for row in store['metadata']}
+        for table in store['tables']:
+            raw_name, schema = table['name'], table['schema']
+            name = (f'{store["store"]}.{raw_name}' if service == 'Cloud Frontend'
+                    and raw_name == 'schema_metadata' else raw_name)
+            if name in databases[service]:
+                raise ValueError(f'Duplicate entity across stores: {service}.{name}')
+            detail = meta.get(('table', schema, raw_name), {})
+            if raw_name == 'schema_metadata':
+                detail = {'group': 'Schema documentation',
+                          'scenario': 'Read while generating and validating the ER model.',
+                          'purpose': 'Versioned business descriptions and logical references.'}
+            purpose = table['comment'] or detail.get('purpose', '')
+            if not purpose or not detail.get('scenario') or not detail.get('group'):
+                raise ValueError(f'Incomplete entity explanation: {service}.{name}')
+            notes[service][name] = (purpose, detail['scenario'])
+            group = detail['group']
+            groups[service].setdefault(group, []).append(name)
+            columns = {col['name']: {'type': col['type'], 'nn': col['not_null'],
+                                     'description': col.get('comment') or meta.get(
+                                         ('column', schema, raw_name + '.' + col['name']), {}
+                                     ).get('description', '')}
+                       for col in table['columns']}
+            unique = {index['name']: tuple(index['columns']) for index in table['indexes']
+                      if index['unique'] and not index['partial'] and index['columns']}
+            fks = {}
+            for fk in table['fks']:
+                cols = tuple(fk['columns'])
+                target = tuple(fk['parent_columns'])
+                fks[fk['name']] = {'child': name, 'cols': cols, 'parent': fk['parent'],
+                                   'target': target, 'constraint': fk['name'],
+                                   'source': detail.get('source', 'database catalog'),
+                                   'optional': not all(columns[c]['nn'] for c in cols),
+                                   'one': any(set(key).issubset(cols) for key in unique.values())}
+            databases[service][name] = {'name': name, 'columns': columns,
+                                         'pk': tuple(table['pk']), 'unique': unique,
+                                         'fks': fks, 'source': detail.get('source',
+                                             'scripts/database_schema_catalog.py')}
+        for row in store['metadata']:
+            if row['kind'] == 'logical_ref':
+                detail = row['details']
+                logical.append((row['name'], detail['source_service'], detail['source_table'],
+                                detail['source_column'], detail['target_service'],
+                                detail['target_table'], detail['target_column'],
+                                detail['evidence'], detail['reason']))
+    if any(not tables for tables in databases.values()):
+        raise ValueError('All five schema owners are required for the integrated atlas')
+    group_rows = {}
+    for service, entries in groups.items():
+        rows = []
+        for title, members in sorted(entries.items()):
+            meta_row = next((row['details'] for store in snapshot['stores']
+                             if store['service'] == service for row in store['metadata']
+                             if row['kind'] == 'group' and row['name'] == title), None)
+            purpose = (meta_row or {}).get('purpose', title + '.')
+            scenario = (meta_row or {}).get('scenario', 'Used by this service.')
+            for offset in range(0, len(members), 8):
+                batch = sorted(members)[offset:offset+8]
+                rows.append((title, purpose, scenario, ' '.join(batch)))
+        group_rows[service] = tuple(rows)
+    global ENTITY_NOTES, GROUPS, LOGICAL_LINKS
+    ENTITY_NOTES, GROUPS, LOGICAL_LINKS = notes, group_rows, tuple(sorted(logical))
+    return databases, snapshot
+
+
+# Populated from the source databases' schema_metadata rows by load_snapshot.
+LOGICAL_LINKS = ()
 
 
 def text_lines(value, x, y, css, limit=42, step=20):
@@ -382,7 +453,7 @@ def catalog(db, tables, links):
         rows = []
         for col, definition in table['columns'].items():
             tags = ', '.join(t for t, yes in [('PK', col in table['pk']), ('FK', col in fkcols)] if yes)
-            rows.append(f'<tr><td><code>{ESC(col)}</code></td><td>{ESC(definition["type"])}</td><td>{tags}</td><td>{"No" if definition["nn"] else "Yes"}</td></tr>')
+            rows.append(f'<tr><td><code>{ESC(col)}</code></td><td>{ESC(definition["type"])}</td><td>{tags}</td><td>{"No" if definition["nn"] else "Yes"}</td><td>{ESC(definition.get("description", ""))}</td></tr>')
         refs = ' · '.join(f'<a href="#{link}">Model {i+1}</a>' for i, link in enumerate(links[name])) or 'No declared incoming or outgoing foreign keys in the extracted DDL.'
         outgoing = ''.join(f'<li><a href="#{relation_id(db, fk)}">{ESC(fk["constraint"])}</a> references <a href="#{entity_id(db, fk["parent"])}">{ESC(fk["parent"])}</a> ({ESC(", ".join(fk["cols"]))} → {ESC(", ".join(fk["target"]))})</li>' for fk in table['fks'].values())
         inbound = ''.join(f'<li>Referenced by <a href="#{entity_id(db, fk["child"])}">{ESC(fk["child"])}</a> via <a href="#{relation_id(db, fk)}">{ESC(fk["constraint"])}</a> ({ESC(", ".join(fk["cols"]))} → {ESC(", ".join(fk["target"]))})</li>' for fk in sorted(incoming[name], key=lambda f: (f['child'], f['constraint'])))
@@ -393,7 +464,7 @@ def catalog(db, tables, links):
             panels.append(f'<div><h4>Referenced by (incoming FK)</h4><ul>{inbound}</ul></div>')
         if not panels:
             panels.append('<p>No declared incoming or outgoing FK.</p>')
-        items.append(f'<details class="catalog-entity" id="{entity_id(db, name)}"><summary>{ESC(name)} <span>{len(table["columns"])} attributes · {len(table["fks"])} outgoing FK · {len(incoming[name])} incoming FK</span></summary><div class="entity-explanation"><p><strong>Data managed:</strong> {ESC(purpose)}</p><p><strong>When used:</strong> {ESC(scenario)}</p></div><p class="entity-models">Diagrams: {refs}</p><table><thead><tr><th>Attribute</th><th>SQL type</th><th>Key</th><th>Nullable</th></tr></thead><tbody>{"".join(rows)}</tbody></table><div class="entity-relations {'single' if len(panels) == 1 else ''}">{"".join(panels)}</div><p class="source">Schema source: <a href="../../{ESC(table["source"])}"><code>{ESC(table["source"])}</code></a>. <a href="#overall">Back to overall</a></p></details>')
+        items.append(f'<details class="catalog-entity" id="{entity_id(db, name)}"><summary>{ESC(name)} <span>{len(table["columns"])} attributes · {len(table["fks"])} outgoing FK · {len(incoming[name])} incoming FK</span></summary><div class="entity-explanation"><p><strong>Data managed:</strong> {ESC(purpose)}</p><p><strong>When used:</strong> {ESC(scenario)}</p></div><p class="entity-models">Diagrams: {refs}</p><table><thead><tr><th>Attribute</th><th>SQL type</th><th>Key</th><th>Nullable</th><th>Description</th></tr></thead><tbody>{"".join(rows)}</tbody></table><div class="entity-relations {'single' if len(panels) == 1 else ''}">{"".join(panels)}</div><p class="source">Schema source: <a href="../../{ESC(table["source"])}"><code>{ESC(table["source"])}</code></a>. <a href="#overall">Back to overall</a></p></details>')
     return f'<details class="catalog" id="catalog-{slug(db)}"><summary>Complete entity catalog — {len(tables)} tables</summary>{"".join(items)}</details>'
 
 
@@ -529,7 +600,7 @@ def validate_narratives(databases):
 
 
 def main():
-    databases = {db: parse_database(paths) for db, paths in SOURCES.items()}
+    databases, snapshot = load_snapshot(SNAPSHOT)
     validate_narratives(databases)
     sections, stats, revisions = [], [], []
     for db, paths in SOURCES.items():
@@ -555,7 +626,8 @@ def main():
         relations = sum(len(t['fks']) for t in tables.values())
         stats.append((db, len(tables), relations, count))
         repo = ROOT / Path(paths[0]).parts[0] / Path(paths[0]).parts[1]
-        revision = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', '--short=12', 'HEAD'], text=True).strip()
+        revision = snapshot.get('revisions', {}).get(db) or subprocess.check_output(
+            ['git', '-C', str(repo), 'rev-parse', '--short=12', 'HEAD'], text=True).strip()
         revisions.append(f'| {db} | `{revision}` |')
         assert all(links[n] for n in tables), 'Every entity must have a diagram'
         sections.append(f'<section id="{slug(db)}"><h2>{db}</h2><p>{len(tables)} entities · {relations} declared {"relationship" if relations == 1 else "relationships"} · {count} relationship {"model" if count == 1 else "models"}. Topical groups contain at most eight entities each and explain their data and operation context. Group membership is editorial, not a database relationship; an FK may point to an entity in another group.</p><h3>Relationship groups</h3>{relationship_groups(db, tables)}<h3>Declared FK detail diagrams</h3><p>Open a model to read it at full size. On narrow screens, scroll horizontally instead of shrinking the text.</p>{"".join(models)}<h3>Entities without declared FK relationships</h3><p>Application references are not automatically promoted to database relationships.</p>{"".join(independent)}{catalog(db, tables, links)}<p class="jump-back"><a href="#overall">↑ Back to overall</a></p></section>')
@@ -563,7 +635,7 @@ def main():
     edge_count = sum(s[2] for s in stats)
     nav = '<a href="#overall">Overall</a>' + ''.join(f'<a href="#{slug(db)}">{db}</a>' for db in SOURCES)
     OUT.write_text(f'''<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database ER Model — RTK Cloud</title><style>{CSS}</style></head><body><main><p class="eyebrow">RTK CLOUD / DATABASE DESIGN</p><h1>Database Entity–Relationship Model</h1><p class="intro">Traditional Crow’s-foot notation, organized around connected entities. The model covers {total} tables and {edge_count} declared foreign-key relationships across five service-owned schema collections. Each relationship appears with both endpoints; repeated entities keep larger models readable.</p><div class="legend"><h3>How to read the model</h3><p><strong>Circle: zero · Bar: one · Crow’s foot: many.</strong> Each endpoint describes how many records at that end can relate to one record at the other end.</p><p><code>1</code> exactly one · <code>0..1</code> optional one · <code>0..*</code> zero or more. PK marks primary-key attributes; FK marks actual foreign-key attributes. A PK/FK entity commonly resolves a many-to-many relationship.</p><p>Parent optionality comes from FK nullability. A unique child FK changes the child maximum from many to one. SQL foreign keys alone do not require a parent to have children. <strong>Dashed orange lines in Overall are documented logical mappings, not SQL FK.</strong></p></div><nav aria-label="Database navigation">{nav}</nav>{overall(databases)}<div id="details"><h2>Details</h2>{"".join(sections)}</div><footer>Source-derived design model; not an inspection of deployed databases. Exact relationship columns and the full entity catalog accompany every database. See database-er-diagrams.md for scope and refresh instructions.</footer></main><script>{JS}</script></body></html>''')
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Database ER Model — RTK Cloud</title><style>{CSS}</style></head><body><main><p class="eyebrow">RTK CLOUD / DATABASE DESIGN</p><h1>Database Entity–Relationship Model</h1><p class="intro">Traditional Crow’s-foot notation, organized around connected entities. The model covers {total} tables and {edge_count} declared foreign-key relationships across five service-owned schema collections. Each relationship appears with both endpoints; repeated entities keep larger models readable.</p><div class="legend"><h3>How to read the model</h3><p><strong>Circle: zero · Bar: one · Crow’s foot: many.</strong> Each endpoint describes how many records at that end can relate to one record at the other end.</p><p><code>1</code> exactly one · <code>0..1</code> optional one · <code>0..*</code> zero or more. PK marks primary-key attributes; FK marks actual foreign-key attributes. A PK/FK entity commonly resolves a many-to-many relationship.</p><p>Parent optionality comes from FK nullability. A unique child FK changes the child maximum from many to one. SQL foreign keys alone do not require a parent to have children. <strong>Dashed orange lines in Overall are documented logical mappings, not SQL FK.</strong></p></div><nav aria-label="Database navigation">{nav}</nav>{overall(databases)}<div id="details"><h2>Details</h2>{"".join(sections)}</div><footer>Generated from isolated database catalogs and checked-in metadata. The full entity catalog accompanies every database. See database-er-diagrams.md for scope and refresh instructions.</footer></main><script>{JS}</script></body></html>''')
     rows = '\n'.join(f'| {db} | {tables} | {rels} | {models} |' for db, tables, rels, models in stats)
     INDEX.write_text(f'''# Database Entity–Relationship Model
 
@@ -571,7 +643,7 @@ Open the [Crow’s-foot ER atlas](database-er-atlas.html).
 
 ## Notation and navigation
 
-The single-file atlas opens with an **Overall** view of five schema owners and only evidence-backed cross-service mappings. Select a service to reach reviewed topical groups of at most eight entities. Every group explains the data domain and operation context; every entity has its own data-purpose and usage-scenario description. Group membership is editorial, **not** an extra FK or a claim that every member is directly connected. All {total} entities, including isolated tables, occur in exactly one group. The description inventory is maintained in `scripts/database_er_narratives_en.py`; regeneration fails when a new DDL table lacks a group or explanation.
+The single-file atlas opens with an **Overall** view of five schema owners and only evidence-backed cross-service mappings. Select a service to reach topical groups of at most eight entities. Every group explains the data domain and operation context; every entity has its own data-purpose and usage-scenario description. Group membership is editorial, **not** an extra FK or a claim that every member is directly connected. All {total} entities, including isolated tables, occur in exactly one group. Descriptions and group assignments come from the databases' `COMMENT` and `schema_metadata` entries; regeneration fails when a new table lacks an explanation.
 
 Search indexes all {total} entities and {edge_count} FK relationships. Entity nodes open complete columns, descriptions, and outgoing/incoming FK lists. Each FK detail explicitly links both the referencing (child) and referenced (parent) entity; the parent catalog links back to every child that references it. Relationship lines, R labels, and group links open a stable relationship anchor. Direct `file://...#entity-...` or `#relation-...` links expand the containing details; browser Back/Forward follows those anchors. Return links lead to Overall.
 
@@ -594,7 +666,7 @@ These are service schema collections, not a claim that there are exactly five ph
 
 ## Sources and reproducibility
 
-The generator reads Account Manager and Billing migrations in filename order, Video Cloud runtime PostgreSQL schema and PKI DDL, Cloud Admin SQLite migrations, and Frontend SQLite repository initializers. It applies literal migration table/index deletion, column addition/removal/rename, table rename, nullability changes, FK additions/removals, and unconditional unique indexes in source order. Test reset helpers are excluded; unsupported persistent table/index DDL fails explicitly. Table attributes omitted from a drawing are available in its database’s full entity catalog. Each entity explanation links to its checked-in schema source. The descriptions express the schema's data responsibility and intended operation context, informed by representative runtime call sites; they are not proof of activity in any deployed database.
+The generator applies each service's production schema initializer to isolated PostgreSQL or SQLite databases, then reads their catalogs and metadata into [the schema snapshot](database-schema.json). Types, keys, constraints, defaults, indexes, views, and triggers come from the initialized catalogs. Table purpose and column descriptions come from PostgreSQL `COMMENT` or SQLite metadata; group and logical-reference records come from `schema_metadata`. Table attributes omitted from a drawing are available in its complete catalog. The descriptions express intended responsibility and usage; they are not proof of activity in any deployed database.
 
 The revision below is each checkout's base commit. The generated model also
 includes any uncommitted changes to the listed source files in the current
@@ -604,11 +676,11 @@ workspace; it is not necessarily a pure snapshot of those commits.
 | --- | --- |
 {chr(10).join(revisions)}
 
-Refresh from the workspace root with `python3 scripts/generate_database_er_atlas.py`. The process reads source files only; it never opens a deployed database. Exact source paths appear in the entity catalog.
+Refresh from the workspace root with `go run ./scripts/go/rtk-cloud -- schema generate`. Run `go run ./scripts/go/rtk-cloud -- schema generate --check` in CI or before review. Docker, Go, Python, and `scripts/requirements-database-schema.txt` are required. See [the design and usage guide](database-er-process.md) for the complete schema-to-ER process and environment comparison commands.
 
 ## Interpretation boundary
 
-This is a static model of literal checked-in DDL, not a migration execution engine or live database introspection. Conditional historical repair branches and dynamically constructed SQL require review if their behavior changes. Account Manager, Video Cloud, and Admin extraction is also compared with independently initialized PostgreSQL/SQLite catalogs using `scripts/check_database_er_catalog.py`; the stored local catalog fixtures and upgrade tests are under `tests/fixtures/database-simplification` and the service repositories. This does not assert that any deployed environment has already upgraded.
+This is a snapshot of newly initialized databases from the current workspace sources. It does not assert that any deployed environment has upgraded. Environment-specific snapshots must be captured separately and compared with the expected snapshot for their deployed version. The older SQL parser remains available for historical schema-simplification fixtures; the published ER model uses the initialized catalogs.
 
 Dashed orange Overall links are **logical references, not enforced database foreign keys**. They use no Crow’s-foot cardinality because the cited source does not establish one. Each link names both endpoint columns and links to its checked-in code or contract evidence. Currently evidenced mappings are Account Manager `organizations.id` to Billing `commercial_accounts.organization_id`, Account Manager `organizations.id` to Video Cloud `devices.org_id`, and Account Manager `devices.id` to Video Cloud `devices.account_device_id`. The Account Manager device UUID and Video Cloud `devices.id` are deliberately not equated. No Cloud Admin or Cloud Frontend cross-service link is inferred from similar column names alone. The only Crow’s-foot lines represent declared FKs in the extracted DDL.
 
