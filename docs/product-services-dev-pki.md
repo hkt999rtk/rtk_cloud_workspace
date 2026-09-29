@@ -50,6 +50,15 @@ OpenBao ACLs **before** provisioning. If a provision result is uncertain, inspec
 provider state and reconcile the original operation; never generate another key
 without confirming the exact mount/key inventory and recording the recovery.
 
+Before the new bootstrap session, the dev `pki-service-bootstrap-dev` Kubernetes
+auth role still carried only the retiring v9 signer policy. On 2026-09-29 the
+operator checked the exact v10 `sign/service-client` ACL, ran the canonical dev
+read-only credential preflight (10/10 PASS), and changed only that role's policy
+to `pki-service-client-dev-v10-cf348f82-f4cc-434e-a59d-c37eee8222cf`. Its
+ServiceAccount, namespace, `openbao` audience, and other role fields matched the
+pre-change values on read-back. This policy update did not create a bootstrap
+session, sign a leaf, or enable Product writes.
+
 The private registration listener, six new registrar identities, bootstrap
 session, service registrations and Product grant below are still pending. The
 local `pki/services/issuer.json` bootstrap enrollment record is not yet complete.
@@ -171,7 +180,11 @@ session succeed.
    checkpoint above. Its history is preserved; do not rerun provisioning or
    activation. A new request is necessary only if approved policy content must
    change.
-2. Reserve a new deployment bootstrap session with the successor issuer,
+2. Immediately before starting a new session, read the live OpenBao
+   `pki-service-bootstrap-dev` role and require its exact v10
+   `sign/service-client` policy, bound ServiceAccount/namespace, and `openbao`
+   audience. Do not use a wildcard or the retiring v9 signing policy for a new
+   session. Reserve a deployment bootstrap session with the successor issuer,
    reviewed Root pin, a new deployment ID and session UUID. Render its Job
    using `render-staging-controller.py --phase service-bootstrap
    --environment dev --service-bootstrap-state-claim
