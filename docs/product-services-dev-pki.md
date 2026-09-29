@@ -66,6 +66,15 @@ and its presented chain validates to the pinned Service Root. The public local
 `registration-server-ca.crt` files now contain that verified Root. The legacy
 `certissuer-runtime` Secret's Service CA is not the live listener's issuer;
 check the served certificate and chain rather than copying that old CA.
+The live certissuer gateway DNS allowlist lacked the successor policy's exact
+`account-manager.video-cloud-dev-account-manager.svc.cluster.local` name. A
+resource-version and old-value guarded one-field patch appended that name while
+preserving its existing names and image; certissuer rolled out 1/1 Ready. The
+canonical live `secrets verify --environment dev` and Account Manager→certissuer
+mTLS probe then passed. The exact list is saved in this environment's
+`operator/env/CERT_ISSUER_GATEWAY_DNS_NAMES` key. Before any later certissuer
+update, reconcile the live list with that environment key; the legacy whole
+Deployment renderer is still unsuitable for this PKI-managed workload.
 
 The private registration listener, six new registrar identities, bootstrap
 session, service registrations and Product grant below are still pending. The
