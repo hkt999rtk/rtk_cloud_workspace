@@ -300,3 +300,13 @@ Root/intermediate, opening a bootstrap session, mounting seed Secrets and
 recording consumer ACKs must appear in the selected environment rollout evidence.
 No claim of live migration or successful deployment follows merely from merging
 this design or passing isolated fixture tests.
+
+## Operator inspection
+
+[Certificate operations](../certificate-operations.md) defines the Go
+`deployment certificate-check` command, expected-source inventory, current-owner
+inspection, expiry thresholds and report/exit semantics. It is an operator-
+initiated read-only operation. No timer, automatic renewal or new scheduling
+policy is introduced. Environment handover includes checking every selected
+identity's current source; unknown/uncovered managed owners cannot be reported
+as healthy. Initial seeds remain provenance after successful managed enrollment.

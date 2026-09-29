@@ -408,3 +408,87 @@ func TestDeploymentIdentityCommandBindsEnvironmentAndRequiresStackConfirmation(t
 		t.Fatal("normal deployment attempted to mint bootstrap authority")
 	}
 }
+
+func TestDeploymentIdentityPlatformPreflightAdoptsReinstallsAndRejectsDrift(t *testing.T) {
+	env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "identity-test"}
+	fixture := newLKEPlatformCertificateFixture(t, env)
+	store, err := newSecretStore(t.TempDir(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := kubernetesSecretBytes(fixture.listener, "client-ca.crt")
+	cfg := deploymentServiceIssuer{Environment: "dev", Stack: env["CLOUD_STACK_NAME"], Endpoint: "https://issuer.invalid", ServerName: "issuer.invalid", RootCAFile: "pki/services/root.crt", RootSHA256: certificateSHA256(fixture.issuer), RegistrationServerCAFile: "pki/services/root.crt"}
+	raw, _ := json.Marshal(cfg)
+	if err := store.write("pki/services/issuer.json", raw, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write(cfg.RootCAFile, root, false); err != nil {
+		t.Fatal(err)
+	}
+	old := activeSecretEnvironmentRoot
+	activeSecretEnvironmentRoot = store.Root
+	t.Cleanup(func() { activeSecretEnvironmentRoot = old })
+	dir := t.TempDir()
+	cmd, saved := filepath.Join(dir, "kubectl"), filepath.Join(dir, "created.json")
+	script := `#!/bin/sh
+case "$*" in
+ *"get secret account-manager-service-registration-tls"*) printf '%s' "$TEST_REGISTRATION_SECRET" ;;
+ *"get secret"*) printf '%s' "$TEST_IDENTITY_SECRET" ;;
+ *"create -f -"*) umask 077; cat > "$TEST_CREATED_IDENTITY" ;;
+ *) exit 42 ;;
+esac
+`
+	if err := os.WriteFile(cmd, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", cmd)
+	t.Setenv("RTK_CLOUD_KUBECTL_RETRY_ATTEMPTS", "1")
+	t.Setenv("TEST_CREATED_IDENTITY", saved)
+	t.Setenv("TEST_REGISTRATION_SECRET", lkeTestSecretJSON(t, fixture.listener))
+	t.Setenv("TEST_IDENTITY_SECRET", lkeTestSecretJSON(t, fixture.identities["service:ota"]))
+	check := func() error {
+		return lkeRequirePlatformServiceIdentitySecret(env, "ota-identity", "OTA identity Secret", "service:ota")
+	}
+	if err := check(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Root, "pki/services/ota/identity.json")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(saved); !os.IsNotExist(err) {
+		t.Fatal("adoption mutated live identity")
+	}
+	t.Setenv("TEST_IDENTITY_SECRET", "")
+	if err := check(); err != nil {
+		t.Fatal(err)
+	}
+	var installed map[string]any
+	if json.Unmarshal([]byte(readTestFile(t, saved)), &installed) != nil {
+		t.Fatal("missing identity was not installed")
+	}
+	for _, key := range []string{"client.crt", "client.key", "server-ca.crt"} {
+		got, _ := kubernetesSecretBytes(installed, key)
+		want, _ := kubernetesSecretBytes(fixture.identities["service:ota"], key)
+		if !bytes.Equal(got, want) {
+			t.Fatalf("reinstall changed %s", key)
+		}
+	}
+	_ = os.Remove(saved)
+	t.Setenv("TEST_IDENTITY_SECRET", lkeTestSecretJSON(t, installed))
+	if err := check(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_IDENTITY_SECRET", lkeTestSecretJSON(t, fixture.identities["service:shadow"]))
+	if err := check(); err == nil || !strings.Contains(err.Error(), "no overwrite") {
+		t.Fatalf("live drift error=%v", err)
+	}
+	if _, err := os.Stat(saved); !os.IsNotExist(err) {
+		t.Fatal("repeated preflight or drift overwrote live identity")
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) {
+		t.Fatal("repeat deployment changed environment credential")
+	}
+}

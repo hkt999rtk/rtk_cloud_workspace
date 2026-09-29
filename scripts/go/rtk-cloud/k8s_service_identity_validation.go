@@ -10,9 +10,17 @@ import (
 	"time"
 )
 
-// Validate the independent listener first. Canonical deployments persist/reuse
-// the initial identity, enrolling only a missing one with the environment signer.
+// Canonical deployments validate listener trust before enrollment. Legacy callers
+// first require an existing identity; neither path admits an unvalidated identity.
 func lkeRequirePlatformServiceIdentitySecret(env map[string]string, name, label, subject string) error {
+	var identity map[string]any
+	var err error
+	if activeSecretEnvironmentRoot == "" {
+		identity, err = kubectlResourceJSON(lkeNamespaceName(env, "video-cloud"), "secret", name)
+		if err != nil {
+			return fmt.Errorf("%s is unavailable: %w", label, err)
+		}
+	}
 	listener, err := kubectlResourceJSON(lkeNamespaceName(env, "account-manager"), "secret", serviceRegistrationTLSSecretName)
 	if err != nil {
 		return fmt.Errorf("service registration TLS Secret is unavailable: %w", err)
@@ -20,14 +28,11 @@ func lkeRequirePlatformServiceIdentitySecret(env map[string]string, name, label,
 	if err := validateRegistrationServerMaterial(listener, lkeRegistrationServerDNS(env)); err != nil {
 		return err
 	}
-	var identity map[string]any
 	if activeSecretEnvironmentRoot != "" {
 		identity, err = lkeEnsureDeploymentServiceIdentity(env, name, subject, listener)
-	} else {
-		identity, err = kubectlResourceJSON(lkeNamespaceName(env, "video-cloud"), "secret", name)
-	}
-	if err != nil {
-		return fmt.Errorf("%s is unavailable: %w", label, err)
+		if err != nil {
+			return fmt.Errorf("%s is unavailable: %w", label, err)
+		}
 	}
 	return validatePlatformServiceIdentityMaterial(identity, listener, subject, lkeRegistrationServerDNS(env), time.Now())
 }

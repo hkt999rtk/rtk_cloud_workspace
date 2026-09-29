@@ -671,3 +671,11 @@ and every skipped/blocked check. Reports may contain only sanitized evidence.
 - Deployment succeeds but tests fail: run acceptance first according to
   [`testing-operations.md`](testing-operations.md), then identify data, MQTT, API,
   database, or generator bottlenecks.
+
+### Inspect deployment and current certificates
+
+Use the Go `deployment certificate-check --environment <name>` operation and
+[certificate operations runbook](certificate-operations.md). It inspects expected
+sources without changing credentials. Shared inventory applies to dev, staging
+and prod; persist managed-topology overrides in the selected environment's
+`certificate-check.json`. Scheduling is a separate operator decision.
