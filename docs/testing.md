@@ -48,6 +48,28 @@ reason.
 workspace-owned Go tooling, catalog validity and generated-document drift, and
 repository/submodule status. It does not run every service or product E2E test.
 
+## High-Risk PostgreSQL Integration Tests
+
+Run the focused identity, authorization, payment, billing, and device-lifecycle
+integration tests with a temporary local PostgreSQL container:
+
+```sh
+./scripts/test-high-risk-postgres.sh
+```
+
+The script starts a disposable `postgres:16-alpine` container on a dynamically
+assigned loopback port and creates separate Account Manager, Billing, and Video
+Cloud databases. It runs identity, authorization, device claim and lifecycle,
+payment, invoice, ledger, webhook, reconciliation, refund, simulator, and
+idempotency integration cases. The cross-repository activation test drives the
+real Account Manager outbox/inbox against the Video Cloud HTTP router, simulates
+an upstream outage, a mismatched receipt, and a committed activation with a lost
+response, then verifies replay does not duplicate either service's effect. All
+databases are isolated from the development database and removed with the
+container. Docker and the PostgreSQL image must already be available locally;
+the script does not pull images or require developers to set
+`TEST_DATABASE_URL`.
+
 Use the explicit test layers when broader validation is needed:
 
 Delegated agents must use the canonical
