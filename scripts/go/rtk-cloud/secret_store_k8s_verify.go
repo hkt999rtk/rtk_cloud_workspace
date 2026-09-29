@@ -734,16 +734,47 @@ func verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace string, deploy
 		return fmt.Errorf("certissuer enables CRL/root-consumer settings before that deployment contract exists: %s", strings.Join(enabled, ","))
 	}
 	caller := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER"])
+	subject := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT"])
+	subjects := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECTS"])
+	bootstrapSession := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID"])
 	if caller == "" {
+		if subject != "" || subjects != "" || bootstrapSession != "" {
+			return errors.New("certissuer bootstrap trust has subjects or a session without a caller")
+		}
 		return nil
 	}
-	subject := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT"])
-	sessionID := strings.TrimSpace(settings["PKI_BOOTSTRAP_SESSION_ID"])
-	if subject != caller || settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY"] == "" || sessionID == "" {
-		return errors.New("certissuer bootstrap caller requires matching subject, CA, client cert/key and session id")
-	}
-	if strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID"]) != sessionID {
-		return errors.New("certissuer bootstrap handler and managed client must use the same session id")
+	if subjects != "" {
+		// The deployment bootstrap key belongs to the separate one-shot Job,
+		// not the long-running certissuer listener.
+		if caller != "service:deployment-bootstrap" || subject != "" ||
+			settings["PKI_BOOTSTRAP_SESSION_ID"] != "" ||
+			settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT"] != "" ||
+			settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY"] != "" ||
+			!regexp.MustCompile(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`).MatchString(bootstrapSession) {
+			return errors.New("certissuer deployment bootstrap requires an exact caller, plural subjects, session UUID and separate Job identity")
+		}
+		ca := strings.TrimSpace(settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA"])
+		if ca == "" || ca != strings.TrimSpace(settings["CERT_ISSUER_HOST_RENEWAL_TLS_CA"]) ||
+			strings.TrimSpace(settings["CERT_ISSUER_HOST_ROOT_SHA256"]) == "" {
+			return errors.New("certissuer deployment bootstrap must use the pinned mounted Service Root CA")
+		}
+		seen := map[string]bool{}
+		serviceSubject := regexp.MustCompile(`^service:[a-z][a-z0-9-]{0,62}$`)
+		for _, entry := range strings.Split(subjects, ",") {
+			entry = strings.TrimSpace(entry)
+			if !serviceSubject.MatchString(entry) || seen[entry] {
+				return errors.New("certissuer deployment bootstrap subjects must be unique Service identities")
+			}
+			seen[entry] = true
+		}
+	} else {
+		sessionID := strings.TrimSpace(settings["PKI_BOOTSTRAP_SESSION_ID"])
+		if subject != caller || settings["CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_CERT"] == "" || settings["CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY"] == "" || sessionID == "" {
+			return errors.New("certissuer bootstrap caller requires matching subject, CA, client cert/key and session id")
+		}
+		if bootstrapSession != sessionID {
+			return errors.New("certissuer bootstrap handler and managed client must use the same session id")
+		}
 	}
 	renewal, err := url.Parse(strings.TrimSpace(settings["CERT_ISSUER_HOST_RENEWAL_URL"]))
 	if err != nil || renewal.Scheme != "https" || !isLoopbackHost(renewal.Hostname()) {

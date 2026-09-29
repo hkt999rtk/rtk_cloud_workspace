@@ -1576,6 +1576,55 @@ func TestCertIssuerBootstrapPrecheckRejectsUnsupportedAndUnreachableConfiguratio
 	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", allowed); err != nil {
 		t.Fatal(err)
 	}
+	// A later Product ceremony uses a separate one-shot Job identity. The
+	// listener trusts six exact targets without carrying that Job's key.
+	pluralSettings := map[string]string{
+		"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER":     "service:deployment-bootstrap",
+		"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECTS":   "service:logger,service:mqtt,service:ota,service:shadow,service:video-storage,service:webrtc",
+		"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID": "d3cfa4fe-d6bb-4ff2-93a4-ec7bc41f32f5",
+		"CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA":         "/run/pki-host-root/root.pem",
+		"CERT_ISSUER_HOST_RENEWAL_TLS_CA":                 "/run/pki-host-root/root.pem",
+		"CERT_ISSUER_HOST_ROOT_SHA256":                    strings.Repeat("a", 64),
+		"CERT_ISSUER_HOST_RENEWAL_URL":                    "https://127.0.0.1:9443",
+	}
+	plural := func(overrides map[string]string) liveDeploymentList {
+		settings := map[string]string{}
+		for key, value := range pluralSettings {
+			settings[key] = value
+		}
+		for key, value := range overrides {
+			settings[key] = value
+		}
+		env := make([]map[string]string, 0, len(settings))
+		for key, value := range settings {
+			env = append(env, map[string]string{"name": key, "value": value})
+		}
+		raw, err := json.Marshal(env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decode(t, string(raw))
+	}
+	if err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", plural(nil)); err != nil {
+		t.Fatalf("separate-Job plural bootstrap precheck = %v", err)
+	}
+	for _, testcase := range []struct {
+		name, key, value, want string
+	}{
+		{"missing caller", "CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CALLER", "", "without a caller"},
+		{"legacy subject conflict", "CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECT", "service:ota", "separate Job identity"},
+		{"job key in listener", "CERT_ISSUER_SERVICE_CLIENT_IDENTITY_BOOTSTRAP_KEY", "/run/bootstrap.key", "separate Job identity"},
+		{"duplicate target", "CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECTS", "service:ota,service:ota", "unique Service identities"},
+		{"wrong root", "CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_CA", "/run/other.pem", "pinned mounted Service Root"},
+		{"invalid session", "CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SESSION_ID", "session", "session UUID"},
+	} {
+		t.Run(testcase.name, func(t *testing.T) {
+			err := verifyCertIssuerBootstrapConfiguration("/tmp/kubeconfig", "video-cloud-dev-video-cloud", plural(map[string]string{testcase.key: testcase.value}))
+			if err == nil || !strings.Contains(err.Error(), testcase.want) {
+				t.Fatalf("plural bootstrap precheck error = %v, want %q", err, testcase.want)
+			}
+		})
+	}
 }
 
 func TestCertIssuerStaticServingChainPrecheck(t *testing.T) {
