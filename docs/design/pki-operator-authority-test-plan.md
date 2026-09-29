@@ -38,11 +38,19 @@ when, which digest was reviewed, what the signer returned and whether registry,
 provider and trust consumers agreed. It does not store private keys or secret
 values. Replaying the same idempotency key with changed content fails.
 
-The append-only `pki_operator_authorizations` row is the minimal, transactionally
-checked authorization evidence. `pki_audit` keeps controller state transitions;
-the controller emits a secret-free structured event for Loki search. A missing
-or delayed Loki event does not authorize a database operation. A missing database
-authorization always blocks execution.
+The authorization record has two purposes with different failure behavior:
+
+| Record | Contents and purpose | If unavailable |
+| --- | --- | --- |
+| `pki_operator_authorizations` (PKI PostgreSQL) | One append-only row per operation with operator ID, environment, exact request digest, signer reference and authorization times. The controller checks this row against the operation and issuer in the execution transaction. | A missing or mismatched row blocks signing, import and lifecycle execution. |
+| `pki_audit` (PKI PostgreSQL) | Append-only operation state transitions committed with controller changes. | A failed audit write rolls back the state transition. |
+| Structured controller event (central Loki pipeline) | Secret-free event with environment, operator ID, operation ID and request digest for operational search and correlation with controller state. Loki retention and indexing follow the logging policy. | Delayed or missing log delivery does not grant authority and does not undo a committed authorization. Reconcile it from the database record and controller state. |
+
+Loki is a searchable operational log, not an immutable authorization ledger or
+the controller's transaction boundary. The database keeps only the minimal
+binding required to decide whether the action may execute; it does not replace
+the wider operational log stream. Keep private keys, tokens and signer secrets
+out of both records.
 
 The deployed controller retains independent-role approvals until each
 environment is cut over with matching operator and signer configuration. This
