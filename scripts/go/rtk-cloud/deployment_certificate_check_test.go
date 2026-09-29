@@ -155,9 +155,36 @@ func TestCertificateCheckRuntimeAndOwnerCoverageAreReadOnly(t *testing.T) {
 	if rows := r.checkOwnerCoverage(map[string]bool{r.stack + "-video-cloud": true}); len(rows) != 0 {
 		t.Fatal(rows)
 	}
+	pods = []byte(`{"items":[{"metadata":{"name":"ota-1"},"status":{"phase":"Running"},"spec":{"containers":[{"name":"owner","env":[{"name":"PKI_MANAGEMENT_IDENTITY_STATE_FILE","value":"/var/lib/identity.json"}]}]}}]}`)
+	if rows := r.checkOwnerCoverage(map[string]bool{r.stack + "-video-cloud": true}); len(rows) != 0 {
+		t.Fatal("inspected managed _STATE_FILE owner was reported missing", rows)
+	}
 	r.checkedOwners = map[string]bool{}
 	if rows := r.checkOwnerCoverage(map[string]bool{r.stack + "-video-cloud": true}); len(rows) != 1 || rows[0].Status != "UNKNOWN" {
 		t.Fatal("uncovered managed identity appeared healthy")
+	}
+	for _, test := range []struct {
+		name string
+		pods string
+		err  error
+	}{
+		{name: "Pod list unavailable", err: errors.New("cluster unavailable")},
+		{name: "no owner Pod", pods: `{"items":[]}`},
+		{name: "owner Pod not running", pods: `{"items":[{"metadata":{"name":"ota-1"},"status":{"phase":"Pending"}}]}`},
+		{name: "inspection helper unavailable", pods: `{"items":[{"metadata":{"name":"ota-1"},"status":{"phase":"Running"}}]}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r.query = func(args ...string) ([]byte, error) {
+				if strings.Contains(strings.Join(args, " "), " get pods") {
+					return []byte(test.pods), test.err
+				}
+				return []byte(`{"version":0}`), nil
+			}
+			rows := r.check(target)
+			if len(rows) != 1 || rows[0].Status != "UNKNOWN" {
+				t.Fatalf("uninspected owner was accepted: %+v", rows)
+			}
+		})
 	}
 }
 
@@ -255,6 +282,50 @@ func TestCertificateCheckInventoryOverrideValidationAndCLI(t *testing.T) {
 	writeInventory(override, []certificateCheckTarget{changed})
 	if _, err := loadCertificateCheckInventory(workspace, "dev"); err == nil {
 		t.Fatal("bad purpose accepted")
+	}
+	writeInventory(override, []certificateCheckTarget{target})
+	if f, err := os.OpenFile(override, os.O_APPEND|os.O_WRONLY, 0600); err != nil {
+		t.Fatal(err)
+	} else if _, err := f.WriteString(`{"version":1}`); err != nil {
+		f.Close()
+		t.Fatal(err)
+	} else if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadCertificateCheckInventory(workspace, "dev"); err == nil {
+		t.Fatal("trailing inventory object accepted")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*certificateCheckTarget)
+	}{
+		{"missing identity", func(x *certificateCheckTarget) { x.Subject, x.DNS = "", "" }},
+		{"missing trust", func(x *certificateCheckTarget) { x.RootFile = "" }},
+		{"unknown source", func(x *certificateCheckTarget) { x.Source = "opaque" }},
+		{"incomplete file", func(x *certificateCheckTarget) { x.KeyFile = "" }},
+		{"missing deployment record", func(x *certificateCheckTarget) { x.Source, x.RecordFile = "deployment", "" }},
+		{"missing secret binding", func(x *certificateCheckTarget) { x.Source, x.Namespace, x.Secret = "secret", "video-cloud", "" }},
+		{"bad secret namespace", func(x *certificateCheckTarget) {
+			x.Source, x.Namespace, x.Secret, x.CertKey, x.KeyKey = "secret", "bad/name", "identity", "cert", "key"
+		}},
+		{"relative managed state", func(x *certificateCheckTarget) {
+			x.Source, x.Namespace, x.Selector, x.Container, x.StateFile = "managed", "video-cloud", "app=ota", "owner", "relative.json"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := target
+			test.change(&candidate)
+			writeInventory(override, []certificateCheckTarget{candidate})
+			if _, err := loadCertificateCheckInventory(workspace, "dev"); err == nil {
+				t.Fatal("invalid certificate inventory accepted")
+			}
+		})
+	}
+	badLink := target
+	badLink.SupersededBy = "missing-managed-owner"
+	writeInventory(override, []certificateCheckTarget{badLink})
+	if _, err := loadCertificateCheckInventory(workspace, "dev"); err == nil {
+		t.Fatal("deployment provenance linked to a missing owner")
 	}
 	writeInventory(override, []certificateCheckTarget{target})
 	t.Setenv("RTK_CLOUD_CONFIG_ROOT", r.store.ConfigRoot)

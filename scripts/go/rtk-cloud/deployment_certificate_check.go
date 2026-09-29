@@ -124,6 +124,10 @@ func loadCertificateCheckInventory(workspace, environment string) ([]certificate
 		if decoder.Decode(&inventory) != nil || inventory.Version != 1 || len(inventory.Targets) == 0 {
 			return nil, errors.New("invalid certificate inspection inventory")
 		}
+		var trailing any
+		if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+			return nil, errors.New("certificate inspection inventory has trailing data")
+		}
 		seen := map[string]bool{}
 		for _, entry := range inventory.Targets {
 			if entry.ID == "" || seen[entry.ID] {
@@ -510,7 +514,7 @@ func (r *certificateCheckRunner) checkOwnerCoverage(namespaces map[string]bool) 
 		for _, pod := range pods.Items {
 			for _, container := range pod.Spec.Containers {
 				for _, setting := range container.Env {
-					if !strings.HasSuffix(setting.Name, "_IDENTITY_STATE") {
+					if !strings.HasSuffix(setting.Name, "_IDENTITY_STATE") && !strings.HasSuffix(setting.Name, "_IDENTITY_STATE_FILE") {
 						continue
 					}
 					key := namespace + "/" + pod.Metadata.Name + "/" + container.Name + "/" + setting.Value
