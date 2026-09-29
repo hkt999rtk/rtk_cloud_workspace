@@ -56,6 +56,12 @@ existing Product, identity, storage, runtime Secret and private listener gates.
 It updates only the OTA service and its required policies, preserving the
 PKI-managed core API and log ingester. Publication, Product access, billable
 receipt reconciliation and price activation remain separate checks.
+The next narrow edge step is `deployment ota-device-edge`: it checks the
+existing device mTLS host, expected app CA, verified-certificate forwarding,
+core route and ready independent OTA endpoint before adding the OTA route and
+port 18084 ingress policy. The command is dev-only and does not enable core
+cutover or activate OTA in the service catalog. Its exact flags and rollback
+order are in [deployment operations](deployment-operations.md).
 
 ## OTA dev checkpoint (2026-09-30)
 

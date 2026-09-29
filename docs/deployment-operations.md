@@ -304,12 +304,25 @@ different results. Do not report a complete staging release from ready Pods,
    observed `expected_version` and ready `manifest_version`. Read back the
    selected revision, `suspended` status and ready lease, then stop the
    forward and remove the temporary certificate files.
-   Enable registration and verify the independent Pod, private Service,
-   registration lease, receipt creation, outbox delivery, and Billing receipt.
-   Enable the device edge only after the authenticated device route is verified;
-   enable core cutover only after the independent endpoint is Ready. Reverse
-   those switches in the opposite order for rollback while preserving existing
-   receipts and outbox evidence.
+   For the existing dev stack, review `deployment ota-device-edge --environment
+   dev` before changing the device route. After confirming that the independent
+   OTA endpoint and v2 lease remain Ready, set
+   `LKE_OTA_SERVICE_EDGE_ENABLED=true` in the dev operator SecretStore and run
+   `deployment ota-device-edge --environment dev --confirm video-cloud-dev`.
+   This narrow command requires strict Product entitlement checks and a stopped
+   legacy registrar. It verifies that the existing device-host ingress still
+   pins the expected app CA, requires client mTLS, forwards the verified client
+   certificate and retains its core API route. It adds only the OTA port 18084
+   ingress policy, a bridge Service and the `/v1/device/ota/` Prefix route to
+   that same ingress. Its JSON patch checks the observed ingress version and
+   host, so a concurrent edit fails instead of replacing routes. Re-running it
+   after success is safe. Verify an unauthenticated request is rejected at the
+   edge, and a valid device certificate reaches OTA with the expected Product
+   authorization decision before enabling core cutover. Keep the core cutover
+   flag off until that check succeeds; then qualify task, download, outbox and
+   Billing receipts. For rollback, restore core OTA handlers and verify their
+   rollout before removing the OTA ingress path. Retain receipts and outbox
+   evidence during either direction.
 
    OTA devices receive short-lived signed object GET URLs and download
    directly with Range support. The API never proxies firmware bytes. The

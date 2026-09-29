@@ -167,6 +167,9 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if len(args) > 0 && args[0] == "ota-service-rollout" {
 		return runDeploymentOTAServiceRollout(args[1:])
 	}
+	if len(args) > 0 && args[0] == "ota-device-edge" {
+		return runDeploymentOTADeviceEdge(args[1:])
+	}
 	if len(args) > 0 && args[0] == "pki-storage-plan" {
 		return runDeploymentPKIStoragePlan(args[1:])
 	}
@@ -699,6 +702,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment certificate-check --environment NAME [--format table|json] [--local-only]
   rtk-cloud deployment service-identity --environment NAME --subject service:NAME --confirm STACK [--install-seed]
   rtk-cloud deployment ota-service-rollout --environment dev [--confirm video-cloud-dev]
+  rtk-cloud deployment ota-device-edge --environment dev [--confirm video-cloud-dev]
   rtk-cloud deployment pki-storage-plan --environment dev|staging|prod [--live|--render|--cleanup-audit]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK
