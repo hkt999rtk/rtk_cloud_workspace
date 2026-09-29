@@ -57,7 +57,15 @@ read-only credential preflight (10/10 PASS), and changed only that role's policy
 to `pki-service-client-dev-v10-cf348f82-f4cc-434e-a59d-c37eee8222cf`. Its
 ServiceAccount, namespace, `openbao` audience, and other role fields matched the
 pre-change values on read-back. This policy update did not create a bootstrap
-session, sign a leaf, or enable Product writes.
+session, sign a leaf, or enable Product writes. The operator also verified the
+**live** certissuer HTTPS listener at
+`certissuer.video-cloud-dev-video-cloud.svc`: its leaf SHA-256 is
+`ba3bec99d77bc82e95a619b107a5d28de0e3f96aebc27acb824e7a3604106e77`,
+and its presented chain validates to the pinned Service Root. The public local
+`pki/services/service-root.crt`, `issuer-server-ca.crt`, and
+`registration-server-ca.crt` files now contain that verified Root. The legacy
+`certissuer-runtime` Secret's Service CA is not the live listener's issuer;
+check the served certificate and chain rather than copying that old CA.
 
 The private registration listener, six new registrar identities, bootstrap
 session, service registrations and Product grant below are still pending. The
