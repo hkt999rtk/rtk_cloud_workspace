@@ -27,12 +27,12 @@ docker run --detach --rm \
 port=""
 for attempt in $(seq 1 30); do
   port="$(docker port "$container_name" 5432/tcp | sed 's/.*://')"
-  if docker exec "$container_name" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+  if docker exec "$container_name" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1; then
     break
   fi
   sleep 1
 done
-if [[ -z "$port" ]] || ! docker exec "$container_name" pg_isready -U postgres -d postgres >/dev/null 2>&1; then
+if [[ -z "$port" ]] || ! docker exec "$container_name" pg_isready -h 127.0.0.1 -U postgres -d postgres >/dev/null 2>&1; then
   echo "temporary PostgreSQL did not become ready" >&2
   exit 1
 fi
