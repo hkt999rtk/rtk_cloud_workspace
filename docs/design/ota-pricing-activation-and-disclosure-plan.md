@@ -1,6 +1,6 @@
 # OTA 費率生效與服務價格揭露：實作計畫
 
-Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. OTA remains suspended, Product writes remain off, and no effective OTA rate card has been published, so development does not charge OTA.
+Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. The independent OTA service is now registered and its v2 manifest is published in development, but OTA remains suspended, Product writes remain off, and no effective OTA rate card has been published; development does not charge OTA.
 
 Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-30.
 
@@ -8,7 +8,13 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 Account Manager 的私有 mTLS listener、六張各自核准的 Service 身分、六個有效註冊 lease 已完成；有效 MQTT 憑證冒用 OTA service tuple 時被 403 拒絕。原 bootstrap session 到期後，只對原簽署期限內已成功且未撤銷的六筆發行回執，核對實際運作中的 service 再補 ACK 並 seal；到期後沒有新簽憑證。臨時 bootstrap 設定、私鑰與 1 GiB PVC 已清理，唯讀憑證檢查通過。詳細證據與復原規則見 [dev PKI runbook](../product-services-dev-pki.md)。
 
-這個進度只完成註冊前置條件：目前僅 MQTT 在 service catalog 為 active，OTA、Shadow、WebRTC、Storage、Logger 仍 suspended。獨立 OTA runtime、裝置路由、核心切流、實際 receipt／outbox／Billing 投遞均尚未驗收；Storage、WebRTC、Shadow 也有各自的路由切換條件。因此維持 Product writes 與正式 OTA 價卡關閉，不能以六個 lease 取代收費上線驗收。PKI 授權紀錄的控制資料存在 PostgreSQL，操作事件供 Loki 搜尋；兩者的目的與故障處理見 [operator authority design](pki-operator-authority-test-plan.md)。
+截至該日，此進度只完成註冊前置條件：僅 MQTT 在 service catalog 為 active，OTA、Shadow、WebRTC、Storage、Logger 仍 suspended。當時獨立 OTA runtime、裝置路由、核心切流、實際 receipt／outbox／Billing 投遞均尚未驗收；Storage、WebRTC、Shadow 也有各自的路由切換條件。Product writes 與正式 OTA 價卡維持關閉，六個 lease 不能取代收費上線驗收。PKI 授權紀錄的控制資料存在 PostgreSQL，操作事件供 Loki 搜尋；兩者的目的與故障處理見 [operator authority design](pki-operator-authority-test-plan.md)。
+
+### Development 獨立 OTA runtime checkpoint（2026-09-30）
+
+固定版 workspace [#616](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/616) 已合併，使用 Video Cloud [#736](https://github.com/hkt999rtk/rtk_video_cloud/pull/736) 的獨立 OTA 映像 `sha256:096d91197cd0e372aaf5ca02014e1c8f4f8dd736a930c04483283c8054e9b97a`。舊 `video-cloud-otaregistrar` 先縮至零並確認無 Pod，新的 `video-cloud-otaservice` 以 `service:ota` 身分取得 ready v2 lease、1/1 Ready Pod 與私有 Service endpoint。Account Manager [#359](https://github.com/hkt999rtk/rtk_account_manager/pull/359) 修正 suspended 服務不能發布 ready manifest 的錯誤；規範文字見 contracts [#188](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/188)。dev Account Manager 更新至固定映像 `sha256:a00bb92eb06a63d1fc16d151af2e565c69258481bb51b2c41bb268ef5def9222` 後，用 OTA 專屬 mTLS 身分將目錄發布到 revision 28、manifest v2（endpoint `ota-service`）；資料庫核對狀態仍是 `suspended`。兩個映像的 GHCR 唯讀檢查通過，持久 operator 設定已釘選 digest，PKI 管理 sidecar 未改。詳細程序與 rollback 見 [deployment operations](../deployment-operations.md) 及 [dev PKI runbook](../product-services-dev-pki.md)。
+
+這是**獨立服務註冊與版本選擇**驗收，還不是 OTA 收費驗收。當次唯讀計數顯示 dev 沒有 OTA Product profile 或 entitlement snapshot；Video Cloud 的 OTA task/download receipt、artifact object、producer period seal 與 OTA outbox fact 均為 0，Billing 的 OTA usage fact 與 pricing publication 也均為 0。Product writes、裝置 edge 與核心切流仍關閉，OTA catalog 仍 suspended。下一步需以受控 OTA-enabled Product 和裝置驗證授權、直連物件 URL／Range、完成回執、outbox 到 Billing、月封存，再核定未來完整 UTC 生效月與發佈已核准價卡；不能因 v2 lease 或 publication 就收費。
 
 ## 1. 已確定的決策與範圍
 

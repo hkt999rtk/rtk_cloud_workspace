@@ -42,12 +42,13 @@ and the [normative Platform PKI contract](../repos/rtk_cloud_contracts_doc/platf
 The live service catalog still has only `mqtt` active; the other five services
 are suspended. `ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=false`, and
 the current Video Cloud API has strict OTA Product entitlement checks enabled.
-The `video-cloud-otaregistrar` proves the legacy core OTA readiness and owns
-the OTA lease, but the independent `video-cloud-otaservice`, device edge, core
-cutover, and billable OTA receipt path have not been qualified. Core clip direct
-upload also remains disabled. Follow each service's route and authorization
-gates in [deployment operations](deployment-operations.md) before activation;
-do not activate all suspended services merely because their leases are ready.
+The legacy `video-cloud-otaregistrar` is stopped. The independent
+`video-cloud-otaservice` is ready and owns the published OTA v2 manifest, but
+device edge, core cutover, and billable OTA receipt delivery have not been
+qualified in dev. Core clip direct upload also remains disabled. Follow each
+service's route and authorization gates in
+[deployment operations](deployment-operations.md) before activation; do not
+activate all suspended services merely because their leases are ready.
 
 The dedicated dev OTA registration step is `deployment ota-service-rollout`.
 It requires an immutable image, the old registrar fully stopped, and the
@@ -56,7 +57,39 @@ It updates only the OTA service and its required policies, preserving the
 PKI-managed core API and log ingester. Publication, Product access, billable
 receipt reconciliation and price activation remain separate checks.
 
-## Live dev checkpoint (2026-09-29)
+## OTA dev checkpoint (2026-09-30)
+
+The frozen workspace rollout merge is `a8e39adf5d3813c0726cb54d7c93bf3c8c986d8e`.
+Video Cloud uses independent OTA service merge
+`a1fffd65686a26c7a0281c89367de37b7f6e90cd` and immutable API image
+`sha256:096d91197cd0e372aaf5ca02014e1c8f4f8dd736a930c04483283c8054e9b97a`.
+Account Manager uses suspended-publication merge
+`4d1e6b53c81837bd0d66a5d6f1fec8e5c3cc94b0` and immutable app image
+`sha256:a00bb92eb06a63d1fc16d151af2e565c69258481bb51b2c41bb268ef5def9222`.
+The service-registration design clarification is merge
+`66c28b18ccc1961ab1045410742c7e946fba547c`.
+The dev operator SecretStore pins both exact image digests; read-only GHCR
+image qualifications passed before each rollout. Rollback image values were
+saved locally by the operator.
+
+`video-cloud-otaregistrar` has zero replicas and no Pod. The independent
+`video-cloud-otaservice` has one ready Pod and a ready private Service endpoint.
+Its dedicated `service:ota` identity registered manifest v2 with endpoint
+reference `ota-service`. An authenticated mTLS publication advanced the OTA
+catalog to revision 28 and selected v2. PostgreSQL read-back confirmed
+`ota|2|suspended` and a fresh ready `ota-service-0` lease. The publication
+did not activate OTA or enable Product writes; dev currently has zero OTA
+Product profiles and entitlement snapshots. The temporary publication
+certificate files and local port-forward were removed.
+
+Remaining dev qualification is an authenticated OTA-enabled Product and device
+flow through object-URL firmware delivery, download/task receipts, usage fact
+outbox and Billing acceptance, then period-seal and pricing checks. Keep the
+device edge and core cutover flags off, and keep OTA suspended until those
+checks and the user-visible billing terms are verified. CDN delivery is a
+separate later expansion.
+
+## PKI dev checkpoint (2026-09-29)
 
 The frozen operator-authority service versions are deployed in dev: PKI controller
 `dda6fc79cce0ce4b50c7babab0649fe489445188b0431a79d1f1d7e63b86b77c`,
