@@ -173,6 +173,7 @@ func TestMulticloudMailboxHelpersResolveAliasAndInvitationToken(t *testing.T) {
 	operatorEnv := filepath.Join(t.TempDir(), "operator.env")
 	writeTestFile(t, operatorEnv, strings.Join([]string{
 		"IMAP_SERVER=imap.example.test",
+		"IMAP_CONNECT_HOST=127.0.0.1",
 		"IMAP_EMAIL_ADDR=mailbox@example.test",
 		"IMAP_EMAIL_PASSWORD=password",
 		"IMAP_EMAIL_PORT=993",
