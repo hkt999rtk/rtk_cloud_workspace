@@ -82,11 +82,20 @@ def inspect_postgres(dsn, service, store):
     conn.autocommit = True
     try:
         cur = conn.cursor()
+        if 'search_path' in options:
+            cur.execute("SELECT set_config('search_path', %s, false)",
+                        (options['search_path'][-1],))
         cur.execute('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+        cur.execute('SELECT current_schema()')
+        active_schema = cur.fetchone()[0]
+        if not active_schema:
+            raise ValueError('PostgreSQL search_path has no active schema')
+        cur.execute("SELECT set_config('search_path', quote_ident(%s), true)",
+                    (active_schema,))
         cur.execute("""SELECT c.oid, n.nspname, c.relname, obj_description(c.oid,'pg_class')
                        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-                       WHERE n.nspname='public' AND c.relkind IN ('r','p')
-                       ORDER BY n.nspname,c.relname""")
+                       WHERE n.nspname=%s AND c.relkind IN ('r','p')
+                       ORDER BY n.nspname,c.relname""", (active_schema,))
         tables = {}
         for oid, schema, name, comment in cur.fetchall():
             tables[oid] = {'schema': schema, 'name': name, 'comment': comment or '',
@@ -97,9 +106,9 @@ def inspect_postgres(dsn, service, store):
                        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
                        JOIN pg_attribute a ON a.attrelid=c.oid
                        LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
-                       WHERE n.nspname='public' AND c.relkind IN ('r','p')
+                       WHERE n.nspname=%s AND c.relkind IN ('r','p')
                          AND a.attnum>0 AND NOT a.attisdropped
-                       ORDER BY c.oid,a.attnum""")
+                       ORDER BY c.oid,a.attnum""", (active_schema,))
         attr = {}
         for oid, number, name, dtype, required, default, comment in cur.fetchall():
             attr[(oid, number)] = name
@@ -145,19 +154,19 @@ def inspect_postgres(dsn, service, store):
             tables[oid]['triggers'].append({'name': name, 'definition': definition})
         cur.execute("""SELECT n.nspname,c.relname,pg_get_viewdef(c.oid,true)
                        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-                       WHERE n.nspname='public' AND c.relkind IN ('v','m')
-                       ORDER BY n.nspname,c.relname""")
+                       WHERE n.nspname=%s AND c.relkind IN ('v','m')
+                       ORDER BY n.nspname,c.relname""", (active_schema,))
         views = [{'schema': s, 'name': n, 'definition': d} for s, n, d in cur.fetchall()]
-        cur.execute("SELECT to_regclass('public.schema_metadata') IS NOT NULL")
+        cur.execute("SELECT to_regclass('schema_metadata') IS NOT NULL")
         metadata = []
         if cur.fetchone()[0]:
             cur.execute("""SELECT object_kind,schema_name,object_name,meta_version,details::text
-                           FROM public.schema_metadata ORDER BY 1,2,3""")
+                           FROM schema_metadata ORDER BY 1,2,3""")
             metadata = _metadata(cur.fetchall())
-        cur.execute("SELECT to_regclass('public.schema_migrations') IS NOT NULL")
+        cur.execute("SELECT to_regclass('schema_migrations') IS NOT NULL")
         migrations = []
         if cur.fetchone()[0]:
-            cur.execute('SELECT version::text FROM public.schema_migrations ORDER BY version')
+            cur.execute('SELECT version::text FROM schema_migrations ORDER BY version')
             migrations = [row[0] for row in cur.fetchall()]
         cur.execute('ROLLBACK')
         return {'service': service, 'store': store, 'dialect': 'postgresql',
@@ -347,7 +356,7 @@ def generate(*, check=False):
         try:
             for _ in range(40):
                 ready = subprocess.run(['docker', 'exec', container, 'pg_isready',
-                                        '-U', 'postgres', '-d', 'postgres'],
+                                        '-h', '127.0.0.1', '-U', 'postgres', '-d', 'postgres'],
                                        capture_output=True).returncode == 0
                 if ready:
                     break

@@ -35,6 +35,8 @@ Generation uses Docker with `postgres:16-alpine`, Go, and temporary SQLite files
 
 `schema snapshot` reads existing databases and does not run schema initialization. Provide PostgreSQL connection URLs through environment variables and paths to SQLite databases accessible from the command host. For a remote SQLite database, run the command where its file is mounted, or use a consistent SQLite online backup from the owning service; copying only a live `.sqlite` file can omit WAL transactions.
 
+The PostgreSQL reader captures the active schema. For a non-`public` deployment, include `search_path=<schema>` in its connection URL so table and metadata identities match the deployed schema.
+
 ```sh
 go run ./scripts/go/rtk-cloud -- schema snapshot \
   --environment staging \

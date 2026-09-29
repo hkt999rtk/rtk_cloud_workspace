@@ -1,15 +1,15 @@
 {
-  "captured_at": "2026-09-29T13:43:35.013137+00:00",
+  "captured_at": "2026-09-29T14:33:38.540475+00:00",
   "environment": null,
   "format_version": 1,
   "revisions": {
-    "Account Manager": "516ddb9b919c",
-    "Billing": "603bb565332e",
-    "Cloud Admin": "dc1f48c4f8b6",
-    "Cloud Frontend": "7861bb36f013",
-    "Video Cloud": "2cc4fe4c4d39"
+    "Account Manager": "2a0f91da4f5b",
+    "Billing": "3027631c1079",
+    "Cloud Admin": "114d6304a1b5",
+    "Cloud Frontend": "20a2498c8a73",
+    "Video Cloud": "334fe8fb2bc1"
   },
-  "schema_hash": "a2c069c3a825292cf92fc64948828f686bdcbae0a111ff58b40923ba0c0b3dd0",
+  "schema_hash": "66805a33bac99abc4791ee58aa33e1303e54e81befeaf607af96f448c214b231",
   "source_dirty": {
     "Account Manager": false,
     "Billing": false,
@@ -17018,8 +17018,8 @@
         },
         {
           "details": {
-            "description": "Size or usage measured in bytes.",
-            "semantic_kind": "bytes"
+            "description": "PDF document payload bytes; byte_length stores its size.",
+            "semantic_kind": "payload"
           },
           "kind": "column",
           "name": "billing_invoice_documents.document_bytes",
@@ -22121,7 +22121,7 @@
               "type": "text"
             },
             {
-              "comment": "Size or usage measured in bytes.",
+              "comment": "PDF document payload bytes; byte_length stores its size.",
               "default": null,
               "name": "document_bytes",
               "not_null": true,
@@ -28002,7 +28002,7 @@
         {
           "details": {
             "critical": "key",
-            "description": "Primary key of batch_job_action_receipts."
+            "description": "Part of composite primary key (job_id, action_key)."
           },
           "kind": "column",
           "name": "batch_job_action_receipts.action_key",
@@ -28022,7 +28022,7 @@
         {
           "details": {
             "critical": "key",
-            "description": "References batch_jobs.id within this database."
+            "description": "Part of composite primary key (job_id, action_key); references batch_jobs.id."
           },
           "kind": "column",
           "name": "batch_job_action_receipts.job_id",
@@ -28042,7 +28042,7 @@
         {
           "details": {
             "critical": "key",
-            "description": "Primary key of batch_job_items."
+            "description": "Part of composite primary key (job_id, item_key)."
           },
           "kind": "column",
           "name": "batch_job_items.item_key",
@@ -28052,7 +28052,7 @@
         {
           "details": {
             "critical": "key",
-            "description": "References batch_jobs.id within this database."
+            "description": "Part of composite primary key (job_id, item_key); references batch_jobs.id."
           },
           "kind": "column",
           "name": "batch_job_items.job_id",
@@ -42208,7 +42208,7 @@
             },
             {
               "comment": "",
-              "default": "'public'::text",
+              "default": "\"current_schema\"()",
               "name": "schema_name",
               "not_null": true,
               "type": "text"
