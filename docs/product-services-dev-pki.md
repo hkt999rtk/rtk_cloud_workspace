@@ -103,6 +103,21 @@ session, service registrations and Product grant below are still pending. The
 local `pki/services/issuer.json` bootstrap enrollment record is not yet complete.
 Do not infer OTA Product enablement or billing from the active CA alone.
 
+The registration listener needs a server certificate for the exact private
+DNS. The bootstrap Job has a short-lived `service:deployment-bootstrap` client
+certificate, which the ordinary gateway caller regex deliberately excludes.
+Video Cloud PR #734 adds a separate, temporary route for this one server
+certificate: verified direct mTLS, `purpose=server`, one exact
+`CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SERVER_DNS_NAME` already on the gateway
+DNS allowlist, and a matching active deployment session whose stored
+bootstrap-certificate fingerprint matches the mTLS leaf are all required.
+Configure the DNS setting only with that session and remove
+it after sealing. An expired or sealed session denies further issuance even
+while the bootstrap leaf remains valid. The issued server certificate and its
+registry record follow normal validity and revocation. The one-shot server
+Job uses the same protected state PVC and bootstrap NetworkPolicy label. Keep
+the ordinary gateway caller regex unchanged.
+
 ## Read-only baseline (2026-09-26)
 
 The active Service intermediate is
@@ -239,12 +254,19 @@ session succeed.
    lived; retry only the same session and PVC.
 3. Issue one registry recorded client certificate for each of the six exact
    subjects. The dedicated listener server certificate must cover the exact
-   private DNS above. Keep each private key in its own protected state and
+   private DNS above. Its bootstrap request uses the session-bound certissuer
+   route and exact DNS setting described above; the session's six client
+   subject acknowledgements remain unchanged. Keep each private key in its
+   own protected state and
    verify the registry receipt, issuer chain, purpose, validity, and current
    issuer CRL before Secret installation. The Account Manager namespace needs
    `account-manager-service-registration-tls` with `tls.crt`, `tls.key`,
-   `client-ca.crt`, `client.crl`. The Video Cloud namespace needs the following
-   six separate Secrets, each with `client.crt`, `client.key`, `server-ca.crt`:
+   `client-ca.crt`, `client.crl`. The listener uses app Pod port `9444`, reached
+   through the private Account Manager Service port `8443`; its existing PKI
+   sidecar already owns Pod port `8443`. The ingress NetworkPolicy must admit
+   the six reviewed registrar Pod identities on `9444`. The Video Cloud
+   namespace needs the following six separate Secrets, each with `client.crt`,
+   `client.key`, `server-ca.crt`:
 
    | Certificate CN | Secret | Service / instance | Option |
    | --- | --- | --- | --- |

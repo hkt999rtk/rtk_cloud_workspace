@@ -298,8 +298,15 @@ the four built-ins. The shared contracts OpenAPI remains the canonical wire
 reference for the dedicated mTLS registration listener; the local Account
 Manager OpenAPI does not imply those routes run on its user API port.
 The local LKE renderer now has a default-off Account Manager service-registry
-port, Secret mount, and narrowly scoped NetworkPolicy. It checks the required
-Secret keys before a selected Account Manager rollout. Both Video Cloud LKE
+Service port `8443` mapped to app Pod port `9444`, a Secret mount, and a
+narrowly scoped NetworkPolicy on `9444`. The separate PKI sidecar already uses
+Pod port `8443`; the renderer keeps that identity listener unchanged. It checks
+the required Secret keys before a selected Account Manager rollout. The
+initial server certificate is issued under an operator-created bootstrap
+session: certissuer accepts the temporary caller for `purpose=server` and one
+exact private DNS on the existing allowlist, then removes that temporary
+setting after the session seals. The ordinary gateway caller policy remains
+unchanged. Both Video Cloud LKE
 image build paths include the four independent service binaries. A separate
 default-off manifest can deploy one MQTT foundation registrar with a stable,
 preapproved instance identity; it checks for its dedicated client-identity

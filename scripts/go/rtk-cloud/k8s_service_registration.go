@@ -5,7 +5,11 @@ import (
 	"fmt"
 )
 
-const serviceRegistrationTLSSecretName = "account-manager-service-registration-tls"
+const (
+	serviceRegistrationTLSSecretName = "account-manager-service-registration-tls"
+	// The PKI sidecar already binds 8443 in the same Pod network namespace.
+	serviceRegistrationPodPort = 9444
+)
 
 var serviceRegistrationTLSSecretKeys = []string{"tls.crt", "tls.key", "client-ca.crt", "client.crl"}
 

@@ -1999,8 +1999,8 @@ spec:
                   - video-cloud-otaservice
       ports:
         - protocol: TCP
-          port: 8443
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"))
+          port: %d
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "video-cloud"), serviceRegistrationPodPort)
 }
 
 func lkeAllowCloudAdminAccountManagerNetworkPolicyManifest(env map[string]string) string {
@@ -9856,11 +9856,11 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		}
 		if lkeAccountManagerServiceRegistrationEnabled(env) {
 			checksumValues = append(checksumValues, "service-registration-enabled")
-			extraPorts = `            - name: service-registry
-              containerPort: 8443
-`
-			extraEnv += `            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
-              value: "8443"
+			extraPorts = fmt.Sprintf(`            - name: service-registry
+              containerPort: %d
+`, serviceRegistrationPodPort)
+			extraEnv += fmt.Sprintf(`            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
+              value: "%d"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT
               value: "/etc/rtk-account-manager/service-registration/tls.crt"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY
@@ -9869,7 +9869,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
               value: "/etc/rtk-account-manager/service-registration/client-ca.crt"
             - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_CLIENT_CRL
               value: "/etc/rtk-account-manager/service-registration/client.crl"
-`
+`, serviceRegistrationPodPort)
 		}
 		templateAnnotations = fmt.Sprintf(`      annotations:
         rtk.realtek.com/runtime-checksum: %q
