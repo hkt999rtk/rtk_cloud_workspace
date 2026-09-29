@@ -49,8 +49,15 @@ The authorization record has two purposes with different failure behavior:
 Loki is a searchable operational log, not an immutable authorization ledger or
 the controller's transaction boundary. The database keeps only the minimal
 binding required to decide whether the action may execute; it does not replace
-the wider operational log stream. Keep private keys, tokens and signer secrets
-out of both records.
+the wider operational log stream. `pki_operator_authorizations` is keyed by
+operation ID; the controller can insert and select it but cannot update or delete
+it, and a database trigger rejects mutation even if a privileged client tries.
+`pki_audit` has the same update/delete trigger. The authorization handler emits
+`pki_operator_authorized` only after the database transaction commits, with
+`environment`, `operator_id`, `operation_id`, and `request_sha256` for Loki
+correlation. A missing Loki event is an observability fault to reconcile from
+the database and operation state; it must never be treated as permission to
+proceed. Keep private keys, tokens and signer secrets out of both records.
 
 The dev controller now uses its configured operator and signer reference. Other
 environments retain their own pre-cutover behavior until the same configuration,

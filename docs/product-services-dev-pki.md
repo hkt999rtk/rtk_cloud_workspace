@@ -76,6 +76,17 @@ mTLS probe then passed. The exact list is saved in this environment's
 update, reconcile the live list with that environment key; the legacy whole
 Deployment renderer is still unsuitable for this PKI-managed workload.
 
+The certissuer code on the frozen Video Cloud base now includes the six-subject
+bootstrap trust fix from PR #732 (merge commit
+`fc13fdbb1e80ece35b9203931210b549b1bcbe9e`). The listener takes the exact
+comma-separated `CERT_ISSUER_SERVICE_CLIENT_BOOTSTRAP_SUBJECTS` set while the
+legacy singular input remains unset. It still requires the reviewed session,
+`service:deployment-bootstrap` caller, and pinned Service Root CA, and rejects
+missing CA or an empty subject set. Focused Go tests and the governed service
+coverage gate passed before merge. Build and deploy an image from that exact
+commit, then verify listener readiness, the canonical credential check, and
+Account Manager mTLS before creating the short-lived bootstrap session.
+
 The private registration listener, six new registrar identities, bootstrap
 session, service registrations and Product grant below are still pending. The
 local `pki/services/issuer.json` bootstrap enrollment record is not yet complete.
