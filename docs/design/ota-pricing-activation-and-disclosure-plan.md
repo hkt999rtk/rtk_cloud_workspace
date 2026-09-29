@@ -14,6 +14,24 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 - OTA 仍是可註冊、可被 Product 選用的獨立服務。只有 Product 啟用 OTA 才顯示其 dashboard；未啟用時明示「此產品尚未啟用 OTA 服務」。Product 選用服務、費率生效、實際產生用量，是三件不同的事。
 - 其他服務目前畫面中的金額屬**參考價／研究草案**。不得把研究價直接當作已生效價，也不得因計量器存在就宣稱正在收費。任何 Cloud／環境的正式費率只由 Billing 的有效 pricing version 決定。
 
+### 執行決策（2026-09-29）
+
+使用者已授權由執行者決定剩餘技術與過渡規則，採用以下做法：
+
+- **UTC 銜接**：最後一個舊帳期從原時區的前一個月初開始，結束時間延長或截短到 OTA 正式生效的 UTC 月初。整個舊帳期沿用原完整價卡與原稅規則；生效前 OTA 事實仍保留但不收費。不得把 8 小時差額單獨套用新價，也不得按時間比例拆分已封存的用量事實。
+- **執行介面**：Billing 提供先唯讀預覽、再以相同摘要執行的銜接關帳命令。預覽核對正式發佈紀錄、舊／新價卡、帳戶與 owner、profile、完整用量及帳期衝突，列出期間與舊價估算；執行時重新檢查並與一般關帳共用交易鎖。尚未到切點、已開票或有其他重疊帳期、跨邊界不可切分用量、profile 或 owner 證據不足時停止，保留原資料供人工處理。切換完成後使用完整 UTC 月。
+- **月中移轉／關閉**：暫不自動按人頭或天數分攤 OTA。該月保留完整來源證據，暫停自動開立 OTA 帳單，依既有待審原因交人工核對。此為本次交付規則，後續自動分攤是獨立功能。
+- **PKI**：沿用環境專屬 Root 與受控工具。dev Service 中繼憑證只增加已審閱的七個 client subject 及一個 DNS，保留現有允許項目。依實際操作所需的已驗證角色完成申請、核准與簽發，不把 Root 輪替的額外角色要求套用到中繼憑證，也不偽造第二位核准者。已有授權涵蓋技術準備與執行；實際帳戶／簽署權限是部署依賴。
+- **CDN**：採既定 Akamai 直連簽名 URL、私有 origin 與 DataStream 100% sampling。執行者負責 property、stream、目的地及收集設定；僅在查證缺少 Akamai 帳戶存取權後列為外部依賴。CDN 日誌用於成本與完整性對帳；客戶下載量仍由驗證過的裝置完成 receipt 計算。
+
+上述決策不等於已完成實作或已發佈正式價卡。正式生效月在環境驗收完成後選擇未來完整 UTC 月，仍不追收舊月份。
+
+### 本次程式交付（2026-09-29）
+
+- Billing [#44](https://github.com/hkt999rtk/rtk_billing/pull/44) 已合併至選定固定基線：新增 `ota-cutover-bridge` 的唯讀審核及摘要核對執行介面、不可變回執與 migration 070。最後一個舊本地帳期沿用舊完整價卡及稅規則，普通關帳不能略過橋接；帳單用量預覽也顯示同一橋接期間。以隔離 PostgreSQL 16 執行完整 Billing 本機測試，驗證舊價、切點前保留、重放、過期審核摘要、遲到事實與回執不可變。這項程式交付**未選擇生效月、未發佈 OTA 價卡，也未對線上帳戶關帳**。
+- Cloud Admin [#438](https://github.com/hkt999rtk/rtk_cloud_admin/pull/438) 已合併至選定固定基線：登入後「Service Pricing」對下一版已發佈價卡列出每項單價、單位與精度，和當期有效價及研究參考價分開。前端 build、匿名資產價格掃描及未來 OTA 費率的本機瀏覽器驗收通過；這不是實際已啟用 OTA Product 或帳單的驗收。
+- Deployment identity 的契約 [#185](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/185) 與 Video Cloud [#727](https://github.com/hkt999rtk/rtk_video_cloud/pull/727) 已合併至各自固定基線；workspace [#606](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/606) 已釘選合併提交，仍待完整 CI 與主 PR 合併。憑證檢查可拒絕 inventory 後附加資料，並辨識 `_IDENTITY_STATE_FILE` 管理者。這些是部署身分工具與文件，**未代替 dev／staging 實際簽發或安裝身分**。
+
 ### Development 真實驗收與服務目錄門檻（2026-09-29）
 
 以既有 development 平台測試帳戶完成受保護 API 與實際瀏覽器唯讀驗收：未登入取價為 401；登入後三個可讀 Cloud 的參考價、正式價與 Product API 均為 200。參考價各有 15 項，其中 OTA 四筆核准價與本文件一致；Billing 回傳無當期／預告價卡、`ota_eligibility=not_priced`。瀏覽器價格頁顯示四筆「已核准待生效」，選到未啟用 OTA 的 Product 時顯示停用提示；OTA 頁不載入儀表板。這只證明**未啟用 Product 的呈現**，尚無已選 OTA Product、真實用量或已開立 OTA 帳單的驗收。
@@ -219,11 +237,11 @@ Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套
 | `repos/rtk_cloud_admin/docs/service-pricing-research.md` | AWS 等官方 benchmark 的查核日期與非等價說明；**非正式費率來源**。 |
 | `docs/business-model.md` | 公開官網與登入後揭露界線、evaluation／managed cloud／private quote 適用關係；workspace 商務 owner 維護。 |
 
-## 6. 尚需決策的生效條件
+## 6. 尚待完成的生效條件
 
 1. 商務規則已定：付費 Managed Cloud 中 Product 選用 OTA 才適用四價；關閉後原授權任務計至完成、儲存計至實體刪除；OTA 不單獨計稅，所有服務合計後在帳單層計稅一次。帳單總額按台灣營業稅 5% 一次計稅，正式電子發票處理暫不實作；仍須完成帳戶資格及歷史 Product grant 查核的跨服務 staging 驗收；`tax_rate_basis_points=0` **不得宣稱 OTA 免稅**。
 2. 盤點正式環境當期完整 TWD 價卡與所有合約特例，再核准是否要把其他 11 項研究價提升為正式單價；這次只有 OTA 四價已獲核准。
-3. 定義時區月份轉 UTC 的一次性邊界、月中 owner 移轉／Cloud closure 的責任分配。未通過對帳時 OTA 該月不自動收費。
+3. UTC 銜接程式已合併固定基線；仍須在目標環境以正式價卡、帳戶與 owner 證據做唯讀預覽及首期關帳驗收。月中 owner 移轉／Cloud closure 維持人工核對，未通過對帳時 OTA 該月不自動收費。
 4. 完成 CDN 與雙 seal 的 staging 資格、第一個可用的**未來**完整 UTC 月，以及客戶告知時點，才可發佈 production 價卡。
 5. 釐清「登入後才可看具體價格」是否也涵蓋公開 GitHub 原始碼與文件。目前 Cloud Admin、Billing 和 workspace 儲存庫公開，既有原始碼、研究文件及歷史提交含價格數字；這次保護的是應用程式匿名資產和 API，新增的兩份操作／文案文件不重列數字。若要求原始碼層級保密，必須另定私有價目來源、儲存庫可見性及既有公開歷史的處理方式，不能把 UI 授權視為完成該要求。
 

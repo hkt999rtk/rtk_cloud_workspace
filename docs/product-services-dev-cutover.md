@@ -22,7 +22,8 @@ The full Product cutover remains **NO-GO**. The private
 `account-manager-service-registration-tls` Secret and all six registrar
 identity Secrets are absent in dev. The active Service issuer cannot sign the
 new subjects or the Product listener DNS, and its policy is immutable. An
-independently approved successor issuer and new bootstrap session are required;
+a successor issuer approved through the actual Service intermediate workflow
+and a new bootstrap session are required;
 the existing bootstrap PVC must not be reused. Follow
 [the dev PKI prerequisite](product-services-dev-pki.md) to issue and install
 the seven identities, register exact workload approvals, and pass the final
