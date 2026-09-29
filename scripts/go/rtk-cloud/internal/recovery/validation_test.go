@@ -96,7 +96,9 @@ func TestPrivateDirectoriesAndBoundedIO(t *testing.T) {
 	if err := QuietExec(context.Background(), nil, nil, io.Discard); err == nil {
 		t.Fatal("accepted empty command")
 	}
-	e := Engine{Config: Config{TimeoutSeconds: 1}}
+	// The runner executes several coverage jobs concurrently; allow process
+	// startup without weakening the bounded command behavior under test.
+	e := Engine{Config: Config{TimeoutSeconds: 10}}
 	if err := e.command(context.Background(), []string{"true"}, nil, io.Discard); err != nil {
 		t.Fatal(err)
 	}

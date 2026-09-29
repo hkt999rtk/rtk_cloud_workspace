@@ -273,6 +273,23 @@ different results. Do not report a complete staging release from ready Pods,
    object endpoint, `VIDEO_CLOUD_OTA_DELIVERY_MODE=object_url`, required runtime
    Billing/Account Manager tokens, and the dedicated `service:ota` Platform
    identity. Keep the old `otaregistrar` disabled to avoid duplicate ownership.
+   For the existing dev stack, use `deployment ota-service-rollout
+   --environment dev` to review the narrow registration step. After setting
+   `LKE_OTA_REGISTRAR_REGISTRATION_ENABLED=false` and
+   `LKE_OTA_SERVICE_REGISTRATION_ENABLED=true` in the dev operator SecretStore,
+   scale `video-cloud-otaregistrar` to zero and wait until it has no Pods.
+   Pin `LKE_VIDEO_CLOUD_IMAGE` to the reviewed immutable digest, then run
+   `deployment ota-service-rollout --environment dev --confirm video-cloud-dev`.
+   The command combines the current reviewed dev deployment overrides with the
+   environment-local SecretStore runtime; a managed worktree need not contain
+   generated runtime files. In particular, the firmware manifest trust keys
+   come from the reviewed environment configuration rather than an older
+   SecretStore snapshot.
+   This applies only OTA registration policies, its private Service and its
+   Deployment. It checks the old registrar is stopped and leaves the PKI-managed
+   core API and log ingester untouched. Publish OTA manifest v2 with an
+   authenticated service-mTLS request after the independent lease is ready;
+   the rollout command does not change catalogue publication or Product grants.
    Enable registration and verify the independent Pod, private Service,
    registration lease, receipt creation, outbox delivery, and Billing receipt.
    Enable the device edge only after the authenticated device route is verified;

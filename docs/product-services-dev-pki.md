@@ -49,6 +49,13 @@ upload also remains disabled. Follow each service's route and authorization
 gates in [deployment operations](deployment-operations.md) before activation;
 do not activate all suspended services merely because their leases are ready.
 
+The dedicated dev OTA registration step is `deployment ota-service-rollout`.
+It requires an immutable image, the old registrar fully stopped, and the
+existing Product, identity, storage, runtime Secret and private listener gates.
+It updates only the OTA service and its required policies, preserving the
+PKI-managed core API and log ingester. Publication, Product access, billable
+receipt reconciliation and price activation remain separate checks.
+
 ## Live dev checkpoint (2026-09-29)
 
 The frozen operator-authority service versions are deployed in dev: PKI controller
