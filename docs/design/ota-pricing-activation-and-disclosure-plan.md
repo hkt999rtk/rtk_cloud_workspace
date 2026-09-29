@@ -30,7 +30,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 - Billing [#44](https://github.com/hkt999rtk/rtk_billing/pull/44) 已合併至選定固定基線：新增 `ota-cutover-bridge` 的唯讀審核及摘要核對執行介面、不可變回執與 migration 070。最後一個舊本地帳期沿用舊完整價卡及稅規則，普通關帳不能略過橋接；帳單用量預覽也顯示同一橋接期間。以隔離 PostgreSQL 16 執行完整 Billing 本機測試，驗證舊價、切點前保留、重放、過期審核摘要、遲到事實與回執不可變。這項程式交付**未選擇生效月、未發佈 OTA 價卡，也未對線上帳戶關帳**。
 - Cloud Admin [#438](https://github.com/hkt999rtk/rtk_cloud_admin/pull/438) 已合併至選定固定基線：登入後「Service Pricing」對下一版已發佈價卡列出每項單價、單位與精度，和當期有效價及研究參考價分開。前端 build、匿名資產價格掃描及未來 OTA 費率的本機瀏覽器驗收通過；這不是實際已啟用 OTA Product 或帳單的驗收。
-- Deployment identity 的契約 [#185](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/185) 與 Video Cloud [#727](https://github.com/hkt999rtk/rtk_video_cloud/pull/727) 已合併至各自固定基線；workspace [#606](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/606) 已釘選合併提交，仍待完整 CI 與主 PR 合併。憑證檢查可拒絕 inventory 後附加資料，並辨識 `_IDENTITY_STATE_FILE` 管理者。這些是部署身分工具與文件，**未代替 dev／staging 實際簽發或安裝身分**。
+- Deployment identity 的契約 [#185](https://github.com/hkt999rtk/rtk_cloud_contracts_doc/pull/185)、Video Cloud [#727](https://github.com/hkt999rtk/rtk_video_cloud/pull/727) 及 workspace [#606](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/606) 已合併至各自固定基線，CI 均通過。憑證檢查可拒絕 inventory 後附加資料，並辨識 `_IDENTITY_STATE_FILE` 管理者。這些是部署身分工具與文件，**未代替 dev／staging 實際簽發或安裝身分**。
 
 ### Development 真實驗收與服務目錄門檻（2026-09-29）
 
