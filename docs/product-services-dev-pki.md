@@ -20,9 +20,12 @@ certissuer and pki-controller names. The Product listener DNS is
 `account-manager.video-cloud-dev-account-manager.svc.cluster.local`.
 Issuer policy is immutable, so use a successor Service intermediate. Preserve
 the nine existing client subjects and two server names to avoid renewal gaps.
-Follow the Service intermediate's enforced request, approval and signing roles;
-do not borrow any additional human-approval rule from a Root rotation or
-record a second reviewer who did not participate.
+The accepted target is one environment operator for both initial creation and
+subsequent Service updates: the operator reviews the exact request digest,
+uses the configured environment signer, and records the outcome. No second
+human or separate `pki_admin` approval is required by the design. The live
+controller still enforces its older independent-role rule; this runbook cannot
+be used to bypass that check. See the [operator authority test plan](design/pki-operator-authority-test-plan.md).
 
 The running Account Manager sidecar uses
 `PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST` from ConfigMap
@@ -74,8 +77,11 @@ session succeed.
 
 ## Issue and install the seven reviewed identities
 
-1. Request, approve, provision and activate a successor **Service**
-   intermediate under the existing Root. Set its exact client policy to these
+1. After the operator-authority implementation has passed its tests and been
+   deployed, use the configured dev operator to review, authorize, provision
+   and activate a successor **Service** intermediate under the existing Root.
+   Do not fabricate an approval or directly advance a registry status. Set
+   its exact client policy to these
    16 sorted subjects. The deployment bootstrap identity must be included
    because the new bootstrap session signs through this successor issuer:
 
@@ -110,6 +116,11 @@ session succeed.
    distribute its public bundle/CRL through the existing six Service trust
    consumers. Wait for their authenticated receipts. Keep the predecessor
    retiring until its issued certificates and CRL obligations drain.
+   For the already requested OTA successor, revalidate operation
+   `b4d42f12-6f21-45c6-b8d2-3df4930a88bd` and digest
+   `d010a3b9a5193a0e001c6ed95b3f70a42e1d1b82c544fc639a50a6b1100edd99`
+   after the implementation change. Preserve that operation's history; a new
+   request is necessary only if its approved content must change.
 2. Reserve a new deployment bootstrap session with the successor issuer,
    reviewed Root pin, a new deployment ID and session UUID. Render its Job
    using `render-staging-controller.py --phase service-bootstrap

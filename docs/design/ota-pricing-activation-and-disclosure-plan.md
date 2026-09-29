@@ -21,7 +21,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 - **UTC 銜接**：最後一個舊帳期從原時區的前一個月初開始，結束時間延長或截短到 OTA 正式生效的 UTC 月初。整個舊帳期沿用原完整價卡與原稅規則；生效前 OTA 事實仍保留但不收費。不得把 8 小時差額單獨套用新價，也不得按時間比例拆分已封存的用量事實。
 - **執行介面**：Billing 提供先唯讀預覽、再以相同摘要執行的銜接關帳命令。預覽核對正式發佈紀錄、舊／新價卡、帳戶與 owner、profile、完整用量及帳期衝突，列出期間與舊價估算；執行時重新檢查並與一般關帳共用交易鎖。尚未到切點、已開票或有其他重疊帳期、跨邊界不可切分用量、profile 或 owner 證據不足時停止，保留原資料供人工處理。切換完成後使用完整 UTC 月。
 - **月中移轉／關閉**：暫不自動按人頭或天數分攤 OTA。該月保留完整來源證據，暫停自動開立 OTA 帳單，依既有待審原因交人工核對。此為本次交付規則，後續自動分攤是獨立功能。
-- **PKI**：沿用環境專屬 Root 與受控工具。dev Service 中繼憑證只增加已審閱的七個 client subject 及一個 DNS，保留現有允許項目。依實際操作所需的已驗證角色完成申請、核准與簽發，不把 Root 輪替的額外角色要求套用到中繼憑證，也不偽造第二位核准者。已有授權涵蓋技術準備與執行；實際帳戶／簽署權限是部署依賴。
+- **PKI（2026-09-29 修訂目標）**：沿用環境專屬 Root 與受控工具。dev Service 中繼憑證只增加已審閱的七個 client subject 及一個 DNS，保留現有允許項目。新環境建立及後續 Service 憑證更新皆由該環境 operator 依設定中的固定身分、簽署政策、申請摘要與稽核執行；不要求第二位人員或獨立 `pki_admin` 核准。現有控制器仍有舊門檻，須先修改並驗證，不能以假核准或資料庫改寫繞過。
 - **下載資料路徑（2026-09-29 更新）**：首版讓裝置使用短效 HTTPS 物件儲存簽名 GET URL，直接從私有韌體 bucket 下載；OTA API 只檢查 Product／裝置授權、簽發 URL 並保存 artifact grant，不轉送韌體位元組。URL 最長十分鐘，受 manifest 到期時間限制，先驗證實際物件 endpoint、Range、到期和隔離。客戶下載量仍以裝置驗證完整大小與 SHA-256 後的首次 `downloaded` receipt 計算，URL、物件 GET 或失敗重試都不直接計費。Akamai CDN、DataStream 收集與成本對帳留作後續擴充，不是首版啟用、月封存或價格生效的前置條件。若將來切至 CDN 模式，須另行驗證該模式的完整日誌、金鑰和封存規則，不混用同一帳期的兩種證據。
 
 上述決策不等於已完成實作或已發佈正式價卡。正式生效月在環境驗收完成後選擇未來完整 UTC 月，仍不追收舊月份。
@@ -48,7 +48,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 更新後再次確認：匿名價格 API 為 401；平台帳戶可讀三個 Cloud，各有 15 筆參考資料及四筆正確的 OTA 核准／參考價，當期與預告價卡皆空、`ota_eligibility=not_priced`。Video Cloud 的 task/download receipt、artifact object、OTA outbox 和 Billing OTA usage fact／pricing publication 均為 0。核心仍是 `VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED=false`，Product 寫入與獨立 OTA 服務仍關閉，故此更新沒有啟用 OTA 或開始計費。
 
-已由 registry 確認 dev active Service 中繼 v9 的政策不含 `service:ota` 或新的 Account Manager 註冊 DNS。依 [dev PKI 前置程序](../product-services-dev-pki.md) 向現有 Service Root `697e8e86-5af6-4580-8456-7f91d17634f2` 建立後繼中繼 v10 的申請：operation `b4d42f12-6f21-45c6-b8d2-3df4930a88bd`，審核摘要 `d010a3b9a5193a0e001c6ed95b3f70a42e1d1b82c544fc639a50a6b1100edd99`，含文件指定的 16 個 client subject 與 3 個 DNS。申請狀態仍為 `requested`；實際系統要求**不同於申請者的一位 `pki_admin`**核准，中繼尚未 provision／簽署／啟用，Bootstrap session 與七個工作負載身分亦未建立。未完成前維持服務目錄、Product 寫入與 OTA 計費開關關閉。
+已由 registry 確認 dev active Service 中繼 v9 的政策不含 `service:ota` 或新的 Account Manager 註冊 DNS。依 [dev PKI 前置程序](../product-services-dev-pki.md) 向現有 Service Root `697e8e86-5af6-4580-8456-7f91d17634f2` 建立後繼中繼 v10 的申請：operation `b4d42f12-6f21-45c6-b8d2-3df4930a88bd`，審核摘要 `d010a3b9a5193a0e001c6ed95b3f70a42e1d1b82c544fc639a50a6b1100edd99`，含文件指定的 16 個 client subject 與 3 個 DNS。申請狀態仍為 `requested`；**目前部署的舊程式**要求不同於申請者的 `pki_admin` 核准，但使用者已確認目標是環境 operator 單人完成建立及後續更新。中繼尚未 provision／簽署／啟用，Bootstrap session 與七個工作負載身分亦未建立。待程式依 [operator 權限測試計畫](pki-operator-authority-test-plan.md) 修正並部署後，重驗同一申請與摘要；在此之前維持服務目錄、Product 寫入與 OTA 計費開關關閉。
 
 ### 執行狀態（2026-09-28）
 

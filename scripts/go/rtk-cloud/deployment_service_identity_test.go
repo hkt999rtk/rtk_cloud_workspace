@@ -169,6 +169,43 @@ func TestDeploymentIdentityRetriesPersistedRequestAndReusesCompletedCredential(t
 	}
 }
 
+func TestDeploymentIdentityRequiresSelectedEnvironmentOperator(t *testing.T) {
+	f := newDeploymentSignerFixture(t)
+	f.cfg.OperatorUserID = "configured-operator"
+	f.cfg.SignerReference = "offline:dev/service-root"
+	raw, err := json.Marshal(f.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.store.write("pki/services/issuer.json", raw, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = readDeploymentServiceIssuer(f.store, f.cfg.Stack); err == nil {
+		t.Fatal("issuer accepted without environment operator record")
+	}
+	if err = f.store.write("operator/env/PKI_OPERATOR_USER_ID", []byte("other-operator"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = readDeploymentServiceIssuer(f.store, f.cfg.Stack); err == nil {
+		t.Fatal("issuer accepted a different operator")
+	}
+	if err = f.store.write("operator/env/PKI_OPERATOR_USER_ID", []byte(f.cfg.OperatorUserID), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = readDeploymentServiceIssuer(f.store, f.cfg.Stack); err == nil {
+		t.Fatal("issuer accepted without signer reference")
+	}
+	if err = f.store.write("operator/env/PKI_OPERATOR_SIGNER_REF", []byte(f.cfg.SignerReference), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = readDeploymentServiceIssuer(f.store, f.cfg.Stack); err != nil {
+		t.Fatalf("matching environment operator rejected: %v", err)
+	}
+	if len(f.requests) != 0 {
+		t.Fatal("operator preflight submitted a signing request")
+	}
+}
+
 func TestDeploymentIdentityRejectsUnexpectedResponseAndPreservesPending(t *testing.T) {
 	f := newDeploymentSignerFixture(t)
 	f.wrongReply = true

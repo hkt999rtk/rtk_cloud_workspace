@@ -30,6 +30,8 @@ import (
 type deploymentServiceIssuer struct {
 	Environment              string `json:"environment"`
 	Stack                    string `json:"stack"`
+	OperatorUserID           string `json:"operator_user_id,omitempty"`
+	SignerReference          string `json:"signer_reference,omitempty"`
 	Endpoint                 string `json:"endpoint"`
 	ServerName               string `json:"server_name"`
 	ServerCAFile             string `json:"server_ca_file"`
@@ -83,6 +85,17 @@ func readDeploymentServiceIssuer(store secretStore, stack string) (deploymentSer
 	endpoint, err := url.Parse(cfg.Endpoint)
 	if cfg.Environment != store.Environment || cfg.Stack != stack || err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || (endpoint.Path != "" && endpoint.Path != "/") || cfg.ServerName == "" {
 		return cfg, "", errors.New("deployment issuer environment, stack or HTTPS endpoint is invalid")
+	}
+	operator, err := store.readOperator()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return cfg, "", fmt.Errorf("read selected environment operator: %w", err)
+	}
+	operatorID := strings.TrimSpace(operator["PKI_OPERATOR_USER_ID"])
+	signerReference := strings.TrimSpace(operator["PKI_OPERATOR_SIGNER_REF"])
+	if cfg.OperatorUserID != operatorID || cfg.SignerReference != signerReference ||
+		(cfg.OperatorUserID == "") != (cfg.SignerReference == "") ||
+		cfg.OperatorUserID != strings.TrimSpace(cfg.OperatorUserID) || cfg.SignerReference != strings.TrimSpace(cfg.SignerReference) {
+		return cfg, "", errors.New("deployment Service issuer operator or signer reference differs from selected environment SecretStore")
 	}
 	root, err := store.read(cfg.RootCAFile)
 	if err != nil {

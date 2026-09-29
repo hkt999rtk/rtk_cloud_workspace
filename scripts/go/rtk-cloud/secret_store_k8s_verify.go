@@ -264,6 +264,14 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		return errors.New("live Kubernetes Secret metadata is invalid")
 	}
 	var failures []string
+	operator, operatorErr := store.readOperator()
+	if operatorErr != nil && !errors.Is(operatorErr, os.ErrNotExist) {
+		failures = append(failures, "selected environment operator record is invalid")
+	}
+	configuredOperatorID := strings.TrimSpace(operator["PKI_OPERATOR_USER_ID"])
+	configuredSignerReference := strings.TrimSpace(operator["PKI_OPERATOR_SIGNER_REF"])
+	var controllerOperatorID, accountOperatorID string
+	var controllerSignerReference string
 	for _, secret := range secrets.Items {
 		if secret.Metadata.Namespace != stack && !strings.HasPrefix(secret.Metadata.Namespace, stack+"-") {
 			continue
@@ -306,6 +314,8 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		if json.Unmarshal(deploymentRaw, &deployments) != nil {
 			failures = append(failures, "live Video Cloud deployment metadata is invalid")
 		} else {
+			controllerOperatorID = deploymentPKIOperatorValue(deployments, "pki-controller", "pki-controller", "PKI_OPERATOR_USER_ID")
+			controllerSignerReference = deploymentPKIOperatorValue(deployments, "pki-controller", "pki-controller", "PKI_OPERATOR_SIGNER_REF")
 			serviceClientController, serviceClientRegistryConfigured = serviceClientRegistryInputs(deployments)
 			if err := verifyCertIssuerBootstrapConfiguration(kubeconfig, namespace, deployments); err != nil {
 				failures = append(failures, err.Error())
@@ -357,6 +367,7 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		if json.Unmarshal(accountRaw, &deployments) != nil {
 			failures = append(failures, "live Account Manager deployment metadata is invalid")
 		} else {
+			accountOperatorID = deploymentPKIOperatorValue(deployments, "account-manager", "app", "PKI_OPERATOR_USER_ID")
 			if err := verifyAccountManagerPKIConfiguration(deployments); err != nil {
 				failures = append(failures, err.Error())
 			}
@@ -364,6 +375,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 				failures = append(failures, err.Error())
 			}
 		}
+	}
+	if err := verifyPKIOperatorBinding(configuredOperatorID, controllerOperatorID, accountOperatorID, configuredSignerReference, controllerSignerReference); err != nil {
+		failures = append(failures, err.Error())
 	}
 	if serviceClientController && serviceClientRegistryConfigured {
 		if err := verifyLiveDeploymentBootstrapSessions(kubeconfig, stack+"-platform", now); err != nil {
@@ -375,6 +389,35 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	}
 	sort.Strings(failures)
 	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
+}
+
+func verifyPKIOperatorBinding(configured, controller, account, configuredSigner, controllerSigner string) error {
+	if configured == "" && controller == "" && account == "" && configuredSigner == "" && controllerSigner == "" {
+		return nil // Environment has not opted into the operator migration.
+	}
+	if configured == "" || configuredSigner == "" || controller != configured || account != configured || controllerSigner != configuredSigner {
+		return errors.New("PKI operator identity or signer reference differs between the selected environment SecretStore, controller and Account Manager")
+	}
+	return nil
+}
+
+func deploymentPKIOperatorValue(deployments liveDeploymentList, deploymentName, containerName, key string) string {
+	for _, deployment := range deployments.Items {
+		if deployment.Metadata.Name != deploymentName {
+			continue
+		}
+		for _, container := range deployment.Spec.Template.Spec.Containers {
+			if container.Name != containerName {
+				continue
+			}
+			for _, env := range container.Env {
+				if env.Name == key && env.ValueFrom == nil {
+					return strings.TrimSpace(env.Value)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // Product CA creation waits for receipts from these workloads. If either

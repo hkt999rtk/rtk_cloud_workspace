@@ -22,6 +22,7 @@ qualification, and capacity/load testing. These levels do not replace one anothe
 | UI tests | `test-ui` | Chromium and local BFF/fixtures |
 | Deployed-environment acceptance | `deployment acceptance` | Matching runtime + kube access |
 | Billing staging qualification | GitHub Actions `billing-staging-qualification.yml` | Actions dispatch permission + staging authorization |
+| PKI operator-authority qualification | [PKI operator authority test plan](design/pki-operator-authority-test-plan.md) | Disposable local PKI fixtures first; exact environment operator identity and current implementation status before live acceptance |
 | Feature 1K qualification | `test-feature` | Acceptance PASS + dedicated test identity |
 | Capacity test | `home-100k.sh workflow-live` | Explicit target, capacity plan, sufficient inventory and generators |
 
