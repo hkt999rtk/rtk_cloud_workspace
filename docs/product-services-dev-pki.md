@@ -263,8 +263,10 @@ session succeed.
    `account-manager-service-registration-tls` with `tls.crt`, `tls.key`,
    `client-ca.crt`, `client.crl`. The listener uses app Pod port `9444`, reached
    through the private Account Manager Service port `8443`; its existing PKI
-   sidecar already owns Pod port `8443`. The ingress NetworkPolicy must admit
-   the six reviewed registrar Pod identities on `9444`. The Video Cloud
+   sidecar already owns Pod port `8443`. The Kubernetes port name is
+   `service-reg` (port names cannot exceed 15 characters). The ingress
+   NetworkPolicy must admit the six reviewed registrar Pod identities on
+   `9444`. The Video Cloud
    namespace needs the following six separate Secrets, each with `client.crt`,
    `client.key`, `server-ca.crt`:
 
@@ -283,15 +285,24 @@ session succeed.
    write a key to the repository, or reuse the existing log ingester identity
    for `service:logger`. Keep a receipt of the issuer and leaf fingerprints,
    Secret resource versions and expiry, without recording key material.
-4. After each target has loaded and verified its own issued identity, record
-   its bootstrap acknowledgement. Seal the session only after all six have
-   acknowledged; remove bootstrap-only environment inputs from ordinary
-   workloads. Then, as an authenticated platform administrator, approve the
-   six exact `(environment, subject, issuer fingerprint, service, instance,
-   allowed option)` bindings through Account Manager's
-   `POST /platform/service-workloads`. The fingerprint is the issuing
-   intermediate's SHA-256, not the leaf fingerprint. Registration and
-   publication remain separate steps.
+4. As an authenticated platform administrator, approve the six exact
+   `(environment, subject, issuer fingerprint, service, instance, allowed
+   option)` bindings through Account Manager's `POST /platform/service-workloads`.
+   The fingerprint is the issuing intermediate's SHA-256, not the leaf
+   fingerprint. Registration and publication remain separate steps. Start
+   each target with its own identity and verify that the process loaded it and
+   registered its lease. Only then record that target's bootstrap
+   acknowledgement; possession of a Kubernetes Secret alone is insufficient.
+   The OTA registrar probes the Video Cloud API through its internal Service
+   port `80` at `/readyz/ota`; the API Pod's port `8080` is not a Service port.
+   Run `serviceidentity-bootstrap ack` and `seal` from a short-lived operator
+   Job with the environment's PKI migration database credential. The runtime
+   `pkimanagement` sidecar uses a read-only verifier role and cannot update
+   the session table. Seal only after all six acknowledgements, then remove
+   bootstrap-only inputs from ordinary workloads. If the 30-minute session
+   expires before runtime verification, leave it unacknowledged, expire the
+   session with the same operator credential, and plan a reviewed recovery;
+   do not record a false installation.
 
 ## Go / No-Go before Product rollout
 

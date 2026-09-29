@@ -28,7 +28,7 @@ func TestLKEOTARegistrarDeploymentUsesCoreReadinessAndSeparateIdentity(t *testin
 	for _, want := range []string{
 		"replicas: 1", "type: Recreate", "command: [\"/app/otaregistrar\"]",
 		"name: VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED\n              value: \"true\"",
-		"name: VIDEO_CLOUD_OTA_UPSTREAM_URL\n              value: \"http://video-cloud-api.video-cloud-dev-video-cloud.svc.cluster.local:8080\"",
+		"name: VIDEO_CLOUD_OTA_UPSTREAM_URL\n              value: \"http://video-cloud-api.video-cloud-dev-video-cloud.svc.cluster.local:80\"",
 		"secretName: ota-service-platform-identity",
 		"path: /readyz", "value: \"ota-service-0\"",
 	} {

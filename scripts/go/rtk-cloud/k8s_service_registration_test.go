@@ -16,7 +16,7 @@ func TestLKEAccountManagerServiceRegistrationIsOptIn(t *testing.T) {
 		"deployment": lkeDeploymentManifest(env, workload, nil),
 		"service":    lkeServiceManifest(env, workload),
 	} {
-		if strings.Contains(manifest, "service-registry") || strings.Contains(manifest, "account-manager-service-registration-tls") {
+		if strings.Contains(manifest, "service-reg") || strings.Contains(manifest, "account-manager-service-registration-tls") {
 			t.Fatalf("%s enabled service registration without opt-in", name)
 		}
 		var parsed map[string]any
@@ -82,7 +82,7 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 		}
 	}
 	for _, want := range []string{
-		"name: service-registry\n              containerPort: 9444",
+		"name: service-reg\n              containerPort: 9444",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT\n              value: \"9444\"",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_CERT",
 		"name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_SERVER_KEY",
@@ -96,7 +96,7 @@ func TestLKEAccountManagerServiceRegistrationRendersPrivateMTLSBoundary(t *testi
 			t.Fatalf("deployment lacks %q", want)
 		}
 	}
-	if !strings.Contains(service, "name: service-registry\n      port: 8443\n      targetPort: service-registry") || strings.Contains(service, "type: LoadBalancer") {
+	if !strings.Contains(service, "name: service-reg\n      port: 8443\n      targetPort: service-reg") || strings.Contains(service, "type: LoadBalancer") {
 		t.Fatal("registration Service is not internal on port 8443")
 	}
 	for _, want := range []string{
