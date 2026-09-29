@@ -2457,6 +2457,11 @@ func lkeWaitForIngressExternalIP(env map[string]string) (string, error) {
 }
 
 func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if !opts.loggerOnly {
+		if err := lkeCheckDeploymentIdentityContinuity(paths, env, opts); err != nil {
+			return err
+		}
+	}
 	if opts.loggerOnly {
 		if err := ensureLKEDeployImages(env, opts); err != nil {
 			return err
@@ -5276,62 +5281,27 @@ func lkeCertificateSignedByCA(certPEM, caPEM []byte) (bool, error) {
 }
 
 func loadOrCreateLKEMQTTMaterial(paths provisionPaths, env map[string]string) (lkeMQTTMaterial, error) {
-	stateDir := sensitiveEnvironmentPath(paths, "mqtt-tls")
-	caPath := filepath.Join(stateDir, "ca.crt")
-	certPath := filepath.Join(stateDir, "server.crt")
-	keyPath := filepath.Join(stateDir, "server.key")
-	desiredAlgorithm, err := lkeInternalTLSKeyAlgorithm(env)
+	dir := sensitiveEnvironmentPath(paths, "mqtt-tls")
+	unlock, err := lockDeploymentIdentity(dir)
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
-	if fileExists(caPath) || fileExists(certPath) || fileExists(keyPath) {
-		if !fileExists(certPath) || !fileExists(keyPath) {
-			return lkeMQTTMaterial{}, fmt.Errorf("MQTT TLS state is incomplete under %s", stateDir)
+	defer unlock()
+	saved, err := readDeploymentTLSBundle(dir, "MQTT", []string{"ca.crt", "server.crt", "server.key"})
+	if err != nil {
+		return lkeMQTTMaterial{}, err
+	}
+	if saved != nil {
+		if err := validateDeploymentTLS(saved["server.crt"], saved["server.key"], saved["ca.crt"], nil, lkeMQTTDNSNames(env), x509.ExtKeyUsageServerAuth); err != nil {
+			return lkeMQTTMaterial{}, fmt.Errorf("existing MQTT identity: %w; explicit reconciliation required", err)
 		}
-		// Legacy state did not persist the issuer CA. Rotate it once so the
-		// public listener can serve a complete chain and clients can trust the
-		// same CA through mqtt-runtime/ca.crt.
-		if fileExists(caPath) {
-			keyAlgorithm, err := lkePEMPrivateKeyAlgorithm(keyPath)
-			if err != nil {
-				return lkeMQTTMaterial{}, err
-			}
-			certAlgorithm, err := lkePEMCertificatePublicKeyAlgorithm(certPath)
-			if err != nil {
-				return lkeMQTTMaterial{}, err
-			}
-			coversDNSNames, err := lkeCertificateCoversDNSNames(certPath, lkeMQTTDNSNames(env))
-			if err != nil {
-				return lkeMQTTMaterial{}, err
-			}
-			if keyAlgorithm == desiredAlgorithm && certAlgorithm == desiredAlgorithm && coversDNSNames {
-				caPEM, err := os.ReadFile(caPath)
-				if err != nil {
-					return lkeMQTTMaterial{}, err
-				}
-				certPEM, err := os.ReadFile(certPath)
-				if err != nil {
-					return lkeMQTTMaterial{}, err
-				}
-				signedByCA, err := lkeCertificateSignedByCA(certPEM, caPEM)
-				if err != nil {
-					return lkeMQTTMaterial{}, err
-				}
-				if signedByCA {
-					keyPEM, err := readSensitiveFile(keyPath, "MQTT TLS private key")
-					if err != nil {
-						return lkeMQTTMaterial{}, err
-					}
-					return lkeMQTTMaterial{CACert: string(caPEM), ServerCert: string(certPEM), ServerKey: keyPEM}, nil
-				}
-			}
-		}
+		return lkeMQTTMaterial{CACert: saved["ca.crt"], ServerCert: saved["server.crt"], ServerKey: saved["server.key"]}, nil
 	}
 	material, err := newLKEMQTTMaterial(env)
 	if err != nil {
 		return lkeMQTTMaterial{}, err
 	}
-	if err := replaceLKEMQTTMaterial(stateDir, material); err != nil {
+	if err := replaceLKEMQTTMaterial(dir, material); err != nil {
 		return lkeMQTTMaterial{}, err
 	}
 	return material, nil
@@ -5409,103 +5379,38 @@ func newLKECertIssuerMaterial(env map[string]string) (lkeCertIssuerMaterial, err
 }
 
 func loadOrCreateLKECertIssuerMaterial(paths provisionPaths, env map[string]string) (lkeCertIssuerMaterial, error) {
-	stateDir := sensitiveEnvironmentPath(paths, "certissuer")
-	files := []string{"server.crt", "server.key", "service-ca.crt", "client.crt", "client.key", "factory.crt", "factory.key"}
-	desiredAlgorithm, err := lkeInternalTLSKeyAlgorithm(env)
+	dir := sensitiveEnvironmentPath(paths, "certissuer")
+	unlock, err := lockDeploymentIdentity(dir)
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
-	exists := false
-	for name := range files {
-		if fileExists(filepath.Join(stateDir, files[name])) {
-			exists = true
-			break
-		}
+	defer unlock()
+	saved, err := readDeploymentTLSBundle(dir, "certissuer", []string{"server.crt", "server.key", "service-ca.crt", "client.crt", "client.key", "factory.crt", "factory.key"})
+	if err != nil {
+		return lkeCertIssuerMaterial{}, err
 	}
-	if exists {
-		for _, name := range files {
-			if !fileExists(filepath.Join(stateDir, name)) {
-				return lkeCertIssuerMaterial{}, fmt.Errorf("certissuer TLS state is incomplete under %s", stateDir)
+	if saved != nil {
+		checks := []struct {
+			cert, key     string
+			subjects, dns []string
+			purpose       x509.ExtKeyUsage
+		}{
+			{"server.crt", "server.key", []string{"certissuer"}, lkeCertIssuerDNSNames(env), x509.ExtKeyUsageServerAuth},
+			{"client.crt", "client.key", []string{"service:account-manager", "account-manager"}, nil, x509.ExtKeyUsageClientAuth},
+			{"factory.crt", "factory.key", []string{"factoryenroll"}, nil, x509.ExtKeyUsageClientAuth},
+		}
+		for _, check := range checks {
+			if err := validateDeploymentTLS(saved[check.cert], saved[check.key], saved["service-ca.crt"], check.subjects, check.dns, check.purpose); err != nil {
+				return lkeCertIssuerMaterial{}, fmt.Errorf("existing certissuer %s: %w; explicit reconciliation required", check.cert, err)
 			}
 		}
-		for _, name := range []string{"server.key", "client.key", "factory.key"} {
-			keyPath := filepath.Join(stateDir, name)
-			algorithm, err := lkePEMPrivateKeyAlgorithm(keyPath)
-			if err != nil {
-				return lkeCertIssuerMaterial{}, err
-			}
-			if algorithm != desiredAlgorithm {
-				exists = false
-				break
-			}
-		}
-		if exists {
-			for _, name := range []string{"service-ca.crt", "server.crt", "client.crt", "factory.crt"} {
-				algorithm, err := lkePEMCertificatePublicKeyAlgorithm(filepath.Join(stateDir, name))
-				if err != nil {
-					return lkeCertIssuerMaterial{}, err
-				}
-				if algorithm != desiredAlgorithm {
-					exists = false
-					break
-				}
-			}
-		}
-	}
-	if exists {
-		readPublic := func(name string) (string, error) {
-			body, err := os.ReadFile(filepath.Join(stateDir, name))
-			if err != nil {
-				return "", err
-			}
-			return string(body), nil
-		}
-		readPrivate := func(name, label string) (string, error) {
-			return readSensitiveFile(filepath.Join(stateDir, name), label)
-		}
-		serverCert, err := readPublic("server.crt")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		serverKey, err := readPrivate("server.key", "certissuer server private key")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		serviceCA, err := readPublic("service-ca.crt")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		clientCert, err := readPublic("client.crt")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		clientKey, err := readPrivate("client.key", "certissuer account-manager client private key")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		factoryCert, err := readPublic("factory.crt")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		factoryKey, err := readPrivate("factory.key", "certissuer factory client private key")
-		if err != nil {
-			return lkeCertIssuerMaterial{}, err
-		}
-		return lkeCertIssuerMaterial{
-			ServerCert:  serverCert,
-			ServerKey:   serverKey,
-			ServiceCA:   serviceCA,
-			ClientCert:  clientCert,
-			ClientKey:   clientKey,
-			FactoryCert: factoryCert,
-			FactoryKey:  factoryKey,
-		}, nil
+		return lkeCertIssuerMaterial{ServerCert: saved["server.crt"], ServerKey: saved["server.key"], ServiceCA: saved["service-ca.crt"], ClientCert: saved["client.crt"], ClientKey: saved["client.key"], FactoryCert: saved["factory.crt"], FactoryKey: saved["factory.key"]}, nil
 	}
 	material, err := newLKECertIssuerMaterial(env)
 	if err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
-	if err := replaceLKECertIssuerMaterial(stateDir, material); err != nil {
+	if err := replaceLKECertIssuerMaterial(dir, material); err != nil {
 		return lkeCertIssuerMaterial{}, err
 	}
 	return material, nil
@@ -5578,67 +5483,27 @@ func newLKEOpenBaoTLSMaterial(env map[string]string) (lkeOpenBaoTLSMaterial, err
 }
 
 func loadOrCreateLKEOpenBaoTLSMaterial(paths provisionPaths, env map[string]string) (lkeOpenBaoTLSMaterial, error) {
-	stateDir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), sensitiveEnvironmentPath(paths, "openbao"))
-	caPath := filepath.Join(stateDir, "tls-ca.crt")
-	certPath := filepath.Join(stateDir, "tls.crt")
-	keyPath := filepath.Join(stateDir, "tls.key")
-	if fileExists(caPath) || fileExists(certPath) || fileExists(keyPath) {
-		if !fileExists(caPath) || !fileExists(certPath) || !fileExists(keyPath) {
-			return lkeOpenBaoTLSMaterial{}, fmt.Errorf("OpenBao TLS state is incomplete under %s", stateDir)
+	dir := firstNonEmpty(os.Getenv("RTK_CLOUD_OPENBAO_STATE_DIR"), sensitiveEnvironmentPath(paths, "openbao"))
+	unlock, err := lockDeploymentIdentity(dir)
+	if err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	defer unlock()
+	saved, err := readDeploymentTLSBundle(dir, "OpenBao", []string{"tls-ca.crt", "tls.crt", "tls.key"})
+	if err != nil {
+		return lkeOpenBaoTLSMaterial{}, err
+	}
+	if saved != nil {
+		if err := validateDeploymentTLS(saved["tls.crt"], saved["tls.key"], saved["tls-ca.crt"], []string{"openbao"}, lkeOpenBaoDNSNames(env), x509.ExtKeyUsageServerAuth); err != nil {
+			return lkeOpenBaoTLSMaterial{}, fmt.Errorf("existing OpenBao identity: %w; explicit reconciliation required", err)
 		}
-		desiredAlgorithm, err := lkeInternalTLSKeyAlgorithm(env)
-		if err != nil {
-			return lkeOpenBaoTLSMaterial{}, err
-		}
-		algorithm, err := lkePEMPrivateKeyAlgorithm(keyPath)
-		if err != nil {
-			return lkeOpenBaoTLSMaterial{}, err
-		}
-		if algorithm != desiredAlgorithm {
-			material, err := newLKEOpenBaoTLSMaterial(env)
-			if err != nil {
-				return lkeOpenBaoTLSMaterial{}, err
-			}
-			if err := replaceLKEOpenBaoTLSMaterial(stateDir, material); err != nil {
-				return lkeOpenBaoTLSMaterial{}, err
-			}
-			return material, nil
-		}
-		for _, path := range []string{caPath, certPath} {
-			algorithm, err := lkePEMCertificatePublicKeyAlgorithm(path)
-			if err != nil {
-				return lkeOpenBaoTLSMaterial{}, err
-			}
-			if algorithm != desiredAlgorithm {
-				material, err := newLKEOpenBaoTLSMaterial(env)
-				if err != nil {
-					return lkeOpenBaoTLSMaterial{}, err
-				}
-				if err := replaceLKEOpenBaoTLSMaterial(stateDir, material); err != nil {
-					return lkeOpenBaoTLSMaterial{}, err
-				}
-				return material, nil
-			}
-		}
-		ca, err := os.ReadFile(caPath)
-		if err != nil {
-			return lkeOpenBaoTLSMaterial{}, err
-		}
-		cert, err := os.ReadFile(certPath)
-		if err != nil {
-			return lkeOpenBaoTLSMaterial{}, err
-		}
-		key, err := readSensitiveFile(keyPath, "OpenBao TLS private key")
-		if err != nil {
-			return lkeOpenBaoTLSMaterial{}, err
-		}
-		return lkeOpenBaoTLSMaterial{CACert: string(ca), ServerCert: string(cert), ServerKey: key}, nil
+		return lkeOpenBaoTLSMaterial{CACert: saved["tls-ca.crt"], ServerCert: saved["tls.crt"], ServerKey: saved["tls.key"]}, nil
 	}
 	material, err := newLKEOpenBaoTLSMaterial(env)
 	if err != nil {
 		return lkeOpenBaoTLSMaterial{}, err
 	}
-	if err := replaceLKEOpenBaoTLSMaterial(stateDir, material); err != nil {
+	if err := replaceLKEOpenBaoTLSMaterial(dir, material); err != nil {
 		return lkeOpenBaoTLSMaterial{}, err
 	}
 	return material, nil

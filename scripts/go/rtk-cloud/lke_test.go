@@ -3353,29 +3353,19 @@ func TestLKEMQTTRuntimeSecretPublishesCAAndServerChain(t *testing.T) {
 	}
 }
 
-func TestLKEMQTTMaterialMigratesLegacyStateWithoutCA(t *testing.T) {
+func TestLKEMQTTMaterialPreservesLegacyStateWithoutCA(t *testing.T) {
 	paths := provisionPaths{EnvRoot: t.TempDir()}
-	env := map[string]string{
-		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256",
-		"VIDEO_CLOUD_DOMAIN":                     "video-cloud-staging.realtekconnect.com",
+	dir := filepath.Join(paths.EnvRoot, "state", "mqtt-tls")
+	writeTestFile(t, filepath.Join(dir, "server.crt"), "existing-cert")
+	writeTestFile(t, filepath.Join(dir, "server.key"), "existing-key")
+	if _, err := loadOrCreateLKEMQTTMaterial(paths, map[string]string{}); err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("error = %v", err)
 	}
-	legacy, err := newLKEMQTTMaterial(env)
-	if err != nil {
-		t.Fatal(err)
+	if readTestFile(t, filepath.Join(dir, "server.crt")) != "existing-cert" {
+		t.Fatal("partial identity replaced")
 	}
-	stateDir := filepath.Join(paths.EnvRoot, "state", "mqtt-tls")
-	writeTestFile(t, filepath.Join(stateDir, "server.crt"), legacy.ServerCert)
-	writeTestFile(t, filepath.Join(stateDir, "server.key"), legacy.ServerKey)
-
-	migrated, err := loadOrCreateLKEMQTTMaterial(paths, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if migrated.CACert == "" || migrated.ServerCert == legacy.ServerCert {
-		t.Fatal("legacy MQTT state without a CA was not rotated")
-	}
-	if got := readTestFile(t, filepath.Join(stateDir, "ca.crt")); got != migrated.CACert {
-		t.Fatal("rotated MQTT CA was not persisted")
+	if _, err := os.Stat(filepath.Join(dir, "ca.crt")); !os.IsNotExist(err) {
+		t.Fatal("replacement CA created")
 	}
 }
 
@@ -3391,56 +3381,32 @@ func TestLKEMQTTStatefulSetChecksumTracksTLSMaterial(t *testing.T) {
 	}
 }
 
-func TestLKEMQTTMaterialRotatesWhenPublicHostnameChanges(t *testing.T) {
+func TestLKEMQTTMaterialRejectsUncoveredHostnameWithoutRotation(t *testing.T) {
 	paths := provisionPaths{EnvRoot: t.TempDir()}
-	baseEnv := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"}
-	first, err := loadOrCreateLKEMQTTMaterial(paths, baseEnv)
+	first, err := loadOrCreateLKEMQTTMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicEnv := map[string]string{
-		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256",
-		"VIDEO_CLOUD_DOMAIN":                     "video-cloud-staging.realtekconnect.com",
+	if _, err := loadOrCreateLKEMQTTMaterial(paths, map[string]string{"VIDEO_CLOUD_DOMAIN": "changed.example.test"}); err == nil {
+		t.Fatal("changed hostname accepted")
 	}
-	rotated, err := loadOrCreateLKEMQTTMaterial(paths, publicEnv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ServerCert == rotated.ServerCert || first.ServerKey == rotated.ServerKey {
-		t.Fatal("MQTT SAN change did not rotate persisted material")
-	}
-	certPath := filepath.Join(paths.EnvRoot, "state", "mqtt-tls", "server.crt")
-	covered, err := lkeCertificateCoversDNSNames(certPath, lkeMQTTDNSNames(publicEnv))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !covered {
-		t.Fatal("rotated MQTT certificate does not cover required DNS names")
+	if got := readTestFile(t, filepath.Join(paths.EnvRoot, "state", "mqtt-tls", "server.crt")); got != first.ServerCert {
+		t.Fatal("identity replaced")
 	}
 }
 
-func TestLKEMQTTMaterialRotatesConfiguredAlgorithm(t *testing.T) {
-	envRoot := t.TempDir()
-	paths := provisionPaths{EnvRoot: envRoot}
-	p256Env := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"}
-	first, err := loadOrCreateLKEMQTTMaterial(paths, p256Env)
+func TestLKEMQTTMaterialReusesIdentityAfterAlgorithmDefaultChanges(t *testing.T) {
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	first, err := loadOrCreateLKEMQTTMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ed25519Env := map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"}
-	rotated, err := loadOrCreateLKEMQTTMaterial(paths, ed25519Env)
+	again, err := loadOrCreateLKEMQTTMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ServerCert == rotated.ServerCert || first.ServerKey == rotated.ServerKey {
-		t.Fatal("MQTT algorithm change did not rotate persisted material")
-	}
-	stateDir := filepath.Join(envRoot, "state", "mqtt-tls")
-	if algorithm, err := lkePEMPrivateKeyAlgorithm(filepath.Join(stateDir, "server.key")); err != nil || algorithm != "ed25519" {
-		t.Fatalf("rotated MQTT private key algorithm = %q, err=%v", algorithm, err)
-	}
-	if algorithm, err := lkePEMCertificatePublicKeyAlgorithm(filepath.Join(stateDir, "server.crt")); err != nil || algorithm != "ed25519" {
-		t.Fatalf("rotated MQTT certificate algorithm = %q, err=%v", algorithm, err)
+	if first != again {
+		t.Fatal("algorithm default replaced existing identity")
 	}
 }
 
@@ -3559,50 +3525,34 @@ func TestLKEPEMAlgorithmValidationFailsClosed(t *testing.T) {
 	}
 }
 
-func TestLKEOpenBaoTLSMaterialRotatesLegacyP256State(t *testing.T) {
-	envRoot := t.TempDir()
-	stateDir := filepath.Join(envRoot, "state", "openbao")
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, filepath.Join(stateDir, "tls-ca.crt"), "legacy-ca")
-	writeTestFile(t, filepath.Join(stateDir, "tls.crt"), "legacy-cert")
-	writeP256PrivateKey(t, filepath.Join(stateDir, "tls.key"))
-	writeTestFile(t, filepath.Join(stateDir, "root-token"), "keep-root-token")
-
-	material, err := loadOrCreateLKEOpenBaoTLSMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
+func TestLKEOpenBaoTLSMaterialReusesIdentityAfterAlgorithmDefaultChanges(t *testing.T) {
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	first, err := loadOrCreateLKEOpenBaoTLSMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	assertPEMPrivateKeyIsEd25519(t, material.ServerKey)
-	assertPEMPrivateKeyIsEd25519(t, readTestFile(t, filepath.Join(stateDir, "tls.key")))
-	if got := readTestFile(t, filepath.Join(stateDir, "root-token")); got != "keep-root-token" {
-		t.Fatalf("expected root token state to survive TLS rotation, got %q", got)
+	again, err := loadOrCreateLKEOpenBaoTLSMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Fatal("algorithm default replaced existing identity")
 	}
 }
 
-func TestLKECertIssuerMaterialRotatesLegacyP256State(t *testing.T) {
-	envRoot := t.TempDir()
-	stateDir := filepath.Join(envRoot, "state", "certissuer")
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"server.crt", "service-ca.crt", "client.crt", "factory.crt"} {
-		writeTestFile(t, filepath.Join(stateDir, name), "legacy-cert")
-	}
-	for _, name := range []string{"server.key", "client.key", "factory.key"} {
-		writeP256PrivateKey(t, filepath.Join(stateDir, name))
-	}
-
-	material, err := loadOrCreateLKECertIssuerMaterial(provisionPaths{EnvRoot: envRoot}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
+func TestLKECertIssuerMaterialReusesIdentityAfterAlgorithmDefaultChanges(t *testing.T) {
+	paths := provisionPaths{EnvRoot: t.TempDir()}
+	first, err := loadOrCreateLKECertIssuerMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "p256"})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	assertPEMPrivateKeyIsEd25519(t, material.ServerKey)
-	assertPEMPrivateKeyIsEd25519(t, material.ClientKey)
-	assertPEMPrivateKeyIsEd25519(t, material.FactoryKey)
+	again, err := loadOrCreateLKECertIssuerMaterial(paths, map[string]string{"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != again {
+		t.Fatal("algorithm default replaced existing identities")
+	}
 }
 
 func assertPEMPrivateKeyIsEd25519(t *testing.T, keyPEM string) {
