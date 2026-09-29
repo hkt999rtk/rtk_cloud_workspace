@@ -154,11 +154,12 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    and verify all are running the reviewed image and setting. Verify old
    devices without an `ota` grant cannot query, receive, or download a new
    update, including an old URL. Verify in-progress result reports still work.
-   Install the reviewed private-origin CDN property, HTTPS
-   `VIDEO_CLOUD_OTA_CDN_BASE_URL`, and the matching 32-byte-or-longer hex
-   token key as `VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX` in the private
-   `ota-cdn-runtime` Secret. Confirm the edge actually validates this key,
-   preserves Range requests, and cannot expose the object-storage origin.
+   Select `VIDEO_CLOUD_OTA_DELIVERY_MODE=object_url`. Confirm the private
+   object bucket and HTTPS endpoint issue signed GET URLs for the exact
+   billable artifact key, preserve Range requests, expire within ten minutes,
+   and expose no storage credentials. The API must never proxy firmware bytes.
+   CDN property, DataStream and `ota-cdn-runtime` are later expansion work;
+   they are not prerequisites for this direct-object cutover.
    Migrate the OTA receipt, artifact, review, and outbox tables before starting
    the service; leave `VIDEO_CLOUD_DB_ENSURE_SCHEMA=false` in its Deployment.
    Then enable `LKE_OTA_SERVICE_REGISTRATION_ENABLED` and wait for the

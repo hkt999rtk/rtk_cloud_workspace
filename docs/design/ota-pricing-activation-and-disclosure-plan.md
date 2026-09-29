@@ -22,7 +22,7 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 - **執行介面**：Billing 提供先唯讀預覽、再以相同摘要執行的銜接關帳命令。預覽核對正式發佈紀錄、舊／新價卡、帳戶與 owner、profile、完整用量及帳期衝突，列出期間與舊價估算；執行時重新檢查並與一般關帳共用交易鎖。尚未到切點、已開票或有其他重疊帳期、跨邊界不可切分用量、profile 或 owner 證據不足時停止，保留原資料供人工處理。切換完成後使用完整 UTC 月。
 - **月中移轉／關閉**：暫不自動按人頭或天數分攤 OTA。該月保留完整來源證據，暫停自動開立 OTA 帳單，依既有待審原因交人工核對。此為本次交付規則，後續自動分攤是獨立功能。
 - **PKI**：沿用環境專屬 Root 與受控工具。dev Service 中繼憑證只增加已審閱的七個 client subject 及一個 DNS，保留現有允許項目。依實際操作所需的已驗證角色完成申請、核准與簽發，不把 Root 輪替的額外角色要求套用到中繼憑證，也不偽造第二位核准者。已有授權涵蓋技術準備與執行；實際帳戶／簽署權限是部署依賴。
-- **CDN**：採既定 Akamai 直連簽名 URL、私有 origin 與 DataStream 100% sampling。執行者負責 property、stream、目的地及收集設定；僅在查證缺少 Akamai 帳戶存取權後列為外部依賴。CDN 日誌用於成本與完整性對帳；客戶下載量仍由驗證過的裝置完成 receipt 計算。
+- **下載資料路徑（2026-09-29 更新）**：首版讓裝置使用短效 HTTPS 物件儲存簽名 GET URL，直接從私有韌體 bucket 下載；OTA API 只檢查 Product／裝置授權、簽發 URL 並保存 artifact grant，不轉送韌體位元組。URL 最長十分鐘，受 manifest 到期時間限制，先驗證實際物件 endpoint、Range、到期和隔離。客戶下載量仍以裝置驗證完整大小與 SHA-256 後的首次 `downloaded` receipt 計算，URL、物件 GET 或失敗重試都不直接計費。Akamai CDN、DataStream 收集與成本對帳留作後續擴充，不是首版啟用、月封存或價格生效的前置條件。若將來切至 CDN 模式，須另行驗證該模式的完整日誌、金鑰和封存規則，不混用同一帳期的兩種證據。
 
 上述決策不等於已完成實作或已發佈正式價卡。正式生效月在環境驗收完成後選擇未來完整 UTC 月，仍不追收舊月份。
 
@@ -40,9 +40,11 @@ Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09
 
 同日對 development 39 筆 legacy revision 1 grant 做跨服務唯讀查核：Account Manager 受保護的歷史 `/ota-grants/1` 查詢全部回應 200，逐筆重算的 digest 均與資料庫不可變 snapshot 相符，且授權有效起點存在；目前 `/ota-grant` 查詢亦全部回應 200，revision／digest 相符且 OTA 均為停用。兩個路徑均回傳 `Cache-Control: no-store`，匿名歷史查詢回應 401。這證明**現有未啟用 Product 的 grant 回填與查詢**，不證明 OTA-enabled Product、任務原授權、四項用量或 Billing 收據。
 
-七個 service-registration 身分 Secret 仍不存在；因此「可註冊 OTA」在程式與部署渲染器已具備，**development 的實際服務目錄與 Product 寫入尚未切換**。依 [dev Product cutover](../product-services-dev-cutover.md) 接著完成受控 Service 中繼憑證與七個身分，再依序啟用 registry／MQTT／選用服務及嚴格授權；不能用 grant 回填或前端測試替代註冊 lease、CDN 與 Billing 驗收。沒有啟用 Product 寫入、OTA 價卡或計費。
+七個 service-registration 身分 Secret 仍不存在；因此「可註冊 OTA」在程式與部署渲染器已具備，**development 的實際服務目錄與 Product 寫入尚未切換**。依 [dev Product cutover](../product-services-dev-cutover.md) 接著完成受控 Service 中繼憑證與七個身分，再依序啟用 registry／MQTT／選用服務及嚴格授權；不能用 grant 回填或前端測試替代註冊 lease、物件下載與 Billing 驗收。沒有啟用 Product 寫入、OTA 價卡或計費。
 
 ### 執行狀態（2026-09-28）
+
+下表是當日固定版本的歷史盤點；其中 CDN property、DataStream、edge review 的啟用門檻已由上述 2026-09-29 直連物件 URL 決策取代。其他 PKI、服務註冊、Product 授權、收據、雙 seal、價卡及帳單驗收門檻仍有效。
 
 | 階段 | 目前狀態 |
 | --- | --- |
@@ -94,7 +96,7 @@ Billing 對歷史 Product OTA grant 的跨服務查詢採 `LKE_BILLING_OTA_GRANT
 
 ### OTA 裝置路由切換順序
 
-獨立 OTA 服務先取得 `service:ota` 身分、private CDN 設定及 Product 授權，再啟用 `LKE_OTA_SERVICE_REGISTRATION_ENABLED`，確認 Pod Ready、lease 與私有 Service endpoint。之後單獨啟用 `LKE_OTA_SERVICE_EDGE_ENABLED`，使 `device.<VIDEO_CLOUD_DOMAIN>` 上的 `/v1/device/ota/` 經要求裝置憑證的 ingress 送到獨立服務；須實測憑證有效、無憑證拒絕、check／artifact-token／events 成功及 CDN URL 直下載。最後才啟用 `LKE_OTA_CORE_CUTOVER_ENABLED`；部署前檢查必須看見**實際已生效**的 mTLS ingress path 和 Ready OTA endpoint。一般 public API host 不能代替裝置 mTLS 入口。回復時先恢復核心 handler，再移除裝置 edge route；若核心 Deployment 暫時不存在但線上 ingress 仍有 OTA 路由，必須保留該路由，待核心 handler 恢復後才可移除。OTA 裝置模擬器的控制請求須用裝置 mTLS host 與各裝置憑證；CDN 下載用不帶裝置憑證的獨立 client。以上路徑程式碼完成、PR 與 live 驗收前仍屬待完成項。
+獨立 OTA 服務先取得 `service:ota` 身分、私有物件儲存 HTTPS endpoint／簽名權限及 Product 授權，再啟用 `LKE_OTA_SERVICE_REGISTRATION_ENABLED`，確認 Pod Ready、lease 與私有 Service endpoint。之後單獨啟用 `LKE_OTA_SERVICE_EDGE_ENABLED`，使 `device.<VIDEO_CLOUD_DOMAIN>` 上的 `/v1/device/ota/` 經要求裝置憑證的 ingress 送到獨立服務；須實測憑證有效、無憑證拒絕、check／artifact-token／events 成功及物件 URL 直下載、Range、到期。最後才啟用 `LKE_OTA_CORE_CUTOVER_ENABLED`；部署前檢查必須看見**實際已生效**的 mTLS ingress path 和 Ready OTA endpoint。一般 public API host 不能代替裝置 mTLS 入口。回復時先恢復核心 handler，再移除裝置 edge route；若核心 Deployment 暫時不存在但線上 ingress 仍有 OTA 路由，必須保留該路由，待核心 handler 恢復後才可移除。OTA 裝置模擬器的控制請求須用裝置 mTLS host 與各裝置憑證；物件下載用不帶裝置憑證的獨立 client。以上路徑程式碼完成、PR 與 live 驗收前仍屬待完成項。
 
 ### development 部署與計費狀態（2026-09-27）
 
@@ -171,11 +173,11 @@ Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/
 | D0 文件／Contracts、Billing、Cloud Admin | 在 OTA contract 將四價標為「已核准未稅單價，尚未生效」，在 pricing contract 記錄 UTC 月初發佈及舊事實不追收；本文件維護跨 repo 順序。把登入後揭露、評估帳戶與 private quote 邊界寫進 business model。新增 Billing 操作 runbook 與 Cloud Admin customer-copy 規格。 | 文件無互相矛盾的「proposal／active」文字；links、docs-check、contracts-check 通過。 |
 | P1 價卡資料／Billing | 保留既有 rate `quantity_scale`／`tax_category` 及舊版計稅模式；新 OTA 完整價卡明示 Product OTA 授權適用規則、台灣營業稅 5% 的帳單總額計稅模式、不可變 base version／manifest digest／審核證據。建立四價 manifest（service/metric/unit、`96@scale3`、`96@scale2`、`96@scale2`、`144@scale6`、TWD、round-half-up、Product gate／歷史 grant、核准日期／帳單稅務政策）。在目標環境的唯讀一致快照中複製當期版次**全部非 OTA 費率**，只加入 OTA 四筆並輸出 deterministic diff/digest；建 immutable draft 時同交易重驗 base／Product scope／tax／差異，拒絕 stale 或只含 OTA 的卡。此階段不啟用費率。 | 缺 5% 帳單稅務設定／帳戶資格／Product grant、重複／漏價、舊費率被改、base 漂移、已有預定版次皆拒絕；manifest digest、舊／新全價卡 diff、審核人、環境、版本與唯讀快照可重現；OTA 未選用 Product、關閉後新工作、關閉前工作完成與儲存未刪除皆有 fail-closed／歷史授權測試。 |
 | P2 UTC 生效／Billing | 把 publication 和「此刻適用」分開：允許預先發佈**未來完整 UTC 月第一天 00:00:00Z**的版本；交易中截斷前版 `effective_until`，新版自該時間適用。對客戶輸出的 current/upcoming 以有效區間算，不直接把資料庫 `active/retired` 欄位當顯示狀態。跨 currency 範圍防止重疊／缺口，保護已開立發票；價卡發佈和 invoice close 共用序列化點。保留既有非月初歷史版次與發票，不重寫。 | PostgreSQL 交易測試：切月前舊價、當刻新價、後續月份新價；併發發佈／月結、重複發佈、重疊、空檔、已開票期間皆安全。 |
-| P3 月份與事實／Billing、Account Manager、OTA producer | 定義新收費期間的 UTC month 契約，修正 usage 預覽與 invoice close；OTA close 僅接受完整 UTC 月，兩份 seal、outbox high-water、CDN 異常對帳都齊全。owner 月中移轉時，完整月 seal 仍證明來源總量；可見性和責任只使用 owner 授權期間。**在可驗證的分攤規則完成之前，月中移轉所涉及的 OTA 月份不自動開立 OTA 費用**，人工審核且不跨 owner 洩露資料。舊時區月份需有一次性的切換／截斷方案，不能產生漏算或重複區間。 | UTC／Asia-Taipei 邊界、月中 Cloud 轉移／關閉、零用量 seal、儲存整月、晚到回報、來源缺口、其他服務同張發票測試；不合格 close 保持 incomplete。 |
+| P3 月份與事實／Billing、Account Manager、OTA producer | 定義新收費期間的 UTC month 契約，修正 usage 預覽與 invoice close；OTA close 僅接受完整 UTC 月、兩份 seal、outbox high-water 與物件盤點對帳。直連物件模式不要求 CDN 日誌；若未來改 CDN，同月不得混用模式且需獨立 edge review。owner 月中移轉時，完整月 seal 仍證明來源總量；可見性和責任只使用 owner 授權期間。**在可驗證的分攤規則完成之前，月中移轉所涉及的 OTA 月份不自動開立 OTA 費用**，人工審核且不跨 owner 洩露資料。舊時區月份需有一次性的切換／截斷方案，不能產生漏算或重複區間。 | UTC／Asia-Taipei 邊界、月中 Cloud 轉移／關閉、零用量 seal、儲存整月、晚到回報、來源缺口、其他服務同張發票測試；不合格 close 保持 incomplete。 |
 | P4 不追收／Billing | 在 invoice input 邊界識別 OTA 正式生效月之前的 fact，保留已接受的 immutable fact 與全部來源 receipt，但從所有 draft/rebuild/close/usage estimated charge 排除；不得為此刪 fact 或重寫歷史。訂定關帳前的 outbox high-water／遲到證據規則：既有 Billing close barrier 拒絕已關帳月份的遲到 fact 時，來源 ledger 仍保存未送達 payload 與拒收原因，不能默默丟棄或轉到新月份。其他服務缺對應費率仍拒絕開票。 | 生效前 OTA + 已收費 MQTT 的混合月可正常開 MQTT 發票、OTA 金額 0 且留稽核；生效後四項按 Product×meter 開列；重跑不改舊單；晚到 fact 可由來源 ledger 對帳。 |
 | A1 客戶價格 API／Billing、Cloud Admin | Billing 提供登入租戶可讀的 current/upcoming TWD price book：`version_id`、有效 UTC 區間、currency、tax policy、rate identity、unit/scale/rounding、整月 commercial 證據／結算時 active Billing 帳戶狀態；Cloud Admin BFF 依 Brand Cloud 授權代理。公開網站不調此 API。若 Billing 查詢失敗，畫面顯示「目前無法確認適用費率」並禁止用靜態參考價替代。 | 權限隔離、錯誤回應、環境不同版次、跨月快取失效、未登入拒絕、無適用價與未生效版次 API 測試。 |
 | A2 詳細前端／Cloud Admin | 將「Billing > Service Pricing」改成正式生效、已核准待生效、參考價／尚待核准三種明確區塊；顯示第 4 節完整表格與計算說明。核准與參考數字由受 Cloud Billing 權限保護的端點提供，不放進匿名可下載的前端資產；Product 選服務與 OTA disabled 畫面連到對應費率；invoice/usage 明細顯示實際 quantity、unit、rate、未稅／稅／總額、pricing version、UTC 期間。持續禁止已移除的固定 NT$232 範例，未來估算器只用當期有效價卡。 | 繁中／英文、窄螢幕表格、鍵盤／螢幕閱讀器、匿名資產與 API 無數字／未授權拒絕、無價／API outage／切月、Product 切換與 invoice drilldown E2E。 |
-| Q1 staging 資格／各 owner | 在隔離資料與固定版次下實測 Product grant、OTA 註冊、CDN 直接下載與 Range、四 receipt/outbox、雙 seal、月結、帳單及價格頁；核對 Billing DB 當期／下期版次。 | 完整且可追溯的 staging 報告；發現 CDN／period seal 差異就不發佈。 |
+| Q1 staging 資格／各 owner | 在隔離資料與固定版次下實測 Product grant、OTA 註冊、私有物件簽名 URL 直接下載與 Range、四 receipt/outbox、雙 seal、月結、帳單及價格頁；核對 Billing DB 當期／下期版次。 | 完整且可追溯的 staging 報告；發現物件盤點／period seal 差異就不發佈。 |
 | R1 production 發佈／Finance、營運 | 核對已決定的 5% 帳單稅務／commercial 加 active 帳戶適用規則並取得 staging 簽核後，選**下一個尚未開始的完整 UTC 月**為生效月，預先發佈審核過的完整版本；在邊界前後核對 API/UI、第一月對帳、舊客帳單與異常回退程序。 | 發佈紀錄、客戶告知及正式環境版次、第一張 OTA invoice 的四項來源與金額對帳。不得回填已過月份。 |
 
 此表是實作順序與驗收條件，**不是已完成清單**。staging／production 的操作依 [Billing staging qualification](../billing-staging-qualification.md) 與部署治理另外執行。

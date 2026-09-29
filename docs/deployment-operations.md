@@ -259,8 +259,8 @@ different results. Do not report a complete staging release from ready Pods,
    `LKE_OTA_CORE_CUTOVER_ENABLED`. The adapter defaults and dev, staging, and
    production overrides all set them to `false`. For an authorized rollout,
    first verify strict Product OTA entitlements, MQTT foundation registration,
-   Account Manager service registration, private object storage, an HTTPS CDN
-   base URL backed by a private origin, `ota-cdn-runtime`, required runtime
+   Account Manager service registration, private object storage, an HTTPS
+   object endpoint, `VIDEO_CLOUD_OTA_DELIVERY_MODE=object_url`, required runtime
    Billing/Account Manager tokens, and the dedicated `service:ota` Platform
    identity. Keep the old `otaregistrar` disabled to avoid duplicate ownership.
    Enable registration and verify the independent Pod, private Service,
@@ -270,7 +270,12 @@ different results. Do not report a complete staging release from ready Pods,
    those switches in the opposite order for rollback while preserving existing
    receipts and outbox evidence.
 
-   The OTA CDN log collector is separately controlled by
+   OTA devices receive short-lived signed object GET URLs and download
+   directly with Range support. The API never proxies firmware bytes. The
+   producer-seal CronJob consumes the same delivery mode; a direct-object
+   month requires no CDN review and rejects mixed CDN evidence.
+
+   The future OTA CDN log collector is separately controlled by
    `LKE_OTA_CDN_COLLECTOR_ENABLED=false` in adapter defaults and every dev,
    staging, and production override. Before enabling it, configure the exact
    DataStream ID, OTA CDN host and URL path root, dedicated log bucket and log

@@ -140,6 +140,8 @@ spec:
                   value: %q
                 - name: VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE
                   value: %q
+                - name: VIDEO_CLOUD_OTA_DELIVERY_MODE
+                  value: %q
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:
                     secretKeyRef: { name: video-cloud-runtime, key: AWS_ACCESS_KEY_ID }
@@ -160,7 +162,8 @@ spec:
 `, videoNS, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env),
 		firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_ENV"), env["CLOUD_ENV_NAME"], env["ACCOUNT_MANAGER_ENV"], "staging"),
 		lkeNamespaceName(env, "platform"), lkeAccountManagerInternalURL(env), env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"],
-		env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"), lkeNamespaceName(env, "billing"))
+		env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"),
+		lkeOTADeliveryMode(env), lkeNamespaceName(env, "billing"))
 }
 
 func lkeAllowOTABillingNetworkPolicyManifest(env map[string]string) string {

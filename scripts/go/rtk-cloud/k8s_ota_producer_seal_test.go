@@ -47,6 +47,7 @@ func TestLKEOTAProducerSealScheduleIsOptInAndUsesDedicatedToken(t *testing.T) {
 		"timeZone: Etc/UTC", "concurrencyPolicy: Forbid", "automountServiceAccountToken: false",
 		`args: ["--all-brand-clouds", "--month", "previous"]`,
 		"name: VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN", "name: VIDEO_CLOUD_OTA_PRODUCER_SEAL_TOKEN",
+		"name: VIDEO_CLOUD_OTA_DELIVERY_MODE",
 	} {
 		if !strings.Contains(job, want) {
 			t.Fatalf("producer CronJob lacks %q", want)

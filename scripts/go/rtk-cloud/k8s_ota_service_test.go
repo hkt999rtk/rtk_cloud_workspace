@@ -49,13 +49,16 @@ func TestLKEOTAServiceManifestIsPrivateAndOwnsBillingDelivery(t *testing.T) {
 		"name: VIDEO_CLOUD_OTA_SERVICE_ENABLED\n              value: \"true\"",
 		"name: VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED\n              value: \"false\"",
 		"name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT",
-		"name: VIDEO_CLOUD_BILLING_USAGE_TOKEN", "name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX",
+		"name: VIDEO_CLOUD_BILLING_USAGE_TOKEN", "name: VIDEO_CLOUD_OTA_DELIVERY_MODE",
 		"secretName: ota-service-platform-identity", "name: VIDEO_CLOUD_OTA_SERVICE_INSTANCE_ID",
 		"value: \"ota-service-0\"",
 	} {
 		if !strings.Contains(deployment, want) {
 			t.Fatalf("OTA service deployment lacks %q", want)
 		}
+	}
+	if strings.Contains(deployment, "name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX") {
+		t.Fatal("direct object delivery unexpectedly requires a CDN token")
 	}
 	if !strings.Contains(service, "type: ClusterIP") || strings.Contains(service, "LoadBalancer") {
 		t.Fatal("OTA service must remain private behind the core API")
@@ -71,6 +74,7 @@ func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
 	env["LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED"] = "true"
 	env["VIDEO_CLOUD_BLOB_BUCKET"] = "firmware"
 	env["VIDEO_CLOUD_BLOB_REGION"] = "us-east-1"
+	env["VIDEO_CLOUD_OTA_DELIVERY_MODE"] = "cdn"
 	env["VIDEO_CLOUD_OTA_CDN_BASE_URL"] = "http://firmware.example.test"
 	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 		t.Fatalf("non-TLS CDN was accepted: %v", err)
@@ -97,7 +101,8 @@ func TestLKEOTAServicePreflightRequiresCDNRuntimeAndIdentity(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME": "video-cloud-staging", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED": "true",
 		"VIDEO_CLOUD_BLOB_BUCKET": "firmware", "VIDEO_CLOUD_BLOB_REGION": "us-east-1",
-		"VIDEO_CLOUD_OTA_CDN_BASE_URL": "https://firmware.example.test",
+		"VIDEO_CLOUD_OTA_DELIVERY_MODE": "cdn",
+		"VIDEO_CLOUD_OTA_CDN_BASE_URL":  "https://firmware.example.test",
 	}
 	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "CDN runtime Secret") {
 		t.Fatalf("missing CDN runtime Secret was accepted: %v", err)
