@@ -63,6 +63,32 @@ func TestLKEOTAServiceManifestIsPrivateAndOwnsBillingDelivery(t *testing.T) {
 	if !strings.Contains(service, "type: ClusterIP") || strings.Contains(service, "LoadBalancer") {
 		t.Fatal("OTA service must remain private behind the core API")
 	}
+	env["VIDEO_CLOUD_OTA_DELIVERY_MODE"] = "cdn"
+	cdnDeployment := lkeOTAServiceDeploymentManifest(env)
+	if err := yaml.Unmarshal([]byte(cdnDeployment), new(map[string]any)); err != nil {
+		t.Fatalf("invalid future CDN deployment manifest: %v", err)
+	}
+	if !strings.Contains(cdnDeployment, "name: VIDEO_CLOUD_OTA_CDN_BASE_URL") ||
+		!strings.Contains(cdnDeployment, "name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX") ||
+		!strings.Contains(cdnDeployment, "name: ota-cdn-runtime") {
+		t.Fatal("future CDN mode does not restore its required runtime settings")
+	}
+}
+
+func TestLKEOTAServiceDirectObjectInputsRejectUnsafeEndpointAndUnknownMode(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME": "video-cloud-dev", "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED": "true",
+		"LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED": "true", "LKE_ACCOUNT_MANAGER_SERVICE_REGISTRATION_ENABLED": "true",
+		"VIDEO_CLOUD_BLOB_BUCKET": "firmware", "VIDEO_CLOUD_BLOB_REGION": "us-east-1",
+		"VIDEO_CLOUD_OTA_DELIVERY_MODE": "object_url", "VIDEO_CLOUD_BLOB_ENDPOINT": "http://objects.example.test",
+	}
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "HTTPS private object endpoint") {
+		t.Fatalf("non-TLS object endpoint was accepted: %v", err)
+	}
+	env["VIDEO_CLOUD_OTA_DELIVERY_MODE"] = "unknown"
+	if err := lkeRequireOTAServiceInputs(env); err == nil || !strings.Contains(err.Error(), "delivery mode") {
+		t.Fatalf("unknown OTA delivery mode was accepted: %v", err)
+	}
 }
 
 func TestLKEOTAServiceInputsRequirePrivateCDNAndSeparateLease(t *testing.T) {
