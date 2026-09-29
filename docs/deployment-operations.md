@@ -290,6 +290,20 @@ different results. Do not report a complete staging release from ready Pods,
    core API and log ingester untouched. Publish OTA manifest v2 with an
    authenticated service-mTLS request after the independent lease is ready;
    the rollout command does not change catalogue publication or Product grants.
+   Publication of a ready revision is allowed while OTA is `suspended`; it
+   changes only the selected manifest version, not service activation or Product
+   eligibility. If publication returns 409 despite a ready v2 lease and the
+   expected v1 revision, update Account Manager to the suspended-publication
+   fix. Do not temporarily activate OTA to bypass that check. For the
+   publication, use only `ota-service-platform-identity` and verify its leaf
+   subject is `service:ota`. Stage its client certificate, key and server CA
+   in a temporary mode-0700 directory with mode-0600 files; forward the private
+   Account Manager service-registration port 8443 to localhost and retain the
+   exact `account-manager.<account-manager-namespace>.svc.cluster.local` TLS
+   server name. Send `PATCH /v1/platform/services/ota/publication` with the
+   observed `expected_version` and ready `manifest_version`. Read back the
+   selected revision, `suspended` status and ready lease, then stop the
+   forward and remove the temporary certificate files.
    Enable registration and verify the independent Pod, private Service,
    registration lease, receipt creation, outbox delivery, and Billing receipt.
    Enable the device edge only after the authenticated device route is verified;
