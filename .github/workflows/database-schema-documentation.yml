@@ -39,9 +39,13 @@ jobs:
           cache: false
       - name: Install catalog reader
         run: |
-          python3 -m venv "$RUNNER_TEMP/database-schema-venv"
-          "$RUNNER_TEMP/database-schema-venv/bin/python" -m pip install -r scripts/requirements-database-schema.txt
-          echo "$RUNNER_TEMP/database-schema-venv/bin" >> "$GITHUB_PATH"
+          deps_dir="$RUNNER_TEMP/database-schema-deps"
+          mkdir -p "$deps_dir"
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" -v "$deps_dir:/deps" -w /workspace \
+            python:3.13-alpine python -m pip install --no-cache-dir --target /deps \
+            -r scripts/requirements-database-schema.txt
+          echo "PYTHONPATH=$deps_dir" >> "$GITHUB_ENV"
       - name: Validate schema and ER tools
         run: |
           python3 -m unittest discover -s scripts -p 'test_database_schema_catalog.py'
