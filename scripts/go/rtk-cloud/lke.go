@@ -9856,7 +9856,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 		}
 		if lkeAccountManagerServiceRegistrationEnabled(env) {
 			checksumValues = append(checksumValues, "service-registration-enabled")
-			extraPorts = fmt.Sprintf(`            - name: service-registry
+			extraPorts = fmt.Sprintf(`            - name: service-reg
               containerPort: %d
 `, serviceRegistrationPodPort)
 			extraEnv += fmt.Sprintf(`            - name: ACCOUNT_MANAGER_SERVICE_REGISTRATION_PORT
@@ -10637,9 +10637,9 @@ func lkeGrafanaDashboardPath(env map[string]string) string {
 func lkeServiceManifest(env map[string]string, workload lkeWorkload) string {
 	extraPorts := ""
 	if workload.Key == "account-manager" && lkeAccountManagerServiceRegistrationEnabled(env) {
-		extraPorts = `    - name: service-registry
+		extraPorts = `    - name: service-reg
       port: 8443
-      targetPort: service-registry
+      targetPort: service-reg
 `
 	}
 	return fmt.Sprintf(`apiVersion: v1
