@@ -269,8 +269,8 @@ different results. Do not report a complete staging release from ready Pods,
    `LKE_OTA_CORE_CUTOVER_ENABLED`. The adapter defaults and dev, staging, and
    production overrides all set them to `false`. For an authorized rollout,
    first verify strict Product OTA entitlements, MQTT foundation registration,
-   Account Manager service registration, private object storage, an HTTPS CDN
-   base URL backed by a private origin, `ota-cdn-runtime`, required runtime
+   Account Manager service registration, private object storage, an HTTPS
+   object endpoint, `VIDEO_CLOUD_OTA_DELIVERY_MODE=object_url`, required runtime
    Billing/Account Manager tokens, and the dedicated `service:ota` Platform
    identity. Keep the old `otaregistrar` disabled to avoid duplicate ownership.
    Enable registration and verify the independent Pod, private Service,
@@ -280,7 +280,12 @@ different results. Do not report a complete staging release from ready Pods,
    those switches in the opposite order for rollback while preserving existing
    receipts and outbox evidence.
 
-   The OTA CDN log collector is separately controlled by
+   OTA devices receive short-lived signed object GET URLs and download
+   directly with Range support. The API never proxies firmware bytes. The
+   producer-seal CronJob consumes the same delivery mode; a direct-object
+   month requires no CDN review and rejects mixed CDN evidence.
+
+   The future OTA CDN log collector is separately controlled by
    `LKE_OTA_CDN_COLLECTOR_ENABLED=false` in adapter defaults and every dev,
    staging, and production override. Before enabling it, configure the exact
    DataStream ID, OTA CDN host and URL path root, dedicated log bucket and log
@@ -303,7 +308,9 @@ different results. Do not report a complete staging release from ready Pods,
 
    The independent producer close schedule uses
    `LKE_OTA_PRODUCER_SEAL_SCHEDULE_ENABLED=false` in every environment until
-   the CDN delivery collector and per-Cloud positive reviews are qualified.
+   the selected delivery mode, source receipts, object inventory and Billing
+   acknowledgement are qualified. Direct-object months do not need the CDN
+   collector or edge review; future CDN months require both.
    To enable it, select Video Cloud, Account Manager and Billing in one reviewed
    rollout; confirm the Account Manager completed-month inventory API is deployed,
    the Video Cloud image contains `/app/otaseal`, and provision a separate
@@ -316,12 +323,12 @@ different results. Do not report a complete staging release from ready Pods,
    `ota-producer-period-seal` to reach Billing on port 8080. The CronJob starts
    at 04:00 UTC on days 3-7, each time replaying the previous UTC month. It
    enumerates every historical Brand Cloud through Account Manager, including
-   disabled and zero-use Clouds; any missing CDN review, source fact, object,
+   disabled and zero-use Clouds; any missing delivery-mode evidence, source fact, object,
    inventory or Billing acknowledgement makes the batch fail. Inspect the Job,
    hashed Cloud failures, Billing's two seals and the oldest unclosed month;
    alert on failed or missing Jobs. For an older month, launch the packaged
    `/app/otaseal --all-brand-clouds --month YYYY-MM` with the same protected
-   runtime inputs after the CDN review. Disabling the flag or rolling back the
+   runtime inputs after the selected mode's review. Disabling the flag or rolling back the
    CronJob does not delete historical Jobs, source receipts or Billing seals.
    In staging, Product PKI Go/No-Go and the selected CI image provenance remain
    mandatory before any mutation.

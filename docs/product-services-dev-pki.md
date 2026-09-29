@@ -20,6 +20,9 @@ certissuer and pki-controller names. The Product listener DNS is
 `account-manager.video-cloud-dev-account-manager.svc.cluster.local`.
 Issuer policy is immutable, so use a successor Service intermediate. Preserve
 the nine existing client subjects and two server names to avoid renewal gaps.
+Follow the Service intermediate's enforced request, approval and signing roles;
+do not borrow any additional human-approval rule from a Root rotation or
+record a second reviewer who did not participate.
 
 The running Account Manager sidecar uses
 `PKI_MANAGEMENT_ACCOUNT_SERVICE_CLIENT_SERVER_CRL_MANIFEST` from ConfigMap

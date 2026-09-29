@@ -786,6 +786,9 @@ func TestTrackedOTAPlatformSealAdapterOverridesResolve(t *testing.T) {
 					t.Fatalf("%s = %q, want false", key, got)
 				}
 			}
+			if got := cfg.AdapterValues["VIDEO_CLOUD_OTA_DELIVERY_MODE"]; got != "object_url" {
+				t.Fatalf("OTA delivery mode = %q, want object_url", got)
+			}
 		})
 	}
 }

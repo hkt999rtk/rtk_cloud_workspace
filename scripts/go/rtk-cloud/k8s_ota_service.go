@@ -23,6 +23,10 @@ func lkeOTACoreCutoverEnabled(env map[string]string) bool {
 	return lkeFeatureEnabled(env, "LKE_OTA_CORE_CUTOVER_ENABLED")
 }
 
+func lkeOTADeliveryMode(env map[string]string) string {
+	return firstNonEmpty(env["VIDEO_CLOUD_OTA_DELIVERY_MODE"], "object_url")
+}
+
 func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if lkeOTARegistrarRegistrationEnabled(env) {
 		return fmt.Errorf("independent OTA service and core OTA registrar cannot own the same Platform lease")
@@ -39,12 +43,22 @@ func lkeRequireOTAServiceInputs(env map[string]string) error {
 	if strings.TrimSpace(env["VIDEO_CLOUD_BLOB_BUCKET"]) == "" || strings.TrimSpace(env["VIDEO_CLOUD_BLOB_REGION"]) == "" {
 		return fmt.Errorf("OTA service requires private object storage")
 	}
-	cdnURL, err := url.Parse(strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]))
-	if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
-		return fmt.Errorf("OTA service requires an HTTPS private-origin CDN base URL")
-	}
-	if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
-		return err
+	switch lkeOTADeliveryMode(env) {
+	case "object_url":
+		endpoint, err := url.Parse(strings.TrimSpace(env["VIDEO_CLOUD_BLOB_ENDPOINT"]))
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return fmt.Errorf("OTA service requires an HTTPS private object endpoint")
+		}
+	case "cdn":
+		cdnURL, err := url.Parse(strings.TrimSpace(env["VIDEO_CLOUD_OTA_CDN_BASE_URL"]))
+		if err != nil || cdnURL.Scheme != "https" || cdnURL.Host == "" || cdnURL.User != nil || cdnURL.RawQuery != "" || cdnURL.Fragment != "" {
+			return fmt.Errorf("OTA service requires an HTTPS private-origin CDN base URL")
+		}
+		if err := lkeRequireOTACDNRuntimeSecret(env); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("OTA service delivery mode must be object_url or cdn")
 	}
 	if err := lkeRequireOTAServiceRuntimeSecrets(env); err != nil {
 		return err
@@ -101,6 +115,19 @@ func lkeOTAServiceDeploymentManifest(env map[string]string) string {
 	videoNS := lkeNamespaceName(env, "video-cloud")
 	platformNS := lkeNamespaceName(env, "platform")
 	accountNS := lkeNamespaceName(env, "account-manager")
+	cdnEnv := ""
+	if lkeOTADeliveryMode(env) == "cdn" {
+		cdnEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_OTA_CDN_BASE_URL
+              value: %q
+            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: ota-cdn-runtime
+                  key: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
+            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_NAME
+              value: %q
+`, env["VIDEO_CLOUD_OTA_CDN_BASE_URL"], firstNonEmpty(env["VIDEO_CLOUD_OTA_CDN_TOKEN_NAME"], "__token__"))
+	}
 	return fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -223,16 +250,9 @@ spec:
                 secretKeyRef:
                   name: video-cloud-runtime
                   key: AWS_SECRET_ACCESS_KEY
-            - name: VIDEO_CLOUD_OTA_CDN_BASE_URL
+            - name: VIDEO_CLOUD_OTA_DELIVERY_MODE
               value: %q
-            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
-              valueFrom:
-                secretKeyRef:
-                  name: ota-cdn-runtime
-                  key: VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX
-            - name: VIDEO_CLOUD_OTA_CDN_TOKEN_NAME
-              value: %q
-            - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
+%s            - name: VIDEO_CLOUD_BILLING_USAGE_ENDPOINT
               value: "http://billing.%s.svc.cluster.local:80/v1/internal/billing/usage-facts"
             - name: VIDEO_CLOUD_BILLING_USAGE_TOKEN
               valueFrom:
@@ -271,7 +291,7 @@ spec:
 		lkeVideoCloudAPIBaseURL(env), platformNS, env["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"],
 		lkeAccountManagerInternalURL(env), env["VIDEO_CLOUD_BLOB_ENDPOINT"], env["VIDEO_CLOUD_BLOB_REGION"],
 		env["VIDEO_CLOUD_BLOB_BUCKET"], env["VIDEO_CLOUD_BLOB_PREFIX"], firstNonEmpty(env["VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE"], "false"),
-		env["VIDEO_CLOUD_OTA_CDN_BASE_URL"], firstNonEmpty(env["VIDEO_CLOUD_OTA_CDN_TOKEN_NAME"], "__token__"),
+		lkeOTADeliveryMode(env), cdnEnv,
 		lkeNamespaceName(env, "billing"), firstNonEmpty(env["VIDEO_CLOUD_BILLING_USAGE_FORWARD_INTERVAL"], "5s"),
 		otaRegistrarInstanceID, accountNS, otaRegistrarIdentitySecretName)
 }

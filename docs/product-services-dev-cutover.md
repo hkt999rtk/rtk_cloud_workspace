@@ -22,7 +22,8 @@ The full Product cutover remains **NO-GO**. The private
 `account-manager-service-registration-tls` Secret and all six registrar
 identity Secrets are absent in dev. The active Service issuer cannot sign the
 new subjects or the Product listener DNS, and its policy is immutable. An
-independently approved successor issuer and new bootstrap session are required;
+a successor issuer approved through the actual Service intermediate workflow
+and a new bootstrap session are required;
 the existing bootstrap PVC must not be reused. Follow
 [the dev PKI prerequisite](product-services-dev-pki.md) to issue and install
 the seven identities, register exact workload approvals, and pass the final
@@ -153,11 +154,12 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    and verify all are running the reviewed image and setting. Verify old
    devices without an `ota` grant cannot query, receive, or download a new
    update, including an old URL. Verify in-progress result reports still work.
-   Install the reviewed private-origin CDN property, HTTPS
-   `VIDEO_CLOUD_OTA_CDN_BASE_URL`, and the matching 32-byte-or-longer hex
-   token key as `VIDEO_CLOUD_OTA_CDN_TOKEN_KEY_HEX` in the private
-   `ota-cdn-runtime` Secret. Confirm the edge actually validates this key,
-   preserves Range requests, and cannot expose the object-storage origin.
+   Select `VIDEO_CLOUD_OTA_DELIVERY_MODE=object_url`. Confirm the private
+   object bucket and HTTPS endpoint issue signed GET URLs for the exact
+   billable artifact key, preserve Range requests, expire within ten minutes,
+   and expose no storage credentials. The API must never proxy firmware bytes.
+   CDN property, DataStream and `ota-cdn-runtime` are later expansion work;
+   they are not prerequisites for this direct-object cutover.
    Migrate the OTA receipt, artifact, review, and outbox tables before starting
    the service; leave `VIDEO_CLOUD_DB_ENSURE_SCHEMA=false` in its Deployment.
    Then enable `LKE_OTA_SERVICE_REGISTRATION_ENABLED` and wait for the
@@ -168,10 +170,10 @@ rendered core Deployment; both Logger cutover values must remain `true`.
    routes `/v1/device/ota/` to `video-cloud-otaservice`: a device certificate
    succeeds, no certificate is rejected, and `check`, `artifact-token`, and
    `events` reach the independent service. The OTA device simulator must use
-   the device mTLS URL with each device's certificate; its CDN artifact client
+   the device mTLS URL with each device's certificate; its object-download client
    must not send that certificate. Only after the observed ingress route and
    private endpoint pass may `LKE_OTA_CORE_CUTOVER_ENABLED` disable the core
-   device handler and forward operator/app routes. Verify direct CDN downloads,
+   device handler and forward operator/app routes. Verify direct object downloads,
    signed completion reports, all four usage facts, outbox delivery, and
    Billing receipts before accepting the cutover. For rollback, restore the
    core handler and wait for its rollout before removing the device edge route.
