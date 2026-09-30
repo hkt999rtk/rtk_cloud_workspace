@@ -346,6 +346,23 @@ different results. Do not report a complete staging release from ready Pods,
    rollout before removing the OTA ingress path. Retain receipts and outbox
    evidence during either direction.
 
+   After the controlled Product download and the three immediate source-to-Billing
+   receipts pass in dev, use `deployment ota-core-cutover --environment dev`
+   to review the exact core image and scope. Keep the existing
+   `LKE_OTA_CORE_CUTOVER_ENABLED=false` until running
+   `deployment ota-core-cutover --environment dev --confirm
+   video-cloud-dev`. This narrow command requires the stopped old registrar,
+   ready private OTA Service, active device mTLS route, strict Product gate and
+   immutable operator-pinned Video Cloud image. It patches only the core API
+   app image and the two OTA upstream settings with a resource-version guard,
+   waits for rollout, checks live read-back, then persists the `true` flag in
+   the selected dev operator SecretStore. If persistence fails after live
+   cutover, retry the same guarded command; do not run a full deployment until
+   the live and operator states agree. Verify public core health and
+   an authorized Product operation through Cloud Admin afterward. Its
+   `--read-only` mode checks the persisted live cutover without changes. This
+   cutover does not publish OTA pricing or activate the suspended catalog.
+
    Product-issued device certificates chain through their Product issuer and
    Device intermediate to the environment's Device Root. The legacy device
    ingress bundle does not contain that Root and depth 2 rejects this three-hop

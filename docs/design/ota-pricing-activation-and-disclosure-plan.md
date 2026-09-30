@@ -42,6 +42,8 @@ dev Account Manager API 與 outbox worker 已釘選同一固定映像，兩個 P
 
 唯讀資料庫核對該 Product 的 `ota_task_receipts`、`ota_download_receipts`、`ota_artifact_objects` 各一筆，Product grant revision 均為 1；canonical outbox 的 `device_task`、`successful_download_gib`、`artifact_write` 各一筆且全部已投遞，Billing 三種 meter 各接受一筆並保留 revision 1。儲存 meter 需完整 UTC 月封存，本月結束前不能產生正式月 fact。dev 生效 OTA 價卡、OTA pricing publication、OTA invoice line 均為 0，目錄仍 suspended、核心 cutover 仍關閉。這完成三種 meter 的受控來源與跨服務投遞驗證；完整月儲存、實體安裝、seal／關帳、顧客畫面和正式價卡仍待驗收。
 
+同日 dev Billing 唯讀盤點顯示 7 個 active TWD 帳戶、0 個 `pricing_plan_versions`、0 筆 `pricing_rates`、0 張 `billing_invoices`、0 筆 OTA draft／publication，已有三種各一筆 OTA usage fact。價卡在該環境是全帳戶共用；直接將研究最高參考價發佈為正式版會影響所有 dev TWD 帳戶，也違反「參考價不是帳單依據」的既定區分。dev 必須先建立經審核的完整非 OTA 基準價卡，才能依原子 OTA draft／review／未來 UTC 月發佈流程驗證實際帳單；目前維持 OTA 目錄 suspended、無 OTA 收費。核心服務切流和登入後價格頁的「待生效／參考」狀態可分別驗收，不藉由缺失價卡推定收費成功。
+
 ## 1. 已確定的決策與範圍
 
 - 使用者於 2026-09-26 核准 **OTA 四項單價**：首次裝置指派 NT$96／1,000 次、已驗證下載 NT$0.96／GiB、實體韌體儲存 NT$0.96／GiB-month、成功建立韌體物件 NT$144／百萬次。這是商業單價的核准，**尚非 Billing 資料庫中的生效價卡**；正式生效月仍待核定。development 的程式部署已完成，但不代表價格生效。
