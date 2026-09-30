@@ -42,7 +42,27 @@ dev Account Manager API 與 outbox worker 已釘選同一固定映像，兩個 P
 
 唯讀資料庫核對該 Product 的 `ota_task_receipts`、`ota_download_receipts`、`ota_artifact_objects` 各一筆，Product grant revision 均為 1；canonical outbox 的 `device_task`、`successful_download_gib`、`artifact_write` 各一筆且全部已投遞，Billing 三種 meter 各接受一筆並保留 revision 1。儲存 meter 需完整 UTC 月封存，本月結束前不能產生正式月 fact。dev 生效 OTA 價卡、OTA pricing publication、OTA invoice line 均為 0，目錄仍 suspended、核心 cutover 仍關閉。這完成三種 meter 的受控來源與跨服務投遞驗證；完整月儲存、實體安裝、seal／關帳、顧客畫面和正式價卡仍待驗收。
 
-同日 dev Billing 唯讀盤點顯示 7 個 active TWD 帳戶、0 個 `pricing_plan_versions`、0 筆 `pricing_rates`、0 張 `billing_invoices`、0 筆 OTA draft／publication，已有三種各一筆 OTA usage fact。價卡在該環境是全帳戶共用；直接將研究最高參考價發佈為正式版會影響所有 dev TWD 帳戶，也違反「參考價不是帳單依據」的既定區分。dev 必須先建立經審核的完整非 OTA 基準價卡，才能依原子 OTA draft／review／未來 UTC 月發佈流程驗證實際帳單；目前維持 OTA 目錄 suspended、無 OTA 收費。核心服務切流和登入後價格頁的「待生效／參考」狀態可分別驗收，不藉由缺失價卡推定收費成功。
+同日 dev Billing 唯讀盤點顯示 7 個 active TWD 帳戶、0 個 `pricing_plan_versions`、0 筆 `pricing_rates`、0 張 `billing_invoices`、0 筆 OTA draft／publication，已有三種各一筆 OTA usage fact。價卡在該環境是全帳戶共用；任何發佈都影響所有 dev TWD 帳戶。**2026-09-30 使用者已核准將 11 項非 OTA 最高研究參考數字作為 dev 專用正式測試費率，OTA 四項仍保留原核准價並另列參考價。**這是價格決策，研究快照本身仍不是帳單依據；只有 Billing 的有效 version 才會收費。完整非 OTA 首版候選放在 `cloud_env/dev/pricing-initial-rates.json`，另含兩項 MQTT bytes 零元診斷列，精確費率、單位與比例由受控首版發佈流程綁定摘要。非 OTA 的 Shadow、WebRTC、Storage、Logger 與其他 API 目前缺合格的 Billing facts；即使有單價，未經來源驗收也不生成這些費用。
+
+固定版 workspace [#622](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/622) 已合併並在 dev 執行受限核心切流：舊 registrar 停止、獨立 OTA Service 與裝置 mTLS edge Ready、Product 嚴格授權開啟，核心 API 換至固定映像 `sha256:096d91197cd0e372aaf5ca02014e1c8f4f8dd736a930c04483283c8054e9b97a`，只新增 OTA upstream 設定；rollout 1/1 Ready、操作旗標持久化，事後唯讀檢查 PASS，公開 `https://video-cloud-dev.realtekconnect.com/healthz` 經 TLS 驗證回 200。這完成 dev core 路由切換，**沒有**啟用 OTA 價卡或 catalog；先前受控模擬下載不能代表實體韌體安裝。
+
+首版 dev 基準價卡必須採台灣營業稅 5% 的整張帳單計稅，以受審核的首版發佈 API 建立不可變摘要／核准紀錄，排程在**下一個完整 UTC 月初**生效；先前已開始的月不追收。候選檔依 Billing canonical 格式計算的 SHA-256 摘要是 `10dac416e791da9e59c487486f12c6e44e5133cbf11a0d215ceb2f1fc83ff03a`；發佈前須重新計算並與此值及審核紀錄核對。待四種 OTA 月度來源與封存證據完整後，再依既有 OTA draft／review／兩位審核者／未來 UTC 月發佈流程加上四項原核准價。dev 對象與正式價須在登入後 Cloud Admin「Billing > Service Pricing」核對；價格頁的研究參考數字保持獨立欄位，不能因數字相同而冒充有效費率。
+
+dev 首版候選的**未稅** rate identity 與展示單位如下；每個 request／unit 都按實際數量比例計價，百萬次不是最低級距。只有 MQTT 計數已能產出一般 Billing fact；其餘收費項目須先完成各自的來源與授權驗收，不能從定價表推斷已產生帳款。
+
+| Service / metric | 展示價 | Billing unit / scale | dev 來源狀態 |
+| --- | ---: | --- | --- |
+| `mqtt.publish_count`、`mqtt.delivery_count` | 各 NT$48／百萬次 | `requests`／0 | 已有一般 fact |
+| `mqtt.publish_bytes`、`mqtt.delivery_bytes` | NT$0／bytes | `bytes`／0 | 診斷 fact；訊息費仍照收，流量不另收 |
+| `shadow.operation_units` | NT$60／百萬個 1 KiB 單位 | `units`／0 | 計量待驗收；AWS 比較值用 1 KB，兩者不等價 |
+| `webrtc.turn_relay_gib` | NT$4.80／GiB | `GiB`／9 | relay 出口 fact 待驗收 |
+| `storage.clip_storage_gib_month` | NT$1.30／GiB-month | `GiB-month`／9 | 實物件 byte-time 待驗收 |
+| `storage.clip_object_write` | NT$224／百萬次 | `requests`／0 | 成功寫入 fact 待驗收 |
+| `storage.clip_object_read` | NT$17.92／百萬次 | `requests`／0 | 成功讀取 fact 待驗收 |
+| `storage.clip_download_gib` | NT$4.80／GiB | `GiB`／9 | 送達位元組 fact 待驗收 |
+| `logger.ingest_gib` | NT$28.80／GiB | `GiB`／9 | 收集總量已有，通用發票 fact 待驗收 |
+| `logger.retention_gib_month` | NT$1.31／GiB-month | `GiB-month`／9 | 原始 bytes×設定保留天數／30 的計量待驗收；AWS 比較值按壓縮 bytes |
+| `api.data_request` | NT$136／百萬次 | `requests`／0 | 成功路由分類與 fact 待驗收 |
 
 ## 1. 已確定的決策與範圍
 
@@ -272,11 +292,11 @@ Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/
 | Logs | [CloudWatch São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonCloudWatch/current/sa-east-1/index.csv)：Standard ingest US$0.90／GB、archive US$0.0408／壓縮後 GB-month，研究換算 NT$28.80／GiB、NT$1.31／GiB-month。 | RTK retention 草案用原始接收 bytes×設定天數，不是壓縮後實際保存量；後者僅為成本代理值。 |
 | 其他資料 API | [API Gateway REST São Paulo 現行價目](https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonApiGateway/current/sa-east-1/index.csv)：US$4.25／百萬次，折 NT$136／百萬次。 | AWS REST 收到的請求與 RTK 成功的「其他資料 API」不同，須完成路由分類。 |
 
-Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套、免費額、尚未正式收取的未來項目及歷史舊價格不參與最高價排名；它們仍記在研究候選表並註明排除原因。最高參考價不會寫入 Billing 的有效價卡。
+Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套、免費額、尚未正式收取的未來項目及歷史舊價格不參與最高價排名；它們仍記在研究候選表並註明排除原因。研究快照本身不能直接充當 Billing 價卡；dev 已核准採用同一組非 OTA 數字，仍須經完整候選、摘要審核與生效版次發佈。
 
 **成本關卡：**核准的 OTA 下載售價 NT$0.96／GiB；Finance 在正式啟用直連物件交付前，須以實際儲存供應商合約、物件讀取與出口流量、Range／重試、交付地區、匯率及稅計算成本與毛利並留下簽核記錄。AWS CloudFront 出口價只供未來 CDN 擴充評估，不作為首版啟用門檻。使用者價格頁不展示供應商成本或暗示本服務轉售 AWS。
 
-15 項舊價、官方候選值、選出的最高參考價與排除原因記在 [service-pricing-research.md](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)；商務仍須另外核准非 OTA 正式價格。
+15 項舊價、官方候選值、選出的最高參考價與排除原因記在 [service-pricing-research.md](../../repos/rtk_cloud_admin/docs/service-pricing-research.md)；非 OTA 的 dev 正式測試數字已核准，其他環境的正式價格仍須各自核定。
 
 | 文件 | 放置內容及維護者 |
 | --- | --- |
