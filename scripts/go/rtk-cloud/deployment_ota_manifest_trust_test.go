@@ -140,6 +140,29 @@ func TestOTAManifestTrustCommandPatchesOnlyLivePublicKey(t *testing.T) {
 		return func() {}, nil
 	}
 	args := []string{"--workspace", workspace, "--environment", "dev", "--confirm", "video-cloud-dev"}
+	if err := runDeploymentWithOperations([]string{"ota-manifest-trust", "--workspace", workspace, "--environment", "dev"}, deploymentOperations{}); err != nil {
+		t.Fatalf("read-only trust update plan: %v", err)
+	}
+	for _, invalid := range [][]string{
+		{"--workspace", workspace},
+		{"--workspace", workspace, "--environment", "dev", "unexpected"},
+		{"--workspace", workspace, "--environment", "dev", "--unknown"},
+		{"--workspace", workspace, "--environment", "dev", "--confirm", "another-stack"},
+	} {
+		if err := runDeploymentOTAManifestTrustWithCredentials(invalid, credentials); err == nil {
+			t.Fatalf("invalid trust update arguments accepted: %v", invalid)
+		}
+	}
+	if err := runDeploymentOTAManifestTrustWithCredentials(args, func(string) (func(), error) {
+		return nil, fmt.Errorf("operator credential unavailable")
+	}); err == nil || !strings.Contains(err.Error(), "operator credential unavailable") {
+		t.Fatalf("missing operator credential was accepted: %v", err)
+	}
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "ghcr.io/example/video-cloud-api:latest")
+	if err := runDeploymentOTAManifestTrustWithCredentials(args, credentials); err == nil {
+		t.Fatal("mutable OTA Service image was accepted")
+	}
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", image)
 	if err := runDeploymentOTAManifestTrustWithCredentials(args, credentials); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +182,22 @@ func TestOTAManifestTrustCommandPatchesOnlyLivePublicKey(t *testing.T) {
 	if strings.Count(string(log), "patch deployment video-cloud-otaservice --type=json") != 1 {
 		t.Fatal("idempotent update patched the Deployment again")
 	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{}`)
+	if err := runDeploymentOTAManifestTrustWithCredentials(args, credentials); err == nil {
+		t.Fatal("trust update ignored missing private OTA Service")
+	}
+	t.Setenv("FAKE_OTA_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"video-cloud-otaservice"},"ports":[{"port":18084,"targetPort":"http"}]}}`)
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", `{}`)
+	if err := runDeploymentOTAManifestTrustWithCredentials(args, credentials); err == nil {
+		t.Fatal("trust update ignored missing device mTLS route")
+	}
+	t.Setenv("FAKE_WEBRTC_DEVICE_INGRESS_JSON", string(ingressJSON))
+	unknownJSON, _ := json.Marshal(otaManifestTrustDeployment(image, `{"unknown":"`+strings.Repeat("cc", 32)+`"}`))
+	writeTestFile(t, statePath, string(unknownJSON))
+	if err := runDeploymentOTAManifestTrustWithCredentials(args, credentials); err == nil {
+		t.Fatal("trust update would remove an unreviewed live key")
+	}
+	writeTestFile(t, statePath, string(afterJSON))
 	t.Setenv("LKE_OTA_CORE_CUTOVER_ENABLED", "true")
 	if err := runDeploymentOTAManifestTrustWithCredentials(args, credentials); err == nil {
 		t.Fatal("trust update ignored core cutover")
