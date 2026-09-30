@@ -111,6 +111,19 @@ billing terms are verified. Product writes and the OTA price card are still
 off; no OTA usage should be charged. CDN delivery is a separate later
 expansion.
 
+The fixed Video Cloud branch now contains the
+[operator Manifest V1 signing tool](../repos/rtk_video_cloud/docs/ota-manifest-operator.md)
+from PR #737 (merge `4ca9d1f13fa77d65c6aa9fb82805d00f7bb1ecfd`). The
+operator created a dev-only `dev-ota-acceptance-20260930` signing key under
+the local dev SecretStore with mode `0600`; the private key is not in Git or
+Kubernetes. The dev environment override preserves its prior public key and
+adds this new public trust entry. At this checkpoint, the updated trust map
+has **not** been applied to the OTA Service or core API, no release has been
+signed, and no OTA Product has been created. The first authenticated flow can
+use the independent OTA Service's protected operator endpoint through a
+temporary private port-forward while core cutover remains off; device traffic
+must still use the mTLS edge. Stop the forward after verification.
+
 ## PKI dev checkpoint (2026-09-29)
 
 The frozen operator-authority service versions are deployed in dev: PKI controller

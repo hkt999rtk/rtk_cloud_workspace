@@ -285,6 +285,16 @@ different results. Do not report a complete staging release from ready Pods,
    generated runtime files. In particular, the firmware manifest trust keys
    come from the reviewed environment configuration rather than an older
    SecretStore snapshot.
+   Before a signed release, follow the Video Cloud
+   [operator Manifest V1 guide](../repos/rtk_video_cloud/docs/ota-manifest-operator.md):
+   generate the environment-specific private key in the local operator
+   SecretStore, add only its public entry to the reviewed environment override,
+   retain existing trusted keys, and verify the effective key ID on the OTA
+   Service after rollout. The private key must never enter the deployment
+   manifest, Kubernetes Secret, or Git. Until core cutover, a controlled
+   acceptance run may send operator requests to the independent OTA Service
+   through a temporary private port-forward with the existing OTA BFF token;
+   that route does not replace the device mTLS edge.
    This applies only OTA registration policies, its private Service and its
    Deployment. It checks the old registrar is stopped and leaves the PKI-managed
    core API and log ingester untouched. Publish OTA manifest v2 with an
