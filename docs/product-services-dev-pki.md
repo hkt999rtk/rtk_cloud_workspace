@@ -44,8 +44,9 @@ are suspended. `ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=false`, and
 the current Video Cloud API has strict OTA Product entitlement checks enabled.
 The legacy `video-cloud-otaregistrar` is stopped. The independent
 `video-cloud-otaservice` is ready and owns the published OTA v2 manifest, but
-device edge, core cutover, and billable OTA receipt delivery have not been
-qualified in dev. Core clip direct upload also remains disabled. Follow each
+the device edge has only passed route and unauthenticated-denial checks; core
+cutover and billable OTA receipt delivery have not been qualified in dev. Core
+clip direct upload also remains disabled. Follow each
 service's route and authorization gates in
 [deployment operations](deployment-operations.md) before activation; do not
 activate all suspended services merely because their leases are ready.
@@ -88,12 +89,27 @@ did not activate OTA or enable Product writes; dev currently has zero OTA
 Product profiles and entitlement snapshots. The temporary publication
 certificate files and local port-forward were removed.
 
+Frozen workspace PR #618 merged at `20bee2c38c13d45c97b940e85edd467629c09f50`.
+After the read-only dev credential check passed 10/10, the operator saved the
+old `LKE_OTA_SERVICE_EDGE_ENABLED=false` value and set only that environment
+flag to `true`. `deployment ota-device-edge` added an OTA-only port 18084
+NetworkPolicy, private bridge Service and `/v1/device/ota/` Prefix route on
+the existing device mTLS ingress. The live ingress still pins the dev app CA,
+requires client certificates at depth 2 and retains its core `/` route.
+The core API and independent OTA Service stayed 1/1 Ready; the old registrar
+stayed at zero replicas. A public request without a client certificate
+returned ingress HTTP 400 with the expected missing-certificate response; a
+private OTA handler request without identity returned HTTP 401. The temporary
+port-forward was stopped. These are denial and route-configuration checks,
+not an authenticated device or billable download qualification.
+
 Remaining dev qualification is an authenticated OTA-enabled Product and device
 flow through object-URL firmware delivery, download/task receipts, usage fact
 outbox and Billing acceptance, then period-seal and pricing checks. Keep the
-device edge and core cutover flags off, and keep OTA suspended until those
-checks and the user-visible billing terms are verified. CDN delivery is a
-separate later expansion.
+core cutover flag off and OTA suspended until those checks and the user-visible
+billing terms are verified. Product writes and the OTA price card are still
+off; no OTA usage should be charged. CDN delivery is a separate later
+expansion.
 
 ## PKI dev checkpoint (2026-09-29)
 

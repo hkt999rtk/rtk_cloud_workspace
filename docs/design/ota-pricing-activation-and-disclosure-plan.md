@@ -16,6 +16,12 @@ Account Manager 的私有 mTLS listener、六張各自核准的 Service 身分�
 
 這是**獨立服務註冊與版本選擇**驗收，還不是 OTA 收費驗收。當次唯讀計數顯示 dev 沒有 OTA Product profile 或 entitlement snapshot；Video Cloud 的 OTA task/download receipt、artifact object、producer period seal 與 OTA outbox fact 均為 0，Billing 的 OTA usage fact 與 pricing publication 也均為 0。Product writes、裝置 edge 與核心切流仍關閉，OTA catalog 仍 suspended。下一步需以受控 OTA-enabled Product 和裝置驗證授權、直連物件 URL／Range、完成回執、outbox 到 Billing、月封存，再核定未來完整 UTC 生效月與發佈已核准價卡；不能因 v2 lease 或 publication 就收費。
 
+### Development OTA 裝置入口 checkpoint（2026-09-30）
+
+固定版 workspace [#618](https://github.com/hkt999rtk/rtk_cloud_workspace/pull/618) 合併後，dev 的唯讀 SecretStore／環境憑證檢查通過 10/10，operator 保存 edge 旗標原值並只把 `LKE_OTA_SERVICE_EDGE_ENABLED` 設為 `true`。受限部署指令確認舊 registrar 已停止、獨立 OTA Service endpoint Ready、Product OTA 授權檢查維持嚴格模式；只新增 OTA Pod 的 18084 ingress policy、私有 bridge Service，以及既有 device mTLS ingress 的 `/v1/device/ota/` Prefix 路徑。現場讀回顯示原核心 `/` 路徑保留、app CA pin 與 client certificate 驗證深度 2 不變，核心 API 與獨立 OTA Service 都是 1/1 Ready。公開入口對沒有 client certificate 的請求回應 ingress HTTP 400；私有 OTA handler 對無身分請求回應 HTTP 401。
+
+這些是**入口設定與拒絕路徑**驗收，不是合法裝置的成功下載、OTA 用量或 Billing 收據。OTA service 仍 suspended、Product writes 仍關閉、核心 cutover 仍關閉，正式 OTA 價卡尚未生效；已建立的入口本身不會開始收費。下一關要以受控 OTA-enabled Product 和具有效裝置憑證的測試資料驗證正向流程、Object Storage 簽名 URL／Range、四類 receipt 與 outbox／Billing 對帳，再決定是否切除核心舊 handler。
+
 ## 1. 已確定的決策與範圍
 
 - 使用者於 2026-09-26 核准 **OTA 四項單價**：首次裝置指派 NT$96／1,000 次、已驗證下載 NT$0.96／GiB、實體韌體儲存 NT$0.96／GiB-month、成功建立韌體物件 NT$144／百萬次。這是商業單價的核准，**尚非 Billing 資料庫中的生效價卡**；正式生效月仍待核定。development 的程式部署已完成，但不代表價格生效。
