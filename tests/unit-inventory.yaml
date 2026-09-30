@@ -1407,6 +1407,14 @@ cases:
       title: SDK bridge stays within normal same-origin console routes
       owner: rtk_cloud_admin
       status: active
+    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#effective%20rates%20use%20readable%20proportional%20units%20without%20changing%20the%20Billing%20price
+      module: cloud-admin-web
+      language: javascript
+      source: src/service-pricing.test.mjs
+      title: effective rates use readable proportional units without changing the Billing price
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-PRICING-001
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#effective%20price%20book%20is%20owner%20scoped%20and%20never%20inferred%20from%20reference%20prices
       module: cloud-admin-web
       language: javascript
@@ -1414,6 +1422,7 @@ cases:
       title: effective price book is owner scoped and never inferred from reference prices
       owner: rtk_cloud_admin
       status: active
+      test_id: UNIT-CA-PRICING-005
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#owner-scoped%20catalog%20is%20complete%20and%20keeps%20approved%20OTA%20prices%20separate%20from%20research%20references
       module: cloud-admin-web
       language: javascript
@@ -1421,6 +1430,7 @@ cases:
       title: owner-scoped catalog is complete and keeps approved OTA prices separate from research references
       owner: rtk_cloud_admin
       status: active
+      test_id: UNIT-CA-PRICING-003
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#price%20amounts%20and%20provider%20benchmarks%20stay%20out%20of%20public%20client%20data%20and%20translations
       module: cloud-admin-web
       language: javascript
@@ -1428,6 +1438,7 @@ cases:
       title: price amounts and provider benchmarks stay out of public client data and translations
       owner: rtk_cloud_admin
       status: active
+      test_id: UNIT-CA-PRICING-002
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#pricing%20fetch%20requires%20the%20current%20ownership%20version%20and%20fails%20closed%20on%20API%20errors
       module: cloud-admin-web
       language: javascript
@@ -1435,6 +1446,7 @@ cases:
       title: pricing fetch requires the current ownership version and fails closed on API errors
       owner: rtk_cloud_admin
       status: active
+      test_id: UNIT-CA-PRICING-004
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#research%20references%20stay%20separate%20from%20approved%20but%20inactive%20OTA%20prices
       module: cloud-admin-web
       language: javascript
