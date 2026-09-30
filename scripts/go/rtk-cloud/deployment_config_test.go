@@ -493,6 +493,102 @@ func TestDeploymentPreflightProvisionChecksInputsWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestDeploymentPreflightProvisionChecksExistingKubectlVersion(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateDNS = func(deploymentConfig) error { return nil }
+	checks.validateLKEState = func(deploymentConfig) error { return nil }
+	checks.validateKube = func(deploymentConfig) error { return errors.New("unsupported kubectl skew") }
+	var out bytes.Buffer
+	if err := runDeploymentPreflightWithChecks(cfg, "provision", checks, &out); err == nil {
+		t.Fatal("expected incompatible kubectl to block an existing-cluster upgrade")
+	}
+	if !strings.Contains(out.String(), "FAIL kubernetes-access") || !strings.Contains(out.String(), "unsupported kubectl skew") {
+		t.Fatalf("missing Kubernetes version failure: %s", out.String())
+	}
+}
+
+func TestDeploymentPreflightProvisionRejectsStaleOperatorImage(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("operator/env/LKE_BILLING_IMAGE", []byte("ghcr.io/hkt999rtk/rtk_billing/billing-twd:sha-000000000000\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Workspace, err = workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateDNS = func(deploymentConfig) error { return nil }
+	checks.validateLKEState = func(deploymentConfig) error { return nil }
+	var out bytes.Buffer
+	if err := runDeploymentPreflightWithChecks(cfg, "provision", checks, &out); err == nil {
+		t.Fatal("expected stale operator image to block an existing-cluster upgrade")
+	}
+	if !strings.Contains(out.String(), "FAIL image-source") || !strings.Contains(out.String(), "does not match source commit") {
+		t.Fatalf("missing selected image-source failure: %s", out.String())
+	}
+}
+
+func TestDeploymentPreflightProvisionAcceptsSelectedOperatorImage(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("operator/env/LKE_BILLING_IMAGE", []byte("registry.example.test/rtk/billing:approved\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateDNS = func(deploymentConfig) error { return nil }
+	checks.validateLKEState = func(deploymentConfig) error { return nil }
+	var out bytes.Buffer
+	_ = runDeploymentPreflightWithChecks(cfg, "provision", checks, &out)
+	if !strings.Contains(out.String(), "PASS image-source") {
+		t.Fatalf("selected operator image was not accepted: %s", out.String())
+	}
+}
+
+func TestValidateDeploymentKubectlVersion(t *testing.T) {
+	for _, tc := range []struct {
+		client, server string
+		wantError      bool
+	}{
+		{client: "37", server: "36"},
+		{client: "35", server: "36"},
+		{client: "32", server: "36", wantError: true},
+		{client: "38", server: "36", wantError: true},
+		{client: "bad", server: "36", wantError: true},
+	} {
+		payload := fmt.Sprintf(`{"clientVersion":{"major":"1","minor":"%s"},"serverVersion":{"major":"1","minor":"%s"}}`, tc.client, tc.server)
+		if err := validateDeploymentKubectlVersion([]byte(payload)); (err != nil) != tc.wantError {
+			t.Fatalf("client=%s server=%s error=%v, want error=%v", tc.client, tc.server, err, tc.wantError)
+		}
+	}
+	if err := validateDeploymentKubectlVersion([]byte("{")); err == nil || !strings.Contains(err.Error(), "invalid Kubernetes version response") {
+		t.Fatalf("malformed kubectl version response = %v", err)
+	}
+	if err := validateDeploymentKubectlVersion([]byte(`{"clientVersion":{"major":"2","minor":"36"},"serverVersion":{"major":"1","minor":"36"}}`)); err == nil || !strings.Contains(err.Error(), "outside the supported one-minor skew") {
+		t.Fatalf("different Kubernetes major versions = %v", err)
+	}
+}
+
 func TestDeploymentPreflightAcceptanceRequiresMatchingRuntime(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
 	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
