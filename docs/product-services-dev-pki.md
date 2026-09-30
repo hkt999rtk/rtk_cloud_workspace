@@ -40,8 +40,10 @@ failure behavior are defined in the
 and the [normative Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md).
 
 The live service catalog still has only `mqtt` active; the other five services
-are suspended. `ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=false`, and
-the current Video Cloud API has strict OTA Product entitlement checks enabled.
+are suspended. Dev Account Manager now has
+`ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=true` on both the API and
+outbox worker; the current Video Cloud API has strict OTA Product entitlement
+checks enabled.
 The legacy `video-cloud-otaregistrar` is stopped. The independent
 `video-cloud-otaservice` is ready and owns the published OTA v2 manifest, but
 the device edge has only passed route and unauthenticated-denial checks; core
@@ -103,13 +105,13 @@ private OTA handler request without identity returned HTTP 401. The temporary
 port-forward was stopped. These are denial and route-configuration checks,
 not an authenticated device or billable download qualification.
 
-Remaining dev qualification is an authenticated OTA-enabled Product and device
-flow through object-URL firmware delivery, download/task receipts, usage fact
-outbox and Billing acceptance, then period-seal and pricing checks. Keep the
-core cutover flag off and OTA suspended until those checks and the user-visible
-billing terms are verified. Product writes and the OTA price card are still
-off; no OTA usage should be charged. CDN delivery is a separate later
-expansion.
+The later controlled Product flow below has now verified object-URL delivery,
+task and download source receipts, and three accepted Billing facts. Period
+seal, complete-month storage fact, physical installation and pricing checks
+remain. Keep the core cutover flag off and OTA suspended until the remaining
+acceptance and user-visible billing terms are verified. The OTA price card is
+still off; these dev facts do not produce OTA charges. CDN delivery is a
+separate later expansion.
 
 The fixed Video Cloud branch now contains the
 [operator Manifest V1 signing tool](../repos/rtk_video_cloud/docs/ota-manifest-operator.md)
@@ -128,6 +130,92 @@ to reapply the registration Deployment. Use the dev-only
 `deployment ota-manifest-trust` command to add the reviewed public key to the
 live independent service; it checks the existing route and patches only that
 Deployment's trust value. Core API trust is not changed by this step.
+
+### Later dev acceptance preparation (2026-09-30)
+
+Workspace PR #620 merged on the frozen OTA deployment branch. The operator ran
+`deployment ota-manifest-trust --environment dev` against the reviewed public
+key and fixed API image. The independent OTA Service rolled out 1/1 Ready with
+both the earlier and new key IDs; core API trust and the stopped legacy
+registrar were not changed. The private signing key remains only in the dev
+operator SecretStore.
+
+The Account Manager API already ran the fixed image, while its outbox worker
+still used the preceding image. The operator updated only that worker to the
+API's immutable image digest, paused the worker, enabled Product writes in the
+runtime Secret, restarted the API, then resumed the worker. Both live Pods
+reported the enabled value and were Ready. The same value is now stored in the
+dev operator environment configuration for future renders. A read-only
+Product-grant backfill report found 39 versioned Products and zero needing
+backfill. OTA remains suspended, and no OTA Product or billable OTA receipt was
+created at this checkpoint.
+
+The public Account Manager dev host presents a valid Let's Encrypt YE1 leaf
+and full chain. OpenSSL verification succeeded and system `curl` verified the
+certificate and received HTTP 200 from `/v1/health`. An ad hoc Python.org
+3.13 `urllib` request failed because that local installation's default
+OpenSSL CA file and directory do not exist. The same request received HTTP 200
+when Python used `/etc/ssl/cert.pem` or its installed `certifi` bundle. This
+was a local client trust-store issue, not a server certificate or deployment
+failure. Public HTTPS acceptance clients must load a valid CA bundle and keep
+certificate verification enabled.
+
+A controlled dev OTA Product was then created with only `mqtt` and `ota` while
+the OTA catalog was briefly active. Its immutable grant revision 1 recorded
+both service bindings; the catalog was immediately returned to `suspended` at
+revision 42. Product PKI became ready, and a one-device factory run issued a
+test device certificate. Its private key is stored only in the local dev
+SecretStore. The first public device OTA check returned ingress HTTP 400:
+the ingress client CA Secret still contains three legacy CAs and verification
+depth 2. The new Product device's certificate chains through two
+intermediates to the separately pinned Device Root; OpenSSL validates it at
+depth 3 and rejects it at depth 2. The public Root in the PKI-published
+ConfigMap matches the operator's ID and SHA-256 pin and is now saved as
+`pki/devices/device-root.crt` in the dev SecretStore. A new read-only ingress
+trust check correctly reports `CA_ready=false depth_ready=false` before the
+repair. The targeted dev update then appended only the pinned public Root to
+the existing bundle and changed device-ingress verification depth to 3. The
+same read-only check passed after the update. A Product-issued test device's
+complete certificate chain received HTTP 200 and `no_eligible_campaign` from
+`POST /v1/device/ota/check` with server TLS verification successful; the same
+request without a client certificate remained HTTP 400. See [deployment
+operations](deployment-operations.md) for the additive update and repeatable
+check. This client-certificate issue is separate from the valid Let's Encrypt
+public server certificate. No OTA task, download receipt, or billable fact was
+created by this initial check.
+
+### Controlled OTA source and Billing acceptance (2026-09-30)
+
+The operator used the one Product and factory-issued test identity above to
+create a 2,048-byte release. The independent OTA Service accepted the upload,
+verified the stored size and SHA-256, checked the operator's Ed25519 Manifest
+V1 signature, and published the release. A campaign targeted only
+`ota-dev-66022e43d6d8`; activation froze exactly one target. The public
+device mTLS check then assigned deployment `dep_fb4d48adb65f367316c7776f`.
+The artifact-token response named the private Linode Object Storage HTTPS
+origin, supported Range and expired within ten minutes. A separate client
+obtained HTTP 206 for bytes 0-99 and HTTP 200 for all 2,048 bytes; the full
+SHA-256 matched the signed release. No firmware bytes passed through the OTA
+API GET path.
+
+After verifying those downloaded bytes, the test client reported
+`downloading` and `downloaded` with the expected size and digest. These are
+**simulated device reports after a real object download**, not proof that
+physical device firmware was installed. No `installing`, `rebooting`,
+`verifying` or `succeeded` event was sent. The campaign was paused after this
+check to prevent continued dispatch; the existing deployment and immutable
+receipts were retained.
+
+Read-only PostgreSQL queries scoped to this Product found one each in
+`ota_task_receipts`, `ota_download_receipts` and `ota_artifact_objects`, all
+with Product grant revision 1. The canonical outbox had one delivered fact
+each for `device_task`, `successful_download_gib` and `artifact_write`;
+Billing accepted one fact for each metric with grant revision 1. The 2,048
+byte download has Billing quantity 1,907 at its metric scale. A storage
+month fact cannot be sealed before the complete UTC month ends. Dev still has
+zero active OTA rate cards, zero OTA pricing publications and zero OTA invoice
+lines. These facts establish source, delivery and acceptance for three meters;
+they do not establish an actual customer charge or a completed OTA install.
 
 ## PKI dev checkpoint (2026-09-29)
 

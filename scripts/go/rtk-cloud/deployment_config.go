@@ -173,6 +173,9 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if len(args) > 0 && args[0] == "ota-device-edge" {
 		return runDeploymentOTADeviceEdge(args[1:])
 	}
+	if len(args) > 0 && args[0] == "device-root-ingress-trust" {
+		return runDeploymentDeviceRootIngressTrust(args[1:])
+	}
 	if len(args) > 0 && args[0] == "pki-storage-plan" {
 		return runDeploymentPKIStoragePlan(args[1:])
 	}
@@ -707,6 +710,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment ota-service-rollout --environment dev [--confirm video-cloud-dev]
   rtk-cloud deployment ota-manifest-trust --environment dev [--confirm video-cloud-dev]
   rtk-cloud deployment ota-device-edge --environment dev [--confirm video-cloud-dev]
+  rtk-cloud deployment device-root-ingress-trust --environment dev [--confirm video-cloud-dev]
   rtk-cloud deployment pki-storage-plan --environment dev|staging|prod [--live|--render|--cleanup-audit]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK
