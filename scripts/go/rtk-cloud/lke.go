@@ -651,7 +651,7 @@ func lkeApplyPublicHTTPS(paths provisionPaths, env map[string]string, opts provi
 			return err
 		}
 	}
-	if err := lkeCopyExistingDeviceMTLSAppCASecret(env); err != nil {
+	if err := lkeCopyExistingDeviceMTLSAppCASecret(paths, env); err != nil {
 		return err
 	}
 	if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
@@ -1205,7 +1205,7 @@ stringData:
 `, lkeDeviceMTLSAppCASecretName(env), lkeIngressNamespace(env), lkeDeviceMTLSAppCASecretName(env), env["CLOUD_STACK_NAME"], appCACertPEM)
 }
 
-func lkeCopyExistingDeviceMTLSAppCASecret(env map[string]string) error {
+func lkeCopyExistingDeviceMTLSAppCASecret(paths provisionPaths, env map[string]string) error {
 	out, err := kubectlCombinedOutput(nil, "-n", lkeNamespaceName(env, "video-cloud"), "get", "secret", "certissuer-runtime", "-o", "json")
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return nil
@@ -1231,7 +1231,11 @@ func lkeCopyExistingDeviceMTLSAppCASecret(env map[string]string) error {
 	if strings.TrimSpace(rootCA) == "" || strings.TrimSpace(deviceCA) == "" || strings.TrimSpace(appCA) == "" {
 		return nil
 	}
-	return kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(rootCA, deviceCA, appCA)))
+	productRoot, err := loadPinnedDeviceIngressRoot(provisionPaths{EnvRoot: firstNonEmpty(activeSecretEnvironmentRoot, paths.EnvRoot)}, env)
+	if err != nil {
+		return err
+	}
+	return kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(rootCA, deviceCA, appCA, productRoot)))
 }
 
 func decodeSecretPEM(data map[string]string, key string) (string, error) {
@@ -1246,9 +1250,9 @@ func decodeSecretPEM(data map[string]string, key string) (string, error) {
 	return string(decoded), nil
 }
 
-func lkeClientCABundle(rootCA string, deviceCA string, appCA string) string {
+func lkeClientCABundle(rootCA string, deviceCA string, appCA string, productRoots ...string) string {
 	parts := []string{}
-	for _, cert := range []string{rootCA, deviceCA, appCA} {
+	for _, cert := range append([]string{rootCA, deviceCA, appCA}, productRoots...) {
 		cert = strings.TrimSpace(cert)
 		if cert != "" {
 			parts = append(parts, cert+"\n")
@@ -1257,13 +1261,13 @@ func lkeClientCABundle(rootCA string, deviceCA string, appCA string) string {
 	return strings.Join(parts, "")
 }
 
-func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA string, appCA string) error {
+func writeLKEDeviceClientCABundle(paths provisionPaths, rootCA string, deviceCA string, appCA string, productRoots ...string) error {
 	if strings.TrimSpace(rootCA) == "" || strings.TrimSpace(deviceCA) == "" || strings.TrimSpace(appCA) == "" {
 		return errors.New("root, device, and app CA certificates are required for the device client CA bundle")
 	}
 	dir := filepath.Join(paths.EnvRoot, "state", "pki")
 	path := filepath.Join(dir, "device-client-ca-bundle.pem")
-	if err := writeSensitiveFile(path, lkeClientCABundle(rootCA, deviceCA, appCA)); err != nil {
+	if err := writeSensitiveFile(path, lkeClientCABundle(rootCA, deviceCA, appCA, productRoots...)); err != nil {
 		return fmt.Errorf("write device client CA bundle: %w", err)
 	}
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -1330,12 +1334,20 @@ func lkeIsDeviceMTLSRoute(env map[string]string, route lkePublicHTTPSRoute) bool
 func lkeDeviceMTLSIngressAnnotations(env map[string]string) string {
 	return fmt.Sprintf(`    nginx.ingress.kubernetes.io/auth-tls-secret: %q
     nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
-    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "2"
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: %q
     nginx.ingress.kubernetes.io/configuration-snippet: |
       proxy_set_header X-Client-Verify $ssl_client_verify;
       proxy_set_header X-Client-S-DN $ssl_client_s_dn_legacy;
       proxy_set_header X-Client-Cert $ssl_client_escaped_cert;
-`, lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env))
+`, lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env), lkeDeviceMTLSVerifyDepth(env))
+}
+
+func lkeDeviceMTLSVerifyDepth(env map[string]string) string {
+	id, fingerprint := deviceIngressRootPin(env)
+	if id != "" && fingerprint != "" {
+		return "3"
+	}
+	return "2"
 }
 
 func lkeFactoryMTLSIngressAnnotations(env map[string]string) string {
@@ -3942,7 +3954,11 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		material.RootCACert = openBao.RootCACert
 		material.DeviceCACert = openBao.DeviceCACert
 		material.AppCACert = openBao.AppCACert
-		if err := writeLKEDeviceClientCABundle(paths, material.RootCACert, material.DeviceCACert, material.AppCACert); err != nil {
+		productRoot, err := loadPinnedDeviceIngressRoot(provisionPaths{EnvRoot: firstNonEmpty(activeSecretEnvironmentRoot, paths.EnvRoot)}, env)
+		if err != nil {
+			return err
+		}
+		if err := writeLKEDeviceClientCABundle(paths, material.RootCACert, material.DeviceCACert, material.AppCACert, productRoot); err != nil {
 			return err
 		}
 		materialReady = true
@@ -3961,7 +3977,7 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := kubectlApply(lkeCertIssuerRuntimeSecretManifest(env, material)); err != nil {
 			return err
 		}
-		if err := kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(material.RootCACert, material.DeviceCACert, material.AppCACert))); err != nil {
+		if err := kubectlApply(lkeDeviceMTLSAppCASecretManifest(env, lkeClientCABundle(material.RootCACert, material.DeviceCACert, material.AppCACert, productRoot))); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeCertIssuerOpenBaoAuthSecretManifest(env, openBao)); err != nil {

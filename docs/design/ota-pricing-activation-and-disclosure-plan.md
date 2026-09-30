@@ -1,6 +1,6 @@
 # OTA 費率生效與服務價格揭露：實作計畫
 
-Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. The independent OTA service is now registered and its v2 manifest is published in development, but OTA remains suspended, Product writes remain off, and no effective OTA rate card has been published; development does not charge OTA.
+Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. The independent OTA service is registered and its v2 manifest published in development. Product writes are enabled on the dev Account Manager API and outbox worker. A controlled OTA Product and test device completed direct-object download and three source-to-Billing meter checks; physical installation and complete-month storage remain unverified. OTA remains suspended and no effective OTA rate card has been published; development does not charge OTA.
 
 Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-30.
 
@@ -27,6 +27,20 @@ Account Manager 的私有 mTLS listener、六張各自核准的 Service 身分�
 Video Cloud [#737](https://github.com/hkt999rtk/rtk_video_cloud/pull/737) 已合併到指定的固定基線，提供與服務共用 `CanonicalManifestV1` 的 operator 工具、獨立簽章驗證測試及[操作文件](../../repos/rtk_video_cloud/docs/ota-manifest-operator.md)；本機 OTA 相關測試與一次完整 Video Cloud PR coverage 通過。dev operator 在本機 SecretStore 建立獨立 Ed25519 私鑰（檔案權限 `0600`），其公開信任項目已加入 dev 環境 override 並保留舊公開金鑰。此 checkpoint 尚未把新公開金鑰部署到 workload、建立 OTA Product／裝置、簽署韌體或收集用量；私鑰不進 Git、Kubernetes 或服務程序。這是正向驗收前置條件，**不是 OTA 開始計費的證明**。
 
 既有 `ota-service-rollout` 僅供 edge 啟用前的首次註冊部署；edge 已啟用後，dev 使用新增的 `deployment ota-manifest-trust` 限定更新路徑，只在確認實際 mTLS route、獨立服務 endpoint 與固定映像後，以 resourceVersion 比對增加公開信任金鑰，不重套註冊網路政策或碰核心 API。核心切流後的金鑰更新仍需協調兩個 operator 路徑。
+
+### Development Product 裝置正向驗收 checkpoint（2026-09-30）
+
+dev Account Manager API 與 outbox worker 已釘選同一固定映像，兩個 Pod 均啟用 Product writes；唯讀 backfill 顯示 39 個既有 Product 已版本化、待補零個。operator 暫時把 OTA catalog 從 `suspended` 設為 `active`，建立一個只選 `mqtt`、`ota` 的隔離測試 Product，確認不可變 grant revision 1 與兩個 binding 後立刻恢復 `suspended`（catalog revision 42）；價卡未啟用。該 Product 的 PKI 轉為 ready，受控 factory run 簽出一台測試裝置，其私鑰只在本機 dev SecretStore。
+
+公開 Account Manager 網域的 Let’s Encrypt YE1 伺服器憑證鏈經 OpenSSL、系統 `curl` 驗證成功。曾失敗的 Python.org 3.13 `urllib` 用戶端，其預設 OpenSSL CA 路徑不存在；明確載入 `/etc/ssl/cert.pem` 或 `certifi` 後同一 HTTPS health 請求回 200。這不是公開伺服器的簽證缺陷。
+
+測試裝置首次呼叫公開 OTA mTLS 入口則被 ingress 以 HTTP 400 拒絕。入口只含舊 Root／Device CA／App CA，且驗證深度 2；新 Product 裝置鏈的已釘選 Device Root 指紋為 `1faac429c8b91ed85b120a6918ee957db4e91bf960f60ef32c73f4e59a28cf9c`，需深度 3。離線驗證深度 2 失敗、深度 3 成功。公開 Root 已從 PKI 發布的 ConfigMap 與 operator ID／指紋雙重核對，存入 dev SecretStore。受限部署指令把此 Root 加入現有 device ingress client CA bundle 並設定深度 3；舊 CA 保留。更新前唯讀檢查為 `CA_ready=false depth_ready=false`，更新後同一檢查 PASS。使用 Product 裝置完整憑證鏈呼叫公開 `POST /v1/device/ota/check` 得 HTTP 200、`no_eligible_campaign`，伺服器 TLS 驗證成功；不附裝置憑證仍得 ingress HTTP 400。這證明裝置入口與 OTA check 正向授權可用，**尚未**證明任務、物件下載、收據、outbox 或 Billing 用量。流程見 [deployment operations](../deployment-operations.md)。
+
+### Development 受控來源與 Billing 驗收 checkpoint（2026-09-30）
+
+獨立 OTA Service 用上述 Product 建立 2,048-byte 測試 release，實際上傳物件、核對大小與 SHA-256，驗證 operator Ed25519 manifest 並發布。單一測試裝置 campaign 啟用後凍結目標數為 1；公開 mTLS check 回 `assigned`。artifact-token 產生私有 Linode Object Storage HTTPS 短效 URL（非 API GET 代理），獨立 client 的 Range GET 回 206、完整 GET 回 200，雜湊和簽署 release 相同。測試 client 在核對 bytes 後回報 `downloading`、`downloaded`；這是**模擬裝置下載回報**，不是實體裝置韌體安裝成功。未送 `installing`／`rebooting`／`verifying`／`succeeded`，campaign 隨後暫停以防繼續派送。
+
+唯讀資料庫核對該 Product 的 `ota_task_receipts`、`ota_download_receipts`、`ota_artifact_objects` 各一筆，Product grant revision 均為 1；canonical outbox 的 `device_task`、`successful_download_gib`、`artifact_write` 各一筆且全部已投遞，Billing 三種 meter 各接受一筆並保留 revision 1。儲存 meter 需完整 UTC 月封存，本月結束前不能產生正式月 fact。dev 生效 OTA 價卡、OTA pricing publication、OTA invoice line 均為 0，目錄仍 suspended、核心 cutover 仍關閉。這完成三種 meter 的受控來源與跨服務投遞驗證；完整月儲存、實體安裝、seal／關帳、顧客畫面和正式價卡仍待驗收。
 
 ## 1. 已確定的決策與範圍
 

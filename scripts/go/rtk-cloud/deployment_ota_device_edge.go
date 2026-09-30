@@ -125,7 +125,7 @@ func otaDeviceEdgePatch(env map[string]string, ingress map[string]any) (string, 
 	annotations, ok := metadata["annotations"].(map[string]any)
 	if !ok ||
 		annotations["nginx.ingress.kubernetes.io/auth-tls-verify-client"] != "on" ||
-		annotations["nginx.ingress.kubernetes.io/auth-tls-verify-depth"] != "2" ||
+		annotations["nginx.ingress.kubernetes.io/auth-tls-verify-depth"] != lkeDeviceMTLSVerifyDepth(env) ||
 		annotations["nginx.ingress.kubernetes.io/auth-tls-secret"] != lkeIngressNamespace(env)+"/"+lkeDeviceMTLSAppCASecretName(env) {
 		return "", false, errors.New("device ingress does not pin the expected mTLS app CA")
 	}

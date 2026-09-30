@@ -333,7 +333,7 @@ different results. Do not report a complete staging release from ready Pods,
    `deployment ota-device-edge --environment dev --confirm video-cloud-dev`.
    This narrow command requires strict Product entitlement checks and a stopped
    legacy registrar. It verifies that the existing device-host ingress still
-   pins the expected app CA, requires client mTLS, forwards the verified client
+   pins the expected client CA bundle, requires client mTLS, forwards the verified client
    certificate and retains its core API route. It adds only the OTA port 18084
    ingress policy, a bridge Service and the `/v1/device/ota/` Prefix route to
    that same ingress. Its JSON patch checks the observed ingress version and
@@ -345,6 +345,33 @@ different results. Do not report a complete staging release from ready Pods,
    Billing receipts. For rollback, restore core OTA handlers and verify their
    rollout before removing the OTA ingress path. Retain receipts and outbox
    evidence during either direction.
+
+   Product-issued device certificates chain through their Product issuer and
+   Device intermediate to the environment's Device Root. The legacy device
+   ingress bundle does not contain that Root and depth 2 rejects this three-hop
+   chain even when the leaf is valid. For each environment with a pinned
+   `PKI_DEVICE_ROOT_ID` and `PKI_DEVICE_ROOT_SHA256`, copy **only the public**
+   active Root certificate from the PKI-published bundle to that environment's
+   SecretStore `pki/devices/device-root.crt` after matching its subject and
+   SHA-256 to the operator pin. The LKE deployment renderer then appends this
+   Root to the existing client CA bundle and sets device ingress verification
+   depth to 3; a missing or mismatched Root fails the deployment. It preserves
+   legacy trust during transition. This file and the two pin values must be
+   prepared in dev, staging and production when each environment activates
+   Product Device PKI. Never copy a Root from a device-supplied chain as the
+   authority for ingress trust.
+
+   The already-running dev ingress can be updated without redeploying the
+   stack. First run `deployment device-root-ingress-trust --environment dev
+   --read-only` and record its current result. Review the plan without
+   `--confirm`, then run with `--confirm video-cloud-dev`. The command accepts
+   only the pinned Root, validates the existing CA bundle and mTLS ingress,
+   applies resource-version guarded additive CA and depth patches, and verifies
+   live read-back. Repeat `--read-only` and send a Product-issued device's
+   complete certificate chain through the public mTLS host. A missing client
+   certificate must still be denied. Preserve the pre-change CA bundle and
+   ingress depth for rollback; remove the added trust only after new Product
+   devices are no longer using that Root.
 
    OTA devices receive short-lived signed object GET URLs and download
    directly with Range support. The API never proxies firmware bytes. The
