@@ -285,11 +285,33 @@ different results. Do not report a complete staging release from ready Pods,
    generated runtime files. In particular, the firmware manifest trust keys
    come from the reviewed environment configuration rather than an older
    SecretStore snapshot.
-   This applies only OTA registration policies, its private Service and its
-   Deployment. It checks the old registrar is stopped and leaves the PKI-managed
-   core API and log ingester untouched. Publish OTA manifest v2 with an
-   authenticated service-mTLS request after the independent lease is ready;
-   the rollout command does not change catalogue publication or Product grants.
+   Before a signed release, follow the Video Cloud
+   [operator Manifest V1 guide](../repos/rtk_video_cloud/docs/ota-manifest-operator.md):
+   generate the environment-specific private key in the local operator
+   SecretStore, add only its public entry to the reviewed environment override,
+   retain existing trusted keys, and verify the effective key ID on the OTA
+   Service after rollout. The private key must never enter the deployment
+   manifest, Kubernetes Secret, or Git. Until core cutover, a controlled
+   acceptance run may send operator requests to the independent OTA Service
+   through a temporary private port-forward with the existing OTA BFF token;
+   that route does not replace the device mTLS edge.
+   This initial registration applies only OTA registration policies, its
+   private Service and its Deployment. It checks the old registrar is stopped
+   and leaves the PKI-managed core API and log ingester untouched. Publish OTA
+   manifest v2 with an authenticated service-mTLS request after the independent
+   lease is ready; the rollout command does not change catalogue publication
+   or Product grants.
+   `ota-service-rollout` is the initial registration step and deliberately
+   refuses to run after the device edge is enabled. For an additive public-key
+   update on the already deployed dev OTA Service, first review
+   `deployment ota-manifest-trust --environment dev`, then run it with
+   `--confirm video-cloud-dev`. It requires the existing mTLS edge and ready
+   service, rejects any removed or changed trusted key, verifies the pinned
+   image, and patches only the OTA Service Deployment's manifest-trust value
+   with a resource-version check. It waits for rollout and verifies the key
+   value, endpoint and edge route afterward. It does not modify the core API;
+   after core cutover, key rotation needs a coordinated procedure for both
+   operator paths.
    Publication of a ready revision is allowed while OTA is `suspended`; it
    changes only the selected manifest version, not service activation or Product
    eligibility. If publication returns 409 despite a ready v2 lease and the
