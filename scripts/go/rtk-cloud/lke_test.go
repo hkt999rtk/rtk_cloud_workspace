@@ -7138,6 +7138,25 @@ if [[ "$*" == *"get service video-cloud-otaservice -o json"* ]]; then
   fi
   exit 0
 fi
+if [[ "$*" == *"get deployment video-cloud-otaservice -o json"* ]]; then
+  if [[ -n "${FAKE_OTA_DEPLOYMENT_JSON_FILE:-}" ]]; then
+    cat "$FAKE_OTA_DEPLOYMENT_JSON_FILE"
+  else
+    printf '{}\n'
+  fi
+  exit 0
+fi
+if [[ "$*" == *"patch deployment video-cloud-otaservice --type=json"* ]]; then
+  line='ARGS'
+  for arg in "$@"; do
+    line="$line $arg"
+  done
+  printf '%s\n' "$line" >> "` + logPath + `"
+  if [[ -n "${FAKE_OTA_DEPLOYMENT_AFTER_PATCH_JSON_FILE:-}" ]]; then
+    cp "$FAKE_OTA_DEPLOYMENT_AFTER_PATCH_JSON_FILE" "$FAKE_OTA_DEPLOYMENT_JSON_FILE"
+  fi
+  exit 0
+fi
 if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-otaservice -o json"* ]]; then
   if [[ -n "${FAKE_OTA_ENDPOINTSLICES_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_OTA_ENDPOINTSLICES_JSON"

@@ -123,6 +123,11 @@ signed, and no OTA Product has been created. The first authenticated flow can
 use the independent OTA Service's protected operator endpoint through a
 temporary private port-forward while core cutover remains off; device traffic
 must still use the mTLS edge. Stop the forward after verification.
+Since the edge is now active, the initial `ota-service-rollout` command refuses
+to reapply the registration Deployment. Use the dev-only
+`deployment ota-manifest-trust` command to add the reviewed public key to the
+live independent service; it checks the existing route and patches only that
+Deployment's trust value. Core API trust is not changed by this step.
 
 ## PKI dev checkpoint (2026-09-29)
 

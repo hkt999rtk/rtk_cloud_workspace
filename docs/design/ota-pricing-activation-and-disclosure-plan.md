@@ -26,6 +26,8 @@ Account Manager 的私有 mTLS listener、六張各自核准的 Service 身分�
 
 Video Cloud [#737](https://github.com/hkt999rtk/rtk_video_cloud/pull/737) 已合併到指定的固定基線，提供與服務共用 `CanonicalManifestV1` 的 operator 工具、獨立簽章驗證測試及[操作文件](../../repos/rtk_video_cloud/docs/ota-manifest-operator.md)；本機 OTA 相關測試與一次完整 Video Cloud PR coverage 通過。dev operator 在本機 SecretStore 建立獨立 Ed25519 私鑰（檔案權限 `0600`），其公開信任項目已加入 dev 環境 override 並保留舊公開金鑰。此 checkpoint 尚未把新公開金鑰部署到 workload、建立 OTA Product／裝置、簽署韌體或收集用量；私鑰不進 Git、Kubernetes 或服務程序。這是正向驗收前置條件，**不是 OTA 開始計費的證明**。
 
+既有 `ota-service-rollout` 僅供 edge 啟用前的首次註冊部署；edge 已啟用後，dev 使用新增的 `deployment ota-manifest-trust` 限定更新路徑，只在確認實際 mTLS route、獨立服務 endpoint 與固定映像後，以 resourceVersion 比對增加公開信任金鑰，不重套註冊網路政策或碰核心 API。核心切流後的金鑰更新仍需協調兩個 operator 路徑。
+
 ## 1. 已確定的決策與範圍
 
 - 使用者於 2026-09-26 核准 **OTA 四項單價**：首次裝置指派 NT$96／1,000 次、已驗證下載 NT$0.96／GiB、實體韌體儲存 NT$0.96／GiB-month、成功建立韌體物件 NT$144／百萬次。這是商業單價的核准，**尚非 Billing 資料庫中的生效價卡**；正式生效月仍待核定。development 的程式部署已完成，但不代表價格生效。
