@@ -544,6 +544,27 @@ func TestDeploymentPreflightProvisionRejectsStaleOperatorImage(t *testing.T) {
 	}
 }
 
+func TestDeploymentPreflightProvisionAcceptsSelectedOperatorImage(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	store := makeIsolatedTestSecretStore(t, "staging")
+	if err := store.write("operator/env/LKE_BILLING_IMAGE", []byte("registry.example.test/rtk/billing:approved\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := defaultDeploymentPreflightChecks()
+	checks.lookPath = func(string) (string, error) { return "/fake/tool", nil }
+	checks.validateDNS = func(deploymentConfig) error { return nil }
+	checks.validateLKEState = func(deploymentConfig) error { return nil }
+	var out bytes.Buffer
+	_ = runDeploymentPreflightWithChecks(cfg, "provision", checks, &out)
+	if !strings.Contains(out.String(), "PASS image-source") {
+		t.Fatalf("selected operator image was not accepted: %s", out.String())
+	}
+}
+
 func TestValidateDeploymentKubectlVersion(t *testing.T) {
 	for _, tc := range []struct {
 		client, server string
@@ -559,6 +580,12 @@ func TestValidateDeploymentKubectlVersion(t *testing.T) {
 		if err := validateDeploymentKubectlVersion([]byte(payload)); (err != nil) != tc.wantError {
 			t.Fatalf("client=%s server=%s error=%v, want error=%v", tc.client, tc.server, err, tc.wantError)
 		}
+	}
+	if err := validateDeploymentKubectlVersion([]byte("{")); err == nil || !strings.Contains(err.Error(), "invalid Kubernetes version response") {
+		t.Fatalf("malformed kubectl version response = %v", err)
+	}
+	if err := validateDeploymentKubectlVersion([]byte(`{"clientVersion":{"major":"2","minor":"36"},"serverVersion":{"major":"1","minor":"36"}}`)); err == nil || !strings.Contains(err.Error(), "outside the supported one-minor skew") {
+		t.Fatalf("different Kubernetes major versions = %v", err)
 	}
 }
 
