@@ -5300,6 +5300,7 @@ func missingLKEImageEnvKeys() []string {
 	keys := []string{
 		"LKE_VIDEO_CLOUD_IMAGE",
 		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_BILLING_IMAGE",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"LKE_FRONTEND_IMAGE",
 		"LKE_CLOUD_LOGGER_IMAGE",
@@ -5314,9 +5315,21 @@ func missingLKEImageEnvKeys() []string {
 }
 
 func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
+	operatorImages, err := selectedOperatorLKEImages(workspace, envRoot)
+	if err != nil {
+		return err
+	}
+	for key, image := range operatorImages {
+		if selected := strings.TrimSpace(os.Getenv(key)); selected != "" && selected != image {
+			return fmt.Errorf("%s differs from the selected environment operator image; reconcile the release before provisioning", key)
+		}
+		if err := os.Setenv(key, image); err != nil {
+			return err
+		}
+	}
 	missing := missingLKEImageEnvKeys()
 	if len(missing) == 0 {
-		return nil
+		return validateResolvedLKEImageSources(workspace)
 	}
 	if stackEnv, source := stackLKEImageEnv(envRoot); lkeImageEnvHasKeys(stackEnv, missing) {
 		for _, key := range missing {
@@ -5325,7 +5338,7 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 			}
 		}
 		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] use: lke_image_env source=%s keys=%s\n", source, strings.Join(missing, ","))
-		return nil
+		return validateResolvedLKEImageSources(workspace)
 	}
 	if env, source := existingLKEImageEnv(envRoot); lkeImageEnvHasKeys(env, missing) {
 		if err := validateExistingLKEImageEnvAgainstStack(envRoot, env, source, missing); err != nil {
@@ -5337,7 +5350,7 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 			}
 		}
 		fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] use: lke_image_env source=%s keys=%s\n", source, strings.Join(missing, ","))
-		return nil
+		return validateResolvedLKEImageSources(workspace)
 	}
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	imageDir := filepath.Join(envRoot, "artifacts", "lke-images", ts)
@@ -5375,7 +5388,71 @@ func resolveLKEImagesIfNeeded(workspace, envRoot string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "[cloud-staging-e2e] pass: lke_resolve_images env=%s\n", envFile)
+	return validateResolvedLKEImageSources(workspace)
+}
+
+func validateResolvedLKEImageSources(workspace string) error {
+	for _, source := range lkeServiceImageSources() {
+		image := strings.TrimSpace(os.Getenv(source.EnvKey))
+		officialTag := "ghcr.io/hkt999rtk/" + source.RepoName + "/" + source.Name + ":sha-"
+		if !strings.HasPrefix(image, officialTag) {
+			continue
+		}
+		commit, err := gitOutput(filepath.Join(workspace, source.RepoPath), "rev-parse", "HEAD")
+		if err != nil {
+			return fmt.Errorf("resolve %s source commit: %w", source.Key, err)
+		}
+		if err := validatePinnedLKEImage(image, "ghcr.io", "hkt999rtk", source, strings.TrimSpace(commit), true); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// The selected environment's operator record is the image source of truth for
+// an existing stack. Read it before falling back to restored stack.env or an
+// older image artifact; otherwise a full upgrade can resolve a different image
+// from the one the provisioner later loads from the SecretStore.
+func selectedOperatorLKEImages(workspace, envRoot string) (map[string]string, error) {
+	environment := filepath.Base(filepath.Dir(filepath.Clean(envRoot)))
+	if environment != "dev" && environment != "staging" && environment != "prod" {
+		return nil, nil
+	}
+	store, err := newSecretStore("", environment)
+	if err != nil {
+		return nil, err
+	}
+	values, err := store.readOperator()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	images := make(map[string]string)
+	var failures []string
+	for _, source := range lkeServiceImageSources() {
+		image := strings.TrimSpace(values[source.EnvKey])
+		if image == "" {
+			continue
+		}
+		officialTag := "ghcr.io/hkt999rtk/" + source.RepoName + "/" + source.Name + ":sha-"
+		if strings.HasPrefix(image, officialTag) {
+			commit, err := gitOutput(filepath.Join(workspace, source.RepoPath), "rev-parse", "HEAD")
+			if err != nil {
+				failures = append(failures, fmt.Sprintf("resolve %s source commit: %v", source.Key, err))
+				continue
+			}
+			if err := validatePinnedLKEImage(image, "ghcr.io", "hkt999rtk", source, strings.TrimSpace(commit), true); err != nil {
+				failures = append(failures, err.Error())
+			}
+		}
+		images[source.EnvKey] = image
+	}
+	if len(failures) > 0 {
+		return nil, fmt.Errorf("operator image selection is stale: %s", strings.Join(failures, "; "))
+	}
+	return images, nil
 }
 
 func stackLKEImageEnv(envRoot string) (map[string]string, string) {

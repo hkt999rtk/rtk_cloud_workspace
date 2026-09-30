@@ -204,6 +204,7 @@ func TestResolveLKEImagesUsesExistingEnvRootManifest(t *testing.T) {
     "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
     "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
     "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
+    "LKE_BILLING_IMAGE": "registry.example.test/rtk/billing:manifest",
     "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
     "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
     "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
@@ -218,6 +219,81 @@ func TestResolveLKEImagesUsesExistingEnvRootManifest(t *testing.T) {
 	}
 }
 
+func TestMissingLKEImageEnvKeysIncludesBilling(t *testing.T) {
+	clearLKEImageEnvForTest(t)
+	for _, key := range []string{"LKE_VIDEO_CLOUD_IMAGE", "LKE_ACCOUNT_MANAGER_IMAGE", "LKE_CLOUD_ADMIN_IMAGE", "LKE_FRONTEND_IMAGE", "LKE_CLOUD_LOGGER_IMAGE"} {
+		t.Setenv(key, "registry.example.test/selected")
+	}
+	missing := missingLKEImageEnvKeys()
+	if len(missing) != 1 || missing[0] != "LKE_BILLING_IMAGE" {
+		t.Fatalf("missing image keys = %v, want Billing only", missing)
+	}
+}
+
+func TestResolveLKEImagesUsesSelectedOperatorBillingImage(t *testing.T) {
+	_, envRoot := makeStagingResetTestEnv(t)
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := newSecretStore("", "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const selected = "registry.example.test/rtk/billing:approved"
+	if err := store.write("operator/env/LKE_BILLING_IMAGE", []byte(selected+"\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	clearLKEImageEnvForTest(t)
+	for _, key := range []string{"LKE_VIDEO_CLOUD_IMAGE", "LKE_ACCOUNT_MANAGER_IMAGE", "LKE_CLOUD_ADMIN_IMAGE", "LKE_FRONTEND_IMAGE", "LKE_CLOUD_LOGGER_IMAGE"} {
+		t.Setenv(key, "registry.example.test/selected")
+	}
+	if err := resolveLKEImagesIfNeeded(workspace, envRoot); err != nil {
+		t.Fatal(err)
+	}
+	if got := os.Getenv("LKE_BILLING_IMAGE"); got != selected {
+		t.Fatalf("Billing image = %q, want operator selection %q", got, selected)
+	}
+	t.Setenv("LKE_BILLING_IMAGE", "registry.example.test/rtk/billing:stale")
+	if err := resolveLKEImagesIfNeeded(workspace, envRoot); err == nil || !strings.Contains(err.Error(), "differs from the selected environment operator image") {
+		t.Fatalf("conflicting Billing image should fail closed, got %v", err)
+	}
+}
+
+func TestSelectedOperatorLKEImagesRejectsStaleSourceTag(t *testing.T) {
+	_, envRoot := makeStagingResetTestEnv(t)
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := newSecretStore("", "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("operator/env/LKE_BILLING_IMAGE", []byte("ghcr.io/hkt999rtk/rtk_billing/billing-twd:sha-000000000000\n"), true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := selectedOperatorLKEImages(workspace, envRoot); err == nil || !strings.Contains(err.Error(), "does not match source commit") {
+		t.Fatalf("stale operator Billing image should fail closed, got %v", err)
+	}
+}
+
+func TestResolveLKEImagesRejectsStaleRestoredBillingTag(t *testing.T) {
+	_, envRoot := makeStagingResetTestEnv(t)
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	clearLKEImageEnvForTest(t)
+	for _, key := range []string{"LKE_VIDEO_CLOUD_IMAGE", "LKE_ACCOUNT_MANAGER_IMAGE", "LKE_CLOUD_ADMIN_IMAGE", "LKE_FRONTEND_IMAGE", "LKE_CLOUD_LOGGER_IMAGE"} {
+		t.Setenv(key, "registry.example.test/selected")
+	}
+	appendTestFile(t, filepath.Join(envRoot, "env", "stack.env"), "LKE_BILLING_IMAGE=ghcr.io/hkt999rtk/rtk_billing/billing-twd:sha-000000000000\n")
+	if err := resolveLKEImagesIfNeeded(workspace, envRoot); err == nil || !strings.Contains(err.Error(), "does not match source commit") {
+		t.Fatalf("stale restored Billing image should fail closed, got %v", err)
+	}
+}
+
 func TestResolveLKEImagesRejectsStaleManifestWhenStackPinsImage(t *testing.T) {
 	_, envRoot := makeStagingResetTestEnv(t)
 	clearLKEImageEnvForTest(t)
@@ -228,6 +304,7 @@ func TestResolveLKEImagesRejectsStaleManifestWhenStackPinsImage(t *testing.T) {
     "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
     "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
     "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:old",
+    "LKE_BILLING_IMAGE": "registry.example.test/rtk/billing:manifest",
     "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
     "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
     "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
@@ -252,6 +329,7 @@ func TestRunStagingProvisionPlanReportsExistingLKEImageArtifact(t *testing.T) {
     "LKE_POSTGRES_IMAGE": "postgres:16-alpine",
     "LKE_VIDEO_CLOUD_IMAGE": "registry.example.test/rtk/video-cloud:manifest",
     "LKE_ACCOUNT_MANAGER_IMAGE": "registry.example.test/rtk/account-manager:manifest",
+    "LKE_BILLING_IMAGE": "registry.example.test/rtk/billing:manifest",
     "LKE_CLOUD_ADMIN_IMAGE": "registry.example.test/rtk/cloud-admin:manifest",
     "LKE_FRONTEND_IMAGE": "registry.example.test/rtk/frontend:manifest",
     "LKE_CLOUD_LOGGER_IMAGE": "registry.example.test/rtk/cloud-logger:manifest"
@@ -273,6 +351,7 @@ func clearLKEImageEnvForTest(t *testing.T) {
 	for _, key := range []string{
 		"LKE_VIDEO_CLOUD_IMAGE",
 		"LKE_ACCOUNT_MANAGER_IMAGE",
+		"LKE_BILLING_IMAGE",
 		"LKE_CLOUD_ADMIN_IMAGE",
 		"LKE_FRONTEND_IMAGE",
 		"LKE_CLOUD_LOGGER_IMAGE",

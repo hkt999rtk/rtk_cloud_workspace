@@ -151,8 +151,14 @@ go run ./scripts/go/rtk-cloud -- deployment preflight \
 
 `plan` validates the tracked environment schema and basic tools. `provision`
 additionally validates provider, DNS, GHCR, SSH key, active-service limit, and
-existing-cluster safety state. Output shows only `PASS/WARN/FAIL`, never credential
-values. Correct every `FAIL` before proceeding to provisioning.
+existing-cluster safety state. It checks official operator `sha-` image pins
+against the selected service commits before materializing runtime. When the
+selected environment has a kubeconfig, `provision` also verifies Kubernetes
+API readiness and rejects a `kubectl`
+client more than one minor version from the API server. Select a supported
+binary with `RTK_CLOUD_KUBECTL` if the shell's first `kubectl` is too old.
+Output shows only `PASS/WARN/FAIL`, never credential values. Correct every
+`FAIL` before proceeding to provisioning.
 
 ## Create a New Environment
 
@@ -206,6 +212,13 @@ different results. Do not report a complete staging release from ready Pods,
    every repository is not a prerequisite. Verify each workflow's actual trigger;
    reuse successful publication and do not dispatch unrelated CI. Staging accepts
    CI-published images only; local images are for dev.
+   The full LKE image resolver includes Billing in its required image set. It
+   reads image pins from the selected environment's operator SecretStore before
+   considering restored `stack.env` or an older image artifact. A process image
+   override that conflicts with the operator pin, or an official `sha-` tag that
+   does not match the selected service submodule commit, stops the upgrade.
+   Digest-pinned images still require the separate canonical CI provenance and
+   registry-pull checks; a digest alone does not identify its source revision.
 2. **Desired/runtime gate.** Reconcile tracked `environment.env`, canonical
    environment-local operator settings, restored runtime and effective workload
    configuration. Restored `stack.env` is old controller state, not the desired

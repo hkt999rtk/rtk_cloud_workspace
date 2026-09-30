@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -171,6 +173,24 @@ func runDeploymentPreflightWithChecks(cfg deploymentConfig, operation string, ch
 	} else {
 		reporter.pass("environment-safety", "provider state and existing-cluster runtime state are coherent")
 	}
+	if operation == "provision" {
+		if images, err := selectedOperatorLKEImages(cfg.Workspace, cfg.RuntimeRoot); err != nil {
+			reporter.fail("image-source", err)
+		} else if len(images) > 0 {
+			reporter.pass("image-source", "operator SHA-tag image pins match selected source commits; digest provenance remains a separate gate")
+		}
+		if store, err := newSecretStore("", cfg.Environment); err != nil {
+			reporter.fail("kubernetes-access", err)
+		} else if _, err := os.Stat(store.KubeconfigPath()); err == nil {
+			if err := checks.validateKube(cfg); err != nil {
+				reporter.fail("kubernetes-access", err)
+			} else {
+				reporter.pass("kubernetes-access", "API readyz and kubectl version skew are valid")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			reporter.fail("kubernetes-access", err)
+		}
+	}
 	if operation == "ephemeral-test" {
 		if err := checks.validateEphemeral(cfg); err != nil {
 			reporter.fail("ephemeral-ownership", err)
@@ -238,6 +258,31 @@ func validateDeploymentKubeAccess(cfg deploymentConfig) error {
 	}
 	if strings.TrimSpace(string(out)) != "ok" {
 		return fmt.Errorf("Kubernetes API readyz returned an unexpected response")
+	}
+	version, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "--request-timeout=10s", "version", "-o", "json").Output()
+	if err != nil {
+		return fmt.Errorf("Kubernetes client/server version check failed: %w", err)
+	}
+	return validateDeploymentKubectlVersion(version)
+}
+
+func validateDeploymentKubectlVersion(raw []byte) error {
+	var versions struct {
+		Client struct{ Major, Minor string } `json:"clientVersion"`
+		Server struct{ Major, Minor string } `json:"serverVersion"`
+	}
+	if err := json.Unmarshal(raw, &versions); err != nil {
+		return fmt.Errorf("invalid Kubernetes version response: %w", err)
+	}
+	clientMajor, clientMajorErr := strconv.Atoi(versions.Client.Major)
+	serverMajor, serverMajorErr := strconv.Atoi(versions.Server.Major)
+	clientMinor, clientMinorErr := strconv.Atoi(strings.TrimSuffix(versions.Client.Minor, "+"))
+	serverMinor, serverMinorErr := strconv.Atoi(strings.TrimSuffix(versions.Server.Minor, "+"))
+	if clientMajorErr != nil || serverMajorErr != nil || clientMinorErr != nil || serverMinorErr != nil {
+		return errors.New("Kubernetes client/server version response is incomplete")
+	}
+	if clientMajor != serverMajor || clientMinor < serverMinor-1 || clientMinor > serverMinor+1 {
+		return fmt.Errorf("kubectl v%d.%d is outside the supported one-minor skew for API server v%d.%d", clientMajor, clientMinor, serverMajor, serverMinor)
 	}
 	return nil
 }
