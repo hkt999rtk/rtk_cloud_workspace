@@ -181,10 +181,14 @@ API rollout with an old auxiliary worker image fails the check.
 The checker reads `cloud_env/NAME/runtime/env/stack.env` by default; set
 `RTK_CLOUD_ENV_ROOT` only when checking an explicit alternate runtime tree.
 Before acceptance that expects billable device logs, use
-`--require-billable-logging-ready`. It checks live Product write enablement,
+`--require-billable-logging-ready`. It checks the Secret and running Account
+Manager API/outbox worker Pods for Product write enablement,
 complete immutable Product grant backfill, active Logger catalog publication,
-and the required controller readiness. A denied device log is an operational
-warning only; it is not an accepted receipt or Billing usage.
+the API's HTTP/MQTT Logger cutovers and MQTT entitlement enforcement, the
+Logger's MQTT subscription and Billing fact generation, Loki's persistent data
+PVC and 7/30/90-day retention rules, and the required controller readiness.
+A denied device log is an operational warning only; it is not an accepted
+receipt or Billing usage.
 A scoped or read-only PASS alone is not deployment approval. Use the matching
 `deployment preflight --operation ...` for configuration/tooling prerequisites;
 it does not replace credentials-check. Recheck affected inputs after changes.

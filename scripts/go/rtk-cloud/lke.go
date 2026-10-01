@@ -7375,7 +7375,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
               value: %q
             - name: VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED
               value: %q
-`, lkeNamespaceName(env, "account-manager"), lkeAccountManagerInternalURL(env), lkeNamespaceName(env, "billing"), "true", strconv.FormatBool(lkeLoggerBillingFactsEnabled(env)))
+`, lkeNamespaceName(env, "account-manager"), lkeAccountManagerInternalURL(env), lkeNamespaceName(env, "billing"), strconv.FormatBool(lkeLoggerMQTTCoreCutoverEnabled(env)), strconv.FormatBool(lkeLoggerBillingFactsEnabled(env)))
 			loggerIdentityMount = `            - name: logger-platform-identity
               mountPath: /etc/video_cloud/platform-service
               readOnly: true

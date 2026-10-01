@@ -695,9 +695,14 @@ operational warning and broker acknowledgment.
 Run `scripts/check-deployment-credentials.sh --environment staging --read-only
 --require-billable-logging-ready` before creating billable-log acceptance
 fixtures. On this staging snapshot it fails immediately on the disabled
-Product write gate. Once that gate is enabled, the same check also rejects
-missing immutable grants or a non-active Logger catalog entry. It does not
-change any Product option or grant.
+Product write gate. Once that gate is enabled, the same check verifies every
+running Account Manager API and outbox worker Pod received it and also rejects
+missing immutable grants, a non-active Logger catalog entry, inactive core
+Logger cutovers or MQTT entitlement enforcement, disabled Logger Billing facts,
+or Loki storage without its bound data PVC and tiered retention rules. It does
+not change any Product option or grant. The registered Logger stays off the
+MQTT log subscription until the MQTT core cutover. Its standby HTTP readiness
+depends on its database and log backend, since it has no log subscription yet.
 
 If a rollout is stuck, stop further updates, inspect both old and new Pod
 readiness plus broker client state, repair the dependency, and rerun the scoped
