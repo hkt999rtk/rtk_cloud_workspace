@@ -280,6 +280,9 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 		if err := verifyLiveAccountManagerEnvironment(store.Environment, secret.Metadata.Namespace, secret.Metadata.Name, secret.Data); err != nil {
 			failures = append(failures, err.Error())
 		}
+		if secret.Metadata.Namespace == stack+"-video-cloud" && secret.Metadata.Name == "mqtt-pki-worker" {
+			failures = append(failures, verifyMQTTBrokerAPISecret(secret.Data, label)...)
+		}
 		for _, pair := range [][2]string{{"tls.crt", "tls.key"}, {"client.crt", "client.key"}, {"cert.pem", "key.pem"}} {
 			certEncoded, certOK := secret.Data[pair[0]]
 			keyEncoded, keyOK := secret.Data[pair[1]]
@@ -391,6 +394,17 @@ func verifySecretStoreK8SRuntime(store secretStore, now time.Time) error {
 	return fmt.Errorf("live Kubernetes secret validation failed: %s", strings.Join(failures, "; "))
 }
 
+func verifyMQTTBrokerAPISecret(data map[string]string, label string) []string {
+	var failures []string
+	for _, name := range []string{"PKI_BROKER_API_KEY", "PKI_BROKER_API_SECRET"} {
+		raw, err := base64.StdEncoding.DecodeString(data[name])
+		if err != nil || len(raw) == 0 || strings.TrimSpace(string(raw)) != string(raw) {
+			failures = append(failures, label+" "+name+" must be nonempty and have no surrounding whitespace")
+		}
+	}
+	return failures
+}
+
 func verifyPKIOperatorBinding(configured, controller, account, configuredSigner, controllerSigner string) error {
 	if configured == "" && controller == "" && account == "" && configuredSigner == "" && controllerSigner == "" {
 		return nil // Environment has not opted into the operator migration.
@@ -481,8 +495,13 @@ func verifyFixedDeviceRootTrust(environment, kubeconfig, namespace string, deplo
 		return errors.New("fixed Device Root trust requires API direct mTLS, Product PKI, static Root and registry enforcement without CRL consumers")
 	}
 	broker := settings["mqtt-pki/pkibroker"]
-	if broker["PKI_ENVIRONMENT"] != environment || broker["PKI_BROKER_REQUIRE_CRLS"] != "false" || broker["PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR"] != "" || broker["PKI_BROKER_DEVICE_CRL_MANIFEST"] != "" || broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] == "true" {
-		return errors.New("fixed Device Root trust requires broker registry enforcement without dynamic Device trust or CRLs")
+	if broker["PKI_ENVIRONMENT"] != environment || broker["PKI_BROKER_DEVICE_AUTOMATIC_STATE_DIR"] != "" {
+		return errors.New("fixed Device Root trust requires broker registry enforcement with a matching Root")
+	}
+	staticRegistry := broker["PKI_BROKER_REQUIRE_CRLS"] == "false" && broker["PKI_BROKER_DEVICE_CRL_MANIFEST"] == "" && broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] != "true" && broker["PKI_BROKER_DEVICE_ROOT_ID"] == ""
+	verifiedRegistry := broker["PKI_BROKER_REQUIRE_CRLS"] == "true" && broker["PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED"] == "true" && broker["PKI_BROKER_DEVICE_ROOT_ID"] == controller["PKI_DEVICE_ROOT_ID"] && broker["PKI_BROKER_DEVICE_ROOT_STATE"] != "" && broker["PKI_BROKER_DEVICE_ROOTS"] == "/run/pki-device/roots.pem" && broker["PKI_BROKER_DEVICE_CRL_MANIFEST"] != "" && broker["PKI_BROKER_PKI_CONTROLLER_URL"] != "" && broker["PKI_BROKER_MANAGEMENT_CA"] != "" && broker["PKI_BROKER_MANAGEMENT_CERT"] != "" && broker["PKI_BROKER_MANAGEMENT_KEY"] != ""
+	if !staticRegistry && !verifiedRegistry {
+		return errors.New("fixed Device Root trust requires broker registry enforcement with a matching Root")
 	}
 	for _, target := range []struct{ deployment, container, path string }{
 		{"video-cloud-api-pki", "app", api["VIDEO_CLOUD_AUTH_DEVICE_CA_CERT"]},
@@ -578,9 +597,9 @@ func verifySelectedStackMetadata(store secretStore) error {
 	return nil
 }
 
-// Dynamic root consumers fetch a policy before serving. A deployment can have
-// valid certificates and Secrets yet loop on controller HTTP 503 when its root
-// ID has no policy row (for example after a dev database rebuild).
+// Dynamic root consumers fetch the environment/domain policy before serving.
+// An empty removal policy is valid for a ready or active Root that has never
+// been distrusted; terminal Roots require their durable removal record.
 func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deployments liveDeploymentList) error {
 	fields := [][2]string{
 		{"VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_ID", "VIDEO_CLOUD_ACCOUNT_MANAGER_SERVICE_ROOT_STATE"},
@@ -646,6 +665,23 @@ func verifyLiveRootPolicyReferences(kubeconfig, platformNamespace string, deploy
 	found := map[string]bool{}
 	for _, id := range present {
 		found[id] = true
+	}
+	var unresolved []string
+	for _, id := range ids {
+		if !found[id] {
+			unresolved = append(unresolved, "'"+id+"'")
+		}
+	}
+	if len(unresolved) > 0 {
+		query = "SELECT COALESCE(json_agg(id ORDER BY id),'[]'::json) FROM (SELECT id::text AS id FROM public.pki_issuers WHERE id::text IN (" + strings.Join(unresolved, ",") + ") AND kind='root' AND status IN ('ready','active','retiring')) roots"
+		output, commandErr = exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platformNamespace, "exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d", "video_cloud", "-At", "-c", query).CombinedOutput()
+		var valid []string
+		if commandErr != nil || json.Unmarshal([]byte(strings.TrimSpace(string(output))), &valid) != nil {
+			return errors.New("active Root verification did not return valid database metadata")
+		}
+		for _, id := range valid {
+			found[id] = true
+		}
 	}
 	var missing []string
 	for _, id := range ids {

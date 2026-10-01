@@ -1245,6 +1245,31 @@ func TestAutomaticDeviceTrustPrecheckDevFixedRoot(t *testing.T) {
 		t.Fatalf("broker CRL setting was admitted: %v", err)
 	}
 	broker.Env[1].Value = "false"
+	baseEnv := len(broker.Env)
+	for name, value := range map[string]string{
+		"PKI_BROKER_REQUIRE_CRLS":              "true",
+		"PKI_BROKER_DEVICE_BUNDLE_ACK_ENABLED": "true",
+		"PKI_BROKER_DEVICE_ROOT_ID":            "root-id",
+		"PKI_BROKER_DEVICE_ROOT_STATE":         "/run/pki-state/root.json",
+		"PKI_BROKER_DEVICE_ROOTS":              "/run/pki-device/roots.pem",
+		"PKI_BROKER_DEVICE_CRL_MANIFEST":       "/run/pki-broker-device/manifest.json",
+		"PKI_BROKER_PKI_CONTROLLER_URL":        "https://controller.test",
+		"PKI_BROKER_MANAGEMENT_CA":             "/run/management/ca.crt",
+		"PKI_BROKER_MANAGEMENT_CERT":           "/run/management/tls.crt",
+		"PKI_BROKER_MANAGEMENT_KEY":            "/run/management/tls.key",
+	} {
+		broker.Env = append(broker.Env, struct {
+			Name      string `json:"name"`
+			Value     string `json:"value"`
+			ValueFrom any    `json:"valueFrom"`
+		}{Name: name, Value: value})
+	}
+	broker.Env[1].Value = "true"
+	if err := check("dev"); err != nil {
+		t.Fatalf("fixed Root with broker registry receipt mode: %v", err)
+	}
+	broker.Env = broker.Env[:baseEnv]
+	broker.Env[1].Value = "false"
 	mounts := broker.VolumeMounts
 	broker.VolumeMounts = nil
 	if err := check("dev"); err == nil || !strings.Contains(err.Error(), "not mounted") {
@@ -1482,7 +1507,7 @@ func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	kubectl := filepath.Join(t.TempDir(), "kubectl")
-	script := "#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_root_distrust'*) printf '%s' '[]' ;;\n  *) exit 1 ;;\nesac\n"
+	script := "#!/bin/sh\ncase \"$*\" in\n  *'get pods -l app.kubernetes.io/name=postgresql -o json'*) printf '%s' '{\"items\":[{\"metadata\":{\"name\":\"postgresql-0\"}}]}' ;;\n  *'pki_root_distrust'*) printf '%s' '[]' ;;\n  *'pki_issuers'*) printf '%s' '[]' ;;\n  *) exit 1 ;;\nesac\n"
 	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1490,6 +1515,13 @@ func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
 	err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments)
 	if err == nil || !strings.Contains(err.Error(), rootID) || !strings.Contains(err.Error(), "video-cloud-api/app") {
 		t.Fatalf("missing root policy error = %v", err)
+	}
+	active := strings.Replace(script, "*'pki_issuers'*) printf '%s' '[]'", "*'pki_issuers'*) printf '%s' '[\""+rootID+"\"]'", 1)
+	if err := os.WriteFile(kubectl, []byte(active), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err != nil {
+		t.Fatalf("active Root with empty removal policy: %v", err)
 	}
 	script = strings.Replace(script, "'[]'", "'[\""+rootID+"\"]'", 1)
 	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
@@ -1501,6 +1533,20 @@ func TestLiveRootPolicyPrecheckRejectsMissingPolicy(t *testing.T) {
 	deployments.Items[0].Spec.Template.Spec.Containers[0].Env[1].Value = ""
 	if err := verifyLiveRootPolicyReferences("/tmp/kubeconfig", "video-cloud-dev-platform", deployments); err == nil || !strings.Contains(err.Error(), "incomplete") {
 		t.Fatalf("incomplete root policy error = %v", err)
+	}
+}
+
+func TestMQTTBrokerAPISecretRejectsTrailingNewline(t *testing.T) {
+	data := map[string]string{
+		"PKI_BROKER_API_KEY":    base64.StdEncoding.EncodeToString([]byte("key\n")),
+		"PKI_BROKER_API_SECRET": base64.StdEncoding.EncodeToString([]byte("secret")),
+	}
+	if issues := verifyMQTTBrokerAPISecret(data, "staging/mqtt-pki-worker"); len(issues) != 1 || !strings.Contains(issues[0], "PKI_BROKER_API_KEY") {
+		t.Fatalf("newline check = %v", issues)
+	}
+	data["PKI_BROKER_API_KEY"] = base64.StdEncoding.EncodeToString([]byte("key"))
+	if issues := verifyMQTTBrokerAPISecret(data, "staging/mqtt-pki-worker"); len(issues) != 0 {
+		t.Fatalf("normalized broker credential = %v", issues)
 	}
 }
 
