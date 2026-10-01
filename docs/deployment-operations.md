@@ -263,7 +263,8 @@ different results. Do not report a complete staging release from ready Pods,
    role schema ownership or CREATE. The one-shot Billing migration Job reads
    only `billing-migration-database`. Both Jobs must complete before updating
    Billing workloads. `BILLING_DB_MIGRATE_ON_STARTUP=false` prevents the API
-   from attempting DDL. This separation is required for Billing deployment;
+   and payment simulator from attempting DDL. This separation is required for
+   Billing deployment;
    an older image without the migration command must be updated before the
    isolated runtime role is used. Save the prior image/schema version and
    retain failed Job logs for review. After migration, verify the runtime role
