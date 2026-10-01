@@ -178,6 +178,8 @@ is a failed release. After the scoped rollout, add
 workers and any present registered Video Cloud services with the environment's
 protected `LKE_VIDEO_CLOUD_IMAGE` pin. This also checks readiness; a successful
 API rollout with an old auxiliary worker image fails the check.
+The checker reads `cloud_env/NAME/runtime/env/stack.env` by default; set
+`RTK_CLOUD_ENV_ROOT` only when checking an explicit alternate runtime tree.
 Before acceptance that expects billable device logs, use
 `--require-billable-logging-ready`. It checks live Product write enablement,
 complete immutable Product grant backfill, active Logger catalog publication,

@@ -81,7 +81,8 @@ if [[ -n "$environment" ]]; then
       echo "invalid environment for workload readiness check" >&2
       exit 2
     fi
-    stack_file="$ROOT/cloud_env/$environment/runtime/env/stack.env"
+    environment_root="${RTK_CLOUD_ENV_ROOT:-$ROOT/cloud_env/$environment/runtime}"
+    stack_file="$environment_root/env/stack.env"
     stack_name="$(awk -F= '$1 == "CLOUD_STACK_NAME" { print $2; exit }' "$stack_file")"
     if [[ ! "$stack_name" =~ ^[a-z0-9-]+$ ]]; then
       echo "missing or invalid CLOUD_STACK_NAME in $stack_file" >&2

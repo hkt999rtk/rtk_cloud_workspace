@@ -58,14 +58,19 @@ func TestDeploymentCredentialScriptDetectsScopedImageDrift(t *testing.T) {
 	}
 	root := t.TempDir()
 	config := filepath.Join(root, "staging")
+	envRoot := filepath.Join(root, "runtime")
 	for _, dir := range []string{filepath.Join(config, "kube"), filepath.Join(config, "operator", "env")} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
+	if err := os.MkdirAll(filepath.Join(envRoot, "env"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for path, content := range map[string]string{
 		filepath.Join(config, "kube", "kubeconfig.yaml"):                  "fixture",
 		filepath.Join(config, "operator", "env", "LKE_VIDEO_CLOUD_IMAGE"): "registry.example.test/video-cloud:reviewed\n",
+		filepath.Join(envRoot, "env", "stack.env"):                         "CLOUD_STACK_NAME=video-cloud-staging\n",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
@@ -97,6 +102,7 @@ esac
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("RTK_CLOUD_KUBECTL", filepath.Join(bin, "kubectl"))
 	t.Setenv("RTK_CLOUD_CONFIG_ROOT", root)
+	t.Setenv("RTK_CLOUD_ENV_ROOT", envRoot)
 	args := []string{filepath.Join(workspace, "scripts", "check-deployment-credentials.sh"), "--environment", "staging", "--read-only", "--require-video-cloud-image"}
 	for _, tc := range []struct {
 		name  string
