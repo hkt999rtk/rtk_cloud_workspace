@@ -47,6 +47,8 @@ func checkRolloutLoggerPeriodSource(cfg deploymentConfig) deploymentCredentialCh
 		return check
 	}
 	env := appendMap(appendMap(appendMap(root.Values, cfg.Values), cfg.AdapterResolved), operator)
+	// Match the deployment SecretStore: scoped media credentials win over legacy aliases.
+	mergeObjectStorageCredentialAliases(env)
 	if env["CLOUD_ENV_NAME"] != cfg.Environment || env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] {
 		check.Detail = "Logger source settings differ from the selected environment"
 		return check
@@ -60,6 +62,9 @@ func checkRolloutLoggerPeriodSource(cfg deploymentConfig) deploymentCredentialCh
 		return check
 	}
 	bindings := map[string]string{"RTK_CLOUD_KUBECONFIG": store.KubeconfigPath(), "RTK_CLOUD_LKE_KUBECONFIG": store.KubeconfigPath()}
+	for _, key := range []string{"LINODE_OBJ_ACCESS_KEY_ID", "LINODE_OBJ_SECRET_ACCESS_KEY"} {
+		bindings[key] = env[key]
+	}
 	for key, value := range env {
 		if strings.HasPrefix(key, "LKE_") || strings.HasPrefix(key, "VIDEO_CLOUD_") {
 			bindings[key] = value

@@ -188,17 +188,47 @@ esac
 					t.Fatal(err)
 				}
 				canonicalEnv := appendMap(resolved.Values, env)
+				for key, value := range map[string]string{
+					"LINODE_OBJ_ACCESS_KEY_ID": "legacy-media-id", "LINODE_OBJ_SECRET_ACCESS_KEY": "legacy-media-secret",
+					"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "scoped-media-id", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "scoped-media-secret",
+				} {
+					if err := store.write("operator/env/"+key, []byte(value), false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// The normal deploy uses scoped media inputs even when legacy credentials coexist.
+				canonicalEnv["LINODE_OBJ_ACCESS_KEY_ID"] = "scoped-media-id"
+				canonicalEnv["LINODE_OBJ_SECRET_ACCESS_KEY"] = "scoped-media-secret"
 				previousDir := lkeRuntimeSecretStateDir
 				lkeRuntimeSecretStateDir = store.RuntimeDir()
 				canonicalChecksum := lkeVideoCloudRuntimeChecksum(canonicalEnv)
+				legacyChecksum := lkeVideoCloudRuntimeChecksum(appendMap(canonicalEnv, map[string]string{
+					"LINODE_OBJ_ACCESS_KEY_ID": "legacy-media-id", "LINODE_OBJ_SECRET_ACCESS_KEY": "legacy-media-secret",
+				}))
+				if canonicalChecksum == legacyChecksum {
+					t.Fatal("mixed credentials must produce distinct runtime checksums")
+				}
 				lkeRuntimeSecretStateDir = previousDir
 				deployment["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = canonicalChecksum
 				pods[0].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = canonicalChecksum
 				setJSON("LOGGER_SOURCE_DEPLOYMENT", deployment)
 				setJSON("LOGGER_SOURCE_PODS", map[string]any{"items": pods})
+				t.Setenv("LINODE_OBJ_ACCESS_KEY_ID", "unrelated-shell-id")
+				t.Setenv("LINODE_OBJ_SECRET_ACCESS_KEY", "unrelated-shell-secret")
 				check := checkRolloutLoggerPeriodSource(cfg)
 				if !check.Passed {
 					t.Fatalf("canonical live source qualification failed: %+v", check)
+				}
+				if os.Getenv("LINODE_OBJ_ACCESS_KEY_ID") != "unrelated-shell-id" || os.Getenv("LINODE_OBJ_SECRET_ACCESS_KEY") != "unrelated-shell-secret" {
+					t.Fatal("selected credential bindings leaked into caller")
+				}
+				deployment["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = legacyChecksum
+				pods[0].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = legacyChecksum
+				setJSON("LOGGER_SOURCE_DEPLOYMENT", deployment)
+				setJSON("LOGGER_SOURCE_PODS", map[string]any{"items": pods})
+				check = checkRolloutLoggerPeriodSource(cfg)
+				if check.Passed || !strings.Contains(check.Detail, "runtime checksum") {
+					t.Fatalf("legacy credential checksum must remain rejected: %+v", check)
 				}
 				if os.Getenv("RTK_CLOUD_KUBECONFIG") != "/fixture/staging/kubeconfig.yaml" || lkeRuntimeSecretStateDir == store.RuntimeDir() {
 					t.Fatal("canonical qualification leaked selected context")
