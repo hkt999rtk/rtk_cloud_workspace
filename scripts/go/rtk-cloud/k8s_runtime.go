@@ -96,6 +96,16 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:  "singleton-rollout-check",
+			Phase: "runtime",
+			Enabled: func(ctx provisionContext) bool {
+				return provider.Name() == "lke" && (ctx.Opts.mode.preflight || ctx.Opts.mode.plan || ctx.Opts.mode.deploy) && lkeWorkloadSelected(ctx.Env, ctx.Opts, "video-cloud")
+			},
+			Run: func(ctx provisionContext) error {
+				return lkeCheckSingletonRolloutPlans(ctx.Env)
+			},
+		},
+		{
 			Name:    "dns-adapter-preflight",
 			Phase:   "dns",
 			Enabled: func(ctx provisionContext) bool { return ctx.Opts.mode.dns },
@@ -112,6 +122,24 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 			Run: func(ctx provisionContext) error {
 				return lkeCheckCapacityWithPaths(ctx.Paths, ctx.Env, ctx.Opts)
+			},
+		},
+		{
+			Name:  "identity-continuity",
+			Phase: "runtime",
+			Enabled: func(ctx provisionContext) bool {
+				return provider.Name() == "lke" && activeSecretEnvironmentRoot != "" &&
+					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy)
+			},
+			Run: func(ctx provisionContext) error {
+				// An empty environment has no previous identities. An existing stack
+				// must reject drift before node-pool or base-resource mutation.
+				if _, err := os.Stat(sensitiveEnvironmentPath(ctx.Paths, "kube", "kubeconfig.yaml")); errors.Is(err, os.ErrNotExist) {
+					return nil
+				} else if err != nil {
+					return err
+				}
+				return lkeCheckDeploymentIdentityContinuity(ctx.Paths, ctx.Env, ctx.Opts)
 			},
 		},
 		{

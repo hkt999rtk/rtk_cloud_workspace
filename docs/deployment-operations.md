@@ -522,6 +522,10 @@ different results. Do not report a complete staging release from ready Pods,
        --no-resume --device-prefix <unique-prefix>
    ```
 
+   The wrapper uses the protected staging kubeconfig when no explicit
+   kubeconfig is set. A missing kubeconfig still fails before creating test
+   data; supply a valid selected-environment kubeconfig before retrying.
+
    This step intentionally creates/mutates test data and needs that scope of
    authorization. Do not reuse devices after lifecycle deactivation/unprovision.
    A device token 200 does not clear an app token 401. Record each unverified
@@ -532,6 +536,73 @@ The default `run-staging-e2e.sh --confirm ...` includes reset/provision. It is *
 the default persistent-staging update command. Use it only for an explicitly
 authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
 test script grants permission to reset an existing environment.
+
+### Staging deployment check lessons (2026-10-01)
+
+The selected frozen release's full `deployment upgrade` stopped at the
+`certissuer-runtime/client-ca.crt` identity guard. The live Secret contained
+the original transport CA plus the active Service Root, while the local
+`pki/certissuer/service-ca.crt` and baseline renderer held only the original
+CA. The guard correctly refused to remove the active trust extension, but it
+ran after base resources had been applied. The release was completed with
+scoped workloads and resource-version-guarded, image-only updates to the
+remaining Video Cloud Deployments; no PKI Secret or trust bundle was replaced.
+For a full upgrade, run the read-only continuity check **before mutation**:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-deployment-identity
+```
+
+The deployment engine also runs that check before node-pool and base-resource
+steps whenever an existing environment kubeconfig is present. A legitimate
+live CA-bundle addition requires a reviewed managed renderer/patch path; copying
+an older local CA over the live bundle is not reconciliation.
+
+The first staging acceptance attempt reached test-data creation but failed with
+`pki_not_ready`. Root pin, registry, workload readiness and service mTLS were
+healthy; the retained RTK test Cloud's automatic CA job had failed before the
+new Device Root existed. Its Product jobs remained pending because no active
+Cloud issuer could parent them. This failure was invisible to the former Root
+only check. For acceptance against a retained Cloud, include its exact UUID:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-product-pki --product-pki-cloud-id "$ACCEPTANCE_CLOUD_ID"
+```
+
+The extra read-only query requires that Cloud and all its active Products to
+have ready CA issuers. The documented [Device PKI requeue procedure](automatic-device-pki-rollout.md)
+was applied only after reviewing one failed Cloud and eleven failed active
+Product jobs, all without existing issuers; it preserved business IDs and
+recorded an audit event. The requeued twelve jobs and the newly created test
+Product subsequently reached `ready`. A future acceptance run must use a new
+device prefix. Intermittent LKE `exec` proxy timeouts were retried as transport
+errors and were not treated as PKI or database evidence.
+
+The next acceptance run used the former default of 64 concurrent factory
+enrollments. All 100 attempts hit the client's 30-second timeout, while the
+issuer journal showed only partial progress. A ten-device run at concurrency
+two completed setup in 24 seconds. The `environment-acceptance` defaults are
+now four users, two device enrollments and two binds at a time; explicit flags
+or environment settings still permit a separate load exercise. The small run
+then reached MQTT Shadow: `accepted` arrived, but the device did not receive
+`delta`. The Redis document had a nonempty delta and the correct Cloud ID;
+the outbox and dead-letter queues were empty. The cause of that delivery gap
+is still under investigation. Do not record the full acceptance as passed on
+the strength of readiness or an empty outbox alone.
+An MQTT-only retry received `delta` but timed out awaiting the reported-state
+`documents` event. The broker showed the test clients subscribed to the
+expected physical `_bc/<cloud-id>/...` topics, and the final Redis document
+contained the reported state with delta cleared. Thus the outstanding gate is
+intermittent broker delivery or probe observation, not CA issuance or missing
+Shadow state. Video Cloud [PR #739](https://github.com/hkt999rtk/rtk_video_cloud/pull/739)
+corrected a definite routing flaw: tenant-scoped responses for one Device had
+been assigned to different publisher shards by their full topic names. The
+merged fix keeps them on one shard, but staging MQTT acceptance must verify
+delivery after its image is deployed. Billing log and database checks passed
+independently; their step-only report does not supersede the failed full
+acceptance.
 
 ### Registered-service listener (opt-in)
 
@@ -554,6 +625,105 @@ Logger keeps its existing MQTT subscription and needs group access to the
 mode-`0440` certificate mount (`fsGroup: 10001`). Before replacing the
 baseline Deployment, the renderer refuses any existing managed PKI identity
 owner so that another controller's state is preserved.
+
+The 2026-10-01 staging rollout of the frozen Video Cloud image exposed two
+Logger startup defects and a plan visibility gap. The scoped `video-cloud`
+selector also applies Fleet
+Valkey, Prometheus, MQTT, and every auxiliary worker; the old plan showed only
+the image group. The plan now lists those rollout targets before mutation.
+Log Ingester has one fixed Platform instance and one persistent MQTT client ID,
+so its Deployment must use `Recreate`. A rolling update starts two Pods with
+the same identities and can leave both unready. The deployment preflight
+checks the generated Logger and MQTT usage singleton strategies before
+updating cluster resources. Run the read-only
+`scripts/check-deployment-credentials.sh --environment staging --read-only --require-video-cloud-ready`
+check against the existing controllers before a routine scoped update; it
+fails on a missing or unready Fleet Valkey, Prometheus, API, MQTT, Logger, or
+MQTT usage controller. For a recovery rollout, record the failed check and
+repair the unhealthy workload before declaring success. The lease readiness
+probe must depend on the
+database and Logger backend, then the HTTP readiness probe also waits for the
+MQTT subscription and active lease. Requiring MQTT connectivity to acquire
+the initial lease deadlocks when a persistent session replays logs: an
+unregistered handler closes the connection to avoid acknowledging QoS 1 data.
+Keep the unacknowledged messages in the broker until registration succeeds.
+Video Cloud [PR #740](https://github.com/hkt999rtk/rtk_video_cloud/pull/740)
+fixes that lease startup order on the frozen staging branch.
+The next staged image acquired its lease, then repeatedly replayed a retained
+test-device log with a permanent Product entitlement denial. The old handler
+closed the MQTT connection for every error, so one denied QoS 1 event kept the
+whole subscriber unready. [PR #741](https://github.com/hkt999rtk/rtk_video_cloud/pull/741)
+records a redacted denial and acknowledges that permanently unauthorized
+event without accepting or billing it; database and backend failures still
+trigger redelivery. A successful image rollout and full acceptance are still
+required to confirm this recovery in staging.
+The first scoped rollout returned success while several auxiliary workers
+still ran the previous image: the plan listed them, but the scoped deploy
+path only reapplied the Logger. A scoped Video Cloud deploy now reapplies and
+waits for every auxiliary worker, including the MQTT usage checkpoint owner.
+After rollout, use `--require-video-cloud-image` on the credential checker.
+It reads the selected environment's protected `LKE_VIDEO_CLOUD_IMAGE` pin,
+requires the API and seven auxiliary deployments, and checks all present
+Video Cloud service deployments against that pin. The separately managed
+`video-cloud-api-pki` deployment is outside this image group. Image drift or
+a missing required worker is a failed rollout even when the API is Ready.
+
+The first fresh acceptance then stopped at Shadow `documents` although the
+reported state reached version 2 with an empty delta and the Redis outbox
+drained. The MQTT test client had carried its handshake deadline across the
+whole multi-step probe. It now clears that deadline after connection and
+starts a new read deadline for each expected publish. The staging acceptance
+wrapper also selects the protected staging kubeconfig when none is explicitly
+set, so an operator need not rediscover that prerequisite during the run.
+The next acceptance reached MQTT and Shadow but found no persisted runtime
+logs. Logger was Ready and had consumed all six messages; its audit warnings
+identified `factory entitlement service denied`. The newly created camera
+Product allowed MQTT and video but omitted the billable `device_logging`
+service. Staging camera fixtures now explicitly select `device_logging` with
+seven-day retention. Do not weaken Logger's Product entitlement check or
+count denied messages as usage; verify the fixture's service grant before
+interpreting missing log evidence as a transport failure.
+This fixture cannot yet be created in staging: on 2026-10-01 its Account
+Manager Product write gate was off, Logger catalog entry was suspended, and
+the read-only service-grant report found 32 Products awaiting backfill with
+zero existing grant revisions. Creating the logging Product returned HTTP 400
+with the legacy three-option limit. Runtime-log and Billing acceptance remain
+NO-GO until the documented Product service grant backfill, active Logger
+publication, and Product write cutover complete. Rejected MQTT logs leave no
+accepted Logger receipt or billable usage; they generate only a redacted
+operational warning and broker acknowledgment.
+Run `scripts/check-deployment-credentials.sh --environment staging --read-only
+--require-billable-logging-ready` before creating billable-log acceptance
+fixtures. On this staging snapshot it fails immediately on the disabled
+Product write gate. Once that gate is enabled, the same check also rejects
+missing immutable grants or a non-active Logger catalog entry. It does not
+change any Product option or grant.
+
+If a rollout is stuck, stop further updates, inspect both old and new Pod
+readiness plus broker client state, repair the dependency, and rerun the scoped
+deployment and full acceptance. A partially completed `provision --deploy`
+is not a successful release.
+
+For a routine scoped update, use this read-only sequence before the mutating
+command:
+
+```sh
+go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging/runtime \
+  --preflight --plan --workloads video-cloud
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-video-cloud-ready
+```
+
+After the rollout, verify readiness and exact pinned images:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-video-cloud-image
+```
+
+If the readiness check fails, treat the existing deployment as a recovery
+case. Capture the failed controller and broker state before changing it; the
+normal pre-update PASS criterion cannot be claimed retroactively.
 
 For the existing dev managed-PKI stack, complete the separate
 [Product service PKI prerequisite](product-services-dev-pki.md) before enabling

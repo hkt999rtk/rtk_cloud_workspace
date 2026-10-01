@@ -266,12 +266,16 @@ func ensureFactoryProductionProfileForType(ctx accountManagerContext, token, bra
 			return profile.ID, nil
 		}
 	}
-	payload, err := json.Marshal(map[string]any{
+	profile := map[string]any{
 		"profile_key": profileKey, "display_name": "Runtime factory " + runID,
 		"category": category, "ca_profile": "factory-device", "issuer_profile": "runtime-e2e",
 		"service_options":   serviceOptions,
 		"metadata_defaults": map[string]string{"e2e_run_id": runID},
-	})
+	}
+	if contains(serviceOptions, "device_logging") {
+		profile["log_retention_days"] = 7
+	}
+	payload, err := json.Marshal(profile)
 	if err != nil {
 		return "", err
 	}

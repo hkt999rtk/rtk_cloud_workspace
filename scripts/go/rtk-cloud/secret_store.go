@@ -459,6 +459,8 @@ func runSecrets(args []string) error {
 	dryRun := fs.Bool("dry-run", false, "report missing Kubernetes bindings without writing")
 	requirePKIMigration := fs.Bool("require-pki-migration", false, "verify the protected PKI migration database Secret against this environment's canonical PostgreSQL credential")
 	requireProductPKI := fs.Bool("require-product-pki", false, "verify the protected Device Root and Product PKI registry are ready for lifecycle acceptance")
+	productPKICloudID := fs.String("product-pki-cloud-id", "", "with --require-product-pki, require one retained Cloud and its active Products to have ready CAs")
+	requireDeploymentIdentity := fs.Bool("require-deployment-identity", false, "verify local deployment identities match the existing cluster before a full upgrade")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -470,6 +472,12 @@ func runSecrets(args []string) error {
 	}
 	if *requireProductPKI && action != "verify" {
 		return errors.New("--require-product-pki is only valid with secrets verify")
+	}
+	if *productPKICloudID != "" && (!*requireProductPKI || action != "verify") {
+		return errors.New("--product-pki-cloud-id requires secrets verify --require-product-pki")
+	}
+	if *requireDeploymentIdentity && action != "verify" {
+		return errors.New("--require-deployment-identity is only valid with secrets verify")
 	}
 	store, err := newSecretStore(*configRoot, *environment)
 	if err != nil {
@@ -503,13 +511,18 @@ func runSecrets(args []string) error {
 		}
 		return migrateSecrets(store, *workspace)
 	case "verify":
+		if *requireDeploymentIdentity {
+			if err := verifyDeploymentIdentityReadiness(store); err != nil {
+				return err
+			}
+		}
 		if *requirePKIMigration {
 			if err := verifyPKIMigrationDatabaseSecret(store); err != nil {
 				return err
 			}
 		}
 		if *requireProductPKI {
-			if err := verifyProductPKIReadiness(store); err != nil {
+			if err := verifyProductPKIReadiness(store, *productPKICloudID); err != nil {
 				return err
 			}
 		}

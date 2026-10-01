@@ -2120,7 +2120,7 @@ type loadDeviceType struct {
 }
 
 var loadDeviceTypes = []loadDeviceType{
-	{"camera", "RTC-CAM-PRO2-SIM", "camera", []string{"mqtt", "video_streaming", "video_storage"}, []string{"camera_event", "status_report", "snapshot", "websocket_owner", "webrtc", "recording_clip", "mqtt_legacy_snapshot"}},
+	{"camera", "RTC-CAM-PRO2-SIM", "camera", []string{"mqtt", "video_streaming", "video_storage", "device_logging"}, []string{"camera_event", "status_report", "snapshot", "websocket_owner", "webrtc", "recording_clip", "mqtt_legacy_snapshot"}},
 	{"light", "RTC-LIGHT-SIM", "light", []string{"mqtt"}, []string{"mqtt", "power", "brightness", "color_temperature", "state_report", "command_result"}},
 	{"switch", "RTC-SWITCH-SIM", "switch", []string{"mqtt"}, []string{"mqtt", "power", "state_report", "command_result"}},
 	{"smart_plug", "RTC-PLUG-SIM", "smart_plug", []string{"mqtt"}, []string{"mqtt", "power", "energy_watts", "state_report", "command_result"}},
@@ -4740,9 +4740,9 @@ func runEnvironmentAcceptance(args []string) error {
 	deviceCount := fs.Int("device-count", 100, "device count")
 	deviceMix := fs.String("device-mix", "camera=40,light=25,air_conditioner=20,smart_meter=15", "device mix")
 	devicePrefix := fs.String("device-prefix", "load-device", "device prefix")
-	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 64), "user creation concurrency")
-	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 64), "device generation concurrency")
-	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 64), "device bind concurrency")
+	userConcurrency := fs.Int("user-concurrency", envInt("CLOUD_STAGING_E2E_USER_CONCURRENCY", 4), "user creation concurrency")
+	deviceConcurrency := fs.Int("device-concurrency", envInt("CLOUD_STAGING_E2E_DEVICE_CONCURRENCY", 2), "device generation concurrency")
+	bindConcurrency := fs.Int("bind-concurrency", envInt("CLOUD_STAGING_E2E_BIND_CONCURRENCY", 2), "device bind concurrency")
 	skipMQTTProbe := fs.Bool("skip-mqtt-probe", false, "run MQTT test without live broker probe")
 	quiet := fs.Bool("quiet", false, "suppress periodic progress lines")
 	resume := fs.Bool("resume", true, "reuse completed data setup artifacts")

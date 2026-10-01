@@ -71,6 +71,35 @@ func TestPrepareFactoryProductionCredentialUsesAccountManagerIssuance(t *testing
 	}
 }
 
+func TestStagingCameraProductEnablesBillableDeviceLogging(t *testing.T) {
+	services := loadDeviceTypes[0].ServiceOptions
+	if !contains(services, "device_logging") {
+		t.Fatal("staging camera Product must enable device_logging for runtime log acceptance")
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"device_item_profiles":[]}`))
+			return
+		}
+		var payload struct {
+			Options       []string `json:"service_options"`
+			RetentionDays int      `json:"log_retention_days"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if !contains(payload.Options, "device_logging") || payload.RetentionDays != 7 {
+			t.Fatalf("staging Product logging policy = %+v", payload)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"device_item_profile":{"id":"profile-logging"}}`))
+	}))
+	defer server.Close()
+	if _, err := ensureFactoryProductionProfileForType(accountManagerContext{BaseURL: server.URL}, "token", "brand", "e2e-key", "run", "ip_camera", services); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFactoryProductionAccountContextFallsBackToOperatorEnvironment(t *testing.T) {
 	root := t.TempDir()
 	platformDir := filepath.Join(root, "services", "account-manager")

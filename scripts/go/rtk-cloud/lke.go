@@ -486,7 +486,50 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 		}
 		fmt.Fprintf(os.Stdout, "  - %s: %s\n", workload.EnvKey, status)
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") {
+		platformNS := lkeNamespaceName(env, "platform")
+		videoNS := lkeNamespaceName(env, "video-cloud")
+		observabilityNS := lkeNamespaceName(env, "observability")
+		fmt.Fprintln(os.Stdout, "- video-cloud deploy targets (same image and runtime settings apply to auxiliary workers):")
+		fmt.Fprintf(os.Stdout, "  - %s/statefulset/fleet-valkey\n", platformNS)
+		fmt.Fprintf(os.Stdout, "  - %s/deployment/fleet-valkey-exporter\n", platformNS)
+		fmt.Fprintf(os.Stdout, "  - %s/deployment/video-cloud-prometheus\n", observabilityNS)
+		fmt.Fprintf(os.Stdout, "  - %s/deployment/video-cloud-api\n", videoNS)
+		fmt.Fprintf(os.Stdout, "  - %s/statefulset/mqtt\n", videoNS)
+		for _, service := range lkeVideoCloudAuxiliaryServices() {
+			fmt.Fprintf(os.Stdout, "  - %s/deployment/%s\n", videoNS, service.Name)
+		}
+		for _, target := range []struct {
+			enabled bool
+			name    string
+		}{
+			{lkeMQTTFoundationRegistrationEnabled(env), "video-cloud-mqttfoundation"},
+			{lkeShadowWorkerRegistrationEnabled(env), "video-cloud-shadowworker"},
+			{lkeWebRTCServiceRegistrationEnabled(env), "video-cloud-webrtcservice"},
+			{lkeVideoStorageServiceRegistrationEnabled(env), "video-cloud-videostorage"},
+			{lkeOTARegistrarRegistrationEnabled(env), "video-cloud-otaregistrar"},
+			{lkeOTAServiceRegistrationEnabled(env), otaServiceWorkloadName},
+		} {
+			if target.enabled {
+				fmt.Fprintf(os.Stdout, "  - %s/deployment/%s\n", videoNS, target.name)
+			}
+		}
+		fmt.Fprintln(os.Stdout, "  - related Secrets, Services, NetworkPolicies and enabled CronJobs")
+	}
 	lkePrintCapacityPlan(env, opts)
+}
+
+func lkeCheckSingletonRolloutPlans(env map[string]string) error {
+	for _, service := range []lkeVideoCloudAuxiliaryService{
+		{Name: "video-cloud-logingester", Binary: "logingester"},
+		{Name: "video-cloud-mqttusage", Binary: "mqttusage"},
+	} {
+		manifest := lkeVideoCloudAuxiliaryDeploymentManifest(env, service)
+		if !strings.Contains(manifest, "  strategy:\n    type: Recreate\n    rollingUpdate: null\n") {
+			return fmt.Errorf("%s has a fixed MQTT client ID and requires Recreate rollout", service.Name)
+		}
+	}
+	return nil
 }
 
 func lkeApplyBase(env map[string]string, opts provisionOptions) error {
@@ -2821,6 +2864,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if len(opts.workloads) > 0 && lkeWorkloadSelected(env, opts, "video-cloud") {
+		// A scoped image rollout must update the auxiliary binaries it lists in
+		// the plan. The full path applies them through runtime dependencies.
+		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
 		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
 			return err
@@ -2929,9 +2979,9 @@ func lkeRestartVideoCloudLogIngester(env map[string]string) error {
 	return runKubectl("-n", namespace, "rollout", "status", "deployment/video-cloud-logingester", "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m"))
 }
 
-// A targeted rollout does not reapply auxiliary workers. The Logger registrar
-// still needs its identity mount and registration settings; refuse to replace
-// a Deployment that owns managed PKI state through another renderer.
+// Check the Logger's managed identity owner before the targeted auxiliary
+// rollout replaces its Deployment. Preserve the dedicated identity mount and
+// registration settings in that rollout.
 func lkeApplyTargetedLoggerRegistration(env map[string]string) error {
 	if err := lkeRequireLoggerServiceIdentitySecret(env); err != nil {
 		return err
@@ -7359,7 +7409,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
 	mqttUsageEnv := ""
 	mqttUsageVolumeMount := ""
 	mqttUsageVolume := ""
-	mqttUsageStrategy := ""
+	auxiliaryStrategy := ""
 	mqttUsageInitContainers := ""
 	if service.Name == "video-cloud-mqttusage" {
 		mqttUsageEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_USAGE_LOG_INTERVAL
@@ -7385,8 +7435,9 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
           persistentVolumeClaim:
             claimName: video-cloud-mqttusage-checkpoint
 `
-		mqttUsageStrategy = `  strategy:
+		auxiliaryStrategy = `  strategy:
     type: Recreate
+    rollingUpdate: null
 `
 		mqttUsageInitContainers = `      initContainers:
         - name: prepare-mqtt-usage-checkpoint
@@ -7422,6 +7473,13 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
                   name: video-cloud-workers-runtime
                   key: VIDEO_CLOUD_EMQX_API_SECRET
 `)
+	}
+	if service.Name == "video-cloud-logingester" {
+		// One fixed Platform instance and MQTT client ID cannot safely overlap.
+		auxiliaryStrategy = `  strategy:
+    type: Recreate
+    rollingUpdate: null
+`
 	}
 	body := fmt.Sprintf(`apiVersion: apps/v1
 kind: Deployment
@@ -7544,7 +7602,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers+loggerPodSecurityContext, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount+loggerIdentityMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(env, service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume+loggerIdentityVolume)
+%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, auxiliaryStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers+loggerPodSecurityContext, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount+loggerIdentityMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(env, service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume+loggerIdentityVolume)
 	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
 	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
 	return body

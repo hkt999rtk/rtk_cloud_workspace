@@ -10,6 +10,7 @@ import (
 
 const testDeviceRootID = "8f4fb04a-1578-4e04-b6f7-1ecdb150cb76"
 const testDeviceRootFingerprint = "2f960bf9bd3bdb980394add69a159e9b9b4a89f25bfe3e35ef5c62ee49ff924f"
+const testProductPKICloudID = "43962cfa-a092-4368-b2c7-32925b0ef54f"
 
 func productPKITestDeployment(rootID, fingerprint string) liveDeployment {
 	var deployment liveDeployment
@@ -52,7 +53,7 @@ func TestProductPKIRootPin(t *testing.T) {
 
 func TestVerifyProductPKIReadiness(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "staging")
-	if err := verifyProductPKIReadiness(store); err == nil || !strings.Contains(err.Error(), "kubeconfig") {
+	if err := verifyProductPKIReadiness(store, ""); err == nil || !strings.Contains(err.Error(), "kubeconfig") {
 		t.Fatalf("missing kubeconfig: %v", err)
 	}
 	if err := store.write("kube/kubeconfig.yaml", []byte("apiVersion: v1\n"), true); err != nil {
@@ -62,10 +63,12 @@ func TestVerifyProductPKIReadiness(t *testing.T) {
 	deploymentPath := filepath.Join(dir, "deployment.json")
 	podsPath := filepath.Join(dir, "pods.json")
 	issuerPath := filepath.Join(dir, "issuer.json")
+	cloudPath := filepath.Join(dir, "cloud.json")
 	kubectl := filepath.Join(dir, "kubectl")
 	script := "#!/bin/sh\ncase \"$*\" in\n" +
 		"  *'get deployment pki-controller'*) cat \"$FAKE_DEPLOYMENT\";;\n" +
 		"  *'get pods -l app.kubernetes.io/name=postgresql'*) cat \"$FAKE_PODS\";;\n" +
+		"  *'-d rtk_account_manager'*) cat \"$FAKE_CLOUD\";;\n" +
 		"  *'exec postgresql-0'*) cat \"$FAKE_ISSUER\";;\n" +
 		"  *) exit 1;;\nesac\n"
 	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
@@ -75,6 +78,7 @@ func TestVerifyProductPKIReadiness(t *testing.T) {
 	t.Setenv("FAKE_DEPLOYMENT", deploymentPath)
 	t.Setenv("FAKE_PODS", podsPath)
 	t.Setenv("FAKE_ISSUER", issuerPath)
+	t.Setenv("FAKE_CLOUD", cloudPath)
 	writeJSON := func(path string, value any) {
 		body, err := json.Marshal(value)
 		if err != nil {
@@ -86,26 +90,41 @@ func TestVerifyProductPKIReadiness(t *testing.T) {
 	}
 	writeJSON(podsPath, map[string]any{"items": []any{map[string]any{"metadata": map[string]string{"name": "postgresql-0"}}}})
 	writeJSON(deploymentPath, productPKITestDeployment("", ""))
-	if err := verifyProductPKIReadiness(store); err == nil || !strings.Contains(err.Error(), "no complete") {
+	if err := verifyProductPKIReadiness(store, ""); err == nil || !strings.Contains(err.Error(), "no complete") {
 		t.Fatalf("unbound controller: %v", err)
 	}
 	writeJSON(deploymentPath, productPKITestDeployment(testDeviceRootID, testDeviceRootFingerprint))
 	if err := os.WriteFile(issuerPath, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyProductPKIReadiness(store); err == nil || !strings.Contains(err.Error(), "absent") {
+	if err := verifyProductPKIReadiness(store, ""); err == nil || !strings.Contains(err.Error(), "absent") {
 		t.Fatalf("missing registry issuer: %v", err)
 	}
 	writeJSON(issuerPath, map[string]string{"environment": "staging", "trust_domain": "device",
 		"kind": "root", "status": "active", "signer_provider": "openbao",
 		"certificate_fingerprint_sha256": testDeviceRootFingerprint})
-	if err := verifyProductPKIReadiness(store); err != nil {
+	if err := verifyProductPKIReadiness(store, ""); err != nil {
 		t.Fatalf("registered root: %v", err)
+	}
+	writeJSON(cloudPath, map[string]any{"cloud_status": "failed", "cloud_issuer_ready": false, "active_products": 12, "unready_products": 12})
+	if err := verifyProductPKIReadiness(store, testProductPKICloudID); err == nil || !strings.Contains(err.Error(), "cloud=failed") {
+		t.Fatalf("failed retained Cloud must block acceptance: %v", err)
+	}
+	writeJSON(cloudPath, map[string]any{"cloud_status": "ready", "cloud_issuer_ready": true, "active_products": 12, "unready_products": 1})
+	if err := verifyProductPKIReadiness(store, testProductPKICloudID); err == nil || !strings.Contains(err.Error(), "unready_products=1") {
+		t.Fatalf("pending Product must block acceptance: %v", err)
+	}
+	writeJSON(cloudPath, map[string]any{"cloud_status": "ready", "cloud_issuer_ready": true, "active_products": 12, "unready_products": 0})
+	if err := verifyProductPKIReadiness(store, testProductPKICloudID); err != nil {
+		t.Fatalf("ready retained Cloud and Products: %v", err)
+	}
+	if err := verifyProductPKIReadiness(store, "not-a-uuid"); err == nil || !strings.Contains(err.Error(), "canonical UUID") {
+		t.Fatalf("invalid Cloud ID: %v", err)
 	}
 	writeJSON(issuerPath, map[string]string{"environment": "staging", "trust_domain": "device",
 		"kind": "root", "status": "retired", "signer_provider": "openbao",
 		"certificate_fingerprint_sha256": testDeviceRootFingerprint})
-	if err := verifyProductPKIReadiness(store); err == nil || !strings.Contains(err.Error(), "inactive") {
+	if err := verifyProductPKIReadiness(store, ""); err == nil || !strings.Contains(err.Error(), "inactive") {
 		t.Fatalf("retired root: %v", err)
 	}
 }

@@ -82,10 +82,37 @@ func validatePKIMigrationDatabaseURL(raw, environment, password string) error {
 	return nil
 }
 
-// verifyProductPKIReadiness is an opt-in precondition for staging lifecycle
-// acceptance. A listening controller and valid database credential do not
-// prove that its pinned Device Root exists in the registry.
-func verifyProductPKIReadiness(store secretStore) error {
+// verifyDeploymentIdentityReadiness checks the same continuity guard that a
+// full workload renderer uses, before any base resources can be applied.
+func verifyDeploymentIdentityReadiness(store secretStore) error {
+	if info, err := os.Stat(store.KubeconfigPath()); err != nil || info.Size() == 0 {
+		return errors.New("deployment identity check requires the selected environment kubeconfig")
+	}
+	previousRoot := activeSecretEnvironmentRoot
+	activeSecretEnvironmentRoot = store.Root
+	defer func() { activeSecretEnvironmentRoot = previousRoot }()
+	previousKubeconfig, hadKubeconfig := os.LookupEnv("RTK_CLOUD_KUBECONFIG")
+	if err := os.Setenv("RTK_CLOUD_KUBECONFIG", store.KubeconfigPath()); err != nil {
+		return err
+	}
+	defer func() {
+		if hadKubeconfig {
+			_ = os.Setenv("RTK_CLOUD_KUBECONFIG", previousKubeconfig)
+		} else {
+			_ = os.Unsetenv("RTK_CLOUD_KUBECONFIG")
+		}
+	}()
+	env := map[string]string{"CLOUD_ENV_NAME": store.Environment, "CLOUD_STACK_NAME": "video-cloud-" + store.Environment}
+	return lkeCheckDeploymentIdentityContinuity(provisionPaths{}, env, provisionOptions{})
+}
+
+// verifyProductPKIReadiness is an opt-in precondition for lifecycle acceptance.
+// Root readiness alone does not prove a retained Cloud's older failed jobs have
+// been explicitly requeued after that Root was activated.
+func verifyProductPKIReadiness(store secretStore, cloudID string) error {
+	if cloudID != "" && !regexp.MustCompile(`^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$`).MatchString(cloudID) {
+		return errors.New("Product PKI Cloud ID must be a canonical UUID")
+	}
 	kubeconfig := store.KubeconfigPath()
 	if info, err := os.Stat(kubeconfig); err != nil || info.Size() == 0 {
 		return errors.New("Product PKI requires the selected environment kubeconfig")
@@ -134,6 +161,30 @@ func verifyProductPKIReadiness(store secretStore) error {
 		issuer.Kind != "root" || issuer.Status != "active" ||
 		issuer.Provider != "openbao" || issuer.Fingerprint != fingerprint {
 		return errors.New("Product PKI pinned Device Root is absent, inactive or mismatched in the registry")
+	}
+	if cloudID != "" {
+		query := `SELECT json_build_object('cloud_status',o.pki_status,'cloud_issuer_ready',o.pki_issuer_id IS NOT NULL,
+ 'active_products',count(p.id),'unready_products',count(p.id) FILTER (WHERE p.pki_status<>'ready' OR p.pki_issuer_id IS NULL))
+ FROM organizations o LEFT JOIN device_item_profiles p ON p.brand_cloud_id=o.id AND p.status='active' AND p.disabled_at IS NULL
+ WHERE o.id='` + cloudID + `'::uuid AND o.organization_kind='brand_cloud' AND o.status='active' AND o.deleted_at IS NULL GROUP BY o.id`
+		row, err := exec.Command(lkeKubectl(), "--kubeconfig", kubeconfig, "-n", platform,
+			"exec", pods.Items[0].Metadata.Name, "--", "psql", "-U", "postgres", "-d",
+			"rtk_account_manager", "-At", "-c", query).Output()
+		if err != nil {
+			return errors.New("Product PKI Cloud readiness query failed")
+		}
+		var state struct {
+			CloudStatus      string `json:"cloud_status"`
+			CloudIssuerReady bool   `json:"cloud_issuer_ready"`
+			ActiveProducts   int    `json:"active_products"`
+			UnreadyProducts  int    `json:"unready_products"`
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(string(row))), &state) != nil || state.CloudStatus == "" {
+			return errors.New("Product PKI selected active Cloud is absent or its readiness response is invalid")
+		}
+		if state.CloudStatus != "ready" || !state.CloudIssuerReady || state.UnreadyProducts != 0 {
+			return fmt.Errorf("Product PKI Cloud/active Products are not ready: cloud=%s active_products=%d unready_products=%d; inspect the outbox and use the documented non-production requeue if an earlier epoch failed", state.CloudStatus, state.ActiveProducts, state.UnreadyProducts)
+		}
 	}
 	return nil
 }

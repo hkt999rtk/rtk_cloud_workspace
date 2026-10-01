@@ -1360,6 +1360,22 @@ func TestActorSeparatedProbePublishesRuntimeLogsForDeviceAndAppActors(t *testing
 	}
 }
 
+func TestActorConnectionSurvivesHandshakeTimeoutBetweenShadowSteps(t *testing.T) {
+	broker := newFakeMQTTBroker(t)
+	defer broker.Close()
+	conn, err := connectMQTTActor(mqttActorProbe{
+		DeviceID: "rtk-deadline-1", Dial: broker.Dial, Timeout: 200 * time.Millisecond,
+	}, "device", testMQTTToken("device"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	time.Sleep(250 * time.Millisecond)
+	if err := mqttSubscribe(conn, 1, "$vc/devices/rtk-deadline-1/shadow/update/delta"); err != nil {
+		t.Fatalf("MQTT connection expired after successful handshake: %v", err)
+	}
+}
+
 func TestSustainedShadowCommandPublishesRuntimeLogsForServerCorrelation(t *testing.T) {
 	broker := newFakeTLSMQTTBroker(t)
 	defer broker.Close()
