@@ -165,6 +165,15 @@ needs to populate the blob endpoint; the read-only check does not.
 
 OpenBao health/capabilities/workload authorization, live Secret key bindings and
 actual container access, and acceptance-user login remain separate release gates.
+A scoped Video Cloud `provision --preflight --plan --workloads video-cloud`
+now prints the Fleet Valkey, MQTT, Prometheus, API and auxiliary rollout targets,
+and checks that fixed-ID Logger and MQTT usage Deployments render with a
+`Recreate` strategy before mutation. Review that target list and current Pod
+readiness before starting the rollout. Add `--require-video-cloud-ready` to
+`scripts/check-deployment-credentials.sh --environment NAME --read-only` to
+check the existing Fleet Valkey, Prometheus, API, MQTT, Logger, and MQTT usage
+controllers. It fails on a missing or unready controller. A timed-out rollout
+is a failed release.
 A scoped or read-only PASS alone is not deployment approval. Use the matching
 `deployment preflight --operation ...` for configuration/tooling prerequisites;
 it does not replace credentials-check. Recheck affected inputs after changes.

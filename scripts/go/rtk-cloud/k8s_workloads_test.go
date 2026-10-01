@@ -27,6 +27,29 @@ func TestK8SWorkloadsRegistryIncludesServiceImages(t *testing.T) {
 	}
 }
 
+func TestLKEPlanListsVideoCloudAuxiliaryRolloutTargets(t *testing.T) {
+	env := k8sWorkloadTestEnv()
+	env["LKE_SHADOW_WORKER_REGISTRATION_ENABLED"] = "true"
+	opts := provisionOptions{mode: provisionMode{plan: true}, workloads: []string{"video-cloud"}}
+	output := captureStdout(t, func() { lkePlan(env, opts) })
+	for _, target := range []string{
+		"platform/statefulset/fleet-valkey",
+		"video-cloud/deployment/video-cloud-logingester",
+		"video-cloud/deployment/video-cloud-mqttusage",
+		"video-cloud/deployment/video-cloud-shadowworker",
+	} {
+		if !strings.Contains(output, target) {
+			t.Fatalf("plan omitted %s:\n%s", target, output)
+		}
+	}
+}
+
+func TestLKEPreflightRequiresSafeSingletonRollouts(t *testing.T) {
+	if err := lkeCheckSingletonRolloutPlans(k8sWorkloadTestEnv()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestK8SSelectedWorkloadsMatchLKESelectionModes(t *testing.T) {
 	env := k8sWorkloadTestEnv()
 	tests := []struct {

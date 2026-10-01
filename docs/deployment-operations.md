@@ -622,6 +622,48 @@ mode-`0440` certificate mount (`fsGroup: 10001`). Before replacing the
 baseline Deployment, the renderer refuses any existing managed PKI identity
 owner so that another controller's state is preserved.
 
+The 2026-10-01 staging rollout of the frozen Video Cloud image exposed two
+Logger startup defects and a plan visibility gap. The scoped `video-cloud`
+selector also applies Fleet
+Valkey, Prometheus, MQTT, and every auxiliary worker; the old plan showed only
+the image group. The plan now lists those rollout targets before mutation.
+Log Ingester has one fixed Platform instance and one persistent MQTT client ID,
+so its Deployment must use `Recreate`. A rolling update starts two Pods with
+the same identities and can leave both unready. The deployment preflight
+checks the generated Logger and MQTT usage singleton strategies before
+updating cluster resources. Run the read-only
+`scripts/check-deployment-credentials.sh --environment staging --read-only --require-video-cloud-ready`
+check against the existing controllers before a routine scoped update; it
+fails on a missing or unready Fleet Valkey, Prometheus, API, MQTT, Logger, or
+MQTT usage controller. For a recovery rollout, record the failed check and
+repair the unhealthy workload before declaring success. The lease readiness
+probe must depend on the
+database and Logger backend, then the HTTP readiness probe also waits for the
+MQTT subscription and active lease. Requiring MQTT connectivity to acquire
+the initial lease deadlocks when a persistent session replays logs: an
+unregistered handler closes the connection to avoid acknowledging QoS 1 data.
+Keep the unacknowledged messages in the broker until registration succeeds.
+Video Cloud [PR #740](https://github.com/hkt999rtk/rtk_video_cloud/pull/740)
+fixes that lease startup order on the frozen staging branch.
+If a rollout is stuck, stop further updates, inspect both old and new Pod
+readiness plus broker client state, repair the dependency, and rerun the scoped
+deployment and full acceptance. A partially completed `provision --deploy`
+is not a successful release.
+
+For a routine scoped update, use this read-only sequence before the mutating
+command, then repeat the readiness check after rollout:
+
+```sh
+go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging/runtime \
+  --preflight --plan --workloads video-cloud
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-video-cloud-ready
+```
+
+If the readiness check fails, treat the existing deployment as a recovery
+case. Capture the failed controller and broker state before changing it; the
+normal pre-update PASS criterion cannot be claimed retroactively.
+
 For the existing dev managed-PKI stack, complete the separate
 [Product service PKI prerequisite](product-services-dev-pki.md) before enabling
 this listener or any of the six Product registrars. It preserves the live CRL

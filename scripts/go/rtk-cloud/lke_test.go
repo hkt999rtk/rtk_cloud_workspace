@@ -3859,6 +3859,7 @@ func TestLKELoadTestCapacityManifestsSetResourcesAndPlacement(t *testing.T) {
 
 	worker := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-logingester", Binary: "logingester"})
 	for _, want := range []string{
+		"strategy:\n    type: Recreate\n    rollingUpdate: null",
 		"name: VIDEO_CLOUD_DB_MAX_OPEN_CONNS\n              value: \"4\"",
 		"name: VIDEO_CLOUD_DB_MAX_IDLE_CONNS\n              value: \"2\"",
 		"name: VIDEO_CLOUD_DB_CONN_MAX_LIFETIME\n              value: \"5m\"",
