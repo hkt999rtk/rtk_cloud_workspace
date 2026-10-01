@@ -7040,6 +7040,10 @@ if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
   printf '{"data":{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM="}}\n'
   exit 0
 fi
+if [[ "$*" == *"get secret billing-runtime -o json"* ]]; then
+  printf '{"data":{}}\n'
+  exit 0
+fi
 if [[ "$*" == *"get secret account-manager-service-registration-tls -o json"* ]]; then
   if [[ -n "${FAKE_SERVICE_REGISTRATION_SECRET_JSON:-}" ]]; then
     printf '%s\n' "$FAKE_SERVICE_REGISTRATION_SECRET_JSON"
@@ -7490,6 +7494,10 @@ if [[ "$*" == *"get nodes -o json"* ]]; then
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
+  exit 0
+fi
+if [[ "$*" == *"get secret billing-runtime -o json"* ]]; then
+  printf '{"data":{}}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then
