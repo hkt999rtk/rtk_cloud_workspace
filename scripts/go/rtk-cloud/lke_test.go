@@ -6757,6 +6757,8 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	t.Setenv("LKE_BILLING_IMAGE", "registry.example.test/rtk/billing:test")
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+	t.Setenv("LKE_BILLING_DB_RUNTIME_PASSWORD", "fixture-billing-runtime-password-32bytes")
 	t.Setenv("AUTH_TOKEN_BASE_URL", "https://admin.example.test")
 	t.Setenv("SOCIAL_LOGIN_CALLBACK_URL", "https://admin.video-cloud-staging.realtekconnect.com/api/auth/social/callback")
 	t.Setenv("GOOGLE_LOGIN_ENABLED", "true")
