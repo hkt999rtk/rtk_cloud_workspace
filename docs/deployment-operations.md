@@ -475,8 +475,9 @@ different results. Do not report a complete staging release from ready Pods,
    `scripts/check-deployment-credentials.sh --environment <environment> --read-only --require-pki-migration`;
    this checks the separate
    migration-owner Secret instead of accepting the controller runtime login.
-   Before Product PKI lifecycle acceptance, add --require-product-pki to
-   verify that the controller pins an active Device Root in its registry.
+   Before Product PKI lifecycle acceptance, add `--require-product-pki` and
+   `--product-pki-cloud-id <qualification-cloud-id>` to verify both the active
+   Device Root pin and that exact owner Cloud's active Product issuers.
    Before the write fence, run the full credential check without --read-only
    and then deployment plan so the validated runtime-media storage receipt
    populates the blob endpoint used by the deployer.
@@ -579,6 +580,19 @@ recorded an audit event. The requeued twelve jobs and the newly created test
 Product subsequently reached `ready`. A future acceptance run must use a new
 device prefix. Intermittent LKE `exec` proxy timeouts were retried as transport
 errors and were not treated as PKI or database evidence.
+
+Before each controlled Product fixture, run the generic Root check together
+with `--product-pki-cloud-id` for that fixture's exact owner Cloud, then verify
+its existing active Products are ready. A ready Device Root alone does not
+qualify the Cloud. If its issuer job is terminally failed or a new Product is
+pending, stop the fixture before any device enrollment or billing probe. Inspect
+the Cloud's specific outbox and issuer state, use the maintained recovery only
+for the failed Cloud, preserve the existing Product identities and certificates
+that are already ready, and repeat this exact-owner read-only check. A staging
+attempt on 2026-10-02 exposed this case: the generic Root check passed while
+the selected Cloud's earlier issuer job was terminally failed and its new
+Product remained pending. This is an early NO-GO until the Cloud and Product
+read-backs pass; it does not justify replacing ready Product credentials.
 
 The next acceptance run used the former default of 64 concurrent factory
 enrollments. All 100 attempts hit the client's 30-second timeout, while the
@@ -709,6 +723,12 @@ It does not change any Product option or grant. The registered Logger stays off 
 MQTT log subscription until the MQTT core cutover. Its standby HTTP readiness
 depends on its database and log backend, since it has no log subscription yet.
 
+Staging update (2026-10-02): Billing schema migrations 072 and 073 are applied,
+Loki retains its data on one Bound PVC, and 32 existing Products have versioned
+service grants after the reviewed backfill. The 2026-10-01 failed fixture report
+above remains historical. These completed steps do not establish the OTA core
+cutover, a complete Logger billing month, or customer invoicing.
+
 ### Logger source close and reviewed staging OTA activation
 
 The approved staging completion is specified in
@@ -768,6 +788,16 @@ image provenance remain staging release gates. Reuse the existing staging OTA
 registration, leases and Device Root; initial registration rollout is unnecessary
 when that service is already running. Qualify the device mTLS route and public
 Root trust before core cutover, and persist the flag only after live read-back.
+The scoped commands derive runtime values from the selected tracked deployment
+configuration, even when the checkout has no generated `stack.env`. An initial
+`ota-service-rollout` also reads the selected runtime-media bucket and region
+from that configuration, verifies the canonical media access key's `read_write`
+scope and HTTPS endpoint against read-only Linode inventory, and compares any
+available validated storage receipt before creating Kubernetes resources. The
+legacy object-store bucket and endpoint may belong to release artifacts and
+must not become the OTA private origin. The existing `video-cloud-runtime`
+Secret's AWS credential pair must also equal the selected media grant before
+the OTA Deployment is applied; this check does not rewrite that Secret.
 
 Before the first staging standby rollout, verify that the environment's OTA
 manifest signing key exists and its public key matches the tracked map in
@@ -776,10 +806,27 @@ manifest signing key exists and its public key matches the tracked map in
 `~/.config/rtk_cloud/staging/runtime/ota-manifest-private.pem` and
 `ota-manifest-trust.json`, both `0600`. Reuse these files on later deployments.
 The initial map is installed through the normal scoped Video Cloud render into
-both the core and independent OTA service. Require exact effective public-key
-read-back before release signing. `ota-manifest-trust` intentionally accepts
-only additive changes to an established nonempty map, so it is not the first
-bootstrap operation. Private signing material never enters Git or Kubernetes.
+both the core and independent OTA service. The LKE compatibility rewrite of
+`runtime/env/stack.env` must retain this public-key map: after changing the
+tracked architecture override, regenerate the runtime with the normal
+`deployment plan`, then run the scoped Video Cloud deploy. Check the regenerated
+`stack.env` and the actual new core and OTA Pod environment against the approved
+key ID and public key. A deployment with an empty map is incomplete even if the
+tracked override and `runtime/resolved/deployment.env` are correct. Require exact
+effective public-key read-back before release signing. `ota-manifest-trust`
+intentionally accepts only additive changes to an established nonempty map, so
+it is not the first bootstrap operation. Private signing material never enters
+Git or Kubernetes.
+
+A targeted Account Manager deploy synchronizes the canonical
+`ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES` operator value into the
+existing `account-manager-runtime` Secret using its UID and resource version.
+An absent key represents the legacy `false` default; the deploy adds only this
+key without regenerating other Secret values. The API and outbox worker
+Deployment checksums both include the flag. After enabling Product writes,
+verify that new Ready API and outbox Pods report `true` and that their old Pod
+UIDs are gone. A changed operator file or Secret without both new Pod read-backs
+does not complete the handoff.
 Use the existing [operator signing tool](../repos/rtk_video_cloud/docs/ota-manifest-operator.md)
 if this environment has no key yet; do not borrow another environment's key.
 

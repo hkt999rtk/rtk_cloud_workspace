@@ -40,15 +40,12 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	if err != nil {
 		return err
 	}
-	// The selected environment's canonical SecretStore is the durable runtime
-	// source. A managed worktree need not contain generated cloud_env runtime.
-	envRoot, err := loadLKEImageEnv(cfg.Workspace, store.Root)
+	// The selected configuration supplies runtime values; the canonical
+	// SecretStore supplies image pins and the validated object origin binding.
+	env, err := selectedOTAEnvironment(cfg)
 	if err != nil {
 		return err
 	}
-	env := appendMap(envRoot.Values, cfg.Values)
-	env = appendMap(env, cfg.AdapterValues)
-	env = appendMap(env, cfg.AdapterResolved)
 	if env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] || env["CLOUD_ENV_NAME"] != cfg.Environment {
 		return errors.New("resolved OTA runtime does not match the selected deployment environment")
 	}
@@ -68,6 +65,10 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 		return err
 	}
 	defer restore()
+	storageCredentials, err := bindSelectedOTAStorage(cfg, store, env)
+	if err != nil {
+		return err
+	}
 	if !lkeOTAServiceRegistrationEnabled(env) {
 		return errors.New("LKE_OTA_SERVICE_REGISTRATION_ENABLED must be true in the selected environment")
 	}
@@ -93,6 +94,9 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	if err := lkeRequireOTAServiceInputs(env); err != nil {
 		return err
 	}
+	if err := lkeRequireOTAServiceSelectedStorageCredentials(env, storageCredentials); err != nil {
+		return err
+	}
 	if err := lkeRequireStoppedOTARegistrar(env); err != nil {
 		return err
 	}
@@ -109,6 +113,19 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 		}
 	}
 	return runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/"+otaServiceWorkloadName, "--timeout", "5m")
+}
+
+func lkeRequireOTAServiceSelectedStorageCredentials(env map[string]string, selected selectedOTAStorageCredentials) error {
+	secret, err := kubectlResourceJSON(lkeNamespaceName(env, "video-cloud"), "secret", "video-cloud-runtime")
+	if err != nil {
+		return errors.New("OTA service runtime storage Secret is unavailable")
+	}
+	actualAccess, accessErr := kubernetesSecretBytes(secret, "AWS_ACCESS_KEY_ID")
+	actualSecret, secretErr := kubernetesSecretBytes(secret, "AWS_SECRET_ACCESS_KEY")
+	if accessErr != nil || secretErr != nil || strings.TrimSpace(string(actualAccess)) != selected.Access || strings.TrimSpace(string(actualSecret)) != selected.Secret {
+		return errors.New("OTA service runtime storage credentials do not match the selected media grant")
+	}
+	return nil
 }
 
 func lkeRequireStoppedOTARegistrar(env map[string]string) error {

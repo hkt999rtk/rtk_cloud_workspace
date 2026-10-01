@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,17 +12,48 @@ import (
 
 func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "dev", "lke")
+	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	trustFile := filepath.Join(workspace, "cloud_env/dev/overrides/architecture.env")
 	trustedValue := "VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON={\"dev\":\"" + strings.Repeat("ab", 32) + "\"}\n"
 	writeTestFile(t, trustFile, trustedValue)
 	store := t.TempDir()
 	t.Setenv("RTK_CLOUD_CONFIG_ROOT", store)
-	writeTestFile(t, filepath.Join(store, "dev/env/stack.env"), strings.Join([]string{
-		"CLOUD_ENV_NAME=dev", "CLOUD_PROVIDER=lke", "CLOUD_STACK_NAME=video-cloud-dev",
-		"CLOUD_DNS_ROOT_DOMAIN=example.test", "CLOUD_REGION=us-sea",
-		"VIDEO_CLOUD_BLOB_ENDPOINT=https://objects.example.test", "VIDEO_CLOUD_BLOB_REGION=us-sea",
-		"VIDEO_CLOUD_BLOB_BUCKET=firmware", "",
-	}, "\n"))
+	// Canonical SecretStore has no generated stack.env; storage comes from the
+	// selected plan and its matching operator endpoint.
+	operatorDir := filepath.Join(store, "dev", "operator", "env")
+	if err := os.MkdirAll(operatorDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{
+		"LINODE_OBJ_BUCKET":                  "unrelated-artifact-bucket",
+		"LINODE_OBJ_ENDPOINT":                "https://artifact.example.test",
+		"LINODE_TOKEN":                       "test-token",
+		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID":     "media-access",
+		"LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "media-secret",
+	} {
+		if err := os.WriteFile(filepath.Join(operatorDir, key), []byte(value+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.Header.Get("Authorization") != "Bearer test-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/object-storage/buckets":
+			_, _ = fmt.Fprintf(w, `{"data":[{"label":%q,"region":%q,"s3_endpoint":"https://objects.example.test"}]}`, cfg.Storage.RuntimeMedia.Bucket, cfg.Storage.RuntimeMedia.Region)
+		case "/object-storage/keys":
+			_, _ = fmt.Fprintf(w, `{"data":[{"access_key":"media-access","bucket_access":[{"bucket_name":%q,"region":%q,"permissions":"read_write"}]}]}`, cfg.Storage.RuntimeMedia.Bucket, cfg.Storage.RuntimeMedia.Region)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("RTK_CLOUD_LINODE_API_ROOT", server.URL)
 	t.Setenv("LKE_OTA_SERVICE_REGISTRATION_ENABLED", "true")
 	t.Setenv("LKE_OTA_REGISTRAR_REGISTRATION_ENABLED", "false")
 	t.Setenv("LKE_MQTT_FOUNDATION_REGISTRATION_ENABLED", "true")
@@ -31,7 +64,7 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 	t.Setenv("FAKE_ACCOUNT_MANAGER_REGISTRATION_SERVICE_JSON", `{"spec":{"type":"ClusterIP","selector":{"app.kubernetes.io/name":"account-manager"},"ports":[{"name":"service-reg","port":8443,"targetPort":"service-reg"}]}}`)
 	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{
 		"POSTGRES_PASSWORD": "test", "VIDEO_CLOUD_AUTH_SECRET": "test", "VIDEO_CLOUD_OTA_BFF_TOKEN": "test",
-		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN": "test", "AWS_ACCESS_KEY_ID": "test", "AWS_SECRET_ACCESS_KEY": "test",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN": "test", "AWS_ACCESS_KEY_ID": "media-access", "AWS_SECRET_ACCESS_KEY": "media-secret",
 	}))
 	t.Setenv("FAKE_OTA_WORKERS_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{"VIDEO_CLOUD_BILLING_USAGE_TOKEN": "test"}))
 	setFakeLKEPlatformIdentitySecrets(t, map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev"})
@@ -53,6 +86,7 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 	for _, want := range []string{
 		"name: video-cloud-otaservice", "name: allow-video-cloud-api-otaservice",
 		"name: allow-ota-billing", "VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON",
+		"value: \"https://objects.example.test\"", "value: \"" + cfg.Storage.RuntimeMedia.Bucket + "\"",
 		"rollout status deployment/video-cloud-otaservice",
 	} {
 		if !strings.Contains(output, want) {
@@ -66,6 +100,38 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 	if got := strings.Count(output, "ARGS apply -f -"); got != 6 {
 		t.Fatalf("scoped apply count = %d, want 6", got)
 	}
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{
+		"POSTGRES_PASSWORD": "test", "VIDEO_CLOUD_AUTH_SECRET": "test", "VIDEO_CLOUD_OTA_BFF_TOKEN": "test",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN": "test", "AWS_ACCESS_KEY_ID": "artifact-access", "AWS_SECRET_ACCESS_KEY": "media-secret",
+	}))
+	if err := runDeploymentOTAServiceRolloutWithCredentials(args, credentials); err == nil || !strings.Contains(err.Error(), "do not match the selected media grant") {
+		t.Fatalf("stale runtime Secret access key was accepted: %v", err)
+	}
+	logAfterMismatch, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(logAfterMismatch), "ARGS apply -f -") != 6 {
+		t.Fatal("stale storage access key changed Kubernetes resources")
+	}
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{
+		"POSTGRES_PASSWORD": "test", "VIDEO_CLOUD_AUTH_SECRET": "test", "VIDEO_CLOUD_OTA_BFF_TOKEN": "test",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN": "test", "AWS_ACCESS_KEY_ID": "media-access", "AWS_SECRET_ACCESS_KEY": "artifact-secret",
+	}))
+	if err := runDeploymentOTAServiceRolloutWithCredentials(args, credentials); err == nil || !strings.Contains(err.Error(), "do not match the selected media grant") {
+		t.Fatalf("stale runtime Secret credential was accepted: %v", err)
+	}
+	logAfterSecretMismatch, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(logAfterSecretMismatch), "ARGS apply -f -") != 6 {
+		t.Fatal("stale storage secret changed Kubernetes resources")
+	}
+	t.Setenv("FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON", otaTestSecretJSON(t, map[string]string{
+		"POSTGRES_PASSWORD": "test", "VIDEO_CLOUD_AUTH_SECRET": "test", "VIDEO_CLOUD_OTA_BFF_TOKEN": "test",
+		"VIDEO_CLOUD_ACCOUNT_MANAGER_INTERNAL_TOKEN": "test", "AWS_ACCESS_KEY_ID": "media-access", "AWS_SECRET_ACCESS_KEY": "media-secret",
+	}))
 	// A desired flag cannot restart the legacy process during this handoff.
 	t.Setenv("LKE_OTA_REGISTRAR_REGISTRATION_ENABLED", "true")
 	if err := runDeploymentOTAServiceRolloutWithCredentials(args, credentials); err == nil || !strings.Contains(err.Error(), "must be false") {
