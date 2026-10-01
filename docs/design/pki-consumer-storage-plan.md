@@ -51,4 +51,16 @@ No script above performs live mutation automatically. The reviewed operator comm
 
 The staging three-claim PVC step is complete. `plan-only` still means consumer mounts and identity cutover are **NO-GO** until the protected rollout checks pass. Production remains a separate plan-only environment. The staging operator's recorded limit of 20 is stale against 45 observed active services; reconcile it from provider confirmation before another growth operation. A 2026-09-28 live LKE provider preflight/plan reported `additional_required=0` and projected 45, so the documented no-growth exception passes for that plan only. Its runtime image selections remain the old live versions and do not qualify the fixed OTA release.
 
+The Internal Service first-trust ceremony has a **separate temporary** state PVC
+for its one-shot bootstrap Job. It is not a fourth long-lived API/MQTT consumer
+claim and must not be silently included in the three-claim renderer. Before
+starting a new session, include one additional Linode volume in the live
+provider/capacity plan. Its claim name is unique to that session and uses the
+explicit `linode-block-storage` Delete class, because the short-lived
+bootstrap leaf and key must not leave a retained PV or billed volume after
+successful sealing. Retain it across uncertain signing or an incomplete session;
+after sealing and verified owner-state installation, delete that exact PVC and
+verify the PVC, PV and Linode volume are gone. Do not delete the three retained
+consumer claims during this cleanup.
+
 Later on 2026-09-28, a fresh no-growth provider projection observed 44 active services and `additional_required=0`; this does not establish a new account limit. The fixed CI staging PKI migration and grants completed, a staging-only Device Root reached registry `ready`, and the controller was pinned to it using the reviewed CI image. The three consumer PVCs remain Bound and unused by `video-cloud-api-pki`/`mqtt-pki`, because those Deployments and their independent staging Service/MQTT identities are not yet installed. No Root activation or Product/OTA acceptance follows from these preparation steps.
