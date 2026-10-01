@@ -253,8 +253,11 @@ different results. Do not report a complete staging release from ready Pods,
    mode-0600 `runtime/billing-db-runtime-password`. The dependency flow first
    creates `billing-migration-database` with the environment's PostgreSQL owner
    URL and password, and `billing-runtime` with a distinct
-   `rtk_billing_runtime_<environment>` URL. The runtime Secret contains no
-   PostgreSQL owner password. `billing-database-ensure` creates or updates the
+   `rtk_billing_runtime_<environment>` URL. The deployer explicitly removes
+   any legacy `POSTGRES_PASSWORD` data key from `billing-runtime` and verifies
+   its absence before starting the Jobs; omitting the key from a `stringData`
+   manifest alone does not prove that an older Secret lost it.
+   `billing-database-ensure` creates or updates the
    runtime role and grants DML on existing tables and sequences plus default
    privileges for future migration-owned objects; it does not give the runtime
    role schema ownership or CREATE. The one-shot Billing migration Job reads

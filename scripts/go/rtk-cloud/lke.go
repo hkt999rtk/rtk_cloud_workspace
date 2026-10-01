@@ -3437,6 +3437,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
 			return err
 		}
+		if err := lkeRemoveBillingOwnerPasswordFromRuntimeSecret(env); err != nil {
+			return err
+		}
 		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
 		if err := kubectlApply(lkeBillingDatabaseEnsureJobManifest(env)); err != nil {
 			return err
@@ -4087,6 +4090,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 			return err
 		}
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := lkeRemoveBillingOwnerPasswordFromRuntimeSecret(env); err != nil {
 			return err
 		}
 		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
@@ -9040,6 +9046,31 @@ stringData:
   POSTGRES_PASSWORD: %q
   BILLING_RUNTIME_DB_PASSWORD: %q
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingMigrationDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("billing-db-runtime-password"))
+}
+
+// Secret stringData is write-only, so omitting a legacy key from a subsequent
+// kubectl apply cannot prove the stored data key was removed. Remove it explicitly
+// before the Billing workload can consume the new runtime role.
+func lkeRemoveBillingOwnerPasswordFromRuntimeSecret(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "billing")
+	patch := `{"data":{"POSTGRES_PASSWORD":null}}`
+	if _, err := kubectlCombinedOutput(strings.NewReader(patch), "-n", namespace, "patch", "secret", "billing-runtime", "--type=merge", "--patch-file=/dev/stdin"); err != nil {
+		return fmt.Errorf("remove legacy Billing owner password from runtime Secret: %w", err)
+	}
+	raw, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", "billing-runtime", "-o", "json")
+	if err != nil {
+		return fmt.Errorf("verify Billing runtime Secret keys: %w", err)
+	}
+	var secret struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return fmt.Errorf("parse Billing runtime Secret keys: %w", err)
+	}
+	if _, present := secret.Data["POSTGRES_PASSWORD"]; present {
+		return errors.New("Billing runtime Secret still contains the PostgreSQL owner password")
+	}
+	return nil
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {

@@ -62,6 +62,7 @@ func TestLKEImportExistingRuntimeSecretReadsClusterWithoutPrintingValues(t *test
 
 func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	t.Setenv("FAKE_BILLING_LEGACY_OWNER_PASSWORD", "true")
 	oldCache := lkeRuntimeSecretCache
 	lkeRuntimeSecretCache = map[string]string{}
 	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
@@ -79,7 +80,7 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	}
 
 	log := readTestFile(t, logPath)
-	for _, want := range []string{"name: allow-postgres-clients", "name: allow-cloud-admin-account-manager", "name: allow-cloud-admin-billing", "name: billing-migration-database", "name: billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: billing-database-migrate", "job/billing-database-migrate", "name: account-manager-migrate", "job/account-manager-migrate", "registry.example.test/account-manager:billing-permissions", "name: cloud-admin-billing-client"} {
+	for _, want := range []string{"name: allow-postgres-clients", "name: allow-cloud-admin-account-manager", "name: allow-cloud-admin-billing", "name: billing-migration-database", "name: billing-runtime", "patch secret billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: billing-database-migrate", "job/billing-database-migrate", "name: account-manager-migrate", "job/account-manager-migrate", "registry.example.test/account-manager:billing-permissions", "name: cloud-admin-billing-client"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted dependency apply missing %q:\n%s", want, log)
 		}
@@ -98,6 +99,36 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	}
 	if strings.Index(log, "job/billing-database-ensure") > strings.Index(log, "delete job billing-database-migrate") {
 		t.Fatal("Billing database ensure must finish before schema migration")
+	}
+	if strings.Index(log, "patch secret billing-runtime") > strings.Index(log, "name: billing-database-ensure") {
+		t.Fatal("legacy owner password must be removed before the Billing database Job")
+	}
+}
+
+func TestLKEBillingLegacyOwnerPasswordRemovalFailsClosed(t *testing.T) {
+	for _, scenario := range []string{"patch-failure", "owner-remains"} {
+		t.Run(scenario, func(t *testing.T) {
+			logPath := fakeKubectlForTargetedBillingDeploy(t)
+			oldCache := lkeRuntimeSecretCache
+			lkeRuntimeSecretCache = map[string]string{}
+			t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
+			t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-billing-test-seed")
+			t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+			t.Setenv("FAKE_BILLING_LEGACY_OWNER_PASSWORD", "true")
+			if scenario == "patch-failure" {
+				t.Setenv("FAKE_BILLING_OWNER_PATCH_FAIL", "true")
+			} else {
+				t.Setenv("FAKE_BILLING_OWNER_PATCH_NOOP", "true")
+			}
+			env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}
+			err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"billing"}})
+			if err == nil || !strings.Contains(err.Error(), "Billing") {
+				t.Fatalf("legacy owner credential removal error = %v", err)
+			}
+			if strings.Contains(readTestFile(t, logPath), "name: billing-database-ensure") {
+				t.Fatal("Billing database Job started before owner credential was removed")
+			}
+		})
 	}
 }
 
@@ -249,7 +280,22 @@ if [[ "$*" == *"get secret postgresql-runtime"* ]]; then
   exit 0
 fi
 if [[ "$*" == *"get secret billing-runtime"* || "$*" == *"get secret missing-required"* ]]; then
+  if [[ "$*" == *"get secret billing-runtime"* && -f "` + logPath + `.billing-applied" ]]; then
+    if [[ "${FAKE_BILLING_LEGACY_OWNER_PASSWORD:-}" == "true" && ! -f "` + logPath + `.owner-removed" ]]; then
+      printf '{"data":{"POSTGRES_PASSWORD":"bGVnYWN5"}}\n'
+    else
+      printf '{"data":{}}\n'
+    fi
+  fi
   exit 0
+fi
+if [[ "$*" == *"patch secret billing-runtime"* ]]; then
+  if [[ "${FAKE_BILLING_OWNER_PATCH_FAIL:-}" == "true" ]]; then
+    exit 10
+  fi
+  if [[ "${FAKE_BILLING_OWNER_PATCH_NOOP:-}" != "true" ]]; then
+    touch "` + logPath + `.owner-removed"
+  fi
 fi
 {
   printf 'ARGS'
@@ -258,7 +304,11 @@ fi
   done
   printf '\n'
   if [[ "$*" == *"apply -f -"* ]]; then
-    cat
+    content="$(cat)"
+    printf '%s\n' "$content"
+    if [[ "$content" == *"name: billing-runtime"* ]]; then
+      touch "` + logPath + `.billing-applied"
+    fi
     printf '\n---\n'
   fi
 } >> "` + logPath + `"
