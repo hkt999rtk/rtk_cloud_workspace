@@ -382,12 +382,7 @@ esac
 `
 	t.Setenv("RTK_CLOUD_KUBECTL", rolloutWrite(t, filepath.Join(bin, "kubectl"), script, 0o700))
 	t.Setenv("LOKI_CALLS", calls)
-	config, err := json.Marshal(map[string]any{"data": map[string]string{"config.yaml": strings.Join([]string{
-		"retention_enabled: true", "retention_period: 0s",
-		`selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'`,
-		`selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'`,
-		`selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`,
-	}, "\n")}})
+	config, err := json.Marshal(testCanonicalLokiConfigMap(t, env))
 	if err != nil {
 		t.Fatal(err)
 	}

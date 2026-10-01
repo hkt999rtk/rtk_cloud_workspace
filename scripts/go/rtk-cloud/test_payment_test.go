@@ -94,8 +94,10 @@ func TestRunTestPaymentReportsCoverageAndEvidenceFailureTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runID := "unit-payment-missing-evidence"
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(workspace, ".artifacts", "test-runs", runID)) })
+	unique := filepath.Base(filepath.Dir(t.TempDir()))
+	runID := "unit-payment-missing-evidence-" + unique
+	runRoot := filepath.Join(workspace, ".artifacts", "test-runs", runID)
+	t.Cleanup(func() { _ = os.RemoveAll(runRoot) })
 
 	oldRunner := paymentCoverageRunner
 	paymentCoverageRunner = func([]string) error { return errors.New("synthetic coverage failure") }
@@ -107,8 +109,9 @@ func TestRunTestPaymentReportsCoverageAndEvidenceFailureTogether(t *testing.T) {
 	}
 
 	paymentCoverageRunner = func([]string) error { return nil }
-	runID = "unit-payment-evidence-only-failure"
-	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(workspace, ".artifacts", "test-runs", runID)) })
+	runID = "unit-payment-evidence-only-failure-" + unique
+	failedRunRoot := filepath.Join(workspace, ".artifacts", "test-runs", runID)
+	t.Cleanup(func() { _ = os.RemoveAll(failedRunRoot) })
 	err = runTestPayment([]string{"--profile", "fake-e2e", "--run-id", runID})
 	if err == nil || !strings.Contains(err.Error(), "read payment unit manifest") {
 		t.Fatalf("missing evidence error = %v", err)
@@ -150,7 +153,8 @@ func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	runID := "unit-payment-evidence"
+	unique := filepath.Base(filepath.Dir(t.TempDir()))
+	runID := "unit-payment-evidence-" + unique
 	runRoot := filepath.Join(workspace, ".artifacts", "test-runs", runID)
 	t.Cleanup(func() { _ = os.RemoveAll(runRoot) })
 
@@ -218,7 +222,7 @@ func TestRunTestPaymentBuildsTraceableEvidenceFromCoverageArtifacts(t *testing.T
 		t.Fatalf("payment result is incomplete: %s", result)
 	}
 
-	failedRunID := "unit-payment-coverage-fail"
+	failedRunID := "unit-payment-coverage-fail-" + unique
 	failedRunRoot := filepath.Join(workspace, ".artifacts", "test-runs", failedRunID)
 	t.Cleanup(func() { _ = os.RemoveAll(failedRunRoot) })
 	coverageShouldFail = true

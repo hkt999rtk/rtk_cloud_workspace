@@ -879,7 +879,7 @@ func TestTrackedOTAPlatformSealAdapterOverridesResolve(t *testing.T) {
 				"LKE_OTA_CORE_CUTOVER_ENABLED",
 			} {
 				want := "false"
-				if environment == "staging" && key == "LKE_OTA_SERVICE_REGISTRATION_ENABLED" {
+				if environment == "staging" && (key == "LKE_OTA_SERVICE_REGISTRATION_ENABLED" || key == "LKE_OTA_SERVICE_EDGE_ENABLED" || key == "LKE_OTA_CORE_CUTOVER_ENABLED") {
 					want = "true"
 				}
 				if got := cfg.AdapterValues[key]; got != want {
