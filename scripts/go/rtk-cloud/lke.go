@@ -1883,6 +1883,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: factoryenroll
+        - podSelector:
+            matchLabels:
+              rtk.realtek.com/pki-bootstrap: "true"
       ports:
         - protocol: TCP
           port: 9443

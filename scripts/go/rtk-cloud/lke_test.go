@@ -2120,6 +2120,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-account-manager-certissuer",
 		"app.kubernetes.io/name: certissuer",
 		"app.kubernetes.io/name: factoryenroll",
+		"rtk.realtek.com/pki-bootstrap: \"true\"",
 		"kubernetes.io/metadata.name: video-cloud-staging-account-manager",
 		"port: 9443",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-account-manager",
