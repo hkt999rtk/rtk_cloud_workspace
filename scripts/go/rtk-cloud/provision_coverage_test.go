@@ -95,6 +95,19 @@ func TestMergeObjectStorageCredentialDefaultsUsesEnvironmentProfile(t *testing.T
 	}
 }
 
+func TestMergeObjectStorageCredentialAliasesPrefersScopedMediaKey(t *testing.T) {
+	values := map[string]string{
+		"LINODE_OBJ_ACCESS_KEY_ID":           "old-region-access",
+		"LINODE_OBJ_SECRET_ACCESS_KEY":       "old-region-secret",
+		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID":     "media-access",
+		"LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "media-secret",
+	}
+	mergeObjectStorageCredentialAliases(values)
+	if values["LINODE_OBJ_ACCESS_KEY_ID"] != "media-access" || values["LINODE_OBJ_SECRET_ACCESS_KEY"] != "media-secret" {
+		t.Fatal("scoped runtime-media credentials must replace old compatibility keys")
+	}
+}
+
 func TestProvisionStateAndCredentialHelpers(t *testing.T) {
 	root := t.TempDir()
 	opts := provisionOptions{operatorEnv: "/custom/operator.env"}

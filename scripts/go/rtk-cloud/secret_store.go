@@ -1191,6 +1191,9 @@ func configureProvisionSecretStore(environment string) (secretStore, func(), err
 	if err != nil {
 		return secretStore{}, nil, err
 	}
+	// The scoped media key must win in the process environment as well as in
+	// rendered values; some manifests still read the legacy LINODE_OBJ alias.
+	mergeObjectStorageCredentialAliases(values)
 	values["RTK_CLOUD_LKE_KUBECONFIG"] = store.KubeconfigPath()
 	values["RTK_CLOUD_KUBECONFIG"] = store.KubeconfigPath()
 	restore := installAllCredentialEnvironment(values)

@@ -153,11 +153,15 @@ func mergeObjectStorageCredentialDefaults(envRoot string, values map[string]stri
 }
 
 func mergeObjectStorageCredentialAliases(values map[string]string) {
-	if values["LINODE_OBJ_ACCESS_KEY_ID"] == "" {
-		values["LINODE_OBJ_ACCESS_KEY_ID"] = firstNonEmpty(values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"], values["AWS_ACCESS_KEY_ID"])
+	if values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] != "" {
+		values["LINODE_OBJ_ACCESS_KEY_ID"] = values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"]
+	} else if values["LINODE_OBJ_ACCESS_KEY_ID"] == "" {
+		values["LINODE_OBJ_ACCESS_KEY_ID"] = values["AWS_ACCESS_KEY_ID"]
 	}
-	if values["LINODE_OBJ_SECRET_ACCESS_KEY"] == "" {
-		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = firstNonEmpty(values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"], values["AWS_SECRET_ACCESS_KEY"])
+	if values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"] != "" {
+		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"]
+	} else if values["LINODE_OBJ_SECRET_ACCESS_KEY"] == "" {
+		values["LINODE_OBJ_SECRET_ACCESS_KEY"] = values["AWS_SECRET_ACCESS_KEY"]
 	}
 }
 

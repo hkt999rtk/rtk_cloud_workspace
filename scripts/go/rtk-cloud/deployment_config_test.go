@@ -878,8 +878,12 @@ func TestTrackedOTAPlatformSealAdapterOverridesResolve(t *testing.T) {
 				"LKE_OTA_SERVICE_EDGE_ENABLED",
 				"LKE_OTA_CORE_CUTOVER_ENABLED",
 			} {
-				if got := cfg.AdapterValues[key]; got != "false" {
-					t.Fatalf("%s = %q, want false", key, got)
+				want := "false"
+				if environment == "staging" && key == "LKE_OTA_SERVICE_REGISTRATION_ENABLED" {
+					want = "true"
+				}
+				if got := cfg.AdapterValues[key]; got != want {
+					t.Fatalf("%s = %q, want %s", key, got, want)
 				}
 			}
 			if got := cfg.AdapterValues["VIDEO_CLOUD_OTA_DELIVERY_MODE"]; got != "object_url" {

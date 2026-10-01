@@ -533,7 +533,27 @@ the default persistent-staging update command. Use it only for an explicitly
 authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
 test script grants permission to reset an existing environment.
 
-### Registered-service listener (opt-in, not deployed)
+### Registered-service listener (opt-in)
+
+Staging checkpoint (2026-10-01): the environment-local Product Service
+bootstrap session was sealed after six successful, unrevoked issuance receipts
+were matched to the installed Secrets, Ready workloads, and active Platform
+leases. Its expired signing window was not extended. The temporary certissuer
+bootstrap settings, local bootstrap key and certificate, one-shot Jobs, and
+session PVC were removed; the PV disappeared and Linode returned 404 for its
+volume. The three retained PKI consumer PVCs remain Bound. The canonical
+read-only credential check with Product PKI and migration requirements and the
+Account Manager-to-CertIssuer mTLS probe passed. Staging enables strict OTA
+Product entitlement checks and private OTA service registration in `object_url`
+mode. Device edge routing, core OTA cutover, Logger Billing facts, Product
+writes, and customer pricing remain separate acceptance gates.
+
+A targeted Video Cloud rollout must apply the Logger registration settings and
+its dedicated identity mount, not merely restart the previous Pod. Registered
+Logger keeps its existing MQTT subscription and needs group access to the
+mode-`0440` certificate mount (`fsGroup: 10001`). Before replacing the
+baseline Deployment, the renderer refuses any existing managed PKI identity
+owner so that another controller's state is preserved.
 
 For the existing dev managed-PKI stack, complete the separate
 [Product service PKI prerequisite](product-services-dev-pki.md) before enabling

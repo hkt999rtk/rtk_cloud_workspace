@@ -43,6 +43,8 @@ spec:
       app.kubernetes.io/name: video-cloud-videostorage
   template:
     metadata:
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
       labels:
         app.kubernetes.io/name: video-cloud-videostorage
         app.kubernetes.io/part-of: rtk-cloud
@@ -156,7 +158,7 @@ spec:
                 path: clip-private-key.pem
         - name: writable-state
           emptyDir: {}
-`, videoNS, env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"),
+`, videoNS, env["CLOUD_STACK_NAME"], lkeVideoCloudRuntimeChecksum(env), env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env), lkeEnvValue(env, "LKE_VIDEO_CLOUD_IMAGE"),
 		firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_ENV"), env["ACCOUNT_MANAGER_ENV"], env["CLOUD_ENV_NAME"], "staging"), lkeVideoCloudAPIBaseURL(env), platformNS,
 		lkeAccountManagerInternalURL(env), lkeBlobEnvironmentManifest(env, "video-cloud-runtime"), videoStorageServiceInstanceID, accountNS, videoStorageServiceIdentitySecretName)
 }
