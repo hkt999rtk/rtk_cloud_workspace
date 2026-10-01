@@ -645,6 +645,14 @@ unregistered handler closes the connection to avoid acknowledging QoS 1 data.
 Keep the unacknowledged messages in the broker until registration succeeds.
 Video Cloud [PR #740](https://github.com/hkt999rtk/rtk_video_cloud/pull/740)
 fixes that lease startup order on the frozen staging branch.
+The next staged image acquired its lease, then repeatedly replayed a retained
+test-device log with a permanent Product entitlement denial. The old handler
+closed the MQTT connection for every error, so one denied QoS 1 event kept the
+whole subscriber unready. [PR #741](https://github.com/hkt999rtk/rtk_video_cloud/pull/741)
+records a redacted denial and acknowledges that permanently unauthorized
+event without accepting or billing it; database and backend failures still
+trigger redelivery. A successful image rollout and full acceptance are still
+required to confirm this recovery in staging.
 If a rollout is stuck, stop further updates, inspect both old and new Pod
 readiness plus broker client state, repair the dependency, and rerun the scoped
 deployment and full acceptance. A partially completed `provision --deploy`
