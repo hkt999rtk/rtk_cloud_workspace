@@ -592,6 +592,21 @@ esac
 	}
 }
 
+func TestLKENodePoolPruneScope(t *testing.T) {
+	if !lkePruneNodePoolsAfterDeploy(provisionOptions{}) {
+		t.Fatal("full platform deploy must retain the documented node-pool cleanup")
+	}
+	for _, opts := range []provisionOptions{
+		{workloads: []string{"billing"}},
+		{videoOnly: true},
+		{loggerOnly: true},
+	} {
+		if lkePruneNodePoolsAfterDeploy(opts) {
+			t.Fatalf("scoped deploy must not prune unrelated node pools: %+v", opts)
+		}
+	}
+}
+
 func TestLKEUserPodsOnNodeClassFiltersSystemAndOtherNodes(t *testing.T) {
 	dir := t.TempDir()
 	kubectl := filepath.Join(dir, "kubectl")
@@ -2120,6 +2135,7 @@ func TestRunProvisionLKEDNSAppliesPublicHTTPSEdge(t *testing.T) {
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-account-manager-certissuer",
 		"app.kubernetes.io/name: certissuer",
 		"app.kubernetes.io/name: factoryenroll",
+		"rtk.realtek.com/pki-bootstrap: \"true\"",
 		"kubernetes.io/metadata.name: video-cloud-staging-account-manager",
 		"port: 9443",
 		"kind: NetworkPolicy\nmetadata:\n  name: allow-video-cloud-account-manager",
@@ -2713,6 +2729,33 @@ func TestAccountManagerSecretUsesSelectedStackEnvironment(t *testing.T) {
 	})
 	if !strings.Contains(manifest, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: \"true\"") {
 		t.Fatal("explicit dev test-account flag was not rendered")
+	}
+}
+
+func TestAccountManagerDeploymentPreservesPKIOperatorBinding(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	env := map[string]string{
+		"CLOUD_ENV_NAME":       "staging",
+		"CLOUD_STACK_NAME":     "video-cloud-staging",
+		"PKI_OPERATOR_USER_ID": "11111111-1111-4111-8111-111111111111",
+	}
+	if !strings.Contains(lkeAccountManagerSecretManifest(env), `PKI_OPERATOR_USER_ID: "11111111-1111-4111-8111-111111111111"`) {
+		t.Fatal("Account Manager runtime Secret must carry the selected environment PKI operator")
+	}
+	var account lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			account = workload
+			break
+		}
+	}
+	if account.Key == "" {
+		t.Fatal("Account Manager workload is missing")
+	}
+	before := lkeDeploymentManifest(env, account, nil)
+	env["PKI_OPERATOR_USER_ID"] = "22222222-2222-4222-8222-222222222222"
+	if lkeDeploymentManifest(env, account, nil) == before {
+		t.Fatal("changing the PKI operator must roll the Account Manager pod")
 	}
 }
 
@@ -6729,6 +6772,8 @@ func makeLKETestEnv(t *testing.T) (string, string) {
 	t.Setenv("LKE_EDGE_HAPROXY_PUBLIC_IP", "198.51.100.10")
 	t.Setenv("LKE_EDGE_HAPROXY_PRIVATE_IP", "10.2.1.5")
 	t.Setenv("LKE_BILLING_IMAGE", "registry.example.test/rtk/billing:test")
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+	t.Setenv("LKE_BILLING_DB_RUNTIME_PASSWORD", "fixture-billing-runtime-password-32bytes")
 	t.Setenv("AUTH_TOKEN_BASE_URL", "https://admin.example.test")
 	t.Setenv("SOCIAL_LOGIN_CALLBACK_URL", "https://admin.video-cloud-staging.realtekconnect.com/api/auth/social/callback")
 	t.Setenv("GOOGLE_LOGIN_ENABLED", "true")
@@ -7008,6 +7053,10 @@ if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRE
 fi
 if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
   printf '{"data":{"ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_EMAIL":"YWRtaW5AZXhhbXBsZS50ZXN0","ACCOUNT_MANAGER_BOOTSTRAP_PLATFORM_ADMIN_PASSWORD":"cGFzc3dvcmQxMjM="}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret billing-runtime -o json"* ]]; then
+  printf '{"data":{}}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret account-manager-service-registration-tls -o json"* ]]; then
@@ -7460,6 +7509,10 @@ if [[ "$*" == *"get nodes -o json"* ]]; then
 fi
 if [[ "$*" == *"get secret openbao-tls -o json"* && -n "${FAKE_OPENBAO_TLS_SECRET_JSON:-}" ]]; then
   printf '%s\n' "$FAKE_OPENBAO_TLS_SECRET_JSON"
+  exit 0
+fi
+if [[ "$*" == *"get secret billing-runtime -o json"* ]]; then
+  printf '{"data":{}}\n'
   exit 0
 fi
 if [[ "$*" == *"get secret certissuer-runtime -o json"* ]]; then

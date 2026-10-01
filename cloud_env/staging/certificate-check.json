@@ -21,6 +21,39 @@
       "subject": "account-manager",
       "purpose": "client",
       "root_file": "pki/certissuer/service-ca.crt"
+    },
+    {
+      "id": "emqx-pki-initial",
+      "source": "deployment",
+      "record_file": "pki/services/emqx-pki/identity.json",
+      "subject": "service:emqx-pki",
+      "purpose": "client",
+      "service_root": true,
+      "superseded_by": "emqx-pki-current"
+    },
+    {
+      "id": "emqx-pki-current",
+      "source": "managed",
+      "namespace_suffix": "video-cloud",
+      "selector": "app.kubernetes.io/name=mqtt-pki",
+      "container": "mqtt",
+      "state_file": "/var/lib/emqx-pki/identity/service-client.json",
+      "subject": "service:emqx-pki",
+      "purpose": "client",
+      "service_root": true
+    },
+    {
+      "id": "mqtt-pki-server-current",
+      "source": "managed",
+      "namespace_suffix": "video-cloud",
+      "selector": "app.kubernetes.io/name=mqtt-pki",
+      "container": "mqtt",
+      "state_file": "/var/lib/emqx-pki/identity/state.json",
+      "subject": "mqtt-pki.video-cloud-staging-video-cloud.svc",
+      "purpose": "server",
+      "dns": "mqtt-pki.video-cloud-staging-video-cloud.svc",
+      "root_file": "pki/mqtt/mqtt-root.crt",
+      "root_sha256": "188bb1dc25b3d131dc65f0a347192f3aeb8ed61c41ea929fca32264384408486"
     }
   ]
 }

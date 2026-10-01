@@ -335,6 +335,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"cloud-logger-ingest-token", "video-cloud,cloud-logger", "manual"},
 		{"cloud-logger-billing-usage-token", "video-cloud,cloud-logger", "manual"},
 		{"grafana-admin-password", "grafana", "manual"}, {"clip-private-key-seed", "video-cloud", "manual"},
+		{"billing-db-runtime-password", "billing", "manual"},
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
 		{"job-authorization-token", "account-manager,cloud-admin", "manual"},
 		{"fleet-read-token", "video-cloud,cloud-admin", "manual"},

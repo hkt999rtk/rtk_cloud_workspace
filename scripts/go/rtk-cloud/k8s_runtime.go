@@ -180,7 +180,10 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 				if err := applySharedKubernetesNodeClassPlacement(ctx); err != nil {
 					return err
 				}
-				return pruneLKEUnusedNodePools(ctx.Paths, ctx.Env)
+				if lkePruneNodePoolsAfterDeploy(ctx.Opts) {
+					return pruneLKEUnusedNodePools(ctx.Paths, ctx.Env)
+				}
+				return nil
 			},
 		},
 		{
@@ -213,6 +216,10 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 	}
+}
+
+func lkePruneNodePoolsAfterDeploy(opts provisionOptions) bool {
+	return len(opts.workloads) == 0 && !opts.videoOnly && !opts.loggerOnly
 }
 
 func applySharedKubernetesNodeClassPlacement(ctx provisionContext) error {

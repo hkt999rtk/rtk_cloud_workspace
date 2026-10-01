@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1883,6 +1884,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: factoryenroll
+        - podSelector:
+            matchLabels:
+              rtk.realtek.com/pki-bootstrap: "true"
       ports:
         - protocol: TCP
           port: 9443
@@ -3385,6 +3389,11 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			return err
 		}
 	}
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := lkeValidateBillingDatabaseRoles(env); err != nil {
+			return err
+		}
+	}
 	if _, err := lkeImportExistingRuntimeSecret(env, "platform", "postgresql-runtime", map[string]string{
 		"POSTGRES_PASSWORD": "postgres",
 	}, true); err != nil {
@@ -3398,6 +3407,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			return err
 		}
 		if err := kubectlApply(lkeAllowPostgresClientsNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeBillingMigrationSecretManifest(env)); err != nil {
 			return err
 		}
 		if _, err := lkeImportExistingRuntimeSecretWithOptional(env, "billing", "billing-runtime", map[string]string{
@@ -3423,6 +3435,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			}
 		}
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := lkeRemoveBillingOwnerPasswordFromRuntimeSecret(env); err != nil {
 			return err
 		}
 		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
@@ -3899,6 +3914,11 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	if err := lkeRequireOTACDNCollectorDeployment(env, opts); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := lkeValidateBillingDatabaseRoles(env); err != nil {
+			return err
+		}
+	}
 	if err := kubectlApply(lkePostgresSecretManifest(env)); err != nil {
 		return err
 	}
@@ -4066,7 +4086,13 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 		if err := lkeValidateBillingOTAGrantHistoryRuntime(env); err != nil {
 			return err
 		}
+		if err := kubectlApply(lkeBillingMigrationSecretManifest(env)); err != nil {
+			return err
+		}
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
+			return err
+		}
+		if err := lkeRemoveBillingOwnerPasswordFromRuntimeSecret(env); err != nil {
 			return err
 		}
 		_ = runKubectl("-n", lkeNamespaceName(env, "billing"), "delete", "job", "billing-database-ensure", "--ignore-not-found")
@@ -8733,6 +8759,7 @@ stringData:
   ACCOUNT_MANAGER_USER_CACHE_ADDR: %q
   ACCOUNT_MANAGER_USER_CACHE_PREFIX: "account_manager:user"
   ACCOUNT_MANAGER_ENV: %q
+  PKI_OPERATOR_USER_ID: %q
   ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES: %q
   ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS: %q
   CHIPSET_PROVIDER_ALLOWED_HOSTS: %q
@@ -8778,7 +8805,7 @@ stringData:
   APP_CERT_ISSUER_CLIENT_CERT: "/etc/rtk-account-manager/certissuer/client.crt"
   APP_CERT_ISSUER_CLIENT_KEY: "/etc/rtk-account-manager/certissuer/client.key"
   APP_CERT_ISSUER_CA_FILE: "/etc/rtk-account-manager/certissuer/ca.crt"
-`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeRuntimeSecretValue("job-authorization-token"), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"), "false"), firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS"), strconv.FormatBool(strings.EqualFold(accountEnv, "staging"))), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"), lkeRuntimeSecretValue("social-oauth-state-secret"), firstNonEmpty(lkeEnvValue(env, "GOOGLE_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GOOGLE_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("google-oauth-client-secret"), lkeEnvValue(env, "GITHUB_LOGIN_ENABLED"), lkeEnvValue(env, "GITHUB_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("github-oauth-client-secret"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
+`, lkeNamespaceName(env, "account-manager"), env["CLOUD_STACK_NAME"], lkeAccountManagerDatabaseURL(env), lkeRuntimeSecretValue("jwt-access"), lkeRuntimeSecretValue("jwt-refresh"), lkeInternalAuthToken(), lkeRuntimeSecretValue("job-authorization-token"), lkeFactoryProductionJWTSecret(env), lkeFactoryProductionJWTAudience(env), lkeRuntimeSecretValue("factory-admission"), lkePlatformAdminEmail(env), lkeRuntimeSecretValue("platform-admin"), lkeRedisServiceHost(env)+":6379", accountEnv, lkeEnvValue(env, "PKI_OPERATOR_USER_ID"), firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"), "false"), firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_ALLOW_IMMEDIATE_BRAND_ACCOUNTS"), strconv.FormatBool(strings.EqualFold(accountEnv, "staging"))), firstNonEmpty(lkeEnvValue(env, "CHIPSET_PROVIDER_ALLOWED_HOSTS"), env["CLOUD_ADMIN_DOMAIN"]), firstNonEmpty(lkeEnvValue(env, "DEVELOPER_PKI_TEST_TOOLS_ENABLED"), "false"), firstNonEmpty(os.Getenv("ACCOUNT_MANAGER_LOG_LEVEL"), "info"), authBaseURL, lkeEnvValue(env, "SOCIAL_LOGIN_CALLBACK_URL"), lkeRuntimeSecretValue("social-oauth-state-secret"), firstNonEmpty(lkeEnvValue(env, "GOOGLE_LOGIN_ENABLED"), "false"), lkeEnvValue(env, "GOOGLE_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("google-oauth-client-secret"), lkeEnvValue(env, "GITHUB_LOGIN_ENABLED"), lkeEnvValue(env, "GITHUB_OAUTH_CLIENT_ID"), lkeRuntimeSecretValue("github-oauth-client-secret"), lkeEnvValue(env, "SENDMAIL_HTTP_BASE_URL"), lkeEnvValue(env, "SENDMAIL_HTTP_BEARER_TOKEN"), firstNonEmpty(lkeEnvValue(env, "SENDMAIL_HTTP_TIMEOUT"), "15s"), lkeEmailOutboxEncryptionKey(env), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_BATCH_SIZE"), "20"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_MAX_ATTEMPTS"), "8"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_BASE"), "30s"), firstNonEmpty(lkeEnvValue(env, "EMAIL_OUTBOX_RETRY_MAX"), "30m"), lkeVideoCloudLifecycleInternalURL(env), lkeInternalAuthToken(), firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"), "https://"+lkeBillingPublicDomain(env), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeFactoryHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeFactoryHandoffToken()), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeVideoControlHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffInternalURL(env)), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_POLL_INTERVAL"), "5s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_LEASE_DURATION"), "2m"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_STEP_TIMEOUT"), "45s"), firstNonEmpty(lkeEnvValue(env, "HANDOFF_WORKER_BATCH_SIZE"), "10"), lkeCertIssuerBaseURL(env))
 }
 
 func lkePaymentSimulatorRunID(env map[string]string) string {
@@ -8896,7 +8923,28 @@ func lkeMQTTUsageSettlementInternalURL(env map[string]string) string {
 }
 
 func lkeBillingDatabaseURL(env map[string]string) string {
-	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
+	u := &url.URL{Scheme: "postgres", User: url.UserPassword(lkeBillingRuntimeRole(env), lkeRuntimeSecretValue("billing-db-runtime-password")), Host: "postgresql." + lkeNamespaceName(env, "platform") + ".svc.cluster.local:5432", Path: "/rtk_billing", RawQuery: "sslmode=disable"}
+	return u.String()
+}
+
+func lkeBillingRuntimeRole(env map[string]string) string {
+	return "rtk_billing_runtime_" + lkeName(firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"))
+}
+
+func lkeBillingMigrationDatabaseURL(env map[string]string) string {
+	u := &url.URL{Scheme: "postgres", User: url.UserPassword("postgres", lkeRuntimeSecretValue("postgres")), Host: "postgresql." + lkeNamespaceName(env, "platform") + ".svc.cluster.local:5432", Path: "/rtk_billing", RawQuery: "sslmode=disable"}
+	return u.String()
+}
+
+func lkeValidateBillingDatabaseRoles(env map[string]string) error {
+	if !lkeBillingMigrationJobEnabled(env) {
+		return errors.New("Billing runtime database isolation requires the one-shot migration Job")
+	}
+	password := lkeRuntimeSecretValue("billing-db-runtime-password")
+	if len(password) < 24 || password == lkeRuntimeSecretValue("postgres") || !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(password) {
+		return errors.New("Billing runtime database requires a distinct URL-safe password of at least 24 characters")
+	}
+	return nil
 }
 
 func lkeBillingMigrationJobEnabled(env map[string]string) bool {
@@ -8943,7 +8991,6 @@ type: Opaque
 stringData:
   DATABASE_URL: %q
   BILLING_DB_MIGRATE_ON_STARTUP: %q
-  POSTGRES_PASSWORD: %q
   BILLING_SERVICE_TOKEN: %q
   BILLING_INTERNAL_TOKEN: %q
   BILLING_DEBIT_TOKEN: %q
@@ -8980,7 +9027,50 @@ stringData:
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env))
+%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env))
+}
+
+func lkeBillingMigrationSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: billing-migration-database
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing-database-migrate
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  DATABASE_URL: %q
+  POSTGRES_PASSWORD: %q
+  BILLING_RUNTIME_DB_PASSWORD: %q
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingMigrationDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("billing-db-runtime-password"))
+}
+
+// Secret stringData is write-only, so omitting a legacy key from a subsequent
+// kubectl apply cannot prove the stored data key was removed. Remove it explicitly
+// before the Billing workload can consume the new runtime role.
+func lkeRemoveBillingOwnerPasswordFromRuntimeSecret(env map[string]string) error {
+	namespace := lkeNamespaceName(env, "billing")
+	patch := `{"data":{"POSTGRES_PASSWORD":null}}`
+	if _, err := kubectlCombinedOutput(strings.NewReader(patch), "-n", namespace, "patch", "secret", "billing-runtime", "--type=merge", "--patch-file=/dev/stdin"); err != nil {
+		return fmt.Errorf("remove legacy Billing owner password from runtime Secret: %w", err)
+	}
+	raw, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "secret", "billing-runtime", "-o", "json")
+	if err != nil {
+		return fmt.Errorf("verify Billing runtime Secret keys: %w", err)
+	}
+	var secret struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return fmt.Errorf("parse Billing runtime Secret keys: %w", err)
+	}
+	if _, present := secret.Data["POSTGRES_PASSWORD"]; present {
+		return errors.New("Billing runtime Secret still contains the PostgreSQL owner password")
+	}
+	return nil
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -9076,15 +9166,33 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - |
+              set -eu
               present="$(psql -h postgresql.%s.svc.cluster.local -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='rtk_billing'")"
               if [ "$present" != "1" ]; then
                 psql -h postgresql.%s.svc.cluster.local -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rtk_billing'
               fi
+              psql -h postgresql.%s.svc.cluster.local -U postgres -d rtk_billing -v ON_ERROR_STOP=1 -v runtime_role="%s" -v runtime_password="$BILLING_RUNTIME_DB_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE %%I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'runtime_role')
+                WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'runtime_role') \gexec
+              SELECT format('ALTER ROLE %%I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'runtime_role') \gexec
+              SELECT format('ALTER ROLE %%I PASSWORD %%L', :'runtime_role', :'runtime_password') \gexec
+              SELECT format('GRANT CONNECT ON DATABASE rtk_billing TO %%I', :'runtime_role') \gexec
+              SELECT format('GRANT USAGE ON SCHEMA public TO %%I', :'runtime_role') \gexec
+              REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+              SELECT format('REVOKE CREATE ON SCHEMA public FROM %%I', :'runtime_role') \gexec
+              SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %%I', :'runtime_role') \gexec
+              SELECT format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %%I', :'runtime_role') \gexec
+              SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %%I', :'runtime_role') \gexec
+              SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %%I', :'runtime_role') \gexec
+              SQL
           env:
             - name: PGPASSWORD
               valueFrom:
-                secretKeyRef: { name: billing-runtime, key: POSTGRES_PASSWORD }
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"))
+                secretKeyRef: { name: billing-migration-database, key: POSTGRES_PASSWORD }
+            - name: BILLING_RUNTIME_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: billing-migration-database, key: BILLING_RUNTIME_DB_PASSWORD }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeBillingRuntimeRole(env))
 }
 
 func lkeBillingMigrationJobManifest(env map[string]string) string {
@@ -9117,7 +9225,7 @@ spec:
           env:
             - name: DATABASE_URL
               valueFrom:
-                secretKeyRef: { name: billing-runtime, key: DATABASE_URL }
+                secretKeyRef: { name: billing-migration-database, key: DATABASE_URL }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeBillingImage(env))
 }
 
@@ -9841,6 +9949,7 @@ func lkeDeploymentManifestWithVideoSurge(env map[string]string, workload lkeWork
 			lkeFactoryProductionJWTAudience(env),
 			lkePlatformAdminEmail(env),
 			lkeRuntimeSecretValue("platform-admin"),
+			lkeEnvValue(env, "PKI_OPERATOR_USER_ID"),
 			firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"), "false"),
 			lkeCertIssuerBaseURL(env),
 			lkeEnvValue(env, "AUTH_TOKEN_BASE_URL"),
