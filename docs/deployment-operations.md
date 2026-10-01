@@ -592,8 +592,13 @@ An MQTT-only retry received `delta` but timed out awaiting the reported-state
 expected physical `_bc/<cloud-id>/...` topics, and the final Redis document
 contained the reported state with delta cleared. Thus the outstanding gate is
 intermittent broker delivery or probe observation, not CA issuance or missing
-Shadow state. Billing log and database checks passed independently; their
-step-only report does not supersede the failed full acceptance.
+Shadow state. Video Cloud [PR #739](https://github.com/hkt999rtk/rtk_video_cloud/pull/739)
+corrected a definite routing flaw: tenant-scoped responses for one Device had
+been assigned to different publisher shards by their full topic names. The
+merged fix keeps them on one shard, but staging MQTT acceptance must verify
+delivery after its image is deployed. Billing log and database checks passed
+independently; their step-only report does not supersede the failed full
+acceptance.
 
 ### Registered-service listener (opt-in)
 
