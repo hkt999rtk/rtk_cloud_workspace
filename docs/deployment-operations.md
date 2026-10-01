@@ -769,6 +769,20 @@ registration, leases and Device Root; initial registration rollout is unnecessar
 when that service is already running. Qualify the device mTLS route and public
 Root trust before core cutover, and persist the flag only after live read-back.
 
+Before the first staging standby rollout, verify that the environment's OTA
+manifest signing key exists and its public key matches the tracked map in
+`cloud_env/staging/overrides/architecture.env`. The staging key ID is
+`staging-ota-20261002`; the operator-held private key and derived trust entry are
+`~/.config/rtk_cloud/staging/runtime/ota-manifest-private.pem` and
+`ota-manifest-trust.json`, both `0600`. Reuse these files on later deployments.
+The initial map is installed through the normal scoped Video Cloud render into
+both the core and independent OTA service. Require exact effective public-key
+read-back before release signing. `ota-manifest-trust` intentionally accepts
+only additive changes to an established nonempty map, so it is not the first
+bootstrap operation. Private signing material never enters Git or Kubernetes.
+Use the existing [operator signing tool](../repos/rtk_video_cloud/docs/ota-manifest-operator.md)
+if this environment has no key yet; do not borrow another environment's key.
+
 If a rollout is stuck, stop further updates, inspect both old and new Pod
 readiness plus broker client state, repair the dependency, and rerun the scoped
 deployment and full acceptance. A partially completed `provision --deploy`
