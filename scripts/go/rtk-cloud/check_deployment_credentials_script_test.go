@@ -70,7 +70,7 @@ func TestDeploymentCredentialScriptDetectsScopedImageDrift(t *testing.T) {
 	for path, content := range map[string]string{
 		filepath.Join(config, "kube", "kubeconfig.yaml"):                  "fixture",
 		filepath.Join(config, "operator", "env", "LKE_VIDEO_CLOUD_IMAGE"): "registry.example.test/video-cloud:reviewed\n",
-		filepath.Join(envRoot, "env", "stack.env"):                         "CLOUD_STACK_NAME=video-cloud-staging\n",
+		filepath.Join(envRoot, "env", "stack.env"):                        "CLOUD_STACK_NAME=video-cloud-staging\n",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
@@ -84,7 +84,30 @@ case "$*" in
   *"get secret account-manager-runtime"*)
     if [ "${BILLABLE_GATE:-}" = off ]; then printf 'ZmFsc2U='; else printf 'dHJ1ZQ=='; fi
     ;;
+  *"get pods -l app.kubernetes.io/name=account-manager-outbox-worker "*) printf account-manager-outbox-worker-1 ;;
+  *"get pods -l app.kubernetes.io/name=account-manager "*) printf account-manager-1 ;;
+  *"exec pod/account-manager-1 -- printenv ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"*)
+    if [ "${BILLABLE_API_POD_GATE:-}" = off ]; then printf false; else printf true; fi
+    ;;
+  *"exec pod/account-manager-outbox-worker-1 -- printenv ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"*) printf true ;;
   *"exec statefulset/postgresql"*) printf '0|active\n' ;;
+  *"get deployment video-cloud-api "*)
+    case "$*" in
+      *VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED*)
+        if [ "${BILLABLE_MQTT_CUTOVER:-}" = off ]; then printf false; else printf true; fi ;;
+      *) printf true ;;
+    esac
+    ;;
+  *"get deployment video-cloud-logingester "*) printf true ;;
+  *"get deployment video-cloud-loki "*)
+    if [ "${BILLABLE_LOKI_CLAIM:-}" != missing ]; then printf video-cloud-loki-data; fi
+    ;;
+  *"get pvc video-cloud-loki-data "*) printf Bound ;;
+  *"get configmap video-cloud-loki-config "*)
+    if [ "${BILLABLE_RETENTION:-}" != off ]; then
+      printf '%s\n' 'retention_enabled: true' 'retention_period: 0s' 'retention_policy="product-grant-v1",retention_tier="7d"' 'retention_policy="product-grant-v1",retention_tier="30d"' 'retention_policy="product-grant-v1",retention_tier="90d"'
+    fi
+    ;;
   *"get deployments"*)
     for name in video-cloud-api video-cloud-cleaner video-cloud-clipverifier video-cloud-statistics video-cloud-metricsexporter video-cloud-turnregistry video-cloud-logingester video-cloud-mqttusage; do
       image='registry.example.test/video-cloud:reviewed'
@@ -124,14 +147,22 @@ esac
 		})
 	}
 	for _, tc := range []struct {
-		name, gate, want string
-		fail             bool
+		name, gate, apiPodGate, mqttCutover, lokiClaim, retention, want string
+		fail                                                            bool
 	}{
-		{name: "billable logging ready", want: "Billable logging Product grants and Logger catalog are ready"},
+		{name: "billable logging ready", want: "Billable logging deployment prerequisites are ready; receipt and Billing reconciliation remain required"},
 		{name: "billable logging disabled", gate: "off", want: "Product service writes are disabled", fail: true},
+		{name: "API Pod has stale gate", apiPodGate: "off", want: "account-manager Pod account-manager-1 Product service writes are false", fail: true},
+		{name: "MQTT cutover missing", mqttCutover: "off", want: "video-cloud-api VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED is false", fail: true},
+		{name: "Loki PVC missing", lokiClaim: "missing", want: "Loki data PVC is unset", fail: true},
+		{name: "Loki retention missing", retention: "off", want: "Loki tiered retention lacks retention_enabled: true", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BILLABLE_GATE", tc.gate)
+			t.Setenv("BILLABLE_API_POD_GATE", tc.apiPodGate)
+			t.Setenv("BILLABLE_MQTT_CUTOVER", tc.mqttCutover)
+			t.Setenv("BILLABLE_LOKI_CLAIM", tc.lokiClaim)
+			t.Setenv("BILLABLE_RETENTION", tc.retention)
 			billableArgs := []string{filepath.Join(workspace, "scripts", "check-deployment-credentials.sh"), "--environment", "staging", "--read-only", "--require-billable-logging-ready"}
 			output, err := exec.Command("bash", billableArgs...).CombinedOutput()
 			if (err != nil) != tc.fail || !strings.Contains(string(output), tc.want) {

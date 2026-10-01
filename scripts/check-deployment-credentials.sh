@@ -141,17 +141,74 @@ if [[ -n "$environment" ]]; then
       echo "Video Cloud deployments match pinned image: $expected_image"
     fi
     if [[ "$require_billable_logging_ready" == true ]]; then
+      billable_logging_failed=false
       encoded_gate="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-account-manager" get secret account-manager-runtime -o 'jsonpath={.data.ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES}')"
       if [[ -z "$encoded_gate" || "$(printf '%s' "$encoded_gate" | base64 -d)" != true ]]; then
         echo "billable logging NO-GO: Account Manager Product service writes are disabled" >&2
-        exit 1
+        billable_logging_failed=true
+      else
+        for workload in account-manager account-manager-outbox-worker; do
+          pod_names="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-account-manager" get pods -l "app.kubernetes.io/name=$workload" -o 'jsonpath={.items[*].metadata.name}')"
+          if [[ -z "$pod_names" ]]; then
+            echo "billable logging NO-GO: $workload has no running Pod to verify Product writes" >&2
+            billable_logging_failed=true
+            continue
+          fi
+          read -r -a pods <<< "$pod_names"
+          for pod in "${pods[@]}"; do
+            pod_gate="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-account-manager" exec "pod/$pod" -- printenv ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES 2>/dev/null || true)"
+            if [[ "$pod_gate" != true ]]; then
+              echo "billable logging NO-GO: $workload Pod $pod Product service writes are ${pod_gate:-unset} (required true)" >&2
+              billable_logging_failed=true
+            fi
+          done
+        done
       fi
       registry_state="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-platform" exec statefulset/postgresql -- psql -U postgres -d rtk_account_manager -At -c "SELECT (SELECT count(*) FROM device_item_profiles p WHERE NOT EXISTS (SELECT 1 FROM product_service_grants g WHERE g.product_id=p.id)), COALESCE((SELECT status FROM platform_services WHERE environment='$environment' AND service_id='logger'),'missing')")"
       if [[ "$registry_state" != '0|active' ]]; then
         echo "billable logging NO-GO: missing Product grants / Logger catalog status = $registry_state (required 0|active)" >&2
+        billable_logging_failed=true
+      fi
+      deployment_env_value() {
+        local namespace="$1" deployment="$2" key="$3"
+        "$kubectl" --kubeconfig "$kubeconfig" -n "$namespace" get deployment "$deployment" -o "jsonpath={.spec.template.spec.containers[0].env[?(@.name==\"$key\")].value}"
+      }
+      for key in VIDEO_CLOUD_LOGGER_HTTP_SERVICE_CUTOVER_ENABLED VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED; do
+        actual="$(deployment_env_value "$stack_name-video-cloud" video-cloud-api "$key")"
+        if [[ "$actual" != true ]]; then
+          echo "billable logging NO-GO: video-cloud-api $key is ${actual:-unset} (required true)" >&2
+          billable_logging_failed=true
+        fi
+      done
+      for key in VIDEO_CLOUD_LOGGER_SERVICE_ENABLED VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED; do
+        actual="$(deployment_env_value "$stack_name-video-cloud" video-cloud-logingester "$key")"
+        if [[ "$actual" != true ]]; then
+          echo "billable logging NO-GO: video-cloud-logingester $key is ${actual:-unset} (required true)" >&2
+          billable_logging_failed=true
+        fi
+      done
+      loki_claim="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" get deployment video-cloud-loki -o 'jsonpath={.spec.template.spec.volumes[?(@.name=="data")].persistentVolumeClaim.claimName}')"
+      if [[ "$loki_claim" != video-cloud-loki-data ]]; then
+        echo "billable logging NO-GO: Loki data PVC is ${loki_claim:-unset} (required video-cloud-loki-data)" >&2
+        billable_logging_failed=true
+      fi
+      loki_pvc_phase="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" get pvc video-cloud-loki-data --ignore-not-found -o 'jsonpath={.status.phase}')"
+      if [[ "$loki_pvc_phase" != Bound ]]; then
+        echo "billable logging NO-GO: Loki data PVC is ${loki_pvc_phase:-unset} (required Bound)" >&2
+        billable_logging_failed=true
+      fi
+      loki_config="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" get configmap video-cloud-loki-config --ignore-not-found -o 'jsonpath={.data.config\.yaml}')"
+      for required in 'retention_enabled: true' 'retention_period: 0s' 'retention_policy="product-grant-v1",retention_tier="7d"' 'retention_policy="product-grant-v1",retention_tier="30d"' 'retention_policy="product-grant-v1",retention_tier="90d"'; do
+        if [[ "$loki_config" != *"$required"* ]]; then
+          echo "billable logging NO-GO: Loki tiered retention lacks $required" >&2
+          billable_logging_failed=true
+        fi
+      done
+      if [[ "$billable_logging_failed" == true ]]; then
         exit 1
       fi
-      echo "Billable logging Product grants and Logger catalog are ready"
+      "$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" rollout status deployment/video-cloud-loki --timeout=5s
+      echo "Billable logging deployment prerequisites are ready; receipt and Billing reconciliation remain required"
     fi
   fi
 elif [[ "$require_pki_migration" == true || "$require_product_pki" == true || "$require_deployment_identity" == true || "$require_video_cloud_ready" == true || "$require_video_cloud_image" == true || "$require_billable_logging_ready" == true || -n "$product_pki_cloud_id" ]]; then

@@ -88,8 +88,8 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_SERVICE_REGISTRATION_ENABLED": "true"}
 	standby := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http"})
-	if !strings.Contains(standby, "name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED\n              value: \"true\"") {
-		t.Fatal("registered Logger must retain the existing MQTT subscription")
+	if !strings.Contains(standby, "name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED\n              value: \"false\"") {
+		t.Fatal("registered Logger must remain on standby before the MQTT core cutover")
 	}
 	if !strings.Contains(standby, "fsGroup: 10001") {
 		t.Fatal("registered Logger must be able to read its group-owned certificate mount")
