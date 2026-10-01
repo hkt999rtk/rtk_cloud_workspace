@@ -1423,6 +1423,22 @@ cases:
       owner: rtk_cloud_admin
       status: active
       test_id: UNIT-CA-PRICING-005
+    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#effective%20pricing%20refreshes%20at%20a%20published%20boundary%2C%20UTC%20month%20turnover%2C%20and%20return%20to%20the%20page
+      module: cloud-admin-web
+      language: javascript
+      source: src/service-pricing.test.mjs
+      title: effective pricing refreshes at a published boundary, UTC month turnover, and return to the page
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-PRICING-007
+    - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#log%20retention%20explains%20UTC-month%20allocation%20and%20fixed%20thirty-day%20normalization%20in%20every%20locale
+      module: cloud-admin-web
+      language: javascript
+      source: src/service-pricing.test.mjs
+      title: log retention explains UTC-month allocation and fixed thirty-day normalization in every locale
+      owner: rtk_cloud_admin
+      status: active
+      test_id: UNIT-CA-PRICING-006
     - canonical_key: js://cloud-admin-web/src/service-pricing.test.mjs#owner-scoped%20catalog%20is%20complete%20and%20keeps%20approved%20OTA%20prices%20separate%20from%20research%20references
       module: cloud-admin-web
       language: javascript

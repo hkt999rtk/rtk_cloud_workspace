@@ -2,7 +2,170 @@
 
 Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. The independent OTA service is registered and its v2 manifest published in development. Product writes are enabled on the dev Account Manager API and outbox worker. A controlled OTA Product and test device completed direct-object download and three source-to-Billing meter checks; physical installation and complete-month storage remain unverified. The first non-OTA development card was published on 2026-09-30 for the next UTC month. OTA remains suspended and no effective OTA rate card has been published; development does not charge OTA.
 
-Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-09-30.
+Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-10-02.
+
+### Approved Logger and staging closeout implementation (2026-10-02)
+
+The owner requested completion of the staging OTA activation and price book,
+Logger entitlement/retention/cutover prerequisites, and the missing Logger
+invoice source-completeness gate. Work stays on the selected frozen release;
+unrelated newer main commits and CDN expansion are outside this delivery.
+
+| Workstream | Implementation and acceptance |
+| --- | --- |
+| Logger source checkpoint | A Go operator command obtains the complete historical Brand Cloud inventory from Account Manager, including zero-use and retired Clouds. It freezes each closed UTC month in the authoritative shared Logger receipt database after the existing 24-hour grace. A persisted source identity, coverage start and monotonic receipt sequence survive process restarts. The freeze waits for competing receipt writes, rejects pending overlapping receipts, creates both Product meters in the same transaction, and records immutable source/fact-set evidence. A database barrier prevents later insert/update/delete from changing an already frozen month. A newly initialized source cannot certify months before its coverage start. |
+| Logger delivery and Billing | Logger delivers every frozen fact with exact immutable acknowledgments before submitting its seal using a dedicated `logger-producer-seal-token`. Billing's new `POST /v1/internal/billing/logger-period-seals` verifies the typed source high-water, complete month, exact two-meter Product set and complete fact-set digest. Seal ingestion, fact acceptance and invoice preparation share the financial period barrier. Missing/partial/conflicting source evidence leaves the new invoice incomplete; exact existing fact/seal/invoice replays remain valid. A different service's fact cannot satisfy Logger completion. Pricing/usage periods containing Logger use UTC months. |
+| Staging rate version | Preserve the five existing non-OTA base rows and historical invoices, fill only explicitly reviewed missing precision/tax-category metadata, and add the four exact approved OTA rows plus the two Logger test rows (`ingest_gib`: NT$28.80/GiB; `retained_gib_month`: NT$1.31/GiB-month). The reviewed publication explicitly binds the Logger additions and their approval to the complete rate-set digest; the existing OTA-only review must not silently accept other non-OTA changes. The new TWD version uses the already approved combined-subtotal Taiwan 5% tax policy and the next permitted UTC month boundary, currently 2026-11-01T00:00:00Z. It is upcoming before that instant, never a retroactive October charge. |
+| Product grants and service cutover | Freeze only the relevant Account Manager writes for the reviewed immutable grant backfill, preserving the original selections of existing Products. Activate the existing Logger and OTA catalog entries and verify their live identities/leases. Enable Product service writes after backfill. Use separate controlled Products for positive OTA/logging acceptance rather than adding paid options to all old Products. |
+| Loki retention | Back up and migrate the existing approximately 8.6 MiB emptyDir data to one `video-cloud-loki-data` PVC. Verify the copied data, bound claim, canonical config checksum, current Recreate rollout, 7/30/90-day rules and expiry queries before Logger core cutover. Reuse the existing PKI identities and planned resources. |
+| Deployment and live acceptance | Complete code and design, review, focused local integration tests, then the affected coverage/PR gates. Merge exact leaf revisions and their parent pointer; use only their canonical CI digests. Extend the scoped OTA trust/edge/core helpers for reviewed staging updates. Run protected preflight before the ordered deployment, verify receipts/facts and rejected-log nonbilling, and exercise operator sealing against eligible closed months. Current/future incomplete months remain held; no clock manipulation or fabricated historical seal substitutes for a complete month. |
+
+The scoped, transactional `schema-maintenance logger-check|logger-apply|logger-verify`
+operation creates the source schema with writers paused; service startup remains
+read-only. It preserves existing receipts, outbox rows, source identity and
+coverage. First coverage is the actual database migration time. Deployment
+qualification verifies the live source schema as well as the selected singleton
+Logger revision. Provider capacity includes the one planned Loki claim in the
+observability namespace before maintenance or volume creation.
+
+The Logger source high-water schema is version 1 with `source_id`, ledger
+`device_logger_receipts`, `coverage_from`, month-end `cutoff`,
+`max_receipt_sequence`, `receipt_count`, and `pending_count=0`. The outer seal
+contains Brand Cloud, complete UTC boundaries, `issuer_kind=logger_producer`,
+UUID seal identity, sorted Product IDs, counts for `ingest_gib` and
+`retained_gib_month`, source SHA-256, fact-set SHA-256 and the seal time. The
+fact-set digest uses the same canonical sorted nine-field array convention as
+OTA: usage ID, Product ID, metric, quantity, scale, unit, UTC start/end and
+source SHA-256. Each Product with overlapping accepted receipts has both meter
+facts, including a zero ingestion fact in a retention-only month. Empty Product
+sets require an authenticated, covered source freeze; an empty outbox is not
+such evidence.
+
+This section is the approved implementation target. Completion observations
+below are dated evidence and remain valid until replaced by actual verification.
+
+### Rate locations and price-definition principles
+
+This section records the existing price decision and implementation locations.
+The canonical pricing, arithmetic and invoice rules remain in
+[Pricing And Invoicing](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md).
+The dated provider comparisons are maintained in
+[service-pricing research](../../repos/rtk_cloud_admin/docs/service-pricing-research.md).
+
+#### Storage and ownership
+
+All paths below are relative to the workspace, so a fresh checkout can locate
+the same sources without using one operator's worktree path.
+
+| Information | Current location | Owner and effect |
+| --- | --- | --- |
+| Complete first non-OTA development candidate | [cloud_env/dev/pricing-initial-rates.json](../../cloud_env/dev/pricing-initial-rates.json) | Tracked development input: 11 priced meters and two zero-price MQTT byte diagnostics. It contains the service/metric identity, description, unit, unit-price amount and scale, quantity scale, rounding and tax metadata. Editing it does not publish a card or change charges. |
+| Reviewed staging OTA/Logger successor candidate | [cloud_env/staging/pricing-ota-logger-rates.json](../../cloud_env/staging/pricing-ota-logger-rates.json) | Eleven rows: preserves the five legacy staging terms read on 2026-10-02, completes missing quantity/tax-category metadata, and adds four approved OTA prices plus the explicitly reviewed canonical Logger pair. Publication must recheck the live base identity and both digests; the file itself is not an effective card. |
+| Four approved OTA unit prices | [Billing `ProposedOTARates()`](../../repos/rtk_billing/internal/billing/ota.go) | Current exact approved defaults and publication-validation input. There is no standalone OTA environment rate file yet. The reviewed OTA draft operation combines these four rows with the complete non-OTA base; the helper never activates prices itself. |
+| Provider-reference amounts and approved-price disclosure | [Cloud Admin reference catalog](../../repos/rtk_cloud_admin/internal/app/service-pricing-reference.json) and [research ledger](../../repos/rtk_cloud_admin/docs/service-pricing-research.md) | Authenticated comparison/display data, including source date, units, scope and caveats. It is not read as the charging rate. |
+| Published version and exact rates | Billing database `pricing_plan_versions` and `pricing_rates` | Billing's monetary source of truth for that environment. The selected version freezes currency, effective interval and invoice tax policy; its rates freeze service, metric, unit, precision, price and rounding. Current/upcoming customer APIs read these records. |
+| Approval and publication evidence | Billing `reviewed_initial_pricing_publications`, `ota_pricing_drafts` and `ota_pricing_publications` | Retain the complete rate-set digest, approval reference or reviewed OTA evidence, effective time and publication receipt. The database records connect a reviewed candidate to the version actually published. |
+| Historical applied prices | Billing `billing_invoices` and `billing_invoice_lines` | Preserve the applied version/rate, quantity, rounded amounts, tax policy and usage references. Later candidates or versions do not rewrite issued invoices. |
+
+`~/.config/rtk_cloud/<environment>/operator/env` stores deployment credentials,
+identity and operational flags, not an authoritative price book. A normal
+deployment update does not reread the JSON or Go defaults and overwrite
+published prices. Staging and production do not acquire the development test
+rates by inheritance. A later card needs a complete candidate explicitly
+reviewed for its target environment and submitted to Billing's publication
+operation. Filesystem copies, a Product checkbox, service registration, or an
+`active` database label alone do not establish an applicable charge.
+
+#### Defining the numbers
+
+| Principle | Recorded decision |
+| --- | --- |
+| Three price states | Keep researched reference, approved candidate, and published current/upcoming rate separate. Only the Billing version applicable to the account/currency/period supplies invoice prices. A future published interval is upcoming until its effective time. |
+| Highest reference | Use the highest eligible price in the collected comparable candidate set, with the source date and native unit retained. The 2026-09-26 comparison inspected AWS US East, Ireland, Tokyo and São Paulo, eight non-China CloudFront delivery groups, and the collected Cloudflare R2/Akamai standard-storage candidates; it also retained the previous RTK draft as a comparison baseline. This is the highest inspected comparable first paid tier, not a claim about every world region or service class. Free allowances, negotiated discounts, bundles, infrequent-access terms and special message classes are not interchangeable unit-price candidates. A non-equivalent proxy is explicitly labelled. |
+| Development non-OTA decision | The owner approved the highest researched non-OTA values as development test rates on 2026-09-30. This decision does not establish staging or production rates and does not make an unqualified meter chargeable. |
+| OTA approved versus reference | Preserve the four approved pre-tax rates: NT$96 per 1,000 first device assignments; NT$0.96 per GiB of first verified successful download; NT$0.96 per GiB-month of physical artifact storage; NT$144 per million successful object writes. The highest inspected references, respectively NT$144, NT$3.84, NT$1.30 and NT$224 in those display units, remain comparison columns and do not replace the approved rates. |
+| Currency and reference conversion | The research snapshot uses fixed planning US$1 = NT$32 and rounds displayed reference amounts upward to NT$0.01. This is a research conversion, not a payment-time exchange rate. TWD invoices use the reviewed TWD amounts; no current FX quote is applied at invoice time. |
+| Bytes and time | RTK GiB means `2^30` bytes. Verify each provider's meaning of GB before comparison; a decimal GB price is multiplied by `2^30 / 10^9` to express a GiB price, while a documented binary GB already uses the GiB byte count. OTA artifact storage divides byte-time by the actual complete UTC month's duration. Logger `retained_gib_month` divides accepted-to-expiry byte-time by a fixed 30 days and splits overlap between UTC months. A shared GiB-month label does not make these denominators equivalent. |
+| Exact representation and rounding | Persist price and quantity as integers plus explicit decimal scales. TWD `amount_minor=1` means NT$1. Effective unit price is `unit_price_minor / 10^unit_price_scale`; effective quantity is `quantity / 10^quantity_scale`. Aggregate a Product/service/metric/unit line before applying its frozen monetary rounding rule. Per-1,000/per-million display units are not minimum purchase blocks. OTA byte-time quantity conversion uses half-up at scale 9; Logger byte-time uses integer truncation at scale 9. These source conversions are separate from final line-money rounding. Floating-point display formatting is not authoritative invoice arithmetic. |
+| Invoice tax | For the approved new TWD policy, add the pre-tax subtotals of all services, then calculate Taiwan business tax once at 5% with half-up rounding. OTA has no separate tax or exemption. Allocate tax to lines deterministically for explanation. Existing historical versions keep their original tax mode. Government electronic-invoice issuance is deferred. |
+| Eligibility and historical usage | OTA needs a Product OTA grant, trusted complete-month commercial-tier evidence and an active Billing account; no extra contract marker is required. Closing the OTA feature prevents new work, while already authorized tasks and retained objects remain billable until task completion or physical deletion. Missing or conflicting entitlement/source evidence holds settlement. |
+| Counting and duplicate fees | Derive usage from each service's accepted, qualified source evidence. MQTT publish/delivery bytes remain zero-price diagnostic rows. Shadow, WebRTC signaling, OTA dispatch and object operations are excluded from the generic data-API meter. OTA artifact storage/writes/downloads do not also use clip-object tariffs; customer logs do not also use general object-storage tariffs. Separately delivered MQTT transport retains its defined message charge. |
+| Price changes and corrections | Publish a new immutable complete version with a permitted future effective interval and preserved approval digest. First non-OTA and OTA activation paths use future UTC-month boundaries and do not retrocharge previous months. Correcting a metric spelling in a local candidate cannot mutate a published card or rename an accepted fact. Validate exact service/metric/unit/scale identity against its producer before publication. |
+| Disclosure | Show detailed prices only after login in Cloud Admin **Billing > Service Pricing**. Present the counting rule, formula/exclusions, unit, price state, effective interval, reference source, Product entitlement and invoice tax policy. The public website does not publish concrete prices. An unavailable effective-price API is shown as unavailable, without substituting research amounts. |
+
+The current implementation path is:
+
+```text
+dated reference research + approved commercial decision
+  -> complete environment candidate (JSON / reviewed OTA defaults)
+  -> offline identity, unit, precision and digest review
+  -> Billing draft and reviewed publication operation
+  -> immutable published version with effective interval
+  -> qualified usage facts + verified source-completeness checkpoint
+  -> applied invoice prices and one invoice-total tax calculation
+  -> authenticated current/upcoming price and invoice disclosure
+```
+
+The source-completeness checkpoint in this flow is a required closeout gate,
+not a claim that every non-OTA source has already implemented it. Implementation
+and environment gaps are listed in the completion review below.
+
+### Completion review (2026-10-01)
+
+This plan is **not complete**. The implementation, deployed environment and
+financial acceptance are separate checkpoints. This review retained the frozen
+workspace and did not deploy or change the staging environment while the user
+was testing it. CDN remains a future extension; its deployment is not a current
+completion requirement.
+
+| Area | Verified result | Remaining work |
+| --- | --- | --- |
+| OTA registration, entitlement and evidence | The independent registered-service path, Product OTA access checks, immutable historical grants, four source meters and outbox, approved-price publication path, and invoice-total Taiwan business tax policy exist in the frozen code. | Complete the target-environment service activation and price publication, reconcile a full UTC month including artifact byte-time and both source seals, and verify the first OTA invoice. A controlled device simulation does not verify physical firmware installation. |
+| Authenticated pricing disclosure | Cloud Admin has separate current/upcoming Billing price tables, 15 research/counting items, approved OTA prices separate from reference prices, and the selected Product's OTA service state. | Verify the activated rates, actual usage references and issued invoice in the target environment. The general per-service usage drilldown remains a frontend implementation item. |
+| Other non-OTA metering adapters | Clip uploads persist object size and verify it during processing; the reviewed ready/finalization path finishes business state and notifications without emitting the four clip Billing meters. The generic producer registry contains MQTT and OTA; the pricing disclosure explicitly marks Shadow operations, TURN delivery and other data-API classification as pending. | Complete qualified Billing receipts/facts for clip byte-time, writes, reads and delivered bytes, Shadow operation units, TURN relay bytes and classified successful data-API calls. Existing object sizes, storage totals or service APIs do not establish these invoice quantities. The implementation anchors and remaining boundaries are in the research ledger linked above. |
+| Logger producer safeguards | Video Cloud `befac44f6df59cb10986c334ccb14fc6d4b89fe0` holds affected windows for pending receipts, checks regenerated quantities before delivery, and verifies canonical fact hashes after JSONB serialization. Its local PR-profile report passed at 72.63% against the 65% gate; this review does not rerun unchanged coverage. | These producer checks are not a Billing invoice source-completeness gate. Source mutation and delivery still need an authenticated cutoff/high-water boundary; in particular, a late historical receipt can settle between validation and fact delivery. |
+| Logger retention rate mapping | The durable producer and database use `logger.retained_gib_month`. Review found that the initial dev rate file and price display instead named `retention_gib_month`, which cannot price the actual fact. The local candidate and disclosure now match the existing producer code; accepted facts are not renamed. | Published cards remain immutable. Before Logger charging, inventory the target card and publish a reviewed replacement at a permitted future UTC boundary if it contains the old spelling. Editing the candidate file does not repair an already published card. |
+| Invoice source completeness | [The canonical pricing contract](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md) requires an independently authenticated cutoff/high-water checkpoint and late-event reconciliation. [Invoice preparation](../../repos/rtk_billing/internal/billingstore/invoices.go) currently verifies source seals only for OTA. | Implement the required close checkpoint for non-OTA sources. One fact from another service, or only one Logger metric, currently satisfies the nonempty-fact check; it does not prove every priced source is complete. Late facts after issuance are rejected as immutable, so producer holds alone cannot prevent an incomplete invoice. Do not qualify paid-service month close as complete until this is fixed and tested. |
+| PayPal | Hosted order, capture/query, webhook and idempotent recovery code exist. | Actual sandbox buyer approval, completed capture, ambiguous-response recovery and exactly one balance credit remain live acceptance items. Simulator qualification does not prove PayPal acceptance. |
+
+The read-only staging review observed:
+
+- Account Manager, Billing, Cloud Admin and the selected Video Cloud workloads
+  were Ready; Account Manager to CertIssuer authentication reached request
+  validation. Readiness does not prove metering or settlement completeness.
+- The API, Logger and MQTT usage workloads still use Video Cloud
+  `sha-9d67049b21dc`; the later Logger fixes are merged but not deployed there.
+- Only MQTT is active in the registered-service catalog. OTA, Logger, Shadow,
+  video storage and WebRTC are suspended. Product service writes are disabled
+  and 32 Products lack immutable service-grant revisions.
+- `--require-billable-logging-ready` returned **NO-GO**: Logger core cutovers,
+  strict MQTT entitlement enforcement and Logger Billing facts are disabled;
+  Loki has no configured bound data PVC or the required 7/30/90-day retention
+  rules. Review found a preflight gap when only the ConfigMap was edited while
+  an old Pod stayed Ready. The local correction now reuses the Go guard for
+  the selected canonical config checksum and current rollout; focused
+  regressions passed, but this correction has not been published or deployed.
+- The current staging TWD card has five legacy non-OTA rates and `line` tax
+  mode. There are zero published OTA cards, OTA period seals, OTA task/download
+  receipts, OTA artifact objects, OTA/Logger Billing facts, or Logger receipts
+  and usage outbox rows. These zero counts are not source-completeness proofs.
+- Staging PayPal is configured `PAYPAL_ENABLED=false` with sandbox mode. No
+  staging PayPal purchase was performed during this read-only review.
+
+The local pricing-page correction also invalidates effective prices at a
+published rate boundary or UTC month change and when the page becomes visible
+again. It preserves request cancellation and clears the displayed effective
+amount before requesting the new book. The retention explanation now splits
+accepted log byte-time across UTC months using the fixed 30-day normalization.
+Focused fake-clock and localization tests passed; these local changes have not
+been published or deployed. No new coverage or live financial acceptance is
+claimed for this review.
+
+The next closeout order is to finish missing metering and invoice completeness
+code, review it, run focused local/integration tests, and only then run an
+applicable coverage gate. Deployment activation and source-to-invoice acceptance
+follow a reviewed target-environment plan; existing passing coverage, simulator
+tests, Ready Pods or an empty outbox cannot replace those checks.
 
 ### Development registration checkpoint（2026-09-30）
 
@@ -71,7 +234,7 @@ dev 首版候選的**未稅** rate identity 與展示單位如下；每個 reque
 | `storage.clip_object_read` | NT$17.92／百萬次 | `requests`／0 | 成功讀取 fact 待驗收 |
 | `storage.clip_download_gib` | NT$4.80／GiB | `GiB`／9 | 送達位元組 fact 待驗收 |
 | `logger.ingest_gib` | NT$28.80／GiB | `GiB`／9 | 收集總量已有，通用發票 fact 待驗收 |
-| `logger.retention_gib_month` | NT$1.31／GiB-month | `GiB-month`／9 | 原始 bytes×設定保留天數／30 的計量待驗收；AWS 比較值按壓縮 bytes |
+| `logger.retained_gib_month` | NT$1.31／GiB-month | `GiB-month`／9 | 已接受原始 bytes×該 UTC 月內實際保留秒數／30 天；跨月分攤，實體刪除延遲不延長收費；AWS 比較值按壓縮 bytes |
 | `api.data_request` | NT$136／百萬次 | `requests`／0 | 成功路由分類與 fact 待驗收 |
 
 ## 1. 已確定的決策與範圍

@@ -33,13 +33,8 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	if err != nil {
 		return err
 	}
-	if cfg.Adapter != "lke" {
-		return errors.New("OTA service rollout requires the LKE adapter")
-	}
-	// This narrowly scoped rollout is for the existing dev stack. Protected
-	// environments use their reviewed coordinated release procedure.
-	if cfg.Environment != "dev" {
-		return errors.New("targeted OTA service rollout is limited to dev")
+	if err := requireTargetedOTAEnvironment(cfg); err != nil {
+		return err
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {

@@ -508,6 +508,58 @@ func TestConfigureProvisionSecretStoreAddsOnlyNewCatalogCredentials(t *testing.T
 	}
 }
 
+func TestReadOnlySecretStoreBindingDoesNotAddNewCatalogCredentials(t *testing.T) {
+	store := makeIsolatedTestSecretStore(t, "staging")
+	for _, entry := range rtkSecretCatalog() {
+		if entry.ID == "logger-producer-seal-token" {
+			continue
+		}
+		if err := store.write("runtime/"+entry.ID, []byte("fixture-"+entry.ID), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := store.read("inventory.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory secretInventory
+	if err := json.Unmarshal([]byte(raw), &inventory); err != nil {
+		t.Fatal(err)
+	}
+	entries := inventory.Entries[:0]
+	for _, entry := range inventory.Entries {
+		if entry.ID != "logger-producer-seal-token" {
+			entries = append(entries, entry)
+		}
+	}
+	inventory.Entries = entries
+	payload, err := json.Marshal(inventory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.write("inventory.json", payload, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := configureReadOnlySecretStore("staging"); err == nil || !strings.Contains(err.Error(), "logger-producer-seal-token") {
+		t.Fatalf("missing source credential should block qualification: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.RuntimeDir(), "logger-producer-seal-token")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("read-only qualification generated source credential")
+	}
+	after, err := store.read("inventory.json")
+	if err != nil || after != string(payload) {
+		t.Fatal("read-only qualification changed catalog inventory")
+	}
+	if err := store.write("runtime/logger-producer-seal-token", []byte(strings.Repeat("l", 40)), false); err != nil {
+		t.Fatal(err)
+	}
+	_, restore, err := configureReadOnlySecretStore("staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore()
+}
+
 func TestConfigureProvisionSecretStoreDoesNotRepairDeletedRecordedCredential(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "staging")
 	for _, entry := range rtkSecretCatalog() {

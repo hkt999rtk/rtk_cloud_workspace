@@ -25,6 +25,105 @@ type rolloutTLSOptions struct {
 	minDays                          int
 }
 
+func checkRolloutLoggerPeriodSource(cfg deploymentConfig) deploymentCredentialCheck {
+	check := deploymentCredentialCheck{Name: "Logger immutable monthly source"}
+	if cfg.Adapter != "lke" {
+		check.Detail = "Logger source check requires the LKE adapter"
+		return check
+	}
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		check.Detail = "selected SecretStore unavailable"
+		return check
+	}
+	root, err := loadLKEImageEnv(cfg.Workspace, store.Root)
+	if err != nil {
+		check.Detail = "selected runtime unavailable"
+		return check
+	}
+	operator, err := store.readOperator()
+	if err != nil {
+		check.Detail = "selected operator settings unavailable"
+		return check
+	}
+	env := appendMap(appendMap(appendMap(root.Values, cfg.Values), cfg.AdapterResolved), operator)
+	if env["CLOUD_ENV_NAME"] != cfg.Environment || env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] {
+		check.Detail = "Logger source settings differ from the selected environment"
+		return check
+	}
+	if err := loadLKEImageManifestDefaults(store.Root, env); err != nil {
+		check.Detail = "selected image manifest unavailable"
+		return check
+	}
+	if info, err := os.Stat(store.KubeconfigPath()); err != nil || !info.Mode().IsRegular() {
+		check.Detail = "selected kubeconfig unavailable"
+		return check
+	}
+	bindings := map[string]string{"RTK_CLOUD_KUBECONFIG": store.KubeconfigPath(), "RTK_CLOUD_LKE_KUBECONFIG": store.KubeconfigPath()}
+	for key, value := range env {
+		if strings.HasPrefix(key, "LKE_") || strings.HasPrefix(key, "VIDEO_CLOUD_") {
+			bindings[key] = value
+		}
+	}
+	for _, key := range []string{"LKE_LOGGER_PERIOD_SEALS_ENABLED", "LKE_LOGGER_BILLING_FACTS_ENABLED", "LKE_LOGGER_SERVICE_REGISTRATION_ENABLED"} {
+		bindings[key] = firstNonEmpty(env[key], "false")
+	}
+	restore := installAllCredentialEnvironment(bindings)
+	defer restore()
+	previousCanonical, previousDir := activeCanonicalSecretStore, lkeRuntimeSecretStateDir
+	activeCanonicalSecretStore, lkeRuntimeSecretStateDir = true, store.RuntimeDir()
+	defer func() { activeCanonicalSecretStore, lkeRuntimeSecretStateDir = previousCanonical, previousDir }()
+	if err := lkeRequireLoggerProducerSealToken(env); err != nil {
+		check.Detail = err.Error()
+		return check
+	}
+	if err := lkeRequireReadyLoggerPeriodSource(env); err != nil {
+		check.Detail = err.Error()
+		return check
+	}
+	check.Passed, check.Detail = true, "selected immutable source mode, CI image pin, current rollout and every live Logger Pod verified; complete month seal remains required"
+	return check
+}
+
+func checkRolloutLokiRetention(cfg deploymentConfig, envFile string) deploymentCredentialCheck {
+	check := deploymentCredentialCheck{Name: "Loki billable-log retention"}
+	if cfg.Adapter != "lke" {
+		check.Detail = "live Loki retention check requires the LKE adapter"
+		return check
+	}
+	values, profile := deploymentCredentialProfileValues(cfg.Environment, envFile, defaultDeploymentSharedCredentialFile())
+	if !profile.Passed {
+		check.Detail = profile.Detail
+		return check
+	}
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		check.Detail = "cannot resolve selected environment SecretStore"
+		return check
+	}
+	if info, err := os.Stat(store.KubeconfigPath()); err != nil || !info.Mode().IsRegular() {
+		check.Detail = "selected environment kubeconfig is missing or nonregular"
+		return check
+	}
+	env := appendMap(cfg.Values, cfg.AdapterResolved)
+	const retentionFlag = "LKE_LOGGER_RETENTION_STORAGE_ENABLED"
+	env[retentionFlag] = firstNonEmpty(values[retentionFlag], env[retentionFlag], "false")
+	// The selected environment is authoritative; inherited shell flags and
+	// kubeconfig aliases must not qualify a different target or configuration.
+	restore := installAllCredentialEnvironment(map[string]string{
+		retentionFlag:              env[retentionFlag],
+		"RTK_CLOUD_KUBECONFIG":     store.KubeconfigPath(),
+		"RTK_CLOUD_LKE_KUBECONFIG": store.KubeconfigPath(),
+	})
+	defer restore()
+	if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
+		check.Detail = err.Error()
+		return check
+	}
+	check.Passed, check.Detail = true, "bound data PVC, tiered retention, current rollout and canonical configuration checksum verified; receipt/Billing reconciliation remains required"
+	return check
+}
+
 func (c deploymentCredentialChecker) checkStorageReadOnly(store provisionObjectStore, prefix, name string) deploymentCredentialCheck {
 	query := url.Values{"list-type": {"2"}, "max-keys": {"1"}, "prefix": {strings.Trim(prefix, "/") + "/"}}
 	body, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodGet, "", query, nil)
@@ -333,6 +432,12 @@ func checkRolloutMounts(path string) deploymentCredentialCheck {
 }
 
 func (o *deploymentCredentialCheckOptions) configureChecks(selection string) error {
+	if o.requireLokiRetentionReady && !o.readOnly {
+		return errors.New("--require-loki-retention-ready requires --read-only")
+	}
+	if o.requireLoggerPeriodSourceReady && !o.readOnly {
+		return errors.New("--require-logger-period-source-ready requires --read-only")
+	}
 	if selection != "" {
 		o.selected = map[string]bool{}
 		for _, name := range strings.Split(selection, ",") {

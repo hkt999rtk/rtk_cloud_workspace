@@ -78,7 +78,19 @@ func TestDeploymentCredentialScriptDetectsScopedImageDrift(t *testing.T) {
 	}
 	bin := t.TempDir()
 	for name, script := range map[string]string{
-		"go": "#!/bin/sh\nexit 0\n",
+		"go": `#!/bin/sh
+case "$*" in
+  *"deployment credentials-check"*"--require-loki-retention-ready"*)
+    case "$*" in *"--require-logger-period-source-ready"*) ;; *) exit 1 ;; esac
+    case "${BILLABLE_LOKI_GUARD:-}" in
+      storage) echo 'Loki retention Deployment still uses nonpersistent storage'; exit 1 ;;
+      retention) echo 'Loki retention ConfigMap lacks retention_enabled: true'; exit 1 ;;
+      checksum) echo 'Loki retention Deployment config checksum differs from the current retention configuration'; exit 1 ;;
+      *) echo 'Loki canonical configuration checksum verified; receipt/Billing reconciliation remains required' ;;
+    esac
+    ;;
+esac
+`,
 		"kubectl": `#!/bin/sh
 case "$*" in
   *"get secret account-manager-runtime"*)
@@ -99,15 +111,6 @@ case "$*" in
     esac
     ;;
   *"get deployment video-cloud-logingester "*) printf true ;;
-  *"get deployment video-cloud-loki "*)
-    if [ "${BILLABLE_LOKI_CLAIM:-}" != missing ]; then printf video-cloud-loki-data; fi
-    ;;
-  *"get pvc video-cloud-loki-data "*) printf Bound ;;
-  *"get configmap video-cloud-loki-config "*)
-    if [ "${BILLABLE_RETENTION:-}" != off ]; then
-      printf '%s\n' 'retention_enabled: true' 'retention_period: 0s' 'retention_policy="product-grant-v1",retention_tier="7d"' 'retention_policy="product-grant-v1",retention_tier="30d"' 'retention_policy="product-grant-v1",retention_tier="90d"'
-    fi
-    ;;
   *"get deployments"*)
     for name in video-cloud-api video-cloud-cleaner video-cloud-clipverifier video-cloud-statistics video-cloud-metricsexporter video-cloud-turnregistry video-cloud-logingester video-cloud-mqttusage; do
       image='registry.example.test/video-cloud:reviewed'
@@ -147,22 +150,22 @@ esac
 		})
 	}
 	for _, tc := range []struct {
-		name, gate, apiPodGate, mqttCutover, lokiClaim, retention, want string
-		fail                                                            bool
+		name, gate, apiPodGate, mqttCutover, lokiGuard, want string
+		fail                                                 bool
 	}{
-		{name: "billable logging ready", want: "Billable logging deployment prerequisites are ready; receipt and Billing reconciliation remain required"},
+		{name: "billable logging ready forwards Go guard", want: "Loki canonical configuration checksum verified; receipt/Billing reconciliation remains required"},
 		{name: "billable logging disabled", gate: "off", want: "Product service writes are disabled", fail: true},
 		{name: "API Pod has stale gate", apiPodGate: "off", want: "account-manager Pod account-manager-1 Product service writes are false", fail: true},
 		{name: "MQTT cutover missing", mqttCutover: "off", want: "video-cloud-api VIDEO_CLOUD_LOGGER_MQTT_CUTOVER_ENABLED is false", fail: true},
-		{name: "Loki PVC missing", lokiClaim: "missing", want: "Loki data PVC is unset", fail: true},
-		{name: "Loki retention missing", retention: "off", want: "Loki tiered retention lacks retention_enabled: true", fail: true},
+		{name: "Loki PVC missing", lokiGuard: "storage", want: "Loki retention Deployment still uses nonpersistent storage", fail: true},
+		{name: "Loki retention missing", lokiGuard: "retention", want: "Loki retention ConfigMap lacks retention_enabled: true", fail: true},
+		{name: "old Loki revision with new ConfigMap", lokiGuard: "checksum", want: "Loki retention Deployment config checksum differs", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BILLABLE_GATE", tc.gate)
 			t.Setenv("BILLABLE_API_POD_GATE", tc.apiPodGate)
 			t.Setenv("BILLABLE_MQTT_CUTOVER", tc.mqttCutover)
-			t.Setenv("BILLABLE_LOKI_CLAIM", tc.lokiClaim)
-			t.Setenv("BILLABLE_RETENTION", tc.retention)
+			t.Setenv("BILLABLE_LOKI_GUARD", tc.lokiGuard)
 			billableArgs := []string{filepath.Join(workspace, "scripts", "check-deployment-credentials.sh"), "--environment", "staging", "--read-only", "--require-billable-logging-ready"}
 			output, err := exec.Command("bash", billableArgs...).CombinedOutput()
 			if (err != nil) != tc.fail || !strings.Contains(string(output), tc.want) {

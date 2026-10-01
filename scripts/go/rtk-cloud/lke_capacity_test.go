@@ -60,6 +60,107 @@ esac
 	}
 }
 
+func TestLKEProviderServicesCountsSelectedLokiRetentionVolume(t *testing.T) {
+	t.Setenv("LKE_LOGGER_RETENTION_STORAGE_ENABLED", "")
+	for _, tc := range []struct {
+		name, enabled string
+		workloads     []string
+		want          int
+	}{
+		{name: "full enabled", enabled: "true", want: 1},
+		{name: "targeted enabled", enabled: "true", workloads: []string{"video-cloud"}, want: 1},
+		{name: "targeted disabled", enabled: "false", workloads: []string{"video-cloud"}},
+		{name: "unrelated targeted", enabled: "true", workloads: []string{"frontend"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_NODE_COUNT": "1", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": tc.enabled}
+			opts := provisionOptions{workloads: tc.workloads}
+			plan := lkeProviderServices(env, 1, opts)
+			if plan.LokiVolumes != tc.want {
+				t.Fatalf("Loki volumes=%d want%d", plan.LokiVolumes, tc.want)
+			}
+			env["LKE_LOGGER_RETENTION_STORAGE_ENABLED"] = "false"
+			without := lkeProviderServices(env, 1, opts)
+			if plan.RequiredServices != without.RequiredServices+tc.want {
+				t.Fatalf("Loki volume missing from provider total: %+v without=%+v", plan, without)
+			}
+			env["LKE_LOGGER_RETENTION_STORAGE_ENABLED"] = tc.enabled
+			output := captureStdout(t, func() { lkePrintCapacityPlan(env, opts) })
+			if plan.RequiredServices > 0 && !strings.Contains(output, "loki_volumes=") {
+				t.Fatalf("plan omits Loki volume disclosure: %s", output)
+			}
+		})
+	}
+}
+
+func TestLKEMissingLokiVolumeUsesObservabilityNamespaceAndOnlyBound(t *testing.T) {
+	dir := t.TempDir()
+	kubeconfig, calls := filepath.Join(dir, "kubeconfig.yaml"), filepath.Join(dir, "calls")
+	writeTestFile(t, kubeconfig, "test kubeconfig\n")
+	kubectl := filepath.Join(dir, "kubectl")
+	writeTestFile(t, kubectl, `#!/bin/sh
+printf '%s\n' "$*" >> "$LKE_CAPACITY_TEST_CALLS"
+case "$*" in
+  *"-n video-cloud-staging-observability get pvc video-cloud-loki-data "*)
+    test "$LKE_CAPACITY_TEST_PVC_PHASE" != error || exit 1
+    printf '%s' "$LKE_CAPACITY_TEST_PVC_PHASE" ;;
+  *) exit 1 ;;
+esac
+`)
+	if err := os.Chmod(kubectl, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("RTK_CLOUD_KUBECTL", kubectl)
+	t.Setenv("RTK_CLOUD_KUBECONFIG", kubeconfig)
+	t.Setenv("LKE_CAPACITY_TEST_CALLS", calls)
+	for _, phase := range []string{"Bound", "Pending", "", "error"} {
+		t.Run("phase="+phase, func(t *testing.T) {
+			t.Setenv("LKE_CAPACITY_TEST_PVC_PHASE", phase)
+			want := 1
+			if phase == "Bound" {
+				want = 0
+			}
+			got := lkeMissingPlannedVolumeServices(provisionPaths{EnvRoot: dir}, map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}, lkeProviderServicePlan{LokiVolumes: 1})
+			if got != want {
+				t.Fatalf("phase=%q additional=%d want%d", phase, got, want)
+			}
+		})
+	}
+	body, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		if !strings.Contains(call, "--kubeconfig "+kubeconfig) || !strings.Contains(call, "-n video-cloud-staging-observability get pvc video-cloud-loki-data") {
+			t.Fatalf("incorrect Loki capacity query: %s", call)
+		}
+	}
+}
+
+func TestLKELiveProviderServicesRejectsMissingLokiAboveRecordedLimit(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	fakeLinodeCurl(t, map[string]string{
+		"/volumes?page_size=500":          `{"data":[{"id":9001}],"results":1}`,
+		"/nodebalancers?page_size=500":    `{"data":[],"results":0}`,
+		"/linode/instances?page_size=500": `{"data":[{"id":1,"label":"general-1"},{"id":2,"label":"unrelated-existing-service"}],"results":2}`,
+		"/lke/clusters?page_size=500":     `{"data":[{"id":12345,"label":"video-cloud-staging-lke","region":"us-sea","k8s_version":"1.36"}]}`,
+		"/lke/clusters/12345/pools":       `{"data":[{"id":111,"type":"g6-standard-4","count":1,"labels":{"rtk.io/node-class":"general"}}]}`,
+	})
+	t.Setenv("LINODE_TOKEN", "test-token")
+	t.Setenv("RTK_CLOUD_KUBECONFIG", filepath.Join(t.TempDir(), "missing-kubeconfig"))
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CLOUD_REGION": "us-sea", "LKE_NODE_TYPE": "g6-standard-4", "LKE_GENERAL_NODE_TYPE": "g6-standard-4"}
+	plan := lkeProviderServicePlan{NodeServices: 1, GeneralNodes: 1, LokiVolumes: 1, Limit: 1}
+	err := lkeCheckLiveProviderActiveServices(provisionPaths{Workspace: workspace, EnvRoot: envRoot}, env, plan)
+	if err == nil {
+		t.Fatal("missing Loki PVC was treated as no-growth above quota")
+	}
+	for _, want := range []string{"projected active services=4", "current_active=3", "additional_required=1", "loki_volumes=1"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in capacity error: %v", want, err)
+		}
+	}
+}
+
 func TestLKECapacityPlanAcceptsExplicitOneKValidationProfile(t *testing.T) {
 	env := map[string]string{
 		"CLOUD_STACK_NAME":                        "video-cloud-staging",

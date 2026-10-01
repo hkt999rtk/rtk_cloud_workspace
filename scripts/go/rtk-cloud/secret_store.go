@@ -334,6 +334,7 @@ func rtkSecretCatalog() []secretCatalogEntry {
 		{"turn-shared", "video-cloud,coturn", "manual"}, {"turn-registry-node-auth", "video-cloud-workers,coturn", "manual"},
 		{"cloud-logger-ingest-token", "video-cloud,cloud-logger", "manual"},
 		{"cloud-logger-billing-usage-token", "video-cloud,cloud-logger", "manual"},
+		{"logger-producer-seal-token", "billing,video-cloud-logingester,logger-period-seal", "manual"},
 		{"grafana-admin-password", "grafana", "manual"}, {"clip-private-key-seed", "video-cloud", "manual"},
 		{"billing-db-runtime-password", "billing", "manual"},
 		{"billing-service-token", "billing,cloud-admin", "manual"}, {"billing-internal-token", "billing", "manual"},
@@ -400,6 +401,10 @@ func catalogK8SBindings(id string) []secretK8SBinding {
 		"billing-internal-token": {
 			{"-billing", "billing-runtime", "BILLING_INTERNAL_TOKEN"},
 			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_BILLING_USAGE_TOKEN"},
+		},
+		"logger-producer-seal-token": {
+			{"-billing", "billing-runtime", "LOGGER_PRODUCER_SEAL_TOKEN"},
+			{"-video-cloud", "video-cloud-workers-runtime", "VIDEO_CLOUD_LOGGER_PRODUCER_SEAL_TOKEN"},
 		},
 		"billing-debit-token": {{"-billing", "billing-runtime", "BILLING_DEBIT_TOKEN"}},
 		"billing-cloud-creation": {
@@ -1187,6 +1192,14 @@ func archiveAndRemoveLegacySecrets(store secretStore, workspace string) error {
 }
 
 func configureProvisionSecretStore(environment string) (secretStore, func(), error) {
+	return configureSecretStore(environment, true)
+}
+
+func configureReadOnlySecretStore(environment string) (secretStore, func(), error) {
+	return configureSecretStore(environment, false)
+}
+
+func configureSecretStore(environment string, addCatalogCredentials bool) (secretStore, func(), error) {
 	store, err := newSecretStore("", environment)
 	if err != nil {
 		return secretStore{}, nil, err
@@ -1194,8 +1207,10 @@ func configureProvisionSecretStore(environment string) (secretStore, func(), err
 	if err := verifySecretStorePermissionsOnly(store); err != nil {
 		return secretStore{}, nil, err
 	}
-	if err := ensureSecretStoreCatalogAdditions(os.Stderr, store); err != nil {
-		return secretStore{}, nil, err
+	if addCatalogCredentials {
+		if err := ensureSecretStoreCatalogAdditions(os.Stderr, store); err != nil {
+			return secretStore{}, nil, err
+		}
 	}
 	if err := verifySecretStoreContents(store); err != nil {
 		return secretStore{}, nil, err

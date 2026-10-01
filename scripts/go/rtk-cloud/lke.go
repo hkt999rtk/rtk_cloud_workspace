@@ -1673,7 +1673,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                values: [video-cloud-mqttusage, video-cloud-logingester, video-cloud-otaservice]
+                values: [video-cloud-mqttusage, video-cloud-logingester, video-cloud-otaservice, logger-period-seal]
       ports:
         - { protocol: TCP, port: 8080 }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeNamespaceName(env, "account-manager"), lkeNamespaceName(env, "video-cloud"))
@@ -2557,6 +2557,9 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeLoggerServiceRegistrationEnabled(env) {
+		if err := lkeRequireLoggerProducerSealToken(env); err != nil {
+			return err
+		}
 		if !lkeMQTTFoundationRegistrationEnabled(env) {
 			return fmt.Errorf("Logger registration requires the MQTT foundation registrar")
 		}
@@ -7155,7 +7158,7 @@ stringData:
   VIDEO_CLOUD_EMQX_API_SECRET: %q
   VIDEO_CLOUD_LOGGER_TOKEN: %q
   VIDEO_CLOUD_BILLING_USAGE_LOGGER_TOKEN: %q
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeBillingInternalToken(), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("turn-registry-node-auth"), lkeRuntimeSecretValue("mqtt-usage-ingest"), lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkeBillingInternalToken(), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")), lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")), lkeRuntimeSecretValue("cloud-logger-ingest-token"), lkeRuntimeSecretValue("cloud-logger-billing-usage-token")) + lkeLoggerProducerSealWorkerSecretFields(env)
 }
 
 func lkeCloudLoggerRuntimeSecretManifest(env map[string]string) string {
@@ -7376,6 +7379,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
             - name: VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED
               value: %q
 `, lkeNamespaceName(env, "account-manager"), lkeAccountManagerInternalURL(env), lkeNamespaceName(env, "billing"), strconv.FormatBool(lkeLoggerMQTTCoreCutoverEnabled(env)), strconv.FormatBool(lkeLoggerBillingFactsEnabled(env)))
+			logIngesterEnv += lkeLoggerProducerSealWorkerEnv(env)
 			loggerIdentityMount = `            - name: logger-platform-identity
               mountPath: /etc/video_cloud/platform-service
               readOnly: true
@@ -9134,7 +9138,7 @@ stringData:
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env))
+%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env)+lkeBillingLoggerProducerSealSecretFields(env))
 }
 
 func lkeBillingMigrationSecretManifest(env map[string]string) string {
@@ -10640,6 +10644,7 @@ func lkeVideoCloudRuntimeChecksum(env map[string]string) string {
 		lkeHandoffRuntimeValue(env, lkeMQTTUsageHandoffToken()),
 		lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()),
 		lkeHandoffRuntimeValue(env, lkeBillingInternalToken()),
+		lkeLoggerProducerSealToken(),
 		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-key")),
 		lkeHandoffRuntimeValue(env, lkeRuntimeSecretValue("emqx-handoff-api-secret")),
 		lkeClipPrivateKeyPEM(),

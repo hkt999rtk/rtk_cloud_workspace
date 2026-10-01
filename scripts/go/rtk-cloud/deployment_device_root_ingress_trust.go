@@ -14,7 +14,7 @@ import (
 	"strings"
 )
 
-// This dev repair adds one pinned public Device Root to the existing ingress
+// This scoped repair adds one pinned public Device Root to the existing ingress
 // client-CA bundle and allows the Product device chain's three CA hops.
 func runDeploymentDeviceRootIngressTrust(args []string) error {
 	return runDeploymentDeviceRootIngressTrustWithOps(args, deviceRootIngressOps{
@@ -53,8 +53,8 @@ func runDeploymentDeviceRootIngressTrustWithOps(args []string, ops deviceRootIng
 	if err != nil {
 		return err
 	}
-	if cfg.Adapter != "lke" || cfg.Environment != "dev" {
-		return errors.New("targeted Device Root ingress update requires the existing dev LKE stack")
+	if err := requireTargetedOTAEnvironment(cfg); err != nil {
+		return err
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {

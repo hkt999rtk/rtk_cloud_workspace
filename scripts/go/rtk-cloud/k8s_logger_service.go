@@ -25,6 +25,9 @@ func lkeLoggerRetentionStorageEnabled(env map[string]string) bool {
 func lkeLoggerBillingFactsEnabled(env map[string]string) bool {
 	return lkeLoggerFlag(env, "LKE_LOGGER_BILLING_FACTS_ENABLED")
 }
+func lkeLoggerPeriodSealsEnabled(env map[string]string) bool {
+	return lkeLoggerFlag(env, "LKE_LOGGER_PERIOD_SEALS_ENABLED")
+}
 func lkeLoggerFlag(env map[string]string, key string) bool {
 	raw := firstNonEmpty(os.Getenv(key), env[key], "false")
 	switch strings.ToLower(strings.TrimSpace(raw)) {
@@ -122,6 +125,9 @@ func lkeRequireReadyLoggerEndpoint(env map[string]string) error {
 // A configured retention flag is not proof that the existing Loki Pod has
 // switched from emptyDir or that the Compactor is enforcing tiered retention.
 func lkeRequireReadyLokiRetentionStorage(env map[string]string) error {
+	if !lkeLoggerRetentionStorageEnabled(env) {
+		return fmt.Errorf("Loki retention storage is disabled in the selected deployment configuration")
+	}
 	ns := lkeNamespaceName(env, "observability")
 	deployment, err := kubectlResourceJSON(ns, "deployment", "video-cloud-loki")
 	if err != nil {

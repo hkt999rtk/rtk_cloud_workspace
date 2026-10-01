@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// ota-core-cutover updates only the dev core API after the independent OTA
+// ota-core-cutover updates only the selected core API after the independent OTA
 // service and authenticated device edge have been qualified.
 func runDeploymentOTACoreCutover(args []string) error {
 	return runDeploymentOTACoreCutoverWithOps(args, otaCoreCutoverOps{
@@ -17,10 +17,15 @@ func runDeploymentOTACoreCutover(args []string) error {
 			_, restore, err := configureProvisionSecretStore(environment)
 			return restore, err
 		},
+		readOnlyCredentials: func(environment string) (func(), error) {
+			_, restore, err := configureReadOnlySecretStore(environment)
+			return restore, err
+		},
 		stoppedRegistrar: lkeRequireStoppedOTARegistrar,
 		readyService:     lkeRequireReadyOTAServiceEndpoint,
 		activeEdge:       lkeRequireActiveOTADeviceEdgeRoute,
 		get:              kubectlResourceJSON,
+		pods:             otaCoreCutoverPods,
 		patch: func(namespace, patch string) error {
 			return runKubectl("-n", namespace, "patch", "deployment", "video-cloud-api", "--type=json", "-p", patch)
 		},
@@ -34,14 +39,16 @@ func runDeploymentOTACoreCutover(args []string) error {
 }
 
 type otaCoreCutoverOps struct {
-	credentials      func(string) (func(), error)
-	stoppedRegistrar func(map[string]string) error
-	readyService     func(map[string]string) error
-	activeEdge       func(map[string]string) error
-	get              func(string, string, string) (map[string]any, error)
-	patch            func(string, string) error
-	rollout          func(string) error
-	persist          func(secretStore) error
+	credentials         func(string) (func(), error)
+	readOnlyCredentials func(string) (func(), error)
+	stoppedRegistrar    func(map[string]string) error
+	readyService        func(map[string]string) error
+	activeEdge          func(map[string]string) error
+	get                 func(string, string, string) (map[string]any, error)
+	pods                func(string) ([]map[string]any, error)
+	patch               func(string, string) error
+	rollout             func(string) error
+	persist             func(secretStore) error
 }
 
 func runDeploymentOTACoreCutoverWithOps(args []string, ops otaCoreCutoverOps) error {
@@ -60,8 +67,8 @@ func runDeploymentOTACoreCutoverWithOps(args []string, ops otaCoreCutoverOps) er
 	if err != nil {
 		return err
 	}
-	if cfg.Adapter != "lke" || cfg.Environment != "dev" {
-		return errors.New("targeted OTA core cutover requires the existing dev LKE stack")
+	if err := requireTargetedOTAEnvironment(cfg); err != nil {
+		return err
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {
@@ -104,12 +111,16 @@ func runDeploymentOTACoreCutoverWithOps(args []string, ops otaCoreCutoverOps) er
 		return errors.New("OTA core cutover requires independent service and edge enabled, old registrar off, and strict Product entitlements")
 	}
 	if flag := operatorValues["LKE_OTA_CORE_CUTOVER_ENABLED"]; flag != "false" && flag != "true" {
-		return errors.New("selected dev operator environment must explicitly record the current OTA core cutover flag")
+		return errors.New("selected operator environment must explicitly record the current OTA core cutover flag")
 	}
-	if !strings.Contains(image, "@sha256:") {
+	if !rolloutImagePattern.MatchString(image) {
 		return errors.New("OTA core cutover requires a pinned immutable Video Cloud image")
 	}
-	restore, err := ops.credentials(cfg.Environment)
+	credentials := ops.credentials
+	if *readOnly && ops.readOnlyCredentials != nil {
+		credentials = ops.readOnlyCredentials
+	}
+	restore, err := credentials(cfg.Environment)
 	if err != nil {
 		return err
 	}
@@ -135,9 +146,16 @@ func runDeploymentOTACoreCutoverWithOps(args []string, ops otaCoreCutoverOps) er
 	}
 	if *readOnly {
 		if !ready || operatorValues["LKE_OTA_CORE_CUTOVER_ENABLED"] != "true" {
-			return errors.New("dev core API and operator configuration have not both cut over to the pinned independent OTA service")
+			return errors.New("selected core API and operator configuration have not both cut over to the pinned independent OTA service")
 		}
-		fmt.Fprintln(os.Stdout, "PASS dev core OTA cutover uses the pinned image and independent service")
+		pods, err := ops.pods(namespace)
+		if err != nil {
+			return err
+		}
+		if err := otaCoreCutoverCurrentReady(deployment, pods, image, upstream); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "PASS %s core OTA cutover uses the pinned image and independent service\n", cfg.Environment)
 		return nil
 	}
 	if !ready {
@@ -154,6 +172,13 @@ func runDeploymentOTACoreCutoverWithOps(args []string, ops otaCoreCutoverOps) er
 	}
 	if _, ready, err := otaCoreCutoverPatch(deployment, image, upstream); err != nil || !ready {
 		return fmt.Errorf("OTA core cutover read-back is incomplete: %v", err)
+	}
+	pods, err := ops.pods(namespace)
+	if err != nil {
+		return err
+	}
+	if err := otaCoreCutoverCurrentReady(deployment, pods, image, upstream); err != nil {
+		return err
 	}
 	if err := ops.readyService(env); err != nil {
 		return err

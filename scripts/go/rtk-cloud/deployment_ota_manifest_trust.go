@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// This dev-only update adds trusted public manifest keys to the live OTA
+// This scoped update adds trusted public manifest keys to the live OTA
 // Service without reapplying its registration Deployment or network policies.
 func runDeploymentOTAManifestTrust(args []string) error {
 	return runDeploymentOTAManifestTrustWithCredentials(args, func(environment string) (func(), error) {
@@ -33,8 +33,8 @@ func runDeploymentOTAManifestTrustWithCredentials(args []string, credentials fun
 	if err != nil {
 		return err
 	}
-	if cfg.Adapter != "lke" || cfg.Environment != "dev" {
-		return errors.New("OTA manifest trust update requires the existing dev LKE stack")
+	if err := requireTargetedOTAEnvironment(cfg); err != nil {
+		return err
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {

@@ -179,6 +179,9 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if len(args) > 0 && args[0] == "ota-core-cutover" {
 		return runDeploymentOTACoreCutover(args[1:])
 	}
+	if len(args) > 0 && args[0] == "logger-period-seal" {
+		return runDeploymentLoggerPeriodSeal(args[1:])
+	}
 	if len(args) > 0 && args[0] == "pki-storage-plan" {
 		return runDeploymentPKIStoragePlan(args[1:])
 	}
@@ -207,6 +210,8 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	var qualification deploymentCredentialCheckOptions
 	var selectedChecks string
 	fs.BoolVar(&qualification.readOnly, "read-only", false, "credential qualification without DNS/storage writes or receipts")
+	fs.BoolVar(&qualification.requireLokiRetentionReady, "require-loki-retention-ready", false, "verify live persistent Loki retention and its current configuration revision")
+	fs.BoolVar(&qualification.requireLoggerPeriodSourceReady, "require-logger-period-source-ready", false, "verify the current Logger release and immutable monthly source mode before close")
 	fs.StringVar(&selectedChecks, "checks", "", "credential checks: linode,ghcr,dns,storage,tls,mounts (default: configured providers plus supplied local checks)")
 	fs.Func("image", "repeatable exact GHCR @sha256 image to pull for linux/amd64", func(v string) error { qualification.images = append(qualification.images, v); return nil })
 	fs.Func("manifest", "repeatable rendered workload JSON for Secret mount checks", func(v string) error { qualification.manifests = append(qualification.manifests, v); return nil })
@@ -225,7 +230,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if action == "credentials-check" && fs.NArg() != 0 {
 		return errors.New("unexpected positional arguments; use --flag=value for boolean values")
 	}
-	qualificationFlags := keySet("read-only", "checks", "image", "manifest", "tls-cert", "tls-key", "tls-ca", "tls-name", "tls-purpose", "min-valid-days")
+	qualificationFlags := keySet("read-only", "checks", "image", "manifest", "tls-cert", "tls-key", "tls-ca", "tls-name", "tls-purpose", "min-valid-days", "require-loki-retention-ready", "require-logger-period-source-ready")
 	customQualification := false
 	fs.Visit(func(f *flag.Flag) {
 		if qualificationFlags[f.Name] {
@@ -233,7 +238,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	})
 	if customQualification {
-		preflightReadOnlyOnly := action == "preflight" && qualification.readOnly && selectedChecks == "" && len(qualification.images) == 0 && len(qualification.manifests) == 0 && qualification.tls.cert == "" && qualification.tls.key == "" && qualification.tls.ca == "" && qualification.tls.hostname == "" && !hasFlag(args[1:], "--tls-purpose") && !hasFlag(args[1:], "--min-valid-days")
+		preflightReadOnlyOnly := action == "preflight" && qualification.readOnly && selectedChecks == "" && len(qualification.images) == 0 && len(qualification.manifests) == 0 && qualification.tls.cert == "" && qualification.tls.key == "" && qualification.tls.ca == "" && qualification.tls.hostname == "" && !hasFlag(args[1:], "--tls-purpose") && !hasFlag(args[1:], "--min-valid-days") && !hasFlag(args[1:], "--require-loki-retention-ready") && !hasFlag(args[1:], "--require-logger-period-source-ready")
 		if action != "credentials-check" && !preflightReadOnlyOnly {
 			return errors.New("qualification flags are only valid with deployment credentials-check")
 		}
@@ -704,17 +709,20 @@ func printDeploymentUsage() {
 	fmt.Fprint(os.Stdout, `Usage:
   rtk-cloud deployment credentials-check --environment NAME
   rtk-cloud deployment credentials-check --environment NAME --read-only [--checks ghcr,tls,mounts] [--image GHCR_DIGEST] [--manifest WORKLOAD_JSON]
+  rtk-cloud deployment credentials-check --environment NAME --read-only --require-loki-retention-ready
+  rtk-cloud deployment credentials-check --environment NAME --read-only --require-logger-period-source-ready
   rtk-cloud deployment credentials-check --environment NAME --create-missing-object-storage-bucket
   rtk-cloud deployment credentials-check --environment NAME --grant-object-storage-bucket-access
   rtk-cloud deployment preflight --environment NAME --operation plan|provision|acceptance|ephemeral-test
   rtk-cloud deployment plan --environment NAME
   rtk-cloud deployment certificate-check --environment NAME [--format table|json] [--local-only]
   rtk-cloud deployment service-identity --environment NAME --subject service:NAME --confirm STACK [--install-seed]
-  rtk-cloud deployment ota-service-rollout --environment dev [--confirm video-cloud-dev]
-  rtk-cloud deployment ota-manifest-trust --environment dev [--confirm video-cloud-dev]
-  rtk-cloud deployment ota-device-edge --environment dev [--confirm video-cloud-dev]
-  rtk-cloud deployment device-root-ingress-trust --environment dev [--confirm video-cloud-dev]
-  rtk-cloud deployment ota-core-cutover --environment dev [--read-only|--confirm video-cloud-dev]
+  rtk-cloud deployment ota-service-rollout --environment dev|staging [--confirm STACK]
+  rtk-cloud deployment ota-manifest-trust --environment dev|staging [--confirm STACK]
+  rtk-cloud deployment ota-device-edge --environment dev|staging [--confirm STACK]
+  rtk-cloud deployment device-root-ingress-trust --environment dev|staging [--confirm STACK]
+  rtk-cloud deployment ota-core-cutover --environment dev|staging [--read-only|--confirm STACK]
+  rtk-cloud deployment logger-period-seal --environment NAME --month YYYY-MM [--confirm STACK]
   rtk-cloud deployment pki-storage-plan --environment dev|staging|prod [--live|--render|--cleanup-audit]
   rtk-cloud deployment console-check --environment NAME --cloud-id UUID [--product-id UUID]
   rtk-cloud deployment create --environment NAME --confirm STACK

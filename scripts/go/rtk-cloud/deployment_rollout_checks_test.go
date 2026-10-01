@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"math/big"
@@ -283,6 +284,10 @@ func TestRolloutLocalChecksAggregateWithoutCredentialStore(t *testing.T) {
 func TestRolloutCLIRejectsInvalidQualification(t *testing.T) {
 	for _, args := range [][]string{
 		{"provision", "--read-only"}, {"credentials-check", "--read-only", "--grant-object-storage-bucket-access"},
+		{"provision", "--require-loki-retention-ready"}, {"preflight", "--read-only", "--require-loki-retention-ready"},
+		{"credentials-check", "--require-loki-retention-ready"},
+		{"credentials-check", "--require-logger-period-source-ready"},
+		{"provision", "--require-logger-period-source-ready"}, {"preflight", "--read-only", "--require-logger-period-source-ready"},
 		{"credentials-check", "--checks", "typo"}, {"credentials-check", "--checks", "tls"},
 		{"credentials-check", "--checks", "mounts"}, {"credentials-check", "--image", "ghcr.io/owner/repo:latest"},
 		{"credentials-check", "--tls-cert", "cert"},
@@ -292,6 +297,149 @@ func TestRolloutCLIRejectsInvalidQualification(t *testing.T) {
 		if err := runDeploymentWithOperations(args, deploymentOperations{}); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
+	}
+}
+
+func TestRolloutLoggerSourceUsesCanonicalSettingsWithoutGeneratingCredentials(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	root := t.TempDir()
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", root)
+	t.Setenv("LKE_LOGGER_PERIOD_SEALS_ENABLED", "true")
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "/wrong-environment/kubeconfig.yaml")
+	store, err := newSecretStore(root, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ensureLayout(); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(store.Root, "env", "stack.env"), "CLOUD_ENV_NAME=staging\nCLOUD_PROVIDER=lke\nCLOUD_STACK_NAME=video-cloud-staging\n")
+	rolloutWrite(t, store.KubeconfigPath(), "fixture", 0600)
+	for key, value := range map[string]string{
+		"LKE_LOGGER_SERVICE_REGISTRATION_ENABLED": "true",
+		"LKE_LOGGER_BILLING_FACTS_ENABLED":        "true",
+		"LKE_LOGGER_PERIOD_SEALS_ENABLED":         "false",
+		"LKE_VIDEO_CLOUD_IMAGE":                   "ghcr.io/example/video-cloud@sha256:" + strings.Repeat("a", 64),
+	} {
+		if err := store.write("operator/env/"+key, []byte(value), false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg, err := resolveDeploymentConfig(workspace, "staging", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousCanonical, previousDir, previousCache := activeCanonicalSecretStore, lkeRuntimeSecretStateDir, lkeRuntimeSecretCache
+	lkeRuntimeSecretCache = map[string]string{}
+	t.Cleanup(func() {
+		activeCanonicalSecretStore, lkeRuntimeSecretStateDir, lkeRuntimeSecretCache = previousCanonical, previousDir, previousCache
+	})
+	check := checkRolloutLoggerPeriodSource(cfg)
+	if check.Passed || !strings.Contains(check.Detail, "immutable monthly source seal path") {
+		t.Fatalf("shell bypassed selected source mode: %+v", check)
+	}
+	if len(lkeRuntimeSecretCache) != 0 || activeCanonicalSecretStore != previousCanonical || lkeRuntimeSecretStateDir != previousDir {
+		t.Fatal("read-only check generated or leaked credential context")
+	}
+	entries, err := os.ReadDir(store.RuntimeDir())
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("read-only check generated runtime credentials: %v", err)
+	}
+	if os.Getenv("LKE_LOGGER_PERIOD_SEALS_ENABLED") != "true" || os.Getenv("RTK_CLOUD_KUBECONFIG") != "/wrong-environment/kubeconfig.yaml" {
+		t.Fatal("read-only check leaked scoped settings")
+	}
+}
+
+func TestRolloutLokiRetentionUsesSelectedConfigurationAndCurrentRevision(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", root)
+	t.Setenv("LKE_LOGGER_RETENTION_STORAGE_ENABLED", "true")
+	t.Setenv("RTK_CLOUD_KUBECONFIG", "/wrong-environment/kubeconfig.yaml")
+	store, err := newSecretStore(root, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{filepath.Dir(store.KubeconfigPath()), filepath.Join(store.Root, "operator", "env")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rolloutWrite(t, store.KubeconfigPath(), "fixture", 0o600)
+	profile := filepath.Join(store.Root, "operator", "env")
+	flagPath := filepath.Join(profile, "LKE_LOGGER_RETENTION_STORAGE_ENABLED")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
+	cfg := deploymentConfig{Environment: "staging", Adapter: "lke", Values: env}
+	bin := t.TempDir()
+	calls := filepath.Join(bin, "calls")
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$LOKI_CALLS"
+case "$*" in
+  *"get deployment video-cloud-loki -o json"*) printf '%s' "$LOKI_DEPLOYMENT" ;;
+  *"get pvc video-cloud-loki-data -o json"*) printf '{"status":{"phase":"Bound"}}' ;;
+  *"get configmap video-cloud-loki-config -o json"*) printf '%s' "$LOKI_CONFIG" ;;
+  *) exit 1 ;;
+esac
+`
+	t.Setenv("RTK_CLOUD_KUBECTL", rolloutWrite(t, filepath.Join(bin, "kubectl"), script, 0o700))
+	t.Setenv("LOKI_CALLS", calls)
+	config, err := json.Marshal(map[string]any{"data": map[string]string{"config.yaml": strings.Join([]string{
+		"retention_enabled: true", "retention_period: 0s",
+		`selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'`,
+		`selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'`,
+		`selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`,
+	}, "\n")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOKI_CONFIG", string(config))
+	for _, tc := range []struct {
+		name, setting, want string
+		change              func(map[string]any)
+	}{
+		{name: "current canonical checksum", setting: "true"},
+		{name: "selected disabled overrides shell enabled", setting: "false", want: "disabled in the selected deployment configuration"},
+		{name: "old ready Pod with updated ConfigMap", setting: "true", want: "config checksum", change: func(d map[string]any) {
+			d["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/config-checksum"] = "old"
+		}},
+		{name: "new revision not ready", setting: "true", want: "current revision", change: func(d map[string]any) { d["status"].(map[string]any)["updatedReplicas"] = 0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rolloutWrite(t, flagPath, tc.setting, 0o600)
+			rolloutWrite(t, calls, "", 0o600)
+			deployment := testReadyLokiRetentionDeployment(env, true)
+			if tc.change != nil {
+				tc.change(deployment)
+			}
+			body, err := json.Marshal(deployment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("LOKI_DEPLOYMENT", string(body))
+			var out bytes.Buffer
+			checker := deploymentCredentialChecker{out: &out}
+			err = checker.checkWithOptions(cfg, profile, deploymentCredentialCheckOptions{readOnly: true, selected: map[string]bool{}, requireLokiRetentionReady: true})
+			if (err != nil) != (tc.want != "") || (tc.want != "" && !strings.Contains(out.String(), tc.want)) {
+				t.Fatalf("unexpected qualification: %v %s", err, out.String())
+			}
+			commands, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.setting == "false" && len(commands) != 0 {
+				t.Fatal("disabled selected retention queried the cluster")
+			}
+			for _, command := range strings.Split(strings.TrimSpace(string(commands)), "\n") {
+				if command == "" {
+					continue
+				}
+				if !strings.Contains(command, "--kubeconfig "+store.KubeconfigPath()) || !strings.Contains(command, " get ") || strings.Contains(command, "/wrong-environment/") {
+					t.Fatalf("check used wrong target or mutation: %s", command)
+				}
+			}
+			if os.Getenv("RTK_CLOUD_KUBECONFIG") != "/wrong-environment/kubeconfig.yaml" || os.Getenv("LKE_LOGGER_RETENTION_STORAGE_ENABLED") != "true" {
+				t.Fatal("qualification leaked scoped environment overrides")
+			}
+		})
 	}
 }
 

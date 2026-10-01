@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// This dev cutover changes only the device mTLS ingress, its OTA bridge
+// This scoped cutover changes only the device mTLS ingress, its OTA bridge
 // Service, and a pod-scoped ingress policy. It does not redeploy the core API.
 func runDeploymentOTADeviceEdge(args []string) error {
 	return runDeploymentOTADeviceEdgeWithCredentials(args, func(environment string) (func(), error) {
@@ -33,8 +33,8 @@ func runDeploymentOTADeviceEdgeWithCredentials(args []string, credentials func(s
 	if err != nil {
 		return err
 	}
-	if cfg.Adapter != "lke" || cfg.Environment != "dev" {
-		return errors.New("targeted OTA device edge rollout requires the existing dev LKE stack")
+	if err := requireTargetedOTAEnvironment(cfg); err != nil {
+		return err
 	}
 	store, err := newSecretStore("", cfg.Environment)
 	if err != nil {
