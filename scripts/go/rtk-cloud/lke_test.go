@@ -5049,25 +5049,29 @@ func TestWriteLKECompatibilityArtifactsForKubernetesArchitecture(t *testing.T) {
 func TestWriteLKECompatibilityArtifactsPreservesRuntimeCoverageConfig(t *testing.T) {
 	envRoot := t.TempDir()
 	env := map[string]string{
-		"CLOUD_ENV_NAME":                         "runtime-coverage",
-		"CLOUD_STACK_NAME":                       "coverage-123-1",
-		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": "ed25519",
-		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":     "ed25519,p256",
-		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":  "ed25519,p256",
-		"CLOUD_RUNTIME_COVERAGE_STACK":           "coverage-123-1",
-		"CLOUD_REGION":                           "us-sea",
-		"CLOUD_DNS_ROOT_DOMAIN":                  "coverage-123-1.invalid",
-		"VIDEO_CLOUD_DOMAIN":                     "video.coverage-123-1.invalid",
-		"VIDEO_CLOUD_API_BASE_URL":               "https://video.coverage-123-1.invalid:18443",
-		"VIDEO_CLOUD_BLOB_ENDPOINT":              "https://objects.example.test",
-		"VIDEO_CLOUD_BLOB_REGION":                "us-sea",
-		"VIDEO_CLOUD_BLOB_BUCKET":                "clip-test",
-		"VIDEO_CLOUD_BLOB_PREFIX":                "runtime-coverage/runtime-123-1",
-		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":      "false",
-		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": "true",
-		"VIDEO_CLOUD_WEBRTC_TURN_URLS":           "turn:turn.example.test:3478?transport=udp",
-		"VIDEO_CLOUD_LOAD_ADMIN_TOKEN":           "must-not-be-written",
-		"LINODE_OBJ_SECRET_ACCESS_KEY":           "must-not-be-written",
+		"CLOUD_ENV_NAME":                                  "runtime-coverage",
+		"CLOUD_STACK_NAME":                                "coverage-123-1",
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM":          "ed25519",
+		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":              "ed25519,p256",
+		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":           "ed25519,p256",
+		"CLOUD_RUNTIME_COVERAGE_STACK":                    "coverage-123-1",
+		"CLOUD_REGION":                                    "us-sea",
+		"CLOUD_DNS_ROOT_DOMAIN":                           "coverage-123-1.invalid",
+		"VIDEO_CLOUD_DOMAIN":                              "video.coverage-123-1.invalid",
+		"VIDEO_CLOUD_API_BASE_URL":                        "https://video.coverage-123-1.invalid:18443",
+		"VIDEO_CLOUD_BLOB_ENDPOINT":                       "https://objects.example.test",
+		"VIDEO_CLOUD_BLOB_REGION":                         "us-sea",
+		"VIDEO_CLOUD_BLOB_BUCKET":                         "clip-test",
+		"VIDEO_CLOUD_BLOB_PREFIX":                         "runtime-coverage/runtime-123-1",
+		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":               "false",
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED":          "true",
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS":                    "turn:turn.example.test:3478?transport=udp",
+		"TEST_LAB_ENABLED":                                "true",
+		"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES": "true",
+		"AUTH_TOKEN_BASE_URL":                             "https://admin.example.test",
+		"SENDMAIL_HTTP_BEARER_TOKEN":                      "must-not-be-written",
+		"VIDEO_CLOUD_LOAD_ADMIN_TOKEN":                    "must-not-be-written",
+		"LINODE_OBJ_SECRET_ACCESS_KEY":                    "must-not-be-written",
 	}
 	if err := writeLKECompatibilityArtifacts(provisionPaths{EnvRoot: envRoot}, env); err != nil {
 		t.Fatal(err)
@@ -5086,6 +5090,9 @@ func TestWriteLKECompatibilityArtifactsPreservesRuntimeCoverageConfig(t *testing
 		"VIDEO_CLOUD_BLOB_PREFIX=runtime-coverage/runtime-123-1",
 		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED=true",
 		"VIDEO_CLOUD_WEBRTC_TURN_URLS=turn:turn.example.test:3478?transport=udp",
+		"TEST_LAB_ENABLED=true",
+		"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES=true",
+		"AUTH_TOKEN_BASE_URL=https://admin.example.test",
 	} {
 		if !strings.Contains(stack, want) {
 			t.Fatalf("expected %q in stack.env, got:\n%s", want, stack)

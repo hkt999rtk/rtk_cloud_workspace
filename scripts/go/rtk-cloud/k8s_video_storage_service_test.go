@@ -74,6 +74,27 @@ func TestLKEVideoStorageServiceRendersIndependentPrivateWorkload(t *testing.T) {
 	}
 }
 
+func TestMediaServicesRestartWhenRuntimeStorageCredentialChanges(t *testing.T) {
+	env := map[string]string{
+		"CLOUD_STACK_NAME":             "video-cloud-staging",
+		"LINODE_OBJ_SECRET_ACCESS_KEY": "before-rotation",
+	}
+	storageBefore := lkeVideoStorageServiceDeploymentManifest(env)
+	otaBefore := lkeOTAServiceDeploymentManifest(env)
+	env["LINODE_OBJ_SECRET_ACCESS_KEY"] = "after-rotation"
+	for name, manifests := range map[string][2]string{
+		"video storage": {storageBefore, lkeVideoStorageServiceDeploymentManifest(env)},
+		"OTA":           {otaBefore, lkeOTAServiceDeploymentManifest(env)},
+	} {
+		if manifests[0] == manifests[1] || !strings.Contains(manifests[1], "rtk.realtek.com/runtime-checksum:") {
+			t.Fatalf("%s Pod template did not change after storage credential rotation", name)
+		}
+		if strings.Contains(manifests[1], "after-rotation") {
+			t.Fatalf("%s manifest exposed the storage credential", name)
+		}
+	}
+}
+
 func TestLKEVideoStorageServiceRequiresOwnIdentitySecret(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging"}

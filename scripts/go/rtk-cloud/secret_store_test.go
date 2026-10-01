@@ -341,7 +341,11 @@ func TestSecretStoreCommandsAndProvisionIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for key, value := range map[string]string{"LINODE_TOKEN": "linode-fixture", "GODADDY_KEY": "godaddy-fixture"} {
+	for key, value := range map[string]string{
+		"LINODE_TOKEN": "linode-fixture", "GODADDY_KEY": "godaddy-fixture",
+		"LINODE_OBJ_ACCESS_KEY_ID": "legacy-access", "LINODE_OBJ_SECRET_ACCESS_KEY": "legacy-secret",
+		"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "media-access", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "media-secret",
+	} {
 		if err := store.write(filepath.Join("operator", "env", key), []byte(value+"\n"), true); err != nil {
 			t.Fatal(err)
 		}
@@ -376,6 +380,9 @@ func TestSecretStoreCommandsAndProvisionIntegration(t *testing.T) {
 	}
 	if got := os.Getenv("LINODE_TOKEN"); got != "linode-fixture" {
 		t.Fatalf("LINODE_TOKEN = %q", got)
+	}
+	if os.Getenv("LINODE_OBJ_ACCESS_KEY_ID") != "media-access" || os.Getenv("LINODE_OBJ_SECRET_ACCESS_KEY") != "media-secret" {
+		t.Fatal("provisioning did not install the scoped runtime-media key")
 	}
 	if got := sensitiveEnvironmentPath(provisionPaths{EnvRoot: "legacy"}, "kube", "kubeconfig.yaml"); got != configured.KubeconfigPath() {
 		t.Fatalf("canonical kubeconfig path = %q", got)

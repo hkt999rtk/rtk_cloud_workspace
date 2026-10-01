@@ -2816,6 +2816,11 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if len(opts.workloads) > 0 && lkeWorkloadSelected(env, opts, "video-cloud") && lkeLoggerServiceRegistrationEnabled(env) {
+		if err := lkeApplyTargetedLoggerRegistration(env); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
 		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
 			return err
@@ -2922,6 +2927,23 @@ func lkeRestartVideoCloudLogIngester(env map[string]string) error {
 		return err
 	}
 	return runKubectl("-n", namespace, "rollout", "status", "deployment/video-cloud-logingester", "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m"))
+}
+
+// A targeted rollout does not reapply auxiliary workers. The Logger registrar
+// still needs its identity mount and registration settings; refuse to replace
+// a Deployment that owns managed PKI state through another renderer.
+func lkeApplyTargetedLoggerRegistration(env map[string]string) error {
+	if err := lkeRequireLoggerServiceIdentitySecret(env); err != nil {
+		return err
+	}
+	if err := lkeRequireBaselineIdentityDeployment(env, "video-cloud", "video-cloud-logingester"); err != nil {
+		return err
+	}
+	service := lkeVideoCloudAuxiliaryService{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http", MetricsPath: "/metrics/prometheus"}
+	if err := kubectlApply(lkeVideoCloudAuxiliaryDeploymentManifest(env, service)); err != nil {
+		return err
+	}
+	return runKubectl("-n", lkeNamespaceName(env, "video-cloud"), "rollout", "status", "deployment/video-cloud-logingester", "--timeout", firstNonEmpty(os.Getenv("LKE_WORKLOAD_ROLLOUT_TIMEOUT"), "5m"))
 }
 
 func ensureLKEDeployImages(env map[string]string, opts provisionOptions) error {
@@ -4580,26 +4602,44 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 
 func isSafeLKEOperatorStackOverride(key string) bool {
 	safeRuntimeKeys := map[string]bool{
-		"FACTORY_ENROLL_PUBLIC_ENABLED":          true,
-		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM": true,
-		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":     true,
-		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":  true,
-		"CLOUD_RUNTIME_COVERAGE_STACK":           true,
-		"VIDEO_CLOUD_API_BASE_URL":               true,
-		"VIDEO_CLOUD_BLOB_ENDPOINT":              true,
-		"VIDEO_CLOUD_BLOB_REGION":                true,
-		"VIDEO_CLOUD_BLOB_BUCKET":                true,
-		"VIDEO_CLOUD_BLOB_PREFIX":                true,
-		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":      true,
-		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED": true,
-		"VIDEO_CLOUD_CLIP_VERIFIER_ADDR":         true,
-		"VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL":        true,
-		"VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL":    true,
-		"VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES":      true,
-		"VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES":   true,
-		"VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL":  true,
-		"VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL": true,
-		"VIDEO_CLOUD_WEBRTC_TURN_URLS":           true,
+		"FACTORY_ENROLL_PUBLIC_ENABLED":                   true,
+		"TEST_LAB_ENABLED":                                true,
+		"AUTH_TOKEN_BASE_URL":                             true,
+		"SOCIAL_LOGIN_CALLBACK_URL":                       true,
+		"GOOGLE_LOGIN_ENABLED":                            true,
+		"GOOGLE_OAUTH_CLIENT_ID":                          true,
+		"GITHUB_LOGIN_ENABLED":                            true,
+		"GITHUB_OAUTH_CLIENT_ID":                          true,
+		"CHIPSET_PROVIDER_ALLOWED_HOSTS":                  true,
+		"SENDMAIL_HTTP_BASE_URL":                          true,
+		"SENDMAIL_HTTP_TIMEOUT":                           true,
+		"EMAIL_OUTBOX_POLL_INTERVAL":                      true,
+		"EMAIL_OUTBOX_BATCH_SIZE":                         true,
+		"EMAIL_OUTBOX_MAX_ATTEMPTS":                       true,
+		"EMAIL_OUTBOX_RETRY_BASE":                         true,
+		"EMAIL_OUTBOX_RETRY_MAX":                          true,
+		"ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES": true,
+		"VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED":           true,
+		"VIDEO_CLOUD_MQTT_ENTITLEMENTS_REQUIRED":          true,
+		"CERTIFICATE_INTERNAL_TLS_KEY_ALGORITHM":          true,
+		"CERTIFICATE_APP_CSR_KEY_ALGORITHMS":              true,
+		"CERTIFICATE_DEVICE_CSR_KEY_ALGORITHMS":           true,
+		"CLOUD_RUNTIME_COVERAGE_STACK":                    true,
+		"VIDEO_CLOUD_API_BASE_URL":                        true,
+		"VIDEO_CLOUD_BLOB_ENDPOINT":                       true,
+		"VIDEO_CLOUD_BLOB_REGION":                         true,
+		"VIDEO_CLOUD_BLOB_BUCKET":                         true,
+		"VIDEO_CLOUD_BLOB_PREFIX":                         true,
+		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":               true,
+		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED":          true,
+		"VIDEO_CLOUD_CLIP_VERIFIER_ADDR":                  true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL":                 true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL":             true,
+		"VIDEO_CLOUD_CLIP_UPLOAD_MAX_BYTES":               true,
+		"VIDEO_CLOUD_CLIP_THUMBNAIL_MAX_BYTES":            true,
+		"VIDEO_CLOUD_CLIP_VERIFY_POLL_INTERVAL":           true,
+		"VIDEO_CLOUD_CLIP_VERIFY_SWEEP_INTERVAL":          true,
+		"VIDEO_CLOUD_WEBRTC_TURN_URLS":                    true,
 	}
 	if safeRuntimeKeys[key] {
 		return true
@@ -7222,6 +7262,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
 	logIngesterEnv := ""
 	loggerIdentityMount := ""
 	loggerIdentityVolume := ""
+	loggerPodSecurityContext := ""
 	if service.Name == "video-cloud-logingester" {
 		logIngesterEnv = fmt.Sprintf(`            - name: VIDEO_CLOUD_MQTT_LOG_HANDLER_CONCURRENCY
               value: %q
@@ -7284,7 +7325,7 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
               value: %q
             - name: VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED
               value: %q
-`, lkeNamespaceName(env, "account-manager"), lkeAccountManagerInternalURL(env), lkeNamespaceName(env, "billing"), strconv.FormatBool(lkeLoggerMQTTCoreCutoverEnabled(env)), strconv.FormatBool(lkeLoggerBillingFactsEnabled(env)))
+`, lkeNamespaceName(env, "account-manager"), lkeAccountManagerInternalURL(env), lkeNamespaceName(env, "billing"), "true", strconv.FormatBool(lkeLoggerBillingFactsEnabled(env)))
 			loggerIdentityMount = `            - name: logger-platform-identity
               mountPath: /etc/video_cloud/platform-service
               readOnly: true
@@ -7294,6 +7335,14 @@ func lkeVideoCloudAuxiliaryDeploymentManifest(env map[string]string, service lke
             secretName: %s
             defaultMode: 0440
 `, loggerServiceIdentitySecretName)
+			loggerPodSecurityContext = `      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+`
 		}
 	}
 	clipVerifierEnv := ""
@@ -7495,7 +7544,7 @@ spec:
       volumes:
         - name: logger-spool
           emptyDir: {}
-%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount+loggerIdentityMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(env, service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume+loggerIdentityVolume)
+%s`, service.Name, lkeNamespaceName(env, "video-cloud"), service.Name, env["CLOUD_STACK_NAME"], replicas, mqttUsageStrategy, service.Name, service.Name, env["CLOUD_STACK_NAME"], lkeDeploymentImagePullSecretsManifest(env)+mqttUsageInitContainers+loggerPodSecurityContext, lkeVideoCloudImage(env), service.Binary, lkeContainerResourcesManifest(env, service.Name), ports, mqttUsageVolumeMount+loggerIdentityMount, firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOG_LEVEL"), "info"), lkeNamespaceName(env, "platform"), lkeCloudLoggerEndpoint(env), firstNonEmpty(os.Getenv("VIDEO_CLOUD_LOGGER_SPOOL_MAX_BYTES"), "104857600"), lkeVideoCloudWorkerDBMaxOpenConns(env), lkeVideoCloudWorkerDBMaxIdleConns(env), lkeVideoCloudDBConnMaxLifetime(env), lkeMQTTInternalAddr(env), strconv.FormatBool(lkeMQTTTenantNamespaceEnabled(env)), service.Name, lkeVideoCloudAuxiliaryMQTTCleanSession(env, service), logIngesterEnv+clipVerifierEnv, service.Name, mqttUsageEnv, mqttUsageVolume+loggerIdentityVolume)
 	body = strings.Replace(body, "      volumes:\n", lkeBlobEnvironmentManifest(env, "video-cloud-runtime")+"      volumes:\n", 1)
 	body = strings.Replace(body, "    metadata:\n      labels:", fmt.Sprintf("    metadata:\n      annotations:\n        rtk.realtek.com/runtime-checksum: %q\n      labels:", lkeVideoCloudRuntimeChecksum(env)), 1)
 	return body

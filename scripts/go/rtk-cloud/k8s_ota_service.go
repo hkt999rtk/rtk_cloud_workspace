@@ -147,6 +147,8 @@ spec:
       app.kubernetes.io/name: %s
   template:
     metadata:
+      annotations:
+        rtk.realtek.com/runtime-checksum: %q
       labels:
         app.kubernetes.io/name: %s
         app.kubernetes.io/part-of: rtk-cloud
@@ -285,7 +287,7 @@ spec:
             secretName: %s
             defaultMode: 0440
 `, otaServiceWorkloadName, videoNS, otaServiceWorkloadName, env["CLOUD_STACK_NAME"],
-		otaServiceWorkloadName, otaServiceWorkloadName, env["CLOUD_STACK_NAME"],
+		otaServiceWorkloadName, lkeVideoCloudRuntimeChecksum(env), otaServiceWorkloadName, env["CLOUD_STACK_NAME"],
 		lkeDeploymentImagePullSecretsManifest(env), lkeVideoCloudImage(env),
 		firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_ENV"), env["CLOUD_ENV_NAME"], env["ACCOUNT_MANAGER_ENV"], "staging"),
 		lkeVideoCloudAPIBaseURL(env), platformNS, env["VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON"],

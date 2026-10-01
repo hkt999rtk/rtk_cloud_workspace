@@ -88,8 +88,11 @@ func TestLKEDevLoggerCutoverPersistsThroughPlainConfigRender(t *testing.T) {
 func TestLKELoggerStagedSubscriptionAndRetentionStorage(t *testing.T) {
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_SERVICE_REGISTRATION_ENABLED": "true"}
 	standby := lkeVideoCloudAuxiliaryDeploymentManifest(env, lkeVideoCloudAuxiliaryService{Name: "video-cloud-logingester", Binary: "logingester", Port: 19300, PortName: "http"})
-	if !strings.Contains(standby, "name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED\n              value: \"false\"") {
-		t.Fatal("registered Logger must stay off the MQTT subscription before cutover")
+	if !strings.Contains(standby, "name: VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED\n              value: \"true\"") {
+		t.Fatal("registered Logger must retain the existing MQTT subscription")
+	}
+	if !strings.Contains(standby, "fsGroup: 10001") {
+		t.Fatal("registered Logger must be able to read its group-owned certificate mount")
 	}
 	if !strings.Contains(standby, "name: VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED\n              value: \"false\"") {
 		t.Fatal("customer Billing facts must remain disabled during validation")
@@ -517,5 +520,29 @@ func TestLKELoggerIdentityAndCutoverPrerequisites(t *testing.T) {
 	err = lkeDeployWorkloads(provisionPaths{}, env, provisionOptions{workloads: []string{"video-cloud"}})
 	if err == nil || !strings.Contains(err.Error(), "Logger Service is not private") {
 		t.Fatalf("Logger cutover without private ready endpoint was accepted: %v", err)
+	}
+}
+
+func TestLKETargetedLoggerRegistrationAppliesIdentityWithoutManagedState(t *testing.T) {
+	logPath := fakeKubectl(t)
+	env := map[string]string{
+		"CLOUD_STACK_NAME":                        "video-cloud-staging",
+		"LKE_LOGGER_SERVICE_REGISTRATION_ENABLED": "true",
+	}
+	setFakeLKEPlatformIdentitySecrets(t, env)
+	if err := lkeApplyTargetedLoggerRegistration(env); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, want := range []string{
+		"name: video-cloud-logingester",
+		"name: logger-platform-identity",
+		"secretName: logger-service-platform-identity",
+		"name: VIDEO_CLOUD_LOGGER_SERVICE_ENABLED",
+		"rollout status deployment/video-cloud-logingester",
+	} {
+		if !strings.Contains(log, want) {
+			t.Fatalf("targeted Logger rollout omitted %q", want)
+		}
 	}
 }
