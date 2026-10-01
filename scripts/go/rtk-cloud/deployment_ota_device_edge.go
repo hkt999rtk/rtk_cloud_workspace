@@ -36,17 +36,10 @@ func runDeploymentOTADeviceEdgeWithCredentials(args []string, credentials func(s
 	if err := requireTargetedOTAEnvironment(cfg); err != nil {
 		return err
 	}
-	store, err := newSecretStore("", cfg.Environment)
+	env, err := selectedOTAEnvironment(cfg)
 	if err != nil {
 		return err
 	}
-	envRoot, err := loadLKEImageEnv(cfg.Workspace, store.Root)
-	if err != nil {
-		return err
-	}
-	env := appendMap(envRoot.Values, cfg.Values)
-	env = appendMap(env, cfg.AdapterValues)
-	env = appendMap(env, cfg.AdapterResolved)
 	if env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] || env["CLOUD_ENV_NAME"] != cfg.Environment {
 		return errors.New("resolved OTA edge runtime does not match the selected environment")
 	}

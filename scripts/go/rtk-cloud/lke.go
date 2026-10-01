@@ -3474,6 +3474,11 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 	}, true); err != nil {
 		return err
 	}
+	if lkeWorkloadSelected(env, opts, "account-manager") {
+		if err := lkeSyncTargetedAccountManagerProductWrites(env); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "billing") {
 		if err := lkeValidateBillingOTAGrantHistoryRuntime(env); err != nil {
 			return err
@@ -3572,6 +3577,83 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
 		return lkeSyncFleetReadTokenConsumers(env, opts.fleetReadTokenBefore, opts)
+	}
+	return nil
+}
+
+// A targeted Account Manager deploy must update the one canonical runtime flag
+// without regenerating the other values in the existing Secret.
+func lkeSyncTargetedAccountManagerProductWrites(env map[string]string) error {
+	const key = "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"
+	desired := firstNonEmpty(lkeEnvValue(env, key), "false")
+	if desired != "true" && desired != "false" {
+		return fmt.Errorf("%s must be true or false", key)
+	}
+	namespace := lkeNamespaceName(env, "account-manager")
+	secret, err := lkeGetOptionalSecret(namespace, "account-manager-runtime")
+	if err != nil {
+		return err
+	}
+	if secret == nil {
+		return fmt.Errorf("account-manager runtime Secret is missing in %s", namespace)
+	}
+	data, ok := secret["data"].(map[string]any)
+	if !ok {
+		return errors.New("account-manager runtime Secret has no data")
+	}
+	encoded, exists := data[key].(string)
+	if exists {
+		current, decodeErr := base64.StdEncoding.DecodeString(encoded)
+		if decodeErr != nil || (string(current) != "true" && string(current) != "false") {
+			return fmt.Errorf("account-manager runtime Secret has invalid %s", key)
+		}
+		if string(current) == desired {
+			return nil
+		}
+	} else if _, present := data[key]; present {
+		return fmt.Errorf("account-manager runtime Secret has invalid %s", key)
+	}
+	metadata, ok := secret["metadata"].(map[string]any)
+	if !ok {
+		return errors.New("account-manager runtime Secret has no metadata")
+	}
+	uid, ok := metadata["uid"].(string)
+	if !ok || uid == "" {
+		return errors.New("account-manager runtime Secret has no UID")
+	}
+	resourceVersion, ok := metadata["resourceVersion"].(string)
+	if !ok || resourceVersion == "" {
+		return errors.New("account-manager runtime Secret has no resourceVersion")
+	}
+	op := "add"
+	if exists {
+		op = "replace"
+	}
+	patch, err := json.Marshal([]map[string]string{
+		{"op": "test", "path": "/metadata/uid", "value": uid},
+		{"op": "test", "path": "/metadata/resourceVersion", "value": resourceVersion},
+		{"op": op, "path": "/data/" + key, "value": base64.StdEncoding.EncodeToString([]byte(desired))},
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := kubectlCombinedOutput(bytes.NewReader(patch), "-n", namespace, "patch", "secret", "account-manager-runtime", "--type=json", "--patch-file=/dev/stdin"); err != nil {
+		return errors.New("account-manager runtime Product writes flag update failed")
+	}
+	updated, err := lkeGetOptionalSecret(namespace, "account-manager-runtime")
+	if err != nil {
+		return err
+	}
+	if updated == nil {
+		return errors.New("account-manager runtime Secret disappeared after update")
+	}
+	updatedMetadata, ok := updated["metadata"].(map[string]any)
+	if !ok || updatedMetadata["uid"] != uid {
+		return errors.New("account-manager runtime Secret UID changed after update")
+	}
+	actual, err := kubernetesSecretBytes(updated, key)
+	if err != nil || string(actual) != desired {
+		return errors.New("account-manager runtime Product writes flag did not match after update")
 	}
 	return nil
 }
@@ -4685,6 +4767,7 @@ func isSafeLKEOperatorStackOverride(key string) bool {
 		"VIDEO_CLOUD_BLOB_PREFIX":                         true,
 		"VIDEO_CLOUD_BLOB_FORCE_PATH_STYLE":               true,
 		"VIDEO_CLOUD_CLIP_DIRECT_UPLOAD_ENABLED":          true,
+		"VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON":      true,
 		"VIDEO_CLOUD_CLIP_VERIFIER_ADDR":                  true,
 		"VIDEO_CLOUD_CLIP_UPLOAD_URL_TTL":                 true,
 		"VIDEO_CLOUD_CLIP_UPLOAD_SESSION_TTL":             true,
@@ -9691,6 +9774,7 @@ func lkeAccountManagerOutboxWorkerManifest(env map[string]string) string {
 		lkeVideoCloudLifecycleInternalURL(env),
 		lkeInternalAuthToken(),
 		firstNonEmpty(lkeEnvValue(env, "VIDEO_CLOUD_LIFECYCLE_TIMEOUT"), "10s"),
+		firstNonEmpty(lkeEnvValue(env, "ACCOUNT_MANAGER_PLATFORM_SERVICE_PRODUCT_WRITES"), "false"),
 	)
 	image := ""
 	for _, workload := range lkeWorkloads(env) {
