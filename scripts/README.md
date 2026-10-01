@@ -173,7 +173,16 @@ readiness before starting the rollout. Add `--require-video-cloud-ready` to
 `scripts/check-deployment-credentials.sh --environment NAME --read-only` to
 check the existing Fleet Valkey, Prometheus, API, MQTT, Logger, and MQTT usage
 controllers. It fails on a missing or unready controller. A timed-out rollout
-is a failed release.
+is a failed release. After the scoped rollout, add
+`--require-video-cloud-image` to compare the API, seven required auxiliary
+workers and any present registered Video Cloud services with the environment's
+protected `LKE_VIDEO_CLOUD_IMAGE` pin. This also checks readiness; a successful
+API rollout with an old auxiliary worker image fails the check.
+Before acceptance that expects billable device logs, use
+`--require-billable-logging-ready`. It checks live Product write enablement,
+complete immutable Product grant backfill, active Logger catalog publication,
+and the required controller readiness. A denied device log is an operational
+warning only; it is not an accepted receipt or Billing usage.
 A scoped or read-only PASS alone is not deployment approval. Use the matching
 `deployment preflight --operation ...` for configuration/tooling prerequisites;
 it does not replace credentials-check. Recheck affected inputs after changes.

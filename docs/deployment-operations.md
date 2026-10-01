@@ -522,6 +522,10 @@ different results. Do not report a complete staging release from ready Pods,
        --no-resume --device-prefix <unique-prefix>
    ```
 
+   The wrapper uses the protected staging kubeconfig when no explicit
+   kubeconfig is set. A missing kubeconfig still fails before creating test
+   data; supply a valid selected-environment kubeconfig before retrying.
+
    This step intentionally creates/mutates test data and needs that scope of
    authorization. Do not reuse devices after lifecycle deactivation/unprovision.
    A device token 200 does not clear an app token 401. Record each unverified
@@ -653,19 +657,68 @@ records a redacted denial and acknowledges that permanently unauthorized
 event without accepting or billing it; database and backend failures still
 trigger redelivery. A successful image rollout and full acceptance are still
 required to confirm this recovery in staging.
+The first scoped rollout returned success while several auxiliary workers
+still ran the previous image: the plan listed them, but the scoped deploy
+path only reapplied the Logger. A scoped Video Cloud deploy now reapplies and
+waits for every auxiliary worker, including the MQTT usage checkpoint owner.
+After rollout, use `--require-video-cloud-image` on the credential checker.
+It reads the selected environment's protected `LKE_VIDEO_CLOUD_IMAGE` pin,
+requires the API and seven auxiliary deployments, and checks all present
+Video Cloud service deployments against that pin. The separately managed
+`video-cloud-api-pki` deployment is outside this image group. Image drift or
+a missing required worker is a failed rollout even when the API is Ready.
+
+The first fresh acceptance then stopped at Shadow `documents` although the
+reported state reached version 2 with an empty delta and the Redis outbox
+drained. The MQTT test client had carried its handshake deadline across the
+whole multi-step probe. It now clears that deadline after connection and
+starts a new read deadline for each expected publish. The staging acceptance
+wrapper also selects the protected staging kubeconfig when none is explicitly
+set, so an operator need not rediscover that prerequisite during the run.
+The next acceptance reached MQTT and Shadow but found no persisted runtime
+logs. Logger was Ready and had consumed all six messages; its audit warnings
+identified `factory entitlement service denied`. The newly created camera
+Product allowed MQTT and video but omitted the billable `device_logging`
+service. Staging camera fixtures now explicitly select `device_logging` with
+seven-day retention. Do not weaken Logger's Product entitlement check or
+count denied messages as usage; verify the fixture's service grant before
+interpreting missing log evidence as a transport failure.
+This fixture cannot yet be created in staging: on 2026-10-01 its Account
+Manager Product write gate was off, Logger catalog entry was suspended, and
+the read-only service-grant report found 32 Products awaiting backfill with
+zero existing grant revisions. Creating the logging Product returned HTTP 400
+with the legacy three-option limit. Runtime-log and Billing acceptance remain
+NO-GO until the documented Product service grant backfill, active Logger
+publication, and Product write cutover complete. Rejected MQTT logs leave no
+accepted Logger receipt or billable usage; they generate only a redacted
+operational warning and broker acknowledgment.
+Run `scripts/check-deployment-credentials.sh --environment staging --read-only
+--require-billable-logging-ready` before creating billable-log acceptance
+fixtures. On this staging snapshot it fails immediately on the disabled
+Product write gate. Once that gate is enabled, the same check also rejects
+missing immutable grants or a non-active Logger catalog entry. It does not
+change any Product option or grant.
+
 If a rollout is stuck, stop further updates, inspect both old and new Pod
 readiness plus broker client state, repair the dependency, and rerun the scoped
 deployment and full acceptance. A partially completed `provision --deploy`
 is not a successful release.
 
 For a routine scoped update, use this read-only sequence before the mutating
-command, then repeat the readiness check after rollout:
+command:
 
 ```sh
 go run ./scripts/go/rtk-cloud -- provision --env-root cloud_env/staging/runtime \
   --preflight --plan --workloads video-cloud
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --require-video-cloud-ready
+```
+
+After the rollout, verify readiness and exact pinned images:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-video-cloud-image
 ```
 
 If the readiness check fails, treat the existing deployment as a recovery

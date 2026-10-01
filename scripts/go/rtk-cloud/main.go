@@ -2120,7 +2120,7 @@ type loadDeviceType struct {
 }
 
 var loadDeviceTypes = []loadDeviceType{
-	{"camera", "RTC-CAM-PRO2-SIM", "camera", []string{"mqtt", "video_streaming", "video_storage"}, []string{"camera_event", "status_report", "snapshot", "websocket_owner", "webrtc", "recording_clip", "mqtt_legacy_snapshot"}},
+	{"camera", "RTC-CAM-PRO2-SIM", "camera", []string{"mqtt", "video_streaming", "video_storage", "device_logging"}, []string{"camera_event", "status_report", "snapshot", "websocket_owner", "webrtc", "recording_clip", "mqtt_legacy_snapshot"}},
 	{"light", "RTC-LIGHT-SIM", "light", []string{"mqtt"}, []string{"mqtt", "power", "brightness", "color_temperature", "state_report", "command_result"}},
 	{"switch", "RTC-SWITCH-SIM", "switch", []string{"mqtt"}, []string{"mqtt", "power", "state_report", "command_result"}},
 	{"smart_plug", "RTC-PLUG-SIM", "smart_plug", []string{"mqtt"}, []string{"mqtt", "power", "energy_watts", "state_report", "command_result"}},

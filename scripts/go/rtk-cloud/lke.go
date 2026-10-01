@@ -2864,6 +2864,13 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 	}
+	if len(opts.workloads) > 0 && lkeWorkloadSelected(env, opts, "video-cloud") {
+		// A scoped image rollout must update the auxiliary binaries it lists in
+		// the plan. The full path applies them through runtime dependencies.
+		if err := lkeApplyVideoCloudAuxiliaryServices(env, opts); err != nil {
+			return err
+		}
+	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") && lkeOTARegistrarRegistrationEnabled(env) {
 		if err := kubectlApply(lkeAllowVideoCloudAPIInternalNetworkPolicyManifest(env)); err != nil {
 			return err
@@ -2972,9 +2979,9 @@ func lkeRestartVideoCloudLogIngester(env map[string]string) error {
 	return runKubectl("-n", namespace, "rollout", "status", "deployment/video-cloud-logingester", "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m"))
 }
 
-// A targeted rollout does not reapply auxiliary workers. The Logger registrar
-// still needs its identity mount and registration settings; refuse to replace
-// a Deployment that owns managed PKI state through another renderer.
+// Check the Logger's managed identity owner before the targeted auxiliary
+// rollout replaces its Deployment. Preserve the dedicated identity mount and
+// registration settings in that rollout.
 func lkeApplyTargetedLoggerRegistration(env map[string]string) error {
 	if err := lkeRequireLoggerServiceIdentitySecret(env); err != nil {
 		return err

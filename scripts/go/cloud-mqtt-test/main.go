@@ -3839,7 +3839,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.Error = "device telemetry runtime log publish failed: " + redactedError(err)
 		return result
 	}
-	telemetryDoc, err := waitForMQTTPublish(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
+	telemetryDoc, err := waitForMQTTPublishWithDeadline(appObserver, upTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["sample_type"] == "home_device_message" && doc["message_id"] == messageID
 	})
 	if err != nil {
@@ -3884,7 +3884,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.Error = "app command runtime log publish failed: " + redactedError(err)
 		return result
 	}
-	if _, err := waitForMQTTPublish(appObserver, shadowAcceptedTopic, probe.Timeout, func(doc map[string]any) bool {
+	if _, err := waitForMQTTPublishWithDeadline(appObserver, shadowAcceptedTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
 	}); err != nil {
 		result.Error = "app observer did not receive shadow desired accepted: " + redactedError(err)
@@ -3893,7 +3893,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		return result
 	}
 	result.TraceChain = appendTrace(result.TraceChain, "shadow_desired", "app_observer", "receive", shadowAcceptedTopic, "PASS", "")
-	deltaDoc, err := waitForMQTTPublish(device, shadowDeltaTopic, probe.Timeout, func(doc map[string]any) bool {
+	deltaDoc, err := waitForMQTTPublishWithDeadline(device, shadowDeltaTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == commandID
 	})
 	if err != nil {
@@ -3927,7 +3927,7 @@ func runActorSeparatedProbe(probe mqttActorProbe) deviceResult {
 		result.Error = "device command ack runtime log publish failed: " + redactedError(err)
 		return result
 	}
-	ackDoc, err := waitForMQTTPublish(appObserver, shadowDocumentsTopic, probe.Timeout, func(doc map[string]any) bool {
+	ackDoc, err := waitForMQTTPublishWithDeadline(appObserver, shadowDocumentsTopic, probe.Timeout, func(doc map[string]any) bool {
 		return doc["clientToken"] == reportedToken && shadowDocumentsDeltaCleared(doc)
 	})
 	if err != nil {
@@ -3997,6 +3997,7 @@ func connectMQTTActor(probe mqttActorProbe, actor, accessToken string) (io.ReadW
 		}
 		return nil, err
 	}
+	clearConnDeadline(conn)
 	if probe.OnConnackSuccess != nil {
 		probe.OnConnackSuccess()
 	}

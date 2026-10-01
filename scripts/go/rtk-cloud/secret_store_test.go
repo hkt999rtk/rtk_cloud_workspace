@@ -438,6 +438,29 @@ func TestSecretStoreCommandsAndProvisionIntegration(t *testing.T) {
 	}()
 }
 
+func TestSecretsQualificationFlagsOnlyApplyToVerifyAndRequireLiveInputs(t *testing.T) {
+	configRoot := t.TempDir()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"migration flag on init", []string{"init", "--require-pki-migration"}, "only valid with secrets verify"},
+		{"Product PKI flag on init", []string{"init", "--require-product-pki"}, "only valid with secrets verify"},
+		{"Cloud without Product PKI", []string{"verify", "--product-pki-cloud-id", testProductPKICloudID}, "requires secrets verify --require-product-pki"},
+		{"deployment identity flag on init", []string{"init", "--require-deployment-identity"}, "only valid with secrets verify"},
+		{"deployment identity without kubeconfig", []string{"verify", "--require-deployment-identity"}, "requires the selected environment kubeconfig"},
+		{"Product PKI without kubeconfig", []string{"verify", "--require-product-pki"}, "requires the selected environment kubeconfig"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{}, tc.args...), "--environment", "staging", "--config-root", configRoot)
+			if err := runSecrets(args); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("runSecrets(%v) = %v, want %q", args, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigureProvisionSecretStoreAddsOnlyNewCatalogCredentials(t *testing.T) {
 	store := makeIsolatedTestSecretStore(t, "staging")
 	for _, entry := range rtkSecretCatalog() {

@@ -4640,6 +4640,26 @@ func TestRunProvisionLKEDeployAppliesVideoCloudAuxiliaryServices(t *testing.T) {
 	}
 }
 
+func TestTargetedVideoCloudDeployUpdatesAuxiliaryImage(t *testing.T) {
+	workspace, envRoot := makeLKETestEnv(t)
+	logPath := fakeKubectl(t)
+	t.Setenv("LKE_VIDEO_CLOUD_IMAGE", "registry.example.test/rtk/video-cloud:reviewed")
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "test-seed")
+	t.Setenv("FAKE_POSTGRES_RUNTIME_SECRET_JSON", `{"data":{"POSTGRES_PASSWORD":"dGVzdC1wYXNzd29yZA=="}}`)
+	if err := runProvision([]string{"--workspace", workspace, "--env-root", envRoot, "--deploy", "--workloads", "video-cloud", "--confirm", "video-cloud-staging"}); err != nil {
+		t.Fatal(err)
+	}
+	log := readTestFile(t, logPath)
+	for _, target := range []string{"video-cloud-cleaner", "video-cloud-mqttusage", "video-cloud-logingester"} {
+		if !strings.Contains(log, "name: "+target) || !strings.Contains(log, "rollout status deployment/"+target) {
+			t.Fatalf("targeted rollout omitted auxiliary %s", target)
+		}
+	}
+	if !strings.Contains(log, "registry.example.test/rtk/video-cloud:reviewed") {
+		t.Fatal("targeted auxiliary rollout did not use reviewed image")
+	}
+}
+
 func TestLKEClipVerifierDefaultsToFourReplicas(t *testing.T) {
 	t.Setenv("LKE_VIDEO_CLOUD_CLIPVERIFIER_REPLICAS", "")
 	manifest := lkeVideoCloudAuxiliaryDeploymentManifest(map[string]string{
@@ -7065,6 +7085,10 @@ if [[ "$*" == *"get secret account-manager-runtime -o json"* ]]; then
 fi
 if [[ "$*" == *"get secret billing-runtime -o json"* ]]; then
   printf '{"data":{}}\n'
+  exit 0
+fi
+if [[ "$*" == *"get secret postgresql-runtime --ignore-not-found=true -o json"* && -n "${FAKE_POSTGRES_RUNTIME_SECRET_JSON:-}" ]]; then
+  printf '%s\n' "$FAKE_POSTGRES_RUNTIME_SECRET_JSON"
   exit 0
 fi
 if [[ "$*" == *"get secret account-manager-service-registration-tls -o json"* ]]; then
