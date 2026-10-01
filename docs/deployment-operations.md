@@ -268,7 +268,9 @@ different results. Do not report a complete staging release from ready Pods,
    isolated runtime role is used. Save the prior image/schema version and
    retain failed Job logs for review. After migration, verify the runtime role
    can perform required DML and cannot perform DDL, and that no API or worker
-   Pod mounts the migration Secret.
+   Pod mounts the migration Secret. A targeted `--workloads billing` deploy
+   reconciles only its selected placement and does not prune unrelated LKE
+   node pools; node-pool retirement remains part of a reviewed full deploy.
    The OTA Platform period-seal schedule is separately gated by
    `LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED`, explicitly `false` in dev,
    staging and production. Before enabling it, provision a dedicated

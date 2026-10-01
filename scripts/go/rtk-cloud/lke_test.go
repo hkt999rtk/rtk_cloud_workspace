@@ -592,6 +592,21 @@ esac
 	}
 }
 
+func TestLKENodePoolPruneScope(t *testing.T) {
+	if !lkePruneNodePoolsAfterDeploy(provisionOptions{}) {
+		t.Fatal("full platform deploy must retain the documented node-pool cleanup")
+	}
+	for _, opts := range []provisionOptions{
+		{workloads: []string{"billing"}},
+		{videoOnly: true},
+		{loggerOnly: true},
+	} {
+		if lkePruneNodePoolsAfterDeploy(opts) {
+			t.Fatalf("scoped deploy must not prune unrelated node pools: %+v", opts)
+		}
+	}
+}
+
 func TestLKEUserPodsOnNodeClassFiltersSystemAndOtherNodes(t *testing.T) {
 	dir := t.TempDir()
 	kubectl := filepath.Join(dir, "kubectl")
