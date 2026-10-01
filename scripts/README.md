@@ -18,6 +18,13 @@ scripts/deploy-environment.sh upgrade --environment staging --confirm video-clou
 go run ./scripts/go/rtk-cloud -- deployment acceptance --environment staging
 ```
 
+Logger's manual monthly source close uses
+`go run ./scripts/go/rtk-cloud -- deployment logger-period-seal --environment NAME --month YYYY-MM`.
+Add `--confirm STACK` after reviewing the plan to start one Job. Require a
+completed UTC month plus 24 hours, durable source coverage, exact fact/seal
+acknowledgments and Job completion before closing the invoice. No schedule is
+installed. See [deployment operation and retry rules](../docs/deployment-operations.md#logger-source-close-and-reviewed-staging-ota-activation).
+
 Use the same rehearsal entry point for every environment:
 
 ```sh
@@ -187,6 +194,13 @@ complete immutable Product grant backfill, active Logger catalog publication,
 the API's HTTP/MQTT Logger cutovers and MQTT entitlement enforcement, the
 Logger's MQTT subscription and Billing fact generation, Loki's persistent data
 PVC and 7/30/90-day retention rules, and the required controller readiness.
+The wrapper forwards `--require-loki-retention-ready` to the Go credential
+checker, which reuses the cutover guard to verify the selected environment's
+enabled retention setting, `Recreate` rollout, current observed/updated/ready
+revision, and the canonical full ConfigMap render checksum on the Pod template.
+A matching ConfigMap with an old ready Loki Pod fails this check. All these
+checks are read-only; receipts and Billing reconciliation remain separate
+acceptance evidence.
 A denied device log is an operational warning only; it is not an accepted
 receipt or Billing usage.
 A scoped or read-only PASS alone is not deployment approval. Use the matching

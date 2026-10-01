@@ -699,10 +699,89 @@ Product write gate. Once that gate is enabled, the same check verifies every
 running Account Manager API and outbox worker Pod received it and also rejects
 missing immutable grants, a non-active Logger catalog entry, inactive core
 Logger cutovers or MQTT entitlement enforcement, disabled Logger Billing facts,
-or Loki storage without its bound data PVC and tiered retention rules. It does
-not change any Product option or grant. The registered Logger stays off the
+or Loki storage without its bound data PVC and tiered retention rules. The
+Loki check also compares the Pod template checksum with the canonical complete
+ConfigMap render and requires its current `Recreate` revision to be observed,
+updated and ready. Updating only the ConfigMap while an old Pod remains ready
+does not pass. The retention flag and kubeconfig come from the selected
+environment; a shell override cannot enable an otherwise disabled setting.
+It does not change any Product option or grant. The registered Logger stays off the
 MQTT log subscription until the MQTT core cutover. Its standby HTTP readiness
 depends on its database and log backend, since it has no log subscription yet.
+
+### Logger source close and reviewed staging OTA activation
+
+The approved staging completion is specified in
+[the OTA/Logger closeout design](design/ota-pricing-activation-and-disclosure-plan.md#approved-logger-and-staging-closeout-implementation-2026-10-02).
+Prepare the compatible Billing migration and standby Logger before Product
+grant backfill or intake cutover. With receipt writers paused, use the selected
+CI image's `/app/schema-maintenance logger-check`, `logger-apply`, then
+`logger-verify`; it takes `DATABASE_DSN` or `VIDEO_CLOUD_DB_DSN` from the
+environment binding. The scoped transactional migration preserves receipt and
+outbox rows and an existing source identity. Its first source coverage timestamp
+is the actual database migration time. Normal service startup does not apply
+this migration. The source-readiness gate executes `logger-verify` against the
+current Logger and blocks a missing schema or disabled database guard.
+Migrate existing Loki data to the single
+planned `video-cloud-loki-data` PVC before enabling core Logger flags. The
+billable-log preflight requires `VIDEO_CLOUD_LOGGER_PERIOD_SEALS_ENABLED=true`
+as well as the entitlement, active catalog, both cutovers and retention checks.
+Persist `LKE_LOGGER_PERIOD_SEALS_ENABLED=true` with
+`LKE_LOGGER_BILLING_FACTS_ENABLED=true` only for the verified source-close path.
+
+`runtime/logger-producer-seal-token` is generated once by the normal SecretStore
+catalog addition flow and preserved on later deploys. Its bindings are
+Billing `LOGGER_PRODUCER_SEAL_TOKEN` and the Video Cloud worker
+`VIDEO_CLOUD_LOGGER_PRODUCER_SEAL_TOKEN`. It must differ from ordinary fact,
+tenant, Account Manager and OTA-seal credentials. A missing/shared credential
+blocks Logger billing activation rather than silently disabling its source gate.
+
+The operator starts a one-time close after the complete UTC month plus 24 hours:
+
+```sh
+go run ./scripts/go/rtk-cloud -- deployment logger-period-seal \
+  --environment staging --month 2026-11
+go run ./scripts/go/rtk-cloud -- deployment logger-period-seal \
+  --environment staging --month 2026-11 --confirm video-cloud-staging
+```
+
+The first command plans; the second starts a bounded Job using the selected
+pinned release. A started Job is not a successful close: require its `Complete`
+condition, all historical Clouds accounted for, source/fact acknowledgments,
+and reconciled immutable `logger_period_seals` before invoice issuance. The Job
+does not issue an invoice or install a schedule. Retry retains the same stored
+source seal and fact identities. The source ledger records coverage at migration;
+if initialized during October 2026, October stays incomplete and November is
+the first potentially covered month, eligible after 2026-12-02T00:00:00Z.
+Never change the clock or rewind coverage to manufacture a month-end record.
+The provider capacity plan must count the Loki claim in the observability
+namespace, and count it as new only when it is not already Bound. A plan that
+only counts PostgreSQL and Fleet claims does not qualify this storage change.
+See [Billing source-close rules](../repos/rtk_billing/docs/logger-period-seals.md)
+and [Logger producer operation](../repos/rtk_video_cloud/docs/log-billing-runbook.md).
+
+The five scoped OTA commands (`ota-service-rollout`, `ota-device-edge`,
+`ota-manifest-trust`, `device-root-ingress-trust`, `ota-core-cutover`) support
+dev and reviewed persistent staging, retain their live-input and stack checks,
+and reject production in this delivery. Protected preflight and canonical CI
+image provenance remain staging release gates. Reuse the existing staging OTA
+registration, leases and Device Root; initial registration rollout is unnecessary
+when that service is already running. Qualify the device mTLS route and public
+Root trust before core cutover, and persist the flag only after live read-back.
+
+Before the first staging standby rollout, verify that the environment's OTA
+manifest signing key exists and its public key matches the tracked map in
+`cloud_env/staging/overrides/architecture.env`. The staging key ID is
+`staging-ota-20261002`; the operator-held private key and derived trust entry are
+`~/.config/rtk_cloud/staging/runtime/ota-manifest-private.pem` and
+`ota-manifest-trust.json`, both `0600`. Reuse these files on later deployments.
+The initial map is installed through the normal scoped Video Cloud render into
+both the core and independent OTA service. Require exact effective public-key
+read-back before release signing. `ota-manifest-trust` intentionally accepts
+only additive changes to an established nonempty map, so it is not the first
+bootstrap operation. Private signing material never enters Git or Kubernetes.
+Use the existing [operator signing tool](../repos/rtk_video_cloud/docs/ota-manifest-operator.md)
+if this environment has no key yet; do not borrow another environment's key.
 
 If a rollout is stuck, stop further updates, inspect both old and new Pod
 readiness plus broker client state, repair the dependency, and rerun the scoped

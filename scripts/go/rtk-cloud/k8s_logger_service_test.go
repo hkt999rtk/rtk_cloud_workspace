@@ -167,6 +167,15 @@ func testReadyLokiRetentionDeployment(env map[string]string, persistent bool) ma
 	}
 }
 
+func testCanonicalLokiConfigMap(t *testing.T, env map[string]string) map[string]any {
+	t.Helper()
+	var config map[string]any
+	if err := yaml.Unmarshal([]byte(lkeLokiConfigManifest(env)), &config); err != nil {
+		t.Fatal(err)
+	}
+	return config
+}
+
 func TestLKELoggerCutoverRequiresLivePersistentTieredLoki(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
@@ -188,12 +197,7 @@ func TestLKELoggerCutoverRequiresLivePersistentTieredLoki(t *testing.T) {
 		t.Fatalf("unbound Loki PVC was accepted: %v", err)
 	}
 	setJSON("FAKE_LOKI_PVC_JSON", map[string]any{"status": map[string]any{"phase": "Bound"}})
-	config := `retention_enabled: true
-retention_period: 0s
-selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'
-selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'
-selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`
-	setJSON("FAKE_LOKI_CONFIGMAP_JSON", map[string]any{"data": map[string]any{"config.yaml": config}})
+	setJSON("FAKE_LOKI_CONFIGMAP_JSON", testCanonicalLokiConfigMap(t, env))
 	if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
 		t.Fatal(err)
 	}
@@ -219,8 +223,14 @@ func TestLKELoggerRetentionRejectsUnreadyOrIncompleteLoki(t *testing.T) {
 	deployment["status"].(map[string]any)["readyReplicas"] = 1
 	setDeployment(deployment)
 	t.Setenv("FAKE_LOKI_PVC_JSON", `{"status":{"phase":"Bound"}}`)
-	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", `{"data":{"config.yaml":"retention_enabled: true\nretention_period: 0s\nselector: '{retention_tier=\"7d\"}'\nselector: '{retention_tier=\"30d\"}'"}}`)
-	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
+	config := testCanonicalLokiConfigMap(t, env)
+	config["data"].(map[string]any)["config.yaml"] = "retention_enabled: true\nretention_period: 0s\nselector: '{retention_tier=\"7d\"}'\nselector: '{retention_tier=\"30d\"}'"
+	body, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", string(body))
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "complete canonical configuration") {
 		t.Fatalf("Loki without the 90-day tier was accepted: %v", err)
 	}
 	legacyTierConfig := strings.Join([]string{
@@ -230,12 +240,13 @@ func TestLKELoggerRetentionRejectsUnreadyOrIncompleteLoki(t *testing.T) {
 		`selector: '{retention_tier="30d"}'`,
 		`selector: '{retention_tier="90d"}'`,
 	}, "\n")
-	body, err := json.Marshal(map[string]any{"data": map[string]string{"config.yaml": legacyTierConfig}})
+	config["data"].(map[string]any)["config.yaml"] = legacyTierConfig
+	body, err = json.Marshal(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", string(body))
-	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "retention ConfigMap lacks") {
+	if err := lkeRequireReadyLokiRetentionStorage(env); err == nil || !strings.Contains(err.Error(), "complete canonical configuration") {
 		t.Fatalf("Loki must not apply Product retention to preexisting tier-only streams: %v", err)
 	}
 }
@@ -244,7 +255,11 @@ func TestLKELoggerRetentionRejectsStaleDeploymentRevision(t *testing.T) {
 	fakeKubectl(t)
 	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
 	t.Setenv("FAKE_LOKI_PVC_JSON", `{"status":{"phase":"Bound"}}`)
-	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", `{"data":{"config.yaml":"retention_enabled: true\nretention_period: 0s\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"7d\"}'\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"30d\"}'\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"90d\"}'"}}`)
+	config, err := json.Marshal(testCanonicalLokiConfigMap(t, env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", string(config))
 	setDeployment := func(deployment map[string]any) {
 		t.Helper()
 		body, err := json.Marshal(deployment)
@@ -280,6 +295,65 @@ func TestLKELoggerRetentionRejectsStaleDeploymentRevision(t *testing.T) {
 	setDeployment(testReadyLokiRetentionDeployment(env, true))
 	if err := lkeRequireReadyLokiRetentionStorage(env); err != nil {
 		t.Fatalf("current Loki revision rejected: %v", err)
+	}
+}
+
+func TestLKELoggerRetentionRejectsChangedCanonicalConfigMap(t *testing.T) {
+	fakeKubectl(t)
+	t.Setenv("LKE_LOGGER_RETENTION_STORAGE_ENABLED", "true")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "LKE_LOGGER_RETENTION_STORAGE_ENABLED": "true"}
+	deployment, err := json.Marshal(testReadyLokiRetentionDeployment(env, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_LOKI_DEPLOYMENT_JSON", string(deployment))
+	t.Setenv("FAKE_LOKI_PVC_JSON", `{"status":{"phase":"Bound"}}`)
+	changeBody := func(config map[string]any, old, replacement string) {
+		data := config["data"].(map[string]any)
+		data["config.yaml"] = strings.Replace(data["config.yaml"].(string), old, replacement, 1)
+	}
+	for _, tc := range []struct {
+		name, want string
+		change     func(map[string]any)
+	}{
+		{name: "complete canonical payload"},
+		{name: "trailing newline only", change: func(c map[string]any) {
+			c["data"].(map[string]any)["config.yaml"] = strings.TrimRight(c["data"].(map[string]any)["config.yaml"].(string), "\n")
+		}},
+		{name: "changed period retains old substring markers", want: "complete canonical configuration", change: func(c map[string]any) { changeBody(c, "period: 168h", "period: 1h") }},
+		{name: "changed backend data directory", want: "complete canonical configuration", change: func(c map[string]any) {
+			changeBody(c, "chunks_directory: /loki/chunks", "chunks_directory: /tmp/chunks")
+		}},
+		{name: "extra rule overrides paid retention", want: "complete canonical configuration", change: func(c map[string]any) {
+			changeBody(c, "  retention_stream:\n", "  retention_stream:\n    - selector: '{retention_policy=\"product-grant-v1\",retention_tier=\"7d\"}'\n      priority: 100\n      period: 1h\n")
+		}},
+		{name: "five substring markers alone", want: "complete canonical configuration", change: func(c map[string]any) {
+			c["data"].(map[string]any)["config.yaml"] = "retention_enabled: true\nretention_period: 0s\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"7d\"}'\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"30d\"}'\nselector: '{retention_policy=\"product-grant-v1\",retention_tier=\"90d\"}'"
+		}},
+		{name: "wrong namespace", want: "identity or schema", change: func(c map[string]any) { c["metadata"].(map[string]any)["namespace"] = "video-cloud-dev-observability" }},
+		{name: "wrong name", want: "identity or schema", change: func(c map[string]any) { c["metadata"].(map[string]any)["name"] = "other" }},
+		{name: "wrong resource kind", want: "identity or schema", change: func(c map[string]any) { c["kind"] = "Secret" }},
+		{name: "wrong resource API", want: "identity or schema", change: func(c map[string]any) { c["apiVersion"] = "v2" }},
+		{name: "missing data", want: "complete canonical configuration", change: func(c map[string]any) { delete(c, "data") }},
+		{name: "non-string payload", want: "complete canonical configuration", change: func(c map[string]any) {
+			c["data"].(map[string]any)["config.yaml"] = map[string]any{"retention_enabled": true}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := testCanonicalLokiConfigMap(t, env)
+			if tc.change != nil {
+				tc.change(config)
+			}
+			body, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("FAKE_LOKI_CONFIGMAP_JSON", string(body))
+			err = lkeRequireReadyLokiRetentionStorage(env)
+			if (err != nil) != (tc.want != "") || (tc.want != "" && !strings.Contains(err.Error(), tc.want)) {
+				t.Fatalf("canonical configuration check = %v; want %q", err, tc.want)
+			}
+		})
 	}
 }
 

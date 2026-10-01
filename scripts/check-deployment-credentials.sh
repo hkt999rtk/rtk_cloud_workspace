@@ -180,35 +180,19 @@ if [[ -n "$environment" ]]; then
           billable_logging_failed=true
         fi
       done
-      for key in VIDEO_CLOUD_LOGGER_SERVICE_ENABLED VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED; do
+      for key in VIDEO_CLOUD_LOGGER_SERVICE_ENABLED VIDEO_CLOUD_LOG_INGESTER_MQTT_SUBSCRIBE_ENABLED VIDEO_CLOUD_LOGGER_BILLING_FACTS_ENABLED VIDEO_CLOUD_LOGGER_PERIOD_SEALS_ENABLED; do
         actual="$(deployment_env_value "$stack_name-video-cloud" video-cloud-logingester "$key")"
         if [[ "$actual" != true ]]; then
           echo "billable logging NO-GO: video-cloud-logingester $key is ${actual:-unset} (required true)" >&2
           billable_logging_failed=true
         fi
       done
-      loki_claim="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" get deployment video-cloud-loki -o 'jsonpath={.spec.template.spec.volumes[?(@.name=="data")].persistentVolumeClaim.claimName}')"
-      if [[ "$loki_claim" != video-cloud-loki-data ]]; then
-        echo "billable logging NO-GO: Loki data PVC is ${loki_claim:-unset} (required video-cloud-loki-data)" >&2
-        billable_logging_failed=true
-      fi
-      loki_pvc_phase="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" get pvc video-cloud-loki-data --ignore-not-found -o 'jsonpath={.status.phase}')"
-      if [[ "$loki_pvc_phase" != Bound ]]; then
-        echo "billable logging NO-GO: Loki data PVC is ${loki_pvc_phase:-unset} (required Bound)" >&2
-        billable_logging_failed=true
-      fi
-      loki_config="$("$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" get configmap video-cloud-loki-config --ignore-not-found -o 'jsonpath={.data.config\.yaml}')"
-      for required in 'retention_enabled: true' 'retention_period: 0s' 'retention_policy="product-grant-v1",retention_tier="7d"' 'retention_policy="product-grant-v1",retention_tier="30d"' 'retention_policy="product-grant-v1",retention_tier="90d"'; do
-        if [[ "$loki_config" != *"$required"* ]]; then
-          echo "billable logging NO-GO: Loki tiered retention lacks $required" >&2
-          billable_logging_failed=true
-        fi
-      done
       if [[ "$billable_logging_failed" == true ]]; then
         exit 1
       fi
-      "$kubectl" --kubeconfig "$kubeconfig" -n "$stack_name-observability" rollout status deployment/video-cloud-loki --timeout=5s
-      echo "Billable logging deployment prerequisites are ready; receipt and Billing reconciliation remain required"
+      # Reuse the Go cutover guard: a ConfigMap update and old ready Pod are not
+      # proof that Loki loaded the canonical tiered-retention configuration.
+      arguments+=(--require-loki-retention-ready --require-logger-period-source-ready)
     fi
   fi
 elif [[ "$require_pki_migration" == true || "$require_product_pki" == true || "$require_deployment_identity" == true || "$require_video_cloud_ready" == true || "$require_video_cloud_image" == true || "$require_billable_logging_ready" == true || -n "$product_pki_cloud_id" ]]; then

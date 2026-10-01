@@ -24,6 +24,8 @@ type deploymentCredentialCheck struct {
 
 type deploymentCredentialCheckOptions struct {
 	readOnly                         bool
+	requireLokiRetentionReady        bool
+	requireLoggerPeriodSourceReady   bool
 	selected                         map[string]bool
 	images                           []string
 	manifests                        []string
@@ -189,6 +191,12 @@ func (c deploymentCredentialChecker) checkWithOptions(cfg deploymentConfig, envF
 	}
 	for _, path := range options.manifests {
 		checks = append(checks, checkRolloutMounts(path))
+	}
+	if options.requireLokiRetentionReady {
+		checks = append(checks, checkRolloutLokiRetention(cfg, envFile))
+	}
+	if options.requireLoggerPeriodSourceReady {
+		checks = append(checks, checkRolloutLoggerPeriodSource(cfg))
 	}
 	return c.render(checks)
 }

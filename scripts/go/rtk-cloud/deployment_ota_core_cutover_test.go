@@ -17,14 +17,15 @@ const (
 
 func otaCoreDeploymentFixture() map[string]any {
 	return map[string]any{
-		"metadata": map[string]any{"name": "video-cloud-api", "resourceVersion": "17"},
-		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
+		"metadata": map[string]any{"name": "video-cloud-api", "resourceVersion": "17", "generation": float64(1)},
+		"spec": map[string]any{"replicas": float64(2), "template": map[string]any{"spec": map[string]any{"containers": []any{
 			map[string]any{"name": "sidecar", "image": "other@sha256:123"},
 			map[string]any{"name": "app", "image": testOldOTAAPIImage, "env": []any{
 				map[string]any{"name": "VIDEO_CLOUD_OTA_ENTITLEMENTS_REQUIRED", "value": "true"},
 				map[string]any{"name": "UNRELATED", "value": "keep"},
 			}},
 		}}}},
+		"status": map[string]any{"observedGeneration": float64(1), "replicas": float64(2), "updatedReplicas": float64(2), "availableReplicas": float64(2), "readyReplicas": float64(2)},
 	}
 }
 
@@ -128,14 +129,19 @@ type otaCoreCommandFixture struct {
 	rollouts   int
 	persisted  int
 	fail       string
+	pods       []map[string]any
 }
 
 func newOTACoreCommandFixture(t *testing.T) *otaCoreCommandFixture {
+	return newOTACoreCommandFixtureForEnvironment(t, "dev")
+}
+
+func newOTACoreCommandFixtureForEnvironment(t *testing.T, environment string) *otaCoreCommandFixture {
 	t.Helper()
-	workspace := writeDeploymentFixture(t, "dev", "lke")
+	workspace := writeDeploymentFixture(t, environment, "lke")
 	configRoot := t.TempDir()
 	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
-	store, err := newSecretStore(configRoot, "dev")
+	store, err := newSecretStore(configRoot, environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +149,7 @@ func newOTACoreCommandFixture(t *testing.T) *otaCoreCommandFixture {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(store.Root, "env", "stack.env"), strings.Join([]string{
-		"CLOUD_ENV_NAME=dev", "CLOUD_PROVIDER=lke", "CLOUD_STACK_NAME=video-cloud-dev",
+		"CLOUD_ENV_NAME=" + environment, "CLOUD_PROVIDER=lke", "CLOUD_STACK_NAME=video-cloud-" + environment,
 		"CLOUD_DNS_ROOT_DOMAIN=example.test", "CLOUD_REGION=us-sea", "",
 	}, "\n"))
 	for name, value := range map[string]string{
@@ -158,10 +164,10 @@ func newOTACoreCommandFixture(t *testing.T) *otaCoreCommandFixture {
 			t.Fatal(err)
 		}
 	}
-	f := &otaCoreCommandFixture{args: []string{"--workspace", workspace, "--environment", "dev"}, deployment: otaCoreDeploymentFixture()}
+	f := &otaCoreCommandFixture{args: []string{"--workspace", workspace, "--environment", environment}, deployment: otaCoreDeploymentFixture()}
 	f.ops = otaCoreCutoverOps{
 		credentials: func(environment string) (func(), error) {
-			if environment != "dev" || f.fail == "credentials" {
+			if environment != store.Environment || f.fail == "credentials" {
 				return nil, errors.New("operator credentials unavailable")
 			}
 			return func() {}, nil
@@ -185,10 +191,19 @@ func newOTACoreCommandFixture(t *testing.T) *otaCoreCommandFixture {
 			return nil
 		},
 		get: func(namespace, kind, name string) (map[string]any, error) {
-			if namespace != "video-cloud-dev-video-cloud" || kind != "deployment" || name != "video-cloud-api" || f.fail == "get" {
+			if namespace != "video-cloud-"+environment+"-video-cloud" || kind != "deployment" || name != "video-cloud-api" || f.fail == "get" {
 				return nil, errors.New("core API unavailable")
 			}
 			return f.deployment, nil
+		},
+		pods: func(namespace string) ([]map[string]any, error) {
+			if namespace != "video-cloud-"+environment+"-video-cloud" || f.fail == "pods" {
+				return nil, errors.New("core API Pods unavailable")
+			}
+			if f.pods != nil {
+				return f.pods, nil
+			}
+			return otaCoreReadyFixturePods(t, f.deployment), nil
 		},
 		patch: func(namespace, patch string) error {
 			if f.fail == "patch" {
@@ -214,7 +229,7 @@ func newOTACoreCommandFixture(t *testing.T) *otaCoreCommandFixture {
 			if f.rollouts == 0 {
 				return errors.New("cutover was persisted before rollout")
 			}
-			if _, ready, err := otaCoreCutoverPatch(f.deployment, testNewOTAAPIImage, testOTAUpstream); err != nil || !ready {
+			if _, ready, err := otaCoreCutoverPatch(f.deployment, testNewOTAAPIImage, "http://video-cloud-otaservice.video-cloud-"+environment+"-video-cloud.svc.cluster.local:18084"); err != nil || !ready {
 				return errors.New("cutover was persisted before live read-back")
 			}
 			f.persisted++
@@ -245,7 +260,7 @@ func TestOTACoreCutoverCommandPlanApplyReadbackAndFailures(t *testing.T) {
 	if err := runDeploymentOTACoreCutoverWithOps(apply, f.ops); err != nil || f.patches != 1 || f.persisted != 1 {
 		t.Fatalf("idempotent apply = %v, patches=%d, persisted=%d", err, f.patches, f.persisted)
 	}
-	for _, failure := range []string{"credentials", "registrar", "service", "edge", "get", "patch", "rollout", "readback", "persist"} {
+	for _, failure := range []string{"credentials", "registrar", "service", "edge", "get", "patch", "rollout", "readback", "pods", "persist"} {
 		t.Run(failure, func(t *testing.T) {
 			bad := newOTACoreCommandFixture(t)
 			bad.fail = failure
@@ -267,5 +282,18 @@ func TestOTACoreCutoverCommandPlanApplyReadbackAndFailures(t *testing.T) {
 	}
 	if err := runDeploymentOTACoreCutoverWithOps(append(f.args, "--read-only", "--confirm", "video-cloud-dev"), f.ops); err == nil {
 		t.Fatal("read-only check accepted mutation confirmation")
+	}
+}
+
+func TestOTACoreCutoverStagingUsesSelectedIdentityAndNamespace(t *testing.T) {
+	f := newOTACoreCommandFixtureForEnvironment(t, "staging")
+	if err := runDeploymentOTACoreCutoverWithOps(append(f.args, "--confirm", "video-cloud-dev"), f.ops); err == nil || f.patches != 0 {
+		t.Fatalf("cross-environment confirmation was accepted: %v", err)
+	}
+	if err := runDeploymentOTACoreCutoverWithOps(append(f.args, "--confirm", "video-cloud-staging"), f.ops); err != nil || f.patches != 1 || f.persisted != 1 {
+		t.Fatalf("staging cutover: err=%v patches=%d persisted=%d", err, f.patches, f.persisted)
+	}
+	if err := runDeploymentOTACoreCutoverWithOps(append(f.args, "--read-only"), f.ops); err != nil {
+		t.Fatal(err)
 	}
 }

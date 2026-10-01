@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const loggerServiceIdentitySecretName = "logger-service-platform-identity"
@@ -24,6 +26,9 @@ func lkeLoggerRetentionStorageEnabled(env map[string]string) bool {
 }
 func lkeLoggerBillingFactsEnabled(env map[string]string) bool {
 	return lkeLoggerFlag(env, "LKE_LOGGER_BILLING_FACTS_ENABLED")
+}
+func lkeLoggerPeriodSealsEnabled(env map[string]string) bool {
+	return lkeLoggerFlag(env, "LKE_LOGGER_PERIOD_SEALS_ENABLED")
 }
 func lkeLoggerFlag(env map[string]string, key string) bool {
 	raw := firstNonEmpty(os.Getenv(key), env[key], "false")
@@ -122,6 +127,9 @@ func lkeRequireReadyLoggerEndpoint(env map[string]string) error {
 // A configured retention flag is not proof that the existing Loki Pod has
 // switched from emptyDir or that the Compactor is enforcing tiered retention.
 func lkeRequireReadyLokiRetentionStorage(env map[string]string) error {
+	if !lkeLoggerRetentionStorageEnabled(env) {
+		return fmt.Errorf("Loki retention storage is disabled in the selected deployment configuration")
+	}
 	ns := lkeNamespaceName(env, "observability")
 	deployment, err := kubectlResourceJSON(ns, "deployment", "video-cloud-loki")
 	if err != nil {
@@ -179,14 +187,30 @@ func lkeRequireReadyLokiRetentionStorage(env map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("Loki retention ConfigMap is unavailable: %w", err)
 	}
+	configMetadata, _ := config["metadata"].(map[string]any)
+	if config["apiVersion"] != "v1" || config["kind"] != "ConfigMap" || configMetadata["name"] != "video-cloud-loki-config" || configMetadata["namespace"] != ns {
+		return fmt.Errorf("Loki retention ConfigMap identity or schema differs from the selected environment")
+	}
 	data, _ := config["data"].(map[string]any)
 	body, _ := data["config.yaml"].(string)
-	for _, required := range []string{"retention_enabled: true", "retention_period: 0s", `selector: '{retention_policy="product-grant-v1",retention_tier="7d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="30d"}'`, `selector: '{retention_policy="product-grant-v1",retention_tier="90d"}'`} {
-		if !strings.Contains(body, required) {
-			return fmt.Errorf("Loki retention ConfigMap lacks %q", required)
-		}
+	expected, err := lkeCanonicalLokiConfig(env)
+	if err != nil {
+		return err
+	}
+	if strings.TrimRight(body, "\n") != strings.TrimRight(expected, "\n") {
+		return fmt.Errorf("Loki retention ConfigMap differs from the complete canonical configuration")
 	}
 	return nil
+}
+
+func lkeCanonicalLokiConfig(env map[string]string) (string, error) {
+	var manifest struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal([]byte(lkeLokiConfigManifest(env)), &manifest); err != nil || manifest.Data["config.yaml"] == "" {
+		return "", fmt.Errorf("canonical Loki configuration cannot be rendered")
+	}
+	return manifest.Data["config.yaml"], nil
 }
 
 // The current dev Loki stores its index and chunks in an emptyDir. Applying a
