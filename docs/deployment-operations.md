@@ -164,6 +164,17 @@ exist. If a same-name cluster exists, stop and use the takeover path instead.
 4. Review the stack, provider region, resolved Product, node class, replicas,
    storage, DNS, image, and projected active services. Use only the topology
    values in this resolved plan.
+
+   For DNS, compare the selected environment, stack, root domain, and public
+   endpoint names with the [environment DNS naming source](environment-dns-naming.md).
+   Review record names and normalized targets in the generated
+   `runtime/resolved/dns-plan.json`; confirm that they belong to the intended
+   root zone and do not collide with another environment. Check that the same
+   names are used by Ingress/SNI routing, service base URLs and redirects, and
+   the requested or installed TLS certificate SANs. Review explicit hostname
+   exceptions and shared external dependencies before provisioning. Apply this
+   review when an upgrade changes DNS names, routing, or certificates as well.
+
 5. Mutate only after explicit approval:
 
    ```sh

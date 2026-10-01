@@ -19,6 +19,12 @@ credential validation, zone discovery, record-set mutation, and
 provider-private evidence. Deployment adapters only return normalized public
 targets; they do not call DNS vendor APIs.
 
+The [environment DNS naming source](environment-dns-naming.md) owns the
+environment mappings, public hostname templates, endpoint roles, and explicit
+exceptions. Shared DNS orchestration resolves names from that policy and the
+selected environment's configuration. DNS adapters apply the resulting record
+intent within the root zone; provider selection does not define service names.
+
 ## Configuration and runtime
 
 Tracked defaults live in `cloud_deploy/dns_adapters/<adapter>/`. Optional,

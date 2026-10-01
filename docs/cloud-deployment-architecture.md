@@ -16,6 +16,14 @@ Adapter resolution is deterministic. LKE maps the logical location to an LKE reg
 
 The directory name under `cloud_env/` is the environment identity. Configuration is resolved in this order: architecture defaults, adapter defaults, environment stack/selection, environment architecture overrides, environment adapter overrides, and allow-listed explicit overrides. Cross-layer duplicate keys, unknown keys, invalid types, and provider keys in architecture config are errors.
 
+The [environment DNS naming source](environment-dns-naming.md) defines how the
+environment identity, stack name, DNS root, and endpoint role determine public
+names, including registered hostname exceptions and runtime applicability.
+Normal managed environments use `video-cloud-<environment>` as their stack.
+Shared orchestration resolves that hostname intent before the selected DNS
+adapter applies records; changing a deployment or DNS provider does not change
+the naming policy.
+
 ```text
 resolve -> validate -> plan -> ensure adapter infrastructure
         -> normalize kube access -> deploy shared Kubernetes workloads

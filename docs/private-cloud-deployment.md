@@ -202,8 +202,11 @@ Account Manager API ---/
 ```
 
 `rtk_cloud_admin` must use service DNS names or public HTTPS upstream domains,
-not raw VM IPs or private app ports. The current LKE staging profile uses these
-public HTTPS upstreams:
+not raw VM IPs or private app ports. The
+[environment DNS naming source](environment-dns-naming.md) defines the
+environment mappings and public hostname rules. Resolve upstreams for the
+selected environment from its configuration. The following URLs and the
+ordered-gate targets below are LKE staging examples:
 
 ```env
 ACCOUNT_MANAGER_BASE_URL=https://account-manager.video-cloud-staging.realtekconnect.com
@@ -212,7 +215,7 @@ VIDEO_CLOUD_BASE_URL=https://video-cloud-staging.realtekconnect.com
 
 ### Ordered Gates
 
-| Order | Component | Owner repo | Gate before next step | Current LKE target / legacy reference |
+| Order | Component | Owner repo | Gate before next step | LKE staging example / legacy reference |
 | --- | --- | --- | --- | --- |
 | 0 | Platform prerequisites | platform/operator | LKE cluster, node pools, namespaces, RBAC, NetworkPolicy, DNS, cert-manager issuer, OpenBao/secret injection, storage classes, and backup target are documented and approved. | Current staging uses LKE/K8s. Legacy VM bootstrap required Linode token, DNS credentials, SSH key, operator CIDR, and service secrets. |
 | 1 | Video Cloud runtime | `rtk_video_cloud` | Public API health/version pass; PostgreSQL, MQTT broker, coturn/TURN, certissuer/factory path, Prometheus scrape path, and selected workers are healthy for the chosen profile. | Runtime-generated LKE staging resources now cover API, certissuer, factory enrollment, workers, MQTT broker, ephemeral PostgreSQL, TURN registry, and Prometheus; coturn is managed as an external `turn01` VM data-plane exception with registrar heartbeat into the K8s registry; production Ingress, persistent database/storage, MQTT/TURN hardening, and OpenBao remain gated. |

@@ -217,7 +217,7 @@ func lkeTurnRegistryPublicURL(env map[string]string) string {
 }
 
 func lkeCoturnVMCount(env map[string]string) int {
-	count := envIntFrom(env, "LKE_COTURN_VM_COUNT", 1)
+	count := envIntFrom(env, "LKE_COTURN_VM_COUNT", envIntFrom(env, "TURN_REPLICAS", 1))
 	if count < 0 {
 		return 0
 	}
@@ -262,7 +262,10 @@ func lkeCoturnTURNURLs(env map[string]string) string {
 
 func lkeCoturnDomains(env map[string]string) []string {
 	count := lkeCoturnVMCount(env)
-	if count <= 1 {
+	if count == 0 {
+		return nil
+	}
+	if count == 1 {
 		return []string{lkeCoturnDomain(env)}
 	}
 	domains := make([]string, 0, count)
