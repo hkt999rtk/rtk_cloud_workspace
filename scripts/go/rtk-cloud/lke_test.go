@@ -2716,6 +2716,33 @@ func TestAccountManagerSecretUsesSelectedStackEnvironment(t *testing.T) {
 	}
 }
 
+func TestAccountManagerDeploymentPreservesPKIOperatorBinding(t *testing.T) {
+	t.Setenv("LKE_ACCOUNT_MANAGER_IMAGE", "registry.example.test/account-manager:test")
+	env := map[string]string{
+		"CLOUD_ENV_NAME":       "staging",
+		"CLOUD_STACK_NAME":     "video-cloud-staging",
+		"PKI_OPERATOR_USER_ID": "11111111-1111-4111-8111-111111111111",
+	}
+	if !strings.Contains(lkeAccountManagerSecretManifest(env), `PKI_OPERATOR_USER_ID: "11111111-1111-4111-8111-111111111111"`) {
+		t.Fatal("Account Manager runtime Secret must carry the selected environment PKI operator")
+	}
+	var account lkeWorkload
+	for _, workload := range lkeWorkloads(env) {
+		if workload.Key == "account-manager" {
+			account = workload
+			break
+		}
+	}
+	if account.Key == "" {
+		t.Fatal("Account Manager workload is missing")
+	}
+	before := lkeDeploymentManifest(env, account, nil)
+	env["PKI_OPERATOR_USER_ID"] = "22222222-2222-4222-8222-222222222222"
+	if lkeDeploymentManifest(env, account, nil) == before {
+		t.Fatal("changing the PKI operator must roll the Account Manager pod")
+	}
+}
+
 func TestRestrictPrivateE2EArtifacts(t *testing.T) {
 	envRoot := t.TempDir()
 	outDir := filepath.Join(envRoot, "artifacts", "staging-e2e", "run")
