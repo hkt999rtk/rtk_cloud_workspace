@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestLKEApplyBaseTargetsOnlyRequestedBillingWorkloads(t *testing.T) {
@@ -63,6 +66,7 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	lkeRuntimeSecretCache = map[string]string{}
 	t.Cleanup(func() { lkeRuntimeSecretCache = oldCache })
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-billing-test-seed")
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
 	env := map[string]string{
 		"CLOUD_STACK_NAME":          "video-cloud-staging",
 		"VIDEO_CLOUD_DOMAIN":        "video-cloud-staging.realtekconnect.com",
@@ -75,7 +79,7 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	}
 
 	log := readTestFile(t, logPath)
-	for _, want := range []string{"name: allow-postgres-clients", "name: allow-cloud-admin-account-manager", "name: allow-cloud-admin-billing", "name: billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: account-manager-migrate", "job/account-manager-migrate", "registry.example.test/account-manager:billing-permissions", "name: cloud-admin-billing-client"} {
+	for _, want := range []string{"name: allow-postgres-clients", "name: allow-cloud-admin-account-manager", "name: allow-cloud-admin-billing", "name: billing-migration-database", "name: billing-runtime", "name: billing-database-ensure", "job/billing-database-ensure", "name: billing-database-migrate", "job/billing-database-migrate", "name: account-manager-migrate", "job/account-manager-migrate", "registry.example.test/account-manager:billing-permissions", "name: cloud-admin-billing-client"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("targeted dependency apply missing %q:\n%s", want, log)
 		}
@@ -92,8 +96,84 @@ func TestLKEApplyTargetedBillingDependenciesAvoidsOpenBao(t *testing.T) {
 	if lkeRuntimeSecretCache["postgres"] != "existing-postgres" {
 		t.Fatal("targeted dependency apply rotated the PostgreSQL credential")
 	}
-	if strings.Contains(log, "billing-database-migrate") {
-		t.Fatal("Billing migration Job must remain opt-in for images without the one-shot command")
+	if strings.Index(log, "job/billing-database-ensure") > strings.Index(log, "delete job billing-database-migrate") {
+		t.Fatal("Billing database ensure must finish before schema migration")
+	}
+}
+
+func TestLKEBillingDatabaseSeparationFailsBeforeTargetedApply(t *testing.T) {
+	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "targeted-billing-test-seed")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CLOUD_ENV_NAME": "staging"}
+	if err := lkeApplyTargetedRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"billing"}}); err == nil || !strings.Contains(err.Error(), "one-shot migration Job") {
+		t.Fatalf("expected Billing database role preflight failure, got %v", err)
+	}
+	if log := readTestFile(t, logPath); log != "" {
+		t.Fatalf("Billing preflight failure applied Kubernetes resources: %q", log)
+	}
+}
+
+func TestLKEBillingDatabaseSeparationFailsBeforeFullApply(t *testing.T) {
+	logPath := fakeKubectlForTargetedBillingDeploy(t)
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "full-billing-test-seed")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CLOUD_ENV_NAME": "staging"}
+	if err := lkeApplyRuntimeDependencies(provisionPaths{}, env, provisionOptions{workloads: []string{"billing"}}); err == nil || !strings.Contains(err.Error(), "one-shot migration Job") {
+		t.Fatalf("expected full Billing database role preflight failure, got %v", err)
+	}
+	if log := readTestFile(t, logPath); log != "" {
+		t.Fatalf("Billing preflight failure applied Kubernetes resources: %q", log)
+	}
+}
+
+func TestLKEBillingDatabaseRolesAndManifests(t *testing.T) {
+	t.Setenv("LKE_RUNTIME_SECRET_SEED", "billing-role-isolation-test-seed")
+	t.Setenv("LKE_BILLING_MIGRATION_JOB_ENABLED", "true")
+	env := map[string]string{"CLOUD_STACK_NAME": "video-cloud-staging", "CLOUD_ENV_NAME": "staging"}
+	if err := lkeValidateBillingDatabaseRoles(env); err != nil {
+		t.Fatal(err)
+	}
+	runtimeURL, err := url.Parse(lkeBillingDatabaseURL(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationURL, err := url.Parse(lkeBillingMigrationDatabaseURL(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeURL.User.Username() != "rtk_billing_runtime_staging" || migrationURL.User.Username() != "postgres" {
+		t.Fatalf("unexpected Billing database roles: runtime=%q migration=%q", runtimeURL.User.Username(), migrationURL.User.Username())
+	}
+	runtimePassword, _ := runtimeURL.User.Password()
+	migrationPassword, _ := migrationURL.User.Password()
+	if runtimePassword == migrationPassword || len(runtimePassword) < 24 {
+		t.Fatal("Billing runtime and migration database passwords must be distinct")
+	}
+	runtime := lkeBillingSecretManifest(env)
+	migration := lkeBillingMigrationSecretManifest(env)
+	ensure := lkeBillingDatabaseEnsureJobManifest(env)
+	job := lkeBillingMigrationJobManifest(env)
+	for _, manifest := range []string{runtime, migration, ensure, job} {
+		if strings.Contains(manifest, "%!") {
+			t.Fatal("malformed Billing manifest format")
+		}
+		var parsed map[string]any
+		if err := yaml.Unmarshal([]byte(manifest), &parsed); err != nil {
+			t.Fatalf("invalid Billing manifest YAML: %v", err)
+		}
+	}
+	if strings.Contains(runtime, "POSTGRES_PASSWORD:") || strings.Contains(runtime, migrationPassword) || !strings.Contains(runtime, `BILLING_DB_MIGRATE_ON_STARTUP: "false"`) {
+		t.Fatal("Billing runtime Secret contains owner credentials or permits API DDL")
+	}
+	if !strings.Contains(migration, "POSTGRES_PASSWORD:") || !strings.Contains(migration, "BILLING_RUNTIME_DB_PASSWORD:") || !strings.Contains(job, "name: billing-migration-database, key: DATABASE_URL") || strings.Contains(job, "name: billing-runtime") {
+		t.Fatal("Billing migration Job did not use the owner-only Secret")
+	}
+	for _, grant := range []string{"REVOKE CREATE ON SCHEMA public FROM PUBLIC", "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES", "GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES", "ALTER DEFAULT PRIVILEGES FOR ROLE postgres"} {
+		if !strings.Contains(ensure, grant) {
+			t.Fatalf("Billing role ensure Job missing %q", grant)
+		}
+	}
+	if strings.Contains(ensure, "name: billing-runtime") || !strings.Contains(ensure, "name: billing-migration-database") {
+		t.Fatal("Billing role ensure Job did not use migration-only credentials")
 	}
 }
 
@@ -123,7 +203,7 @@ func TestLKEApplyTargetedBillingMigrationBeforeWorkload(t *testing.T) {
 			t.Fatalf("targeted Billing migration missing %q:\n%s", want, log)
 		}
 	}
-	if strings.Index(log, "job/billing-database-ensure") > strings.Index(log, "name: billing-database-migrate") {
+	if strings.Index(log, "job/billing-database-ensure") > strings.Index(log, "delete job billing-database-migrate") {
 		t.Fatalf("Billing database ensure must finish before schema migration:\n%s", log)
 	}
 }

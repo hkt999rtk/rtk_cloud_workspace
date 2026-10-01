@@ -247,15 +247,25 @@ different results. Do not report a complete staging release from ready Pods,
    the selected revision requires one. Do not assume a successful API rollout
    updated every auxiliary workload. This guardrail change does not rewrite that
    broader migration/worker orchestration.
-   For Billing images that contain `/rtk-billing-migrate`, explicitly set
+   For Billing deployments, select an image containing `/rtk-billing-migrate` and set
    `LKE_BILLING_MIGRATION_JOB_ENABLED=true` in the selected environment's
-   operator settings. The targeted and full dependency flows then wait for
-   `billing-database-ensure` and `billing-database-migrate` before updating
-   Billing workloads. The same setting renders
-   `BILLING_DB_MIGRATE_ON_STARTUP=false` into `billing-runtime`, so the API does
-   not issue DDL after the Job. Check the selected CI image includes the command,
-   save the prior image and schema version, and retain failed Job logs for review.
-   Leave the setting off for older images that do not contain this command.
+   operator settings. The canonical SecretStore must contain the distinct
+   mode-0600 `runtime/billing-db-runtime-password`. The dependency flow first
+   creates `billing-migration-database` with the environment's PostgreSQL owner
+   URL and password, and `billing-runtime` with a distinct
+   `rtk_billing_runtime_<environment>` URL. The runtime Secret contains no
+   PostgreSQL owner password. `billing-database-ensure` creates or updates the
+   runtime role and grants DML on existing tables and sequences plus default
+   privileges for future migration-owned objects; it does not give the runtime
+   role schema ownership or CREATE. The one-shot Billing migration Job reads
+   only `billing-migration-database`. Both Jobs must complete before updating
+   Billing workloads. `BILLING_DB_MIGRATE_ON_STARTUP=false` prevents the API
+   from attempting DDL. This separation is required for Billing deployment;
+   an older image without the migration command must be updated before the
+   isolated runtime role is used. Save the prior image/schema version and
+   retain failed Job logs for review. After migration, verify the runtime role
+   can perform required DML and cannot perform DDL, and that no API or worker
+   Pod mounts the migration Secret.
    The OTA Platform period-seal schedule is separately gated by
    `LKE_OTA_PLATFORM_SEAL_SCHEDULE_ENABLED`, explicitly `false` in dev,
    staging and production. Before enabling it, provision a dedicated

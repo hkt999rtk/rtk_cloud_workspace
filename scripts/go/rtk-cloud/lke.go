@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -3377,6 +3378,11 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 }
 
 func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string, opts provisionOptions) error {
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := lkeValidateBillingDatabaseRoles(env); err != nil {
+			return err
+		}
+	}
 	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
 		return err
 	}
@@ -3401,6 +3407,9 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 			return err
 		}
 		if err := kubectlApply(lkeAllowPostgresClientsNetworkPolicyManifest(env)); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeBillingMigrationSecretManifest(env)); err != nil {
 			return err
 		}
 		if _, err := lkeImportExistingRuntimeSecretWithOptional(env, "billing", "billing-runtime", map[string]string{
@@ -3896,6 +3905,11 @@ func lkeSeedRuntimeSecretCacheFromK8SSecretJSONWithOptional(raw []byte, required
 }
 
 func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
+	if lkeWorkloadSelected(env, opts, "billing") {
+		if err := lkeValidateBillingDatabaseRoles(env); err != nil {
+			return err
+		}
+	}
 	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
 		return err
 	}
@@ -4067,6 +4081,9 @@ func lkeApplyRuntimeDependencies(paths provisionPaths, env map[string]string, op
 	}
 	if lkeWorkloadSelected(env, opts, "billing") {
 		if err := lkeValidateBillingOTAGrantHistoryRuntime(env); err != nil {
+			return err
+		}
+		if err := kubectlApply(lkeBillingMigrationSecretManifest(env)); err != nil {
 			return err
 		}
 		if err := kubectlApply(lkeBillingSecretManifest(env)); err != nil {
@@ -8900,7 +8917,28 @@ func lkeMQTTUsageSettlementInternalURL(env map[string]string) string {
 }
 
 func lkeBillingDatabaseURL(env map[string]string) string {
-	return fmt.Sprintf("postgres://postgres:%s@postgresql.%s.svc.cluster.local:5432/rtk_billing?sslmode=disable", lkeRuntimeSecretValue("postgres"), lkeNamespaceName(env, "platform"))
+	u := &url.URL{Scheme: "postgres", User: url.UserPassword(lkeBillingRuntimeRole(env), lkeRuntimeSecretValue("billing-db-runtime-password")), Host: "postgresql." + lkeNamespaceName(env, "platform") + ".svc.cluster.local:5432", Path: "/rtk_billing", RawQuery: "sslmode=disable"}
+	return u.String()
+}
+
+func lkeBillingRuntimeRole(env map[string]string) string {
+	return "rtk_billing_runtime_" + lkeName(firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"))
+}
+
+func lkeBillingMigrationDatabaseURL(env map[string]string) string {
+	u := &url.URL{Scheme: "postgres", User: url.UserPassword("postgres", lkeRuntimeSecretValue("postgres")), Host: "postgresql." + lkeNamespaceName(env, "platform") + ".svc.cluster.local:5432", Path: "/rtk_billing", RawQuery: "sslmode=disable"}
+	return u.String()
+}
+
+func lkeValidateBillingDatabaseRoles(env map[string]string) error {
+	if !lkeBillingMigrationJobEnabled(env) {
+		return errors.New("Billing runtime database isolation requires the one-shot migration Job")
+	}
+	password := lkeRuntimeSecretValue("billing-db-runtime-password")
+	if len(password) < 24 || password == lkeRuntimeSecretValue("postgres") || !regexp.MustCompile(`^[A-Za-z0-9_-]+$`).MatchString(password) {
+		return errors.New("Billing runtime database requires a distinct URL-safe password of at least 24 characters")
+	}
+	return nil
 }
 
 func lkeBillingMigrationJobEnabled(env map[string]string) bool {
@@ -8947,7 +8985,6 @@ type: Opaque
 stringData:
   DATABASE_URL: %q
   BILLING_DB_MIGRATE_ON_STARTUP: %q
-  POSTGRES_PASSWORD: %q
   BILLING_SERVICE_TOKEN: %q
   BILLING_INTERNAL_TOKEN: %q
   BILLING_DEBIT_TOKEN: %q
@@ -8984,7 +9021,25 @@ stringData:
   PAYPAL_AFTER_RETURN_URL: %q
   PAYMENT_WORKER_ENABLED: "true"
   ENVIRONMENT: "staging"
-%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeRuntimeSecretValue("postgres"), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env))
+%s%s`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingDatabaseURL(env), strconv.FormatBool(!lkeBillingMigrationJobEnabled(env)), lkeBillingServiceToken(), lkeBillingInternalToken(), lkeBillingDebitToken(), lkeBillingCloudCreationToken(), lkeHandoffRuntimeValue(env, lkeBillingHandoffToken()), lkeHandoffRuntimeValue(env, lkeMQTTUsageSettlementToken()), lkePaymentSimulatorRunID(env), lkePaymentSimulatorInternalURL(env), "https://"+lkePaymentSimulatorPublicDomain(env), lkeBillingInternalURL(env)+"/v1/internal/payment-simulator/setup-callback", lkeRuntimeSecretValue("payment-simulator-shared"), lkeRuntimeSecretValue("payment-simulator-callback"), firstNonEmpty(lkeEnvValue(env, "PAYMENT_SIMULATOR_SCENARIO"), "success"), lkeNewebPayMerchantID(env), lkeNewebPayHashKey(env), lkeNewebPayHashIV(env), lkeNewebPayEndpointBaseURL(env), lkeNewebPayNotifyURL(env), lkeNewebPayReturnURL(env), lkeNewebPayNotifyURL(env), lkePaymentSimulatorAdminToken(env), lkePaymentReferenceEncryptionKey(env), strconv.FormatBool(lkePayPalEnabled(env)), firstNonEmpty(lkeEnvValue(env, "PAYPAL_ENVIRONMENT"), "sandbox"), lkePayPalSecret(env, "paypal-client-id"), lkePayPalSecret(env, "paypal-client-secret"), lkePayPalSecret(env, "paypal-webhook-id"), lkePayPalReturnURL(env), lkePayPalCancelURL(env), lkePayPalAfterReturnURL(env), lkeBillingOTAGrantHistorySecretFields(env), lkeBillingOTAPlatformSealSecretFields(env)+lkeBillingOTAProducerSealSecretFields(env))
+}
+
+func lkeBillingMigrationSecretManifest(env map[string]string) string {
+	return fmt.Sprintf(`apiVersion: v1
+kind: Secret
+metadata:
+  name: billing-migration-database
+  namespace: %s
+  labels:
+    app.kubernetes.io/name: billing-database-migrate
+    app.kubernetes.io/part-of: rtk-cloud
+    rtk.realtek.com/stack: %s
+type: Opaque
+stringData:
+  DATABASE_URL: %q
+  POSTGRES_PASSWORD: %q
+  BILLING_RUNTIME_DB_PASSWORD: %q
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], lkeBillingMigrationDatabaseURL(env), lkeRuntimeSecretValue("postgres"), lkeRuntimeSecretValue("billing-db-runtime-password"))
 }
 
 func lkeCloudAdminBillingSecretManifest(env map[string]string) string {
@@ -9080,15 +9135,33 @@ spec:
           command: ["/bin/sh", "-ec"]
           args:
             - |
+              set -eu
               present="$(psql -h postgresql.%s.svc.cluster.local -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='rtk_billing'")"
               if [ "$present" != "1" ]; then
                 psql -h postgresql.%s.svc.cluster.local -U postgres -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE rtk_billing'
               fi
+              psql -h postgresql.%s.svc.cluster.local -U postgres -d rtk_billing -v ON_ERROR_STOP=1 -v runtime_role="%s" -v runtime_password="$BILLING_RUNTIME_DB_PASSWORD" <<'SQL'
+              SELECT format('CREATE ROLE %%I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'runtime_role')
+                WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'runtime_role') \gexec
+              SELECT format('ALTER ROLE %%I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION', :'runtime_role') \gexec
+              SELECT format('ALTER ROLE %%I PASSWORD %%L', :'runtime_role', :'runtime_password') \gexec
+              SELECT format('GRANT CONNECT ON DATABASE rtk_billing TO %%I', :'runtime_role') \gexec
+              SELECT format('GRANT USAGE ON SCHEMA public TO %%I', :'runtime_role') \gexec
+              REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+              SELECT format('REVOKE CREATE ON SCHEMA public FROM %%I', :'runtime_role') \gexec
+              SELECT format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %%I', :'runtime_role') \gexec
+              SELECT format('GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO %%I', :'runtime_role') \gexec
+              SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %%I', :'runtime_role') \gexec
+              SELECT format('ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %%I', :'runtime_role') \gexec
+              SQL
           env:
             - name: PGPASSWORD
               valueFrom:
-                secretKeyRef: { name: billing-runtime, key: POSTGRES_PASSWORD }
-`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"))
+                secretKeyRef: { name: billing-migration-database, key: POSTGRES_PASSWORD }
+            - name: BILLING_RUNTIME_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: billing-migration-database, key: BILLING_RUNTIME_DB_PASSWORD }
+`, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkePostgresImage(), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeNamespaceName(env, "platform"), lkeBillingRuntimeRole(env))
 }
 
 func lkeBillingMigrationJobManifest(env map[string]string) string {
@@ -9121,7 +9194,7 @@ spec:
           env:
             - name: DATABASE_URL
               valueFrom:
-                secretKeyRef: { name: billing-runtime, key: DATABASE_URL }
+                secretKeyRef: { name: billing-migration-database, key: DATABASE_URL }
 `, lkeNamespaceName(env, "billing"), env["CLOUD_STACK_NAME"], env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeBillingImage(env))
 }
 
