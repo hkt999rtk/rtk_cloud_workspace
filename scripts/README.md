@@ -94,9 +94,15 @@ scripts/check-deployment-credentials.sh --environment staging --read-only --chec
 # separate migration-owner binding (missing/wrong role/password fails closed):
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --require-pki-migration
-# Before Product PKI lifecycle acceptance, require a pinned, active Device Root:
+# Before Product PKI lifecycle acceptance, check the Root and the retained
+# acceptance Cloud's actual Cloud/Product CA jobs. Use the Cloud UUID read from
+# the selected environment's existing test-data inventory:
 scripts/check-deployment-credentials.sh --environment staging --read-only \
-  --require-product-pki
+  --require-product-pki --product-pki-cloud-id "$ACCEPTANCE_CLOUD_ID"
+# Before a full existing-stack upgrade, compare the canonical local identity
+# material against all live identities that the full renderer would replace:
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-deployment-identity
 # Use an actual reviewed CI digest (repeat --image for each affected image):
 scripts/check-deployment-credentials.sh --environment staging --read-only \
   --checks ghcr --image "$RELEASE_IMAGE"
@@ -135,9 +141,18 @@ needs to populate the blob endpoint; the read-only check does not.
   binding after the upgrade if it is no longer needed.
 - --require-product-pki checks the selected controller's Device Root ID and
   fingerprint against an active OpenBao-backed Device Root in the PKI registry.
-  A Ready controller without this pin cannot provision Brand/Product CAs. This
-  gate is read-only; it does not create a Root or enable CRL/OCSP. Run it before
-  lifecycle acceptance that creates Product-scoped devices.
+  `--product-pki-cloud-id UUID` also requires that retained active Cloud and
+  every active Product under it to have a ready CA. An older failed Cloud job
+  can leave newly created Product jobs pending even after the Root becomes
+  active. Inspect the outbox and use the documented non-production requeue
+  procedure after reviewing its inventory; the check never requeues jobs.
+  Run this before lifecycle acceptance that creates Product-scoped devices.
+- `--require-deployment-identity` is the read-only full-upgrade guard for an
+  existing cluster. It compares the canonical local certificates, keys and CA
+  bundles against live identity Secrets and detects managed identity owners.
+  A mismatch blocks full rendering before base resources change. Use a scoped
+  image rollout while reconciling a legitimate live trust-bundle extension;
+  do not force the full renderer to replace that bundle.
 - TLS verifies private-key permissions, key-pair match, CA chain, EKU, server DNS,
   and validity now and at the horizon (default seven days). For client mTLS use
   `--tls-purpose client`; repeat the command for each affected identity. Inputs
@@ -601,6 +616,13 @@ scripts/run-staging-acceptance.sh --confirm video-cloud-staging
 ```
 
 Reset is destructive and requires confirmation. It preserves storage unless `--purge-storage` is explicit. Provision resolves images, applies manifests/DNS/artifacts, and waits for rollout. Acceptance never resets or deploys; it validates the deployed stack.
+
+The acceptance entry point defaults to four concurrent user creations, two
+factory enrollments and two device binds. These deliberately differ from the
+separate load-test defaults: staging factory enrollment timed out at 64
+concurrent requests during the 2026-10-01 release check. Use explicit
+`--user-concurrency`, `--device-concurrency` and `--bind-concurrency` only when
+the selected acceptance or load profile requires different rates.
 
 `run-staging-e2e` supports `--steps`: `reset`, `provision`, `data`, `mqtt`, `runtime-logs`, `billing-log`, and `billing-db`; `billing` expands to both billing steps. Billing verification reuses the load-test Brand Cloud/device credentials.
 

@@ -33,6 +33,22 @@ The following are separate evidence scopes; local PASS is not live acceptance:
 | dev live | Migration 078 applied; 28 CA outbox jobs were pending with zero attempts at last check. The available offline keys were copied into the local dev SecretStore and matched to the registered Roots. Both Root CRLs (#3) and five Service/OpenBao TLS intermediate CRLs were renewed, installed, and acknowledged by their actual consumers. Controller, certissuer and Account Manager returned to ready. The new Device Root and signup → Device enrollment acceptance remain pending. | PARTIAL |
 | staging live | No mutation. Read-only qualification gave a NO-GO verdict; full protected-environment gates remain incomplete. | NOT COMPLETE |
 
+### Staging recovery checkpoint (2026-10-01)
+
+After the staging Device Root became active, the retained RTK acceptance Cloud
+still had a `failed` automatic CA job from 2026-09-21, before that Root existed.
+Its newly created Product job stayed `pending`: an active Cloud issuer is a
+required parent. The standard Root/registry check passed, so readiness of the
+actual retained Cloud must be checked separately before acceptance. The scoped
+read-only requeue inventory showed one failed Cloud and eleven failed active
+Products, none with an existing issuer. The operator applied the documented
+staging-only requeue with the verified replacement Root ID; the resulting audit
+event and stable business IDs were retained. All twelve requeued jobs and the
+new Product reached `ready`. See [deployment operations](deployment-operations.md)
+for the new `--product-pki-cloud-id` preflight and the failed acceptance stage.
+This is a staging recovery checkpoint; it does not claim that device, MQTT,
+Billing or payment acceptance has passed.
+
 Dev image publication attempt: the selected environment's existing registry
 credential successfully authenticates and pulls, but the actual push to
 `ghcr.io/hkt999rtk/rtk_cloud_dev/video-cloud-api:dev-auto-device-pki-20260919-r1`

@@ -100,6 +100,7 @@ func TestKubernetesProvisionStepsExposeProviderNeutralOrder(t *testing.T) {
 		"plan",
 		"dns-adapter-preflight",
 		"capacity-check",
+		"identity-continuity",
 		"ensure-kube-access",
 		"ensure-lke-node-pool",
 		"wait-kube-api-ready",

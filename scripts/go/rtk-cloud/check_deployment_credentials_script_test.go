@@ -27,6 +27,8 @@ func TestDeploymentCredentialScriptForwardsOptionalPKIFlagsOnBash(t *testing.T) 
 	}{
 		{"without optional flags", nil, "secrets verify --environment staging"},
 		{"with Product PKI flag", []string{"--require-product-pki"}, "secrets verify --environment staging --require-product-pki"},
+		{"with retained Cloud", []string{"--require-product-pki", "--product-pki-cloud-id", testProductPKICloudID}, "secrets verify --environment staging --require-product-pki --product-pki-cloud-id " + testProductPKICloudID},
+		{"with deployment identity", []string{"--require-deployment-identity"}, "secrets verify --environment staging --require-deployment-identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(calls, nil, 0o600); err != nil {
@@ -42,7 +44,7 @@ func TestDeploymentCredentialScriptForwardsOptionalPKIFlagsOnBash(t *testing.T) 
 				t.Fatal(err)
 			}
 			lines := strings.Split(strings.TrimSpace(string(payload)), "\n")
-			if len(lines) != 2 || !strings.Contains(lines[0], tc.want) || !strings.Contains(lines[1], "deployment credentials-check") || strings.Contains(lines[1], "--require-product-pki") {
+			if len(lines) != 2 || !strings.Contains(lines[0], tc.want) || !strings.Contains(lines[1], "deployment credentials-check") || strings.Contains(lines[1], "--require-product-pki") || strings.Contains(lines[1], "--require-deployment-identity") || strings.Contains(lines[1], "--product-pki-cloud-id") {
 				t.Fatalf("unexpected credential script forwarding: %q", lines)
 			}
 		})

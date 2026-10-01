@@ -533,6 +533,68 @@ the default persistent-staging update command. Use it only for an explicitly
 authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
 test script grants permission to reset an existing environment.
 
+### Staging deployment check lessons (2026-10-01)
+
+The selected frozen release's full `deployment upgrade` stopped at the
+`certissuer-runtime/client-ca.crt` identity guard. The live Secret contained
+the original transport CA plus the active Service Root, while the local
+`pki/certissuer/service-ca.crt` and baseline renderer held only the original
+CA. The guard correctly refused to remove the active trust extension, but it
+ran after base resources had been applied. The release was completed with
+scoped workloads and resource-version-guarded, image-only updates to the
+remaining Video Cloud Deployments; no PKI Secret or trust bundle was replaced.
+For a full upgrade, run the read-only continuity check **before mutation**:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-deployment-identity
+```
+
+The deployment engine also runs that check before node-pool and base-resource
+steps whenever an existing environment kubeconfig is present. A legitimate
+live CA-bundle addition requires a reviewed managed renderer/patch path; copying
+an older local CA over the live bundle is not reconciliation.
+
+The first staging acceptance attempt reached test-data creation but failed with
+`pki_not_ready`. Root pin, registry, workload readiness and service mTLS were
+healthy; the retained RTK test Cloud's automatic CA job had failed before the
+new Device Root existed. Its Product jobs remained pending because no active
+Cloud issuer could parent them. This failure was invisible to the former Root
+only check. For acceptance against a retained Cloud, include its exact UUID:
+
+```sh
+scripts/check-deployment-credentials.sh --environment staging --read-only \
+  --require-product-pki --product-pki-cloud-id "$ACCEPTANCE_CLOUD_ID"
+```
+
+The extra read-only query requires that Cloud and all its active Products to
+have ready CA issuers. The documented [Device PKI requeue procedure](automatic-device-pki-rollout.md)
+was applied only after reviewing one failed Cloud and eleven failed active
+Product jobs, all without existing issuers; it preserved business IDs and
+recorded an audit event. The requeued twelve jobs and the newly created test
+Product subsequently reached `ready`. A future acceptance run must use a new
+device prefix. Intermittent LKE `exec` proxy timeouts were retried as transport
+errors and were not treated as PKI or database evidence.
+
+The next acceptance run used the former default of 64 concurrent factory
+enrollments. All 100 attempts hit the client's 30-second timeout, while the
+issuer journal showed only partial progress. A ten-device run at concurrency
+two completed setup in 24 seconds. The `environment-acceptance` defaults are
+now four users, two device enrollments and two binds at a time; explicit flags
+or environment settings still permit a separate load exercise. The small run
+then reached MQTT Shadow: `accepted` arrived, but the device did not receive
+`delta`. The Redis document had a nonempty delta and the correct Cloud ID;
+the outbox and dead-letter queues were empty. The cause of that delivery gap
+is still under investigation. Do not record the full acceptance as passed on
+the strength of readiness or an empty outbox alone.
+An MQTT-only retry received `delta` but timed out awaiting the reported-state
+`documents` event. The broker showed the test clients subscribed to the
+expected physical `_bc/<cloud-id>/...` topics, and the final Redis document
+contained the reported state with delta cleared. Thus the outstanding gate is
+intermittent broker delivery or probe observation, not CA issuance or missing
+Shadow state. Billing log and database checks passed independently; their
+step-only report does not supersede the failed full acceptance.
+
 ### Registered-service listener (opt-in)
 
 Staging checkpoint (2026-10-01): the environment-local Product Service

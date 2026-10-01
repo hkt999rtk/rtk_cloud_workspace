@@ -115,6 +115,24 @@ func kubernetesProvisionSteps(provider cloudProvider) []provisionStep {
 			},
 		},
 		{
+			Name:  "identity-continuity",
+			Phase: "runtime",
+			Enabled: func(ctx provisionContext) bool {
+				return provider.Name() == "lke" && activeSecretEnvironmentRoot != "" &&
+					(ctx.Opts.mode.apply || ctx.Opts.mode.deploy)
+			},
+			Run: func(ctx provisionContext) error {
+				// An empty environment has no previous identities. An existing stack
+				// must reject drift before node-pool or base-resource mutation.
+				if _, err := os.Stat(sensitiveEnvironmentPath(ctx.Paths, "kube", "kubeconfig.yaml")); errors.Is(err, os.ErrNotExist) {
+					return nil
+				} else if err != nil {
+					return err
+				}
+				return lkeCheckDeploymentIdentityContinuity(ctx.Paths, ctx.Env, ctx.Opts)
+			},
+		},
+		{
 			Name:  "ensure-kube-access",
 			Phase: "provider",
 			Enabled: func(ctx provisionContext) bool {
