@@ -243,16 +243,63 @@ its signed object PUT returned HTTP 204 and finalization returned HTTP 200.
 The `artifact_write` source ACK and Billing fact each reached one. Publication
 returned HTTP 409 because the original legacy release was still Published
 while the new one was Ready, with neither release assigned to a device. Video
-Cloud PR #747 contains the narrow legacy Published-to-Revoked CAS repair and
-is merged at `a9201728`, but the corresponding new image has not yet been
-deployed to the active core or independent OTA Service. The scoped image
-update must verify the active configuration and live source before changing
-only the selected images, core first and independent OTA second. Then continue
-the same billable release without re-uploading or repricing legacy evidence.
-Device assignment, verified download and the remaining OTA source-to-Billing
-meters remain pending. Future qualification must complete independent service,
-strict Product, authenticated edge and source-schema readiness, then core
-cutover, **before** creating the paid Admin release.
+Cloud PR #747 contains the narrow legacy Published-to-Revoked repair and
+is merged at `a9201728`; workspace PR #641 merged the scoped active OTA image
+update at `2fde40e0`. The normal core-first and independent OTA rollout
+completed on 2026-10-02 with matching selected images and preserved runtime
+Secrets, grant, Loki claim and Logger source. All three affected Pods used
+canonical digest
+`sha256:562c62c4f800f5ad5998c3cfa0963f0e965db9d9fe7a21b6b5745c38be4133e1`.
+They were Ready with zero restarts. One OTA startup readiness Warning occurred before
+Ready and did not repeat during the 30-second observation; the public health
+check passed using system TLS verification. The initial release's signed
+manifest had expired during CI and cannot be replaced through normal Finalize.
+A single normal revoke changed only the pre-cutover legacy release from
+Published revision 3 to Revoked revision 4; the expired first billable release
+stayed Ready revision 2, with its first acknowledged write and tracked object
+preserved. The older legacy provider object remains physically present but
+has zero billable receipt, task, download or fact.
+
+A separate `1.0.3` release on the **same** Product, Device, certificate and
+grant completed the normal 23-step OTA flow once. Its new billable object
+produced a second `artifact_write`; assignment produced one `device_task`,
+and the first verified 1 MiB download produced one
+`successful_download_gib` fact at quantity 976563/scale 9. Direct object
+Range/full reads returned HTTP 206/200 with the expected digest; no physical
+installation was attempted. The 2026-10-02 10:20 UTC read-only aggregate saw
+all four immediate source facts acknowledged with pending zero and four
+Billing facts carrying the original Product grant. A later per-usage-ID
+read-back matched the source and Billing IDs, hashes, quantity, unit, UTC
+window and grant time, then an exact one-time replay of the original
+sequence-3 downloaded body returned HTTP 200 with all seven selected source
+and Billing rowsets unchanged. There are two *billable-ledger tracked*
+objects (first billable release plus new release), while the older legacy
+provider object is separately unbilled.
+
+| Immediate OTA metric | Matched source / Billing facts | Recorded quantity |
+| --- | ---: | --- |
+| `artifact_write` | 2 / 2 | Two writes to separate retained billable releases |
+| `device_task` | 1 / 1 | One device task |
+| `successful_download_gib` | 1 / 1 | 976563 at scale 9 GiB, from one verified 1 MiB download |
+
+All four facts are acknowledged, with zero pending. This does not include a
+closed-month `artifact_storage_gib_month` fact or prove monthly storage billing.
+
+The first strict replay after-check compared PostgreSQL captured times to a
+different operator host clock and therefore retained a failed report despite
+unchanged rows. Offline reconciliation of its original immutable packets
+verified the causal order using the operator's own timestamps and file
+creation sequence, without another POST. A no-client-certificate device
+check returned Ingress HTTP 400 with verified server TLS and no source or
+Billing change. Its original helper expected a visible `Server` header, but
+the actual Ingress hides that header while its exact body says a certificate
+is required and identifies nginx; the offline reconciliation preserved that
+failed helper report and qualified the HTTP 400 outcome without another
+request. These are scoped functional and nonbilling checks, not a formal
+OTA price publication, full-month source seal, invoice or Product CA signer
+qualification. The activation order remains independent service, strict
+Product, authenticated edge and source schema, then core cutover, **before**
+creating a paid Admin release.
 
 The cutover core returns `503 OTA_DIRECT_ROUTE_REQUIRED` for device identity
 `check`, deployment `events` and `artifact-token`; use the independent OTA

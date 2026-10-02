@@ -3,9 +3,11 @@
 Current staging checkpoint (2026-10-02): Logger's source freeze, authenticated
 seal and Billing invoice close guard are implemented and deployed. Runtime
 cutover and the Factory public TLS/auth gate passed. One Logger receipt reached
-its retained source; one OTA artifact-write fact reached Billing, while the
-remaining OTA meters, closed-month Logger facts and the first complete Logger
-source month remain unverified. Formal Product CA issuer qualification failed. The 11-row OTA/Logger
+its retained source. A controlled OTA download produced four acknowledged
+source/Billing facts: two artifact writes, one device task and one successful
+download. These four facts cover three immediate metrics; closed-month OTA
+storage and Logger facts remain unverified. Formal Product CA issuer
+qualification failed. The 11-row OTA/Logger
 successor is a technical candidate; the active staging card still has five
 rows. No OTA/Logger successor rate or new Cloud Admin image has been
 published. The dated checkpoint below separates these code, runtime and
@@ -211,14 +213,60 @@ its signed object PUT returned HTTP 204 and finalization returned HTTP 200.
 The `artifact_write` source ACK and matching Billing fact each reached one.
 Publication returned HTTP 409 because the legacy release was still Published
 while this new release was Ready; neither release had a device assignment or
-download. The narrow legacy Published-to-Revoked CAS fix in Video Cloud PR
-#747 is merged and pinned at `a9201728`, but its new image has not yet been
-deployed. The live independent OTA Service remains on the prior image. After
-the scoped core-then-OTA image update and exact read-back, continue this same
-billable release; do not re-upload, adopt or reprice the legacy release.
-Device assignment, verified download and the other OTA source-to-Billing
-meters remain pending. The first legacy 409 was an activation-order finding,
-not a failed billing replay test.
+download. That first legacy HTTP 409 was an activation-order finding,
+not a billing replay failure. The narrow legacy Published-to-Revoked fix in
+Video Cloud PR #747 is pinned at `a9201728`; the scoped core-first and
+independent OTA image-update tool merged in workspace PR #641 at `2fde40e0`.
+Its normal staging rollout completed at `2026-10-02T08:41:18Z` with matching
+selected core and OTA images, preserved Secrets, Product grant, Loki PVC and
+Logger source. Two API Pods and one OTA Pod stayed Ready with zero restarts.
+The OTA Pod's one historical startup readiness Warning preceded its Ready
+transition and did not repeat through the 30-second dwell. Public HTTPS health
+passed with system TLS verification; this is deployment readiness, not an
+invoicing or physical-installation result.
+
+The first billable release's signed manifest expired while that code and CI
+repair ran. Normal Finalize cannot replace a Ready release's manifest; that
+expired release was neither re-signed nor re-uploaded. One scoped normal revoke changed only
+the original pre-cutover legacy release from Published revision 3 to Revoked
+revision 4. The expired first billable release remains Ready revision 2 with
+its original retained tracked object and acknowledged write fact; its
+immutable payload and the original write were preserved. The legacy release
+gained no billable receipt. Its older provider object remains physically
+present but is separate from the two billable-ledger objects.
+
+A separate new `1.0.3` release reused the same Cloud, Product, Device, grant,
+certificate and synthetic 1 MiB artifact, with the first billable release's
+build prefix plus `-billable-v2`. Its normal 23-step operator/device sequence completed once,
+including signed PUT, publish, campaign, authenticated check, token,
+sequence-3 downloaded event and its first exact replay. Direct object Range
+and full reads returned HTTP 206 and 200 with the expected SHA-256. No
+physical firmware installation was tested. A read-only aggregate at
+`2026-10-02T10:20Z` found four immediate OTA source and Billing facts:
+`artifact_write` twice (one per billable release), `device_task` once and
+`successful_download_gib` once at quantity 976563, scale 9 for 1 MiB. All
+four source facts were acknowledged, pending was zero, and Billing preserved
+the original Product grant on all four. These are two *tracked billable*
+objects; the older unbilled legacy provider object also exists.
+
+The new release's per-usage-ID read-back matched source and Billing on all four
+facts, including quantities, units, UTC windows, hashes and grant evidence.
+One further exact sequence-3 downloaded-event replay returned HTTP 200 and
+all seven selected source/Billing rowsets remained unchanged, with four
+acknowledgments and zero pending. The original strict after-check incorrectly
+compared PostgreSQL captured timestamps with the operator host clock; it
+retained a failed report despite the unchanged rows. A separate offline
+reconciliation bound the original packets and demonstrated before read,
+one replay and after read in the operator's own clock; it sent no additional
+request during reconciliation. A separate no-client-certificate check reached the device
+Ingress at HTTP 400 with verified server TLS and unchanged source/Billing
+records. Its original helper also marked a false failure because the Ingress
+hides the `Server` header even though its error body identified nginx and
+stated that a client certificate was required. Preserve those original helper
+reports and their distinct offline reconciliation packets; neither was a
+runtime acceptance failure. This controlled acceptance does not publish a
+rate card, prove a complete UTC month, issue an invoice, or qualify the
+staging shared-issuer certificate as a formal Product CA signer.
 
 After cutover, device identity APIs (`check`, deployment `events` and
 `artifact-token`) use the independent OTA edge with direct mTLS; the core
