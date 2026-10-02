@@ -321,6 +321,72 @@ func TestOTAServiceRolloutAppliesOnlyIndependentServiceAfterHandoff(t *testing.T
 		}
 		before := clone(deployment)
 		after := clone(deployment)
+		for _, scenario := range []struct {
+			name, want string
+			change     func(map[string]any)
+		}{
+			{"wrong runtime checksum", "runtime checksum", func(template map[string]any) {
+				template["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = "stale"
+			}},
+			{"wrong manifest trust", "differs from selected runtime", func(template map[string]any) {
+				variables := template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["env"].([]any)
+				for _, raw := range variables {
+					variable := raw.(map[string]any)
+					if variable["name"] == "VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON" {
+						variable["value"] = "{}"
+					}
+				}
+			}},
+			{"duplicate manifest trust", "exactly once", func(template map[string]any) {
+				container := template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+				variables := container["env"].([]any)
+				for _, raw := range variables {
+					if raw.(map[string]any)["name"] == "VIDEO_CLOUD_OTA_TRUSTED_MANIFEST_KEYS_JSON" {
+						container["env"] = append(variables, clone(raw.(map[string]any)))
+						break
+					}
+				}
+			}},
+			{"wrong Secret reference", "selected runtime Secret", func(template map[string]any) {
+				variables := template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["env"].([]any)
+				for _, raw := range variables {
+					variable := raw.(map[string]any)
+					if variable["name"] == "AWS_ACCESS_KEY_ID" {
+						variable["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any)["name"] = "unrelated"
+					}
+				}
+			}},
+			{"missing identity mount", "identity mount", func(template map[string]any) {
+				template["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["volumeMounts"] = []any{}
+			}},
+		} {
+			t.Run(scenario.name, func(t *testing.T) {
+				template := clone(before["spec"].(map[string]any)["template"].(map[string]any))
+				scenario.change(template)
+				if err := otaServiceTemplateMatches(template, oldImage, selected); err == nil || !strings.Contains(err.Error(), scenario.want) {
+					t.Fatalf("unsafe current OTA template accepted: %v", err)
+				}
+			})
+		}
+		stale := clone(before)
+		stale["status"].(map[string]any)["observedGeneration"] = float64(0)
+		currentPod := podList(before)["items"].([]any)[0].(map[string]any)
+		if err := otaServiceCurrentReady(stale, []map[string]any{currentPod}, oldImage, selected); err == nil || !strings.Contains(err.Error(), "current singleton Recreate revision") {
+			t.Fatalf("unobserved OTA Deployment generation accepted: %v", err)
+		}
+		unready := clone(before)
+		unready["status"].(map[string]any)["readyReplicas"] = float64(0)
+		if err := otaServiceCurrentReady(unready, []map[string]any{currentPod}, oldImage, selected); err == nil || !strings.Contains(err.Error(), "readyReplicas") {
+			t.Fatalf("OTA Deployment without a ready replica accepted: %v", err)
+		}
+		if err := otaServiceCurrentReady(before, []map[string]any{currentPod, clone(currentPod)}, oldImage, selected); err == nil || !strings.Contains(err.Error(), "exactly one current live Pod") {
+			t.Fatalf("overlapping OTA Service Pods accepted: %v", err)
+		}
+		versionless := clone(before)
+		delete(versionless["metadata"].(map[string]any), "resourceVersion")
+		if _, _, _, err := otaServiceImagePatch(versionless, newImage); err == nil || !strings.Contains(err.Error(), "resourceVersion") {
+			t.Fatalf("OTA image update without resourceVersion CAS accepted: %v", err)
+		}
 		container(after)["image"] = newImage
 		after["metadata"].(map[string]any)["resourceVersion"] = "18"
 		after["metadata"].(map[string]any)["generation"] = float64(2)
