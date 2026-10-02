@@ -6,12 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
-	"time"
 )
 
 type otaSourceObject struct {
@@ -35,29 +32,7 @@ func listOTASourceObjects(source provisionObjectStore, destinationPrefix string)
 			return nil, errors.New("OTA source bucket is not a directory")
 		}
 	}
-	keys := map[string]string{}
-	for _, prefix := range []string{"ota-billable-v1/", strings.Trim(destinationPrefix, "/") + "/ota-billable-v1/"} {
-		entries, err := provisionListObjects(source, prefix)
-		if err != nil {
-			return nil, fmt.Errorf("inventory OTA source bucket: %w", err)
-		}
-		for _, entry := range entries {
-			destinationKey, allowed := storageMigrationDestinationKeyForPurpose(destinationPrefix, entry.Key, []string{"ota-billable-v1/"})
-			if allowed {
-				keys[entry.Key] = destinationKey
-			}
-		}
-	}
-	sourceKeys := make([]string, 0, len(keys))
-	for key := range keys {
-		sourceKeys = append(sourceKeys, key)
-	}
-	sort.Strings(sourceKeys)
-	objects := make([]otaSourceObject, 0, len(sourceKeys))
-	for _, key := range sourceKeys {
-		objects = append(objects, otaSourceObject{SourceKey: key, DestinationKey: keys[key]})
-	}
-	return objects, nil
+	return listStorageSourceObjects(source, destinationPrefix, []string{"ota-billable-v1/"})
 }
 
 func otaObjectProof(data []byte) storageObjectProof {
@@ -158,88 +133,7 @@ func validateLiveOTASourceBucket(body []byte, sourceBucket, sourceRegion, source
 }
 
 func (c deploymentCredentialChecker) migrateOTAFirmwareObjects(cfg deploymentConfig, source, destination provisionObjectStore, statePath string) error {
-	state := deploymentStorageMigrationState{
-		Environment: cfg.Environment, Source: source.bucket, SourceRegion: source.region, SourceEndpoint: source.endpoint,
-		Destination: destination.bucket, DestinationRegion: destination.region, DestinationEndpoint: destination.endpoint,
-		Prefix: cfg.Storage.OTAFirmware.Prefix, Objects: map[string]storageObjectProof{},
-	}
-	if body, err := os.ReadFile(statePath); err == nil {
-		if err := json.Unmarshal(body, &state); err != nil {
-			return fmt.Errorf("decode existing OTA migration receipt: %w", err)
-		}
-		if state.Environment != cfg.Environment || state.Source != source.bucket || state.Destination != destination.bucket || state.Prefix != cfg.Storage.OTAFirmware.Prefix ||
-			(state.SourceRegion != "" && state.SourceRegion != source.region) || (state.SourceEndpoint != "" && state.SourceEndpoint != source.endpoint) ||
-			(state.DestinationRegion != "" && state.DestinationRegion != destination.region) || (state.DestinationEndpoint != "" && state.DestinationEndpoint != destination.endpoint) {
-			return errors.New("existing OTA migration receipt targets different storage")
-		}
-		if state.Objects == nil {
-			return errors.New("existing OTA migration receipt has no object inventory")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read existing OTA migration receipt: %w", err)
-	}
-	objects, err := listOTASourceObjects(source, cfg.Storage.OTAFirmware.Prefix)
-	if err != nil {
-		return err
-	}
-	verified := map[string]storageObjectProof{}
-	for _, object := range objects {
-		data, err := provisionReadObject(source, object.SourceKey)
-		if err != nil {
-			return fmt.Errorf("read OTA source object %s: %w", object.SourceKey, err)
-		}
-		proof := otaObjectProof(data)
-		if previous, found := verified[object.DestinationKey]; found {
-			if previous != proof {
-				return fmt.Errorf("OTA source objects map to %s with different content", object.DestinationKey)
-			}
-			continue
-		}
-		verified[object.DestinationKey] = proof
-		if recorded, found := state.Objects[object.DestinationKey]; found && recorded != proof {
-			return fmt.Errorf("OTA source object %s differs from migration receipt", object.SourceKey)
-		}
-		if _, found := state.Objects[object.DestinationKey]; !found {
-			entries, err := provisionListObjects(destination, object.DestinationKey)
-			if err != nil {
-				return err
-			}
-			exists := false
-			for _, entry := range entries {
-				if entry.Key == object.DestinationKey {
-					exists = true
-					break
-				}
-			}
-			if !exists {
-				if _, err := provisionSignedObjectRequestWithClient(c.client, destination, http.MethodPut, object.DestinationKey, nil, data); err != nil {
-					return fmt.Errorf("copy OTA object %s: %w", object.SourceKey, err)
-				}
-			}
-		}
-		written, err := provisionReadObject(destination, object.DestinationKey)
-		if err != nil {
-			return fmt.Errorf("read OTA destination object %s: %w", object.DestinationKey, err)
-		}
-		if otaObjectProof(written) != proof {
-			return fmt.Errorf("checksum mismatch for %s", object.SourceKey)
-		}
-		state.Objects[object.DestinationKey] = proof
-		state.ObjectCount, state.ByteCount = otaProofTotals(state.Objects)
-		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		if err := writeStorageState(statePath, state); err != nil {
-			return err
-		}
-	}
-	if len(state.Objects) != len(verified) {
-		return errors.New("OTA migration receipt contains objects absent from the current source bucket")
-	}
-	// A completed receipt is required even when the source namespace is empty.
-	state.SourceRegion, state.SourceEndpoint = source.region, source.endpoint
-	state.DestinationRegion, state.DestinationEndpoint = destination.region, destination.endpoint
-	state.ObjectCount, state.ByteCount = otaProofTotals(verified)
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	return writeStorageState(statePath, state)
+	return c.migrateStorageObjects(cfg.Environment, source, destination, cfg.Storage.OTAFirmware.Prefix, statePath, "ota-firmware", []string{"ota-billable-v1/"})
 }
 
 func (c deploymentCredentialChecker) validateOTAMigrationCutover(cfg deploymentConfig, values map[string]string, sourceFile string) error {
@@ -261,63 +155,100 @@ func (c deploymentCredentialChecker) validateOTAMigrationCutover(cfg deploymentC
 		return err
 	}
 	destination := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, region: target.Region, accessKey: values["LINODE_OTA_OBJ_ACCESS_KEY_ID"], secretKey: values["LINODE_OTA_OBJ_SECRET_ACCESS_KEY"]}
-	body, err := os.ReadFile(filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"))
+	return c.validateStorageMigrationCutover(cfg.Environment, source, destination, target.Prefix, filepath.Join(cfg.RuntimeRoot, "state", "storage-migration-ota.json"), "ota-firmware", []string{"ota-billable-v1/"})
+}
+
+func (c deploymentCredentialChecker) validateMediaMigrationCutover(cfg deploymentConfig, values map[string]string, sourceFile string) error {
+	if sourceFile == "" {
+		return errors.New("--source-env-file is required to verify media migration before cutover")
+	}
+	sourceValues, check := deploymentCredentialValues(sourceFile)
+	if !check.Passed {
+		return errors.New(check.Detail)
+	}
+	source, err := provisionObjectStoreFromEnv(sourceValues)
 	if err != nil {
-		return fmt.Errorf("OTA cutover requires a completed migration receipt, including verified empty inventory: %w", err)
+		return err
+	}
+	target := cfg.Storage.RuntimeMedia
+	bucket, err := c.resolveStorageBucket(values["LINODE_TOKEN"], target)
+	if err != nil {
+		return err
+	}
+	endpoint, err := normalizeLinodeS3Endpoint(bucket.S3Endpoint)
+	if err != nil {
+		return err
+	}
+	destination := provisionObjectStore{bucket: target.Bucket, endpoint: endpoint, region: target.Region,
+		accessKey: firstNonEmpty(values["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"], values["LINODE_OBJ_ACCESS_KEY_ID"]),
+		secretKey: firstNonEmpty(values["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"], values["LINODE_OBJ_SECRET_ACCESS_KEY"])}
+	return c.validateStorageMigrationCutover(cfg.Environment, source, destination, target.Prefix, filepath.Join(cfg.RuntimeRoot, "state", "storage-migration.json"), "media", []string{"clips/", "brands/", "snapshots/", "clip-index/", "ota/", "firmware/"})
+}
+
+func (c deploymentCredentialChecker) validateStorageMigrationCutover(environment string, source, destination provisionObjectStore, prefix, statePath, purpose string, namespaces []string) error {
+	body, err := os.ReadFile(statePath)
+	if err != nil {
+		return fmt.Errorf("cutover requires a completed migration receipt, including verified empty inventory: %w", err)
 	}
 	var receipt deploymentStorageMigrationState
 	if err := json.Unmarshal(body, &receipt); err != nil {
-		return fmt.Errorf("decode OTA migration receipt: %w", err)
+		return fmt.Errorf("decode migration receipt: %w", err)
 	}
-	if receipt.Environment != cfg.Environment || receipt.Source != source.bucket || receipt.SourceRegion != source.region || receipt.SourceEndpoint != source.endpoint ||
-		receipt.Destination != destination.bucket || receipt.DestinationRegion != destination.region || receipt.DestinationEndpoint != destination.endpoint ||
-		receipt.Prefix != target.Prefix || receipt.Objects == nil || receipt.UpdatedAt == "" {
-		return errors.New("OTA migration receipt does not match current source and destination; rerun storage-migrate")
+	if receipt.Environment != environment || receipt.Purpose != purpose || receipt.Source != source.bucket || receipt.SourceRegion != source.region || receipt.SourceEndpoint != source.endpoint ||
+		receipt.SourcePrefix != source.prefix || receipt.SourcePrefixExplicit != source.prefixSet || receipt.Destination != destination.bucket || receipt.DestinationRegion != destination.region || receipt.DestinationEndpoint != destination.endpoint ||
+		receipt.Prefix != strings.Trim(prefix, "/") || receipt.Objects == nil || receipt.SourceKeys == nil || receipt.UpdatedAt == "" {
+		return errors.New("migration receipt does not match current source and destination; rerun storage-migrate")
 	}
-	objects, err := listOTASourceObjects(source, target.Prefix)
+	for _, store := range []provisionObjectStore{source, destination} {
+		if err := validateStorageCopyBucket(c.client, store); err != nil {
+			return err
+		}
+	}
+	objects, err := listStorageSourceObjects(source, prefix, namespaces)
 	if err != nil {
 		return err
 	}
 	verified := map[string]storageObjectProof{}
 	for _, object := range objects {
-		data, err := provisionReadObject(source, object.SourceKey)
+		if receipt.SourceKeys[object.SourceKey] != object.DestinationKey {
+			return fmt.Errorf("migration receipt does not match source mapping %s", object.SourceKey)
+		}
+		snapshot, err := readStorageObject(c.client, source, object.SourceKey)
 		if err != nil {
-			return fmt.Errorf("read OTA source object %s: %w", object.SourceKey, err)
+			return fmt.Errorf("read source object %s: %w", object.SourceKey, err)
 		}
-		proof := otaObjectProof(data)
-		if previous, found := verified[object.DestinationKey]; found {
-			if previous != proof {
-				return fmt.Errorf("OTA source objects map to %s with different content", object.DestinationKey)
-			}
-			continue
-		}
+		proof := snapshot.proof()
 		verified[object.DestinationKey] = proof
 		if receipt.Objects[object.DestinationKey] != proof {
-			return fmt.Errorf("OTA migration receipt does not match source object %s", object.SourceKey)
+			return fmt.Errorf("migration receipt does not match source object %s", object.SourceKey)
 		}
-		data, err = provisionReadObject(destination, object.DestinationKey)
+		written, err := readStorageObject(c.client, destination, object.DestinationKey)
 		if err != nil {
-			return fmt.Errorf("read OTA destination object %s: %w", object.DestinationKey, err)
+			return fmt.Errorf("read destination object %s: %w", object.DestinationKey, err)
 		}
-		if otaObjectProof(data) != proof {
-			return fmt.Errorf("OTA destination checksum mismatch for %s", object.DestinationKey)
+		if err := verifyStorageObject(snapshot, written, object.DestinationKey); err != nil {
+			return err
 		}
 	}
 	count, bytes := otaProofTotals(verified)
-	if len(receipt.Objects) != count || receipt.ObjectCount != count || receipt.ByteCount != bytes {
-		return errors.New("OTA migration receipt inventory or totals differ from current source bucket")
+	if len(receipt.SourceKeys) != len(objects) || len(receipt.Objects) != count || receipt.ObjectCount != count || receipt.ByteCount != bytes {
+		return errors.New("migration receipt inventory or totals differ from current source bucket")
 	}
-	destinationEntries, err := provisionListObjects(destination, strings.Trim(target.Prefix, "/")+"/ota-billable-v1/")
-	if err != nil {
-		return fmt.Errorf("inventory OTA destination bucket: %w", err)
-	}
-	for _, entry := range destinationEntries {
-		if _, found := verified[entry.Key]; !found {
-			return fmt.Errorf("OTA destination bucket contains unverified object %s", entry.Key)
+	var destinationCount int
+	for _, namespace := range namespaces {
+		entries, err := provisionListObjects(destination, storageJoinPrefix(prefix, namespace))
+		if err != nil {
+			return fmt.Errorf("inventory destination bucket: %w", err)
+		}
+		for _, entry := range entries {
+			if _, found := verified[entry.Key]; !found {
+				return fmt.Errorf("destination bucket contains unverified object %s", entry.Key)
+			}
+			destinationCount++
 		}
 	}
-	if len(destinationEntries) != count {
-		return errors.New("OTA destination bucket inventory differs from the verified source inventory")
+	if destinationCount != count {
+		return errors.New("destination inventory differs from verified source inventory")
 	}
 	return nil
 }

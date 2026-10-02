@@ -4,7 +4,7 @@ Status: active workspace policy.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-05-18.
+Last reviewed: 2026-10-02.
 
 ## Purpose
 
@@ -38,28 +38,17 @@ CI/release/deploy Object Storage access.
 | GitHub Releases | Optional human-facing release mirror or legacy fallback, not the default deploy source. |
 | Service runtime object/blob stores | Product data such as media, firmware, snapshots, or backups; out of scope for this policy. |
 
-The shared release bucket naming target and the independent runtime media/OTA
-bucket rules are recorded in [Object Storage naming](storage-credential-lifecycle.md).
-The current live names are in the dated [bucket inventory](object-storage-inventory.md).
+Bucket naming, namespaces and retention are defined only in
+[Object Storage Policy](object-storage-policy.md). The dated
+[bucket inventory](object-storage-inventory.md) records observations, not a live
+lookup or permission to switch release consumers.
 
 ## Required Artifact Pattern
 
-Formal release artifacts must be version-addressed. Deploy and handoff flows must
-not infer or deploy a floating `latest` object.
-
-Canonical object prefix:
-
-```text
-releases/<artifact-name>-<version>/
-```
-
-Required objects:
-
-```text
-releases/<artifact-name>-<version>/<version>.tar.gz
-releases/<artifact-name>-<version>/<version>.tar.gz.sha256
-releases/<artifact-name>-<version>/manifest.json
-```
+Use the formal release and SDK namespaces in
+[Object Storage Policy](object-storage-policy.md#object-namespaces-and-compatibility).
+The existing versioned bundle, checksum and manifest keys remain compatible.
+This document owns their manifest contents and verification procedure.
 
 A repository may keep local file names that include the repo name, such as
 `rtk_account_manager-v1.2.3.tar.gz`, but the object manifest must record the

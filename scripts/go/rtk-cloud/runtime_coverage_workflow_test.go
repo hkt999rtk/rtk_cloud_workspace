@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -318,7 +319,8 @@ func TestRuntimeCoverageWorkflowKeepsSharedClusterGuardrails(t *testing.T) {
 		"RUNTIME_COVERAGE_PLANNED_LOAD_BALANCERS: \"0\"",
 		"RUNTIME_COVERAGE_PLANNED_GENERATORS: \"0\"",
 		`get secret video-cloud-runtime -o json`,
-		`.data.AWS_ACCESS_KEY_ID | @base64d`,
+		`deployment_secret_env AWS_ACCESS_KEY_ID`,
+		`deployment_secret_env AWS_SECRET_ACCESS_KEY`,
 		`deployment_env VIDEO_CLOUD_BLOB_ENDPOINT`,
 		`deployment_env VIDEO_CLOUD_BLOB_REGION`,
 		`deployment_env VIDEO_CLOUD_BLOB_BUCKET`,
@@ -627,6 +629,162 @@ func TestK8SE2ETokenBaseURLSupportsMTLSTunnelOverride(t *testing.T) {
 	t.Setenv("CLOUD_STAGING_E2E_VIDEO_CLOUD_TOKEN_BASE_URL_OVERRIDE", "https://device.coverage.invalid:18443")
 	if got := k8sE2ETokenBaseURL("18080"); got != "https://device.coverage.invalid:18443" {
 		t.Fatalf("overridden token base URL = %q", got)
+	}
+}
+
+func TestRuntimeCoverageWorkflowStorageFollowsDeploymentSecretReferences(t *testing.T) {
+	workspace, err := workspaceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(workspace, ".github", "workflows", "go-runtime-coverage-nightly.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(raw, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for _, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			if step.Name == "Acquire shared staging kubeconfig without mutating the cluster" {
+				if offset := strings.Index(step.Run, "staging_deployment="); offset >= 0 {
+					script = "set -euo pipefail\n" + step.Run[offset:]
+				}
+			}
+		}
+	}
+	if script == "" {
+		t.Fatal("missing workflow storage discovery script")
+	}
+	for _, scenario := range []string{
+		"original-secret", "cutover-secret", "missing-container", "ambiguous-container",
+		"missing-env", "ambiguous-env", "literal-credential", "configmap-reference",
+		"field-reference", "envfrom-only", "missing-secret", "missing-secret-key",
+		"empty-secret-value", "missing-ref-name", "missing-ref-key", "ambiguous-bucket",
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "bin")
+			if err := os.Mkdir(bin, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeJSON := func(name string, value any) {
+				t.Helper()
+				body, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, name), body, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			secretName, accessKey, secretKey := "rtk-storage-media", "media-access", "media-secret"
+			if scenario == "original-secret" {
+				secretName, accessKey, secretKey = "video-cloud-runtime", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"
+			}
+			ref := func(name, key string) map[string]any {
+				return map[string]any{"name": name, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": key}}}
+			}
+			env := []any{
+				ref("AWS_ACCESS_KEY_ID", accessKey), ref("AWS_SECRET_ACCESS_KEY", secretKey),
+				map[string]any{"name": "VIDEO_CLOUD_BLOB_ENDPOINT", "value": "https://storage.invalid"},
+				map[string]any{"name": "VIDEO_CLOUD_BLOB_REGION", "value": "sg-sin-2"},
+				map[string]any{"name": "VIDEO_CLOUD_BLOB_BUCKET", "value": "rtk-cloud-staging-runtime-sg-sin-2"},
+				map[string]any{"name": "VIDEO_CLOUD_WEBRTC_TURN_URLS", "value": "turns:turn.invalid:5349?transport=tcp"},
+			}
+			app := map[string]any{"name": "app", "env": env}
+			switch scenario {
+			case "missing-container":
+				app["name"] = "unexpected"
+			case "missing-env", "envfrom-only":
+				app["env"] = env[1:]
+				app["envFrom"] = []any{map[string]any{"secretRef": map[string]any{"name": secretName}}}
+			case "ambiguous-env":
+				app["env"] = append(env, env[0])
+			case "literal-credential":
+				env[0] = map[string]any{"name": "AWS_ACCESS_KEY_ID", "value": "fixture-literal-credential"}
+			case "configmap-reference", "field-reference":
+				from := map[string]any{"configMapKeyRef": map[string]any{"name": "storage", "key": "access"}}
+				if scenario == "field-reference" {
+					from = map[string]any{"fieldRef": map[string]any{"fieldPath": "metadata.name"}}
+				}
+				env[0] = map[string]any{"name": "AWS_ACCESS_KEY_ID", "valueFrom": from}
+			case "missing-ref-name", "missing-ref-key":
+				key := "name"
+				if scenario == "missing-ref-key" {
+					key = "key"
+				}
+				delete(env[0].(map[string]any)["valueFrom"].(map[string]any)["secretKeyRef"].(map[string]any), key)
+			case "ambiguous-bucket":
+				app["env"] = append(env, env[4])
+			}
+			// A sidecar's same-named variables must not influence app storage selection.
+			containers := []any{map[string]any{"name": "sidecar", "env": []any{map[string]any{"name": "AWS_ACCESS_KEY_ID", "value": "wrong-sidecar-key"}, map[string]any{"name": "VIDEO_CLOUD_BLOB_BUCKET", "value": "wrong-sidecar-bucket"}}}, app}
+			if scenario == "ambiguous-container" {
+				containers = append(containers, app)
+			}
+			writeJSON("deployment.json", map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": containers}}}})
+			encoded := func(value string) string { return base64.StdEncoding.EncodeToString([]byte(value)) }
+			data := map[string]string{"AWS_ACCESS_KEY_ID": encoded("fixture-old-access"), "AWS_SECRET_ACCESS_KEY": encoded("fixture-old-secret"), "VIDEO_CLOUD_TURN_SHARED_SECRET": encoded("fixture-turn")}
+			writeJSON("video-cloud-runtime.json", map[string]any{"data": data})
+			wantAccess, wantSecret := "fixture-old-access", "fixture-old-secret"
+			if secretName != "video-cloud-runtime" {
+				wantAccess, wantSecret = "fixture-new-access", "fixture-new-secret"
+				data = map[string]string{accessKey: encoded(wantAccess), secretKey: encoded(wantSecret)}
+				if scenario == "missing-secret-key" {
+					delete(data, accessKey)
+				}
+				if scenario == "empty-secret-value" {
+					data[accessKey] = ""
+				}
+				if scenario != "missing-secret" {
+					writeJSON(secretName+".json", map[string]any{"data": data})
+				}
+			}
+			mock := `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == --kubeconfig && "$3" == -n && "$4" == video-cloud-staging-video-cloud && "$5" == get && "$8" == -o && "$9" == json ]]
+case "$6/$7" in
+  deployment/video-cloud-api) cat "$FIXTURE_ROOT/deployment.json" ;;
+  secret/*) cat "$FIXTURE_ROOT/$7.json" ;;
+  *) exit 2 ;;
+esac
+`
+			if err := os.WriteFile(filepath.Join(bin, "kubectl"), []byte(mock), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			envFile := filepath.Join(dir, "github.env")
+			command := exec.Command("bash", "-c", script)
+			command.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "RUNNER_TEMP="+dir, "FIXTURE_ROOT="+dir, "GITHUB_ENV="+envFile, "kubeconfig=fixture-kubeconfig", "staging_video_namespace=video-cloud-staging-video-cloud")
+			output, runErr := command.CombinedOutput()
+			published, _ := os.ReadFile(envFile)
+			if scenario != "original-secret" && scenario != "cutover-secret" {
+				if runErr == nil || strings.Contains(string(published), "LINODE_OBJ_ACCESS_KEY_ID=") {
+					t.Fatal("invalid or ambiguous storage configuration was published")
+				}
+				if strings.Contains(string(output), "fixture-new-access") || strings.Contains(string(output), "fixture-new-secret") || strings.Contains(string(output), "fixture-literal-credential") {
+					t.Fatal("failure output exposed a storage credential")
+				}
+				return
+			}
+			if runErr != nil {
+				t.Fatalf("workflow storage discovery failed: %v", runErr)
+			}
+			for _, expected := range []string{"LINODE_OBJ_ACCESS_KEY_ID=" + wantAccess, "LINODE_OBJ_SECRET_ACCESS_KEY=" + wantSecret, "LINODE_OBJ_BUCKET=rtk-cloud-staging-runtime-sg-sin-2", "LKE_TURN_SHARED=fixture-turn"} {
+				if !strings.Contains(string(published), expected+"\n") {
+					t.Fatal("workflow did not publish the selected container's storage and retained TURN credentials")
+				}
+			}
+		})
 	}
 }
 
