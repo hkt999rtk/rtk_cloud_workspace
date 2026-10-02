@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 var sqliteCaptureStackName = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
@@ -268,10 +269,13 @@ func (c sqliteCaptureClient) copyTar(pod, directory, output string, hashes map[s
 	args := []string{"exec", pod, "-c", "app", "--", "sh", "-c", `set -eu; cd "$1"; shift; tar -cf - "$@"`, "sh", directory}
 	args = append(args, names...)
 	cmd := c.command(args...)
+	// A terminated kubectl wrapper can leave descendants holding stderr open.
+	cmd.WaitDelay = 2 * time.Second
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
 	}
+	defer pipe.Close()
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
@@ -314,6 +318,14 @@ func (c sqliteCaptureClient) copyTar(pod, directory, output string, hashes map[s
 			copyErr = errors.New("captured SQLite hash differs from source")
 		}
 	}
+	if copyErr == nil {
+		// tar EOF precedes any trailing record padding. Consume the remaining
+		// stdout so the producer can finish before Wait waits for its exit.
+		_, copyErr = io.Copy(io.Discard, pipe)
+	}
+	// On rejection, stop descendants from blocking on unread archive bytes
+	// before killing the parent and waiting for its stderr copier.
+	_ = pipe.Close()
 	if copyErr != nil {
 		_ = cmd.Process.Kill()
 	}
