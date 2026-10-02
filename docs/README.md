@@ -18,6 +18,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
 | Build a fresh staging environment and run canonical 1K validation | [Staging from scratch](staging-from-scratch.md) |
+| Find authoritative documentation with semantic retrieval | [RTK Knowledge Search skill](../.agents/skills/rtk-knowledge-search/SKILL.md) |
 
 ## Workspace Documents
 
