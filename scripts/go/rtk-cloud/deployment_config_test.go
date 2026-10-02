@@ -73,6 +73,37 @@ func TestDeploymentRejectsUnknownActionAndMissingConfirmation(t *testing.T) {
 	}
 }
 
+func TestStoragePreparationCLIRequiresCandidateBeforeCredentialWrites(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	configRoot := t.TempDir()
+	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
+	store, _ := newSecretStore("", "staging")
+	if err := store.write("operator/env/LINODE_MEDIA_OBJ_ACCESS_KEY_ID", []byte("active-key"), false); err != nil {
+		t.Fatal(err)
+	}
+	for _, action := range []string{"storage-bootstrap", "storage-migrate", "storage-cutover"} {
+		err := runDeploymentWithOperations([]string{action, "--workspace", workspace, "--environment", "staging", "--confirm", "video-cloud-staging"}, deploymentOperations{})
+		if err == nil || !strings.Contains(err.Error(), "--destination-env-file is required") {
+			t.Fatalf("%s: %v", action, err)
+		}
+	}
+	active, _ := store.readOperator()
+	if active["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"] != "active-key" {
+		t.Fatal("preparation changed active credential")
+	}
+}
+
+func TestCredentialGrantCannotActivatePendingMigration(t *testing.T) {
+	workspace := writeDeploymentFixture(t, "staging", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "storage.env"), "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=rtk-cloud-staging-runtime-us-sea\nRUNTIME_MEDIA_STORAGE_PREFIX=environments/video-cloud-staging\nRUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true\n")
+	for _, flag := range []string{"--create-missing-object-storage-bucket", "--grant-object-storage-bucket-access"} {
+		err := runDeploymentWithOperations([]string{"credentials-check", "--workspace", workspace, "--environment", "staging", flag}, deploymentOperations{})
+		if err == nil || !strings.Contains(err.Error(), "isolated candidate") {
+			t.Fatalf("%s: %v", flag, err)
+		}
+	}
+}
+
 func TestResolveDeploymentStoragePlanRejectsInvalidProfiles(t *testing.T) {
 	identity := map[string]string{"DEPLOYMENT_LOCATION": "asia-southeast", "CLOUD_STACK_NAME": "video-cloud-staging"}
 	validRuntime := "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=media\nRUNTIME_MEDIA_STORAGE_PREFIX=environments/staging\n"
@@ -134,19 +165,19 @@ func TestResolveDedicatedOTAStorageRequiresSeparateCanonicalBucket(t *testing.T)
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	base := "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=rtk-video-media-dev-us-sea\nRUNTIME_MEDIA_STORAGE_PREFIX=environments/video-cloud-dev\n"
+	base := "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=rtk-cloud-dev-runtime-us-sea\nRUNTIME_MEDIA_STORAGE_PREFIX=environments/video-cloud-dev\n"
 	identity := map[string]string{"CLOUD_STACK_NAME": "video-cloud-dev", "DEPLOYMENT_LOCATION": "us-west"}
 	adapter := map[string]string{"LKE_REGION": "us-sea"}
 	for _, tc := range []struct{ name, extra, want string }{
 		{"invalid mode", "RUNTIME_OTA_STORAGE_MODE=unknown\n", "legacy-shared or dedicated"},
-		{"missing policy", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "policy must be colocated or cross-region"},
-		{"shared bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-video-media-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must differ"},
-		{"wrong environment bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-prod-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-sea"},
-		{"wrong storage region bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-sea"},
-		{"colocated with explicit region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_REGION=us-lax\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must not set RUNTIME_OTA_STORAGE_REGION"},
-		{"cross-region without region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "different from the compute region"},
-		{"cross-region in compute region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-sea\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "different from the compute region"},
-		{"cross-region wrong bucket suffix", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-ord\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-ota-firmware-dev-us-ord"},
+		{"missing policy", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "policy must be colocated or cross-region"},
+		{"shared bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-runtime-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must differ"},
+		{"wrong environment bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-prod-ota-firmware-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-cloud-dev-ota-firmware-us-sea"},
+		{"wrong storage region bucket", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-cloud-dev-ota-firmware-us-sea"},
+		{"colocated with explicit region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_REGION=us-lax\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must not set RUNTIME_OTA_STORAGE_REGION"},
+		{"cross-region without region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "different from the compute region"},
+		{"cross-region in compute region", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-sea\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "different from the compute region"},
+		{"cross-region wrong bucket suffix", "RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-ord\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n", "must be rtk-cloud-dev-ota-firmware-us-ord"},
 		{"invalid cutover flag", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=yes\n", "must be true or false"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -159,24 +190,24 @@ func TestResolveDedicatedOTAStorageRequiresSeparateCanonicalBucket(t *testing.T)
 			}
 		})
 	}
-	if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+"RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true\nRUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+"RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED=true\nRUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=colocated\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-sea\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := resolveDeploymentStoragePlan(workspace, root, identity, adapter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.RuntimeMediaCutoverRequired || plan.OTAFirmware.Bucket != "rtk-ota-firmware-dev-us-sea" || plan.OTAFirmware.Region != "us-sea" {
+	if !plan.RuntimeMediaCutoverRequired || plan.OTAFirmware.Bucket != "rtk-cloud-dev-ota-firmware-us-sea" || plan.OTAFirmware.Region != "us-sea" {
 		t.Fatalf("incorrect dedicated OTA plan: %#v", plan)
 	}
-	if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+"RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-lax\nRUNTIME_OTA_STORAGE_BUCKET=rtk-ota-firmware-dev-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "storage.env"), []byte(base+"RUNTIME_OTA_STORAGE_MODE=dedicated\nRUNTIME_OTA_STORAGE_POLICY=cross-region\nRUNTIME_OTA_STORAGE_REGION=us-lax\nRUNTIME_OTA_STORAGE_BUCKET=rtk-cloud-dev-ota-firmware-us-lax\nRUNTIME_OTA_STORAGE_PREFIX=environments/video-cloud-dev\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	plan, err = resolveDeploymentStoragePlan(workspace, root, identity, adapter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.RuntimeMedia.Region != "us-sea" || plan.OTAFirmware.Policy != "cross-region" || plan.OTAFirmware.Bucket != "rtk-ota-firmware-dev-us-lax" || plan.OTAFirmware.Region != "us-lax" {
+	if plan.RuntimeMedia.Region != "us-sea" || plan.OTAFirmware.Policy != "cross-region" || plan.OTAFirmware.Bucket != "rtk-cloud-dev-ota-firmware-us-lax" || plan.OTAFirmware.Region != "us-lax" {
 		t.Fatalf("incorrect cross-region OTA plan: %#v", plan)
 	}
 }

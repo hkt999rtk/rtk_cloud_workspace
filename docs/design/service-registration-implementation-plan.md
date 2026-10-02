@@ -638,8 +638,8 @@ Historical core device reports retain their prior evidence and transition rules
 until cutover, while the registered billable service requires the verified
 SHA-256, size, and downloaded-before-installing sequence. The dedicated
 service requires Object Storage at startup and writes new firmware only under
-`ota-billable-v1/` in its private
-`rtk-ota-firmware-<environment>-<actual storage region>` bucket; its object
+`ota-billable-v1/` in its private dedicated E3 bucket selected under
+[Object Storage Policy](../object-storage-policy.md); its object
 inventory, write and storage receipts, and producer seal cover that namespace.
 Historical objects have no new upload-attempt evidence and must not be turned
 into retroactive charges. They require the separate documented legacy cleanup

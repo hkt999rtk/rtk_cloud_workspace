@@ -53,7 +53,7 @@ func TestProvisionObjectStoreConfigurationAndHelpers(t *testing.T) {
 		t.Fatalf("escaped path = %q", got)
 	}
 	query := url.Values{"z": {"2", "1"}, "a": {"a b"}}
-	if got := provisionCanonicalQuery(query); got != "a=a+b&z=1&z=2" {
+	if got := provisionCanonicalQuery(query); got != "a=a%20b&z=1&z=2" {
 		t.Fatalf("canonical query = %q", got)
 	}
 	if provisionCanonicalQuery(nil) != "" || provisionHexSHA256(nil) == "" ||

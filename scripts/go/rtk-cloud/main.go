@@ -78,6 +78,8 @@ var commands = map[string]commandSpec{
 	"mqtt-loadtest":                    {run: runMQTTLoadTest},
 	"mqtt-test":                        {run: runMQTTTest},
 	"mqtt-trace-report":                {run: runMQTTTraceReport},
+	"object-storage-audit":             {run: runObjectStorageAudit},
+	"object-storage-lifecycle-plan":    {run: runObjectStorageLifecyclePlan},
 	"platform-admin-token":             {run: runPlatformAdminToken},
 	"pre-pr":                           {run: runPrePR},
 	"provisioning-lifecycle-evidence":  {run: runProvisioningLifecycleEvidence},
@@ -201,7 +203,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" || args[0] == "object-storage-audit" || args[0] == "object-storage-lifecycle-plan" {
 		return args, nil
 	}
 	var environment, workspace string

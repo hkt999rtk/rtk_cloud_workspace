@@ -4,7 +4,7 @@ Status: active workspace policy.
 
 Owner: `rtk_cloud_workspace`.
 
-Last reviewed: 2026-08-31.
+Last reviewed: 2026-10-02.
 
 ## Purpose
 
@@ -36,6 +36,15 @@ are authoritative, and how to review changes.
 - Consumer repositories that need a local contracts checkout should mount it at
   `docs/rtk_cloud_contracts_doc`; see
   [contracts-submodule-governance.md](contracts-submodule-governance.md).
+
+## Workspace Policy Ownership
+
+[Object Storage Policy](object-storage-policy.md) is the sole source for bucket
+naming, object namespace ownership, retention and resource creation/migration/
+retirement requirements. Storage operations, release governance, backup
+procedures and runbooks link to it rather than defining competing rules. Keep
+provider observations dated and separate from naming targets or tracked intent;
+policy adoption alone does not prove a live migration or lifecycle installation.
 
 ## Document Classifications
 
