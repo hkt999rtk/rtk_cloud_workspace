@@ -128,7 +128,8 @@ Both mandatory read-only credential checks returned **NO-GO** on 2026-10-02:
   PKI registry policy and conflicted with the fixed Device Root enforcement.
 
 These are live PKI qualification failures outside the storage naming change.
-No bucket, object, lifecycle, key, GitHub binding or live workload was changed.
+This read-only reconciliation changed no bucket, object, lifecycle, key,
+GitHub binding or live workload.
 Prepared naming intent is guarded by cutover receipts. Production remains
 outside migration scope. Before resuming live migration, repair and re-run the
 selected environment's credential check, then complete the storage-specific
@@ -145,3 +146,23 @@ inspected buckets. The same artifact scan identified 237 CI objects totaling
 candidates subject to owner/hold and complete-history review; no deletion or
 lifecycle activation was performed. Unknown ACL/CORS/encryption capabilities
 remain explicit rather than being treated as successful migration checks.
+
+## Shared artifact destination preparation: 2026-10-02
+
+At 14:12 UTC, the Dev-only preparation step created
+`rtk-cloud-shared-artifacts-us-sea` in `us-sea`. The provider reported an E1
+endpoint. A separate private candidate profile holds a limited key that can
+read and write only this destination bucket; the active artifact credentials
+remain unchanged. The bootstrap canary was removed. Read-only verification
+found an owner-only ACL, no public policy principal, no current objects,
+versions, delete markers or incomplete multipart uploads, and confirmed that
+the new key cannot list the old artifact bucket.
+
+This records a prepared empty destination only. No source object was copied,
+no CORS or source policy was applied, and no publisher, reader, workload or
+credential binding was changed. The source bucket continues to receive writes.
+Before copying, re-inventory its current objects and configuration. Before a
+consumer cutover or retirement, complete the writer fence, exact copy and
+verification, reader/publisher reconciliation, and the relevant environment
+qualification. The Dev and Staging PKI findings above still block runtime
+storage cutover.
