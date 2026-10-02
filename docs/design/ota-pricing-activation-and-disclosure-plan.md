@@ -6,12 +6,33 @@ cutover and the Factory public TLS/auth gate passed. One Logger receipt reached
 its retained source. A controlled OTA download produced four acknowledged
 source/Billing facts: two artifact writes, one device task and one successful
 download. These four facts cover three immediate metrics; closed-month OTA
-storage and Logger facts remain unverified. Formal Product CA issuer
-qualification failed. The 11-row OTA/Logger
+storage and Logger facts remain unverified. Staging uses the documented
+shared-issuer compatibility path; per-Product CA isolation remains a production
+migration boundary and is not qualified by this run. The 11-row OTA/Logger
 successor is a technical candidate; the active staging card still has five
 rows. No OTA/Logger successor rate or new Cloud Admin image has been
 published. The dated checkpoint below separates these code, runtime and
 financial states.
+
+Publication and month close are separate operations. A reviewed complete card
+can be published for a future UTC month before that month ends; it stays
+upcoming until its boundary. This does not certify a source month or authorize
+an invoice. Operational meter qualification and the actual publication approval
+remain required. Complete source coverage, OTA's two seals, Logger's seal and
+owner reconciliation are enforced at invoice close. The earliest possible
+combined November close remains 2026-12-03 UTC, not a prerequisite date for
+announcing an otherwise qualified upcoming card. No card was published by
+this checkpoint; the current publication path still requires two distinct,
+actually authorized reviewers. A proposed staging-only change to that rule
+requires the owner's explicit decision before implementation.
+
+The focused isolated PostgreSQL storage test now exercises both existing CDN
+mode and the selected direct `object_url` mode with nonempty July/August
+fixtures. It verifies per-object byte-time, separate Product totals, deletion
+proration, delivered immutable facts and exact seal replay; direct mode has
+no CDN review. This is simulated local integration evidence, distinct from
+a real staging storage month or monthly invoice. See
+[the current-mode storage test](../../repos/rtk_video_cloud/internal/postgres/productota_lifecycle_coverage_integration_test.go).
 
 Development history (through 2026-09-30): approved-rate documentation,
 authenticated research-price disclosure, preactivation OTA invoice protection,
@@ -316,9 +337,10 @@ new Cloud Admin image has been published. The candidate
 `2026-11-01T00:00:00Z` boundary is not a live pricing cutover. Finance/Billing
 scope, tax and direct-object margin evidence, plus two real publication
 reviewers, still require verification before the separate reviewed publish
-operation. One positive Logger source receipt passed, but no Logger
-closed-month fact-to-Billing, positive OTA receipt or complete-month seal has
-passed yet. The attempted denied-before Logger helper stopped at a
+operation. One positive Logger source receipt and four immediate OTA
+source-to-Billing facts passed as recorded above; Logger closed-month facts,
+OTA storage-month facts and complete-month seals remain unverified. The
+attempted denied-before Logger helper stopped at a
 variable-name regex before sending an event; the corrected normal probe then
 obtained an mTLS request token and received exact HTTP 403 for one rejected
 Logger POST. Its verified before/after read-back at
@@ -326,9 +348,10 @@ Logger POST. Its verified before/after read-back at
 source outbox row or Billing fact, and zero entries in the bounded Loki query;
 source identity was unchanged. This qualifies rejected-log nonbilling for this
 one controlled request only, not a complete-month source seal. OTA core
-cutover has passed its separate read-back; a new billable OTA release's
-positive receipts and the first customer invoice remain unverified. Runtime
-service activation does not make these prices effective.
+cutover has passed its separate read-back. The new controlled billable release
+also passed positive immediate receipts and Billing acknowledgments as recorded
+above; storage-month evidence and the first customer invoice remain unverified.
+Runtime service activation does not make these prices effective.
 
 ### Rate locations and price-definition principles
 
@@ -378,6 +401,43 @@ operation. Filesystem copies, a Product checkbox, service registration, or an
 | Counting and duplicate fees | Derive usage from each service's accepted, qualified source evidence. MQTT publish/delivery bytes remain zero-price diagnostic rows. Shadow, WebRTC signaling, OTA dispatch and object operations are excluded from the generic data-API meter. OTA artifact storage/writes/downloads do not also use clip-object tariffs; customer logs do not also use general object-storage tariffs. Separately delivered MQTT transport retains its defined message charge. |
 | Price changes and corrections | Publish a new immutable complete version with a permitted future effective interval and preserved approval digest. First non-OTA and OTA activation paths use future UTC-month boundaries and do not retrocharge previous months. Correcting a metric spelling in a local candidate cannot mutate a published card or rename an accepted fact. Validate exact service/metric/unit/scale identity against its producer before publication. |
 | Disclosure | Show detailed prices only after login in Cloud Admin **Billing > Service Pricing**. Present the counting rule, formula/exclusions, unit, price state, effective interval, reference source, Product entitlement and invoice tax policy. The public website does not publish concrete prices. An unavailable effective-price API is shown as unavailable, without substituting research amounts. |
+
+#### Direct-object cost check (2026-10-02)
+
+The selected staging bucket's provider inventory identifies Singapore
+`sg-sin-2`, endpoint type **E3**. This is a read-only observation of the existing
+bucket, not a bucket creation or a customer-usage meter. OTA remains on signed
+object URLs; CDN deployment is deferred.
+
+[Akamai's Object Storage pricing](https://techdocs.akamai.com/cloud-computing/docs/object-storage-pricing)
+lists request charges for E2/E3 no earlier than 2026-10-01. That date has passed;
+the September research snapshot's exclusion of future request fees must not be
+treated as proof that today's requests cost zero. The wording does not prove
+which charges have actually appeared on this account's provider invoice.
+Use these published overage prices for the cost model pending that confirmation.
+
+| Existing Singapore direct-object cost | Published USD basis | Planning TWD basis at US$1 = NT$32 |
+| --- | --- | --- |
+| Storage over included capacity | US$0.02 per binary GB-month | NT$0.64/GiB-month |
+| Outbound transfer over the shared allowance | US$0.005 per binary GB | NT$0.16/GiB |
+| Class A PUT/COPY/POST/LIST over the free quota | US$0.005 per 1,000 requests | NT$160/million requests |
+| Class B GET over the free quota | US$0.00040 per 1,000 requests | NT$12.80/million requests |
+
+The provider documents binary storage/transfer units in
+[its billing guide](https://techdocs.akamai.com/cloud-computing/docs/understanding-how-billing-works).
+The flat base and free storage, transfer and request allowances are shared
+account benefits; they cannot guarantee a margin for each Product. Class A
+includes LIST and multipart operations, while RTK's approved OTA meter counts
+qualified successful artifact writes. Range requests and retries can also
+create several provider GETs for one customer successful-download fact.
+Provider costs and customer meters therefore need separate reconciliation.
+
+At the listed overage, one million Class A operations cost NT$160, already
+NT$16 above the approved NT$144 per million OTA writes before other operating
+costs. This is a cost exposure, not a new customer tariff. Preserve all four
+approved OTA prices. Revisit commercial margin with actual provider invoices
+and operation counts before production; do not silently replace approved
+prices or use account-wide transfer as proof of customer OTA downloads.
 
 The current implementation path is:
 
