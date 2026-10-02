@@ -718,6 +718,7 @@ func printDeploymentUsage() {
   rtk-cloud deployment certificate-check --environment NAME [--format table|json] [--local-only]
   rtk-cloud deployment service-identity --environment NAME --subject service:NAME --confirm STACK [--install-seed]
   rtk-cloud deployment ota-service-rollout --environment dev|staging [--confirm STACK]
+  rtk-cloud deployment ota-service-rollout --environment dev|staging --update-image [--read-only|--confirm STACK]
   rtk-cloud deployment ota-manifest-trust --environment dev|staging [--confirm STACK]
   rtk-cloud deployment ota-device-edge --environment dev|staging [--confirm STACK]
   rtk-cloud deployment device-root-ingress-trust --environment dev|staging [--confirm STACK]

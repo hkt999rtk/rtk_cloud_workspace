@@ -7242,10 +7242,25 @@ if [[ "$*" == *"patch deployment video-cloud-otaservice --type=json"* ]]; then
     line="$line $arg"
   done
   printf '%s\n' "$line" >> "` + logPath + `"
+	if [[ "${FAKE_OTA_PATCH_FAIL:-}" == "1" ]]; then
+		printf 'test operation failed: concurrent Deployment edit\n' >&2
+		exit 1
+	fi
   if [[ -n "${FAKE_OTA_DEPLOYMENT_AFTER_PATCH_JSON_FILE:-}" ]]; then
     cp "$FAKE_OTA_DEPLOYMENT_AFTER_PATCH_JSON_FILE" "$FAKE_OTA_DEPLOYMENT_JSON_FILE"
   fi
+	if [[ -n "${FAKE_OTA_PODS_AFTER_PATCH_JSON_FILE:-}" ]]; then
+		cp "$FAKE_OTA_PODS_AFTER_PATCH_JSON_FILE" "$FAKE_OTA_PODS_JSON_FILE"
+	fi
   exit 0
+fi
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=video-cloud-otaservice -o json"* ]]; then
+	if [[ -n "${FAKE_OTA_PODS_JSON_FILE:-}" ]]; then
+		cat "$FAKE_OTA_PODS_JSON_FILE"
+	else
+		printf '{"items":[]}\n'
+	fi
+	exit 0
 fi
 if [[ "$*" == *"get endpointslices -l kubernetes.io/service-name=video-cloud-otaservice -o json"* ]]; then
   if [[ -n "${FAKE_OTA_ENDPOINTSLICES_JSON:-}" ]]; then
@@ -7340,6 +7355,14 @@ if [[ "$*" == *"get deployment video-cloud-api --ignore-not-found=true -o json"*
     printf '%s\n' "$FAKE_WEBRTC_CORE_DEPLOYMENT_JSON"
   fi
   exit 0
+fi
+if [[ "$*" == *"get deployment video-cloud-api -o json"* && -n "${FAKE_OTA_CORE_DEPLOYMENT_JSON_FILE:-}" ]]; then
+	cat "$FAKE_OTA_CORE_DEPLOYMENT_JSON_FILE"
+	exit 0
+fi
+if [[ "$*" == *"get pods -l app.kubernetes.io/name=video-cloud-api -o json"* && -n "${FAKE_OTA_CORE_PODS_JSON_FILE:-}" ]]; then
+	cat "$FAKE_OTA_CORE_PODS_JSON_FILE"
+	exit 0
 fi
 if [[ "$*" == *"get secret video-cloud-runtime -o json"* ]]; then
   if [[ -n "${FAKE_OTA_VIDEO_RUNTIME_SECRET_JSON:-}" ]]; then

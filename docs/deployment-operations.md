@@ -341,6 +341,22 @@ different results. Do not report a complete staging release from ready Pods,
    value, endpoint and edge route afterward. It does not modify the core API;
    after core cutover, key rotation needs a coordinated procedure for both
    operator paths.
+   To replace only an already active independent OTA Service image, set the
+   reviewed immutable Video Cloud CI digest in the canonical operator store.
+   First run `deployment ota-service-rollout --environment dev --update-image
+   --read-only`; this verifies the existing ready revision and shows whether
+   its image differs from the selected digest without writing or waiting for a
+   rollout. Then use `--update-image --confirm video-cloud-dev` for the single
+   image change. This mode requires canonical registration, edge and core
+   cutover flags all `true`, the old registrar `false`, strict Product checks,
+   the current mTLS edge and private OTA endpoint, the saved environment
+   `service:ota` identity matching the existing live Secret, selected object
+   storage and unchanged runtime Secrets. Missing or different local identity
+   records stop the update; this command never enrolls or adopts an identity. It tests
+   the Deployment resource version and old image before replacing the image,
+   then requires the new observed revision and its only live Pod to be Ready
+   on that digest. It does not reapply the Service, policies, Secrets, PVC or
+   core API. The original registration mode still rejects an active edge.
    Publication of a ready revision is allowed while OTA is `suspended`; it
    changes only the selected manifest version, not service activation or Product
    eligibility. If publication returns 409 despite a ready v2 lease and the
@@ -798,6 +814,26 @@ legacy object-store bucket and endpoint may belong to release artifacts and
 must not become the OTA private origin. The existing `video-cloud-runtime`
 Secret's AWS credential pair must also equal the selected media grant before
 the OTA Deployment is applied; this check does not rewrite that Secret.
+
+For an active staging OTA image update, finish the reviewed core API image
+update first. The new core can forward to the still Ready independent OTA
+Service; only then replace the independent service image with
+`deployment ota-service-rollout --environment staging --update-image --confirm
+video-cloud-staging`. Run the same command with `--read-only` and without
+`--confirm` before either mutation to qualify the current OTA Service's
+observed revision, only live Ready Pod, selected runtime checksum, existing
+service identity, object origin, runtime Secret UID and data, and mTLS route.
+This read-only check accepts the currently pinned core image only when its
+actual Ready Pods have already cut over to the independent OTA upstream;
+the mutating image update requires the core's Ready Pods on the newly selected
+immutable digest first. The independent OTA image must stay in the same Video
+Cloud repository as its currently deployed image.
+Repeat its read-back after the update and verify core and OTA use the same
+reviewed digest. A successful image rollout establishes process readiness;
+device/API behavior and Billing source acceptance still need their separate
+qualification. If the selected runtime settings differ from the live Pod,
+stop and reconcile them through a separately reviewed operation; this image
+command never rewrites them.
 
 Before the first staging standby rollout, verify that the environment's OTA
 manifest signing key exists and its public key matches the tracked map in

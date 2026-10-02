@@ -4,7 +4,7 @@ Status: active
 
 Owner: `rtk_cloud_workspace`
 
-Last reviewed: 2026-09-02
+Last reviewed: 2026-10-02 (OTA/Logger closeout boundary addendum)
 
 Audience: internal test operators, maintainers, and delegated agents
 
@@ -174,6 +174,135 @@ The `Revoke ephemeral Cloud Admin customer session` step, payment policy/method
 cleanup, evidence redaction, and `Upload sanitized qualification evidence` step
 must also succeed. Any missing Test ID, missing screenshot/PDF, credential-like
 artifact, failed cleanup, or missing artifact is a failed qualification.
+
+### OTA and Logger closeout boundary (2026-10-02)
+
+The seven Test IDs above qualify the existing payment and Cloud Admin Billing
+workflow. They do not certify a new OTA/Logger rate card, Logger source
+completeness, OTA direct-object delivery, or an OTA/Logger invoice. The
+separate frozen staging closeout has applied Billing migrations 072 and 073,
+retained Loki data on one 100 GiB PVC, preserved the original service options
+of 32 Products during grant backfill, and completed the scoped Logger runtime
+cutover. Its 11-row price comparison is a **technical review**, not a
+publication or an effective customer price. The existing active five-row
+card and four issued invoices remain the financial baseline. The newer Cloud
+Admin image still needs publication and customer-view acceptance. The
+tracked Factory public-entry flag has been set. The scoped Factory deployment
+repair merged in PR #637: when public entry is selected, the normal Video
+Cloud path requires Factory at the selected image. PR #638 allows only trailing
+CR/LF differences in the canonical-to-live issuer PEM comparison; all runtime
+values remain exact. Both live Factory Secret UIDs and their full raw data,
+plus the local source files, must remain unchanged through rollout. This
+merged safeguard passed the normal scoped staging rollout: 42 live Secret
+snapshots, 83 resource snapshots, 84 operator entries and 62 local files were
+preserved. Factory is on the selected Video Cloud image and its public
+TLS/auth gate passed. The original production run and enrollment returned
+HTTP 201/200, and one legacy certificate was issued. The separate strict
+Product issuer check failed because `issuer_id`/Product fields were absent;
+Product claim bindings remain zero. The deployed Factory/certissuer use the
+[documented staging compatibility signer](../repos/rtk_cloud_contracts_doc/platform_pki.md#16-current-implementation-gap-and-migration),
+so do not treat public transport readiness as formal Product CA issuer
+qualification. The same legacy Device/key/CSR/certificate was then used in
+one normal Account Manager provisioning operation; it succeeded without a new
+scope, certificate, production run or enrollment. Twelve read-only checks and
+a normal GET confirmed the same operation, its immutable succeeded outbox and
+Video Cloud applied `device_logging`, `mqtt` and `ota` grant with seven-day
+retention. The public Account Manager Device exposes
+`applied_grant_revision`, while its filtered `metadata` omits bare grant
+fields. An initial evidence helper expected those absent fields; local-only
+config/artifact finalization exited successfully at
+`2026-10-02T03:06:06Z` using the authoritative outbox and Video Cloud grant
+read-back, without reposting. Keep this compatibility result separate from
+formal Product signer qualification and OTA/Logger billing acceptance.
+
+For Logger, an initial private helper stopped before MQTT connect because it
+missed the renderer-derived public endpoint. A separate Python strict TLS
+check rejected the legacy MQTT CA for missing AKI, while normal Go TLS
+verification of the canonical CA and hostname passed; neither preliminary
+attempt sent a log or demonstrated a deployed TLS failure. The corrected
+unpublished-only continuation reused the same provisioned fixture, reached
+Ready and received one QoS 1 PUBACK. Read-back at
+`2026-10-02T03:32:42Z` verified one accepted 528-byte receipt, zero pending
+receipts, Product sequence one, one matching Loki entry and the applied
+grant's revision/digest/seven-day UTC expiry. The partial October source
+outbox and Billing fact counts remained zero; no closed-month fact
+acknowledgment or seal passed. This is accepted-source evidence only.
+
+For OTA, the first controlled fixture's Admin preparation passed but its
+device check returned HTTP 409 before any artifact token, event or download.
+It was a legacy `ota/` release created through Admin `/v1/ota` while core
+cutover was false; the independent billable API requires `ota-billable-v1`.
+The scoped diagnosis found no OTA deployment, grant, task, download, object,
+upload, source fact or Billing fact. The original campaign was canceled with
+the normal API (HTTP 200) before cutover and is not adopted or repriced.
+Normal core-cutover apply then passed, both selected Video Cloud API Pods
+became Ready and the pinned independent-service read-back passed with the
+canonical flag true. The original Product grant, Device and certificate were
+retained. A new billable release was created through the cut-over core, then
+its signed object PUT returned HTTP 204 and finalization returned HTTP 200.
+The `artifact_write` source ACK and Billing fact each reached one. Publication
+returned HTTP 409 because the original legacy release was still Published
+while the new one was Ready, with neither release assigned to a device. Video
+Cloud PR #747 contains the narrow legacy Published-to-Revoked CAS repair and
+is merged at `a9201728`, but the corresponding new image has not yet been
+deployed to the active core or independent OTA Service. The scoped image
+update must verify the active configuration and live source before changing
+only the selected images, core first and independent OTA second. Then continue
+the same billable release without re-uploading or repricing legacy evidence.
+Device assignment, verified download and the remaining OTA source-to-Billing
+meters remain pending. Future qualification must complete independent service,
+strict Product, authenticated edge and source-schema readiness, then core
+cutover, **before** creating the paid Admin release.
+
+The cutover core returns `503 OTA_DIRECT_ROUTE_REQUIRED` for device identity
+`check`, deployment `events` and `artifact-token`; use the independent OTA
+edge with direct mTLS for those APIs. Signed
+`PUT /v1/device/ota/internal/upload/<release-id>` is the sole core device-path
+forwarding exception: OTA validates the release-scoped expiring token and
+current Product grant before reserving upload. It neither authenticates a
+device nor forwards artifact GET/download. After Product grant and core
+cutover read-back, create the billable release through core-forwarded
+operator `POST /v1/ota/.../releases`, then use its signed PUT URL.
+
+PR #639 retains the selected non-secret capacity profile across normal
+deployment reloads and refuses a missing or stale canonical staging profile
+before provider operations. A fresh zero-addition provider plan passed; the
+normal rollout then restored all seven previously lost workload budgets. The
+Factory read-back matched its new declared `100m` CPU and `128Mi` memory
+request with a `128Mi` memory limit. The post-rollout Product PKI prerequisite,
+Loki retention/mount and Logger source checks, plus issuer mTLS, passed. These
+results do not certify OTA/Logger billing acceptance.
+
+Logger source coverage began at the actual
+`2026-10-01T20:26:25.633349Z` migration clock. The source-schema maintenance
+record contains an initial GO-assertion exception and a subsequent read-only
+recovery verification; it must not be reported as a fully passed initial
+writer-pause gate. October cannot be certified as a full source month.
+November is the first possible complete month if coverage remains continuous
+and all Product/owner gates pass. Its Logger seal cannot complete before
+`2026-12-02 00:00 UTC`; OTA's 48-hour grace makes
+`2026-12-03 00:00 UTC` the earliest possible combined November close. A
+missing seal means incomplete evidence, not zero usage. Do not manufacture
+an October seal or mark OTA/Logger charge acceptance PASS from this payment
+qualification run. At `2026-10-02T02:43:44Z`, the normal
+`deployment logger-period-seal --month 2026-10` invocation, without
+`--confirm`, refused the open UTC month with `month must be YYYY-MM and closed
+for at least 24 hours in UTC` before configuration, provider, Job or database
+writes. It proves the live time guard only, not source completeness or a real
+month seal. An initial denied-before Logger helper stopped on a variable-name
+regex before sending an event. The corrected normal probe then obtained an
+mTLS request token and received exact HTTP 403 for one rejected Logger POST.
+Its verified before/after read-back at `2026-10-02T03:17:29Z` found zero
+scoped event, receipt, source outbox row and Billing fact, plus zero entries in
+the bounded Loki query; source identity was unchanged. This qualifies only
+this rejected request's nonbilling path, not a complete-month source seal. The
+current
+[Logger seal guard](../repos/rtk_billing/internal/billingstore/logger_period_seals.go)
+checks full-month source coverage and reconciled facts; the
+[invoice close guard](../repos/rtk_billing/internal/billingstore/invoices.go)
+holds an incomplete month. Record the separately reviewed financial approval,
+published future version, source/seal high-water, accepted/rejected fact
+reconciliation and first actual invoice as distinct follow-on evidence.
 
 ## Evidence And Handoff Record
 
