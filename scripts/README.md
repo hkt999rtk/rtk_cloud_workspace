@@ -183,7 +183,13 @@ controllers. It fails on a missing or unready controller. A timed-out rollout
 is a failed release. After the scoped rollout, add
 `--require-video-cloud-image` to compare the API, seven required auxiliary
 workers and any present registered Video Cloud services with the environment's
-protected `LKE_VIDEO_CLOUD_IMAGE` pin. This also checks readiness; a successful
+protected `LKE_VIDEO_CLOUD_IMAGE` pin. When the selected runtime enables
+`FACTORY_ENROLL_PUBLIC_ENABLED=true`, the scoped deployment also reapplies and
+waits for Factory enrollment using its existing canonical issuer identity and
+runtime Secrets. The image checker then requires a ready `factoryenroll`
+Deployment at that same image pin. Missing or changed canonical Factory
+credentials stop the rollout; the scoped path does not generate identities or
+rewrite Factory Secrets. This also checks readiness; a successful
 API rollout with an old auxiliary worker image fails the check.
 The checker reads `cloud_env/NAME/runtime/env/stack.env` by default; set
 `RTK_CLOUD_ENV_ROOT` only when checking an explicit alternate runtime tree.
