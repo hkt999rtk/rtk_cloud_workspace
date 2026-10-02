@@ -188,8 +188,10 @@ protected `LKE_VIDEO_CLOUD_IMAGE` pin. When the selected runtime enables
 waits for Factory enrollment using its existing canonical issuer identity and
 runtime Secrets. The image checker then requires a ready `factoryenroll`
 Deployment at that same image pin. Missing or changed canonical Factory
-credentials stop the rollout; the scoped path does not generate identities or
-rewrite Factory Secrets. This also checks readiness; a successful
+credentials stop the rollout. The PEM comparison ignores only terminal CR/LF
+from the existing key writer; other bytes and runtime values must match. Both live
+Secret UIDs and their complete raw data stay unchanged through rollout. The scoped
+path does not generate identities or rewrite Factory Secrets. This also checks readiness; a successful
 API rollout with an old auxiliary worker image fails the check.
 The checker reads `cloud_env/NAME/runtime/env/stack.env` by default; set
 `RTK_CLOUD_ENV_ROOT` only when checking an explicit alternate runtime tree.

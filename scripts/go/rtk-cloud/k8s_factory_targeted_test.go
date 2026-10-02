@@ -28,6 +28,10 @@ func testTargetedFactoryCanonicalRollout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	_, otherPrivate, err := newLKESignedCertificate(ca, key, "factoryenroll", nil, nil, []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}, "p256")
+	if err != nil {
+		t.Fatal(err)
+	}
 	paths := provisionPaths{EnvRoot: t.TempDir()}
 	dir := sensitiveEnvironmentPath(paths, "certissuer")
 	local := map[string]string{"factory.crt": cert, "factory.key": private, "service-ca.crt": caPEM}
@@ -77,7 +81,9 @@ case "$*" in
       printf '{"spec":{"template":{"spec":{"containers":[{"env":[{"name":"FACTORY_ENROLL_IDENTITY_STATE","value":"managed"}]}]}}}}'
     else printf '{}' ; fi ;;
   *"get deployment"*) printf '{}' ;;
-  *"get secret factoryenroll-certissuer-client"*) printf '%s' "$FACTORY_CLIENT_JSON" ;;
+  *"get secret factoryenroll-certissuer-client"*)
+    if [ -f "$FACTORY_ROLLED" ] && [ "${FACTORY_CLIENT_CHANGED_AFTER:-}" = true ]; then printf '%s' "$FACTORY_CHANGED_CLIENT_JSON";
+    else printf '%s' "$FACTORY_CLIENT_JSON"; fi ;;
   *"get secret factoryenroll-runtime"*)
     if [ -f "$FACTORY_ROLLED" ] && [ "${FACTORY_CHANGED_AFTER:-}" = true ]; then printf '%s' "$FACTORY_CHANGED_JSON";
     else printf '%s' "$FACTORY_RUNTIME_JSON"; fi ;;
@@ -98,13 +104,20 @@ esac
 	env := map[string]string{"CLOUD_ENV_NAME": "dev", "CLOUD_STACK_NAME": "video-cloud-dev", "ACCOUNT_MANAGER_DOMAIN": "account.example.test", "FACTORY_ENROLL_PUBLIC_ENABLED": "true"}
 	for _, tc := range []struct{ name, failure, want string }{
 		{"preserved canonical credentials", "", ""},
+		{"same PEM without final newline preserved", "no-newline", ""},
+		{"same PEM with trailing CRLF preserved", "crlf", ""},
 		{"managed identity rejected", "managed", "managed identity owner"},
-		{"different client bytes rejected", "client", "differs from canonical identity"},
+		{"different client content rejected", "client", "differs from canonical identity"},
+		{"different private key DER rejected", "different-key", "differs from canonical identity"},
+		{"leading key whitespace rejected", "leading", "differs from canonical identity"},
+		{"internal key line ending rejected", "internal", "differs from canonical identity"},
+		{"trailing key space rejected", "space", "differs from canonical identity"},
 		{"different JWT rejected", "jwt", "FACTORY_ENROLL_PRODUCTION_JWT_SECRET differs from canonical settings"},
 		{"missing issuer Secret rejected", "missing-client", "existing issuer client Secret"},
 		{"missing runtime Secret rejected", "missing-runtime", "existing runtime Secret"},
 		{"missing local bundle does not bootstrap", "missing-local", "incomplete"},
 		{"changed Secret during rollout rejected", "after", "changed during rollout"},
+		{"same UID client formatting changed during rollout rejected", "after-line-ending", "changed during rollout"},
 		{"failed rollout rejected", "rollout", "exit status 1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,12 +130,28 @@ esac
 			setJSON("FACTORY_CHANGED_JSON", secret("replacement", map[string]string{"changed": "value"}))
 			t.Setenv("FACTORY_MANAGED", "false")
 			t.Setenv("FACTORY_CHANGED_AFTER", "false")
+			t.Setenv("FACTORY_CLIENT_CHANGED_AFTER", "false")
 			t.Setenv("FACTORY_ROLLOUT_FAIL", "false")
 			switch tc.failure {
 			case "managed":
 				t.Setenv("FACTORY_MANAGED", "true")
 			case "client":
-				setJSON("FACTORY_CLIENT_JSON", secret("client-original", map[string]string{"client.crt": cert + "\n", "client.key": private, "ca.crt": caPEM}))
+				setJSON("FACTORY_CLIENT_JSON", secret("client-original", map[string]string{"client.crt": cert + " ", "client.key": private, "ca.crt": caPEM}))
+			case "different-key":
+				setJSON("FACTORY_CLIENT_JSON", secret("client-original", map[string]string{"client.crt": cert, "client.key": otherPrivate, "ca.crt": caPEM}))
+			case "no-newline", "crlf", "leading", "internal", "space":
+				key := strings.TrimRight(private, "\r\n")
+				switch tc.failure {
+				case "crlf":
+					key += "\r\n"
+				case "leading":
+					key = "\n" + key
+				case "internal":
+					key = strings.Replace(key, "\n", "\r\n", 1)
+				case "space":
+					key += " "
+				}
+				setJSON("FACTORY_CLIENT_JSON", secret("client-original", map[string]string{"client.crt": cert, "client.key": key, "ca.crt": caPEM, "unrelated": "preserved-client-extra"}))
 			case "jwt":
 				data := map[string]any{}
 				for key, value := range runtime["data"].(map[string]any) {
@@ -145,11 +174,14 @@ esac
 				})
 			case "after":
 				t.Setenv("FACTORY_CHANGED_AFTER", "true")
+			case "after-line-ending":
+				setJSON("FACTORY_CHANGED_CLIENT_JSON", secret("client-original", map[string]string{"client.crt": cert, "client.key": private + "\n", "ca.crt": caPEM, "unrelated": "preserved-client-extra"}))
+				t.Setenv("FACTORY_CLIENT_CHANGED_AFTER", "true")
 			case "rollout":
 				t.Setenv("FACTORY_ROLLOUT_FAIL", "true")
 			}
 			var err error
-			if tc.failure == "" {
+			if tc.want == "" {
 				err = lkeApplyTargetedRuntimeDependencies(paths, env, provisionOptions{workloads: []string{"video-cloud"}})
 			} else {
 				err = lkeApplyTargetedFactoryEnroll(paths, env)
@@ -164,7 +196,7 @@ esac
 						t.Fatalf("missing normal Factory operation: %s", required)
 					}
 				}
-			} else if tc.failure != "after" && tc.failure != "rollout" && body != "" {
+			} else if tc.failure != "after" && tc.failure != "after-line-ending" && tc.failure != "rollout" && body != "" {
 				t.Fatal("Factory mutation preceded preservation guard")
 			}
 			if strings.Contains(body, "kind: Secret\nmetadata:\n  name: factoryenroll-runtime") || strings.Contains(body, "kind: Secret\nmetadata:\n  name: factoryenroll-certissuer-client") || strings.Contains(body, "name: certissuer\n") || strings.Contains(body, "name: openbao") {
