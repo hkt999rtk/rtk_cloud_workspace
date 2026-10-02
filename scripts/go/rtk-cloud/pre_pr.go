@@ -420,6 +420,9 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 
 func prePRIntegrationChecks(selection prePRSelection) []string {
 	checks := []string{}
+	if selection.AccountManagerPostgres {
+		checks = append(checks, "Account Manager cross-service factory/token chain")
+	}
 	if selection.BillingPostgres {
 		checks = append(checks, "Billing PostgreSQL/virtual payment")
 	}

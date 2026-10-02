@@ -81,7 +81,7 @@ func TestParsePrePRSelectionRejectsMissingAndInvalidFields(t *testing.T) {
 
 func TestPrePRIntegrationChecks(t *testing.T) {
 	selection := prePRSelection{AccountManagerPostgres: true, VideoCloudPostgresEMQX: true}
-	want := []string{"none"}
+	want := []string{"Account Manager cross-service factory/token chain"}
 	if got := prePRIntegrationChecks(selection); !reflect.DeepEqual(got, want) {
 		t.Fatalf("checks = %v, want %v", got, want)
 	}

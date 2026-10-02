@@ -79,6 +79,8 @@ The runner restores the caller's environment and removes its containers after
 each profile. It never resets a supplied database or uses shared staging.
 An integration profile replaces that module's local unit execution; unrelated
 CI profiles with different fixtures remain separate checks.
+Account Manager's additional factory/token chain against an independently
+compiled Video Cloud service remains in CI and is listed separately in the plan.
 
 Account Manager's canonical report script executes formatting, its full
 PostgreSQL suite with coverage, and the build once. Workspace coverage consumes
