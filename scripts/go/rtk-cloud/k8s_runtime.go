@@ -39,6 +39,11 @@ func runKubernetesProvision(provider cloudProvider, ctx provisionContext) error 
 		activeSecretEnvironmentRoot = ""
 	}()
 	lkeRuntimeSecretStateDir = store.RuntimeDir()
+	if provider.Name() == "lke" {
+		if err := lkeRequireCanonicalCapacityProfile(ctx.Env); err != nil {
+			return err
+		}
+	}
 	if err := loadLKEImageManifestDefaults(ctx.Paths.EnvRoot, ctx.Env); err != nil {
 		return err
 	}

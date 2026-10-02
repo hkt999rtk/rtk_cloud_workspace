@@ -4744,6 +4744,23 @@ func writeLKECompatibilityArtifacts(paths provisionPaths, env map[string]string)
 }
 
 func isSafeLKEOperatorStackOverride(key string) bool {
+	// Compatibility metadata must retain the validated shared architecture and
+	// its computed capacity, or the next invocation would render empty resources.
+	if deploymentArchitectureKeys[key] || key == "DEPLOYMENT_ARCHITECTURE" || key == "DEPLOYMENT_ADAPTER" || key == "DNS_ADAPTER" {
+		return true
+	}
+	for _, spec := range capacityWorkloadRegistry {
+		if key == spec.Prefix+"_EFFECTIVE_REPLICAS" || key == spec.Prefix+"_LIMIT_MEMORY" {
+			return true
+		}
+	}
+	for _, class := range []string{"GENERAL", "BROKER", "DATABASE"} {
+		for _, suffix := range []string{"EFFECTIVE_COUNT", "TOTAL_REQUEST_CPU_MILLI", "TOTAL_REQUEST_MEMORY_MIB", "USABLE_CPU_MILLI", "USABLE_MEMORY_MIB", "REQUIRED_BY_CPU", "REQUIRED_BY_MEMORY", "REQUIRED_BY_SPREAD"} {
+			if key == "NODE_CLASS_"+class+"_"+suffix {
+				return true
+			}
+		}
+	}
 	safeRuntimeKeys := map[string]bool{
 		"FACTORY_ENROLL_PUBLIC_ENABLED":                   true,
 		"TEST_LAB_ENABLED":                                true,
@@ -8729,7 +8746,7 @@ spec:
           image: %s
           imagePullPolicy: IfNotPresent
           command: ["/app/factoryenroll"]
-          ports:
+%s          ports:
             - name: http
               containerPort: 18443
           env:
@@ -8787,7 +8804,7 @@ spec:
         - name: factoryenroll-certissuer-client
           secret:
             secretName: factoryenroll-certissuer-client
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeFactoryAdmissionBaseURL(env), firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeContainerResourcesManifest(env, "factoryenroll"), lkeFactoryAdmissionBaseURL(env), firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeFactoryAdmissionBaseURL(env map[string]string) string {

@@ -79,6 +79,32 @@ func lkePrintCapacityPlan(env map[string]string, opts provisionOptions) {
 	}
 }
 
+// Protected canonical environments must never fall back to an empty legacy
+// capacity plan after their materialized architecture metadata is lost.
+func lkeRequireCanonicalCapacityProfile(env map[string]string) error {
+	if !activeCanonicalSecretStore {
+		return nil
+	}
+	switch env["CLOUD_ENV_NAME"] {
+	case "staging", "prod", "production":
+	default:
+		return nil
+	}
+	if env["DEPLOYMENT_ARCHITECTURE"] != "kubernetes" || env["DEPLOYMENT_RUNTIME"] != "kubernetes" {
+		return errors.New("protected canonical capacity profile is missing its Kubernetes architecture; run deployment plan for the selected environment before provisioning")
+	}
+	_, effective, err := buildSharedCapacityPlan(env)
+	if err != nil {
+		return fmt.Errorf("protected canonical capacity profile is incomplete: %w; run deployment plan for the selected environment before provisioning", err)
+	}
+	for key, value := range effective {
+		if env[key] != value {
+			return fmt.Errorf("protected canonical capacity profile has missing or stale %s; run deployment plan for the selected environment before provisioning", key)
+		}
+	}
+	return nil
+}
+
 func lkeCheckCapacity(env map[string]string, opts provisionOptions) error {
 	return lkeCheckCapacityWithPaths(provisionPaths{}, env, opts)
 }

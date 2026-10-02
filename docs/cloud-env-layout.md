@@ -92,6 +92,8 @@ resolution writes `runtime/adapters/lke/resolved-resources.env`; normalized
 service limit required by load tests. Shared runtime and load tests must not read
 adapter-private files directly.
 
+The normal LKE compatibility rewrite must retain the validated non-secret architecture, workload requests and memory limits, placement, minimum/effective replicas, and computed node-class capacity totals. Repeated provision or DNS calls consume that same materialized profile; they must not downgrade to an empty legacy capacity plan. Canonical staging and production reject missing, incomplete or stale architecture/capacity metadata before provisioning; rebuild it through `deployment plan` for the selected environment. Credentials remain in the environment SecretStore and are excluded from compatibility metadata.
+
 ## Configuration Resolution Order
 
 The resolver combines architecture defaults, adapter defaults, environment

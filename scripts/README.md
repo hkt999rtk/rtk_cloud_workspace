@@ -172,6 +172,15 @@ needs to populate the blob endpoint; the read-only check does not.
 
 OpenBao health/capabilities/workload authorization, live Secret key bindings and
 actual container access, and acceptance-user login remain separate release gates.
+Before a protected scoped rollout, materialize the selected environment with
+`deployment plan`. Its non-secret architecture and complete capacity profile
+must survive every compatibility rewrite and reload. Canonical staging and
+production refuse missing or stale profiles before provisioning; an empty
+0m/0Mi capacity plan is not release qualification. Confirm the planned resource
+requests and memory limits, then compare actual workload budgets after rollout.
+The scoped public Factory renderer also uses its registered capacity profile;
+existing Secret and issuer identity preservation remains unchanged.
+
 A scoped Video Cloud `provision --preflight --plan --workloads video-cloud`
 now prints the Fleet Valkey, MQTT, Prometheus, API and auxiliary rollout targets,
 and checks that fixed-ID Logger and MQTT usage Deployments render with a

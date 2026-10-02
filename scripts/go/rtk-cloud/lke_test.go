@@ -5041,6 +5041,7 @@ func TestRunProvisionLKEDeployWritesLegacyStackAndVideoState(t *testing.T) {
 }
 
 func TestWriteLKECompatibilityArtifactsForKubernetesArchitecture(t *testing.T) {
+	t.Run("repeated materialized capacity and protected preflight", testLKECompatibilityCapacityRoundTrip)
 	envRoot := t.TempDir()
 	env := map[string]string{
 		"DEPLOYMENT_ARCHITECTURE": "kubernetes",
