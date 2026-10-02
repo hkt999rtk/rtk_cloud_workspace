@@ -182,23 +182,83 @@ esac
 						t.Fatal(err)
 					}
 				}
-				cfg := deploymentConfig{Environment: "staging", Adapter: "lke", Workspace: t.TempDir(), Values: env}
-				resolved, err := loadLKEImageEnv(cfg.Workspace, store.Root)
+				cfg := deploymentConfig{
+					Environment: "staging", Adapter: "lke", Workspace: t.TempDir(), RuntimeRoot: t.TempDir(),
+					Values:          appendMap(env, map[string]string{"DEPLOYMENT_ADAPTER": "lke", "CLOUD_DNS_ROOT_DOMAIN": "example.test"}),
+					AdapterValues:   map[string]string{"LKE_MQTT_TENANT_NAMESPACE_ENABLED": "false"},
+					AdapterResolved: map[string]string{"LKE_REGION": "us-sea"},
+					Storage:         deploymentStoragePlan{RuntimeMedia: deploymentStorageTarget{Bucket: "selected-media", Region: "us-sea", Prefix: "selected-prefix"}},
+				}
+				// Runtime metadata and validated storage live outside the SecretStore.
+				writeTestFile(t, filepath.Join(cfg.RuntimeRoot, "env", "stack.env"), "CLOUD_ENV_NAME=staging\nCLOUD_STACK_NAME=video-cloud-staging\nCLOUD_PROVIDER=lke\nCLOUD_REGION=us-sea\nCLOUD_DNS_ROOT_DOMAIN=example.test\nVIDEO_CLOUD_BLOB_ENDPOINT=https://stale.example.test\nVIDEO_CLOUD_BLOB_BUCKET=stale-media\n")
+				if err := writeDeploymentStorageReceipt(cfg.RuntimeRoot, deploymentStorageReceipt{Bucket: "selected-media", Region: "us-sea", Endpoint: "https://selected.example.test"}); err != nil {
+					t.Fatal(err)
+				}
+				resolved, err := loadLKEImageEnv(cfg.Workspace, cfg.RuntimeRoot)
 				if err != nil {
 					t.Fatal(err)
 				}
-				canonicalEnv := appendMap(resolved.Values, env)
+				canonicalEnv := appendMap(resolved.Values, cfg.Values)
+				for key, value := range map[string]string{
+					"VIDEO_CLOUD_BLOB_ENDPOINT": "https://selected.example.test", "VIDEO_CLOUD_BLOB_BUCKET": "selected-media",
+					"VIDEO_CLOUD_BLOB_REGION": "us-sea", "VIDEO_CLOUD_BLOB_PREFIX": "selected-prefix",
+					"LKE_MQTT_TENANT_NAMESPACE_ENABLED": "false",
+				} {
+					canonicalEnv[key] = value
+				}
+				for key, value := range map[string]string{
+					"LINODE_OBJ_ACCESS_KEY_ID": "legacy-media-id", "LINODE_OBJ_SECRET_ACCESS_KEY": "legacy-media-secret",
+					"LINODE_MEDIA_OBJ_ACCESS_KEY_ID": "scoped-media-id", "LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY": "scoped-media-secret",
+				} {
+					if err := store.write("operator/env/"+key, []byte(value), false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// The normal deploy uses scoped media inputs even when legacy credentials coexist.
+				canonicalEnv["LINODE_OBJ_ACCESS_KEY_ID"] = "scoped-media-id"
+				canonicalEnv["LINODE_OBJ_SECRET_ACCESS_KEY"] = "scoped-media-secret"
 				previousDir := lkeRuntimeSecretStateDir
 				lkeRuntimeSecretStateDir = store.RuntimeDir()
 				canonicalChecksum := lkeVideoCloudRuntimeChecksum(canonicalEnv)
+				legacyChecksum := lkeVideoCloudRuntimeChecksum(appendMap(canonicalEnv, map[string]string{
+					"LINODE_OBJ_ACCESS_KEY_ID": "legacy-media-id", "LINODE_OBJ_SECRET_ACCESS_KEY": "legacy-media-secret",
+				}))
+				if canonicalChecksum == legacyChecksum {
+					t.Fatal("mixed credentials must produce distinct runtime checksums")
+				}
 				lkeRuntimeSecretStateDir = previousDir
 				deployment["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = canonicalChecksum
 				pods[0].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = canonicalChecksum
 				setJSON("LOGGER_SOURCE_DEPLOYMENT", deployment)
 				setJSON("LOGGER_SOURCE_PODS", map[string]any{"items": pods})
+				t.Setenv("LINODE_OBJ_ACCESS_KEY_ID", "unrelated-shell-id")
+				t.Setenv("LINODE_OBJ_SECRET_ACCESS_KEY", "unrelated-shell-secret")
 				check := checkRolloutLoggerPeriodSource(cfg)
 				if !check.Passed {
 					t.Fatalf("canonical live source qualification failed: %+v", check)
+				}
+				if os.Getenv("LINODE_OBJ_ACCESS_KEY_ID") != "unrelated-shell-id" || os.Getenv("LINODE_OBJ_SECRET_ACCESS_KEY") != "unrelated-shell-secret" {
+					t.Fatal("selected credential bindings leaked into caller")
+				}
+				for name, staleChecksum := range map[string]string{
+					"legacy credentials": legacyChecksum,
+					"stale storage":      lkeVideoCloudRuntimeChecksum(appendMap(canonicalEnv, map[string]string{"VIDEO_CLOUD_BLOB_BUCKET": "stale-media"})),
+				} {
+					deployment["spec"].(map[string]any)["template"].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = staleChecksum
+					pods[0].(map[string]any)["metadata"].(map[string]any)["annotations"].(map[string]any)["rtk.realtek.com/runtime-checksum"] = staleChecksum
+					setJSON("LOGGER_SOURCE_DEPLOYMENT", deployment)
+					setJSON("LOGGER_SOURCE_PODS", map[string]any{"items": pods})
+					check = checkRolloutLoggerPeriodSource(cfg)
+					if check.Passed || !strings.Contains(check.Detail, "runtime checksum") {
+						t.Fatalf("%s checksum must remain rejected: %+v", name, check)
+					}
+				}
+				if err := writeDeploymentStorageReceipt(cfg.RuntimeRoot, deploymentStorageReceipt{Bucket: "different-media", Region: "us-sea", Endpoint: "https://stale.example.test"}); err != nil {
+					t.Fatal(err)
+				}
+				selected, err := loggerPeriodSourceSelectedEnv(cfg, store)
+				if err != nil || selected["VIDEO_CLOUD_BLOB_ENDPOINT"] != "" {
+					t.Fatal("mismatched receipt borrowed a stale runtime endpoint")
 				}
 				if os.Getenv("RTK_CLOUD_KUBECONFIG") != "/fixture/staging/kubeconfig.yaml" || lkeRuntimeSecretStateDir == store.RuntimeDir() {
 					t.Fatal("canonical qualification leaked selected context")

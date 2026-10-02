@@ -9,6 +9,7 @@ import (
 
 func TestLoggerPeriodSealCommandPlansWithoutCredentialsAndStartsGuardedJob(t *testing.T) {
 	workspace := writeDeploymentFixture(t, "staging", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "staging", "storage.env"), "RUNTIME_MEDIA_STORAGE_POLICY=colocated\nRUNTIME_MEDIA_STORAGE_BUCKET=selected-seal-media\nRUNTIME_MEDIA_STORAGE_PREFIX=selected-seal-prefix\n")
 	configRoot := t.TempDir()
 	t.Setenv("RTK_CLOUD_CONFIG_ROOT", configRoot)
 	store, err := newSecretStore(configRoot, "staging")
@@ -43,7 +44,10 @@ func TestLoggerPeriodSealCommandPlansWithoutCredentialsAndStartsGuardedJob(t *te
 			}
 			return func() {}, nil
 		},
-		readyLogger: func(map[string]string) error {
+		readyLogger: func(env map[string]string) error {
+			if env["VIDEO_CLOUD_BLOB_BUCKET"] != "selected-seal-media" || env["VIDEO_CLOUD_BLOB_REGION"] != "us-sea" || env["VIDEO_CLOUD_BLOB_PREFIX"] != "selected-seal-prefix" {
+				t.Fatal("monthly close omitted the selected materialized storage projection")
+			}
 			if failed == "logger" {
 				return errors.New("Logger unavailable")
 			}
