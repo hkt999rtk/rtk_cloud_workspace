@@ -806,7 +806,7 @@ func lkePublicHTTPSRoutes(env map[string]string) []lkePublicHTTPSRoute {
 func lkePublicHTTPSBaseRoutes(env map[string]string) []lkePublicHTTPSRoute {
 	videoNS := lkeNamespaceName(env, "video-cloud")
 	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
-	deviceDomain := firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain)
+	deviceDomain := lkeDeviceDomain(env)
 	routes := []lkePublicHTTPSRoute{
 		{Host: videoDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
 		{Host: deviceDomain, Namespace: videoNS, Service: "video-cloud-api", ServicePort: 80, TargetPort: envIntDefault("LKE_VIDEO_CLOUD_PORT", 8080)},
@@ -842,6 +842,10 @@ func lkeFrontendPublicDomain(env map[string]string) string {
 	return firstNonEmpty(os.Getenv("LKE_FRONTEND_DOMAIN"), env["FRONTEND_DOMAIN"], "frontend."+env["VIDEO_CLOUD_DOMAIN"])
 }
 
+func lkeDeviceDomain(env map[string]string) string {
+	return firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+env["VIDEO_CLOUD_DOMAIN"])
+}
+
 func lkeSDKPortalBaseURL(env map[string]string) string {
 	if configured := strings.TrimSpace(lkeEnvValue(env, "SDK_PORTAL_BASE_URL")); configured != "" {
 		return strings.TrimRight(configured, "/")
@@ -850,16 +854,24 @@ func lkeSDKPortalBaseURL(env map[string]string) string {
 }
 
 func lkeCloudLoggerRoute(env map[string]string) lkePublicHTTPSRoute {
+	route := lkeCloudLoggerPlannedRoute(env)
+	if route.Host == "" {
+		return lkePublicHTTPSRoute{}
+	}
+	out, err := kubectlCombinedOutput(nil, "-n", route.Namespace, "get", "service", route.Service, "-o", "name")
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return lkePublicHTTPSRoute{}
+	}
+	return route
+}
+
+func lkeCloudLoggerPlannedRoute(env map[string]string) lkePublicHTTPSRoute {
 	host := env["CLOUD_LOGGER_DOMAIN"]
-	if host == "" {
+	if host == "" || lkeWorkloadReplicas(env, lkeWorkload{Key: "cloud-logger", Name: "cloud-logger"}) == "0" {
 		return lkePublicHTTPSRoute{}
 	}
 	namespace := lkeNamespaceName(env, "logger")
 	service := firstNonEmpty(os.Getenv("LKE_CLOUD_LOGGER_SERVICE"), "cloud-logger")
-	out, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "service", service, "-o", "name")
-	if err != nil || strings.TrimSpace(string(out)) == "" {
-		return lkePublicHTTPSRoute{}
-	}
 	servicePort := envIntDefault("LKE_CLOUD_LOGGER_SERVICE_PORT", 80)
 	targetPortDefault := envIntDefault("LKE_CLOUD_LOGGER_PORT", 18090)
 	return lkePublicHTTPSRoute{Host: host, Namespace: namespace, Service: service, ServicePort: servicePort, TargetPort: envIntDefault("LKE_CLOUD_LOGGER_TARGET_PORT", targetPortDefault)}
@@ -1341,8 +1353,7 @@ func lkePublicHTTPSIngressManifests(env map[string]string, routes []lkePublicHTT
 }
 
 func lkeIsDeviceMTLSRoute(env map[string]string, route lkePublicHTTPSRoute) bool {
-	videoDomain := env["VIDEO_CLOUD_DOMAIN"]
-	deviceHost := firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoDomain)
+	deviceHost := lkeDeviceDomain(env)
 	// Every route on the device host must retain the ingress client-certificate
 	// check, including a path routed to an optional service.
 	return route.Host != "" && route.Host == deviceHost

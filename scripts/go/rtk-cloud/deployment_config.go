@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
 	"rtk-cloud-workspace/scripts/go/internal/storagepolicy"
 )
 
@@ -85,7 +87,7 @@ var deploymentArchitectureKeys = architectureKeySet()
 var deploymentEnvironmentKeys = keySet(
 	"CLOUD_STACK_NAME", "CLOUD_DNS_ROOT_DOMAIN", "DEPLOYMENT_LOCATION",
 	"PRIVACY_POLICY_URL", "GOOGLE_ANALYTICS_MEASUREMENT_ID",
-	"FRONTEND_DOMAIN", "PUBLIC_BASE_URL", "DISABLE_SEARCH_INDEXING",
+	"FRONTEND_DOMAIN", "CONSOLE_DOMAIN", "PUBLIC_BASE_URL", "DISABLE_SEARCH_INDEXING",
 	"TEST_LAB_ENABLED",
 	"SUPPORT_TICKETS_ENABLED", "ZAMMAD_SUPPORT_GROUP_ID", "ZAMMAD_UNASSIGNED_OWNER_ID",
 	"FACTORY_ENROLL_PUBLIC_ENABLED", "FACTORY_ENROLL_DOMAIN",
@@ -768,6 +770,9 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		}
 		environmentRoot = filepath.Join(workspace, "cloud_env", environment)
 	}
+	if !secretEnvironmentPattern.MatchString(environment) || strings.HasSuffix(environment, "-") || len("video-cloud-"+environment) > 63 {
+		return deploymentConfig{}, fmt.Errorf("invalid DNS environment name %q: use lowercase alphanumeric characters and internal hyphens; video-cloud-<environment> must fit one DNS label", environment)
+	}
 	envIdentity, err := readStrictEnv(filepath.Join(environmentRoot, "environment.env"))
 	if err != nil {
 		return deploymentConfig{}, err
@@ -790,6 +795,16 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 		if strings.TrimSpace(envIdentity[key]) == "" {
 			return deploymentConfig{}, fmt.Errorf("%s is required in environment.env", key)
 		}
+	}
+	expectedStack := envroot.Derive(map[string]string{"CLOUD_ENV_NAME": environment})["CLOUD_STACK_NAME"]
+	if envIdentity["CLOUD_STACK_NAME"] != expectedStack {
+		return deploymentConfig{}, fmt.Errorf("CLOUD_STACK_NAME must be %s for environment %s; coverage-* stacks are scoped runtime-coverage exceptions", expectedStack, environment)
+	}
+	if envIdentity["CONSOLE_DOMAIN"] != "" && environment != "prod" {
+		return deploymentConfig{}, errors.New("CONSOLE_DOMAIN is supported only in the prod environment")
+	}
+	if err := validateManagedDNSHostname(envIdentity["CLOUD_DNS_ROOT_DOMAIN"]); err != nil {
+		return deploymentConfig{}, fmt.Errorf("CLOUD_DNS_ROOT_DOMAIN: %w", err)
 	}
 	architecture := selection["DEPLOYMENT_ARCHITECTURE"]
 	adapter := selection["DEPLOYMENT_ADAPTER"]
@@ -992,7 +1007,11 @@ func resolveDeploymentConfig(workspace, environment, environmentRoot string) (de
 	if err != nil {
 		return deploymentConfig{}, err
 	}
-	return deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity, Storage: storage}, nil
+	cfg := deploymentConfig{Workspace: workspace, Environment: environment, EnvironmentRoot: environmentRoot, RuntimeRoot: filepath.Join(environmentRoot, "runtime"), Architecture: architecture, Adapter: adapter, DNSAdapter: dnsAdapter, Values: values, AdapterValues: adapterValues, AdapterResolved: adapterResolved, DNSValues: dnsValues, Capacity: capacity, Storage: storage}
+	if err := validateDeploymentDNSPlan(cfg); err != nil {
+		return deploymentConfig{}, err
+	}
+	return cfg, nil
 }
 
 func validateFactoryEnrollmentDomain(domain, stack, root string) error {
@@ -1271,13 +1290,17 @@ func nonNegativeIntValue(key, raw string) (int, error) {
 }
 
 func materializeDeploymentRuntime(cfg deploymentConfig) error {
+	if err := validateDeploymentDNSPlan(cfg); err != nil {
+		return err
+	}
 	for _, dir := range []string{"resolved", "env", "state", filepath.Join("adapters", cfg.Adapter), filepath.Join("dns", cfg.DNSAdapter), "services", "secrets", "devices", "artifacts", "backups"} {
 		if err := os.MkdirAll(filepath.Join(cfg.RuntimeRoot, dir), 0o700); err != nil {
 			return err
 		}
 	}
 	resolved := appendMap(cfg.Values, nil)
-	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(resolved))
+	stack := deploymentEndpointValues(cfg)
+	stack = appendMap(stack, deploymentRuntimeEndpoints(stack))
 	stack = appendMap(stack, cfg.DNSValues)
 	stack["CLOUD_ENV_NAME"] = cfg.Environment
 	stack["CLOUD_PROVIDER"] = cfg.Adapter
@@ -1380,7 +1403,7 @@ func deploymentRuntimeEndpoints(v map[string]string) map[string]string {
 	}
 	publicHost := firstNonEmpty(strings.TrimSpace(v["VIDEO_CLOUD_DOMAIN"]), stack+"."+rootDomain)
 	accountHost := firstNonEmpty(strings.TrimSpace(v["ACCOUNT_MANAGER_DOMAIN"]), "account-manager."+stack+"."+rootDomain)
-	deviceHost := firstNonEmpty(strings.TrimSpace(v["VIDEO_CLOUD_DEVICE_DOMAIN"]), "device."+publicHost)
+	deviceHost := lkeDeviceDomain(appendMap(v, map[string]string{"VIDEO_CLOUD_DOMAIN": publicHost}))
 	return map[string]string{
 		"ACCOUNT_MANAGER_BASE_URL":    "https://" + accountHost,
 		"VIDEO_CLOUD_BASE_URL":        "https://" + publicHost,
@@ -1389,6 +1412,52 @@ func deploymentRuntimeEndpoints(v map[string]string) map[string]string {
 		"VIDEO_CLOUD_TOKEN_BASE_URL":  "https://" + deviceHost,
 		"VIDEO_CLOUD_MQTT_ADDR":       publicHost + ":8883",
 	}
+}
+
+// deploymentEndpointValues supplies the same generated hostnames and TURN intent
+// to planning and runtime materialization without consulting a live cluster.
+func deploymentEndpointValues(cfg deploymentConfig) map[string]string {
+	values := appendMap(cfg.Values, map[string]string{"CLOUD_ENV_NAME": cfg.Environment})
+	values = envroot.Derive(values)
+	return values
+}
+
+func validateDeploymentDNSPlan(cfg deploymentConfig) error {
+	values := deploymentEndpointValues(cfg)
+	if values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		for _, route := range deploymentPublicHTTPSRoutes(values) {
+			if route.Host == values["FACTORY_ENROLL_DOMAIN"] && (route.Service != "factoryenroll" || route.Path != "/v1/factory/enroll" || !route.Exact) {
+				return errors.New("FACTORY_ENROLL_DOMAIN must be independent of effective public service hostnames")
+			}
+		}
+	}
+	plan := buildGenericDNSPlan(cfg)
+	if err := validateManagedDNSHostname(plan.RootDomain); err != nil {
+		return fmt.Errorf("CLOUD_DNS_ROOT_DOMAIN: %w", err)
+	}
+	owners := map[string]string{}
+	for _, record := range plan.Records {
+		if err := validateManagedDNSHostname(record.Name); err != nil {
+			return err
+		}
+		if err := validateDNSRecord(plan.RootDomain, record); err != nil {
+			return err
+		}
+		key := record.Type + ":" + record.Name
+		target := strings.Join(record.Values, ",")
+		if previous, ok := owners[key]; ok && previous != target {
+			return fmt.Errorf("DNS hostname %s has conflicting targets %s and %s", record.Name, previous, target)
+		}
+		owners[key] = target
+	}
+	if raw := lkeEnvValue(cfg.Values, "PUBLIC_BASE_URL"); raw != "" {
+		parsed, err := url.Parse(raw)
+		frontend := lkeFrontendPublicDomain(deploymentEndpointValues(cfg))
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() != frontend || (parsed.Port() != "" && parsed.Port() != "443") || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("PUBLIC_BASE_URL must use the effective frontend origin https://%s", frontend)
+		}
+	}
+	return nil
 }
 
 func deploymentLegacyLKEValues(v map[string]string, environment string) map[string]string {
