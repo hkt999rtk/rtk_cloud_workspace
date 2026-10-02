@@ -11,6 +11,8 @@ in the owning service repository; shared wire and payload contracts belong in
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
 | Back up or restore matched core data under maintenance | [Core Backup and Restore](backup-restore.md) |
+| Name, retain, migrate or retire Object Storage buckets and objects | [Object Storage Policy](object-storage-policy.md) |
+| Prepare storage credentials and qualify media/OTA cutover | [Storage operations](storage-credential-lifecycle.md) |
 | Prepare the private support ticket backend | [Zammad deployment runbook](deployment/support-ticket-zammad.md) |
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
@@ -26,8 +28,9 @@ in the owning service repository; shared wire and payload contracts belong in
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
 | [documentation-governance.md](documentation-governance.md) | Source | Documentation ownership, status, and review rules. |
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Source | Contracts submodule path, URL, and commit alignment policy. |
-| [artifact-release-governance.md](artifact-release-governance.md) | Source | Linode Object Storage artifact source-of-truth policy and adoption matrix. |
-| [storage-credential-lifecycle.md](storage-credential-lifecycle.md) | Source | Bucket naming, OTA/media paths, scoped keys, and migration lifecycle. |
+| [artifact-release-governance.md](artifact-release-governance.md) | Source | Formal artifact manifests, verification and release adoption matrix; naming and retention defer to Object Storage Policy. |
+| [object-storage-policy.md](object-storage-policy.md) | Source: active policy | Sole bucket naming, object namespace, retention and creation/migration/retirement policy; targets require explicit live migration. |
+| [storage-credential-lifecycle.md](storage-credential-lifecycle.md) | Source: operations | Scoped credentials, implemented storage commands, and media/OTA qualification and cutover gates. |
 | [object-storage-inventory.md](object-storage-inventory.md) | Dated inventory | Observed Linode buckets and proposed naming targets. |
 | [dependency-failure-policy.md](dependency-failure-policy.md) | Source | Cross-service dependency failure policy for startup-critical dependencies, request-scoped upstreams, durable async delivery, observability, and optional features. |
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
@@ -112,7 +115,8 @@ evidence, not current operator instructions.
 | [architecture.md](architecture.md) | Repository boundaries and source-of-truth model. |
 | [documentation-governance.md](documentation-governance.md) | Ownership, classification, review, and drift prevention. |
 | [contracts-submodule-governance.md](contracts-submodule-governance.md) | Canonical contracts submodule path, URL, and commit alignment. |
-| [artifact-release-governance.md](artifact-release-governance.md) | Versioned release artifact policy and adoption matrix. |
+| [object-storage-policy.md](object-storage-policy.md) | Canonical bucket naming, namespaces, retention and lifecycle; separates policy from deployed state. |
+| [artifact-release-governance.md](artifact-release-governance.md) | Release artifact manifests, verification and adoption matrix. |
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Account Manager and Cloud Admin responsibility boundary. |
 | [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Cross-repository Platform Root, Platform Admin, CA, certificate lifecycle, and recovery authority. |
 | [service-logging-architecture.md](service-logging-architecture.md) | Cross-service logging topology and ownership. |
