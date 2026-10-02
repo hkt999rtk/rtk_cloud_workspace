@@ -246,8 +246,11 @@ func CollectKubernetes(ctx context.Context, cfg Config, inv Inventory, rt Runtim
 		case !t.Enabled:
 			r.Status = NotApplicable
 			r.Reason = t.DisabledReason
-		case t.Namespace == "" || t.Kind == "external":
-			r.Reason = "外部服務需提供實際端點、指標與容量來源"
+		case strings.EqualFold(t.Kind, "external"):
+			r.Status = NotApplicable
+			r.Reason = "外部服務不由 Kubernetes 管理；需由設定的實際端點或 TURN probe 驗證"
+		case t.Namespace == "":
+			r.Reason = "Kubernetes target 未設定 namespace"
 		case !data[t.Namespace].ok:
 			r.Reason = "無法讀取 namespace workload：連線或權限不足"
 		default:

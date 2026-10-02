@@ -1,6 +1,10 @@
 package cloudmonitor
 
-import "time"
+import (
+	"net"
+	"strings"
+	"time"
+)
 
 // ConfigurationCoverage prevents an empty adapter list from silently removing a
 // required check. The inventory is the expectation; live discovery is evidence.
@@ -73,8 +77,46 @@ func ConfigurationCoverage(cfg Config, inv Inventory, now time.Time) Collection 
 			gap(e.Service, "coverage/performance", "此服務尚未配置必要的實際效能指標；其他服務的指標不代表本服務。")
 		}
 	}
+	for _, target := range inv.Targets {
+		if !target.Enabled || !target.Required || !strings.EqualFold(target.Kind, "external") {
+			continue
+		}
+		if strings.EqualFold(target.Service, "turn") {
+			if !hasTURNProbeForHost(cfg, target.Name) {
+				gap(target.Service, "coverage/external-turn/"+target.Name, "此外部 TURN host 尚未配置相同 host 的專用 TURN probe。")
+			}
+			continue
+		}
+		if !hasSemanticRequiredHTTP(cfg, target.Service) {
+			gap(target.Service, "coverage/external-http/"+target.Name, "此外部服務尚未配置必要的語意 HTTP 證據；Kubernetes 不管理此 target。")
+		}
+	}
 	for i := range inv.CoverageNotes {
 		gap("inventory", "coverage/intent/"+strconvInt(i), "預期 workload 的啟用意圖尚未完整宣告。")
 	}
 	return out
+}
+
+func hasSemanticRequiredHTTP(cfg Config, service string) bool {
+	for _, check := range cfg.HTTP {
+		if check.Service == service && check.Required && !check.LivenessOnly && check.Contains != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTURNProbeForHost(cfg Config, host string) bool {
+	want := normalizeMonitorHost(host)
+	for _, probe := range cfg.Synthetic.TURN {
+		probeHost, _, err := net.SplitHostPort(strings.TrimSpace(probe.Address))
+		if err == nil && normalizeMonitorHost(probeHost) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeMonitorHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 }

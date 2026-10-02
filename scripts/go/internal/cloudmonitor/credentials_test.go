@@ -16,6 +16,66 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+func TestCertificateCheckedAtUsesCompletionTime(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		checkedAt func(time.Time) time.Time
+		want      Status
+	}{
+		{
+			name:      "completion-after-collection-start",
+			checkedAt: func(completed time.Time) time.Time { return completed },
+			want:      Pass,
+		},
+		{
+			name:      "stale-at-completion",
+			checkedAt: func(completed time.Time) time.Time { return completed.Add(-5*time.Minute - time.Second) },
+			want:      Unknown,
+		},
+		{
+			name:      "future-at-completion",
+			checkedAt: func(completed time.Time) time.Time { return completed.Add(2*time.Minute + 10*time.Second) },
+			want:      Unknown,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			started := time.Now().UTC().Add(-3 * time.Minute)
+			f := &collectorRunner{fn: func([]string) ([]byte, int, error) {
+				completed := time.Now().UTC()
+				body, _ := json.Marshal(map[string]any{
+					"environment": "dev",
+					"stack":       "video-cloud-dev",
+					"checked_at":  tc.checkedAt(completed),
+					"results": []map[string]any{{
+						"source":    "endpoint/service",
+						"kind":      "certificate",
+						"status":    "OK",
+						"not_after": completed.Add(24 * time.Hour),
+					}},
+				})
+				return body, 0, nil
+			}}
+			c := CollectCertificates(context.Background(), Config{Environment: "dev", Stack: "video-cloud-dev", CertificateTool: "cert"}, Runtime{ConfigRoot: "/store/dev"}, f, started)
+			inventory := findCollectorResult(t, c, "certificate-inventory")
+			if inventory.Status != tc.want {
+				t.Fatalf("inventory status = %s, want %s", inventory.Status, tc.want)
+			}
+			if tc.want != Pass {
+				return
+			}
+			if !inventory.ObservedAt.After(started.Add(2 * time.Minute)) {
+				t.Fatalf("inventory observation remained at collection start: %s", inventory.ObservedAt)
+			}
+			if len(c.Results) != 2 || !c.Results[1].ObservedAt.Equal(inventory.ObservedAt) {
+				t.Fatalf("certificate result observation must match completion: %#v", c.Results)
+			}
+			if c.Results[1].Value == nil || *c.Results[1].Value >= 1 {
+				t.Fatalf("days remaining must be calculated at completion: %#v", c.Results[1])
+			}
+		})
+	}
+}
+
 func TestJWTVerificationScopesAndRedaction(t *testing.T) {
 	now := time.Now().UTC()
 	root := t.TempDir()

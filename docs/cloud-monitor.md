@@ -60,6 +60,14 @@ The report records the desired configuration fingerprint.
 The minimal example is deliberately incomplete: missing token, database,
 active identity, semantic readiness, and metric sources produce UNKNOWN. Add
 configuration for each required dependency before treating coverage as complete.
+Kubernetes marks an external target as `NOT_APPLICABLE` only for Kubernetes
+liveness; it is not health evidence. For each required external non-TURN target
+(including `public-edge`), configure a required semantic HTTP check with the
+same `service`, `liveness_only: false`, and a response `contains` marker. For
+each generated external TURN domain, configure a dedicated TURN probe whose
+`address` host matches that inventory target. Missing, optional, or mismatched
+evidence remains UNKNOWN, and the configured probe's actual result determines
+the overall status.
 
 ```sh
 bin/cloud-monitor watch --environment dev --workspace "$PWD" \

@@ -61,6 +61,19 @@ func TestKubernetesBulkMissingDriftAndUnknownIntent(t *testing.T) {
 		t.Fatal("unknown intent must stay unknown")
 	}
 }
+
+func TestKubernetesUnknownIntentTakesPrecedenceOverExternalAndDisabled(t *testing.T) {
+	inv := Inventory{Targets: []WorkloadTarget{
+		{ID: "external-uncertain", Name: "edge", Service: "public-edge", Kind: "external", Enabled: true, Required: true, IntentUnknown: true},
+		{ID: "disabled-uncertain", Name: "optional", Service: "optional", Kind: "Deployment", Enabled: false, Required: true, IntentUnknown: true},
+	}}
+	c := CollectKubernetes(context.Background(), Config{}, inv, Runtime{}, &collectorRunner{}, time.Now())
+	for _, id := range []string{"k8s/external-uncertain", "k8s/disabled-uncertain"} {
+		if r := findCollectorResult(t, c, id); r.Status != Unknown || !r.Required {
+			t.Fatalf("unknown intent must take precedence for %s: %#v", id, r)
+		}
+	}
+}
 func TestCertificateToolExitOneIsValidEvidence(t *testing.T) {
 	now := time.Now().UTC()
 	body, _ := json.Marshal(map[string]any{"environment": "dev", "stack": "video-cloud-dev", "checked_at": now, "results": []map[string]any{{"source": "endpoint/service", "kind": "certificate", "status": "RENEW_NOW", "not_after": now.Add(time.Hour)}}})
@@ -109,10 +122,13 @@ func TestKubernetesReadinessPodsPVCDriftAndController(t *testing.T) {
 	f := &collectorRunner{fn: func([]string) ([]byte, int, error) { return raw, 0, nil }}
 	inv := Inventory{Targets: []WorkloadTarget{{ID: "pki", Name: "pki-controller", Service: "pki", Namespace: "env-ns", Kind: "Deployment", Enabled: true, Required: true}, {ID: "pg", Name: "postgres", Service: "pg", Namespace: "env-ns", Kind: "StatefulSet", Enabled: true, Required: true}, {ID: "agent", Name: "agent", Service: "ops", Namespace: "env-ns", Kind: "DaemonSet", Enabled: true, Required: true}, {ID: "disabled", Name: "disabled", Service: "optional", Kind: "Deployment", Enabled: false, DisabledReason: "explicitly disabled"}, {ID: "external", Name: "external", Service: "external", Kind: "external", Enabled: true, Required: true}}}
 	c := CollectKubernetes(context.Background(), Config{}, inv, Runtime{}, f, now)
-	for id, want := range map[string]Status{"k8s/pki": Pass, "k8s/pg": Pass, "k8s/agent": Fail, "k8s/disabled": NotApplicable, "k8s/external": Unknown, "pki/app-crl-worker": Pass, "k8s/drift": Warn, "k8s/pvc/storage": Fail, "k8s/pod/broken": Fail} {
+	for id, want := range map[string]Status{"k8s/pki": Pass, "k8s/pg": Pass, "k8s/agent": Fail, "k8s/disabled": NotApplicable, "k8s/external": NotApplicable, "pki/app-crl-worker": Pass, "k8s/drift": Warn, "k8s/pvc/storage": Fail, "k8s/pod/broken": Fail} {
 		if r := findCollectorResult(t, c, id); r.Status != want {
 			t.Fatalf("%s: %s", id, r.Status)
 		}
+	}
+	if r := findCollectorResult(t, c, "k8s/external"); !r.Required || !strings.Contains(r.Reason, "Kubernetes") {
+		t.Fatalf("external Kubernetes marker must remain required but not health evidence: %#v", r)
 	}
 	if len(c.Samples) != 1 || c.Samples[0].Name != "container_restarts" || c.Samples[0].Value != 4 || c.Samples[0].Identity != "one/app" {
 		t.Fatal("restart instance counter missing")

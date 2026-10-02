@@ -37,6 +37,8 @@ func collectCertificateInventory(ctx context.Context, cfg Config, rt Runtime, ru
 	c, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	raw, code, err := runner.Run(c, cfg.CertificateTool, args, nil, nil)
+	completedAt := time.Now().UTC()
+	r.ObservedAt = completedAt
 	var report struct {
 		Environment string    `json:"environment"`
 		Stack       string    `json:"stack"`
@@ -51,7 +53,7 @@ func collectCertificateInventory(ctx context.Context, cfg Config, rt Runtime, ru
 		} `json:"results"`
 		Coverage []string `json:"coverage_notes"`
 	}
-	if len(raw) == 0 || len(raw) > 32<<20 || json.Unmarshal(raw, &report) != nil || report.Environment != cfg.Environment || report.Stack != cfg.Stack || report.CheckedAt.IsZero() || report.CheckedAt.After(now.Add(2*time.Minute)) || now.Sub(report.CheckedAt) > 5*time.Minute || code < 0 || code > 1 || (err != nil && code != 1) {
+	if len(raw) == 0 || len(raw) > 32<<20 || json.Unmarshal(raw, &report) != nil || report.Environment != cfg.Environment || report.Stack != cfg.Stack || report.CheckedAt.IsZero() || report.CheckedAt.After(completedAt.Add(2*time.Minute)) || completedAt.Sub(report.CheckedAt) > 5*time.Minute || code < 0 || code > 1 || (err != nil && code != 1) {
 		r.Reason = "certificate-tools 未完成、輸出格式或環境不符"
 		return Collection{Results: []Result{r}}
 	}
@@ -62,13 +64,13 @@ func collectCertificateInventory(ctx context.Context, cfg Config, rt Runtime, ru
 	for _, v := range report.Results {
 		identityHash := sha256.Sum256([]byte(v.Source + "/" + v.Kind + "/" + v.Fingerprint))
 		saved := strings.HasPrefix(v.Source, "saved/")
-		e := result("pki", "certificate-inventory/"+hex.EncodeToString(identityHash[:8]), "credential", !saved, now)
+		e := result("pki", "certificate-inventory/"+hex.EncodeToString(identityHash[:8]), "credential", !saved, completedAt)
 		e.Source = "certificate-tools/" + v.Source + "/" + v.Kind
 		e.Fingerprint = v.Fingerprint
 		if !v.NotAfter.IsZero() {
 			exp := v.NotAfter
 			e.ExpiresAt = &exp
-			e.Value = numeric(v.NotAfter.Sub(now).Hours() / 24)
+			e.Value = numeric(v.NotAfter.Sub(completedAt).Hours() / 24)
 			e.Unit = "days"
 		}
 		switch v.Status {
@@ -96,7 +98,7 @@ func collectCertificateInventory(ctx context.Context, cfg Config, rt Runtime, ru
 		out.Results[0].Reason = "憑證 discovery 無結果"
 	}
 	for i := range report.Coverage {
-		e := result("pki", "certificate-coverage/"+strconvInt(i), "coverage", false, now)
+		e := result("pki", "certificate-coverage/"+strconvInt(i), "coverage", false, completedAt)
 		e.Reason = "certificate-tools 已回報覆蓋限制；需補充明確來源"
 		out.Results = append(out.Results, e)
 	}
