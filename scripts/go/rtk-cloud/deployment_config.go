@@ -1199,17 +1199,7 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 		}
 	}
 	resolved := appendMap(cfg.Values, nil)
-	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(resolved))
-	stack = appendMap(stack, cfg.DNSValues)
-	stack["CLOUD_ENV_NAME"] = cfg.Environment
-	stack["CLOUD_PROVIDER"] = cfg.Adapter
-	stack["CLOUD_REGION"] = cfg.AdapterResolved["LKE_REGION"]
-	stack["VIDEO_CLOUD_BLOB_BUCKET"] = cfg.Storage.RuntimeMedia.Bucket
-	stack["VIDEO_CLOUD_BLOB_REGION"] = cfg.Storage.RuntimeMedia.Region
-	stack["VIDEO_CLOUD_BLOB_PREFIX"] = cfg.Storage.RuntimeMedia.Prefix
-	if receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
-		stack["VIDEO_CLOUD_BLOB_ENDPOINT"] = receipt.Endpoint
-	}
+	stack := deploymentRuntimeStack(cfg)
 	if err := writeSortedEnv(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment.env"), resolved, 0o600); err != nil {
 		return err
 	}
@@ -1259,6 +1249,23 @@ func materializeDeploymentRuntime(cfg deploymentConfig) error {
 	body, _ := json.MarshalIndent(plan, "", "  ")
 	body = append(body, '\n')
 	return os.WriteFile(filepath.Join(cfg.RuntimeRoot, "resolved", "deployment-plan.json"), body, 0o600)
+}
+
+// deploymentRuntimeStack is the same read-only selected projection used by
+// materialization and runtime checks; it never creates storage receipts.
+func deploymentRuntimeStack(cfg deploymentConfig) map[string]string {
+	stack := appendMap(cfg.Values, deploymentRuntimeEndpoints(cfg.Values))
+	stack = appendMap(stack, cfg.DNSValues)
+	stack["CLOUD_ENV_NAME"] = cfg.Environment
+	stack["CLOUD_PROVIDER"] = cfg.Adapter
+	stack["CLOUD_REGION"] = cfg.AdapterResolved["LKE_REGION"]
+	stack["VIDEO_CLOUD_BLOB_BUCKET"] = cfg.Storage.RuntimeMedia.Bucket
+	stack["VIDEO_CLOUD_BLOB_REGION"] = cfg.Storage.RuntimeMedia.Region
+	stack["VIDEO_CLOUD_BLOB_PREFIX"] = cfg.Storage.RuntimeMedia.Prefix
+	if receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot); err == nil && receipt.Bucket == cfg.Storage.RuntimeMedia.Bucket && receipt.Region == cfg.Storage.RuntimeMedia.Region {
+		stack["VIDEO_CLOUD_BLOB_ENDPOINT"] = receipt.Endpoint
+	}
+	return stack
 }
 
 func materializeStagingE2EDeploymentConfig(workspace, envRoot string) error {

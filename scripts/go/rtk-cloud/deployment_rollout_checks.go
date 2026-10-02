@@ -36,19 +36,11 @@ func checkRolloutLoggerPeriodSource(cfg deploymentConfig) deploymentCredentialCh
 		check.Detail = "selected SecretStore unavailable"
 		return check
 	}
-	root, err := loadLKEImageEnv(cfg.Workspace, store.Root)
+	env, err := loggerPeriodSourceSelectedEnv(cfg, store)
 	if err != nil {
-		check.Detail = "selected runtime unavailable"
+		check.Detail = "selected runtime or operator settings unavailable"
 		return check
 	}
-	operator, err := store.readOperator()
-	if err != nil {
-		check.Detail = "selected operator settings unavailable"
-		return check
-	}
-	env := appendMap(appendMap(appendMap(root.Values, cfg.Values), cfg.AdapterResolved), operator)
-	// Match the deployment SecretStore: scoped media credentials win over legacy aliases.
-	mergeObjectStorageCredentialAliases(env)
 	if env["CLOUD_ENV_NAME"] != cfg.Environment || env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] {
 		check.Detail = "Logger source settings differ from the selected environment"
 		return check
@@ -88,6 +80,28 @@ func checkRolloutLoggerPeriodSource(cfg deploymentConfig) deploymentCredentialCh
 	}
 	check.Passed, check.Detail = true, "selected immutable source mode, CI image pin, current rollout and every live Logger Pod verified; complete month seal remains required"
 	return check
+}
+
+// Match normal materialization without writing the selected runtime or credentials.
+func loggerPeriodSourceSelectedEnv(cfg deploymentConfig, store secretStore) (map[string]string, error) {
+	root, err := loadLKEImageEnv(cfg.Workspace, cfg.RuntimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	operator, err := store.readOperator()
+	if err != nil {
+		return nil, err
+	}
+	adapter := appendMap(cfg.AdapterValues, cfg.AdapterResolved)
+	compat := appendMap(cfg.Values, cfg.AdapterResolved)
+	adapter = appendMap(adapter, deploymentLegacyLKEValues(compat, cfg.Environment))
+	stack := deploymentRuntimeStack(cfg)
+	// A stale runtime endpoint cannot replace a missing or mismatched storage receipt.
+	root.Values["VIDEO_CLOUD_BLOB_ENDPOINT"] = stack["VIDEO_CLOUD_BLOB_ENDPOINT"]
+	env := appendMap(appendMap(appendMap(root.Values, stack), adapter), operator)
+	// Scoped media credentials win over legacy aliases in normal SecretStore setup.
+	mergeObjectStorageCredentialAliases(env)
+	return env, nil
 }
 
 func checkRolloutLokiRetention(cfg deploymentConfig, envFile string) deploymentCredentialCheck {

@@ -56,16 +56,10 @@ func runDeploymentLoggerPeriodSealWithOps(args []string, ops loggerPeriodSealOps
 	if err != nil {
 		return err
 	}
-	root, err := loadLKEImageEnv(cfg.Workspace, store.Root)
+	env, err := loggerPeriodSourceSelectedEnv(cfg, store)
 	if err != nil {
 		return err
 	}
-	env := appendMap(appendMap(appendMap(root.Values, cfg.Values), cfg.AdapterValues), cfg.AdapterResolved)
-	operator, err := store.readOperator()
-	if err != nil {
-		return err
-	}
-	env = appendMap(env, operator)
 	if env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] || env["CLOUD_ENV_NAME"] != cfg.Environment {
 		return errors.New("Logger monthly close inputs differ from the selected environment")
 	}
