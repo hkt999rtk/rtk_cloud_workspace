@@ -183,6 +183,7 @@ func runTestCoverage(args []string) error {
 	profile := fs.String("profile", "unit", "coverage profile: unit, pr, or runtime")
 	runtimeDir := fs.String("runtime-dir", "", "GOCOVERDIR root to aggregate with --profile runtime")
 	install := fs.Bool("install", false, "install Node dependencies before JavaScript coverage")
+	accountReportEvidence := fs.String("account-manager-report-evidence", "", "validate and re-render a completed Account Manager report without rerunning its tests")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -194,9 +195,35 @@ func runTestCoverage(args []string) error {
 	if *profile == "runtime" && strings.TrimSpace(*runtimeDir) == "" {
 		return errors.New("--runtime-dir is required with --profile runtime")
 	}
+	if *accountReportEvidence != "" && (*profile != "pr" || *moduleFilter != "account-manager") {
+		return errors.New("--account-manager-report-evidence requires --profile pr --module account-manager")
+	}
+	if *accountReportEvidence != "" {
+		absolute, err := filepath.Abs(*accountReportEvidence)
+		if err != nil {
+			return err
+		}
+		*accountReportEvidence = absolute
+	}
 	workspace, err := workspaceRoot()
 	if err != nil {
 		return err
+	}
+	resolvedHead, err := gitOutput(workspace, "rev-parse", "--verify", strings.TrimSpace(*headRef)+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolve coverage head: %w", err)
+	}
+	checkedOut, err := gitOutput(workspace, "rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(resolvedHead) != strings.TrimSpace(checkedOut) {
+		return errors.New("coverage --head-ref must resolve to the checked-out commit")
+	}
+	*headRef = strings.TrimSpace(resolvedHead)
+	if strings.TrimSpace(*baseRef) != "" {
+		resolvedBase, err := gitOutput(workspace, "rev-parse", "--verify", strings.TrimSpace(*baseRef)+"^{commit}")
+		if err != nil {
+			return fmt.Errorf("resolve coverage base: %w", err)
+		}
+		*baseRef = strings.TrimSpace(resolvedBase)
 	}
 	cfg, err := loadCoverageConfig(workspace)
 	if err != nil {
@@ -205,7 +232,18 @@ func runTestCoverage(args []string) error {
 	if *runID == "" {
 		*runID = time.Now().UTC().Format("20060102T150405Z")
 	}
+	if *runID == "." || *runID == ".." || strings.ContainsAny(*runID, `/\`) {
+		return errors.New("coverage run ID must be a single directory name")
+	}
 	outDir := filepath.Join(workspace, ".artifacts", "test-runs", *runID, "coverage")
+	if err := os.MkdirAll(filepath.Dir(outDir), 0o755); err != nil {
+		return err
+	}
+	// Claim only this output directory; unrelated worktrees and runs remain free
+	// to execute concurrently. Never truncate a prior or in-progress evidence set.
+	if err := os.Mkdir(outDir, 0o755); err != nil {
+		return fmt.Errorf("claim coverage output (choose a new --run-id): %w", err)
+	}
 	if err := os.MkdirAll(filepath.Join(outDir, "profiles"), 0o755); err != nil {
 		return err
 	}
@@ -240,7 +278,7 @@ func runTestCoverage(args []string) error {
 			continue
 		}
 		delete(selected, module.Name)
-		result := runCoverageModuleProfile(workspace, outDir, cfg, module, report.BaseRef, report.HeadRef, *profile, *install)
+		result := runCoverageModuleProfile(workspace, outDir, cfg, module, report.BaseRef, report.HeadRef, *profile, *install, *accountReportEvidence)
 		report.Cases = append(report.Cases, result)
 		if result.Status != "PASS" {
 			report.Status = "FAIL"
@@ -475,7 +513,7 @@ func runCoverageModule(workspace, outDir string, cfg coverageConfig, module cove
 	return runCoverageModuleProfile(workspace, outDir, cfg, module, baseRef, headRef, "unit", install)
 }
 
-func runCoverageModuleProfile(workspace, outDir string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, install bool) coverageCaseResult {
+func runCoverageModuleProfile(workspace, outDir string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, install bool, accountReportEvidence ...string) coverageCaseResult {
 	started := time.Now().UTC()
 	result := coverageCaseResult{
 		TestID:    module.TestID,
@@ -493,7 +531,7 @@ func runCoverageModuleProfile(workspace, outDir string, cfg coverageConfig, modu
 	var runErr error
 	switch module.Kind {
 	case "go":
-		runErr = runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, profile, &result)
+		runErr = runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, profile, &result, accountReportEvidence...)
 	case "node":
 		runErr = runNodeCoverageModule(workspace, outDir, logPath, module, install, &result)
 	default:
@@ -529,7 +567,7 @@ func runGoCoverageModule(workspace, outDir, logPath string, cfg coverageConfig, 
 	return runGoCoverageModuleProfile(workspace, outDir, logPath, cfg, module, baseRef, headRef, "unit", result)
 }
 
-func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, result *coverageCaseResult) error {
+func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageConfig, module coverageModule, baseRef, headRef, profile string, result *coverageCaseResult, accountReportEvidence ...string) error {
 	moduleDir := filepath.Join(workspace, module.Path)
 	moduleRel := filepath.ToSlash(filepath.Join("modules", module.Name))
 	profileRel := filepath.ToSlash(filepath.Join(moduleRel, "coverage.out"))
@@ -551,7 +589,11 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 		args = append(args, "-coverpkg="+strings.Join(module.CoverPackages, ","))
 	}
 	env := map[string]string{"GOWORK": "off"}
-	if profile == "pr" {
+	reuseAccountReport := ""
+	if len(accountReportEvidence) > 0 && module.Name == "account-manager" && profile == "pr" {
+		reuseAccountReport = accountReportEvidence[0]
+	}
+	if profile == "pr" && reuseAccountReport == "" {
 		for _, name := range module.PRRequiredEnv {
 			if strings.TrimSpace(os.Getenv(name)) == "" {
 				return fmt.Errorf("PR integration coverage requires environment variable %s", name)
@@ -559,7 +601,32 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 			env[name] = os.Getenv(name)
 		}
 	}
-	commandErr := runCoverageJSONCommand(moduleDir, logPath, eventsPath, env, "go", args...)
+	var commandErr, reportErr error
+	if profile == "pr" && module.Name == "account-manager" {
+		if !slices.Equal(module.Packages, []string{"./..."}) || !slices.Equal(module.CoverPackages, []string{"./internal/..."}) {
+			return errors.New("Account Manager canonical report requires the full ./... and ./internal/... coverage scope")
+		}
+		candidate := filepath.Join(outDir, filepath.FromSlash(moduleRel), "test_report.md")
+		env["REPORT_DIR"] = filepath.Dir(profilePath)
+		env["REPORT_FILE"] = candidate
+		env["REPORT_CANONICAL"] = "true"
+		env["REPORT_GENERATED_AT"] = "ci-candidate"
+		env["REPORT_REUSE_DIR"] = reuseAccountReport
+		commandErr = runCoverageCommand(moduleDir, logPath, env, "bash", "scripts/test-report.sh")
+		if commandErr == nil {
+			if err := runCoverageCommand(moduleDir, logPath, nil, "bash", "scripts/validate-report-candidate.sh", "docs/test_report.md", candidate); err != nil {
+				reportErr = fmt.Errorf("Account Manager report candidate validation failed: %w", err)
+			} else {
+				actual, readErr := os.ReadFile(candidate)
+				committed, committedErr := os.ReadFile(filepath.Join(moduleDir, "docs", "test_report.md"))
+				if readErr != nil || committedErr != nil || string(actual) != string(committed) {
+					reportErr = fmt.Errorf("Account Manager canonical report differs: validate and import %s; its completed test evidence remains available", candidate)
+				}
+			}
+		}
+	} else {
+		commandErr = runCoverageJSONCommand(moduleDir, logPath, eventsPath, env, "go", args...)
+	}
 	if commandErr != nil && !exists(profilePath) {
 		return fmt.Errorf("Go coverage tests failed before producing a profile: %w", commandErr)
 	}
@@ -645,6 +712,16 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 		}
 		result.Evidence = append(result.Evidence, coverageArtifactEvidence{Kind: kind, Path: rel, SHA256: sha})
 	}
+	if profile == "pr" && module.Name == "account-manager" && commandErr == nil {
+		for _, name := range []string{"execution-evidence.json", "gofmt.txt", "build.txt", "coverage.txt", "coverage.html", "test-cases.md", "correctness-gates.md", "test_report.md"} {
+			rel := filepath.ToSlash(filepath.Join(moduleRel, name))
+			sha, err := fileSHA256(filepath.Join(outDir, filepath.FromSlash(rel)))
+			if err != nil {
+				return fmt.Errorf("incomplete Account Manager report evidence %s: %w", name, err)
+			}
+			result.Evidence = append(result.Evidence, coverageArtifactEvidence{Kind: "account-manager-report", Path: rel, SHA256: sha})
+		}
+	}
 	sort.Slice(result.Evidence, func(i, j int) bool { return result.Evidence[i].Path < result.Evidence[j].Path })
 	if commit, commitErr := gitOutput(moduleDir, "rev-parse", "HEAD"); commitErr == nil {
 		result.SubmoduleCommit = strings.TrimSpace(commit)
@@ -693,6 +770,9 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 				return fmt.Errorf("differential statement coverage %.2f%% is below %.2f%% (%d/%d statements)", changedPercent, cfg.Differential.MinimumStatementPercent, covered, statements)
 			}
 		}
+	}
+	if reportErr != nil {
+		return reportErr
 	}
 	return nil
 }

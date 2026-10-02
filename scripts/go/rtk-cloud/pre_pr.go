@@ -26,13 +26,15 @@ type prePRSelection struct {
 }
 
 var (
-	prePRRunCmd                    = runCmd
-	prePRRunMatrix                 = runTestMatrix
-	prePRRunCoverage               = runTestCoverage
-	prePRRunInventory              = runTestInventory
-	prePRRunUI                     = runTestUI
-	prePRStartVideoCloudPRFixtures = startVideoCloudPRFixtures
-	prePRRunFixtureCommand         = runPrePRFixtureCommand
+	prePRRunCmd                     = runCmd
+	prePRRunMatrix                  = runTestMatrix
+	prePRRunCoverage                = runTestCoverage
+	prePRRunInventory               = runTestInventory
+	prePRRunUI                      = runTestUI
+	prePRStartVideoCloudPRFixtures  = startVideoCloudPRFixtures
+	prePRRunFixtureCommand          = runPrePRFixtureCommand
+	prePRCheckReadiness             = checkPrePRReadiness
+	prePRStartAccountManagerFixture = startAccountManagerPRFixture
 )
 
 func runPrePR(args []string) error {
@@ -45,6 +47,7 @@ func runPrePR(args []string) error {
 	runMatrix := fs.Bool("matrix", true, "run the workspace policy matrix when selected")
 	runUI := fs.Bool("ui", true, "run full desktop and mobile UI E2E when Cloud Admin web is selected")
 	dryRun := fs.Bool("dry-run", false, "print selected local and CI-only checks without running them")
+	accountReportEvidence := fs.String("account-manager-report-evidence", "", "reuse a validated completed Account Manager canonical report execution")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -63,13 +66,36 @@ func runPrePR(args []string) error {
 		return errors.New("pre-pr selects committed changes only; commit the workspace changes before running it")
 	}
 	for label, ref := range map[string]string{"base": *baseRef, "head": *headRef} {
-		if _, err := gitOutput(workspace, "rev-parse", "--verify", strings.TrimSpace(ref)+"^{commit}"); err != nil {
+		resolved, err := gitOutput(workspace, "rev-parse", "--verify", strings.TrimSpace(ref)+"^{commit}")
+		if err != nil {
 			return fmt.Errorf("resolve --%s ref %q (run git fetch origin main first if needed): %w", label, ref, err)
 		}
+		if label == "base" {
+			*baseRef = strings.TrimSpace(resolved)
+		} else {
+			*headRef = strings.TrimSpace(resolved)
+		}
+	}
+	resolvedHead, err := gitOutput(workspace, "rev-parse", strings.TrimSpace(*headRef)+"^{commit}")
+	if err != nil {
+		return err
+	}
+	checkedOut, err := gitOutput(workspace, "rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(resolvedHead) != strings.TrimSpace(checkedOut) {
+		return errors.New("pre-pr --head must resolve to the checked-out commit; checks execute the working tree")
 	}
 	selection, err := selectPrePRChecks(workspace, strings.TrimSpace(*baseRef), strings.TrimSpace(*headRef))
 	if err != nil {
 		return err
+	}
+	if *accountReportEvidence != "" && !selection.AccountManagerPostgres {
+		return errors.New("Account Manager evidence was provided but its PR profile is not selected")
+	}
+	if *accountReportEvidence != "" {
+		*accountReportEvidence, err = filepath.Abs(*accountReportEvidence)
+		if err != nil {
+			return err
+		}
 	}
 	if *runID == "" {
 		*runID = "local-pre-pr-" + time.Now().UTC().Format("20060102T150405Z")
@@ -78,6 +104,22 @@ func runPrePR(args []string) error {
 	if *dryRun {
 		return nil
 	}
+	if err := checkPrePROutputs(workspace, *runID, selection, *runUI); err != nil {
+		return err
+	}
+	readiness := selection
+	if *accountReportEvidence != "" {
+		readiness.AccountManagerPostgres = false // render-only reuse needs no live database
+		if !slices.Contains(readiness.GoModules, "account-manager") {
+			readiness.GoModules = append(append([]string(nil), readiness.GoModules...), "account-manager")
+		}
+		if _, err := prePRRunFixtureCommand(workspace, nil, "python3", "--version"); err != nil {
+			return errors.New("Account Manager report reuse requires python3")
+		}
+	}
+	if err := prePRCheckReadiness(workspace, readiness); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(os.Stdout, "\n== diff check ==")
 	if err := prePRRunCmd(workspace, "git", "diff", "--check", strings.TrimSpace(*baseRef)+"..."+strings.TrimSpace(*headRef)); err != nil {
@@ -85,27 +127,54 @@ func runPrePR(args []string) error {
 	}
 	if selection.Policy && *runMatrix {
 		fmt.Fprintln(os.Stdout, "\n== workspace policy matrix ==")
-		if err := prePRRunMatrix(nil); err != nil {
+		var matrixArgs []string
+		if slices.Contains(selection.GoModules, "workspace-tooling") {
+			matrixArgs = []string{"--policy-only"}
+		}
+		if err := prePRRunMatrix(matrixArgs); err != nil {
 			return err
 		}
 	}
 	goModules := append([]string(nil), selection.GoModules...)
+	if selection.AccountManagerPostgres {
+		fmt.Fprintln(os.Stdout, "\n== local Account Manager PostgreSQL fixture and canonical report ==")
+		cleanup := func() {}
+		if *accountReportEvidence == "" {
+			cleanup, err = prePRStartAccountManagerFixture(workspace)
+			if err != nil {
+				return err
+			}
+		}
+		coverageArgs := []string{"--profile", "pr", "--module", "account-manager",
+			"--base-ref", strings.TrimSpace(*baseRef), "--head-ref", strings.TrimSpace(*headRef),
+			"--run-id", *runID + "-account-manager-pr"}
+		if *accountReportEvidence != "" {
+			coverageArgs = append(coverageArgs, "--account-manager-report-evidence", *accountReportEvidence)
+		}
+		err = prePRRunCoverage(coverageArgs)
+		cleanup()
+		if err != nil {
+			return err
+		}
+		goModules = removePrePRModule(goModules, "account-manager")
+	}
 	if selection.VideoCloudPostgresEMQX {
 		fmt.Fprintln(os.Stdout, "\n== local Video Cloud PostgreSQL/EMQX fixtures ==")
 		cleanup, err := prePRStartVideoCloudPRFixtures(workspace)
 		if err != nil {
 			return err
 		}
-		defer cleanup()
 		goModules = removePrePRModule(goModules, "video-cloud")
 		fmt.Fprintln(os.Stdout, "\n== Video Cloud PR coverage ==")
-		if err := prePRRunCoverage([]string{
+		err = prePRRunCoverage([]string{
 			"--profile", "pr",
 			"--module", "video-cloud",
 			"--base-ref", strings.TrimSpace(*baseRef),
 			"--head-ref", strings.TrimSpace(*headRef),
 			"--run-id", *runID + "-video-cloud-pr",
-		}); err != nil {
+		})
+		cleanup()
+		if err != nil {
 			return err
 		}
 	}
@@ -223,6 +292,8 @@ func printPrePRPlan(out io.Writer, baseRef, headRef string, selection prePRSelec
 	fmt.Fprintf(out, "Local pre-PR plan (%s...%s):\n", baseRef, headRef)
 	fmt.Fprintf(out, "- Workspace policy matrix: %t\n", selection.Policy && runMatrix)
 	fmt.Fprintf(out, "- Go coverage: %s\n", prePRList(selection.GoModules))
+	fmt.Fprintf(out, "- Local PostgreSQL canonical Account Manager report: %t\n", selection.AccountManagerPostgres)
+	fmt.Fprintf(out, "- Local Video Cloud PostgreSQL/EMQX: %t\n", selection.VideoCloudPostgresEMQX)
 	fmt.Fprintf(out, "- JavaScript coverage: %s\n", prePRList(selection.NodeModules))
 	fmt.Fprintf(out, "- Cloud Admin desktop/mobile E2E: %t\n", runUI && slices.Contains(selection.NodeModules, "cloud-admin-web"))
 	fmt.Fprintf(out, "- CI-only integration checks: %s\n", strings.Join(prePRIntegrationChecks(selection), ", "))
@@ -260,7 +331,7 @@ func runPrePRFixtureCommand(dir string, env []string, name string, args ...strin
 
 // startVideoCloudPRFixtures supplies the same isolated dependencies as the
 // repository PR profile. The short-lived credentials are local test values and
-// are placed in this process only after the workspace baseline checks finish.
+// are placed in this process only during the Video Cloud PR profile.
 func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	if _, err := prePRRunFixtureCommand("", nil, "docker", "info"); err != nil {
 		return nil, errors.New("Docker is required for local Video Cloud PostgreSQL/EMQX coverage")
@@ -308,7 +379,7 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 	}
 	postgresReady := false
 	for attempt := 0; attempt < 30; attempt++ {
-		if ready("", nil, "docker", "exec", postgresName, "pg_isready", "-U", "video_cloud", "-d", "video_cloud_test") {
+		if ready("", nil, "docker", "exec", postgresName, "pg_isready", "-h", "127.0.0.1", "-U", "video_cloud", "-d", "video_cloud_test") {
 			postgresReady = true
 			break
 		}
@@ -350,13 +421,10 @@ func startVideoCloudPRFixtures(workspace string) (func(), error) {
 func prePRIntegrationChecks(selection prePRSelection) []string {
 	checks := []string{}
 	if selection.AccountManagerPostgres {
-		checks = append(checks, "Account Manager PostgreSQL")
+		checks = append(checks, "Account Manager cross-service factory/token chain")
 	}
 	if selection.BillingPostgres {
 		checks = append(checks, "Billing PostgreSQL/virtual payment")
-	}
-	if selection.VideoCloudPostgresEMQX {
-		checks = append(checks, "Video Cloud PostgreSQL/EMQX")
 	}
 	if len(checks) == 0 {
 		return []string{"none"}

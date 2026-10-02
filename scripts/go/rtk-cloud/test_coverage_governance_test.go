@@ -708,6 +708,120 @@ func TestRunCoverageJSONCommandAndEvidenceCopy(t *testing.T) {
 	}
 }
 
+func TestCoverageEvidenceCopyPreservesAdditionalReportPacket(t *testing.T) {
+	source, target := t.TempDir(), t.TempDir()
+	result := coverageCaseResult{Name: "account-manager", ProfilePath: "modules/account-manager/coverage.out"}
+	for _, name := range []string{"coverage.out", "test_report.md", "execution-evidence.json", "gofmt.txt", "build.txt"} {
+		rel := "modules/account-manager/" + name
+		writeTestFile(t, filepath.Join(source, rel), "verified "+name+"\n")
+		hash, err := fileSHA256(filepath.Join(source, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result.Evidence = append(result.Evidence, coverageArtifactEvidence{Kind: "report-artifact", Path: rel, SHA256: hash})
+	}
+	before, _ := json.Marshal(result)
+	if err := copyCoverageCaseEvidence(source, target, result); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range result.Evidence {
+		actual, err := fileSHA256(filepath.Join(target, item.Path))
+		if err != nil || actual != item.SHA256 {
+			t.Fatalf("missing or altered copied artifact %s: %v", item.Path, err)
+		}
+	}
+	after, _ := json.Marshal(result)
+	if string(before) != string(after) {
+		t.Fatal("copy altered the case's evidence references")
+	}
+}
+
+func TestCoverageEvidenceCopyRejectsInvalidPathsAndChecksums(t *testing.T) {
+	source := t.TempDir()
+	writeTestFile(t, filepath.Join(source, "artifact"), "original\n")
+	hash, err := fileSHA256(filepath.Join(source, "artifact"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		entries []coverageArtifactEvidence
+	}{
+		{"empty path", []coverageArtifactEvidence{{Path: "", SHA256: hash}}},
+		{"root path", []coverageArtifactEvidence{{Path: ".", SHA256: hash}}},
+		{"absolute path", []coverageArtifactEvidence{{Path: filepath.Join(source, "artifact"), SHA256: hash}}},
+		{"parent traversal", []coverageArtifactEvidence{{Path: "../artifact", SHA256: hash}}},
+		{"nested traversal", []coverageArtifactEvidence{{Path: "modules/../artifact", SHA256: hash}}},
+		{"backslash traversal", []coverageArtifactEvidence{{Path: `modules\..\artifact`, SHA256: hash}}},
+		{"missing hash", []coverageArtifactEvidence{{Path: "artifact"}}},
+		{"invalid hash", []coverageArtifactEvidence{{Path: "artifact", SHA256: "invalid"}}},
+		{"wrong hash", []coverageArtifactEvidence{{Path: "artifact", SHA256: strings.Repeat("0", 64)}}},
+		{"conflicting index", []coverageArtifactEvidence{{Path: "artifact", SHA256: hash}, {Path: "artifact", SHA256: strings.Repeat("0", 64)}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := t.TempDir()
+			if err := copyCoverageCaseEvidence(source, target, coverageCaseResult{Evidence: tc.entries}); err == nil {
+				t.Fatal("invalid artifact index was accepted")
+			}
+			if exists(filepath.Join(target, "artifact")) {
+				t.Fatal("invalid evidence was copied")
+			}
+		})
+	}
+}
+
+func TestCoverageEvidenceCopyRejectsSymlinkEscapes(t *testing.T) {
+	for _, side := range []string{"source file", "source directory", "target file", "target directory"} {
+		t.Run(side, func(t *testing.T) {
+			source, target, outside := t.TempDir(), t.TempDir(), t.TempDir()
+			rel := "modules/artifact"
+			writeTestFile(t, filepath.Join(source, rel), "verified\n")
+			writeTestFile(t, filepath.Join(outside, "artifact"), "verified\n")
+			hash, err := fileSHA256(filepath.Join(source, rel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := source
+			if strings.HasPrefix(side, "target") {
+				root = target
+			}
+			link, destination := filepath.Join(root, rel), filepath.Join(outside, "artifact")
+			if strings.HasSuffix(side, "directory") {
+				link, destination = filepath.Join(root, "modules"), outside
+			}
+			if err := os.RemoveAll(link); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(destination, link); err != nil {
+				t.Fatal(err)
+			}
+			result := coverageCaseResult{Evidence: []coverageArtifactEvidence{{Path: rel, SHA256: hash}}}
+			if err := copyCoverageCaseEvidence(source, target, result); err == nil {
+				t.Fatal("symlink escape was accepted")
+			}
+			if content := readTestFile(t, filepath.Join(outside, "artifact")); content != "verified\n" {
+				t.Fatal("copy changed a file outside the evidence root")
+			}
+		})
+	}
+}
+
+func TestCoverageEvidenceCopyRejectsNonRegularArtifact(t *testing.T) {
+	source := t.TempDir()
+	if err := os.Mkdir(filepath.Join(source, "directory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := copyCoverageCaseEvidence(source, t.TempDir(), coverageCaseResult{
+		Evidence: []coverageArtifactEvidence{{Path: "directory", SHA256: strings.Repeat("0", 64)}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("nonregular artifact error = %v", err)
+	}
+}
+
 func TestRuntimeCoverageEmptySelectionWritesPassingReport(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {

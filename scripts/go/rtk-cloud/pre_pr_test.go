@@ -81,7 +81,7 @@ func TestParsePrePRSelectionRejectsMissingAndInvalidFields(t *testing.T) {
 
 func TestPrePRIntegrationChecks(t *testing.T) {
 	selection := prePRSelection{AccountManagerPostgres: true, VideoCloudPostgresEMQX: true}
-	want := []string{"Account Manager PostgreSQL", "Video Cloud PostgreSQL/EMQX"}
+	want := []string{"Account Manager cross-service factory/token chain"}
 	if got := prePRIntegrationChecks(selection); !reflect.DeepEqual(got, want) {
 		t.Fatalf("checks = %v, want %v", got, want)
 	}
@@ -199,6 +199,8 @@ EOF
 		t.Fatal(err)
 	}
 	joined := strings.Join(calls, "\n")
+	commit, _ := gitOutput(workspace, "rev-parse", "HEAD")
+	joined = strings.ReplaceAll(joined, strings.TrimSpace(commit), "HEAD")
 	for _, want := range []string{
 		"git diff --check HEAD...HEAD",
 		"matrix ",
@@ -248,6 +250,8 @@ EOF
 		t.Fatalf("fixture starts = %d, want 1", fixtures)
 	}
 	joined := strings.Join(calls, "\n")
+	commit, _ := gitOutput(workspace, "rev-parse", "HEAD")
+	joined = strings.ReplaceAll(joined, strings.TrimSpace(commit), "HEAD")
 	for _, want := range []string{
 		"--profile pr --module video-cloud --base-ref HEAD --head-ref HEAD --run-id video-pr-video-cloud-pr",
 		"--profile unit --module godaddy-dns-toolkit --base-ref HEAD --head-ref HEAD --run-id video-pr-go",
@@ -465,6 +469,9 @@ EOF
 
 func newPrePRTestWorkspaceWithScript(t *testing.T, script string) string {
 	t.Helper()
+	originalReadiness := prePRCheckReadiness
+	prePRCheckReadiness = func(string, prePRSelection) error { return nil }
+	t.Cleanup(func() { prePRCheckReadiness = originalReadiness })
 	workspace := t.TempDir()
 	scriptDir := filepath.Join(workspace, "scripts", "ci")
 	if err := os.MkdirAll(scriptDir, 0o755); err != nil {

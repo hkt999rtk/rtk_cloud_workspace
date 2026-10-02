@@ -48,6 +48,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          lfs: true
           submodules: false
       - name: Initialize workspace submodules
         env:
@@ -62,7 +63,14 @@ jobs:
         env:
           # Keep the workspace-wide Go test binaries from peaking together on shared runners.
           GOFLAGS: -p=1
-        run: go run ./rtk-cloud -- test-matrix
+          BASELINE_COVERAGE_SELECTED: ${{ needs.changes.outputs.run_unit == 'true' && needs.changes.outputs.run_coverage == 'true' && contains(fromJSON(needs.changes.outputs.go_modules), 'workspace-tooling') && contains(fromJSON(needs.changes.outputs.coverage_modules), 'workspace-tooling') }}
+        shell: bash
+        run: |
+          args=()
+          if [ "$BASELINE_COVERAGE_SELECTED" = true ]; then
+            args+=(--policy-only)
+          fi
+          go run ./rtk-cloud -- test-matrix "${args[@]}"
 
   unit:
     name: Go unit coverage (${{ matrix.module }})
@@ -135,6 +143,10 @@ jobs:
           BASE_REF: ${{ steps.diff.outputs.base_ref }}
           MODULE: ${{ matrix.module }}
         run: |
+          if [ "$MODULE" = workspace-tooling ]; then
+            # Match the standalone policy job's package scheduling and Go mode.
+            export GOFLAGS=-p=1
+          fi
           args=(--profile unit --module "$MODULE" --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${MODULE}")
           if [ -n "${BASE_REF:-}" ] && [ "$BASE_REF" != "0000000000000000000000000000000000000000" ]; then
             args+=(--base-ref "$BASE_REF" --head-ref HEAD)
@@ -250,7 +262,10 @@ jobs:
         working-directory: scripts/go
         env:
           TEST_DATABASE_URL: postgres://am_${{ github.run_id }}_${{ github.run_attempt }}:integration_password@127.0.0.1:${{ job.services.postgres.ports[5432] }}/am_${{ github.run_id }}_${{ github.run_attempt }}?sslmode=disable
-        run: go run ./rtk-cloud -- test-coverage --profile pr --module account-manager --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          export REPORT_FIXTURE_ID="postgres16-tmpfs-v1:$(docker inspect --format='{{.Image}}' "$POSTGRES_CONTAINER")"
+          go run ./rtk-cloud -- test-coverage --profile pr --module account-manager --run-id "gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-account-manager-pr"
       - name: Verify registered service to device token across real services
         working-directory: repos/rtk_account_manager
         env:
@@ -442,6 +457,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     steps:
+      - name: Require selected checks to succeed
+        env:
+          SELECTED_CHECKS_PASSED: ${{ (needs.changes.outputs.policy != 'true' || needs.policy.result == 'success') && (needs.changes.outputs.run_unit != 'true' || needs.unit.result == 'success') && (needs.changes.outputs.run_node != 'true' || needs.node.result == 'success') && (needs.changes.outputs.account_manager_postgres != 'true' || needs.account-manager-postgres.result == 'success') && (needs.changes.outputs.billing_postgres != 'true' || needs.billing-postgres.result == 'success') && (needs.changes.outputs.video_cloud_postgres_emqx != 'true' || needs.video-cloud-postgres-emqx.result == 'success') }}
+        run: test "$SELECTED_CHECKS_PASSED" = true
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0

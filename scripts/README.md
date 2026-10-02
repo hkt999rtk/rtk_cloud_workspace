@@ -343,7 +343,7 @@ go run ./scripts/go/rtk-cloud -- sync-all
 
 ### `go run ./scripts/go/rtk-cloud -- test-matrix`
 
-Run the fast workspace baseline: workspace/submodule status, diff checks, and Go-based workspace checks. It does not run every service or product E2E test.
+Run workspace/submodule status and policy checks, followed by the complete workspace Go suite. The Go suite may take several minutes. It does not run every service or product E2E test. `--policy-only` delegates the Go execution to required full `workspace-tooling` coverage; `pre-pr` selects this automatically when applicable.
 
 ```sh
 (cd scripts/go && go run ./rtk-cloud -- test-matrix)
@@ -351,9 +351,9 @@ Run the fast workspace baseline: workspace/submodule status, diff checks, and Go
 
 ### `pre-pr`
 
-Use the same changed-path selector as GitHub Actions to run affected workspace policy checks, Go/JavaScript coverage, and Cloud Admin desktop/mobile headless E2E. It never connects to or deploys shared staging. Integration tests requiring PostgreSQL, EMQX, or other CI service containers remain in the PR CI plan.
+Use the same changed-path selector as GitHub Actions to run affected workspace policy checks, Go/JavaScript coverage, and Cloud Admin desktop/mobile headless E2E. Prerequisite checks run before expensive suites. Selected Account Manager PostgreSQL and Video Cloud PostgreSQL/EMQX profiles use owned disposable local containers. It never connects to or deploys shared staging. Checks requiring additional CI-only fixtures remain explicitly listed in the plan.
 
-Commit local changes and update `origin/main` first. The command rejects a dirty worktree so the selector cannot miss uncommitted paths:
+Commit local changes and refresh the agreed target first (normally `origin/main`; retain an explicitly frozen delivery target). The command rejects a dirty worktree and a `--head` different from the checkout, then pins the selected refs to commits:
 
 ```sh
 git fetch origin main
@@ -361,7 +361,9 @@ go run ./scripts/go/rtk-cloud -- pre-pr --base origin/main
 go run ./scripts/go/rtk-cloud -- pre-pr --base origin/main --dry-run
 ```
 
-UI selection installs Node/Playwright dependencies by default. Use `--install=false` when already installed or `--ui=false` for a faster coverage-only pass. PR CI remains the final Linux and service-container merge gate.
+Each run requires a fresh output ID. Account Manager produces its canonical report and coverage from one execution; `--account-manager-report-evidence <directory>` validates a completed report packet for rendering without repeating tests or the build. See [Testing](../docs/testing.md#local-pre-pr-sequence-and-evidence-reuse) for validity rules and recovery commands.
+
+UI selection installs Node/Playwright dependencies by default. Use `--install=false` when already installed. `--ui=false` is a reduced development check, not the complete gate. PR CI remains the final Linux and service-container merge gate.
 
 ### `test-services`
 
