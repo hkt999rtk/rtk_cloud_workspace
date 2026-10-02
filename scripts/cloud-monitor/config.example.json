@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "environment": "dev",
+  "stack": "video-cloud-dev",
+  "inventory_file": "inventory.dev.json",
+  "chromium": "chromium",
+  "timezone": "Asia/Taipei",
+  "daily_at": "08:00",
+  "timeout_seconds": 5,
+  "concurrency": 8,
+  "retention_days": 30,
+  "http": [],
+  "tls": [],
+  "tokens": [],
+  "postgres": [],
+  "redis": [],
+  "metrics": [],
+  "synthetic": {"auth": [], "mqtt": [], "turn": []}
+}
