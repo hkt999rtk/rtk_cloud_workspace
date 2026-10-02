@@ -1,0 +1,22 @@
+[Unit]
+Description=RTK Cloud monitor (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cloud-monitor
+Group=cloud-monitor
+UMask=0077
+WorkingDirectory=/opt/rtk_cloud_workspace
+ExecStart=/opt/rtk_cloud_workspace/bin/cloud-monitor watch --environment %i --workspace /opt/rtk_cloud_workspace --config /etc/rtk-cloud-monitor/%i.json --config-root /var/lib/rtk-cloud-monitor/credentials --out-dir /var/lib/rtk-cloud-monitor/output
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/rtk-cloud-monitor
+
+[Install]
+WantedBy=multi-user.target

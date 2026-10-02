@@ -11,6 +11,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | --- | --- |
 | Prepare, deploy, restore, accept, or remove an environment | [Deployment Operations Guide](deployment-operations.md) |
 | Back up or restore matched core data under maintenance | [Core Backup and Restore](backup-restore.md) |
+| Monitor service health, credentials, capacity and generate PDF reports | [Cloud Monitor](cloud-monitor.md) |
 | Prepare the private support ticket backend | [Zammad deployment runbook](deployment/support-ticket-zammad.md) |
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
@@ -33,6 +34,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | [backend-release-readiness.md](backend-release-readiness.md) | Supporting note | Backend foundation closeout checklist, validation commands, report status, and remaining release-evidence items. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Source | Local deployment secret layout, environment/provider/service taxonomy, and handling rules. |
 | [backup-restore.md](backup-restore.md) | Source | Environment-scoped maintenance backup/restore, matched core data, escrow, safety backups, exclusions and qualification gates. |
+| [cloud-monitor.md](cloud-monitor.md) | Implementation guide | Workspace monitor setup, expected inventory, credential/capacity/performance checks, dedicated probes and PDF reports. |
 | [Platform PKI contract](../repos/rtk_cloud_contracts_doc/platform_pki.md) | Canonical contract | Platform Root of Trust, Platform Admin bootstrap, CA hierarchy, certificate lifecycle, rollover, revocation, custody, and recovery. |
 | [Registered services target](../repos/rtk_cloud_contracts_doc/service_registration.md) | Draft contract | MQTT foundation, platform-authenticated service registration, and Product/device entitlement flow. |
 | [Registered services implementation plan](design/service-registration-implementation-plan.md) | Supporting note | Cross-repository implementation order, migration, and acceptance scenarios. |

@@ -36,6 +36,11 @@ cloud_env/*/runtime/adapters/lke/*
 output/
 tmp/
 
+# Monitor operator configuration and generated environment inventories.
+/bin/
+scripts/cloud-monitor/*.local.json
+scripts/cloud-monitor/inventory.*.json
+
 # Local RAG runtime index/cache.
 .rag/
 

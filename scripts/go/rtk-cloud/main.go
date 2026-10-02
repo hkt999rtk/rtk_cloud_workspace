@@ -74,6 +74,7 @@ var commands = map[string]commandSpec{
 	"lke-capacity-run-summary":         {run: runLKECapacityRunSummary},
 	"lke-resolve-images":               {run: runLKEResolveImages},
 	"migrate-env":                      {run: runMigrateEnv},
+	"monitor-inventory":                {run: runMonitorInventory},
 	"mqtt-loadtest":                    {run: runMQTTLoadTest},
 	"mqtt-test":                        {run: runMQTTTest},
 	"mqtt-trace-report":                {run: runMQTTTraceReport},
@@ -200,7 +201,7 @@ func run(args []string) error {
 }
 
 func normalizeEnvironmentArgs(args []string) ([]string, error) {
-	if len(args) == 0 || args[0] == "deployment" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
+	if len(args) == 0 || args[0] == "deployment" || args[0] == "monitor-inventory" || args[0] == "secrets" || args[0] == "backup" || args[0] == "restore" || args[0] == "test-feature-coverage" {
 		return args, nil
 	}
 	var environment, workspace string

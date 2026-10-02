@@ -42,6 +42,15 @@ exists but the environment lacks matching OpenBao/PostgreSQL operator state,
 provisioning stops before mutation to prevent new secrets from being paired
 with an old PVC.
 
+## Cloud Monitor
+
+`scripts/build-cloud-monitor.sh` builds the independent `cloud-monitor` binary
+and its read-only inventory adapter. It checks environment service health,
+credential expiry, PostgreSQL/Redis capacity and actual performance metrics,
+stores private history, and renders offline HTML/PDF. See
+[Cloud Monitor](../docs/cloud-monitor.md) for setup and dedicated synthetic probes.
+The systemd template is supplied for later installation.
+
 ## Core Backup and Restore
 
 `go run ./scripts/go/rtk-cloud -- backup --help` and `restore --help` expose

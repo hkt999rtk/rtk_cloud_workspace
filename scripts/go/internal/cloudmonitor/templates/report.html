@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src 'self' file:; img-src data:;">
+<title>RTK Cloud 巡檢報告 — {{.Environment}}</title>
+<style>
+@page { size: A4 landscape; margin: 15mm 12mm 18mm; @bottom-right { content: "第 " counter(page) " 頁"; font: 9px "Noto Sans CJK TC", "PingFang TC", sans-serif; color: #526875; } }
+* { box-sizing: border-box; }
+body { margin: 0; color: #183141; background: white; font: 11px/1.5 "Noto Sans CJK TC", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+h1 { margin: 0 0 5px; font-size: 25px; }
+h2 { margin: 24px 0 9px; font-size: 17px; color: #126e82; break-after: avoid; }
+h3 { margin: 0 0 7px; font-size: 12px; }
+p { margin: 6px 0; }
+.muted { color: #526875; }
+.meta { border-bottom: 3px solid #126e82; padding-bottom: 12px; }
+.cards { display: flex; gap: 10px; margin: 14px 0; }
+.card { flex: 1; border: 1px solid #cbd6dc; border-radius: 4px; padding: 10px; break-inside: avoid; }
+.large { font-size: 24px; font-weight: 650; }
+.status { display: inline-block; padding: 2px 6px; border: 1px solid #8ea4ae; border-radius: 3px; font-size: 10px; white-space: nowrap; }
+.PASS { color: #166149; background: #edf8f1; border-color: #9bc5ad; }
+.WARN { color: #805109; background: #fff6db; border-color: #dbc284; }
+.FAIL { color: #942c36; background: #ffeff0; border-color: #d8a1a5; }
+.UNKNOWN, .NOT_RUN { color: #515c7e; background: #f1f2f8; border-color: #b1b7cf; }
+.NOT_APPLICABLE { color: #586870; background: #f5f7f8; }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.table-block { break-inside: avoid; page-break-inside: avoid; margin-bottom: 12px; }
+thead { display: table-header-group; }
+th, td { text-align: left; vertical-align: top; padding: 7px 6px; border-bottom: 1px solid #d8e0e5; overflow-wrap: anywhere; }
+th { background: #eef4f7; color: #244858; font-weight: 650; }
+tr { break-inside: avoid; }
+.detail { font-size: 10px; }
+.detail small { display: block; margin-top: 3px; color: #526875; font-size: 9px; }
+.notes { padding: 8px 12px; border-left: 3px solid #9d7a32; background: #fff9ea; }
+.notes p { break-inside: avoid; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.chart-intro { break-inside: avoid; break-after: avoid; page-break-after: avoid; }
+.chart { border: 1px solid #d8e0e5; padding: 9px; margin-bottom: 2px; break-inside: avoid; min-width: 0; }
+.chart svg { width: 100%; height: 108px; display: block; }
+.footer { border-top: 1px solid #cbd6dc; margin-top: 20px; padding-top: 7px; font-size: 9px; color: #526875; }
+.empty { padding: 16px; background: #f3f6f8; }
+@media screen { body { max-width: 1120px; padding: 28px; margin: auto; } }
+</style>
+</head>
+<body>
+<header class="meta">
+<h1>RTK Cloud 巡檢報告</h1>
+<p><strong>環境：{{.Environment}}</strong>　Stack：{{.Stack}}　巡檢範圍：{{.Profile}}</p>
+<p class="muted">報告期間：{{when .From}} — {{when .To}}　時區：{{.Timezone}}</p>
+<p class="muted">產生時間：{{when .GeneratedAt}}　結果格式：{{.Version}}　設定來源指紋：{{.SourceFingerprint}}</p>
+</header>
+<div class="cards">
+<div class="card"><p>目前整體狀態</p><div class="large"><span class="status {{.Overall}}">{{status .Overall}}</span></div><p class="muted">依最後有效觀測與所選巡檢範圍判定</p></div>
+<div class="card"><p>必要檢查覆蓋率</p><div class="large">{{pct .Coverage.Percent}}</div><p>已驗證 {{.Coverage.Verified}} / {{.Coverage.Required}}；未知 {{.Coverage.Unknown}}；未執行 {{.Coverage.NotRun}}</p></div>
+<div class="card"><p>期間採樣覆蓋率</p><div class="large">{{pct .HistoryCoverage}}</div><p>{{.Snapshots}} 筆已保存觀測；以 30 秒採集間隔估算</p></div>
+<div class="card"><p>風險與異常項目</p><div class="large">{{count "WARN"}} / {{count "FAIL"}}</div><p>警告 / 異常；未知 {{count "UNKNOWN"}}；未執行 {{count "NOT_RUN"}}</p></div>
+</div>
+{{if .Notes}}<div class="notes">{{range .Notes}}<p>{{.}}</p>{{end}}</div>{{end}}
+
+<h2>全服務與檢查層級</h2>
+{{if .Services}}
+{{range servicePages .Services}}<div class="table-block">
+<table><thead><tr><th style="width:30%">服務</th><th style="width:12%">整體</th><th style="width:12%">存活</th><th style="width:12%">依賴就緒</th><th style="width:12%">實際功能</th><th>最後觀測</th></tr></thead><tbody>
+{{range .}}<tr><td>{{.Name}}</td><td><span class="status {{.Overall}}">{{status .Overall}}</span></td><td><span class="status {{.Liveness}}">{{status .Liveness}}</span></td><td><span class="status {{.Readiness}}">{{status .Readiness}}</span></td><td><span class="status {{.Function}}">{{status .Function}}</span></td><td>{{when .Latest}}</td></tr>{{end}}
+</tbody></table></div>{{end}}
+{{else}}<div class="empty">沒有可呈現的服務觀測。未觀測不能視為正常。</div>{{end}}
+
+{{range .Groups}}
+<h2>{{.Title}}</h2>
+{{range resultPages .Results}}<div class="table-block">
+<table class="detail"><thead><tr><th style="width:19%">服務 / 檢查</th><th style="width:10%">狀態</th><th style="width:18%">數值 / 門檻</th><th style="width:17%">效期 / 版本</th><th style="width:26%">證據與處理建議</th><th style="width:10%">觀測時間</th></tr></thead><tbody>
+{{range .}}
+<tr><td><strong>{{.Service}}</strong><br>{{.CheckID}}<small>層級：{{.Layer}}；必要：{{.Required}}</small></td>
+<td><span class="status {{.Status}}">{{status .Status}}</span>{{if .ObservedStatus}}<small>本次觀測：{{status .ObservedStatus}}<br>連續失敗 {{.ConsecutiveFailures}}；成功 {{.ConsecutiveSuccesses}}</small>{{end}}<small>耗時 {{.DurationMS}} ms</small></td>
+<td>{{num .Value}} {{.Unit}}<small>門檻：{{if .Threshold}}{{.Threshold}}{{else}}未設定或不適用{{end}}</small></td>
+<td>{{if .ExpiresAt}}{{when .ExpiresAt}}<small>期間終點剩餘 {{remaining .ExpiresAt}}</small>{{else}}—{{end}}{{if .Fingerprint}}<small>Fingerprint：{{.Fingerprint}}</small>{{end}}</td>
+<td>{{.Reason}}{{if .Recommendation}}<small>建議：{{.Recommendation}}</small>{{end}}<small>來源：{{if .Source}}{{.Source}}{{else}}未提供{{end}}</small></td>
+<td>{{when .ObservedAt}}</td></tr>
+{{end}}</tbody></table></div>{{end}}
+{{end}}
+
+<div class="chart-intro"><h2>保存樣本的趨勢</h2>
+<p class="muted">缺樣以折線中斷呈現。圖軸使用 UTC；不以平均延遲推算 p95 / p99。未驗證的處理上限須參考對應檢查結果。</p>
+</div>
+{{if .Charts}}{{range chartPages .Charts}}<div class="table-block"><div class="charts">{{range .}}<div class="chart"><h3>{{.Title}} <span class="muted">({{.Unit}})</span></h3><p class="muted">樣本 {{.Samples}}；期間峰值 {{.Peak}}</p>{{.SVG}}</div>{{end}}</div></div>{{end}}{{else}}<div class="empty">沒有足夠的連續樣本可畫趨勢。單次巡檢只能呈現當下數值。</div>{{end}}
+
+<h2>異常與狀態變化時間線</h2>
+{{if .Events}}{{range eventPages .Events}}<div class="table-block"><table class="detail"><thead><tr><th style="width:18%">時間</th><th style="width:22%">服務 / 檢查</th><th style="width:12%">狀態</th><th>證據</th></tr></thead><tbody>{{range .}}<tr><td>{{when .Time}}</td><td>{{.Service}} / {{.CheckID}}</td><td><span class="status {{.Status}}">{{status .Status}}</span></td><td>{{.Reason}}</td></tr>{{end}}</tbody></table></div>{{end}}{{else}}<p>已保存觀測中沒有記錄警告或異常狀態變化；請同時確認覆蓋率。</p>{{end}}
+
+<footer class="footer">此報告由已保存的巡檢資料產生。健康狀態只代表檢查範圍及已觀測時間；缺少來源、過期資料與未執行功能均需另外確認。報告不包含原始 token、私鑰或連線密碼。</footer>
+</body>
+</html>
