@@ -47,6 +47,8 @@ type deploymentServiceIdentity struct {
 	Environment      string `json:"environment"`
 	Stack            string `json:"stack"`
 	Subject          string `json:"subject"`
+	Owner            string `json:"owner,omitempty"`
+	RuntimeSecretUID string `json:"runtime_secret_uid,omitempty"`
 	RootSHA256       string `json:"root_sha256"`
 	RequestID        string `json:"request_id"`
 	CSR              string `json:"csr_pem,omitempty"`
@@ -170,9 +172,31 @@ func validateDeploymentServiceIdentity(record deploymentServiceIdentity, root st
 // Initial enrollment never renews, changes an existing key, or writes runtime
 // owner state. The caller holds the per-service lock until installation finishes.
 func ensureDeploymentServiceIdentity(store secretStore, stack, subject string, existing map[string]any, listener map[string]any, dns string) (deploymentServiceIdentity, error) {
+	return ensureDeploymentServiceIdentityOwner(store, stack, subject, "", existing, listener, dns)
+}
+
+// A known owner may hold its own key without introducing a new Service subject.
+// Existing API identities keep their paths and idempotency references unchanged.
+func deploymentServiceIdentityPath(subject, owner string) (string, error) {
+	if !deploymentServiceSubject(subject) || (owner != "" && (subject != "service:ota" || owner != otaProducerSealOwner)) {
+		return "", errors.New("unrecognized deployment service identity owner")
+	}
+	name := strings.TrimPrefix(subject, "service:")
+	if owner != "" {
+		name = owner
+	}
+	return "pki/services/" + name + "/identity.json", nil
+}
+
+func ensureDeploymentServiceIdentityOwner(store secretStore, stack, subject, owner string, existing map[string]any, listener map[string]any, dns string) (deploymentServiceIdentity, error) {
 	var record deploymentServiceIdentity
-	if !deploymentServiceSubject(subject) {
-		return record, errors.New("unrecognized deployment service subject")
+	path, err := deploymentServiceIdentityPath(subject, owner)
+	if err != nil {
+		return record, err
+	}
+	requestSubject := subject
+	if owner != "" {
+		requestSubject += "\x00owner:" + owner
 	}
 	cfg, root, err := readDeploymentServiceIssuer(store, stack)
 	if err != nil {
@@ -187,19 +211,18 @@ func ensureDeploymentServiceIdentity(store secretStore, stack, subject string, e
 			return record, err
 		}
 	}
-	path := "pki/services/" + strings.TrimPrefix(subject, "service:") + "/identity.json"
 	raw, err := store.read(path)
 	if err == nil {
 		if json.Unmarshal([]byte(raw), &record) != nil {
 			return record, errors.New("invalid saved deployment identity JSON")
 		}
-		if record.Version != 1 || record.Environment != store.Environment || record.Stack != stack || record.Subject != subject || record.RootSHA256 != cfg.RootSHA256 || (record.Source != "enrolled" && record.Source != "adopted") {
+		if record.Version != 1 || record.Environment != store.Environment || record.Stack != stack || record.Subject != subject || record.Owner != owner || record.RootSHA256 != cfg.RootSHA256 || (record.Source != "enrolled" && record.Source != "adopted") {
 			return record, errors.New("saved deployment identity scope/pin differs from selected environment; reconciliation required")
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return record, err
 	} else {
-		record = deploymentServiceIdentity{Version: 1, Environment: store.Environment, Stack: stack, Subject: subject, RootSHA256: cfg.RootSHA256, Source: "enrolled", RequestID: initialServiceRequestID(store.Environment, stack, subject, cfg.RootSHA256)}
+		record = deploymentServiceIdentity{Version: 1, Environment: store.Environment, Stack: stack, Subject: subject, Owner: owner, RootSHA256: cfg.RootSHA256, Source: "enrolled", RequestID: initialServiceRequestID(store.Environment, stack, requestSubject, cfg.RootSHA256)}
 		if existing != nil {
 			if listener == nil {
 				return record, errors.New("adoption requires independent listener trust and CRL")
@@ -230,7 +253,7 @@ func ensureDeploymentServiceIdentity(store secretStore, stack, subject string, e
 		if existing != nil {
 			return record, errors.New("pending local enrollment and installed identity coexist; reconcile before deployment")
 		}
-		if record.Source != "enrolled" || record.RequestID != initialServiceRequestID(store.Environment, stack, subject, cfg.RootSHA256) {
+		if record.Source != "enrolled" || record.RequestID != initialServiceRequestID(store.Environment, stack, requestSubject, cfg.RootSHA256) {
 			return record, errors.New("invalid pending initial identity")
 		}
 		// Prove the saved CSR/key pair before resubmission; never regenerate on error.
@@ -426,6 +449,7 @@ func runDeploymentServiceIdentity(args []string) error {
 	environment := fs.String("environment", "", "selected environment")
 	workspace := fs.String("workspace", "", "workspace root")
 	subject := fs.String("subject", "", "exact service:<name> from deployment catalogue")
+	owner := fs.String("owner", "", "optional known independent owner: ota-producer-period-seal")
 	confirm := fs.String("confirm", "", "selected stack name")
 	installSeed := fs.Bool("install-seed", false, "create the selected workload initial identity Secret without overwriting existing state")
 	if err := fs.Parse(args); err != nil {
@@ -445,7 +469,11 @@ func runDeploymentServiceIdentity(args []string) error {
 	if err != nil {
 		return err
 	}
-	identityPath, err := store.safePath(filepath.Join("pki/services", strings.TrimPrefix(*subject, "service:"), "identity.json"))
+	relativePath, err := deploymentServiceIdentityPath(*subject, *owner)
+	if err != nil {
+		return err
+	}
+	identityPath, err := store.safePath(relativePath)
 	if err != nil {
 		return err
 	}
@@ -454,7 +482,7 @@ func runDeploymentServiceIdentity(args []string) error {
 		return err
 	}
 	defer unlock()
-	record, err := ensureDeploymentServiceIdentity(store, *confirm, *subject, nil, nil, "")
+	record, err := ensureDeploymentServiceIdentityOwner(store, *confirm, *subject, *owner, nil, nil, "")
 	if err != nil {
 		return err
 	}
@@ -463,12 +491,20 @@ func runDeploymentServiceIdentity(args []string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(os.Stdout, "%s %s certificate_sha256=%s (environment SecretStore; runtime owner state unchanged)\n", *environment, *subject, record.Fingerprint)
+	if record.Owner != "" && *installSeed {
+		fmt.Fprintf(os.Stdout, "%s %s owner=%s certificate_sha256=%s (environment record; current Secret initialized or preserved without overwrite)\n", *environment, *subject, record.Owner, record.Fingerprint)
+	} else {
+		fmt.Fprintf(os.Stdout, "%s %s certificate_sha256=%s (environment SecretStore; runtime owner state unchanged)\n", *environment, *subject, record.Fingerprint)
+	}
 	return nil
 }
 
-// The seed is separate from runtime state and is immutable during normal deploy.
+// Static workload seeds are separate and immutable. The known monthly owner
+// instead initializes its own current Secret once, preserving existing state.
 func installDeploymentIdentitySeed(store secretStore, env map[string]string, record deploymentServiceIdentity) error {
+	if record.Owner == otaProducerSealOwner {
+		return installOTAProducerIdentityState(store, env, record)
+	}
 	namespaceKey := "video-cloud"
 	if record.Subject == "service:account-manager" {
 		namespaceKey = "account-manager"

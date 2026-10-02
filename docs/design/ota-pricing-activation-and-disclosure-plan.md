@@ -97,6 +97,34 @@ such evidence.
 This section is the approved implementation target. Completion observations
 below are dated evidence and remain valid until replaced by actual verification.
 
+### Monthly producer operations follow-up (2026-10-02; not deployed)
+
+The protected monthly Job initially had no independent durable Service identity
+and used the Account Manager HTTP inventory. This follow-up implements a
+separate `service:ota` owner, existing-Secret state persistence with UID/version
+CAS, the Account Manager private mTLS inventory route, and operator Go commands
+for exact-month close and identity maintenance. The source inventory continues
+to include disabled and zero-use Clouds. A pending issuance is durable before
+issuer I/O; installed state is durable before activation. Local initial identity
+records are deployment provenance and cannot overwrite a renewed current key.
+A dedicated named-Secret get/patch Role and projected API token/CA require no
+additional PVC. The API's key/owner and file-state consumers remain separate.
+
+Each environment explicitly declares schedule disabled/suspended and its first
+qualified UTC source month. Staging proposes November 2026; earlier partial
+periods are skipped, with no source/Billing writes. Optional future scheduling
+still needs qualified source/token/inventory and canonical image prerequisites.
+A monthly gap may exceed a 30-day leaf's lifetime. The operator therefore invokes
+read-only inspection and explicit due-only identity maintenance before expiry;
+this delivery does not select or install a recurring renewal schedule. Runtime
+admission uses registry/revocation rows, and optional CRL inspection truthfully
+reports `unchecked` when unconfigured.
+
+Focused identity, persistence, auth, fixture/database and operator checks precede
+the required delivery gates. This section describes code and operations being
+prepared; it does not claim a live Job identity, token, completed month, price
+publication or new invoice. See [deployment operations](../deployment-operations.md).
+
 ### Staging activation checkpoint (2026-10-02; incomplete)
 
 This checkpoint updates only the fields verified since the 2026-10-01 read-only

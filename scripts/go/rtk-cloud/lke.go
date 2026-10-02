@@ -1933,6 +1933,9 @@ spec:
         - podSelector:
             matchLabels:
               rtk.realtek.com/pki-bootstrap: "true"
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ota-producer-period-seal
       ports:
         - protocol: TCP
           port: 9443
@@ -2059,6 +2062,7 @@ spec:
                   - video-cloud-logingester
                   - video-cloud-otaregistrar
                   - video-cloud-otaservice
+                  - ota-producer-period-seal
       ports:
         - protocol: TCP
           port: %d
@@ -2911,6 +2915,9 @@ func lkeDeployWorkloads(paths provisionPaths, env map[string]string, opts provis
 			return err
 		}
 		if lkeOTAProducerSealScheduleEnabled(env) {
+			if err := kubectlApply(lkeOTAProducerIdentityRBACManifest(env)); err != nil {
+				return err
+			}
 			if err := kubectlApply(lkeOTAProducerSealRuntimeSecretManifest(env)); err != nil {
 				return err
 			}
