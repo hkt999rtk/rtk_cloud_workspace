@@ -12,28 +12,34 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
 
 type deploymentStorageMigrationState struct {
-	Environment         string                        `json:"environment"`
-	Source              string                        `json:"source_bucket"`
-	SourceRegion        string                        `json:"source_region,omitempty"`
-	SourceEndpoint      string                        `json:"source_endpoint,omitempty"`
-	Destination         string                        `json:"destination_bucket"`
-	DestinationRegion   string                        `json:"destination_region,omitempty"`
-	DestinationEndpoint string                        `json:"destination_endpoint,omitempty"`
-	Prefix              string                        `json:"destination_prefix"`
-	Objects             map[string]storageObjectProof `json:"objects"`
-	ObjectCount         int                           `json:"object_count"`
-	ByteCount           int64                         `json:"byte_count"`
-	UpdatedAt           string                        `json:"updated_at"`
+	Environment          string                        `json:"environment"`
+	Source               string                        `json:"source_bucket"`
+	SourceRegion         string                        `json:"source_region,omitempty"`
+	SourceEndpoint       string                        `json:"source_endpoint,omitempty"`
+	SourcePrefix         string                        `json:"source_prefix,omitempty"`
+	SourcePrefixExplicit bool                          `json:"source_prefix_explicit,omitempty"`
+	Purpose              string                        `json:"purpose,omitempty"`
+	SourceKeys           map[string]string             `json:"source_keys"`
+	Destination          string                        `json:"destination_bucket"`
+	DestinationRegion    string                        `json:"destination_region,omitempty"`
+	DestinationEndpoint  string                        `json:"destination_endpoint,omitempty"`
+	Prefix               string                        `json:"destination_prefix"`
+	Objects              map[string]storageObjectProof `json:"objects"`
+	ObjectCount          int                           `json:"object_count"`
+	ByteCount            int64                         `json:"byte_count"`
+	UpdatedAt            string                        `json:"updated_at"`
 }
 
 type storageObjectProof struct {
-	SHA256 string `json:"sha256"`
-	Bytes  int64  `json:"bytes"`
+	SHA256           string `json:"sha256"`
+	Bytes            int64  `json:"bytes"`
+	AttributesSHA256 string `json:"attributes_sha256,omitempty"`
 }
 
 var errStorageEndpointUnassigned = errors.New("Object Storage endpoint is not assigned to this account")
@@ -47,13 +53,33 @@ func validateDeploymentStorageActivation(cfg deploymentConfig) error {
 		return fmt.Errorf("runtime media bucket %s is prepared but not cut over; storage-cutover receipt is required before deployment", cfg.Storage.RuntimeMedia.Bucket)
 	}
 	var receipt struct {
-		Environment                 string `json:"environment"`
-		Bucket                      string `json:"bucket"`
-		CutoverAt                   string `json:"cutover_at"`
-		RollbackCredentialsRetained bool   `json:"rollback_credentials_retained"`
+		Environment                 string    `json:"environment"`
+		Bucket                      string    `json:"bucket"`
+		Region                      string    `json:"region"`
+		Prefix                      string    `json:"prefix"`
+		CutoverID                   string    `json:"cutover_id"`
+		MigrationSHA256             string    `json:"migration_receipt_sha256"`
+		CutoverAt                   time.Time `json:"cutover_at"`
+		RollbackCredentialsRetained bool      `json:"rollback_credentials_retained"`
 	}
-	if json.Unmarshal(body, &receipt) != nil || receipt.Environment != cfg.Environment || receipt.Bucket != cfg.Storage.RuntimeMedia.Bucket || receipt.CutoverAt == "" || !receipt.RollbackCredentialsRetained {
+	if json.Unmarshal(body, &receipt) != nil || receipt.Environment != cfg.Environment || receipt.Bucket != cfg.Storage.RuntimeMedia.Bucket || receipt.Region != cfg.Storage.RuntimeMedia.Region || receipt.Prefix != cfg.Storage.RuntimeMedia.Prefix || receipt.CutoverAt.IsZero() || receipt.CutoverAt.After(time.Now().UTC()) || receipt.CutoverID == "" || receipt.MigrationSHA256 == "" || !receipt.RollbackCredentialsRetained {
 		return fmt.Errorf("runtime media bucket %s has no matching completed cutover receipt", cfg.Storage.RuntimeMedia.Bucket)
+	}
+	store, err := newSecretStore("", cfg.Environment)
+	if err != nil {
+		return err
+	}
+	raw, err := store.read(storageCutoverJournalName("media"))
+	if err != nil {
+		return errors.New("completed private storage cutover journal is required before deployment")
+	}
+	var journal storageCutoverJournal
+	if json.Unmarshal([]byte(raw), &journal) != nil || journal.Environment != cfg.Environment || journal.Purpose != "media" || journal.Status != "complete" || journal.ID != receipt.CutoverID || journal.MigrationSHA256 != receipt.MigrationSHA256 {
+		return errors.New("storage cutover receipt does not match its completed private journal")
+	}
+	proof, err := os.ReadFile(storageCutoverMigrationPath(cfg, "media"))
+	if err != nil || fmt.Sprintf("%x", sha256.Sum256(proof)) != receipt.MigrationSHA256 {
+		return errors.New("storage migration proof changed after cutover; reconcile it before deployment")
 	}
 	return nil
 }
@@ -63,8 +89,8 @@ func runDeploymentStorageLifecycle(action string, cfg deploymentConfig, environm
 }
 
 func runDeploymentStorageLifecyclePurpose(action string, cfg deploymentConfig, environmentFile, sourceFile string, keyID int, purpose string) error {
-	if purpose != "media" && purpose != "ota" {
-		return errors.New("--purpose must be media or ota")
+	if purpose != "media" && purpose != "ota" && purpose != "artifacts" {
+		return errors.New("--purpose must be media, ota, or artifacts")
 	}
 	if purpose == "ota" && cfg.Storage.OTAMode != "dedicated" {
 		return errors.New("OTA storage is not configured as dedicated")
@@ -132,6 +158,9 @@ func runDeploymentStorageLifecyclePurpose(action string, cfg deploymentConfig, e
 		fmt.Println(string(body))
 		return nil
 	case "storage-bootstrap":
+		if purpose == "artifacts" {
+			return checker.bootstrapArtifactStorage(cfg, values, environmentFile)
+		}
 		if purpose == "ota" {
 			return checker.bootstrapOTAStorage(cfg, values, environmentFile)
 		}
@@ -142,19 +171,30 @@ func runDeploymentStorageLifecyclePurpose(action string, cfg deploymentConfig, e
 		}
 		return checker.migrateStoragePurpose(cfg, values, sourceFile, purpose)
 	case "storage-cutover":
+		if purpose == "artifacts" {
+			return errors.New("artifact cutover requires updating and verifying every release, CI, SDK, backup, and download consumer; runtime cutover cannot activate shared artifacts")
+		}
 		if purpose == "ota" {
 			if sourceFile == "" {
 				return errors.New("--source-env-file is required for OTA storage-cutover")
 			}
-			return checker.cutoverOTAStorage(cfg, values, sourceFile)
+			return checker.cutoverOTAStorage(cfg, values, sourceFile, environmentFile)
 		}
 		if check := checker.checkResolvedObjectStorage(cfg, values); !check.Passed {
 			return errors.New(check.Detail)
 		}
-		return checker.cutoverRuntimeStorage(cfg, values)
+		return checker.cutoverRuntimeStorage(cfg, values, sourceFile, environmentFile)
+	case "storage-rollback":
+		if purpose == "artifacts" {
+			return errors.New("artifact rollback requires all external consumer bindings and destination writes to be reconciled")
+		}
+		if err := rollbackStorageCutover(cfg, purpose); err != nil {
+			return err
+		}
+		return rollbackStorageCandidate(cfg, environmentFile, purpose)
 	case "storage-retire":
-		if purpose == "ota" {
-			return errors.New("OTA key retirement requires separate consumer verification; use Linode key management after verification")
+		if purpose != "media" {
+			return errors.New("OTA and artifact key retirement require separate consumer verification; use Linode key management after verification")
 		}
 		if keyID <= 0 {
 			return errors.New("--key-id is required for storage-retire")
@@ -165,205 +205,9 @@ func runDeploymentStorageLifecyclePurpose(action string, cfg deploymentConfig, e
 	}
 }
 
-func (c deploymentCredentialChecker) cutoverRuntimeStorage(cfg deploymentConfig, values map[string]string) error {
-	if err := materializeDeploymentRuntime(cfg); err != nil {
-		return err
-	}
-	receipt, err := readDeploymentStorageReceipt(cfg.RuntimeRoot)
-	if err != nil {
-		return err
-	}
-	values["LINODE_OBJ_BUCKET"], values["LINODE_OBJ_REGION"], values["LINODE_OBJ_ENDPOINT"] = cfg.Storage.RuntimeMedia.Bucket, cfg.Storage.RuntimeMedia.Region, receipt.Endpoint
-	restore := installDeploymentChildCredentialEnvironment(values)
-	defer restore()
-	store := provisionObjectStore{bucket: cfg.Storage.RuntimeMedia.Bucket, endpoint: receipt.Endpoint, region: cfg.Storage.RuntimeMedia.Region, accessKey: values["LINODE_OBJ_ACCESS_KEY_ID"], secretKey: values["LINODE_OBJ_SECRET_ACCESS_KEY"]}
-	if err := c.validateClipStorageSmoke(store, cfg.Storage.RuntimeMedia.Prefix); err != nil {
-		return err
-	}
-	secretStore, err := newSecretStore("", cfg.Environment)
-	if err != nil {
-		return err
-	}
-	kubeconfig := secretStore.KubeconfigPath()
-	if _, err := os.Stat(kubeconfig); err != nil {
-		return errors.New("staging kubeconfig is required to cut over and roll workloads")
-	}
-	oldKubeconfig, hadKubeconfig := os.LookupEnv("RTK_CLOUD_LKE_KUBECONFIG")
-	_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
-	defer func() {
-		if hadKubeconfig {
-			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", oldKubeconfig)
-		} else {
-			_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
-		}
-	}()
-	stack, err := readEnvFile(filepath.Join(cfg.RuntimeRoot, "env", "stack.env"))
-	if err != nil {
-		return err
-	}
-	namespace := lkeNamespaceName(stack, "video-cloud")
-	if err := ensureMediaCutoverScope(namespace, cfg.Storage.RuntimeMedia.Bucket); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeVideoCloudRuntimeSecretManifest(stack)); err != nil {
-		return err
-	}
-	for _, deployment := range []string{"video-cloud-api", "video-cloud-clipverifier"} {
-		if err := runKubectl("-n", namespace, "set", "env", "deployment/"+deployment,
-			"VIDEO_CLOUD_BLOB_BUCKET="+cfg.Storage.RuntimeMedia.Bucket,
-			"VIDEO_CLOUD_BLOB_REGION="+cfg.Storage.RuntimeMedia.Region,
-			"VIDEO_CLOUD_BLOB_ENDPOINT="+receipt.Endpoint,
-			"VIDEO_CLOUD_BLOB_PREFIX="+cfg.Storage.RuntimeMedia.Prefix); err != nil {
-			return err
-		}
-		if err := runKubectl("-n", namespace, "rollout", "status", "deployment/"+deployment, "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-			return err
-		}
-	}
-	state := map[string]any{"environment": cfg.Environment, "bucket": cfg.Storage.RuntimeMedia.Bucket, "cutover_at": time.Now().UTC().Format(time.RFC3339), "rollback_credentials_retained": true, "workloads_rolled": []string{"video-cloud-api", "video-cloud-clipverifier"}, "clip_storage_smoke": "pass"}
-	return writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json"), state)
-}
-
-func ensureMediaCutoverScope(namespace, destinationBucket string) error {
-	body, err := kubectlCombinedOutput(nil, "-n", namespace, "get", "deployments", "-o", "json")
-	if err != nil {
-		return fmt.Errorf("inspect media consumers before cutover: %w", err)
-	}
-	return validateMediaCutoverInventory(body, destinationBucket)
-}
-
-func validateMediaCutoverInventory(body []byte, destinationBucket string) error {
-	var inventory struct {
-		Items []struct {
-			Metadata struct {
-				Name string `json:"name"`
-			} `json:"metadata"`
-			Spec struct {
-				Template struct {
-					Spec struct {
-						Containers []struct {
-							Env []struct {
-								Name  string `json:"name"`
-								Value string `json:"value"`
-							} `json:"env"`
-						} `json:"containers"`
-					} `json:"spec"`
-				} `json:"template"`
-			} `json:"spec"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(body, &inventory); err != nil {
-		return fmt.Errorf("decode media consumer inventory: %w", err)
-	}
-	allowed := keySet("video-cloud-api", "video-cloud-clipverifier")
-	for _, deployment := range inventory.Items {
-		if allowed[deployment.Metadata.Name] {
-			continue
-		}
-		for _, container := range deployment.Spec.Template.Spec.Containers {
-			for _, variable := range container.Env {
-				if variable.Name == "VIDEO_CLOUD_BLOB_BUCKET" && variable.Value != "" && variable.Value != destinationBucket {
-					return fmt.Errorf("media cutover blocked: active deployment %s still references bucket %s", deployment.Metadata.Name, variable.Value)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func (c deploymentCredentialChecker) cutoverOTAStorage(cfg deploymentConfig, values map[string]string, sourceFile string) error {
-	if err := lkeValidateOTACDNBaseURL(cfg.Values); err != nil {
-		return err
-	}
-	if check := c.checkResolvedOTAStorage(cfg, values); !check.Passed {
-		return errors.New(check.Detail)
-	}
-	metricsEndpoint := ""
-	if cfg.Values["VIDEO_CLOUD_OTA_CDN_BASE_URL"] == "" {
-		bucket, err := c.resolveStorageBucket(values["LINODE_TOKEN"], cfg.Storage.OTAFirmware)
-		if err != nil {
-			return err
-		}
-		if err := validateOTADirectMetricsEndpoint(bucket); err != nil {
-			return err
-		}
-		metricsEndpoint, err = normalizeLinodeS3Endpoint(bucket.S3Endpoint)
-		if err != nil {
-			return err
-		}
-	}
-	if err := materializeDeploymentRuntime(cfg); err != nil {
-		return err
-	}
-	stack, err := readEnvFile(filepath.Join(cfg.RuntimeRoot, "env", "stack.env"))
-	if err != nil {
-		return err
-	}
-	if !lkeOTAServiceRegistrationEnabled(stack) {
-		return errors.New("OTA service registration is disabled; dedicated bucket is prepared but no workload can be cut over")
-	}
-	if metricsEndpoint != "" {
-		if err := validateOTAMetricsQualification(cfg.RuntimeRoot, cfg.Environment, cfg.Storage.OTAFirmware.Bucket, cfg.Storage.OTAFirmware.Region, metricsEndpoint, time.Now().UTC()); err != nil {
-			return err
-		}
-	}
-	secretStore, err := newSecretStore("", cfg.Environment)
-	if err != nil {
-		return err
-	}
-	kubeconfig := secretStore.KubeconfigPath()
-	if _, err := os.Stat(kubeconfig); err != nil {
-		return errors.New("kubeconfig is required for OTA cutover")
-	}
-	old, had := os.LookupEnv("RTK_CLOUD_LKE_KUBECONFIG")
-	_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", kubeconfig)
-	defer func() {
-		if had {
-			_ = os.Setenv("RTK_CLOUD_LKE_KUBECONFIG", old)
-		} else {
-			_ = os.Unsetenv("RTK_CLOUD_LKE_KUBECONFIG")
-		}
-	}()
-	if err := ensureLiveOTASourceBucket(lkeNamespaceName(stack, "video-cloud"), sourceFile, cfg.Storage.OTAFirmware.Prefix); err != nil {
-		return err
-	}
-	if err := c.validateOTAMigrationCutover(cfg, values, sourceFile); err != nil {
-		return err
-	}
-	restore := installDeploymentChildCredentialEnvironment(values)
-	defer restore()
-	if err := lkeRequireOTAServiceInputs(stack); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeAllowVideoCloudAPIOTAGatewayNetworkPolicyManifest(stack)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeOTAStorageSecretManifest(stack)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeOTAServiceDeploymentManifest(stack)); err != nil {
-		return err
-	}
-	if err := kubectlApply(lkeOTAServiceServiceManifest(stack)); err != nil {
-		return err
-	}
-	if err := runKubectl("-n", lkeNamespaceName(stack, "video-cloud"), "rollout", "status", "deployment/"+otaServiceWorkloadName, "--timeout", firstNonEmpty(os.Getenv("LKE_ROLLOUT_TIMEOUT"), "5m")); err != nil {
-		return err
-	}
-	if err := lkeRequireReadyOTAServiceEndpoint(stack); err != nil {
-		return err
-	}
-	return writeStorageState(filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover-ota.json"), map[string]any{
-		"environment": cfg.Environment, "bucket": cfg.Storage.OTAFirmware.Bucket,
-		"region": cfg.Storage.OTAFirmware.Region, "prefix": cfg.Storage.OTAFirmware.Prefix,
-		"cutover_at": time.Now().UTC().Format(time.RFC3339), "rollback_credentials_retained": true,
-		"service_ready": true,
-	})
-}
-
 func (c deploymentCredentialChecker) validateClipStorageSmoke(store provisionObjectStore, prefix string) error {
 	body := []byte("rtk-cloud-clip-storage-smoke")
-	key := strings.Trim(prefix, "/") + "/clips/__rtk_cloud_cutover_smoke__/" + fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	key := strings.Trim(prefix, "/") + "/__rtk_cloud_validation__/cutover-" + fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	if _, err := provisionSignedObjectRequestWithClient(c.client, store, http.MethodPut, key, nil, body); err != nil {
 		return fmt.Errorf("clip upload smoke failed: %w", err)
 	}
@@ -438,7 +282,7 @@ func (c deploymentCredentialChecker) bootstrapRuntimeStorage(cfg deploymentConfi
 			return errors.New(check.Detail)
 		}
 	}
-	return c.bootstrapArtifactStorage(cfg, values)
+	return nil
 }
 
 func (c deploymentCredentialChecker) bootstrapOTAStorage(cfg deploymentConfig, values map[string]string, environmentFile string) error {
@@ -565,13 +409,25 @@ func (c deploymentCredentialChecker) checkResolvedOTAStorage(cfg deploymentConfi
 	return deploymentCredentialCheck{Name: name, Passed: true, Detail: "inventory, limited key, and write/read/delete canary verified"}
 }
 
-func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConfig, values map[string]string) error {
+func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConfig, values map[string]string, environmentFile string) error {
 	if c.checkResolvedArtifactStorage(cfg, values).Passed {
 		return nil
 	}
 	target := cfg.Storage.ReleaseArtifacts
 	bucket, err := c.resolveStorageBucket(values["LINODE_TOKEN"], target)
-	if err != nil {
+	if err != nil && strings.Contains(err.Error(), "was not found") {
+		if err := c.validateStorageRegionCapabilities(values["LINODE_TOKEN"], target.Region); err != nil {
+			return err
+		}
+		payload, _ := json.Marshal(map[string]string{"label": target.Bucket, "region": target.Region})
+		body, createErr := c.linodeAuthorizedRequest(values["LINODE_TOKEN"], http.MethodPost, "/object-storage/buckets", payload)
+		if createErr != nil {
+			return fmt.Errorf("create artifact destination bucket: %w", createErr)
+		}
+		if json.Unmarshal(body, &bucket) != nil {
+			return errors.New("artifact bucket create response returned invalid JSON")
+		}
+	} else if err != nil {
 		return err
 	}
 	endpoint, err := normalizeLinodeS3Endpoint(bucket.S3Endpoint)
@@ -586,16 +442,10 @@ func (c deploymentCredentialChecker) bootstrapArtifactStorage(cfg deploymentConf
 	if err := c.validateNewStorageKey(store, target.Prefix); err != nil {
 		return fmt.Errorf("new artifact key validation failed: %w", err)
 	}
-	environmentFile := defaultDeploymentEnvironmentCredentialFile(cfg.Environment)
 	if err := ensureCredentialProfile(environmentFile); err != nil {
 		return err
 	}
 	replacements := map[string]string{
-		"LINODE_TOKEN":                          values["LINODE_TOKEN"],
-		"GHCR_PULL_USERNAME":                    values["GHCR_PULL_USERNAME"],
-		"GHCR_PULL_TOKEN":                       values["GHCR_PULL_TOKEN"],
-		"GODADDY_KEY":                           values["GODADDY_KEY"],
-		"GODADDY_SECRET":                        values["GODADDY_SECRET"],
 		"LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID":     access,
 		"LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY": secret,
 	}
@@ -622,7 +472,7 @@ func (c deploymentCredentialChecker) migrateRuntimeStorage(cfg deploymentConfig,
 
 func (c deploymentCredentialChecker) migrateStoragePurpose(cfg deploymentConfig, destinationValues map[string]string, sourceFile, purpose string) error {
 	target := cfg.Storage.RuntimeMedia
-	check := c.checkResolvedObjectStorage(cfg, destinationValues)
+	var check deploymentCredentialCheck
 	access := firstNonEmpty(destinationValues["LINODE_MEDIA_OBJ_ACCESS_KEY_ID"], destinationValues["LINODE_OBJ_ACCESS_KEY_ID"])
 	secret := firstNonEmpty(destinationValues["LINODE_MEDIA_OBJ_SECRET_ACCESS_KEY"], destinationValues["LINODE_OBJ_SECRET_ACCESS_KEY"])
 	stateName := "storage-migration.json"
@@ -633,6 +483,14 @@ func (c deploymentCredentialChecker) migrateStoragePurpose(cfg deploymentConfig,
 		access, secret = destinationValues["LINODE_OTA_OBJ_ACCESS_KEY_ID"], destinationValues["LINODE_OTA_OBJ_SECRET_ACCESS_KEY"]
 		stateName = "storage-migration-ota.json"
 		namespaces = []string{"ota-billable-v1/"}
+	} else if purpose == "artifacts" {
+		target = cfg.Storage.ReleaseArtifacts
+		check = c.checkResolvedArtifactStorage(cfg, destinationValues)
+		access, secret = destinationValues["LINODE_ARTIFACT_OBJ_ACCESS_KEY_ID"], destinationValues["LINODE_ARTIFACT_OBJ_SECRET_ACCESS_KEY"]
+		stateName = "storage-migration-artifacts.json"
+		namespaces = []string{""}
+	} else {
+		check = c.checkResolvedObjectStorage(cfg, destinationValues)
 	}
 	if !check.Passed {
 		return errors.New(check.Detail)
@@ -659,69 +517,149 @@ func (c deploymentCredentialChecker) migrateStoragePurpose(cfg deploymentConfig,
 	if purpose == "ota" {
 		return c.migrateOTAFirmwareObjects(cfg, source, destination, statePath)
 	}
-	state := deploymentStorageMigrationState{Environment: cfg.Environment, Source: source.bucket, Destination: destination.bucket, Prefix: target.Prefix, Objects: map[string]storageObjectProof{}}
-	if body, readErr := os.ReadFile(statePath); readErr == nil {
-		_ = json.Unmarshal(body, &state)
-		if state.Source != source.bucket || state.Destination != destination.bucket || state.Prefix != target.Prefix {
-			return errors.New("existing migration state targets different storage")
+	if purpose == "artifacts" {
+		if source.prefix != "" {
+			return errors.New("artifact migration requires the complete source bucket; LINODE_OBJ_PREFIX must be empty")
 		}
-		if state.Objects == nil {
-			state.Objects = map[string]storageObjectProof{}
+		// releases/, ci/, SDK and other consumers already own their namespaces.
+		// Preserve every physical key instead of prepending the release prefix.
+		return c.migrateStorageObjects(cfg.Environment, source, destination, "", statePath, "release-artifacts", namespaces)
+	}
+	return c.migrateStorageObjects(cfg.Environment, source, destination, target.Prefix, statePath, "media", namespaces)
+}
+
+func (c deploymentCredentialChecker) migrateStorageObjects(environment string, source, destination provisionObjectStore, prefix, statePath, purpose string, namespaces []string) error {
+	for _, store := range []provisionObjectStore{source, destination} {
+		if err := validateStorageCopyBucket(c.client, store); err != nil {
+			return err
 		}
 	}
-	for _, namespace := range namespaces {
-		for _, sourcePrefix := range []string{namespace, strings.Trim(target.Prefix, "/") + "/" + namespace} {
-			entries, listErr := provisionListObjects(source, sourcePrefix)
-			if listErr != nil {
-				return listErr
+	want := deploymentStorageMigrationState{
+		Environment: environment, Purpose: purpose, Source: source.bucket, SourceRegion: source.region, SourceEndpoint: source.endpoint,
+		SourcePrefix: source.prefix, SourcePrefixExplicit: source.prefixSet,
+		Destination: destination.bucket, DestinationRegion: destination.region, DestinationEndpoint: destination.endpoint,
+		Prefix: strings.Trim(prefix, "/"), Objects: map[string]storageObjectProof{}, SourceKeys: map[string]string{},
+	}
+	state := want
+	if body, err := os.ReadFile(statePath); err == nil {
+		if err := json.Unmarshal(body, &state); err != nil {
+			return fmt.Errorf("decode existing migration receipt: %w", err)
+		}
+		if state.Environment != want.Environment || state.Purpose != want.Purpose || state.Source != want.Source || state.SourceRegion != want.SourceRegion || state.SourceEndpoint != want.SourceEndpoint ||
+			state.SourcePrefix != want.SourcePrefix || state.SourcePrefixExplicit != want.SourcePrefixExplicit || state.Destination != want.Destination || state.DestinationRegion != want.DestinationRegion ||
+			state.DestinationEndpoint != want.DestinationEndpoint || state.Prefix != want.Prefix || state.Objects == nil || state.SourceKeys == nil {
+			return errors.New("existing migration receipt targets different storage or predates verified mapping; use a separate reviewed migration receipt")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	objects, err := listStorageSourceObjects(source, prefix, namespaces)
+	if err != nil {
+		return err
+	}
+	currentKeys := map[string]string{}
+	for _, object := range objects {
+		currentKeys[object.SourceKey] = object.DestinationKey
+	}
+	for key, destinationKey := range state.SourceKeys {
+		if currentKeys[key] != destinationKey {
+			return fmt.Errorf("source mapping for %s differs from migration receipt", key)
+		}
+	}
+	for _, object := range objects {
+		snapshot, err := readStorageObject(c.client, source, object.SourceKey)
+		if err != nil {
+			return fmt.Errorf("read source object %s: %w", object.SourceKey, err)
+		}
+		proof := snapshot.proof()
+		if recorded, found := state.Objects[object.DestinationKey]; found && recorded != proof {
+			return fmt.Errorf("source object %s differs from migration receipt", object.SourceKey)
+		}
+		if err := copyStorageObject(c.client, snapshot, destination, object.DestinationKey); err != nil {
+			return fmt.Errorf("copy %s: %w", object.SourceKey, err)
+		}
+		// Re-read the source before recording proof so changes during the copy
+		// cannot become a successfully resumable receipt.
+		current, err := readStorageObject(c.client, source, object.SourceKey)
+		if err != nil {
+			return err
+		}
+		if current.proof() != proof {
+			return fmt.Errorf("source object %s changed during migration", object.SourceKey)
+		}
+		state.Objects[object.DestinationKey] = proof
+		state.SourceKeys[object.SourceKey] = object.DestinationKey
+		state.ObjectCount, state.ByteCount = otaProofTotals(state.Objects)
+		state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if err := writeStorageState(statePath, state); err != nil {
+			return err
+		}
+	}
+	state.ObjectCount, state.ByteCount = otaProofTotals(state.Objects)
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return writeStorageState(statePath, state)
+}
+
+// An explicit LINODE_OBJ_PREFIX selects only that source namespace. Profiles
+// without it retain the documented root/target-prefix compatibility lookup.
+func listStorageSourceObjects(source provisionObjectStore, destinationPrefix string, namespaces []string) ([]otaSourceObject, error) {
+	if strings.HasPrefix(source.endpoint, "file://") {
+		root, err := provisionFileObjectRoot(source)
+		if err != nil {
+			return nil, err
+		}
+		info, err := os.Stat(filepath.Join(root, source.bucket))
+		if err != nil {
+			return nil, fmt.Errorf("inspect source bucket: %w", err)
+		}
+		if !info.IsDir() {
+			return nil, errors.New("source bucket is not a directory")
+		}
+	}
+	prefixes := []string{"", strings.Trim(destinationPrefix, "/")}
+	if source.prefixSet {
+		prefixes = []string{source.prefix}
+	}
+	keys, destinations := map[string]string{}, map[string]string{}
+	for _, prefix := range prefixes {
+		for _, namespace := range namespaces {
+			entries, err := provisionListObjects(source, storageJoinPrefix(prefix, namespace))
+			if err != nil {
+				return nil, err
 			}
 			for _, entry := range entries {
-				destinationKey, allowed := storageMigrationDestinationKeyForPurpose(target.Prefix, entry.Key, namespaces)
+				logical := entry.Key
+				if prefix != "" {
+					logical = strings.TrimPrefix(entry.Key, prefix+"/")
+				}
+				destinationKey, allowed := storageMigrationDestinationKeyForPurpose(destinationPrefix, logical, namespaces)
 				if !allowed {
-					continue
+					return nil, fmt.Errorf("source inventory returned unexpected key %s", entry.Key)
 				}
-				if _, done := state.Objects[destinationKey]; done {
-					continue
+				if previous, found := destinations[destinationKey]; found && previous != entry.Key {
+					return nil, fmt.Errorf("source keys %s and %s map to the same destination %s", previous, entry.Key, destinationKey)
 				}
-				data, readErr := provisionReadObject(source, entry.Key)
-				if readErr != nil {
-					return readErr
-				}
-				existing, listErr := provisionListObjects(destination, destinationKey)
-				if listErr != nil {
-					return listErr
-				}
-				found := false
-				for _, object := range existing {
-					if object.Key == destinationKey {
-						found = true
-						break
-					}
-				}
-				if !found {
-					if _, writeErr := provisionSignedObjectRequestWithClient(c.client, destination, http.MethodPut, destinationKey, nil, data); writeErr != nil {
-						return writeErr
-					}
-				}
-				written, verifyErr := provisionSignedObjectRequestWithClient(c.client, destination, http.MethodGet, destinationKey, nil, nil)
-				if verifyErr != nil {
-					return verifyErr
-				}
-				sourceSum, destinationSum := sha256.Sum256(data), sha256.Sum256(written)
-				if sourceSum != destinationSum {
-					return fmt.Errorf("checksum mismatch for %s", entry.Key)
-				}
-				state.Objects[destinationKey] = storageObjectProof{SHA256: hex.EncodeToString(sourceSum[:]), Bytes: int64(len(data))}
-				state.ObjectCount++
-				state.ByteCount += int64(len(data))
-				state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-				if err := writeStorageState(statePath, state); err != nil {
-					return err
-				}
+				keys[entry.Key], destinations[destinationKey] = destinationKey, entry.Key
 			}
 		}
 	}
-	return nil
+	sortedKeys := make([]string, 0, len(keys))
+	for key := range keys {
+		sortedKeys = append(sortedKeys, key)
+	}
+	sort.Strings(sortedKeys)
+	objects := make([]otaSourceObject, 0, len(keys))
+	for _, key := range sortedKeys {
+		objects = append(objects, otaSourceObject{SourceKey: key, DestinationKey: keys[key]})
+	}
+	return objects, nil
+}
+
+func storageJoinPrefix(prefix, key string) string {
+	if prefix = strings.Trim(prefix, "/"); prefix != "" {
+		return prefix + "/" + strings.TrimLeft(key, "/")
+	}
+	return key
 }
 
 func storageMigrationDestinationKey(environmentPrefix, sourceKey string) (string, bool) {
@@ -730,7 +668,7 @@ func storageMigrationDestinationKey(environmentPrefix, sourceKey string) (string
 
 func storageMigrationDestinationKeyForPurpose(environmentPrefix, sourceKey string, namespaces []string) (string, bool) {
 	prefix := strings.Trim(environmentPrefix, "/")
-	if strings.HasPrefix(sourceKey, prefix+"/") {
+	if prefix != "" && strings.HasPrefix(sourceKey, prefix+"/") {
 		sourceKey = strings.TrimPrefix(sourceKey, prefix+"/")
 	}
 	allowed := false
@@ -743,21 +681,7 @@ func storageMigrationDestinationKeyForPurpose(environmentPrefix, sourceKey strin
 	if !allowed {
 		return "", false
 	}
-	return prefix + "/" + strings.TrimLeft(sourceKey, "/"), true
-}
-
-func (c deploymentCredentialChecker) retireStorageKey(cfg deploymentConfig, values map[string]string, keyID int) error {
-	cutoverPath := filepath.Join(cfg.RuntimeRoot, "state", "storage-cutover.json")
-	if _, err := os.Stat(cutoverPath); err != nil {
-		return errors.New("recorded storage cutover state is required before retirement")
-	}
-	consumerInventory := filepath.Join(cfg.RuntimeRoot, "state", "storage-consumers.json")
-	body, err := os.ReadFile(consumerInventory)
-	if err != nil || !bytes.Contains(body, []byte(`"generic_key_in_use": false`)) {
-		return errors.New("consumer inventory must confirm generic_key_in_use is false")
-	}
-	_, err = c.linodeAuthorizedRequest(values["LINODE_TOKEN"], http.MethodDelete, fmt.Sprintf("/object-storage/keys/%d", keyID), nil)
-	return err
+	return storageJoinPrefix(prefix, sourceKey), true
 }
 
 func writeStorageState(path string, value any) error {
@@ -768,7 +692,23 @@ func writeStorageState(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(body, '\n'), 0o600)
+	file, err := os.CreateTemp(filepath.Dir(path), ".storage-state-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.Write(append(body, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 type linodeStorageBucket struct {
@@ -954,17 +894,11 @@ func (c deploymentCredentialChecker) validateStorageRegionCapabilities(token, re
 }
 
 func (c deploymentCredentialChecker) resolveStorageBucket(token string, target deploymentStorageTarget) (linodeStorageBucket, error) {
-	body, err := c.linodeAuthorizedRequest(token, http.MethodGet, "/object-storage/buckets?page_size=500", nil)
-	if err != nil {
+	var inventory []linodeStorageBucket
+	if err := c.storageAccountInventory(token, "buckets", &inventory); err != nil {
 		return linodeStorageBucket{}, fmt.Errorf("bucket inventory request failed: %w", err)
 	}
-	var inventory struct {
-		Data []linodeStorageBucket `json:"data"`
-	}
-	if json.Unmarshal(body, &inventory) != nil {
-		return linodeStorageBucket{}, errors.New("bucket inventory returned invalid JSON")
-	}
-	for _, bucket := range inventory.Data {
+	for _, bucket := range inventory {
 		if bucket.Label != target.Bucket {
 			continue
 		}
@@ -981,19 +915,16 @@ func (c deploymentCredentialChecker) resolveStorageBucket(token string, target d
 }
 
 func (c deploymentCredentialChecker) resolveAuthorizedStorageKey(token, access string, target deploymentStorageTarget) (linodeStorageKey, error) {
-	body, err := c.linodeAuthorizedRequest(token, http.MethodGet, "/object-storage/keys?page_size=500", nil)
-	if err != nil {
+	var inventory []linodeStorageKey
+	if err := c.storageAccountInventory(token, "keys", &inventory); err != nil {
 		return linodeStorageKey{}, fmt.Errorf("access-key inventory request failed: %w", err)
 	}
-	var inventory struct {
-		Data []linodeStorageKey `json:"data"`
-	}
-	if json.Unmarshal(body, &inventory) != nil {
-		return linodeStorageKey{}, errors.New("access-key inventory returned invalid JSON")
-	}
-	for _, key := range inventory.Data {
+	for _, key := range inventory {
 		if key.AccessKey != access {
 			continue
+		}
+		if len(key.BucketAccess) != 1 {
+			return linodeStorageKey{}, fmt.Errorf("%w: key must grant exactly one bucket", errStorageKeyWrongTarget)
 		}
 		for _, grant := range key.BucketAccess {
 			if grant.BucketName == target.Bucket && grant.Region == target.Region && grant.Permissions == "read_write" {

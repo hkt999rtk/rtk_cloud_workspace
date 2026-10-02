@@ -22,6 +22,7 @@ LKE/Kubernetes; the legacy VM runtime is not an active deployment path.
 | Upgrade persistent staging | Reviewed plan and CI image provenance -> `deployment upgrade` (or a scoped existing-workload rollout) | Updates selected resources; never implies reset |
 | Check Console release features | `deployment console-check --environment NAME --cloud-id UUID --product-id UUID --test-account-id UUID` | Uses an existing Test Lab account; creates private login sessions, otherwise GET/HEAD only |
 | Take over an existing environment | Transfer matching non-secret controller state and SecretStore -> `deployment preflight --operation acceptance` | Preflight does not |
+| Prepare or migrate Object Storage | [Storage policy](object-storage-policy.md) and [storage operations](storage-credential-lifecycle.md) | Only explicitly selected bootstrap/migration/cutover steps |
 | Restore core data after deployment | [Matched backup/restore procedure](backup-restore.md) under a maintenance/write fence | Explicit restore replaces selected datasets after a safety backup |
 | Accept an existing environment | `deployment acceptance` | Creates or updates test data; does not rebuild the deployment |
 | One-time environment rehearsal | `deployment test` | Creates resources and removes the owned resources at the end |

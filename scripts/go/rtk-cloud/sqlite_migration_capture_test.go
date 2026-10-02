@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 const captureTestUID = "11111111-2222-3333-4444-555555555555"
@@ -96,9 +98,27 @@ case "$script" in
     if [[ "${FAKE_CAPTURE_TAR_CORRUPT:-}" == true ]]; then printf 'changed' >> "$FAKE_SOURCE/rtk-cloud-admin.db"; fi
     if [[ "${FAKE_CAPTURE_TAR_EXTRA:-}" == true ]]; then
       printf 'extra' > "$FAKE_SOURCE/extra.db"
-      COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@" extra.db
+      if [[ "${FAKE_CAPTURE_TAR_BLOCKED_CHILD:-}" == true ]]; then
+        dd if=/dev/zero of="$FAKE_SOURCE/extra.db" bs=1048576 count=4 2>/dev/null
+        # This separate child keeps stderr open even when the tar writer
+        # receives SIGPIPE. The capture must bound its inherited-pipe wait.
+        sleep 30 </dev/null >/dev/null &
+        printf '%s\n' "$!" >> "$FAKE_CAPTURE_CHILD_PIDS"
+        COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@" extra.db &
+        producer="$!"
+        printf '%s\n' "$producer" >> "$FAKE_CAPTURE_CHILD_PIDS"
+        wait "$producer"
+      else
+        COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@" extra.db
+      fi
     else
       COPYFILE_DISABLE=1 tar -C "$FAKE_SOURCE" -cf - "$@"
+    fi
+    if [[ "${FAKE_CAPTURE_TAR_PADDING:-}" == true ]]; then
+      dd if=/dev/zero bs=1048576 count=4 2>/dev/null &
+      producer="$!"
+      printf '%s\n' "$producer" >> "$FAKE_CAPTURE_CHILD_PIDS"
+      wait "$producer"
     fi ;;
   *) exit 2 ;;
 esac
@@ -123,7 +143,8 @@ func captureArgs(output, kubeconfig string) []string {
 
 func TestSQLiteMigrationCaptureChecksSourceAndCopy(t *testing.T) {
 	source, output, kubeconfig := captureFixture(t)
-	if err := runSQLiteMigrationCapture(captureArgs(output, kubeconfig)); err != nil {
+	t.Setenv("FAKE_CAPTURE_TAR_PADDING", "true")
+	if err := captureWithPipeDeadline(t, captureArgs(output, kubeconfig)); err != nil {
 		t.Fatal(err)
 	}
 	want, err := sqliteMigrationHash(filepath.Join(source, "rtk-cloud-admin.db"))
@@ -172,7 +193,17 @@ func TestSQLiteMigrationCaptureRejectsChangedSource(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, output, kubeconfig := captureFixture(t)
 			t.Setenv(tc.env, "true")
-			if err := runSQLiteMigrationCapture(captureArgs(output, kubeconfig)); err == nil {
+			var captureErr error
+			if tc.env == "FAKE_CAPTURE_TAR_EXTRA" {
+				t.Setenv("FAKE_CAPTURE_TAR_BLOCKED_CHILD", "true")
+				captureErr = captureWithPipeDeadline(t, captureArgs(output, kubeconfig))
+				if captureErr == nil || !strings.Contains(captureErr.Error(), "unexpected entry") {
+					t.Fatalf("large extra source was not rejected: %v", captureErr)
+				}
+			} else {
+				captureErr = runSQLiteMigrationCapture(captureArgs(output, kubeconfig))
+			}
+			if captureErr == nil {
 				t.Fatal("unsafe source was accepted")
 			}
 			entries, err := os.ReadDir(output)
@@ -180,6 +211,40 @@ func TestSQLiteMigrationCaptureRejectsChangedSource(t *testing.T) {
 				t.Fatalf("failed capture left plaintext: %v, %v", entries, err)
 			}
 		})
+	}
+}
+
+func captureWithPipeDeadline(t *testing.T, args []string) error {
+	t.Helper()
+	pidFile := filepath.Join(t.TempDir(), "child-pids")
+	t.Setenv("FAKE_CAPTURE_CHILD_PIDS", pidFile)
+	// Own only the local children started by this fixture, including the
+	// deliberate stderr holder that outlives its killed parent.
+	stopChildren := func() {
+		pids, _ := os.ReadFile(pidFile)
+		for _, value := range strings.Fields(string(pids)) {
+			pid, err := strconv.Atoi(value)
+			if err == nil && pid > 0 {
+				if process, err := os.FindProcess(pid); err == nil {
+					_ = process.Kill()
+				}
+			}
+		}
+	}
+	t.Cleanup(stopChildren)
+	result := make(chan error, 1)
+	go func() { result <- runSQLiteMigrationCapture(args) }()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(7 * time.Second):
+		stopChildren()
+		select {
+		case <-result:
+		case <-time.After(3 * time.Second):
+		}
+		t.Fatal("capture blocked on descendant archive or stderr pipe")
+		return nil
 	}
 }
 

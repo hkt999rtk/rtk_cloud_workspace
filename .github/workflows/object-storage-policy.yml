@@ -1,0 +1,46 @@
+name: Object Storage Policy
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/object-storage-policy.yml'
+      - '.github/workflows/go-runtime-coverage-nightly.yml'
+      - 'docs/object-storage-policy.md'
+      - 'cloud_deploy/storage/**'
+      - 'cloud_env/**/storage.env'
+      - 'scripts/ci/init-submodules.sh'
+      - 'scripts/go/internal/storagepolicy/**'
+      - 'scripts/go/internal/storagebindings/**'
+      - 'scripts/go/rtk-cloud/runtime_coverage_workflow_test.go'
+      - 'repos/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bindings:
+    name: Policy and producer-consumer bindings
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: false
+      - name: Initialize pinned service repositories
+        env:
+          CI_RUNNER_GITHUB_WORK_KEY: ${{ secrets.CI_RUNNER_GITHUB_WORK_KEY }}
+        run: scripts/ci/init-submodules.sh
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.3'
+          cache: false
+      - name: Validate policy and storage bindings without cloud access
+        working-directory: scripts/go
+        run: |
+          go test ./internal/storagepolicy ./internal/storagebindings
+          go test ./rtk-cloud -run '^TestRuntimeCoverageWorkflow'

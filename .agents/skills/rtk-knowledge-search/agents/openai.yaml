@@ -1,6 +1,6 @@
 interface:
   display_name: "RTK Knowledge Search"
-  short_description: "Find RTK sources and verify scope and freshness"
+  short_description: "Find RTK sources semantically; verify scope and freshness"
   default_prompt: "Use $rtk-knowledge-search to find the authoritative RTK documentation for this question and cite the current source files."
 
 policy:

@@ -63,13 +63,13 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/v4/object-storage/buckets":
             endpoint = f"http://{self.headers['Host']}"
             body, content_type = json.dumps({"data": [
-                {"label": "rtk-video-staging-sg", "region": "sg-sin-2", "s3_endpoint": endpoint},
-                {"label": "rtk-cloud-client-artifacts", "region": "us-sea", "s3_endpoint": endpoint},
+                {"label": "rtk-cloud-staging-runtime-sg-sin-2", "region": "sg-sin-2", "s3_endpoint": endpoint},
+                {"label": "rtk-cloud-shared-artifacts-us-sea", "region": "us-sea", "s3_endpoint": endpoint},
             ]}), "application/json"
         elif path == "/v4/object-storage/keys":
             body, content_type = json.dumps({"data": [
-                {"id": 41, "access_key": "media-access", "bucket_access": [{"bucket_name": "rtk-video-staging-sg", "region": "sg-sin-2", "permissions": "read_write"}]},
-                {"id": 42, "access_key": "artifact-access", "bucket_access": [{"bucket_name": "rtk-cloud-client-artifacts", "region": "us-sea", "permissions": "read_write"}]},
+                {"id": 41, "access_key": "media-access", "bucket_access": [{"bucket_name": "rtk-cloud-staging-runtime-sg-sin-2", "region": "sg-sin-2", "permissions": "read_write"}]},
+                {"id": 42, "access_key": "artifact-access", "bucket_access": [{"bucket_name": "rtk-cloud-shared-artifacts-us-sea", "region": "us-sea", "permissions": "read_write"}]},
             ]}), "application/json"
         elif path == "/token":
             body, content_type = json.dumps({"token": "registry-token"}), "application/json"
@@ -78,7 +78,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path.startswith("/v1/domains/") and "/records/TXT/" in path:
             body = self.objects.get(path, b"[]").decode()
             content_type = "application/json"
-        elif path in ("/test-bucket", "/rtk-video-staging-sg", "/rtk-cloud-client-artifacts"):
+        elif path in ("/test-bucket", "/rtk-cloud-staging-runtime-sg-sin-2", "/rtk-cloud-shared-artifacts-us-sea"):
             body, content_type = "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>", "application/xml"
         elif path in self.objects:
             body, content_type = self.objects[path].decode(), "application/octet-stream"

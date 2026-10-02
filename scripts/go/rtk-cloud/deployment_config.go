@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"rtk-cloud-workspace/scripts/go/rtk-cloud/internal/envroot"
+	"rtk-cloud-workspace/scripts/go/internal/storagepolicy"
 )
 
 type deploymentConfig struct {
@@ -186,9 +187,10 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	sharedEnvFile := fs.String("shared-env-file", "", "retired; shared secret fallback is not supported")
 	createMissingObjectStorageBucket := fs.Bool("create-missing-object-storage-bucket", false, "create a missing configured Object Storage bucket before revalidation")
 	grantObjectStorageBucketAccess := fs.Bool("grant-object-storage-bucket-access", false, "create and activate a replacement limited key for the configured Object Storage bucket")
+	destinationEnvFile := fs.String("destination-env-file", "", "private candidate credential profile for storage preparation, migration and cutover")
 	sourceEnvFile := fs.String("source-env-file", "", "source Object Storage credential profile for migration and OTA cutover")
 	keyID := fs.Int("key-id", 0, "recorded old Object Storage key ID to retire")
-	storagePurpose := fs.String("purpose", "media", "storage purpose: media or ota")
+	storagePurpose := fs.String("purpose", "media", "storage purpose: media, ota or artifacts")
 	metricsStart := fs.String("window-start", "", "UTC start of the OTA Cloud Pulse qualification window")
 	metricsEnd := fs.String("window-end", "", "UTC end of the OTA Cloud Pulse qualification window")
 	metricsRecorder := fs.String("recorded-by", "", "operator identity for the OTA metrics qualification")
@@ -245,7 +247,7 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 		}
 	}
 	storageAction := strings.HasPrefix(action, "storage-")
-	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-retire", "storage-metrics-export")[action] {
+	if action != "preflight" && action != "credentials-check" && action != "plan" && action != "create" && action != "upgrade" && action != "provision" && action != "acceptance" && action != "remove" && action != "test" && !keySet("storage-plan", "storage-bootstrap", "storage-migrate", "storage-cutover", "storage-rollback", "storage-retire", "storage-metrics-export")[action] {
 		return fmt.Errorf("unknown deployment action %q", action)
 	}
 	if *createMissingObjectStorageBucket && action != "credentials-check" {
@@ -260,6 +262,11 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, *environmentRoot)
 	if err != nil {
 		return err
+	}
+	if (*createMissingObjectStorageBucket || *grantObjectStorageBucketAccess) && cfg.Storage.RuntimeMediaCutoverRequired {
+		if err := validateDeploymentStorageActivation(cfg); err != nil {
+			return fmt.Errorf("use storage-bootstrap with an isolated candidate profile before cutover: %w", err)
+		}
 	}
 	if *envFile == "" {
 		*envFile = defaultDeploymentEnvironmentCredentialFile(cfg.Environment)
@@ -277,7 +284,19 @@ func runDeploymentWithOperations(args []string, ops deploymentOperations) error 
 	if action != "plan" && action != "credentials-check" && action != "storage-plan" && *confirm != stack {
 		return fmt.Errorf("--confirm %s is required", stack)
 	}
+	if *destinationEnvFile != "" && !storageAction {
+		return errors.New("--destination-env-file requires a storage action")
+	}
 	if storageAction {
+		if keySet("storage-bootstrap", "storage-migrate", "storage-cutover")[action] && *destinationEnvFile == "" {
+			return errors.New("--destination-env-file is required to keep replacement storage credentials isolated until cutover")
+		}
+		if *destinationEnvFile != "" {
+			if err := stageDeploymentStorageProfile(cfg.Environment, *envFile, *destinationEnvFile, action == "storage-bootstrap"); err != nil {
+				return err
+			}
+			*envFile = *destinationEnvFile
+		}
 		if action == "storage-metrics-export" {
 			if *storagePurpose != "ota" {
 				return errors.New("storage-metrics-export requires --purpose ota")
@@ -714,10 +733,11 @@ func printDeploymentUsage() {
   rtk-cloud deployment remove --environment NAME --confirm STACK
   rtk-cloud deployment test --environment NAME --confirm STACK
   rtk-cloud deployment storage-plan --environment NAME
-  rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota --confirm STACK
-  rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota --source-env-file PATH --confirm STACK
+  rtk-cloud deployment storage-bootstrap --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --confirm STACK
+  rtk-cloud deployment storage-migrate --environment NAME --purpose media|ota|artifacts --destination-env-file PATH --source-env-file PATH --confirm STACK
   rtk-cloud deployment storage-metrics-export --environment NAME --purpose ota --window-start YYYY-MM-DDTHH:MM:SSZ --window-end YYYY-MM-DDTHH:MM:SSZ --recorded-by OPERATOR --confirm STACK
-  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota [--source-env-file PATH for ota] --confirm STACK
+  rtk-cloud deployment storage-cutover --environment NAME --purpose media|ota --destination-env-file PATH --source-env-file PATH --confirm STACK
+  rtk-cloud deployment storage-rollback --environment NAME --purpose media|ota --destination-env-file PATH --confirm STACK
   rtk-cloud deployment storage-retire --environment NAME --key-id ID --confirm STACK
 `)
 }
@@ -1073,10 +1093,10 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 	}
 	if len(runtime) == 0 {
 		region := strings.TrimSpace(adapterResolved["LKE_REGION"])
-		runtime = map[string]string{"RUNTIME_MEDIA_STORAGE_POLICY": "colocated", "RUNTIME_MEDIA_STORAGE_BUCKET": "rtk-video-media-" + filepath.Base(environmentRoot) + "-" + region, "RUNTIME_MEDIA_STORAGE_PREFIX": "environments/" + identity["CLOUD_STACK_NAME"]}
+		runtime = map[string]string{"RUNTIME_MEDIA_STORAGE_POLICY": "colocated", "RUNTIME_MEDIA_STORAGE_BUCKET": "rtk-cloud-" + filepath.Base(environmentRoot) + "-runtime-" + region, "RUNTIME_MEDIA_STORAGE_PREFIX": "environments/" + identity["CLOUD_STACK_NAME"]}
 	}
 	for key := range runtime {
-		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED", "RUNTIME_OTA_STORAGE_MODE", "RUNTIME_OTA_STORAGE_POLICY", "RUNTIME_OTA_STORAGE_BUCKET", "RUNTIME_OTA_STORAGE_REGION", "RUNTIME_OTA_STORAGE_PREFIX")[key] {
+		if !keySet("RUNTIME_MEDIA_STORAGE_POLICY", "RUNTIME_MEDIA_STORAGE_BUCKET", "RUNTIME_MEDIA_STORAGE_PREFIX", "RUNTIME_MEDIA_STORAGE_CUTOVER_REQUIRED", "RUNTIME_MEDIA_STORAGE_NAMING_EXCEPTION", "RUNTIME_OTA_STORAGE_MODE", "RUNTIME_OTA_STORAGE_POLICY", "RUNTIME_OTA_STORAGE_BUCKET", "RUNTIME_OTA_STORAGE_REGION", "RUNTIME_OTA_STORAGE_PREFIX")[key] {
 			return deploymentStoragePlan{}, fmt.Errorf("unknown runtime storage key %s", key)
 		}
 	}
@@ -1096,7 +1116,7 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 		return deploymentStoragePlan{}, err
 	}
 	if len(shared) == 0 {
-		shared = map[string]string{"RELEASE_ARTIFACT_STORAGE_POLICY": "shared-cross-region", "RELEASE_ARTIFACT_STORAGE_BUCKET": "rtk-cloud-client-artifacts", "RELEASE_ARTIFACT_STORAGE_LOCATION": "us-west", "RELEASE_ARTIFACT_STORAGE_REGION": "us-sea", "RELEASE_ARTIFACT_STORAGE_PREFIX": "releases"}
+		shared = map[string]string{"RELEASE_ARTIFACT_STORAGE_POLICY": "shared-cross-region", "RELEASE_ARTIFACT_STORAGE_BUCKET": "rtk-cloud-shared-artifacts-us-sea", "RELEASE_ARTIFACT_STORAGE_LOCATION": "us-west", "RELEASE_ARTIFACT_STORAGE_REGION": "us-sea", "RELEASE_ARTIFACT_STORAGE_PREFIX": "releases"}
 	}
 	allowed := keySet("RELEASE_ARTIFACT_STORAGE_POLICY", "RELEASE_ARTIFACT_STORAGE_BUCKET", "RELEASE_ARTIFACT_STORAGE_LOCATION", "RELEASE_ARTIFACT_STORAGE_REGION", "RELEASE_ARTIFACT_STORAGE_PREFIX")
 	for key := range shared {
@@ -1115,6 +1135,14 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 	computeRegion := strings.TrimSpace(adapterResolved["LKE_REGION"])
 	if computeRegion == "" && len(adapterResolved) > 0 {
 		return deploymentStoragePlan{}, errors.New("resolved compute region is required for colocated runtime storage")
+	}
+	if computeRegion != "" && strings.TrimSpace(runtime["RUNTIME_MEDIA_STORAGE_NAMING_EXCEPTION"]) == "" {
+		if err := storagepolicy.Validate(runtime["RUNTIME_MEDIA_STORAGE_BUCKET"], filepath.Base(environmentRoot), "runtime", computeRegion); err != nil {
+			return deploymentStoragePlan{}, err
+		}
+	}
+	if err := storagepolicy.Validate(shared["RELEASE_ARTIFACT_STORAGE_BUCKET"], "shared", "artifacts", shared["RELEASE_ARTIFACT_STORAGE_REGION"]); err != nil {
+		return deploymentStoragePlan{}, err
 	}
 	otaMode := firstNonEmpty(runtime["RUNTIME_OTA_STORAGE_MODE"], "legacy-shared")
 	if otaMode != "legacy-shared" && otaMode != "dedicated" {
@@ -1145,7 +1173,10 @@ func resolveDeploymentStoragePlan(workspace, environmentRoot string, identity, a
 		default:
 			return deploymentStoragePlan{}, errors.New("dedicated OTA storage policy must be colocated or cross-region")
 		}
-		expectedBucket := "rtk-ota-firmware-" + filepath.Base(environmentRoot) + "-" + ota.Region
+		expectedBucket, nameErr := storagepolicy.Bucket(filepath.Base(environmentRoot), "ota-firmware", ota.Region)
+		if nameErr != nil {
+			return deploymentStoragePlan{}, nameErr
+		}
 		if runtime["RUNTIME_OTA_STORAGE_BUCKET"] != expectedBucket {
 			return deploymentStoragePlan{}, fmt.Errorf("dedicated OTA bucket must be %s for the selected environment and storage region", expectedBucket)
 		}

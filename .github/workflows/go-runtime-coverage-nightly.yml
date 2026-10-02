@@ -124,16 +124,41 @@ jobs:
             get deployment video-cloud-api -o json > "$staging_deployment"
           kubectl --kubeconfig "$kubeconfig" -n "$staging_video_namespace" \
             get secret video-cloud-runtime -o json > "$staging_secret"
-          deployment_env() {
-            jq -er --arg name "$1" '
-              [.spec.template.spec.containers[].env[]?
-                | select(.name == $name)
-                | .value
-              ] | if length > 0 and .[0] != null and .[0] != "" then .[0] else error("missing deployment environment value") end
+          deployment_env_entry() {
+            jq -ec --arg name "$1" '
+              [.spec.template.spec.containers[]? | select(.name == "app")]
+              | if length == 1 then [.[0].env[]? | select(.name == $name)]
+                else error("expected one app container") end
+              | if length == 1 then .[0] else error("expected one deployment environment entry") end
             ' "$staging_deployment"
           }
-          blob_access_key="$(jq -er '.data.AWS_ACCESS_KEY_ID | @base64d | select(length > 0)' "$staging_secret")"
-          blob_secret_key="$(jq -er '.data.AWS_SECRET_ACCESS_KEY | @base64d | select(length > 0)' "$staging_secret")"
+          deployment_env() {
+            deployment_env_entry "$1" | jq -er '
+              if (.value | type) == "string" and (.value | length) > 0 and .valueFrom == null
+              then .value else error("expected a literal deployment environment value") end
+            '
+          }
+          deployment_secret_env() {
+            local ref secret_name secret_key
+            ref="$(deployment_env_entry "$1" | jq -ec '
+              if (has("value") | not) and (.valueFrom | keys) == ["secretKeyRef"]
+              then .valueFrom.secretKeyRef else error("expected an explicit Secret reference") end
+              | if (.name | type) == "string" and (.name | length) > 0 and
+                   (.key | type) == "string" and (.key | length) > 0
+                then . else error("missing Secret name or key") end
+            ')" || return 1
+            secret_name="$(jq -r '.name' <<< "$ref")"
+            secret_key="$(jq -r '.key' <<< "$ref")"
+            kubectl --kubeconfig "$kubeconfig" -n "$staging_video_namespace" \
+              get secret "$secret_name" -o json |
+              jq -er --arg key "$secret_key" '
+                .data[$key]
+                | if type == "string" and length > 0 then @base64d else error("missing Secret value") end
+                | if length > 0 then . else error("empty Secret value") end
+              '
+          }
+          blob_access_key="$(deployment_secret_env AWS_ACCESS_KEY_ID)"
+          blob_secret_key="$(deployment_secret_env AWS_SECRET_ACCESS_KEY)"
           turn_shared_secret="$(jq -er '.data.VIDEO_CLOUD_TURN_SHARED_SECRET | @base64d | select(length > 0)' "$staging_secret")"
           blob_endpoint="$(deployment_env VIDEO_CLOUD_BLOB_ENDPOINT)"
           blob_region="$(deployment_env VIDEO_CLOUD_BLOB_REGION)"
