@@ -879,15 +879,38 @@ func newControlledOTARunner(t *testing.T, cancel context.CancelFunc, checkDecisi
 				http.Error(w, "event rejected", http.StatusBadRequest)
 				return
 			}
-			w.WriteHeader(http.StatusCreated)
 			if event.Status == cancelAfterEvent {
-				time.AfterFunc(time.Millisecond, cancel)
+				w.Header().Set("X-Test-Cancel-After-Response", "true")
 			}
+			w.WriteHeader(http.StatusCreated)
 		default:
 			http.NotFound(w, req)
 		}
 	}))
-	return testOTARunner(server.URL), server
+	runner := testOTARunner(server.URL)
+	if cancelAfterEvent != "" {
+		runner.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			resp, err := http.DefaultTransport.RoundTrip(req)
+			if err == nil && resp.Header.Get("X-Test-Cancel-After-Response") == "true" {
+				// Cancel after the client consumes the event response, before the next stage.
+				// A server-side timer can cancel the event request itself under CI load.
+				resp.Body = otaCancelAfterResponseBody{ReadCloser: resp.Body, cancel: cancel}
+			}
+			return resp, err
+		})
+	}
+	return runner, server
+}
+
+type otaCancelAfterResponseBody struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b otaCancelAfterResponseBody) Close() error {
+	err := b.ReadCloser.Close()
+	b.cancel()
+	return err
 }
 
 func testOTARunner(baseURL string) otaDeviceRunner {

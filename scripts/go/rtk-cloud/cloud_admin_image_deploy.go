@@ -14,6 +14,9 @@ import (
 var cloudAdminCommitImagePattern = regexp.MustCompile(
 	`^ghcr\.io/hkt999rtk/rtk_cloud_admin/cloud-admin:sha-[0-9a-f]{12,40}$`,
 )
+var cloudAdminCurrentImagePattern = regexp.MustCompile(
+	`^ghcr\.io/hkt999rtk/rtk_cloud_admin/cloud-admin(?::sha-[0-9a-f]{12,40}|@sha256:[0-9a-f]{64})$`,
+)
 
 // runCloudAdminImageDeploy updates only the existing Cloud Admin deployment.
 // It does not reconcile shared infrastructure, secrets, DNS, or other workloads.
@@ -24,11 +27,15 @@ func runCloudAdminImageDeploy(args []string) error {
 	envRootFlag := fs.String("env-root", "", "normalized environment root")
 	confirm := fs.String("confirm", "", "exact stack name confirmation")
 	kubeconfig := fs.String("kubeconfig", "", "kubeconfig for the existing staging cluster")
+	expectedOldImage := fs.String("expected-old-image", "", "exact currently deployed Cloud Admin sha tag or digest image")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*envRootFlag) == "" {
 		return errors.New("--env-root is required")
+	}
+	if !cloudAdminCurrentImagePattern.MatchString(strings.TrimSpace(*expectedOldImage)) {
+		return errors.New("--expected-old-image must be the exact current Cloud Admin sha or digest image")
 	}
 	workspace := strings.TrimSpace(*workspaceFlag)
 	if workspace == "" {
@@ -51,9 +58,20 @@ func runCloudAdminImageDeploy(args []string) error {
 	if stack == "" || strings.TrimSpace(*confirm) != stack {
 		return fmt.Errorf("--confirm must equal CLOUD_STACK_NAME %q", stack)
 	}
-	image := strings.TrimSpace(lkeEnvValue(env, "LKE_CLOUD_ADMIN_IMAGE"))
+	store, err := newSecretStore("", env["CLOUD_ENV_NAME"])
+	if err != nil {
+		return err
+	}
+	operator, err := store.readOperator()
+	if err != nil {
+		return fmt.Errorf("read selected Cloud Admin operator configuration: %w", err)
+	}
+	image := strings.TrimSpace(operator["LKE_CLOUD_ADMIN_IMAGE"])
 	if !cloudAdminCommitImagePattern.MatchString(image) {
-		return errors.New("LKE_CLOUD_ADMIN_IMAGE must be the exact Cloud Admin sha image")
+		return errors.New("selected operator LKE_CLOUD_ADMIN_IMAGE must be the exact Cloud Admin sha image")
+	}
+	if processImage := strings.TrimSpace(os.Getenv("LKE_CLOUD_ADMIN_IMAGE")); processImage != "" && processImage != image {
+		return errors.New("process LKE_CLOUD_ADMIN_IMAGE differs from the selected operator pin")
 	}
 	if strings.TrimSpace(*kubeconfig) != "" {
 		if err := os.Setenv("RTK_CLOUD_KUBECONFIG", strings.TrimSpace(*kubeconfig)); err != nil {
@@ -72,11 +90,14 @@ func runCloudAdminImageDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := updateDeploymentContainerImage(deployment, "app", image); err != nil {
+	already, err := updateCloudAdminDeploymentImage(deployment, strings.TrimSpace(*expectedOldImage), image)
+	if err != nil {
 		return err
 	}
-	if err := kubectlReplaceJSON(deployment); err != nil {
-		return fmt.Errorf("replace Cloud Admin deployment: %w", err)
+	if !already {
+		if err := kubectlReplaceJSON(deployment); err != nil {
+			return fmt.Errorf("replace Cloud Admin deployment: %w", err)
+		}
 	}
 	return runKubectl(
 		"-n", namespace, "rollout", "status", "deployment/cloud-admin",
@@ -84,29 +105,46 @@ func runCloudAdminImageDeploy(args []string) error {
 	)
 }
 
-func updateDeploymentContainerImage(deployment map[string]any, containerName, image string) error {
+func updateCloudAdminDeploymentImage(deployment map[string]any, expectedOldImage, image string) (bool, error) {
+	metadata, ok := deployment["metadata"].(map[string]any)
+	if !ok {
+		return false, errors.New("Cloud Admin deployment has no resourceVersion")
+	}
+	resourceVersion, ok := metadata["resourceVersion"].(string)
+	if !ok || strings.TrimSpace(resourceVersion) == "" {
+		return false, errors.New("Cloud Admin deployment has no resourceVersion")
+	}
 	spec, ok := deployment["spec"].(map[string]any)
 	if !ok {
-		return errors.New("deployment has no spec")
+		return false, errors.New("deployment has no spec")
+	}
+	if replicas, ok := spec["replicas"].(float64); !ok || replicas != 1 {
+		return false, errors.New("Cloud Admin deployment must have exactly one replica")
 	}
 	template, ok := spec["template"].(map[string]any)
 	if !ok {
-		return errors.New("deployment has no pod template")
+		return false, errors.New("deployment has no pod template")
 	}
 	podSpec, ok := template["spec"].(map[string]any)
 	if !ok {
-		return errors.New("deployment has no pod spec")
+		return false, errors.New("deployment has no pod spec")
 	}
 	containers, ok := podSpec["containers"].([]any)
 	if !ok {
-		return errors.New("deployment has no containers")
+		return false, errors.New("deployment has no containers")
 	}
 	for _, item := range containers {
 		container, _ := item.(map[string]any)
-		if container["name"] == containerName {
+		if container["name"] == "app" {
+			if container["image"] != expectedOldImage {
+				return false, errors.New("Cloud Admin deployment image differs from --expected-old-image")
+			}
+			if image == expectedOldImage {
+				return true, nil
+			}
 			container["image"] = image
-			return nil
+			return false, nil
 		}
 	}
-	return fmt.Errorf("deployment has no %s container", containerName)
+	return false, errors.New("Cloud Admin deployment has no app container")
 }

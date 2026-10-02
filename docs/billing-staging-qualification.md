@@ -215,6 +215,12 @@ config/artifact finalization exited successfully at
 read-back, without reposting. Keep this compatibility result separate from
 formal Product signer qualification and OTA/Logger billing acceptance.
 
+The shared issuer is the current staging compatibility baseline in the
+canonical PKI contract cited above. Formal per-Product CA isolation belongs
+to its production migration; it is not an additional gate for these scoped
+staging metering checks. Device mTLS, registered service identities and exact
+Product grants remain required and were verified separately.
+
 For Logger, an initial private helper stopped before MQTT connect because it
 missed the renderer-derived public endpoint. A separate Python strict TLS
 check rejected the legacy MQTT CA for missing AKI, while normal Go TLS

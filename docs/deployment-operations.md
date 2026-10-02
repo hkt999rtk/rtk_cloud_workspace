@@ -554,6 +554,56 @@ the default persistent-staging update command. Use it only for an explicitly
 authorized destructive rehearsal after reviewing its plan. Neither a skill nor a
 test script grants permission to reset an existing environment.
 
+### Scoped Cloud Admin price-page update
+
+Use `cloud-admin-image-deploy` for an existing Cloud Admin image update after
+the protected environment's scoped GO. It does not run a full-platform upgrade
+or publish a Billing rate card. The target image must first be published by
+Cloud Admin's canonical CI workflow for the reviewed fixed source revision;
+the PR's image-build smoke check does not push a deployable package.
+
+1. Record the actual Deployment UID, resourceVersion, app image, replicas,
+   strategy, complete configuration and rollback value. Query Pods using the
+   Deployment's actual selector rather than assuming `app=cloud-admin`.
+   Qualify the canonical CI digest, node platform, registry credential and
+   live pull identity. Complete the non-issuing issuer mTLS check and applicable
+   provider/no-addition plan before mutation. Omit DNS and storage write probes
+   when neither dependency changes.
+2. Preserve the old selected-environment operator image pin and set its
+   mode-0600 `operator/env/LKE_CLOUD_ADMIN_IMAGE` to the reviewed immutable
+   Cloud Admin SHA tag. The helper reads that canonical environment's
+   SecretStore directly. A missing pin fails; a conflicting process image also
+   fails. Generated `stack.env` and an exported image alone do not replace the
+   canonical pin. Reconcile generated image declarations when they exist.
+3. Pass the exact observed old image as a separate concurrency assertion:
+
+   ```sh
+   go run ./scripts/go/rtk-cloud -- cloud-admin-image-deploy \
+     --workspace . --env-root cloud_env/staging/runtime \
+     --kubeconfig ~/.config/rtk_cloud/staging/kube/kubeconfig.yaml \
+     --expected-old-image "$REVIEWED_OLD_CLOUD_ADMIN_IMAGE" \
+     --confirm video-cloud-staging
+   ```
+
+   The helper checks one desired replica and the old app image in the live
+   object, preserves its resourceVersion, and replaces only that image. A
+   concurrent update is refused. It preserves strategy, env, Secrets, volumes,
+   resource budgets and unrelated workloads. The 2026-10-02 staging baseline
+   uses RollingUpdate with no shared Admin volume or PVC; it has no shared
+   SQLite file that justifies changing strategy for this update. A future
+   persistent/shared database rollout needs its own reviewed writer strategy.
+4. Verify rollout and a short stability dwell, the Pod's actual imageID,
+   Ready/restart state, public TLS health, anonymous API denial, and the
+   authenticated Service Pricing page. Compare current/upcoming rates,
+   approved-but-unpublished OTA prices, references, Logger hold explanations
+   and invoice-total tax wording. Confirm unrelated images, Secret data and
+   PVCs are unchanged. Restore the operator pin together with the scoped image
+   if rollback is required; no pricing or invoice rollback is implied.
+
+Price-page delivery, reviewed future-card publication and source-complete
+monthly invoice close are three separate acceptance results. Preserve failed
+or unexecuted checks rather than treating a healthy page as financial approval.
+
 ### Staging deployment check lessons (2026-10-01)
 
 The selected frozen release's full `deployment upgrade` stopped at the

@@ -799,6 +799,51 @@ func TestPRCoverageRequiresEnvironmentBeforeExecutingGo(t *testing.T) {
 	}
 }
 
+func TestVideoCloudPRCoverageSerializesSharedDatabasePackages(t *testing.T) {
+	t.Setenv("GOFLAGS", "-p=8")
+	workspace := t.TempDir()
+	moduleDir := filepath.Join(workspace, "module")
+	if err := os.MkdirAll(moduleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"go.mod":           "module example.test/coverage\n\ngo 1.25.0\n",
+		"coverage.go":      "package coverage\nfunc Answer() int { return 42 }\n",
+		"coverage_test.go": "package coverage\nimport \"testing\"\nfunc TestAnswer(t *testing.T) { if Answer() != 42 { t.Fatal(\"wrong answer\") } }\n",
+	} {
+		if err := os.WriteFile(filepath.Join(moduleDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		name, module, profile string
+		serialized            bool
+	}{
+		{name: "video-cloud-pr", module: "video-cloud", profile: "pr", serialized: true},
+		{name: "video-cloud-unit", module: "video-cloud", profile: "unit"},
+		{name: "other-pr", module: "other-go", profile: "pr"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			outDir := t.TempDir()
+			logRel := "logs/coverage.log"
+			result := coverageCaseResult{LogPath: logRel}
+			if err := runGoCoverageModuleProfile(workspace, outDir, filepath.Join(outDir, logRel),
+				coverageConfig{}, coverageModule{Name: test.module, Path: "module", Packages: []string{"./..."}},
+				"", "HEAD", test.profile, &result); err != nil {
+				t.Fatal(err)
+			}
+			logRaw, err := os.ReadFile(filepath.Join(outDir, logRel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := strings.SplitN(string(logRaw), "\n", 2)[0]
+			if strings.Contains(command, "-p=1") != test.serialized {
+				t.Fatalf("Go package serialization in %q: want %t", command, test.serialized)
+			}
+		})
+	}
+}
+
 func TestChangedGoLinesResolvesWorkspaceSubmoduleGitlinks(t *testing.T) {
 	workspace, err := workspaceRoot()
 	if err != nil {
