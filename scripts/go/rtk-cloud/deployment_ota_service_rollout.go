@@ -12,22 +12,34 @@ import (
 // This update deliberately avoids the baseline Video Cloud deployment: the
 // existing PKI-managed API and log ingester must retain their identities.
 func runDeploymentOTAServiceRollout(args []string) error {
-	return runDeploymentOTAServiceRolloutWithCredentials(args, func(environment string) (func(), error) {
+	return runDeploymentOTAServiceRolloutWithCredentialModes(args, func(environment string) (func(), error) {
 		_, restore, err := configureProvisionSecretStore(environment)
+		return restore, err
+	}, func(environment string) (func(), error) {
+		_, restore, err := configureReadOnlySecretStore(environment)
 		return restore, err
 	})
 }
 
 func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials func(string) (func(), error)) error {
+	return runDeploymentOTAServiceRolloutWithCredentialModes(args, credentials, credentials)
+}
+
+func runDeploymentOTAServiceRolloutWithCredentialModes(args []string, credentials, readOnlyCredentials func(string) (func(), error)) error {
 	fs := flag.NewFlagSet("deployment ota-service-rollout", flag.ContinueOnError)
 	environment := fs.String("environment", "", "selected environment")
 	workspace := fs.String("workspace", "", "workspace root")
 	confirm := fs.String("confirm", "", "selected stack name for mutation")
+	updateImage := fs.Bool("update-image", false, "update only the active independent OTA Service image")
+	readOnly := fs.Bool("read-only", false, "verify the active OTA Service before an image update without changes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *environment == "" {
 		return errors.New("--environment is required and positional arguments are not accepted")
+	}
+	if *readOnly && (!*updateImage || *confirm != "") {
+		return errors.New("--read-only requires --update-image and cannot accompany --confirm")
 	}
 	cfg, err := resolveDeploymentConfig(*workspace, *environment, "")
 	if err != nil {
@@ -49,22 +61,51 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	if env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] || env["CLOUD_ENV_NAME"] != cfg.Environment {
 		return errors.New("resolved OTA runtime does not match the selected deployment environment")
 	}
+	if *updateImage {
+		operatorValues, err := store.readOperator()
+		if err != nil {
+			return fmt.Errorf("read selected OTA operator configuration: %w", err)
+		}
+		env = appendMap(env, operatorValues)
+		if env["CLOUD_STACK_NAME"] != cfg.Values["CLOUD_STACK_NAME"] || env["CLOUD_ENV_NAME"] != cfg.Environment {
+			return errors.New("operator OTA runtime does not match the selected deployment environment")
+		}
+		if err := requireActiveOTAServiceImageUpdateFlags(env, operatorValues); err != nil {
+			return err
+		}
+	}
 	if err := loadLKEImageManifestDefaults(store.Root, env); err != nil {
 		return err
 	}
-	if *confirm == "" {
+	if *confirm == "" && !*readOnly {
+		if *updateImage {
+			fmt.Fprintf(os.Stdout, "OTA Service image update plan: environment=%s stack=%s workload=%s image=%s\n", cfg.Environment, env["CLOUD_STACK_NAME"], otaServiceWorkloadName, env["LKE_VIDEO_CLOUD_IMAGE"])
+			fmt.Fprintln(os.Stdout, "Apply checks the active edge/core, ready OTA Service and Pods, selected identity/storage/Secrets, and --confirm STACK; only the Deployment image may change.")
+			return nil
+		}
 		fmt.Fprintf(os.Stdout, "OTA service rollout plan: environment=%s stack=%s workload=%s (registration only)\n", cfg.Environment, env["CLOUD_STACK_NAME"], otaServiceWorkloadName)
 		fmt.Fprintln(os.Stdout, "Apply requires the old OTA registrar stopped, strict Product entitlement, service identity, runtime Secrets, private registration listener, and --confirm STACK.")
 		return nil
 	}
-	if *confirm != env["CLOUD_STACK_NAME"] {
+	if !*readOnly && *confirm != env["CLOUD_STACK_NAME"] {
 		return errors.New("--confirm must match the selected stack")
+	}
+	if *updateImage {
+		credentials = readOnlyCredentials
 	}
 	restore, err := credentials(cfg.Environment)
 	if err != nil {
 		return err
 	}
 	defer restore()
+	if *updateImage {
+		// The existing image may only be qualified against the selected saved
+		// runtime material. Missing files must not fall back to shell values or
+		// generated development secrets while calculating its checksum.
+		previousCanonical := activeCanonicalSecretStore
+		activeCanonicalSecretStore = true
+		defer func() { activeCanonicalSecretStore = previousCanonical }()
+	}
 	storageCredentials, err := bindSelectedOTAStorage(cfg, store, env)
 	if err != nil {
 		return err
@@ -75,10 +116,10 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	if lkeOTARegistrarRegistrationEnabled(env) {
 		return errors.New("LKE_OTA_REGISTRAR_REGISTRATION_ENABLED must be false before independent OTA rollout")
 	}
-	if lkeOTAServiceEdgeEnabled(env) || lkeOTACoreCutoverEnabled(env) {
+	if !*updateImage && (lkeOTAServiceEdgeEnabled(env) || lkeOTACoreCutoverEnabled(env)) {
 		return errors.New("registration rollout requires OTA edge and core cutover flags disabled")
 	}
-	if image := lkeVideoCloudImage(env); !strings.Contains(image, "@sha256:") {
+	if image := lkeVideoCloudImage(env); !rolloutImagePattern.MatchString(image) || (*updateImage && image != env["LKE_VIDEO_CLOUD_IMAGE"]) {
 		return errors.New("OTA service rollout requires an immutable Video Cloud image digest")
 	}
 	var trustedKeys map[string]string
@@ -91,7 +132,11 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	if err := lkeRequireExistingServiceRegistrationEndpoint(env); err != nil {
 		return err
 	}
-	if err := lkeRequireOTAServiceInputs(env); err != nil {
+	if *updateImage {
+		if err := lkeRequireExistingOTAServiceInputs(env); err != nil {
+			return err
+		}
+	} else if err := lkeRequireOTAServiceInputs(env); err != nil {
 		return err
 	}
 	if err := lkeRequireOTAServiceSelectedStorageCredentials(env, storageCredentials); err != nil {
@@ -99,6 +144,9 @@ func runDeploymentOTAServiceRolloutWithCredentials(args []string, credentials fu
 	}
 	if err := lkeRequireStoppedOTARegistrar(env); err != nil {
 		return err
+	}
+	if *updateImage {
+		return lkeUpdateActiveOTAServiceImage(store, env, *readOnly)
 	}
 	for _, manifest := range []string{
 		lkeAllowServiceRegistrationNetworkPolicyManifest(env),

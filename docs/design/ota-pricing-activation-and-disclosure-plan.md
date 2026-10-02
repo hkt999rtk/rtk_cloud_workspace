@@ -1,6 +1,33 @@
 # OTA 費率生效與服務價格揭露：實作計畫
 
-Status: implementation plan with approved-rate documentation, authenticated research-price disclosure, preactivation OTA invoice protection, rate precision/tax metadata, late-fact rejection evidence, read-only complete-card and UTC-cutover inventories, non-OTA future cutover groundwork, a conservative UTC-month/owner close guard, source-side historical Product grant evidence for all four OTA meters, immutable per-object storage evidence, and Billing grant/byte-time verification built. The merged code is deployed to development. The dev Service intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate Product registrar identities had live leases and their bootstrap session was sealed. The independent OTA service is registered and its v2 manifest published in development. Product writes are enabled on the dev Account Manager API and outbox worker. A controlled OTA Product and test device completed direct-object download and three source-to-Billing meter checks; physical installation and complete-month storage remain unverified. The first non-OTA development card was published on 2026-09-30 for the next UTC month. OTA remains suspended and no effective OTA rate card has been published; development does not charge OTA.
+Current staging checkpoint (2026-10-02): Logger's source freeze, authenticated
+seal and Billing invoice close guard are implemented and deployed. Runtime
+cutover and the Factory public TLS/auth gate passed. One Logger receipt reached
+its retained source; one OTA artifact-write fact reached Billing, while the
+remaining OTA meters, closed-month Logger facts and the first complete Logger
+source month remain unverified. Formal Product CA issuer qualification failed. The 11-row OTA/Logger
+successor is a technical candidate; the active staging card still has five
+rows. No OTA/Logger successor rate or new Cloud Admin image has been
+published. The dated checkpoint below separates these code, runtime and
+financial states.
+
+Development history (through 2026-09-30): approved-rate documentation,
+authenticated research-price disclosure, preactivation OTA invoice protection,
+rate precision/tax metadata, late-fact rejection evidence, read-only
+complete-card and UTC-cutover inventories, non-OTA future cutover groundwork,
+a conservative UTC-month/owner close guard, historical Product grant evidence
+for all four OTA meters, immutable per-object storage evidence, and Billing
+grant/byte-time verification were built and deployed there. The dev Service
+intermediate successor was activated on 2026-09-29; by 2026-09-30 six separate
+Product registrar identities had live leases and their bootstrap session was
+sealed. The independent OTA service was registered and its v2 manifest
+published in development. Product writes were enabled on the dev Account
+Manager API and outbox worker. A controlled OTA Product and test device
+completed direct-object download and three source-to-Billing meter checks;
+physical installation and complete-month storage remained unverified. The
+first non-OTA development card was published on 2026-09-30 for the next UTC
+month. OTA remained suspended and no effective OTA rate card had been
+published; development did not charge OTA.
 
 Owner: rtk_cloud_workspace (cross-repository sequencing). Last reviewed: 2026-10-02.
 
@@ -10,16 +37,18 @@ The owner requested completion of the staging OTA activation and price book,
 Logger entitlement/retention/cutover prerequisites, and the missing Logger
 invoice source-completeness gate. Work stays on the selected frozen release;
 unrelated newer main commits and CDN expansion are outside this delivery.
+The table is the approved implementation target, not a current completion
+report; the dated staging checkpoint below records what has actually passed.
 
 | Workstream | Implementation and acceptance |
 | --- | --- |
 | Logger source checkpoint | A Go operator command obtains the complete historical Brand Cloud inventory from Account Manager, including zero-use and retired Clouds. It freezes each closed UTC month in the authoritative shared Logger receipt database after the existing 24-hour grace. A persisted source identity, coverage start and monotonic receipt sequence survive process restarts. The freeze waits for competing receipt writes, rejects pending overlapping receipts, creates both Product meters in the same transaction, and records immutable source/fact-set evidence. A database barrier prevents later insert/update/delete from changing an already frozen month. A newly initialized source cannot certify months before its coverage start. |
 | Logger delivery and Billing | Logger delivers every frozen fact with exact immutable acknowledgments before submitting its seal using a dedicated `logger-producer-seal-token`. Billing's new `POST /v1/internal/billing/logger-period-seals` verifies the typed source high-water, complete month, exact two-meter Product set and complete fact-set digest. Seal ingestion, fact acceptance and invoice preparation share the financial period barrier. Missing/partial/conflicting source evidence leaves the new invoice incomplete; exact existing fact/seal/invoice replays remain valid. A different service's fact cannot satisfy Logger completion. Pricing/usage periods containing Logger use UTC months. |
-| Staging rate version | Preserve the five existing non-OTA base rows and historical invoices, fill only explicitly reviewed missing precision/tax-category metadata, and add the four exact approved OTA rows plus the two Logger test rows (`ingest_gib`: NT$28.80/GiB; `retained_gib_month`: NT$1.31/GiB-month). The reviewed publication explicitly binds the Logger additions and their approval to the complete rate-set digest; the existing OTA-only review must not silently accept other non-OTA changes. The new TWD version uses the already approved combined-subtotal Taiwan 5% tax policy and the next permitted UTC month boundary, currently 2026-11-01T00:00:00Z. It is upcoming before that instant, never a retroactive October charge. |
+| Staging rate version | Preserve the five existing non-OTA base rows and historical invoices, fill only explicitly reviewed missing precision/tax-category metadata, and add the four exact approved OTA rows plus the two Logger test rows (`ingest_gib`: NT$28.80/GiB; `retained_gib_month`: NT$1.31/GiB-month). A reviewed publication must bind the Logger additions and their approval to the complete rate-set digest; the existing OTA-only review must not silently accept other non-OTA changes. The proposed TWD version uses the approved combined-subtotal Taiwan 5% tax policy and a permitted future UTC month boundary; `2026-11-01T00:00:00Z` is only the current candidate. It becomes upcoming only after a separate reviewed publication and cannot retroactively charge October. |
 | Product grants and service cutover | Freeze only the relevant Account Manager writes for the reviewed immutable grant backfill, preserving the original selections of existing Products. Activate the existing Logger and OTA catalog entries and verify their live identities/leases. Enable Product service writes after backfill. Use separate controlled Products for positive OTA/logging acceptance rather than adding paid options to all old Products. |
 | Staging OTA signing trust | The environment operator holds the `staging-ota-20261002` Ed25519 private key at `~/.config/rtk_cloud/staging/runtime/ota-manifest-private.pem` and its derived public entry at `runtime/ota-manifest-trust.json`, both mode `0600`. Only the public map is tracked in `cloud_env/staging/overrides/architecture.env`. The first scoped standby rollout must install that same map into the core and independent OTA service and verify it before signing a test release. Existing key files are reused; deployment does not generate a successor or copy a dev key. The additive `ota-manifest-trust` command is for later updates to an established nonempty map, not initial bootstrap. Key preparation alone does not activate OTA or pricing. |
 | Loki retention | Back up and migrate the existing approximately 8.6 MiB emptyDir data to one `video-cloud-loki-data` PVC. Verify the copied data, bound claim, canonical config checksum, current Recreate rollout, 7/30/90-day rules and expiry queries before Logger core cutover. Reuse the existing PKI identities and planned resources. |
-| Deployment and live acceptance | Complete code and design, review, focused local integration tests, then the affected coverage/PR gates. Merge exact leaf revisions and their parent pointer; use only their canonical CI digests. Extend the scoped OTA trust/edge/core helpers for reviewed staging updates. Run protected preflight before the ordered deployment, verify receipts/facts and rejected-log nonbilling, and exercise operator sealing against eligible closed months. Current/future incomplete months remain held; no clock manipulation or fabricated historical seal substitutes for a complete month. |
+| Deployment and live acceptance | Complete code and design, review, focused local integration tests, then the affected coverage/PR gates. Merge exact leaf revisions and their parent pointer; use only their canonical CI digests. Extend the scoped OTA trust/edge/core helpers for reviewed staging updates. Run protected preflight; verify the independent OTA service, strict Product grant, authenticated device edge and source schema; then apply and read back normal core OTA cutover **before** creating a billable release or campaign through the Admin API. Do not adopt or reprice a legacy pre-cutover release. Verify receipts/facts and rejected-log nonbilling, and exercise operator sealing against eligible closed months. Current/future incomplete months remain held; no clock manipulation or fabricated historical seal substitutes for a complete month. |
 
 The scoped, transactional `schema-maintenance logger-check|logger-apply|logger-verify`
 operation creates the source schema with writers paused; service startup remains
@@ -44,6 +73,214 @@ such evidence.
 
 This section is the approved implementation target. Completion observations
 below are dated evidence and remain valid until replaced by actual verification.
+
+### Staging activation checkpoint (2026-10-02; incomplete)
+
+This checkpoint updates only the fields verified since the 2026-10-01 read-only
+staging review below. The earlier observations remain historical. The selected
+frozen workspace started at `0cfdf1f6`; its scoped deployment CLI correction
+merged as `913c3f27`, followed by the Logger source-check correction in
+frozen-target merge `bdfcb969` (PR #636) and the targeted Factory deployment
+repair in frozen-target merge `2e09a4b1` (PR #637). The Factory PEM line-ending
+correction merged as `5cfa74ff` (PR #638), and the capacity-profile retention
+repair as `6056fa8c` (PR #639). Billing's canonical CI image
+`sha256:39c8f1f37647ceaf80439c69b39fe75fa35063e86ff4be066a15b13eb3a525bd`
+is live with migrations 072 and 073. The normal scoped Video Cloud rollout
+completed using CI image
+`sha256:94148926ec428e8d239fd4bf9581e20a404479418688a2fabb858e6d57a86bba`;
+the live Logger read-back found the selected image, all five reviewed Logger
+cutover/billing flags true, and the approved public OTA manifest-key map in
+both core and OTA runtime. OTA core cutover was initially false; the later
+normal cutover and pinned-service read-back passed, and the canonical core
+flag is now true. The corrected
+Logger source checker's final v3 read-only preflight passed against this
+selected runtime. The newer Cloud Admin image has not been published, so its
+customer UI still needs live acceptance on that revision.
+
+Logger source coverage began at the actual migration transaction time,
+`2026-10-01T20:26:25.633349Z`. The source-schema maintenance record has an
+exception: Logger was gracefully stopped, its original Pod was gone, and its
+spool and pending count were zero, but one other idle transaction remained.
+Existing receipts and outbox rows were unchanged. The orchestrator proceeded
+with the additive apply after its GO assertion failed; no valid source-schema
+GO artifact was produced. Subsequent read-only
+verification found no open idle transaction, confirmed unchanged immutable
+receipt/source state, and reported the schema ready. This recovery does not
+turn the initial boundary into a passed writer-pause gate. October has only
+partial source coverage and cannot be certified as a complete Logger billing
+month, even if usage is zero. November is the first *possible* fully covered
+UTC month, conditional on uninterrupted evidence and every close gate. Its
+Logger seal cannot complete before `2026-12-02 00:00 UTC` after the 24-hour
+grace; OTA's 48-hour grace makes `2026-12-03 00:00 UTC` the earliest possible
+combined November close. These are lower bounds, not invoice or approval
+commitments. A missing or partial seal holds close; an October seal must not
+be fabricated. At `2026-10-02T02:43:44Z`, the normal
+`deployment logger-period-seal --month 2026-10` command, without `--confirm`,
+refused the still-open UTC month with `month must be YYYY-MM and closed for at
+least 24 hours in UTC` before configuration, provider, Job or database writes.
+This proves the live time guard only; it is not a source-coverage test or a
+closed-month seal. The current
+[Logger seal guard](../../repos/rtk_billing/internal/billingstore/logger_period_seals.go)
+requires complete source coverage from the UTC month start, zero pending
+receipts, both per-Product meters and fact reconciliation;
+[invoice close](../../repos/rtk_billing/internal/billingstore/invoices.go)
+stays incomplete without the required seal.
+
+One 100 GiB Loki PVC now retains the prior data on the unchanged Loki image;
+the post-migration read-only query matched 241 historical entries. Account
+Manager backfilled immutable service grants for all 32 existing Products while
+preserving their original selections, then enabled Product writes on its API
+and outbox. The OTA and Logger service catalog entries are active. The one
+previously failed qualification Cloud PKI operation was recovered through the
+normal scoped tool with a matching backup; that Cloud and its Product are
+ready, and one Device was allocated. The existing Device Root was reused.
+Initial Factory public transport CA/client material is retained only in the
+environment-local SecretStore. PR #636 added the explicit tracked staging
+Factory flag. PR #637 makes a selected public Factory service a dependency of
+the normal scoped Video Cloud deployment and same-image readiness check. The
+repaired path requires the existing canonical issuer client and matching live
+issuer/runtime Secrets. PR #638 permits only terminal CR/LF differences when
+comparing canonical and live PEM; the underlying key and certificate content
+and all runtime values must match. The earlier 241/240-byte raw key comparison
+failed and remains an operation-record exception; the parsed key and DER did
+not change. Both live Secret UIDs and their complete raw data must remain
+unchanged through rollout, without creating or rotating identities; the
+operator must also confirm the local source files are
+unchanged. The normal scoped rollout now exited successfully; its strict
+before/after comparison preserved 42 live Secret snapshots, 83 resource
+snapshots, 84 operator entries and 62 local files. The three canonical
+post-rollout checks for Product PKI prerequisites, Loki persistence and Logger
+source passed, as did issuer mTLS. Factory runs at the selected Video Cloud
+image. The public Factory TLS/auth gate passed: the original production run
+returned HTTP 201 and enrollment returned HTTP 200, with one successful
+certificate request, one completed journal, one issued run and one issued
+reservation. This is a public transport/admission result, not a Product CA
+issuer qualification. The strict Product issuer helper failed because the
+certificate response omitted `issuer_id`/Product fields; Product claim
+bindings remain zero. Neither deployed Factory nor certissuer has Product
+issuer composition enabled. The current
+[platform PKI staging baseline](../../repos/rtk_cloud_contracts_doc/platform_pki.md#16-current-implementation-gap-and-migration)
+documents shared signing; the
+[Product issuer path](../../repos/rtk_video_cloud/internal/certissuer/product.go)
+is the separate target. Formal Product signer qualification remains **FAIL**;
+the compatibility issuance is neither a new code fix nor a waiver. The
+existing legacy fixture then completed **one** normal Account Manager
+provisioning operation. Read-only proof passed 12 checks and a normal GET
+confirmed that same operation succeeded, its outbox record is immutable, and
+Video Cloud applied the `device_logging`, `mqtt` and `ota` grant with seven-day
+retention. The public Account Manager Device exposes
+`applied_grant_revision`; its filtered `metadata` does not contain bare grant
+fields. An initial evidence helper incorrectly expected those bare fields;
+local-only config/artifact finalization using the authoritative outbox and
+Video Cloud applied-grant read-back exited successfully at
+`2026-10-02T03:06:06Z`, without reposting the operation. No additional scope,
+certificate, production run or enrollment was created. This compatibility
+provisioning does not make formal Product issuer qualification pass or, by
+itself, prove OTA/Logger usage or an issued invoice.
+
+The first private Logger positive helper stopped before MQTT connect because
+it did not read the renderer-derived public endpoint. A separate Python strict
+TLS preflight rejected the legacy MQTT CA for missing AKI; normal Go TLS
+verification of the canonical CA and hostname passed. Neither preliminary
+attempt sent an MQTT packet or log, and this was not a deployed TLS failure.
+The corrected, explicitly unpublished-only continuation reused the same
+Cloud, Product, Device, certificate and provisioned operation. It sent one
+normal MQTT log after status became Ready and received a QoS 1 PUBACK. The
+verified read-back at `2026-10-02T03:32:42Z` found exactly one accepted
+receipt of 528 bytes, no pending receipts, Product sequence increment to one,
+and one Loki entry with matching normalized fields and labels. Grant revision,
+digest and seven-day UTC expiry matched the applied grant. The scoped source
+outbox and Billing fact counts remained zero in this partial October window;
+no closed-month fact acknowledgment or seal was asserted. This qualifies the
+single accepted usage source, not a billed month or invoice.
+
+The first controlled OTA fixture passed its Admin preparation steps but its
+device check returned HTTP 409, with no check response, artifact token, event
+or download. The release had been created while core cutover was false:
+Admin `/v1/ota` still used the legacy core path and produced an `ota/` object
+key, while the independent billable device API requires `ota-billable-v1`.
+Read-only conflict diagnosis found no scoped OTA deployment, event, grant,
+task, download, upload, object, source fact or Billing fact. The original
+legacy campaign was canceled through the normal API (HTTP 200) before cutover;
+its release is not adopted or repriced. The normal core-cutover apply then
+exited successfully, rolled both selected Video Cloud API Pods Ready, and the
+pinned independent-service read-back passed with the canonical core flag
+persisted true. The existing Product grant, Device and certificate were
+retained. A new billable release was then created through the cut-over core;
+its signed object PUT returned HTTP 204 and finalization returned HTTP 200.
+The `artifact_write` source ACK and matching Billing fact each reached one.
+Publication returned HTTP 409 because the legacy release was still Published
+while this new release was Ready; neither release had a device assignment or
+download. The narrow legacy Published-to-Revoked CAS fix in Video Cloud PR
+#747 is merged and pinned at `a9201728`, but its new image has not yet been
+deployed. The live independent OTA Service remains on the prior image. After
+the scoped core-then-OTA image update and exact read-back, continue this same
+billable release; do not re-upload, adopt or reprice the legacy release.
+Device assignment, verified download and the other OTA source-to-Billing
+meters remain pending. The first legacy 409 was an activation-order finding,
+not a failed billing replay test.
+
+After cutover, device identity APIs (`check`, deployment `events` and
+`artifact-token`) use the independent OTA edge with direct mTLS; the core
+returns `503 OTA_DIRECT_ROUTE_REQUIRED` for those paths. The sole core
+device-path exception is signed
+`PUT /v1/device/ota/internal/upload/<release-id>`: core forwards it to OTA,
+whose handler verifies the release-scoped expiring capability and current
+Product grant before reserving an object upload. This does not authenticate a
+device or forward artifact GET/download. Create a billable release through the
+core-forwarded operator `POST /v1/ota/.../releases` only after Product grant
+and core cutover read-back, then use its signed upload URL.
+
+The previous normal scoped rollout lost seven existing workload resource
+budgets after a compatibility rewrite dropped validated non-secret capacity
+metadata. PR #639 retains the selected architecture, requests, memory limits,
+placement, minimum/effective replicas and computed node-class totals across
+normal serialization and reload. Canonical staging and production now stop
+before provider operations if this profile is missing, incomplete or stale;
+the selected `deployment plan` must rematerialize it. The fresh selected
+preflight passed with 47 current/projected active provider services (11
+instances and 36 volumes) and zero additional resources required, authorizing
+a normal capacity-restoration rollout. That normal rollout exited successfully,
+and its read-back confirmed all seven original budgets restored and Factory at
+its declared `100m` CPU/`128Mi` memory request and `128Mi` memory limit. The
+preflight count includes an unrelated 10 GiB
+`us-sea` volume created before this restoration; it must not be attributed to
+this scoped rollout.
+
+| Workload budget verified after rollout | CPU request | Memory request | Memory limit |
+| --- | ---: | ---: | ---: |
+| Video Cloud API | 500m | 512Mi | 1536Mi |
+| Logger ingester | 500m | 512Mi | 1Gi |
+| MQTT usage | 250m | 256Mi | 1Gi |
+| Cleaner, statistics, metrics exporter and turn registry (each) | 100m | 128Mi | 128Mi |
+| Factory enrollment (new declared budget) | 100m | 128Mi | 128Mi |
+
+The first four rows restore seven previously declared workload budgets; the
+Factory row is the reviewed addition. This resource read-back does not
+qualify Product CA signing or OTA/Logger billing.
+
+The proposed staging successor has an 11-row **technical** review: five
+existing non-OTA monetary rows preserved with only missing precision/tax
+metadata filled, four exact approved OTA rates, and the approved Logger pair.
+The active five-row card and four previously issued invoices remain the
+financial baseline. Neither the OTA/Logger successor price version nor the
+new Cloud Admin image has been published. The candidate
+`2026-11-01T00:00:00Z` boundary is not a live pricing cutover. Finance/Billing
+scope, tax and direct-object margin evidence, plus two real publication
+reviewers, still require verification before the separate reviewed publish
+operation. One positive Logger source receipt passed, but no Logger
+closed-month fact-to-Billing, positive OTA receipt or complete-month seal has
+passed yet. The attempted denied-before Logger helper stopped at a
+variable-name regex before sending an event; the corrected normal probe then
+obtained an mTLS request token and received exact HTTP 403 for one rejected
+Logger POST. Its verified before/after read-back at
+`2026-10-02T03:17:29Z` found no scoped event, accepted/pending receipt,
+source outbox row or Billing fact, and zero entries in the bounded Loki query;
+source identity was unchanged. This qualifies rejected-log nonbilling for this
+one controlled request only, not a complete-month source seal. OTA core
+cutover has passed its separate read-back; a new billable OTA release's
+positive receipts and the first customer invoice remain unverified. Runtime
+service activation does not make these prices effective.
 
 ### Rate locations and price-definition principles
 
@@ -108,65 +345,74 @@ dated reference research + approved commercial decision
 ```
 
 The source-completeness checkpoint in this flow is a required closeout gate,
-not a claim that every non-OTA source has already implemented it. Implementation
-and environment gaps are listed in the completion review below.
+not a claim that every non-OTA source has implemented it. The 2026-10-01
+completion review below is historical: its Logger invoice gap was addressed
+by the source and Billing seal guards now deployed in staging, while the
+first eligible complete-month seal and invoice remain unverified.
 
 ### Completion review (2026-10-01)
 
-This plan is **not complete**. The implementation, deployed environment and
-financial acceptance are separate checkpoints. This review retained the frozen
-workspace and did not deploy or change the staging environment while the user
-was testing it. CDN remains a future extension; its deployment is not a current
-completion requirement.
+This is a read-only **2026-10-01 historical snapshot**, superseded where the
+2026-10-02 checkpoint above records later code and staging activation. The
+implementation, deployed environment and financial acceptance are separate
+checkpoints. This review retained the frozen workspace and did not deploy or
+change staging while the user was testing it. CDN remains a future extension;
+its deployment is not a current completion requirement.
 
 | Area | Verified result | Remaining work |
 | --- | --- | --- |
 | OTA registration, entitlement and evidence | The independent registered-service path, Product OTA access checks, immutable historical grants, four source meters and outbox, approved-price publication path, and invoice-total Taiwan business tax policy exist in the frozen code. | Complete the target-environment service activation and price publication, reconcile a full UTC month including artifact byte-time and both source seals, and verify the first OTA invoice. A controlled device simulation does not verify physical firmware installation. |
 | Authenticated pricing disclosure | Cloud Admin has separate current/upcoming Billing price tables, 15 research/counting items, approved OTA prices separate from reference prices, and the selected Product's OTA service state. | Verify the activated rates, actual usage references and issued invoice in the target environment. The general per-service usage drilldown remains a frontend implementation item. |
 | Other non-OTA metering adapters | Clip uploads persist object size and verify it during processing; the reviewed ready/finalization path finishes business state and notifications without emitting the four clip Billing meters. The generic producer registry contains MQTT and OTA; the pricing disclosure explicitly marks Shadow operations, TURN delivery and other data-API classification as pending. | Complete qualified Billing receipts/facts for clip byte-time, writes, reads and delivered bytes, Shadow operation units, TURN relay bytes and classified successful data-API calls. Existing object sizes, storage totals or service APIs do not establish these invoice quantities. The implementation anchors and remaining boundaries are in the research ledger linked above. |
-| Logger producer safeguards | Video Cloud `befac44f6df59cb10986c334ccb14fc6d4b89fe0` holds affected windows for pending receipts, checks regenerated quantities before delivery, and verifies canonical fact hashes after JSONB serialization. Its local PR-profile report passed at 72.63% against the 65% gate; this review does not rerun unchanged coverage. | These producer checks are not a Billing invoice source-completeness gate. Source mutation and delivery still need an authenticated cutoff/high-water boundary; in particular, a late historical receipt can settle between validation and fact delivery. |
+| Logger producer safeguards, as of 2026-10-01 | Video Cloud `befac44f6df59cb10986c334ccb14fc6d4b89fe0` held affected windows for pending receipts, checked regenerated quantities before delivery, and verified canonical fact hashes after JSONB serialization. Its local PR-profile report passed at 72.63% against the 65% gate; this historical review did not rerun unchanged coverage. | At that review, these producer checks were not an invoice source-completeness gate: source mutation and delivery still needed authenticated cutoff/high-water evidence. The 2026-10-02 checkpoint above records the subsequent freeze, seal and Billing guard; live complete-month sealing remains unverified. |
 | Logger retention rate mapping | The durable producer and database use `logger.retained_gib_month`. Review found that the initial dev rate file and price display instead named `retention_gib_month`, which cannot price the actual fact. The local candidate and disclosure now match the existing producer code; accepted facts are not renamed. | Published cards remain immutable. Before Logger charging, inventory the target card and publish a reviewed replacement at a permitted future UTC boundary if it contains the old spelling. Editing the candidate file does not repair an already published card. |
-| Invoice source completeness | [The canonical pricing contract](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md) requires an independently authenticated cutoff/high-water checkpoint and late-event reconciliation. [Invoice preparation](../../repos/rtk_billing/internal/billingstore/invoices.go) currently verifies source seals only for OTA. | Implement the required close checkpoint for non-OTA sources. One fact from another service, or only one Logger metric, currently satisfies the nonempty-fact check; it does not prove every priced source is complete. Late facts after issuance are rejected as immutable, so producer holds alone cannot prevent an incomplete invoice. Do not qualify paid-service month close as complete until this is fixed and tested. |
+| Invoice source completeness, as of 2026-10-01 | [The canonical pricing contract](../../repos/rtk_cloud_contracts_doc/pricing_and_invoicing.md) required an independently authenticated cutoff/high-water checkpoint and late-event reconciliation. At this historical review, [invoice preparation](../../repos/rtk_billing/internal/billingstore/invoices.go) verified source seals only for OTA. | At that time, Logger still needed its own close checkpoint; another service's fact or one Logger metric could satisfy a weak nonempty-fact check. The later [Logger seal guard](../../repos/rtk_billing/internal/billingstore/logger_period_seals.go) and invoice barrier are now implemented and deployed, but a real covered-month seal and first OTA/Logger invoice have not passed. Other priced sources need their own qualified completeness evidence. |
 | PayPal | Hosted order, capture/query, webhook and idempotent recovery code exist. | Actual sandbox buyer approval, completed capture, ambiguous-response recovery and exactly one balance credit remain live acceptance items. Simulator qualification does not prove PayPal acceptance. |
 
-The read-only staging review observed:
+On 2026-10-01, before the later staging activation, the read-only review
+observed:
 
 - Account Manager, Billing, Cloud Admin and the selected Video Cloud workloads
   were Ready; Account Manager to CertIssuer authentication reached request
   validation. Readiness does not prove metering or settlement completeness.
 - The API, Logger and MQTT usage workloads still use Video Cloud
-  `sha-9d67049b21dc`; the later Logger fixes are merged but not deployed there.
-- Only MQTT is active in the registered-service catalog. OTA, Logger, Shadow,
-  video storage and WebRTC are suspended. Product service writes are disabled
-  and 32 Products lack immutable service-grant revisions.
+  `sha-9d67049b21dc`; the later Logger fixes were merged but not yet deployed
+  there at this review.
+- At that time only MQTT was active in the registered-service catalog. OTA,
+  Logger, Shadow, video storage and WebRTC were suspended. Product service
+  writes were disabled and 32 Products lacked immutable grant revisions.
 - `--require-billable-logging-ready` returned **NO-GO**: Logger core cutovers,
   strict MQTT entitlement enforcement and Logger Billing facts are disabled;
   Loki has no configured bound data PVC or the required 7/30/90-day retention
   rules. Review found a preflight gap when only the ConfigMap was edited while
   an old Pod stayed Ready. The local correction now reuses the Go guard for
   the selected canonical config checksum and current rollout; focused
-  regressions passed, but this correction has not been published or deployed.
-- The current staging TWD card has five legacy non-OTA rates and `line` tax
-  mode. There are zero published OTA cards, OTA period seals, OTA task/download
-  receipts, OTA artifact objects, OTA/Logger Billing facts, or Logger receipts
-  and usage outbox rows. These zero counts are not source-completeness proofs.
-- Staging PayPal is configured `PAYPAL_ENABLED=false` with sandbox mode. No
+  regressions passed, but at that review this correction had not been published
+  or deployed.
+- At that review, the staging TWD card had five legacy non-OTA rates and
+  `line` tax mode. There were zero published OTA cards, OTA period seals,
+  OTA task/download receipts, OTA artifact objects, OTA/Logger Billing facts,
+  or Logger receipts and usage outbox rows. These zero counts are not
+  source-completeness proofs.
+- Staging PayPal was configured `PAYPAL_ENABLED=false` with sandbox mode. No
   staging PayPal purchase was performed during this read-only review.
 
-The local pricing-page correction also invalidates effective prices at a
-published rate boundary or UTC month change and when the page becomes visible
-again. It preserves request cancellation and clears the displayed effective
-amount before requesting the new book. The retention explanation now splits
+As of that 2026-10-01 review, the local pricing-page correction also
+invalidated effective prices at a published rate boundary, UTC month change
+or when the page became visible again. It preserved request cancellation and
+cleared the displayed effective amount before requesting the new book. The
+retention explanation split
 accepted log byte-time across UTC months using the fixed 30-day normalization.
-Focused fake-clock and localization tests passed; these local changes have not
-been published or deployed. No new coverage or live financial acceptance is
-claimed for this review.
+Focused fake-clock and localization tests passed; at that review these local
+changes had not been published or deployed. No new coverage or live financial
+acceptance was claimed for that snapshot.
 
-The next closeout order is to finish missing metering and invoice completeness
-code, review it, run focused local/integration tests, and only then run an
-applicable coverage gate. Deployment activation and source-to-invoice acceptance
-follow a reviewed target-environment plan; existing passing coverage, simulator
-tests, Ready Pods or an empty outbox cannot replace those checks.
+At that review, the next closeout order was to finish missing metering and
+invoice-completeness code, review it, run focused local/integration tests and
+then the applicable coverage gate. The later staging checkpoint above records
+the Logger implementation and activation. Source-to-invoice acceptance still
+requires actual qualified receipts and a complete covered UTC month; passing
+coverage, simulator tests, Ready Pods or an empty outbox cannot replace them.
 
 ### Development registration checkpoint（2026-09-30）
 
@@ -394,7 +640,11 @@ Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/
 
 後續另建立 staging 專屬 API-PKI serverAuth 管理 CA／憑證及 `video-cloud-api-pki-tls` Secret，憑證僅涵蓋 staging Service DNS；另建立 MQTT-PKI clientAuth 管理 CA／憑證、公開 callback CA ConfigMap、管理 Secret、無環境秘密的 `mqtt-pki-config`，以及僅屬 `rtk_pki_verifier` 群組的 staging 專用資料庫 LOGIN／Secret。金鑰、鏈、用途、SAN、有效期和實際資料庫登入／最小權限已個別核對。又在 staging SecretStore 產生獨立 callback bearer key、EMQX API key／secret、cookie、Dashboard password 和 HTTPS／mTLS authenticator，建立 `mqtt-pki-callback-auth`、`mqtt-pki-runtime`、`mqtt-pki-worker` 三個 Secret；唯讀逐位元組檢查確認 Kubernetes key set 與 staging 來源一致。renderer 已由 [Video Cloud PR #726](https://github.com/hkt999rtk/rtk_video_cloud/pull/726) 合併至選定固定分支 `e0f24f79239120e18d03b9725a13578eb5995048`，覆寫 API-PKI 的 broker key Secret 參照，避免沿用一般 API token；本地固定版 pre-PR 與遠端 CI 均通過。上述資源**尚未被消費端 Pod 掛載**。Root **尚未 active**：`video-cloud-api-pki`／`mqtt-pki` 工作負載和 staging 專屬受控 Service／MQTT 根仍未安裝，兩份真實消費端 ACK 缺失；`--require-product-pki` 仍因 Root 未啟用而失敗。這些 staging schema 與 PKI 基礎變更不會啟動獨立 OTA 程序、CDN 收集、Billing 價卡或客戶計費。
 
-## 2. 現況證據與待補差距
+## 2. 2026-10-01 現況證據與待補差距（歷史盤點）
+
+下表保留當時的設計與缺口判斷；**staging 實際狀態以本文開頭的
+2026-10-02 checkpoint 為準**。特別是 Logger 月封存與 Billing 關帳防線
+已於後續實作並部署，不能再用本節較早的「待補」文字判定目前程式。
 
 | 項目 | 現況證據 | 必須補齊 |
 | --- | --- | --- |
@@ -428,7 +678,7 @@ Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/
 
 頁首先選定 Brand Cloud／Product，列出「本帳戶 commercial／evaluation 層級與 Billing 帳戶狀態」「正式計費幣別 TWD」「目前有效價卡版本及 UTC 生效區間」「稅務說明」「下一版與生效日」。價格列不得只靠 Product checkbox 推導：Product 啟用控制功能可用性；帳務還要看整月 commercial 證據、active Billing 帳戶、有效價卡及實際用量。Evaluation 顯示免費條款；Private Cloud 的授權／維護費以合約報價，與下表 managed-cloud 用量費分開。
 
-主表固定欄位：**服務／收費項目、何時記一筆、最高參考價、已核准價或當期有效價、計算公式與排除情況、此 Product 是否啟用、狀態與生效日**。可展開看實際量的來源、失敗與重試處理、稅及四捨五入；篩選和行動版不能隱藏「尚未生效」標籤。正式金額只取 Billing API 的有效版次；下列研究快照只可用醒目「參考價，非帳單依據」標籤顯示。OTA 四項已核准單價保持不變，最高外部參考價另外列出。下表「待核定」是指 staging／production 的正式價格；dev 非 OTA 版次已發佈為 2026-10-01 起的正式測試價，仍須依時間與實際來源 fact 才會形成帳款。
+主表固定欄位：**服務／收費項目、何時記一筆、最高參考價、已核准價或當期有效價、計算公式與排除情況、此 Product 是否啟用、狀態與生效日**。可展開看實際量的來源、失敗與重試處理、稅及四捨五入；篩選和行動版不能隱藏「尚未生效」標籤。正式金額只取 Billing API 的有效版次；下列研究快照只可用醒目「參考價，非帳單依據」標籤顯示。OTA 四項已核准單價保持不變，最高外部參考價另外列出；Logger 兩項 staging 核准候選也與參考價分欄，尚未發佈。下表「待核定」是指 staging／production 的正式價格；dev 非 OTA 版次已發佈為 2026-10-01 起的正式測試價，仍須依時間與實際來源 fact 才會形成帳款。
 
 | 服務／項目 | 最高參考價；OTA 另列核准價（未稅） | 使用者要看到的計量與不計費規則 | 現階段揭露狀態 |
 | --- | --- | --- | --- |
@@ -444,13 +694,13 @@ Video Cloud 固定提交的 [CI image-only 發布](https://github.com/hkt999rtk/
 | OTA verified download | **已核准 NT$0.96／GiB**；CDN 參考 **NT$3.84／GiB** | 同一 deployment／精確 artifact 第一次經身分驗證的 `downloaded` 回報，以 artifact 大小計；URL 發放、失敗、Range 重試、原始 CDN egress 不計。 | 核准價待正式生效；CDN 實際出口與驗證下載不是同一計量。 |
 | OTA physical artifact storage | **已核准 NT$0.96／GiB-month**；最高參考 **NT$1.30／GiB-month** | 韌體物件實際 bytes×UTC 儲存時間，至物理刪除；revoke／disable 不等於刪除。 | 核准價待正式生效。 |
 | OTA artifact write | **已核准 NT$144／百萬次**；最高參考 **NT$224／百萬次** | 物件 key/version 的成功持久建立計一次；失敗 PUT 或同物件重試不計；GET 不另收客戶費。 | 核准價待正式生效。 |
-| Device／app log ingest | 參考 **NT$28.80／GiB** | 已接受的未壓縮 log bytes（含 metadata）；走 MQTT 的傳輸訊息另依 MQTT 計。 | 有用量資料；計費整合尚待核定。 |
-| Log retention | 壓縮封存成本參考 **NT$1.31／GiB-month** | 現行草案以接收 bytes×設定保留天數／30 估算；上線前要明定與實際保存量的差異。 | 有用量資料；計費整合尚待核定；參考基礎不同。 |
+| Device／app log ingest | 最高參考 **NT$28.80／GiB**；staging 已核准候選 **NT$28.80／GiB**，未生效 | 已接受的未壓縮 log bytes（含 metadata）；拒收 log 不計費；走 MQTT 的傳輸訊息另依 MQTT 計。 | Logger 來源與月結防線已部署 staging；候選價未發佈，正向 fact／完整月封存仍待驗收。 |
+| Log retention | 壓縮封存成本參考 **NT$1.31／GiB-month**；staging 已核准候選 **NT$1.31／GiB-month**，未生效 | 已接受 log 的 bytes 從接受到到期按 UTC 月分段積分，再以固定 30 天正規化；拒收 log 不計費。參考價是壓縮後成本，與 RTK 原始接受 bytes 的計量不同。 | Logger 來源與月結防線已部署 staging；候選價未發佈，正向 fact／完整月封存仍待驗收。 |
 | Other data APIs | REST proxy 參考 **NT$136／百萬次** | 成功的其他資料 API 呼叫；排除 Shadow、OTA control、物件操作等已列項目；登入與控制台管理不另計。 | 路由分類與計量尚待核定。 |
 
 每列分欄顯示**當期有效價、已核准待生效價、最高研究參考價**；沒有資料的欄位寫「未設定」，不以另一欄代填。帳單一律只用當期有效價。即使參考價可見，也要寫明「本價格尚未生效，不會依此金額計入帳單」；無有效費率時不得顯示為 NT$0 或宣稱永久免費。對已選用但無價的服務顯示「服務可用；目前尚無適用用量費率，實際費用依合約與生效價卡」，並提供帳單／客服入口。
 
-頁面底部用一個具體範例解釋：`同一 Product 同一項目當月數量 × 單價 → line 未稅小計；所有 Product 與服務 line 未稅小計加總 → 帳單未稅總額；按帳單核准稅率對總額計稅一次；未稅總額＋稅＝應付總額`。line 小計按 NT$1 取整，稅額也只在帳單層取整一次，再確定性分攤到明細以供查核；OTA 沒有另加一筆稅。千次／百萬次只是展示分母，**不是最低計費級距**。GiB = 1,073,741,824 bytes；GiB-month 按該 UTC 月實際時間積分。帳單期間用 UTC 正式標示，旁邊可加使用者本地時間換算。估算不等於發票，正式發票要附數量、版本與來源參照；付款與餘額狀態依既有 Billing 頁面。
+頁面底部用一個具體範例解釋：`同一 Product 同一項目當月數量 × 單價 → line 未稅小計；所有 Product 與服務 line 未稅小計加總 → 帳單未稅總額；按帳單核准稅率對總額計稅一次；未稅總額＋稅＝應付總額`。line 小計按 NT$1 取整，稅額也只在帳單層取整一次，再確定性分攤到明細以供查核；OTA 沒有另加一筆稅。千次／百萬次只是展示分母，**不是最低計費級距**。GiB = 1,073,741,824 bytes；OTA 韌體儲存按該完整 UTC 月的實際長度正規化，byte-time 數量在小數第 9 位 half-up；Logger `retained_gib_month` 將接受時刻至到期時刻的 byte-time 依 UTC 月分段，以固定 30 天正規化，數量在小數第 9 位採整數截斷。帳單期間用 UTC 正式標示，旁邊可加使用者本地時間換算。估算不等於發票，正式發票要附數量、版本與來源參照；付款與餘額狀態依既有 Billing 頁面。
 
 ## 5. 參考價來源、限制與文件歸屬
 
@@ -489,4 +739,4 @@ Cloudflare R2 的 Infrequent Access、不同維度的 TURN 分鐘、平價包套
 4. 完成直連物件 URL、四項來源事實、物件盤點與雙 seal 的 staging 資格，選定第一個可用的**未來**完整 UTC 月及客戶告知時點，才可發佈 production 價卡；CDN 留待後續擴充。
 5. 釐清「登入後才可看具體價格」是否也涵蓋公開 GitHub 原始碼與文件。目前 Cloud Admin、Billing 和 workspace 儲存庫公開，既有原始碼、研究文件及歷史提交含價格數字；這次保護的是應用程式匿名資產和 API，新增的兩份操作／文案文件不重列數字。若要求原始碼層級保密，必須另定私有價目來源、儲存庫可見性及既有公開歷史的處理方式，不能把 UI 授權視為完成該要求。
 
-「參考價」與「已核准待生效」本身皆不構成實際收費；dev 非 OTA 版次須到 2026-10-01 00:00 UTC 才能用於當期帳單。OTA 在上述專屬來源與發佈條件完成前不會計費。
+「參考價」與「已核准待生效」本身皆不構成實際收費；dev 非 OTA 版次已於 2026-10-01 00:00 UTC 生效，但仍須有合格來源事實才會形成費用。OTA 在上述專屬來源與發佈條件完成前不會計費。
