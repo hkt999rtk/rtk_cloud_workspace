@@ -38,7 +38,10 @@ func lkeApplyTargetedFactoryEnroll(paths provisionPaths, env map[string]string) 
 	}
 	for file, key := range map[string]string{"factory.crt": "client.crt", "factory.key": "client.key", "service-ca.crt": "ca.crt"} {
 		live, err := kubernetesSecretBytes(client, key)
-		if err != nil || !bytes.Equal(live, []byte(saved[file])) {
+		// The initial renderer can use PEM without a final newline while
+		// writeSensitiveFile persists that same key with one. Only terminal
+		// CR/LF are formatting; preserve every live Secret byte during rollout.
+		if err != nil || !bytes.Equal(bytes.TrimRight(live, "\r\n"), bytes.TrimRight([]byte(saved[file]), "\r\n")) {
 			return fmt.Errorf("Factory issuer client %s differs from canonical identity; reconcile explicitly, no overwrite", key)
 		}
 	}
