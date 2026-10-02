@@ -76,18 +76,14 @@ func (c deploymentCredentialChecker) cutoverRuntimeStorage(cfg deploymentConfig,
 	}
 	state := map[string]any{"environment": cfg.Environment, "bucket": target.Bucket, "region": target.Region, "prefix": target.Prefix, "rollback_credentials_retained": true, "clip_storage_smoke": "pass"}
 	return completeStorageCutover(cfg, environmentFile, "media", store, &journal, state, func() error {
-		inventory, err := kubectlCombinedOutput(nil, "get", "deployments,statefulsets,daemonsets,jobs,cronjobs,replicasets,pods", "-A", "-o", "json")
-		if err != nil {
+		if err := waitMediaStorageConsumers(journal, stack["CLOUD_STACK_NAME"], source, target, access, secret, func() ([]byte, error) {
+			return kubectlCombinedOutput(nil, "get", "deployments,statefulsets,daemonsets,jobs,cronjobs,replicasets,pods", "-A", "-o", "json")
+		}); err != nil {
 			return err
 		}
-		remaining, _, err := planMediaStorageConsumers(inventory, stack["CLOUD_STACK_NAME"], source, target, access, secret, true)
-		if err != nil {
-			return err
-		}
-		if len(remaining) > 0 {
-			return errors.New("source-bucket consumers appeared during cutover")
-		}
-		return nil
+		// Waiting may outlast a concurrent credential or workload edit. Recheck
+		// every journaled destination before recording completion or promotion.
+		return verifyStorageCutover(journal)
 	})
 }
 
@@ -651,7 +647,44 @@ func storageCutoverFinishedJob(object map[string]any) bool {
 	return false
 }
 
-func planMediaStorageConsumers(body []byte, stack string, source provisionObjectStore, target deploymentStorageTarget, access, secret string, afterRollout ...bool) ([]storageCutoverMutation, []map[string]any, error) {
+type storageCutoverDrainingPods struct {
+	owners map[string]string
+}
+
+func (e *storageCutoverDrainingPods) Error() string {
+	return "managed source-bound Pods are still terminating; keep writers fenced until they disappear"
+}
+
+func waitMediaStorageConsumers(journal storageCutoverJournal, stack string, source provisionObjectStore, target deploymentStorageTarget, access, secret string, inspect func() ([]byte, error)) error {
+	deadline := time.Now().Add(envDurationDefault("LKE_ROLLOUT_TIMEOUT", 5*time.Minute))
+	var previous map[string]string
+	for {
+		body, err := inspect()
+		if err != nil {
+			return err
+		}
+		_, _, err = planMediaStorageConsumers(body, stack, source, target, access, secret, journal)
+		var pending *storageCutoverDrainingPods
+		if !errors.As(err, &pending) {
+			return err
+		}
+		if previous != nil {
+			for uid, owner := range pending.owners {
+				if previous[uid] != owner {
+					return errors.New("source-bound Pod appeared or changed ownership while waiting for termination")
+				}
+			}
+		}
+		previous = pending.owners
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("timed out waiting for source-bound Pods to terminate: %w", pending)
+		}
+		time.Sleep(min(2*time.Second, remaining))
+	}
+}
+
+func planMediaStorageConsumers(body []byte, stack string, source provisionObjectStore, target deploymentStorageTarget, access, secret string, afterRollout ...storageCutoverJournal) ([]storageCutoverMutation, []map[string]any, error) {
 	if access == "" || secret == "" {
 		return nil, nil, errors.New("destination storage credentials are missing")
 	}
@@ -669,8 +702,23 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 	plannedUIDs := map[string]bool{}
 	owners := map[string]string{}
 	activePods := map[string]string{}
+	objects := map[string]map[string]any{}
 	for _, object := range inventory.Items {
-		owners[storageCutoverString(storageCutoverGet(object, "/metadata/uid"))] = storageCutoverControllerUID(object)
+		uid := storageCutoverString(storageCutoverGet(object, "/metadata/uid"))
+		owners[uid] = storageCutoverControllerUID(object)
+		objects[uid] = object
+	}
+	if len(afterRollout) > 0 {
+		for _, m := range afterRollout[0].Mutations {
+			if storageCutoverPodPath(m.Kind) == "" {
+				continue
+			}
+			live := objects[m.UID]
+			if m.UID == "" || live == nil || live["kind"] != m.Kind || storageCutoverGet(live, "/metadata/namespace") != m.Namespace || storageCutoverGet(live, "/metadata/name") != m.Name || !storageCutoverFieldsMatch(live, m.After) {
+				return nil, nil, fmt.Errorf("%s %s/%s differs while waiting for source Pods", m.Kind, m.Namespace, m.Name)
+			}
+			plannedUIDs[m.UID] = true
+		}
 	}
 	for _, object := range inventory.Items {
 		kind := storageCutoverString(object["kind"])
@@ -721,8 +769,17 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 						continue
 					}
 					if kind == "Pod" {
+						if len(afterRollout) > 0 {
+							p := strings.Trim(effective[prefix+"PREFIX"], "/")
+							if !strings.HasPrefix(ns, stack+"-") || strings.TrimRight(effective[prefix+"ENDPOINT"], "/") != strings.TrimRight(source.endpoint, "/") || effective[prefix+"REGION"] != source.region || (source.prefixSet && p != source.prefix) || (!source.prefixSet && p != "" && p != target.Prefix) {
+								return nil, nil, fmt.Errorf("source-bound Pod %s/%s storage binding differs from verified migration source", ns, name)
+							}
+						}
 						activePods[ns+"/"+name] = storageCutoverString(storageCutoverGet(object, "/metadata/uid"))
 						continue
+					}
+					if len(afterRollout) > 0 {
+						return nil, nil, fmt.Errorf("source-bucket consumer %s/%s appeared during cutover", ns, name)
 					}
 					if indirect[prefix+"BUCKET"] {
 						return nil, nil, fmt.Errorf("%s/%s has indirect source bucket configuration; explicit consumer mapping required", ns, name)
@@ -809,18 +866,28 @@ func planMediaStorageConsumers(body []byte, stack string, source provisionObject
 			mutations = append(mutations, m)
 		}
 	}
+	draining := &storageCutoverDrainingPods{owners: map[string]string{}}
 	for pod, uid := range activePods {
-		if len(afterRollout) > 0 && afterRollout[0] {
-			return nil, nil, fmt.Errorf("source-bound Pod %s still exists after rollout; keep writers fenced until it terminates", pod)
-		}
+		podUID := uid
+		chain := []string{}
 		seen := map[string]bool{}
 		for uid != "" && !plannedUIDs[uid] && !seen[uid] {
 			seen[uid] = true
+			chain = append(chain, uid)
 			uid = owners[uid]
 		}
 		if !plannedUIDs[uid] {
 			return nil, nil, fmt.Errorf("source-bound Pod %s is not controlled by a verified cutover workload", pod)
 		}
+		if len(afterRollout) > 0 {
+			if _, err := time.Parse(time.RFC3339, storageCutoverString(storageCutoverGet(objects[podUID], "/metadata/deletionTimestamp"))); err != nil {
+				return nil, nil, fmt.Errorf("source-bound Pod %s is not terminating after rollout; keep writers fenced", pod)
+			}
+			draining.owners[podUID] = strings.Join(append(chain, uid), "/")
+		}
+	}
+	if len(draining.owners) > 0 {
+		return nil, nil, draining
 	}
 	secrets := []storageCutoverMutation{}
 	sortedNamespaces := make([]string, 0, len(namespaces))

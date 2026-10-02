@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -398,9 +399,14 @@ func TestStorageCutoverResolvesIndirectConsumersAndPods(t *testing.T) {
 	root := installStorageCutoverMock(t)
 	source := provisionObjectStore{bucket: "old", endpoint: "https://source.example", region: "us-sea", prefix: "environments/stack", prefixSet: true}
 	target := deploymentStorageTarget{Bucket: "new", Endpoint: "https://destination.example", Region: "us-sea", Prefix: "environments/stack"}
+	journal := storageCutoverJournal{}
 	plan := func(items []map[string]any, after bool) error {
 		body, _ := json.Marshal(map[string]any{"items": items})
-		_, _, err := planMediaStorageConsumers(body, "stack", source, target, "next", "secret", after)
+		var rolled []storageCutoverJournal
+		if after {
+			rolled = append(rolled, journal)
+		}
+		_, _, err := planMediaStorageConsumers(body, "stack", source, target, "next", "secret", rolled...)
 		return err
 	}
 	for _, namespace := range []string{"stack-video-cloud", "outside-stack"} {
@@ -455,7 +461,14 @@ func TestStorageCutoverResolvesIndirectConsumersAndPods(t *testing.T) {
 	if err := plan([]map[string]any{pod, replicaSet, deployment}, false); err != nil {
 		t.Fatalf("verified controller Pod blocked before rollout: %v", err)
 	}
-	if err := plan([]map[string]any{pod, replicaSet, deployment}, true); err == nil || !strings.Contains(err.Error(), "after rollout") {
+	live := storageCutoverMap(storageCutoverClone(deployment))
+	storageCutoverMap(storageCutoverGet(live, "/spec/template/spec/containers/0/env/0"))["value"] = target.Bucket
+	mutation, err := storageCutoverMutationFor(deployment, map[string]any{"/spec/template/spec/containers/0/env": storageCutoverGet(live, "/spec/template/spec/containers/0/env")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal.Mutations = []storageCutoverMutation{mutation}
+	if err := plan([]map[string]any{pod, replicaSet, live}, true); err == nil || !strings.Contains(err.Error(), "after rollout") {
 		t.Fatalf("old Pod accepted after rollout: %v", err)
 	}
 	pod["status"] = map[string]any{"phase": "Succeeded"}
@@ -467,6 +480,142 @@ func TestStorageCutoverResolvesIndirectConsumersAndPods(t *testing.T) {
 	mixedContainer["env"] = append(mixedContainer["env"].([]any), map[string]any{"name": "VIDEO_CLOUD_OTA_BLOB_BUCKET", "value": "other"})
 	if err := plan([]map[string]any{mixed}, false); err == nil || !strings.Contains(err.Error(), "another bucket") {
 		t.Fatalf("mixed credential consumers accepted: %v", err)
+	}
+}
+
+func storageCutoverDrainingFixture(t *testing.T) (storageCutoverJournal, []map[string]any, provisionObjectStore, deploymentStorageTarget) {
+	t.Helper()
+	source := provisionObjectStore{bucket: "old", endpoint: "https://source.example", region: "us-sea", prefix: "environments/stack", prefixSet: true}
+	target := deploymentStorageTarget{Bucket: "new", Endpoint: "https://destination.example", Region: "us-sea", Prefix: "environments/stack"}
+	deployment := storageCutoverFixture("Deployment", "api")
+	pod := storageCutoverFixture("Deployment", "old-pod")
+	pod["kind"], pod["apiVersion"], pod["spec"] = "Pod", "v1", storageCutoverGet(pod, "/spec/template/spec")
+	pod["status"] = map[string]any{"phase": "Running"}
+	storageCutoverMap(pod["metadata"])["deletionTimestamp"] = "2026-10-02T12:00:00Z"
+	storageCutoverMap(pod["metadata"])["ownerReferences"] = []any{map[string]any{"controller": true, "uid": "old-replica-uid"}}
+	replicaSet := map[string]any{"kind": "ReplicaSet", "metadata": map[string]any{"name": "old-replica", "namespace": "stack-video-cloud", "uid": "old-replica-uid", "ownerReferences": []any{map[string]any{"controller": true, "uid": "api-uid"}}}}
+	before := storageCutoverMap(storageCutoverClone(deployment))
+	for index, value := range []string{target.Bucket, target.Endpoint, target.Region, target.Prefix} {
+		storageCutoverMap(storageCutoverGet(deployment, fmt.Sprintf("/spec/template/spec/containers/0/env/%d", index)))["value"] = value
+	}
+	m, err := storageCutoverMutationFor(before, map[string]any{"/spec/template/spec/containers/0/env": storageCutoverClone(storageCutoverGet(deployment, "/spec/template/spec/containers/0/env"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return storageCutoverJournal{Mutations: []storageCutoverMutation{m}}, []map[string]any{deployment, replicaSet, pod}, source, target
+}
+
+func TestStorageCutoverWaitsForManagedSourcePodTermination(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		timeout string
+		goneAt  int
+		wantErr string
+		elapsed time.Duration
+	}{
+		{name: "graceful drain", timeout: "10s", goneAt: 3, elapsed: 4 * time.Second},
+		{name: "deadline", timeout: "3s", wantErr: "timed out", elapsed: 3 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("LKE_ROLLOUT_TIMEOUT", test.timeout)
+			synctest.Test(t, func(t *testing.T) {
+				journal, items, source, target := storageCutoverDrainingFixture(t)
+				calls := 0
+				start := time.Now()
+				err := waitMediaStorageConsumers(journal, "stack", source, target, "next", "secret", func() ([]byte, error) {
+					calls++
+					if test.goneAt > 0 && calls >= test.goneAt {
+						items = items[:2]
+					}
+					return json.Marshal(map[string]any{"items": items})
+				})
+				if test.wantErr == "" && err != nil || test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+					t.Fatalf("unexpected drain result: %v", err)
+				}
+				if time.Since(start) != test.elapsed || calls != 3 {
+					t.Fatalf("drain wait = %s, calls = %d", time.Since(start), calls)
+				}
+			})
+		})
+	}
+}
+
+func TestStorageCutoverDrainRejectsUnsafeConsumersAndDrift(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		change  func([]map[string]any)
+		wantErr string
+	}{
+		{name: "standalone", change: func(items []map[string]any) { delete(storageCutoverMap(items[2]["metadata"]), "ownerReferences") }, wantErr: "not controlled"},
+		{name: "unknown owner", change: func(items []map[string]any) {
+			storageCutoverMap(storageCutoverGet(items[1], "/metadata/ownerReferences/0"))["uid"] = "unselected-uid"
+		}, wantErr: "not controlled"},
+		{name: "missing owner chain", change: func(items []map[string]any) { storageCutoverMap(items[1]["metadata"])["uid"] = "different-replica-uid" }, wantErr: "not controlled"},
+		{name: "nonterminating", change: func(items []map[string]any) { delete(storageCutoverMap(items[2]["metadata"]), "deletionTimestamp") }, wantErr: "not terminating"},
+		{name: "invalid deletion timestamp", change: func(items []map[string]any) { storageCutoverMap(items[2]["metadata"])["deletionTimestamp"] = "invalid" }, wantErr: "not terminating"},
+		{name: "source endpoint drift", change: func(items []map[string]any) {
+			storageCutoverMap(storageCutoverGet(items[2], "/spec/containers/0/env/1"))["value"] = "https://other.example"
+		}, wantErr: "binding differs"},
+		{name: "source region drift", change: func(items []map[string]any) {
+			storageCutoverMap(storageCutoverGet(items[2], "/spec/containers/0/env/2"))["value"] = "other-region"
+		}, wantErr: "binding differs"},
+		{name: "source prefix drift", change: func(items []map[string]any) {
+			storageCutoverMap(storageCutoverGet(items[2], "/spec/containers/0/env/3"))["value"] = "other/prefix"
+		}, wantErr: "binding differs"},
+		{name: "destination drift", change: func(items []map[string]any) {
+			storageCutoverMap(storageCutoverGet(items[0], "/spec/template/spec/containers/0/env/0"))["value"] = "other"
+		}, wantErr: "differs while waiting"},
+		{name: "controller replaced", change: func(items []map[string]any) { storageCutoverMap(items[0]["metadata"])["uid"] = "new-controller-uid" }, wantErr: "differs while waiting"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("LKE_ROLLOUT_TIMEOUT", "10s")
+			synctest.Test(t, func(t *testing.T) {
+				journal, items, source, target := storageCutoverDrainingFixture(t)
+				test.change(items)
+				calls := 0
+				err := waitMediaStorageConsumers(journal, "stack", source, target, "next", "secret", func() ([]byte, error) {
+					calls++
+					return json.Marshal(map[string]any{"items": items})
+				})
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) || calls != 1 {
+					t.Fatalf("unsafe consumer was not rejected immediately: calls=%d err=%v", calls, err)
+				}
+			})
+		})
+	}
+}
+
+func TestStorageCutoverDrainRejectsChangesBetweenPolls(t *testing.T) {
+	for _, change := range []string{"new pod", "changed owner", "new controller", "inventory failure"} {
+		t.Run(change, func(t *testing.T) {
+			t.Setenv("LKE_ROLLOUT_TIMEOUT", "10s")
+			synctest.Test(t, func(t *testing.T) {
+				journal, items, source, target := storageCutoverDrainingFixture(t)
+				calls := 0
+				err := waitMediaStorageConsumers(journal, "stack", source, target, "next", "secret", func() ([]byte, error) {
+					calls++
+					if calls == 2 {
+						switch change {
+						case "new pod":
+							storageCutoverMap(items[2]["metadata"])["uid"] = "new-pod-uid"
+						case "changed owner":
+							// Even a new ReplicaSet belonging to the same selected
+							// Deployment cannot adopt a previously draining Pod.
+							storageCutoverMap(items[1]["metadata"])["uid"] = "new-replica-uid"
+							storageCutoverMap(storageCutoverGet(items[2], "/metadata/ownerReferences/0"))["uid"] = "new-replica-uid"
+						case "new controller":
+							items = append(items, storageCutoverFixture("Deployment", "new-consumer"))
+						case "inventory failure":
+							return nil, errors.New("inventory unavailable")
+						}
+					}
+					return json.Marshal(map[string]any{"items": items})
+				})
+				if err == nil || strings.Contains(err.Error(), "timed out") || calls != 2 {
+					t.Fatalf("changed consumer was retried: calls=%d err=%v", calls, err)
+				}
+			})
+		})
 	}
 }
 
