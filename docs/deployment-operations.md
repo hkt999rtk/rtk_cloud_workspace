@@ -742,8 +742,9 @@ depends on its database and log backend, since it has no log subscription yet.
 Staging update (2026-10-02): Billing schema migrations 072 and 073 are applied,
 Loki retains its data on one Bound PVC, and 32 existing Products have versioned
 service grants after the reviewed backfill. The 2026-10-01 failed fixture report
-above remains historical. These completed steps do not establish the OTA core
-cutover, a complete Logger billing month, or customer invoicing.
+above remains historical. OTA core cutover and controlled immediate usage
+acceptance later passed as recorded below; a complete Logger billing month and
+customer invoicing have not passed.
 
 ### Logger source close and reviewed staging OTA activation
 
@@ -834,6 +835,41 @@ device/API behavior and Billing source acceptance still need their separate
 qualification. If the selected runtime settings differ from the live Pod,
 stop and reconcile them through a separately reviewed operation; this image
 command never rewrites them.
+
+Staging observation (2026-10-02): the reviewed core-first and independent OTA
+image update completed through the normal scoped commands with identical
+selected image digests, preserved Secret UIDs/data, Product grant, Loki claim
+and Logger source. The two core API Pods and one independent OTA Pod remained
+Ready with zero restarts. The OTA Pod emitted one startup `Unhealthy` readiness
+Warning before its Ready transition; it did not repeat during the subsequent
+30-second observation. Record that historical Warning as one resolved event,
+not zero events. An earlier protected preflight's Python default CA rejected
+the public HTTPS chain before any mutation. The same canonical public URL
+passed system-default HTTPS verification without a TLS bypass; the Python
+failure was a local trust-tool assumption, not a deployed TLS outage.
+
+For controlled OTA acceptance, do not pre-sign a test manifest while waiting
+for a CI image or active rollout: the first Ready billable release's two-hour
+manifest expired before publication. Normal Finalize does not replace a Ready
+release's manifest; do not renew it by bypassing idempotency or altering its
+immutable payload. Preserve its physical object and acknowledged write fact,
+revoke only the blocking pre-cutover Published release through the normal API,
+then create a **new**, separately identified billable release after the active
+core and OTA images are stable. That new upload is another tracked object and
+another `artifact_write`. The pre-cutover legacy provider object remains
+physically present but outside the billable ledger. A successful OTA API,
+verified URL download and four immediate matched facts do not establish
+physical firmware installation, a complete UTC month, an active price card or
+an issued invoice. Compare source and Billing facts by usage ID, hash, quantity,
+unit, UTC window and Product grant; require all ACKs and zero pending. For a
+replay check, retain the original sequence-3 downloaded body and compare all
+source/Billing rows before and after at most one further normal replay. Use
+one operator clock to bracket local actions: the staging PostgreSQL captured
+clock was ahead of the operator clock by several seconds, so cross-host wall
+times cannot establish causal ordering. The no-client-certificate Ingress
+probe returned HTTP 400 with verified server TLS and an explicit certificate
+error body; the Ingress can hide its `Server` response header, so that header
+is not proof of whether nginx rejected the request.
 
 Before the first staging standby rollout, verify that the environment's OTA
 manifest signing key exists and its public key matches the tracked map in
