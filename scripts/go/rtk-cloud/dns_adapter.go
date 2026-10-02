@@ -56,28 +56,29 @@ type genericDNSPlan struct {
 }
 
 func buildGenericDNSPlan(cfg deploymentConfig) genericDNSPlan {
-	root := strings.TrimSuffix(cfg.Values["CLOUD_DNS_ROOT_DOMAIN"], ".")
-	stack := cfg.Values["CLOUD_STACK_NAME"]
-	base := stack + "." + root
+	values := deploymentEndpointValues(cfg)
+	root := strings.TrimSuffix(values["CLOUD_DNS_ROOT_DOMAIN"], ".")
 	ttl, _ := strconv.Atoi(cfg.DNSValues["DNS_RECORD_TTL"])
 	records := []dnsRecordSet{}
-	for _, item := range []struct{ host, target, purpose string }{
-		{base, "public-edge", "video-cloud"},
-		{"device." + base, "public-edge", "device-mtls"},
-		{"certissuer." + base, "public-edge", "certificate-issuer"},
-		{"turnregistry." + base, "public-edge", "turn-registry"},
-		{"account-manager." + base, "public-edge", "account-manager"},
-		{"admin." + base, "public-edge", "cloud-admin"},
-		{"frontend." + base, "public-edge", "frontend"},
-		{"logger." + base, "public-edge", "cloud-logger"},
-		{"turn." + base, "turn", "turn"},
-	} {
-		records = append(records, dnsRecordSet{Name: item.host, Type: "A", Values: []string{"runtime:" + item.target}, TTL: ttl, Purpose: item.purpose})
+	for _, host := range lkePublicHTTPSHosts(deploymentPublicHTTPSRoutes(values)) {
+		purpose := "public-edge"
+		if values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" && host == values["FACTORY_ENROLL_DOMAIN"] {
+			purpose = "factory-enrollment-mtls"
+		}
+		records = append(records, dnsRecordSet{Name: host, Type: "A", Values: []string{"runtime:public-edge"}, TTL: ttl, Purpose: purpose})
 	}
-	if cfg.Values["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
-		records = append(records, dnsRecordSet{Name: cfg.Values["FACTORY_ENROLL_DOMAIN"], Type: "A", Values: []string{"runtime:public-edge"}, TTL: ttl, Purpose: "factory-enrollment-mtls"})
+	for _, host := range lkeCoturnDomains(values) {
+		records = append(records, dnsRecordSet{Name: host, Type: "A", Values: []string{"runtime:turn"}, TTL: ttl, Purpose: "turn"})
 	}
 	return genericDNSPlan{RootDomain: root, Records: records}
+}
+
+func deploymentPublicHTTPSRoutes(values map[string]string) []lkePublicHTTPSRoute {
+	routes := lkePublicHTTPSBaseRoutes(values)
+	if logger := lkeCloudLoggerPlannedRoute(values); logger.Host != "" {
+		routes = append(routes, logger)
+	}
+	return routes
 }
 
 func newDNSAdapter(name string) (dnsAdapter, error) {
@@ -174,6 +175,18 @@ func validateDNSRecord(root string, record dnsRecordSet) error {
 	}
 	if record.TTL <= 0 || len(record.Values) == 0 {
 		return errors.New("DNS record requires positive TTL and at least one value")
+	}
+	return nil
+}
+
+func validateManagedDNSHostname(name string) error {
+	if name == "" || len(name) > 253 {
+		return fmt.Errorf("invalid managed DNS hostname %q: total length must be 1 to 253 characters", name)
+	}
+	for _, label := range strings.Split(name, ".") {
+		if len(label) == 0 || len(label) > 63 || !secretEnvironmentPattern.MatchString(label) || strings.HasSuffix(label, "-") {
+			return fmt.Errorf("invalid managed DNS hostname %q: use lowercase ASCII labels of 1 to 63 characters with alphanumeric ends", name)
+		}
 	}
 	return nil
 }

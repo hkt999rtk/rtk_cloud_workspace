@@ -1,12 +1,20 @@
 # Creating and Configuring an Environment
 
-This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
+This is the operational entry point for adding `dev`, `staging`, `prod`, `qa`, or another deployment environment. See [`docs/environment-dns-naming.md`](../docs/environment-dns-naming.md) for environment-to-DNS mappings and endpoint naming rules, [`docs/cloud-deployment-architecture.md`](../docs/cloud-deployment-architecture.md) for architecture responsibilities and resolution rules, [`cloud_deploy/README.md`](../cloud_deploy/README.md) for shared defaults and adapter keys, [`docs/storage-credential-lifecycle.md`](../docs/storage-credential-lifecycle.md) for storage operations and credentials, and [`docs/object-storage-policy.md`](../docs/object-storage-policy.md) for canonical naming, namespaces and retention.
 
 To build LKE staging from a fresh clone, complete service acceptance, and run the 1K MQTT/Device Shadow test, follow [`staging-from-scratch.md`](../docs/staging-from-scratch.md). Do not use that procedure for an existing cluster; safely restore the existing environment's ignored `runtime/` first.
 
 ## Create the Minimal Configuration
 
 The environment identity comes directly from its directory name under `cloud_env/`. Use lowercase alphanumeric characters and `-`. Do not copy another environment's `runtime/`.
+
+Normal managed environments use `CLOUD_STACK_NAME=video-cloud-<environment>`.
+Public endpoint names are derived from that stack and `CLOUD_DNS_ROOT_DOMAIN`
+according to their endpoint role. The
+[environment DNS naming source](../docs/environment-dns-naming.md) owns the
+mapping tables, explicit hostname exceptions, and applicability to local or
+qualified runtimes. Follow it when choosing a new environment's names or
+reviewing an existing hostname override.
 
 ```sh
 environment=qa
@@ -44,12 +52,36 @@ DNS_ADAPTER=godaddy
 ## Optional Overrides
 
 The LKE frontend deployment sets `SERVICE_LOGIN_URL` to
-`https://<CLOUD_ADMIN_DOMAIN>/login`, using the selected environment's derived
-Cloud Admin domain. Thus dev links to dev and staging links to staging. For a
-custom login destination, set the absolute URL in that environment's
+`https://<effective-console-host>/login`. By default, the Console host is the
+selected environment's derived `CLOUD_ADMIN_DOMAIN`, so dev links to dev and
+staging links to staging. A configured production `CONSOLE_DOMAIN` selects its
+browser-facing Console host. For a custom login destination, set the absolute
+URL in that environment's
 `~/.config/rtk_cloud/<environment>/operator/env/SERVICE_LOGIN_URL` file (mode
 `0600`). The deployment renderer honors this override. Do not rely on the
 frontend application's standalone staging fallback in a deployed environment.
+
+### Production website and Console names
+
+Production may use short hostnames for the browser website, login, and Console.
+In `cloud_env/prod/environment.env`, the website uses
+`FRONTEND_DOMAIN=www.realtekconnect.com` together with
+`PUBLIC_BASE_URL=https://www.realtekconnect.com`. To choose a short Console
+hostname, set the optional prod-only `CONSOLE_DOMAIN`; for example, the
+following placeholder represents a proposed choice within the production root
+zone:
+
+```env
+CONSOLE_DOMAIN=<chosen-short-console-hostname>
+```
+
+The default frontend `SERVICE_LOGIN_URL` follows that effective Console host.
+When `AUTH_TOKEN_BASE_URL` or `SOCIAL_LOGIN_CALLBACK_URL` is configured, align
+it with the chosen Console origin and align the OAuth provider's registered
+redirect URI with the callback URL. Backend service names follow the
+[environment DNS naming source](../docs/environment-dns-naming.md).
+
+### Architecture and adapter overrides
 
 Do not create an override file when there are no differences. To adjust workload, capacity, or topology, place existing keys from [`cloud_deploy/architectures/kubernetes/`](../cloud_deploy/architectures/kubernetes/) in `overrides/architecture.env`:
 
@@ -177,6 +209,7 @@ LKE mutation requires the operator to provide `LINODE_TOKEN`. Tokens, kubeconfig
 ## Review checklist
 
 - The environment directory name is clear and uses lowercase alphanumeric characters and `-`.
+- Normal managed environments use `video-cloud-<environment>` as the stack name; explicit runtime or hostname exceptions follow the [environment DNS naming source](../docs/environment-dns-naming.md).
 - `CLOUD_STACK_NAME` and DNS names do not collide with another environment.
 - Only values that genuinely differ for this environment are overridden.
 - Architecture overrides contain no `LKE_*`, `EKS_*`, or `GKE_*` keys.

@@ -106,7 +106,7 @@ func lkeRequireReadyWebRTCServiceEndpoint(env map[string]string) error {
 
 func lkeRequireActiveWebRTCEdgeRoutes(env map[string]string) error {
 	videoHost := env["VIDEO_CLOUD_DOMAIN"]
-	deviceHost := firstNonEmpty(os.Getenv("LKE_DEVICE_DOMAIN"), env["VIDEO_CLOUD_DEVICE_DOMAIN"], "device."+videoHost)
+	deviceHost := lkeDeviceDomain(env)
 	for _, target := range []struct {
 		name string
 		host string

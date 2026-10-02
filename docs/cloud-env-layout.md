@@ -48,6 +48,8 @@ cloud_env/<environment>/
 
 The directory name under `cloud_env/` is the environment identity.
 `environment.env` defines the stack, DNS root, and logical deployment location.
+The relationship between those inputs and public endpoint names is defined in
+the [environment DNS naming source](environment-dns-naming.md).
 `deployment.env` selects the architecture, deployment adapter, and independent
 DNS adapter. `overrides/architecture.env` may override only provider-neutral keys;
 `overrides/adapter.env` and `overrides/dns.env` are reserved for explicit provider

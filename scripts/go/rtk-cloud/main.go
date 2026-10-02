@@ -1011,6 +1011,7 @@ func runDocsCheck(args []string) error {
 		"docs/contracts-submodule-governance.md",
 		"docs/documentation-governance.md",
 		"docs/deployment-operations.md",
+		"docs/environment-dns-naming.md",
 		"docs/backup-restore.md",
 		"docs/examples/backup-config.example.json",
 		"docs/deployment-secrets-governance.md",

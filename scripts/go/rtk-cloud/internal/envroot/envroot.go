@@ -108,6 +108,12 @@ func Load(root, dnsOverride string) (Environment, error) {
 	if values["CLOUD_PROVIDER"] == "" {
 		values["CLOUD_PROVIDER"] = "lke"
 	}
+	if values["CONSOLE_DOMAIN"] != "" && values["CLOUD_ENV_NAME"] != "prod" {
+		return Environment{}, fmt.Errorf("CONSOLE_DOMAIN is supported only in the prod environment")
+	}
+	if values["CONSOLE_DOMAIN"] != "" && values["CLOUD_RUNTIME_COVERAGE_STACK"] != "" {
+		return Environment{}, fmt.Errorf("CONSOLE_DOMAIN cannot be used by a runtime-coverage stack")
+	}
 	derived := Derive(values)
 	if runtimeStack := strings.TrimSpace(values["CLOUD_RUNTIME_COVERAGE_STACK"]); runtimeStack != "" {
 		if !strings.HasPrefix(runtimeStack, "coverage-") || values["CLOUD_PROVIDER"] != "lke" {
@@ -187,6 +193,9 @@ func Derive(values map[string]string) map[string]string {
 	}
 	out["ACCOUNT_MANAGER_DOMAIN"] = "account-manager." + stack + "." + dnsRoot
 	out["CLOUD_ADMIN_DOMAIN"] = "admin." + stack + "." + dnsRoot
+	if envName == "prod" && out["CONSOLE_DOMAIN"] != "" && out["CLOUD_RUNTIME_COVERAGE_STACK"] == "" {
+		out["CLOUD_ADMIN_DOMAIN"] = out["CONSOLE_DOMAIN"]
+	}
 	out["CLOUD_LOGGER_DOMAIN"] = "logger." + stack + "." + dnsRoot
 	return out
 }

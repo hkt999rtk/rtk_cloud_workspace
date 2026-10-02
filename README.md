@@ -28,6 +28,7 @@ The workspace snapshot includes:
 | Prepare a controller, create or take over an environment, and deploy | [`docs/deployment-operations.md`](docs/deployment-operations.md) |
 | Prepare data and run local, acceptance, qualification, or load tests | [`docs/testing-operations.md`](docs/testing-operations.md) |
 | Create or review tracked environment configuration | [`cloud_env/README.md`](cloud_env/README.md) |
+| Choose or review environment DNS endpoint names | [`docs/environment-dns-naming.md`](docs/environment-dns-naming.md) |
 | Troubleshoot a restored staging runtime | [`docs/staging-runtime-bootstrap.md`](docs/staging-runtime-bootstrap.md) |
 | Browse architecture, governance, contracts, and historical evidence | [`docs/README.md`](docs/README.md) |
 

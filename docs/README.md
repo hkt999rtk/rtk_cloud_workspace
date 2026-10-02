@@ -17,14 +17,36 @@ in the owning service repository; shared wire and payload contracts belong in
 | Prepare the private support ticket backend | [Zammad deployment runbook](deployment/support-ticket-zammad.md) |
 | Prepare and run local, acceptance, qualification, or load tests | [Testing Operations Guide](testing-operations.md) |
 | Create tracked environment intent and overrides | [Environment README](../cloud_env/README.md) |
+| Choose or review DNS names for an environment | [Environment DNS naming](environment-dns-naming.md) |
+| Select a DNS provider, manage records, or review DNS-01 ownership | [DNS Adapter Architecture](dns-adapter-architecture.md) |
+| Find shared API, payload, authentication, or device transport contracts | [Canonical contracts index](../repos/rtk_cloud_contracts_doc/README.md) |
+| Find service implementation, configuration, or package documentation | [Repository Documentation](#repository-documentation) |
+| Confirm what is deployed in a named environment | [Deployment Operations Guide](deployment-operations.md), using that environment's resolved runtime and dated deployment evidence |
 | Build a fresh staging environment and run canonical 1K validation | [Staging from scratch](staging-from-scratch.md) |
 | Find authoritative documentation with semantic retrieval | [RTK Knowledge Search skill](../.agents/skills/rtk-knowledge-search/SKILL.md) |
+
+## Find Authoritative Sources
+
+This index is the human topic map used by the
+[`rtk-knowledge-search` skill](../.agents/skills/rtk-knowledge-search/SKILL.md).
+Maintain topic routing here. Start with semantic retrieval through
+`mcp-local-rag` when available; use [local RAG](../tools/local-rag/README.md)
+only as an offline fallback. Then open the original documents and check their
+status, owner, applicability, and implementation or evidence links against
+[Documentation Governance](documentation-governance.md).
+
+A search ranking does not establish authority or deployment status. Naming
+policies and resolved plans describe intent; current availability requires
+dated evidence for the selected environment. Draft targets, supporting notes,
+generated references, and historical snapshots retain their stated scope even
+when retrieved alongside an active source.
 
 ## Workspace Documents
 
 | Document | Classification | Purpose |
 | --- | --- | --- |
 | [architecture.md](architecture.md) | Source | Cross-repo boundaries and source-of-truth model. |
+| [environment-dns-naming.md](environment-dns-naming.md) | Source | Environment identity, stack/root mapping, public endpoint hostname rules, and explicit exceptions. |
 | [Database ER model](design/database-er-diagrams.md) | Generated design reference | Tables, columns, declared foreign keys, and evidenced logical references across services. |
 | [Database schema to ER process](design/database-er-process.md) | Source | How schema metadata becomes the ER atlas, checked snapshots, and environment diff reports. |
 | [account-manager-admin-boundary.md](account-manager-admin-boundary.md) | Source | Boundary between Account Manager as backend control plane and Admin as enterprise dashboard/BFF. |
@@ -59,7 +81,7 @@ in the owning service repository; shared wire and payload contracts belong in
 | [payment-abstraction-rollout-plan.md](payment-abstraction-rollout-plan.md) | Source | Documentation-first ownership, provider-neutral balance/payment architecture, NewebPay prerequisites, implementation sequence, test evidence, and rollout gates. |
 | [private-cloud-deployment.md](private-cloud-deployment.md) | Supporting note | Private-cloud deployment bill of materials, deployment order, profiles, operations runbook, support boundary, and follow-up routing. |
 | [product-level-evidence.md](product-level-evidence.md) | Supporting note | Workspace evidence wrapper for private-cloud readiness sign-off and canonical report aggregation. |
-| [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Current Linode staging deployment snapshot, live endpoints, PR state, and remaining production-readiness work. |
+| [linode-staging-deployment-snapshot.md](linode-staging-deployment-snapshot.md) | Supporting note | Retired Linode VM staging snapshot and historical endpoint/deployment evidence. |
 | [staging-from-scratch.md](staging-from-scratch.md) | Source | Fresh-clone LKE staging deployment, billing setup, acceptance, and canonical 1K MQTT/Device Shadow validation. |
 | [linode-ci-runners.md](linode-ci-runners.md) | Source | Linode self-hosted CI runner VM topology, lifecycle, artifact archive, and shutdown policy. |
 | [linode-100k-home-iot-shadow-loadtest.md](linode-100k-home-iot-shadow-loadtest.md) | Pointer | Moved pointer for the 100,000-device Home IoT Device Shadow load-test package under `loadtests/home-100k/`. |
@@ -83,6 +105,7 @@ evidence, not current operator instructions.
 | --- | --- |
 | [cloud-deployment-architecture.md](cloud-deployment-architecture.md) | Provider-neutral environment, architecture, adapter, and runtime model. |
 | [cloud-env-layout.md](cloud-env-layout.md) | Tracked environment and ignored runtime directory layout. |
+| [environment-dns-naming.md](environment-dns-naming.md) | Environment-to-DNS naming policy, endpoint roles, overrides, and runtime applicability. |
 | [deployment-secrets-governance.md](deployment-secrets-governance.md) | Secret ownership, storage, injection, and redaction rules. |
 | [dns-adapter-architecture.md](dns-adapter-architecture.md) | DNS adapter selection, credentials, state, and mutation boundary. |
 | [lke-external-haproxy-edge.md](lke-external-haproxy-edge.md) | Current LKE external HAProxy edge contract. |

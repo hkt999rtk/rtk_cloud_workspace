@@ -57,6 +57,7 @@ finder, then search the routed source files directly. From
 
 ```sh
 RTK_RAG_ENABLE_EMBEDDINGS=0 RTK_RAG_ENABLE_ANSWERS=0 \
+GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
 go run ./cmd/rag --workspace ../.. --db ../../.rag/rag.db \
   query 'Explain how a device receives its credentials and which service owns them'
 ```
@@ -66,9 +67,13 @@ limits candidates with FTS/LIKE and only then reranks them with embeddings, so
 embeddings cannot recover a relevant chunk that was never selected. Its query
 and answer APIs can also send indexed content to the configured OpenAI endpoint;
 do not enable those calls for ordinary lookup unless the task authorizes that
-external processing. If semantic MCP retrieval is unavailable, combine the
-candidate results with direct source search and do not claim the index search
-was comprehensive.
+external processing. The command disables external model calls and Go downloads.
+If semantic MCP retrieval is unavailable, combine the candidate results with
+direct source search and do not claim the index search was comprehensive.
+
+The local CLI has `query`, `status`, and `index`; it has no `search` subcommand
+or CLI filters. Querying can initialize SQLite schema/WAL state; use direct file
+search for a strict no-filesystem-writes request.
 
 Use `rg --files` and focused `rg -n` searches in the applicable documentation
 or owning source directory to locate the current file and exact symbol. Preserve
@@ -99,10 +104,21 @@ component or feature terms only when useful for locating implementation names.
 Ordinary lookup uses the existing checkout and index. Git updates, index
 rebuilds, embedding calls, and server startup require the corresponding
 requested task. Do not refresh the index as a side effect of an ordinary
-question. For requested index maintenance, update after documentation edits,
-repository updates, renames, or deletions are complete; choose incremental sync
-when supported and use the current RAG README for the exact command and
-credential source. If maintenance is outside the current task, finish retrieval
+question.
+
+## Index scan timing
+
+The current Go RAG scans files when `index --changed` or `index --full` is run.
+Both scan the eligible file set and hash-check content; unchanged files with
+embeddings are skipped. A server startup also indexes before listening by
+default, unless `--skip-initial-index` is used. Ordinary queries do not scan the
+document tree, and this skill does not install a background schedule.
+
+For requested index maintenance, batch an incremental update after documentation
+edits, repository updates, renames, or deletions are complete. Follow the
+current RAG README for the exact command and credential source. Missing
+embeddings can also be regenerated; changed indexing is not limited to Git's
+changed-file list. If maintenance is outside the current task, finish retrieval
 from current files and identify a stale index when it affects the answer.
 
 ## Answer and maintain
@@ -115,5 +131,5 @@ their source scopes. Keep the response proportionate to the user's question.
 
 For an authorized documentation edit, update the owning source and its existing
 index entry or links as needed. Report a missing source, stale reference, or RAG
-coverage gap precisely; implement retrieval-tool changes when they are
-requested.
+coverage or metadata gap precisely; implement retrieval-tool changes when they
+are requested.
