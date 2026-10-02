@@ -5319,6 +5319,14 @@ func TestFactoryProductionJWTSharedAcrossLKEWorkloadsAndChecksums(t *testing.T) 
 	if changed := lkeFactoryEnrollDeploymentManifest(env, material); changed == factoryDeployment {
 		t.Fatal("production JWT secret change must update the factory-enroll pod template checksum")
 	}
+	for _, selected := range []string{"dev", "staging", "prod"} {
+		env["CLOUD_ENV_NAME"] = selected
+		body := lkeFactoryEnrollDeploymentManifest(env, material)
+		if !strings.Contains(body, "name: VIDEO_CLOUD_ENV\n              value: \""+selected+"\"") {
+			t.Fatalf("Factory runtime did not select %s", selected)
+		}
+	}
+	t.Run("targeted canonical Factory rollout", testTargetedFactoryCanonicalRollout)
 }
 
 func TestGeneratedGoServiceDockerfileUsesGoModVersion(t *testing.T) {

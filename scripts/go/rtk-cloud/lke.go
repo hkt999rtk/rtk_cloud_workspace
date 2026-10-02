@@ -496,6 +496,9 @@ func lkePlan(env map[string]string, opts provisionOptions) {
 		fmt.Fprintf(os.Stdout, "  - %s/deployment/video-cloud-prometheus\n", observabilityNS)
 		fmt.Fprintf(os.Stdout, "  - %s/deployment/video-cloud-api\n", videoNS)
 		fmt.Fprintf(os.Stdout, "  - %s/statefulset/mqtt\n", videoNS)
+		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+			fmt.Fprintf(os.Stdout, "  - %s/deployment/factoryenroll (existing issuer identity and runtime Secret)\n", videoNS)
+		}
 		for _, service := range lkeVideoCloudAuxiliaryServices() {
 			fmt.Fprintf(os.Stdout, "  - %s/deployment/%s\n", videoNS, service.Name)
 		}
@@ -3452,7 +3455,7 @@ func lkeSelectedWorkloads(env map[string]string, opts provisionOptions) []lkeWor
 	return k8sSelectedWorkloads(env, opts)
 }
 
-func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string, opts provisionOptions) error {
+func lkeApplyTargetedRuntimeDependencies(paths provisionPaths, env map[string]string, opts provisionOptions) error {
 	if err := lkeRequireOTAProducerSealDeployment(env, opts); err != nil {
 		return err
 	}
@@ -3573,6 +3576,11 @@ func lkeApplyTargetedRuntimeDependencies(_ provisionPaths, env map[string]string
 		}
 		if err := lkeRequireOTACDNCollectorRuntimeSecret(env); err != nil {
 			return err
+		}
+		if env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+			if err := lkeApplyTargetedFactoryEnroll(paths, env); err != nil {
+				return err
+			}
 		}
 	}
 	if lkeWorkloadSelected(env, opts, "video-cloud") || lkeWorkloadSelected(env, opts, "cloud-admin") {
@@ -8760,7 +8768,7 @@ spec:
             - name: FACTORY_ENROLL_ADDR
               value: ":18443"
             - name: VIDEO_CLOUD_ENV
-              value: "staging"
+              value: %q
             - name: FACTORY_ENROLL_CERT_ISSUER_URL
               value: %q
             - name: FACTORY_ENROLL_CERT_ISSUER_CLIENT_CERT
@@ -8779,7 +8787,7 @@ spec:
         - name: factoryenroll-certissuer-client
           secret:
             secretName: factoryenroll-certissuer-client
-`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeFactoryAdmissionBaseURL(env), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
+`, lkeNamespaceName(env, "video-cloud"), env["CLOUD_STACK_NAME"], checksum, env["CLOUD_STACK_NAME"], lkeImagePullSecretName(env), lkeVideoCloudImage(env), lkeFactoryAdmissionBaseURL(env), firstNonEmpty(env["CLOUD_ENV_NAME"], "staging"), lkeCertIssuerBaseURL(env), lkeNamespaceName(env, "platform"))
 }
 
 func lkeFactoryAdmissionBaseURL(env map[string]string) string {

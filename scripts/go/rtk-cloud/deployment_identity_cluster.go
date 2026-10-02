@@ -38,6 +38,12 @@ func lkeCheckDeploymentIdentityContinuity(paths provisionPaths, env map[string]s
 			target{"video-cloud", "mqtt-runtime", sensitiveEnvironmentPath(paths, "mqtt-tls"), map[string]string{"server.crt": "tls.crt", "server.key": "tls.key", "ca.crt": "ca.crt"}},
 		)
 	}
+	if lkeWorkloadSelected(env, opts, "video-cloud") && len(opts.workloads) > 0 && env["FACTORY_ENROLL_PUBLIC_ENABLED"] == "true" {
+		if err := lkeRequireBaselineIdentityDeployment(env, "video-cloud", "factoryenroll"); err != nil {
+			return err
+		}
+		targets = append(targets, target{"video-cloud", "factoryenroll-certissuer-client", sensitiveEnvironmentPath(paths, "certissuer"), map[string]string{"factory.crt": "client.crt", "factory.key": "client.key", "service-ca.crt": "ca.crt"}})
+	}
 	if lkeWorkloadSelected(env, opts, "account-manager") {
 		if err := lkeRequireBaselineIdentityDeployment(env, "account-manager", "account-manager"); err != nil {
 			return err

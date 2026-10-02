@@ -118,12 +118,23 @@ if [[ -n "$environment" ]]; then
         echo "invalid pinned Video Cloud image: $image_file" >&2
         exit 2
       fi
+      factory_public_enabled="$(awk -F= '$1 == "FACTORY_ENROLL_PUBLIC_ENABLED" { print $2; exit }' "$stack_file")"
+      case "$factory_public_enabled" in
+        true|false|"") ;;
+        *) echo "invalid selected FACTORY_ENROLL_PUBLIC_ENABLED in $stack_file" >&2; exit 2 ;;
+      esac
       video_namespace="$stack_name-video-cloud"
+      if [[ "$factory_public_enabled" == true ]]; then
+        "$kubectl" --kubeconfig "$kubeconfig" -n "$video_namespace" rollout status deployment/factoryenroll --timeout=5s
+      fi
       deployed_images="$("$kubectl" --kubeconfig "$kubeconfig" -n "$video_namespace" get deployments -o 'jsonpath={range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}')"
       seen='|'
       while IFS=$'\t' read -r name image; do
         case "$name" in
-          video-cloud-api|video-cloud-cleaner|video-cloud-clipverifier|video-cloud-statistics|video-cloud-metricsexporter|video-cloud-turnregistry|video-cloud-logingester|video-cloud-mqttusage|video-cloud-mqttfoundation|video-cloud-shadowworker|video-cloud-webrtcservice|video-cloud-videostorage|video-cloud-otaregistrar|video-cloud-otaservice)
+          video-cloud-api|video-cloud-cleaner|video-cloud-clipverifier|video-cloud-statistics|video-cloud-metricsexporter|video-cloud-turnregistry|video-cloud-logingester|video-cloud-mqttusage|video-cloud-mqttfoundation|video-cloud-shadowworker|video-cloud-webrtcservice|video-cloud-videostorage|video-cloud-otaregistrar|video-cloud-otaservice|factoryenroll)
+            if [[ "$name" == factoryenroll && "$factory_public_enabled" != true ]]; then
+              continue
+            fi
             seen+="$name|"
             if [[ "$image" != "$expected_image" ]]; then
               echo "image drift: $video_namespace/$name has $image; expected $expected_image" >&2
@@ -132,7 +143,11 @@ if [[ -n "$environment" ]]; then
             ;;
         esac
       done <<< "$deployed_images"
-      for name in video-cloud-api video-cloud-cleaner video-cloud-clipverifier video-cloud-statistics video-cloud-metricsexporter video-cloud-turnregistry video-cloud-logingester video-cloud-mqttusage; do
+      required_deployments=(video-cloud-api video-cloud-cleaner video-cloud-clipverifier video-cloud-statistics video-cloud-metricsexporter video-cloud-turnregistry video-cloud-logingester video-cloud-mqttusage)
+      if [[ "$factory_public_enabled" == true ]]; then
+        required_deployments+=(factoryenroll)
+      fi
+      for name in "${required_deployments[@]}"; do
         if [[ "$seen" != *"|$name|"* ]]; then
           echo "missing required Video Cloud deployment: $video_namespace/$name" >&2
           exit 1

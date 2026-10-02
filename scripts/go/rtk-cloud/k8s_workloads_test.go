@@ -30,6 +30,7 @@ func TestK8SWorkloadsRegistryIncludesServiceImages(t *testing.T) {
 func TestLKEPlanListsVideoCloudAuxiliaryRolloutTargets(t *testing.T) {
 	env := k8sWorkloadTestEnv()
 	env["LKE_SHADOW_WORKER_REGISTRATION_ENABLED"] = "true"
+	env["FACTORY_ENROLL_PUBLIC_ENABLED"] = "true"
 	opts := provisionOptions{mode: provisionMode{plan: true}, workloads: []string{"video-cloud"}}
 	output := captureStdout(t, func() { lkePlan(env, opts) })
 	for _, target := range []string{
@@ -37,6 +38,7 @@ func TestLKEPlanListsVideoCloudAuxiliaryRolloutTargets(t *testing.T) {
 		"video-cloud/deployment/video-cloud-logingester",
 		"video-cloud/deployment/video-cloud-mqttusage",
 		"video-cloud/deployment/video-cloud-shadowworker",
+		"video-cloud/deployment/factoryenroll",
 	} {
 		if !strings.Contains(output, target) {
 			t.Fatalf("plan omitted %s:\n%s", target, output)

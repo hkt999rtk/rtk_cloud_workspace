@@ -117,7 +117,12 @@ case "$*" in
       if [ "$name" = video-cloud-cleaner ] && [ "${DRIFT:-}" = 1 ]; then image='registry.example.test/video-cloud:old'; fi
       printf '%s\t%s\n' "$name" "$image"
     done
+    case "${FACTORY_FIXTURE:-}" in
+      matching) printf 'factoryenroll\tregistry.example.test/video-cloud:reviewed\n' ;;
+      drift) printf 'factoryenroll\tregistry.example.test/video-cloud:old\n' ;;
+    esac
     ;;
+  *"rollout status deployment/factoryenroll"*) test "${FACTORY_FIXTURE:-}" != unready ;;
 esac
 `,
 	} {
@@ -146,6 +151,26 @@ esac
 			}
 			if tc.fail && !strings.Contains(string(output), "image drift: video-cloud-staging-video-cloud/video-cloud-cleaner") {
 				t.Fatalf("missing drift diagnosis: %s", output)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, flag, state, want string }{
+		{"public Factory matches", "true", "matching", ""},
+		{"public Factory old image", "true", "drift", "image drift: video-cloud-staging-video-cloud/factoryenroll"},
+		{"public Factory missing", "true", "missing", "missing required Video Cloud deployment: video-cloud-staging-video-cloud/factoryenroll"},
+		{"public Factory unready", "true", "unready", ""},
+		{"private Factory outside selected scope", "false", "drift", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(envRoot, "env", "stack.env"), []byte("CLOUD_STACK_NAME=video-cloud-staging\nFACTORY_ENROLL_PUBLIC_ENABLED="+tc.flag+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("FACTORY_FIXTURE", tc.state)
+			t.Setenv("FACTORY_ENROLL_PUBLIC_ENABLED", "false") // selected runtime wins over caller
+			output, err := exec.Command("bash", args...).CombinedOutput()
+			wantFailure := tc.want != "" || tc.state == "unready"
+			if (err != nil) != wantFailure || (tc.want != "" && !strings.Contains(string(output), tc.want)) {
+				t.Fatalf("unexpected Factory image gate: %v %s", err, output)
 			}
 		})
 	}
