@@ -540,6 +540,11 @@ func runGoCoverageModuleProfile(workspace, outDir, logPath string, cfg coverageC
 	eventsRel := filepath.ToSlash(filepath.Join(moduleRel, "test-events.json"))
 	eventsPath := filepath.Join(outDir, filepath.FromSlash(eventsRel))
 	args := []string{"test", "-json", "-count=1", "-timeout=20m"}
+	if profile == "pr" && module.Name == "video-cloud" {
+		// Video Cloud packages share one local PostgreSQL fixture. CI serializes
+		// them so concurrent schema migrations cannot contend for its lock.
+		args = append(args, "-p=1")
+	}
 	args = append(args, module.Packages...)
 	args = append(args, "-coverprofile="+profilePath)
 	if profile == "pr" && len(module.CoverPackages) > 0 {

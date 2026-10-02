@@ -105,7 +105,11 @@ uses explicit package risk (`critical`, `high`, `normal`, or reporting-only
 `wiring`), per-package ratchets, targets, owners, and documented exclusions.
 The default remains the local `unit` profile for compatibility. The `pr`
 profile additionally requires the configured PostgreSQL/EMQX integration
-environment and fails when a required integration test is skipped. The
+environment and fails when a required integration test is skipped. Video Cloud
+PR coverage runs package processes sequentially (`go test -p=1`), matching CI:
+the packages share one disposable PostgreSQL database, and schema-specific
+fixtures still contend for the database-wide Logger migration lock. Keep that
+production lock intact; serialize the test packages instead. The
 `runtime` profile aggregates deployed-process `GOCOVERDIR` evidence.
 `test-coverage-aggregate` combines the ten required Go module jobs and two
 required JavaScript jobs, preferring the integration-aware PR result for
