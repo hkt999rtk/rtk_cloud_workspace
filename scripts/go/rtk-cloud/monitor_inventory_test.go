@@ -161,45 +161,66 @@ func TestMonitorInventoryDisabledVerifierAndJSONRequirement(t *testing.T) {
 	}
 }
 
-func TestMonitorInventoryPreservesConfiguredStackAndEndpoint(t *testing.T) {
+func TestMonitorInventoryUsesCanonicalEndpointsAndProdAliases(t *testing.T) {
 	t.Setenv("LKE_RUNTIME_SECRET_SEED", "")
-	workspace := writeDeploymentFixture(t, "dev", "lke")
-	writeTestFile(t, filepath.Join(workspace, "cloud_env", "dev", "environment.env"), "CLOUD_STACK_NAME=customer-dev\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\n")
-	cfg, err := resolveDeploymentConfig(workspace, "dev", "")
+	t.Setenv("LKE_FRONTEND_DOMAIN", "")
+	t.Setenv("LKE_DEVICE_DOMAIN", "")
+	workspace := writeDeploymentFixture(t, "prod", "lke")
+	writeTestFile(t, filepath.Join(workspace, "cloud_env", "prod", "environment.env"), "CLOUD_STACK_NAME=video-cloud-prod\nCLOUD_DNS_ROOT_DOMAIN=example.test\nDEPLOYMENT_LOCATION=us-west\nFRONTEND_DOMAIN=www.example.test\nCONSOLE_DOMAIN=console.example.test\nPUBLIC_BASE_URL=https://www.example.test\n")
+	cfg, err := resolveDeploymentConfig(workspace, "prod", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	beforeValues := appendMap(cfg.Values, nil)
 	beforeFiles := monitorFixtureTree(t, workspace)
+	values := monitorEndpointValues(cfg)
+	for key, want := range map[string]string{
+		"VIDEO_CLOUD_DOMAIN":            "video-cloud-prod.example.test",
+		"ACCOUNT_MANAGER_DOMAIN":        "account-manager.video-cloud-prod.example.test",
+		"CLOUD_ADMIN_DOMAIN":            "console.example.test",
+		"CLOUD_LOGGER_DOMAIN":           "logger.video-cloud-prod.example.test",
+		"FRONTEND_DOMAIN":               "www.example.test",
+		"VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.video-cloud-prod.example.test",
+	} {
+		if got := values[key]; got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if got := lkeDeviceDomain(values); got != "device.video-cloud-prod.example.test" {
+		t.Errorf("device domain = %q", got)
+	}
+	if got := deploymentRuntimeEndpoints(values)["VIDEO_CLOUD_MTLS_BASE_URL"]; got != "https://device.video-cloud-prod.example.test" {
+		t.Errorf("mTLS endpoint = %q", got)
+	}
 	inventory, err := buildMonitorInventory(cfg, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inventory.Stack != "customer-dev" {
-		t.Fatal("monitor replaced the configured stack identity")
+	if inventory.Stack != "video-cloud-prod" {
+		t.Fatalf("inventory stack = %q", inventory.Stack)
 	}
 	for _, target := range inventory.Targets {
 		if target.Namespace != "" && !strings.HasPrefix(target.Namespace, inventory.Stack+"-") {
 			t.Errorf("target namespace uses another stack: %s", target.Namespace)
 		}
 	}
+	endpoints := map[string]string{}
 	for _, endpoint := range inventory.Endpoints {
-		if !strings.Contains(endpoint.URL, "customer-dev.example.test") {
-			t.Errorf("endpoint uses another stack: %s", endpoint.URL)
+		endpoints[endpoint.Service] = endpoint.URL
+	}
+	for service, want := range map[string]string{
+		"video-cloud":     "https://video-cloud-prod.example.test",
+		"account-manager": "https://account-manager.video-cloud-prod.example.test",
+		"cloud-admin":     "https://console.example.test",
+		"frontend":        "https://www.example.test",
+		"cloud-logger":    "https://logger.video-cloud-prod.example.test",
+	} {
+		if got := endpoints[service]; got != want {
+			t.Errorf("%s endpoint = %q, want %q", service, got, want)
 		}
 	}
 	if !reflect.DeepEqual(beforeValues, cfg.Values) || !reflect.DeepEqual(beforeFiles, monitorFixtureTree(t, workspace)) {
 		t.Fatal("resolving endpoint defaults mutated configuration")
-	}
-	cfg.Values["VIDEO_CLOUD_DOMAIN"] = "api.customer.example.test"
-	custom, err := buildMonitorInventory(cfg, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, endpoint := range custom.Endpoints {
-		if endpoint.Service == "video-cloud" && endpoint.URL != "https://api.customer.example.test" {
-			t.Fatal("explicit endpoint was overwritten")
-		}
 	}
 }
 

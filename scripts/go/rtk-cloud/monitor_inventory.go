@@ -123,17 +123,10 @@ func monitorFeatureIntent(cfg deploymentConfig) (map[string]string, []string, er
 }
 
 // Resolve endpoint defaults from the selected configuration without requiring
-// deployment materialization or changing the declared stack identity.
+// deployment materialization. Reuse the deployment resolver so monitor
+// inventory matches the canonical hostname and alias policy.
 func monitorEndpointValues(cfg deploymentConfig) map[string]string {
-	values := appendMap(cfg.Values, map[string]string{"CLOUD_ENV_NAME": cfg.Environment})
-	base := values["CLOUD_STACK_NAME"] + "." + values["CLOUD_DNS_ROOT_DOMAIN"]
-	for key, prefix := range map[string]string{
-		"VIDEO_CLOUD_DOMAIN": "", "VIDEO_CLOUD_CERTISSUER_DOMAIN": "certissuer.",
-		"ACCOUNT_MANAGER_DOMAIN": "account-manager.", "CLOUD_ADMIN_DOMAIN": "admin.",
-		"CLOUD_LOGGER_DOMAIN": "logger.",
-	} {
-		values[key] = firstNonEmpty(strings.TrimSpace(values[key]), prefix+base)
-	}
+	values := deploymentEndpointValues(cfg)
 	// Committed TURN descriptor helpers consume legacy count keys. Supply the
 	// canonical architecture intent without reading adapter runtime files.
 	return appendMap(values, deploymentLegacyLKEValues(values, cfg.Environment))
